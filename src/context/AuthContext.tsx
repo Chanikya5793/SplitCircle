@@ -53,24 +53,19 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const [loading, setLoading] = useState(true);
 
   const googleConfig = Constants.expoConfig?.extra?.google ?? Constants.manifest?.extra?.google ?? {};
-  const googleEnvFallback = {
-    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '',
-    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '',
-    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '',
-  };
 
   const [request, response, promptAsync] = Google.useAuthRequest({
-    expoClientId: googleConfig.webClientId ?? googleEnvFallback.webClientId,
-    androidClientId: googleConfig.androidClientId ?? googleEnvFallback.androidClientId,
-    iosClientId: googleConfig.iosClientId ?? googleEnvFallback.iosClientId,
+    expoClientId: googleConfig.webClientId ?? process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID ?? '',
+    androidClientId: googleConfig.androidClientId ?? process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '',
+    iosClientId: googleConfig.iosClientId ?? process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? 'mock_ios_client_id',
   });
 
   useEffect(() => {
     console.log('Google Auth Request initialized:', {
         request: !!request,
-        expoClientId: googleConfig.webClientId ? 'Set (config)' : (googleEnvFallback.webClientId ? 'Set (env)' : 'Missing'),
-        androidClientId: googleConfig.androidClientId ? 'Set (config)' : (googleEnvFallback.androidClientId ? 'Set (env)' : 'Missing'),
-        iosClientId: googleConfig.iosClientId ? 'Set (config)' : (googleEnvFallback.iosClientId ? 'Set (env)' : 'Missing'),
+        expoClientId: googleConfig.webClientId ? 'Set (app.json)' : (process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID ? 'Set (env)' : 'Missing'),
+        androidClientId: googleConfig.androidClientId ? 'Set (app.json)' : (process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ? 'Set (env)' : 'Missing'),
+        iosClientId: googleConfig.iosClientId ? 'Set (app.json)' : (process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ? 'Set (env)' : 'Missing'),
     });
   }, [request]);
 
