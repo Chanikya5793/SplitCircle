@@ -1,5 +1,5 @@
-import 'dotenv/config';
 import type { ExpoConfig } from '@expo/config';
+import 'dotenv/config';
 
 type FirebaseEnv = {
   apiKey: string;
