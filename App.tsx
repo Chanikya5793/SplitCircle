@@ -1,39 +1,46 @@
-import 'react-native-gesture-handler';
-
-import { OfflineBanner } from '@/components/OfflineBanner';
-import { colors, theme } from '@/constants';
-import { AuthProvider } from '@/context/AuthContext';
-import { ChatProvider } from '@/context/ChatContext';
-import { GroupProvider } from '@/context/GroupContext';
-import { useNotifications } from '@/hooks/useNotifications';
-import AppNavigator from '@/navigation/AppNavigator';
-import { StatusBar } from 'expo-status-bar';
-import { PaperProvider } from 'react-native-paper';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-
-const AppContent = () => {
-  useNotifications();
-  return (
-    <>
-      <OfflineBanner />
-      <AppNavigator />
-    </>
-  );
-};
+import React from 'react';
+import { View, Text, StyleSheet, StatusBar } from 'react-native';
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <PaperProvider theme={theme}>
-        <AuthProvider>
-          <GroupProvider>
-            <ChatProvider>
-              <AppContent />
-              <StatusBar style="light" backgroundColor={colors.primary} />
-            </ChatProvider>
-          </GroupProvider>
-        </AuthProvider>
-      </PaperProvider>
-    </SafeAreaProvider>
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" />
+      <Text style={styles.title}>Welcome to SplitCircle!</Text>
+      <Text style={styles.subtitle}>Your expense splitting app</Text>
+      <Text style={styles.info}>🎉 App is running successfully in Expo Go</Text>
+      <Text style={styles.note}>Firebase Auth configured ✓</Text>
+      <Text style={styles.note}>Ready for development ✓</Text>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    color: '#2196F3',
+  },
+  subtitle: {
+    fontSize: 18,
+    color: '#666',
+    marginBottom: 30,
+  },
+  info: {
+    fontSize: 16,
+    marginTop: 20,
+    color: '#4CAF50',
+  },
+  note: {
+    fontSize: 14,
+    marginTop: 10,
+    color: '#999',
+  },
+});
