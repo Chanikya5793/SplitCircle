@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
-import * as Notifications from 'expo-notifications';
-import { doc, updateDoc } from 'firebase/firestore';
-import { registerForPushNotificationsAsync } from '@/utils/notifications';
+// import * as Notifications from 'expo-notifications';
 import { useAuth } from '@/context/AuthContext';
 import { db } from '@/firebase';
+import { registerForPushNotificationsAsync } from '@/utils/notifications';
+import { doc, updateDoc } from 'firebase/firestore';
 
 export const useNotifications = () => {
   const { user } = useAuth();
@@ -13,7 +13,7 @@ export const useNotifications = () => {
       return () => undefined;
     }
 
-    let notificationSub: Notifications.Subscription | undefined;
+    // let notificationSub: Notifications.Subscription | undefined;
 
     const syncToken = async () => {
       const token = await registerForPushNotificationsAsync();
@@ -27,12 +27,12 @@ export const useNotifications = () => {
 
     syncToken();
 
-    notificationSub = Notifications.addNotificationResponseReceivedListener((response) => {
-      console.log('Open notification payload', response.notification.request.content.data);
-    });
+    // notificationSub = Notifications.addNotificationResponseReceivedListener((response) => {
+    //   console.log('Open notification payload', response.notification.request.content.data);
+    // });
 
     return () => {
-      notificationSub?.remove();
+      // notificationSub?.remove();
     };
   }, [user?.userId]);
 };
