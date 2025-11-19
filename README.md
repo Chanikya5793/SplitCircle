@@ -29,7 +29,7 @@ SplitCircle is an Expo + React Native + TypeScript application that combines Spl
 │   ├── services/           # Receipt upload helper
 │   └── utils/              # Formatting, currency, permissions, split helpers
 ├── firestore.rules         # Sample Firestore security rules
-├── app.json                # Expo configuration (uses env vars for Firebase)
+├── app.config.ts           # Expo configuration (loads env vars via dotenv)
 └── README.md
 ```
 
@@ -43,7 +43,7 @@ SplitCircle is an Expo + React Native + TypeScript application that combines Spl
 
 ## Environment Variables
 
-`app.json` references Expo env vars that must be defined (e.g. via `.env` + `expo start --env-file`):
+Environment variables are defined in `.env` (see `.env.example`) and are loaded automatically by `app.config.ts` via `dotenv`:
 
 ```
 EXPO_PUBLIC_FIREBASE_API_KEY=...
@@ -53,7 +53,7 @@ EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=...
 EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
 EXPO_PUBLIC_FIREBASE_APP_ID=...
 EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID=...
-EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID=...
+EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=...
 EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID=...
 EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=...
 ```
@@ -86,7 +86,7 @@ The Metro bundler QR code can be scanned using Expo Go. Ensure your Firebase pro
 
 1. Create a Firestore database in **production mode**.
 2. Enable Authentication providers: **Email/Password** and **Google**.
-3. Create `google-services.json` and `GoogleService-Info.plist` and place them at the project root (paths referenced in `app.json`).
+3. Create `google-services.json` and `GoogleService-Info.plist` and place them at the project root (paths referenced in `app.config.ts`).
 4. Upload placeholder icons in `assets/` or replace them with your own branding.
 5. Configure FCM by following the Expo notifications guide and set up server keys for sending pushes.
 
