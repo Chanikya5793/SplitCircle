@@ -1,7 +1,7 @@
 import { colors } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 import { Button, Text, TextInput } from 'react-native-paper';
 
 interface RegisterScreenProps {
@@ -19,6 +19,8 @@ export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
     setLoading(true);
     try {
       await registerWithEmail(displayName.trim(), email.trim(), password);
+    } catch (error: any) {
+      Alert.alert('Registration Failed', error.message);
     } finally {
       setLoading(false);
     }
