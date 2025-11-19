@@ -18,8 +18,6 @@ const firebaseConfig = Constants.expoConfig?.extra?.firebase ?? Constants?.manif
 
 if (!firebaseConfig) {
   console.warn('Firebase config is missing. Populate EXPO_PUBLIC_FIREBASE_* env vars.');
-} else {
-  console.log('Firebase Config Loaded:', JSON.stringify(firebaseConfig, null, 2));
 }
 
 const app: FirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig ?? {}) : getApp();
