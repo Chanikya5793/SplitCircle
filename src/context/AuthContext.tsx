@@ -1,22 +1,25 @@
 import { auth, db } from '@/firebase';
 import type { UserProfile } from '@/models';
 import * as Google from 'expo-auth-session/providers/google';
+import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
 import {
-    createUserWithEmailAndPassword,
-    GoogleAuthProvider,
-    onAuthStateChanged,
-    sendPasswordResetEmail,
-    signInWithCredential,
-    signInWithEmailAndPassword,
-    signOut,
-    updateProfile,
-    type User as FirebaseUser,
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithCredential,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile,
+  type User as FirebaseUser,
 } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 WebBrowser.maybeCompleteAuthSession();
+
+console.log('AuthContext module loaded');
 
 interface AuthContextValue {
   user: UserProfile | null;
@@ -49,11 +52,27 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const googleConfig = Constants.expoConfig?.extra?.google ?? Constants.manifest?.extra?.google ?? {};
+  const googleEnvFallback = {
+    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '',
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '',
+    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '',
+  };
+
   const [request, response, promptAsync] = Google.useAuthRequest({
-    expoClientId: process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID,
-    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+    expoClientId: googleConfig.webClientId ?? googleEnvFallback.webClientId,
+    androidClientId: googleConfig.androidClientId ?? googleEnvFallback.androidClientId,
+    iosClientId: googleConfig.iosClientId ?? googleEnvFallback.iosClientId,
   });
+
+  useEffect(() => {
+    console.log('Google Auth Request initialized:', {
+        request: !!request,
+        expoClientId: googleConfig.webClientId ? 'Set (config)' : (googleEnvFallback.webClientId ? 'Set (env)' : 'Missing'),
+        androidClientId: googleConfig.androidClientId ? 'Set (config)' : (googleEnvFallback.androidClientId ? 'Set (env)' : 'Missing'),
+        iosClientId: googleConfig.iosClientId ? 'Set (config)' : (googleEnvFallback.iosClientId ? 'Set (env)' : 'Missing'),
+    });
+  }, [request]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -82,34 +101,54 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
   useEffect(() => {
     const handleGoogleResponse = async () => {
+      console.log('Google Auth Response:', response?.type, JSON.stringify(response, null, 2));
       if (response?.type !== 'success' || !response.authentication?.idToken) {
+        if (response?.type === 'error') {
+            console.error('Google Auth Error:', response.error);
+        }
         return;
       }
-      const credential = GoogleAuthProvider.credential(response.authentication.idToken);
-      await signInWithCredential(auth, credential);
+      try {
+        console.log('Signing in with Google credential...');
+        const credential = GoogleAuthProvider.credential(response.authentication.idToken);
+        await signInWithCredential(auth, credential);
+        console.log('Google Sign-In successful');
+      } catch (error) {
+        console.error('Firebase Google Sign-In failed:', error);
+      }
     };
     handleGoogleResponse();
   }, [response]);
 
   const signInWithEmail = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email, password);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (error: any) {
+      console.error('SignIn Error:', error);
+      throw error;
+    }
   };
 
   const registerWithEmail = async (displayName: string, email: string, password: string) => {
-    const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password);
-    await updateProfile(newUser, { displayName });
-    const docRef = doc(db, 'users', newUser.uid);
-    await setDoc(docRef, {
-      userId: newUser.uid,
-      email,
-      displayName,
-      photoURL: newUser.photoURL ?? null,
-      groups: [],
-      status: 'online',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      preferences: { pushEnabled: false, emailEnabled: true },
-    });
+    try {
+      const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password);
+      await updateProfile(newUser, { displayName });
+      const docRef = doc(db, 'users', newUser.uid);
+      await setDoc(docRef, {
+        userId: newUser.uid,
+        email,
+        displayName,
+        photoURL: newUser.photoURL ?? null,
+        groups: [],
+        status: 'online',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        preferences: { pushEnabled: false, emailEnabled: true },
+      });
+    } catch (error: any) {
+      console.error('Registration Error:', error);
+      throw error;
+    }
   };
 
   const sendResetLink = async (email: string) => {

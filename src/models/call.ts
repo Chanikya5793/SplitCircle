@@ -9,7 +9,8 @@ export interface CallParticipant {
   cameraEnabled: boolean;
 }
 
-type SessionDescriptionInit = import('react-native-webrtc/lib/typescript/RTCSessionDescription').RTCSessionDescriptionInit;
+// type SessionDescriptionInit = import('react-native-webrtc/lib/typescript/RTCSessionDescription').RTCSessionDescriptionInit;
+type SessionDescriptionInit = any;
 
 export interface CallSession {
   callId: string;
