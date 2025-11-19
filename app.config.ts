@@ -1,12 +1,6 @@
 import type { ExpoConfig } from '@expo/config';
 import 'dotenv/config';
 
-console.log('---------------------------------------------------');
-console.log('Loading app.config.ts');
-console.log('EXPO_PUBLIC_FIREBASE_API_KEY:', process.env.EXPO_PUBLIC_FIREBASE_API_KEY ? '(Set)' : '(Not Set)');
-console.log('Using API Key:', process.env.EXPO_PUBLIC_FIREBASE_API_KEY ?? 'AIzaSyA3yq_vlfRdwWTec5EfSCMYo5mnU5-W13Q');
-console.log('---------------------------------------------------');
-
 type FirebaseEnv = {
   apiKey: string;
   authDomain: string;
