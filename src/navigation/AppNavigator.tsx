@@ -11,9 +11,11 @@ import { CallSessionScreen } from '@/screens/calls/CallSessionScreen';
 import { ChatListScreen } from '@/screens/chat/ChatListScreen';
 import { ChatRoomScreen } from '@/screens/chat/ChatRoomScreen';
 import { AddExpenseScreen } from '@/screens/expenses/AddExpenseScreen';
+import { ExpenseDetailsScreen } from '@/screens/expenses/ExpenseDetailsScreen';
 import { SettlementsScreen } from '@/screens/expenses/SettlementsScreen';
 import { GroupDetailsScreen } from '@/screens/groups/GroupDetailsScreen';
 import { GroupListScreen } from '@/screens/groups/GroupListScreen';
+import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -87,7 +89,7 @@ const AddExpenseRoute = ({ route, navigation }: any) => {
   if (!group) {
     return <LoadingScreen />;
   }
-  return <AddExpenseScreen group={group} onClose={() => navigation.goBack()} />;
+  return <AddExpenseScreen group={group} expenseId={route.params.expenseId} onClose={() => navigation.goBack()} />;
 };
 
 const SettlementsRoute = ({ route, navigation }: any) => {
@@ -96,6 +98,14 @@ const SettlementsRoute = ({ route, navigation }: any) => {
     return <LoadingScreen />;
   }
   return <SettlementsScreen group={group} onClose={() => navigation.goBack()} />;
+};
+
+const GroupStatsRoute = ({ route, navigation }: any) => {
+  const group = useGroupById(route.params.groupId);
+  if (!group) {
+    return <LoadingScreen />;
+  }
+  return <GroupStatsScreen group={group} />;
 };
 
 const ChatListRoute = ({ navigation }: any) => (
@@ -150,10 +160,17 @@ const GroupStackNavigator = () => (
       options={{ presentation: 'modal', title: 'Add expense' }}
     />
     <GroupStack.Screen
+      name={ROUTES.APP.EXPENSE_DETAILS}
+      component={ExpenseDetailsScreen}
+      options={{ title: 'Expense Details' }}
+    />
+    <GroupStack.Screen
       name={ROUTES.APP.SETTLEMENTS}
       component={SettlementsRoute}
       options={{ presentation: 'modal', title: 'Settle up' }}
     />
+    <GroupStack.Screen name={ROUTES.APP.GROUP_STATS} component={GroupStatsRoute} options={{ title: 'Group Stats' }} />
+    <GroupStack.Screen name={ROUTES.APP.GROUP_CHAT} component={ChatRoomRoute} options={{ title: 'Thread' }} />
   </GroupStack.Navigator>
 );
 
@@ -178,9 +195,9 @@ const AppTabs = () => (
       tabBarActiveTintColor: colors.primary,
       tabBarIcon: ({ color, size }) => {
         const iconMap: Record<string, keyof typeof MaterialCommunityIcons.glyphMap> = {
-          [ROUTES.APP.GROUPS]: 'account-group',
-          [ROUTES.APP.CHAT]: 'chat-processing',
-          [ROUTES.APP.CALLS]: 'phone',
+          [ROUTES.APP.GROUPS_TAB]: 'account-group',
+          [ROUTES.APP.CHAT_TAB]: 'chat-processing',
+          [ROUTES.APP.CALLS_TAB]: 'phone',
           [ROUTES.APP.SETTINGS]: 'cog',
         };
         const iconName = iconMap[route.name] ?? 'circle-outline';
@@ -188,9 +205,9 @@ const AppTabs = () => (
       },
     })}
   >
-    <Tab.Screen name={ROUTES.APP.GROUPS} component={GroupStackNavigator} options={{ title: 'Groups' }} />
-    <Tab.Screen name={ROUTES.APP.CHAT} component={ChatStackNavigator} options={{ title: 'Chat' }} />
-    <Tab.Screen name={ROUTES.APP.CALLS} component={CallStackNavigator} options={{ title: 'Calls' }} />
+    <Tab.Screen name={ROUTES.APP.GROUPS_TAB} component={GroupStackNavigator} options={{ title: 'Groups' }} />
+    <Tab.Screen name={ROUTES.APP.CHAT_TAB} component={ChatStackNavigator} options={{ title: 'Chat' }} />
+    <Tab.Screen name={ROUTES.APP.CALLS_TAB} component={CallStackNavigator} options={{ title: 'Calls' }} />
     <Tab.Screen name={ROUTES.APP.SETTINGS} component={SettingsScreen} options={{ title: 'Settings' }} />
   </Tab.Navigator>
 );

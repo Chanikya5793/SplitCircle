@@ -5,7 +5,7 @@ import type { CallType } from '@/models';
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
-import { RTCView } from 'react-native-webrtc';
+// import { RTCView } from 'react-native-webrtc';
 
 interface CallSessionScreenProps {
   chatId: string;
@@ -28,9 +28,11 @@ export const CallSessionScreen = ({ chatId, groupId, type, onHangUp }: CallSessi
 
   useEffect(() => {
     const stream = localStream.current;
-    stream?.getAudioTracks().forEach((track) => {
-      track.enabled = micEnabled;
-    });
+    if (stream && stream.getAudioTracks) {
+        stream.getAudioTracks().forEach((track: any) => {
+            track.enabled = micEnabled;
+        });
+    }
   }, [micEnabled, localStream]);
 
   useEffect(() => {
@@ -38,9 +40,11 @@ export const CallSessionScreen = ({ chatId, groupId, type, onHangUp }: CallSessi
       return;
     }
     const stream = localStream.current;
-    stream?.getVideoTracks().forEach((track) => {
-      track.enabled = cameraEnabled;
-    });
+    if (stream && stream.getVideoTracks) {
+        stream.getVideoTracks().forEach((track: any) => {
+            track.enabled = cameraEnabled;
+        });
+    }
   }, [cameraEnabled, localStream, type]);
 
   const handleHangUp = () => {
@@ -53,12 +57,13 @@ export const CallSessionScreen = ({ chatId, groupId, type, onHangUp }: CallSessi
       <Text style={styles.status}>Call status: {status}</Text>
       {type === 'video' && (
         <View style={styles.videoGrid}>
-          {remoteStream.current && (
-            <RTCView streamURL={remoteStream.current.toURL()} style={styles.video} objectFit="cover" />
-          )}
-          {localStream.current && (
-            <RTCView streamURL={localStream.current.toURL()} style={styles.video} objectFit="cover" />
-          )}
+          {/* Mock Video Views */}
+          <View style={[styles.video, { justifyContent: 'center', alignItems: 'center' }]}>
+            <Text>Remote Video</Text>
+          </View>
+          <View style={[styles.video, { justifyContent: 'center', alignItems: 'center' }]}>
+            <Text>Local Video</Text>
+          </View>
         </View>
       )}
       <CallControls
