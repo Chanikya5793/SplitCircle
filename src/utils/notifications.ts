@@ -1,33 +1,36 @@
-import * as Notifications from 'expo-notifications';
+// import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+// Notifications.setNotificationHandler({
+//   handleNotification: async () => ({
+//     shouldShowAlert: true,
+//     shouldPlaySound: true,
+//     shouldSetBadge: true,
+//     shouldShowBanner: true,
+//     shouldShowList: true,
+//   }),
+// });
 
 export const registerForPushNotificationsAsync = async (): Promise<string | null> => {
   if (Platform.OS === 'web') {
     return null;
   }
 
-  const settings = await Notifications.getPermissionsAsync();
-  let finalStatus = settings.status;
+  console.log('Mocking push token for Expo Go');
+  return 'mock-push-token';
 
-  if (finalStatus !== 'granted') {
-    const request = await Notifications.requestPermissionsAsync();
-    finalStatus = request.status;
-  }
+//   const settings = await Notifications.getPermissionsAsync();
+//   let finalStatus = settings.status;
 
-  if (finalStatus !== 'granted') {
-    return null;
-  }
+//   if (finalStatus !== 'granted') {
+//     const request = await Notifications.requestPermissionsAsync();
+//     finalStatus = request.status;
+//   }
 
-  const tokenData = await Notifications.getExpoPushTokenAsync();
-  return tokenData.data;
+//   if (finalStatus !== 'granted') {
+//     return null;
+//   }
+
+//   const tokenData = await Notifications.getExpoPushTokenAsync();
+//   return tokenData.data;
 };
