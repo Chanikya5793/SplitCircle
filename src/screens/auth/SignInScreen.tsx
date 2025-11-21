@@ -1,7 +1,7 @@
 import { colors } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 import { Button, Text, TextInput } from 'react-native-paper';
 
 interface SignInScreenProps {
@@ -19,6 +19,8 @@ export const SignInScreen = ({ onSwitchToRegister, onForgotPassword }: SignInScr
     setLoading(true);
     try {
       await signInWithEmail(email.trim(), password);
+    } catch (error: any) {
+      Alert.alert('Sign In Failed', error.message);
     } finally {
       setLoading(false);
     }

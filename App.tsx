@@ -8,6 +8,7 @@ import { PaperProvider } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 export default function App() {
+  console.log('Rendering App component');
   return (
     <SafeAreaProvider>
       <PaperProvider theme={theme}>

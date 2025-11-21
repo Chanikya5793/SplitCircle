@@ -1,12 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { FirebaseApp, getApp, getApps, initializeApp } from 'firebase/app';
-import {
-  getAuth,
-  getReactNativePersistence,
-  initializeAuth,
-  type Auth,
-} from 'firebase/auth';
+import type { Auth } from 'firebase/auth';
+import * as FirebaseAuth from 'firebase/auth';
 import {
   CACHE_SIZE_UNLIMITED,
   initializeFirestore,
@@ -27,6 +23,9 @@ if (!firebaseConfig) {
 const app: FirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig ?? {}) : getApp();
 
 let auth: Auth;
+// @ts-expect-error: getReactNativePersistence exists in the runtime export for React Native
+const { getAuth, initializeAuth, getReactNativePersistence } = FirebaseAuth;
+
 if (Platform.OS === 'web') {
   auth = getAuth(app);
 } else {
@@ -35,7 +34,6 @@ if (Platform.OS === 'web') {
       persistence: getReactNativePersistence(AsyncStorage),
     });
   } catch (error) {
-    // Fast refresh may have already initialized the instance – fall back to the existing one.
     auth = getAuth(app);
   }
 }
