@@ -3,10 +3,11 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors, ROUTES, theme } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
+import { useNavigation } from '@react-navigation/native';
 import { formatCurrency } from '@/utils/currency';
 import * as Linking from 'expo-linking';
-import { useMemo, useState } from 'react';
-import { Alert, Image, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, Image, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Chip, Dialog, Divider, IconButton, Portal, Text, TextInput } from 'react-native-paper';
 
 interface ExpenseDetailsScreenProps {
@@ -14,10 +15,26 @@ interface ExpenseDetailsScreenProps {
   navigation: any;
 }
 
-export const ExpenseDetailsScreen = ({ route, navigation }: ExpenseDetailsScreenProps) => {
+export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
+  const navigation = useNavigation<any>();
   const { groupId, expenseId } = route.params;
   const { groups, deleteExpense, updateExpense } = useGroups();
   const { user } = useAuth();
+  const scrollY = useRef(new Animated.Value(0)).current;
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerTitle: '',
+      headerTransparent: true,
+      headerTintColor: colors.primary,
+    });
+  }, [navigation]);
+
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [40, 80],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
 
   const group = groups.find((g) => g.groupId === groupId);
   const expense = group?.expenses.find((e) => e.expenseId === expenseId);
@@ -66,7 +83,23 @@ export const ExpenseDetailsScreen = ({ route, navigation }: ExpenseDetailsScreen
 
   return (
     <LiquidBackground>
-      <ScrollView contentContainerStyle={styles.container}>
+      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+        <GlassView style={styles.stickyHeaderGlass}>
+          <Text variant="titleMedium" style={styles.stickyHeaderTitle} numberOfLines={1}>
+            {expense.title}
+          </Text>
+        </GlassView>
+      </Animated.View>
+
+      <ScrollView 
+        contentContainerStyle={styles.container}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: false }
+        )}
+        scrollEventThrottle={16}
+      >
+        <View style={{ height: 60 }} />
         <GlassView style={styles.card}>
           <View style={styles.header}>
             <View>
@@ -304,5 +337,28 @@ const styles = StyleSheet.create({
   fullImage: {
     width: '100%',
     height: '80%',
+  },
+  stickyHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    paddingTop: 50,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stickyHeaderGlass: {
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    maxWidth: '80%',
+  },
+  stickyHeaderTitle: {
+    fontWeight: 'bold',
+    color: '#333',
   },
 });

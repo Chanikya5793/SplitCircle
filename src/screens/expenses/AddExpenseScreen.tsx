@@ -1,3 +1,4 @@
+import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors, theme } from '@/constants';
@@ -222,27 +223,21 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
           <GlassView style={styles.card}>
             <Text variant="headlineMedium" style={styles.title}>{expenseId ? 'Edit expense' : 'Add expense'}</Text>
           
-            <TextInput 
+            <FloatingLabelInput 
               label="Title" 
               value={title} 
               onChangeText={setTitle} 
               style={styles.field}
-              mode="outlined"
-              outlineColor="rgba(0,0,0,0.1)"
-              theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
             />
             
             <View style={styles.row}>
-              <TextInput 
+              <FloatingLabelInput 
                 label="Amount" 
                 value={amount} 
                 onChangeText={setAmount} 
                 keyboardType="decimal-pad" 
                 style={[styles.field, { flex: 1 }]} 
                 left={<TextInput.Affix text="$" />}
-                mode="outlined"
-                outlineColor="rgba(0,0,0,0.1)"
-                theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
               />
             </View>
 
@@ -331,7 +326,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                   Remaining: ${(Number(amount) - customTotal).toFixed(2)}
                 </Text>
                 {selectedMembers.map((userId) => (
-                  <TextInput
+                  <FloatingLabelInput
                     key={userId}
                     label={`Share for ${memberDisplayNames[userId] ?? 'Member'}`}
                     value={customShares[userId] ?? ''}
@@ -339,9 +334,6 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                     keyboardType="decimal-pad"
                     style={styles.field}
                     error={!matchesAmount}
-                    mode="outlined"
-                    outlineColor="rgba(0,0,0,0.1)"
-                    theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
                   />
                 ))}
                 {!matchesAmount && (

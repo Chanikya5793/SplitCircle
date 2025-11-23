@@ -1,9 +1,10 @@
+import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
-import { Button, Text, TextInput } from 'react-native-paper';
+import { Button, Text } from 'react-native-paper';
 
 interface RegisterScreenProps {
   onSwitchToSignIn?: () => void;
@@ -34,35 +35,26 @@ export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
           <Text variant="headlineMedium" style={styles.title}>
             Create SplitCircle account
           </Text>
-          <TextInput 
+          <FloatingLabelInput 
             label="Name" 
             value={displayName} 
             onChangeText={setDisplayName} 
             style={styles.field}
-            mode="outlined"
-            outlineColor="rgba(0,0,0,0.1)"
-            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
           />
-          <TextInput
+          <FloatingLabelInput
             label="Email"
             value={email}
             onChangeText={setEmail}
             keyboardType="email-address"
             autoCapitalize="none"
             style={styles.field}
-            mode="outlined"
-            outlineColor="rgba(0,0,0,0.1)"
-            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
           />
-          <TextInput 
+          <FloatingLabelInput 
             label="Password" 
             value={password} 
             onChangeText={setPassword} 
             secureTextEntry 
             style={styles.field}
-            mode="outlined"
-            outlineColor="rgba(0,0,0,0.1)"
-            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
           />
           <Button
             mode="contained"

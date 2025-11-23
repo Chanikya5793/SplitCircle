@@ -3,7 +3,9 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors } from '@/constants';
 import { useChat } from '@/context/ChatContext';
 import type { ChatThread } from '@/models';
-import { FlatList, StyleSheet, View } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { useLayoutEffect, useRef } from 'react';
+import { Animated, FlatList, StyleSheet, View } from 'react-native';
 import { Button, List, Text } from 'react-native-paper';
 
 interface CallLobbyScreenProps {
@@ -11,15 +13,46 @@ interface CallLobbyScreenProps {
 }
 
 export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
+  const navigation = useNavigation();
   const { threads } = useChat();
+  const scrollY = useRef(new Animated.Value(0)).current;
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerTitle: '',
+      headerTransparent: true,
+    });
+  }, [navigation]);
+
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [0, 40],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
 
   return (
     <LiquidBackground>
+      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+        <GlassView style={styles.stickyHeaderGlass}>
+          <Text variant="titleMedium" style={styles.stickyHeaderTitle}>Calls</Text>
+        </GlassView>
+      </Animated.View>
+
       <View style={styles.container}>
         <FlatList
           data={threads}
           keyExtractor={(item) => item.chatId}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, { paddingTop: 60, paddingBottom: 100 }]}
+          ListHeaderComponent={
+            <View style={styles.headerContainer}>
+              <Text variant="displaySmall" style={styles.headerTitle}>Calls</Text>
+            </View>
+          }
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+            { useNativeDriver: false }
+          )}
+          scrollEventThrottle={16}
           renderItem={({ item }) => (
             <GlassView style={styles.card}>
               <List.Item
@@ -66,5 +99,35 @@ const styles = StyleSheet.create({
     marginTop: 32,
     textAlign: 'center',
     color: colors.muted,
+  },
+  stickyHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    paddingTop: 50,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stickyHeaderGlass: {
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+  },
+  stickyHeaderTitle: {
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  headerContainer: {
+    paddingHorizontal: 8,
+    paddingBottom: 16,
+  },
+  headerTitle: {
+    fontWeight: 'bold',
+    color: '#333',
   },
 });
