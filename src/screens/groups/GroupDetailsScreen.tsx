@@ -5,8 +5,8 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors, ROUTES } from '@/constants';
 import type { Group } from '@/models';
 import { useNavigation } from '@react-navigation/native';
-import { useMemo } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { useLayoutEffect, useMemo, useRef } from 'react';
+import { Animated, ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
 
 interface GroupDetailsScreenProps {
@@ -18,14 +18,44 @@ interface GroupDetailsScreenProps {
 
 export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }: GroupDetailsScreenProps) => {
   const navigation = useNavigation<any>();
+  const scrollY = useRef(new Animated.Value(0)).current;
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerTitle: '',
+      headerTransparent: true,
+      headerTintColor: colors.primary, // Ensure back button is visible/colored
+    });
+  }, [navigation]);
+
   const memberMap = useMemo(
     () => Object.fromEntries(group.members.map((m) => [m.userId, m.displayName])),
     [group.members]
   );
 
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [40, 80],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
   return (
     <LiquidBackground>
-      <ScrollView contentContainerStyle={styles.container}>
+      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+        <GlassView style={styles.stickyHeaderGlass}>
+          <Text variant="titleMedium" style={styles.stickyHeaderTitle}>{group.name}</Text>
+        </GlassView>
+      </Animated.View>
+
+      <ScrollView 
+        contentContainerStyle={styles.container}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: false }
+        )}
+        scrollEventThrottle={16}
+      >
+        <View style={{ height: 70 }} /> 
         <GlassView style={styles.headerCard}>
           <View style={styles.header}>
             <Text variant="headlineMedium" style={{ fontWeight: 'bold' }}>{group.name}</Text>
@@ -133,5 +163,27 @@ const styles = StyleSheet.create({
   secondaryButton: {
     flex: 1,
     backgroundColor: 'rgba(255,255,255,0.5)',
+  },
+  stickyHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    paddingTop: 50, // Adjust for status bar/header area
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stickyHeaderGlass: {
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+  },
+  stickyHeaderTitle: {
+    fontWeight: 'bold',
+    color: '#333',
   },
 });
