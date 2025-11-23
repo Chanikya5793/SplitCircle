@@ -157,7 +157,7 @@ const GroupStackNavigator = () => (
     <GroupStack.Screen
       name={ROUTES.APP.ADD_EXPENSE}
       component={AddExpenseRoute}
-      options={{ presentation: 'modal', title: 'Add expense' }}
+      options={{ presentation: 'modal', headerShown: false }}
     />
     <GroupStack.Screen
       name={ROUTES.APP.EXPENSE_DETAILS}
@@ -167,17 +167,33 @@ const GroupStackNavigator = () => (
     <GroupStack.Screen
       name={ROUTES.APP.SETTLEMENTS}
       component={SettlementsRoute}
-      options={{ presentation: 'modal', title: 'Settle up' }}
+      options={{ presentation: 'modal', headerShown: false }}
     />
     <GroupStack.Screen name={ROUTES.APP.GROUP_STATS} component={GroupStatsRoute} options={{ title: 'Group Stats' }} />
-    <GroupStack.Screen name={ROUTES.APP.GROUP_CHAT} component={ChatRoomRoute} options={{ title: 'Thread' }} />
+    <GroupStack.Screen
+      name={ROUTES.APP.GROUP_CHAT}
+      component={ChatRoomRoute}
+      options={{
+        title: '',
+        headerTransparent: true,
+        headerTintColor: colors.primary,
+      }}
+    />
   </GroupStack.Navigator>
 );
 
 const ChatStackNavigator = () => (
   <ChatStack.Navigator>
     <ChatStack.Screen name={ROUTES.APP.CHAT} component={ChatListRoute} options={{ title: 'Chats' }} />
-    <ChatStack.Screen name={ROUTES.APP.GROUP_CHAT} component={ChatRoomRoute} options={{ title: 'Thread' }} />
+    <ChatStack.Screen
+      name={ROUTES.APP.GROUP_CHAT}
+      component={ChatRoomRoute}
+      options={{
+        title: '',
+        headerTransparent: true,
+        headerTintColor: colors.primary,
+      }}
+    />
   </ChatStack.Navigator>
 );
 
