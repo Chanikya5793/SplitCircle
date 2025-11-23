@@ -1,3 +1,4 @@
+import { GlassView } from '@/components/GlassView';
 import { colors } from '@/constants';
 import type { Group } from '@/models';
 import { formatCurrency } from '@/utils/currency';
@@ -9,7 +10,7 @@ interface BalanceSummaryProps {
 }
 
 export const BalanceSummary = ({ group }: BalanceSummaryProps) => (
-  <View style={styles.container}>
+  <GlassView style={styles.container}>
     <Text variant="titleMedium" style={styles.title}>
       Balances
     </Text>
@@ -21,15 +22,14 @@ export const BalanceSummary = ({ group }: BalanceSummaryProps) => (
         </Text>
       </View>
     ))}
-  </View>
+  </GlassView>
 );
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
     padding: 16,
     gap: 12,
+    borderRadius: 16,
   },
   title: {
     fontWeight: '600',

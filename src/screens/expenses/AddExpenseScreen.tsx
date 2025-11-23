@@ -1,3 +1,5 @@
+import { GlassView } from '@/components/GlassView';
+import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors, theme } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
@@ -215,133 +217,152 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
 
   return (
     <PaperProvider theme={theme}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text variant="headlineMedium">{expenseId ? 'Edit expense' : 'Add expense'}</Text>
-      
-      <TextInput label="Title" value={title} onChangeText={setTitle} style={styles.field} />
-      
-      <View style={styles.row}>
-        <TextInput 
-          label="Amount" 
-          value={amount} 
-          onChangeText={setAmount} 
-          keyboardType="decimal-pad" 
-          style={[styles.field, { flex: 1 }]} 
-          left={<TextInput.Affix text="$" />}
-        />
-      </View>
+      <LiquidBackground>
+        <ScrollView contentContainerStyle={styles.container}>
+          <GlassView style={styles.card}>
+            <Text variant="headlineMedium" style={styles.title}>{expenseId ? 'Edit expense' : 'Add expense'}</Text>
+          
+            <TextInput 
+              label="Title" 
+              value={title} 
+              onChangeText={setTitle} 
+              style={styles.field}
+              mode="outlined"
+              outlineColor="rgba(0,0,0,0.1)"
+              theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+            />
+            
+            <View style={styles.row}>
+              <TextInput 
+                label="Amount" 
+                value={amount} 
+                onChangeText={setAmount} 
+                keyboardType="decimal-pad" 
+                style={[styles.field, { flex: 1 }]} 
+                left={<TextInput.Affix text="$" />}
+                mode="outlined"
+                outlineColor="rgba(0,0,0,0.1)"
+                theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+              />
+            </View>
 
-      <View style={styles.row}>
-        <Menu
-          visible={showCategoryMenu}
-          onDismiss={() => setShowCategoryMenu(false)}
-          anchor={
-            <Button mode="outlined" onPress={() => setShowCategoryMenu(true)} icon="tag">
-              {category}
-            </Button>
-          }
-        >
-          {CATEGORIES.map((cat) => (
-            <Menu.Item key={cat} onPress={() => { setCategory(cat); setShowCategoryMenu(false); }} title={cat} />
-          ))}
-        </Menu>
+            <View style={styles.row}>
+              <Menu
+                visible={showCategoryMenu}
+                onDismiss={() => setShowCategoryMenu(false)}
+                anchor={
+                  <Button mode="outlined" onPress={() => setShowCategoryMenu(true)} icon="tag">
+                    {category}
+                  </Button>
+                }
+              >
+                {CATEGORIES.map((cat) => (
+                  <Menu.Item key={cat} onPress={() => { setCategory(cat); setShowCategoryMenu(false); }} title={cat} />
+                ))}
+              </Menu>
 
-        <Button mode="outlined" onPress={() => setShowPayerDialog(true)} icon="account-cash">
-          Paid by {memberDisplayNames[paidBy] ?? 'Unknown'}
-        </Button>
-      </View>
+              <Button mode="outlined" onPress={() => setShowPayerDialog(true)} icon="account-cash">
+                Paid by {memberDisplayNames[paidBy] ?? 'Unknown'}
+              </Button>
+            </View>
 
-      <View style={styles.field}>
-        <Menu
-          visible={showReceiptMenu}
-          onDismiss={() => setShowReceiptMenu(false)}
-          anchor={
-            <Button mode="outlined" icon="paperclip" onPress={() => setShowReceiptMenu(true)}>
-              {receiptUri ? 'Change Receipt' : 'Add Receipt'}
-            </Button>
-          }
-        >
-          <Menu.Item onPress={handleTakePhoto} title="Take Photo" leadingIcon="camera" />
-          <Menu.Item onPress={handlePickImage} title="Choose from Gallery" leadingIcon="image" />
-          <Menu.Item onPress={handlePickDocument} title="Upload Document" leadingIcon="file-document" />
-        </Menu>
+            <View style={styles.field}>
+              <Menu
+                visible={showReceiptMenu}
+                onDismiss={() => setShowReceiptMenu(false)}
+                anchor={
+                  <Button mode="outlined" icon="paperclip" onPress={() => setShowReceiptMenu(true)}>
+                    {receiptUri ? 'Change Receipt' : 'Add Receipt'}
+                  </Button>
+                }
+              >
+                <Menu.Item onPress={handleTakePhoto} title="Take Photo" leadingIcon="camera" />
+                <Menu.Item onPress={handlePickImage} title="Choose from Gallery" leadingIcon="image" />
+                <Menu.Item onPress={handlePickDocument} title="Upload Document" leadingIcon="file-document" />
+              </Menu>
 
-        {receiptUri && (
-          <View style={styles.imagePreviewContainer}>
-            {receiptType === 'image' ? (
-              <Image source={{ uri: receiptUri }} style={styles.imagePreview} resizeMode="contain" />
-            ) : (
-              <View style={styles.documentPreview}>
-                <Text variant="bodyLarge" style={{ marginBottom: 8 }}>📄 {receiptName || 'Document attached'}</Text>
+              {receiptUri && (
+                <View style={styles.imagePreviewContainer}>
+                  {receiptType === 'image' ? (
+                    <Image source={{ uri: receiptUri }} style={styles.imagePreview} resizeMode="contain" />
+                  ) : (
+                    <View style={styles.documentPreview}>
+                      <Text variant="bodyLarge" style={{ marginBottom: 8 }}>📄 {receiptName || 'Document attached'}</Text>
+                    </View>
+                  )}
+                  <Button onPress={() => { setReceiptUri(null); setReceiptType(null); setReceiptName(null); }} textColor={colors.danger}>
+                    Remove
+                  </Button>
+                </View>
+              )}
+            </View>
+
+
+            <SegmentedButtons
+              value={splitType}
+              onValueChange={(value) => setSplitType(value as SplitType)}
+              buttons={[
+                { label: 'Equal', value: 'equal' },
+                { label: 'Custom', value: 'custom' },
+              ]}
+              style={styles.field}
+            />
+
+
+            <Text variant="titleMedium" style={styles.section}>
+              Split with
+            </Text>
+            <View style={styles.members}>
+              {group.members.map((member) => (
+                <Chip
+                  key={member.userId}
+                  selected={selectedMembers.includes(member.userId)}
+                  onPress={() => handleToggleMember(member.userId)}
+                  showSelectedOverlay
+                >
+                  {member.displayName}
+                </Chip>
+              ))}
+            </View>
+
+            {splitType === 'custom' && (
+              <View style={styles.customSplitContainer}>
+                <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
+                  Remaining: ${(Number(amount) - customTotal).toFixed(2)}
+                </Text>
+                {selectedMembers.map((userId) => (
+                  <TextInput
+                    key={userId}
+                    label={`Share for ${memberDisplayNames[userId] ?? 'Member'}`}
+                    value={customShares[userId] ?? ''}
+                    onChangeText={(value) => handleCustomShareChange(userId, value)}
+                    keyboardType="decimal-pad"
+                    style={styles.field}
+                    error={!matchesAmount}
+                    mode="outlined"
+                    outlineColor="rgba(0,0,0,0.1)"
+                    theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+                  />
+                ))}
+                {!matchesAmount && (
+                  <HelperText type="error" visible={!matchesAmount}>
+                    Total must match the expense amount
+                  </HelperText>
+                )}
               </View>
             )}
-            <Button onPress={() => { setReceiptUri(null); setReceiptType(null); setReceiptName(null); }} textColor={colors.danger}>
-              Remove
-            </Button>
-          </View>
-        )}
-      </View>
 
-
-      <SegmentedButtons
-        value={splitType}
-        onValueChange={(value) => setSplitType(value as SplitType)}
-        buttons={[
-          { label: 'Equal', value: 'equal' },
-          { label: 'Custom', value: 'custom' },
-        ]}
-        style={styles.field}
-      />
-
-
-      <Text variant="titleMedium" style={styles.section}>
-        Split with
-      </Text>
-      <View style={styles.members}>
-        {group.members.map((member) => (
-          <Chip
-            key={member.userId}
-            selected={selectedMembers.includes(member.userId)}
-            onPress={() => handleToggleMember(member.userId)}
-            showSelectedOverlay
-          >
-            {member.displayName}
-          </Chip>
-        ))}
-      </View>
-
-      {splitType === 'custom' && (
-        <View style={styles.customSplitContainer}>
-          <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
-            Remaining: ${(Number(amount) - customTotal).toFixed(2)}
-          </Text>
-          {selectedMembers.map((userId) => (
-            <TextInput
-              key={userId}
-              label={`Share for ${memberDisplayNames[userId] ?? 'Member'}`}
-              value={customShares[userId] ?? ''}
-              onChangeText={(value) => handleCustomShareChange(userId, value)}
-              keyboardType="decimal-pad"
-              style={styles.field}
-              error={!matchesAmount}
-            />
-          ))}
-          {!matchesAmount && (
-            <HelperText type="error" visible={!matchesAmount}>
-              Total must match the expense amount
-            </HelperText>
-          )}
-        </View>
-      )}
-
-      <View style={styles.actions}>
-        <Button mode="outlined" onPress={onClose}>
-          Cancel
-        </Button>
-        <Button mode="contained" onPress={handleSubmit} disabled={!formValid}>
-          Save expense
-        </Button>
-      </View>
+            <View style={styles.actions}>
+              <Button mode="outlined" onPress={onClose}>
+                Cancel
+              </Button>
+              <Button mode="contained" onPress={handleSubmit} disabled={!formValid}>
+                Save expense
+              </Button>
+            </View>
+          </GlassView>
+        </ScrollView>
+      </LiquidBackground>
 
       <Portal>
         <Dialog visible={showPayerDialog} onDismiss={() => setShowPayerDialog(false)}>
@@ -369,17 +390,23 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
           </Dialog.Actions>
         </Dialog>
       </Portal>
-      </ScrollView>
     </PaperProvider>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: colors.background,
     padding: 16,
-    gap: 12,
     paddingBottom: 50,
+  },
+  card: {
+    padding: 24,
+    borderRadius: 24,
+    gap: 12,
+  },
+  title: {
+    textAlign: 'center',
+    marginBottom: 12,
   },
   field: {
     marginBottom: 8,
@@ -393,6 +420,7 @@ const styles = StyleSheet.create({
   section: {
     marginTop: 8,
     marginBottom: 8,
+    fontWeight: 'bold',
   },
   members: {
     flexDirection: 'row',

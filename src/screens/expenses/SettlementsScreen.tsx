@@ -1,4 +1,5 @@
-import { colors } from '@/constants';
+import { GlassView } from '@/components/GlassView';
+import { LiquidBackground } from '@/components/LiquidBackground';
 import { useGroups } from '@/context/GroupContext';
 import type { Group } from '@/models';
 import { useState } from 'react';
@@ -28,36 +29,75 @@ export const SettlementsScreen = ({ group, onClose }: SettlementsScreenProps) =>
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text variant="headlineMedium">Record settlement</Text>
-      <TextInput label="From" value={fromUserId} onChangeText={setFromUserId} style={styles.field} />
-      <TextInput label="To" value={toUserId} onChangeText={setToUserId} style={styles.field} />
-      <TextInput label="Amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" style={styles.field} />
-      <TextInput
-        label="Note"
-        value={note}
-        onChangeText={setNote}
-        multiline
-        numberOfLines={3}
-        style={styles.field}
-      />
-      <View style={styles.actions}>
-        <Button mode="outlined" onPress={onClose}>
-          Cancel
-        </Button>
-        <Button mode="contained" onPress={handleSettle} disabled={!amount}>
-          Save settlement
-        </Button>
-      </View>
-    </ScrollView>
+    <LiquidBackground>
+      <ScrollView contentContainerStyle={styles.container}>
+        <GlassView style={styles.card}>
+          <Text variant="headlineMedium" style={styles.title}>Record settlement</Text>
+          <TextInput 
+            label="From" 
+            value={fromUserId} 
+            onChangeText={setFromUserId} 
+            style={styles.field}
+            mode="outlined"
+            outlineColor="rgba(0,0,0,0.1)"
+            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+          />
+          <TextInput 
+            label="To" 
+            value={toUserId} 
+            onChangeText={setToUserId} 
+            style={styles.field}
+            mode="outlined"
+            outlineColor="rgba(0,0,0,0.1)"
+            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+          />
+          <TextInput 
+            label="Amount" 
+            value={amount} 
+            onChangeText={setAmount} 
+            keyboardType="decimal-pad" 
+            style={styles.field}
+            mode="outlined"
+            outlineColor="rgba(0,0,0,0.1)"
+            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+          />
+          <TextInput
+            label="Note"
+            value={note}
+            onChangeText={setNote}
+            multiline
+            numberOfLines={3}
+            style={styles.field}
+            mode="outlined"
+            outlineColor="rgba(0,0,0,0.1)"
+            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+          />
+          <View style={styles.actions}>
+            <Button mode="outlined" onPress={onClose}>
+              Cancel
+            </Button>
+            <Button mode="contained" onPress={handleSettle} disabled={!amount}>
+              Save settlement
+            </Button>
+          </View>
+        </GlassView>
+      </ScrollView>
+    </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: colors.background,
     padding: 16,
     gap: 12,
+  },
+  card: {
+    padding: 24,
+    borderRadius: 24,
+  },
+  title: {
+    textAlign: 'center',
+    marginBottom: 16,
   },
   field: {
     marginBottom: 8,

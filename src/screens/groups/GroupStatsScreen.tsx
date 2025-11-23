@@ -1,3 +1,5 @@
+import { GlassView } from '@/components/GlassView';
+import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors } from '@/constants';
 import { Group } from '@/models';
 import { formatCurrency } from '@/utils/currency';
@@ -13,11 +15,11 @@ interface GroupStatsScreenProps {
 const screenWidth = Dimensions.get('window').width;
 
 const CHART_CONFIG = {
-  backgroundGradientFrom: '#1E2923',
+  backgroundGradientFrom: '#ffffff',
   backgroundGradientFromOpacity: 0,
-  backgroundGradientTo: '#08130D',
-  backgroundGradientToOpacity: 0.5,
-  color: (opacity = 1) => `rgba(26, 255, 146, ${opacity})`,
+  backgroundGradientTo: '#ffffff',
+  backgroundGradientToOpacity: 0,
+  color: (opacity = 1) => `rgba(103, 80, 164, ${opacity})`,
   strokeWidth: 2,
   barPercentage: 0.5,
   useShadowColorFromDataset: false,
@@ -62,37 +64,40 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
   const totalExpenses = group.expenses.reduce((sum, e) => sum + e.amount, 0);
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text variant="headlineMedium" style={styles.title}>
-        Spending by Category
-      </Text>
-      <Text variant="titleMedium" style={styles.subtitle}>
-        Total: {formatCurrency(totalExpenses, group.currency)}
-      </Text>
+    <LiquidBackground>
+      <ScrollView contentContainerStyle={styles.container}>
+        <GlassView style={styles.card}>
+          <Text variant="headlineMedium" style={styles.title}>
+            Spending by Category
+          </Text>
+          <Text variant="titleMedium" style={styles.subtitle}>
+            Total: {formatCurrency(totalExpenses, group.currency)}
+          </Text>
 
-      {categoryData.length > 0 ? (
-        <PieChart
-          data={categoryData}
-          width={screenWidth - 32}
-          height={220}
-          chartConfig={CHART_CONFIG}
-          accessor={'amount'}
-          backgroundColor={'transparent'}
-          paddingLeft={'15'}
-          center={[10, 0]}
-          absolute
-        />
-      ) : (
-        <Text style={styles.empty}>No expenses yet.</Text>
-      )}
-    </ScrollView>
+          {categoryData.length > 0 ? (
+            <PieChart
+              data={categoryData}
+              width={screenWidth - 64} // Adjusted for padding
+              height={220}
+              chartConfig={CHART_CONFIG}
+              accessor={'amount'}
+              backgroundColor={'transparent'}
+              paddingLeft={'15'}
+              center={[10, 0]}
+              absolute
+            />
+          ) : (
+            <Text style={styles.empty}>No expenses yet.</Text>
+          )}
+        </GlassView>
+      </ScrollView>
+    </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     padding: 16,
-    backgroundColor: colors.background,
     flexGrow: 1,
   },
   center: {
@@ -100,9 +105,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  card: {
+    padding: 24,
+    borderRadius: 24,
+    alignItems: 'center',
+  },
   title: {
     marginBottom: 8,
     textAlign: 'center',
+    fontWeight: 'bold',
   },
   subtitle: {
     marginBottom: 24,

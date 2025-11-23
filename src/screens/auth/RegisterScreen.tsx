@@ -1,7 +1,8 @@
-import { colors } from '@/constants';
+import { GlassView } from '@/components/GlassView';
+import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { Button, Text, TextInput } from 'react-native-paper';
 
 interface RegisterScreenProps {
@@ -27,34 +28,56 @@ export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
   };
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={styles.card}>
-        <Text variant="headlineMedium" style={styles.title}>
-          Create SplitCircle account
-        </Text>
-        <TextInput label="Name" value={displayName} onChangeText={setDisplayName} style={styles.field} />
-        <TextInput
-          label="Email"
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          style={styles.field}
-        />
-        <TextInput label="Password" value={password} onChangeText={setPassword} secureTextEntry style={styles.field} />
-        <Button
-          mode="contained"
-          onPress={handleRegister}
-          loading={loading}
-          disabled={!displayName || !email || !password}
-        >
-          Create account
-        </Button>
-        <Button compact onPress={onSwitchToSignIn} style={styles.link}>
-          Already joined? Sign in
-        </Button>
-      </View>
-    </KeyboardAvoidingView>
+    <LiquidBackground>
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <GlassView style={styles.card}>
+          <Text variant="headlineMedium" style={styles.title}>
+            Create SplitCircle account
+          </Text>
+          <TextInput 
+            label="Name" 
+            value={displayName} 
+            onChangeText={setDisplayName} 
+            style={styles.field}
+            mode="outlined"
+            outlineColor="rgba(0,0,0,0.1)"
+            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+          />
+          <TextInput
+            label="Email"
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            style={styles.field}
+            mode="outlined"
+            outlineColor="rgba(0,0,0,0.1)"
+            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+          />
+          <TextInput 
+            label="Password" 
+            value={password} 
+            onChangeText={setPassword} 
+            secureTextEntry 
+            style={styles.field}
+            mode="outlined"
+            outlineColor="rgba(0,0,0,0.1)"
+            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+          />
+          <Button
+            mode="contained"
+            onPress={handleRegister}
+            loading={loading}
+            disabled={!displayName || !email || !password}
+          >
+            Create account
+          </Button>
+          <Button compact onPress={onSwitchToSignIn} style={styles.link}>
+            Already joined? Sign in
+          </Button>
+        </GlassView>
+      </KeyboardAvoidingView>
+    </LiquidBackground>
   );
 };
 
@@ -63,10 +86,8 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     padding: 24,
-    backgroundColor: colors.background,
   },
   card: {
-    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 24,
     gap: 12,

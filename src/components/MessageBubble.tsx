@@ -34,7 +34,7 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 2,
   },
   other: {
-    backgroundColor: colors.surface,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
     borderBottomLeftRadius: 2,
   },
   text: {

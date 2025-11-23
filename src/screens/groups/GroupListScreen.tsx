@@ -1,11 +1,13 @@
+import { GlassView } from '@/components/GlassView';
 import { GroupCard } from '@/components/GroupCard';
+import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors } from '@/constants';
 import { CURRENCIES } from '@/constants/currencies';
 import { useGroups } from '@/context/GroupContext';
 import type { Group } from '@/models';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Button, Dialog, Portal, Text, TextInput } from 'react-native-paper';
+import { Button, Modal, Portal, Text, TextInput } from 'react-native-paper';
 
 interface GroupListScreenProps {
   onOpenGroup: (group: Group) => void;
@@ -71,7 +73,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   };
 
   return (
-    <View style={styles.container}>
+    <LiquidBackground style={styles.container}>
       <FlatList
         data={groups}
         keyExtractor={(item) => item.groupId}
@@ -90,28 +92,40 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       </View>
 
       <Portal>
-        <Dialog 
-          visible={dialog === 'create'} 
+        <Modal
+          visible={dialog === 'create'}
           onDismiss={() => setDialog(null)}
-            style={{
-              borderRadius: 65, //  increasing or decreasing
-              ...(keyboardVisible ? { marginBottom: 300 } : {})
-            }}
+          contentContainerStyle={[
+            styles.modalContainer,
+            keyboardVisible && { marginBottom: 300 }
+          ]}
         >
-          <Dialog.Title>Create group</Dialog.Title>
-          <Dialog.ScrollArea>
-            <ScrollView contentContainerStyle={{ paddingHorizontal: 24 }} keyboardShouldPersistTaps="handled">
-              <TextInput label="Name" value={name} onChangeText={setName} style={styles.field} />
+          <GlassView style={styles.glassCard}>
+            <Text variant="headlineSmall" style={styles.modalTitle}>Create group</Text>
+            <ScrollView contentContainerStyle={{ paddingHorizontal: 4 }} keyboardShouldPersistTaps="handled">
+              <Text variant="bodyMedium" style={styles.label}>Name</Text>
+              <TextInput 
+                value={name} 
+                onChangeText={setName} 
+                style={styles.field}
+                mode="outlined"
+                outlineColor="rgba(0,0,0,0.1)"
+                theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+              />
               <View>
+                <Text variant="bodyMedium" style={styles.label}>Currency</Text>
                 <TextInput 
-                  label="Currency" 
                   value={currencyInput} 
                   onChangeText={(text) => {
                     setCurrencyInput(text);
                     setShowCurrencyList(true);
                   }}
                   onFocus={() => setShowCurrencyList(true)}
-                  autoCapitalize="characters" 
+                  autoCapitalize="characters"
+                  mode="outlined"
+                  outlineColor="rgba(0,0,0,0.1)"
+                  theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+                  style={showCurrencyList ? { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } : undefined}
                 />
                 {showCurrencyList && (
                   <View style={styles.currencyList}>
@@ -134,48 +148,50 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
                 )}
               </View>
             </ScrollView>
-          </Dialog.ScrollArea>
-          <Dialog.Actions>
-            <Button onPress={() => setDialog(null)}>Cancel</Button>
-            <Button onPress={handleCreate} disabled={!name}>
-              Create
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
+            <View style={styles.modalActions}>
+              <Button onPress={() => setDialog(null)}>Cancel</Button>
+              <Button mode="contained" onPress={handleCreate} disabled={!name}>
+                Create
+              </Button>
+            </View>
+          </GlassView>
+        </Modal>
 
-        <Dialog 
-          visible={dialog === 'join'} 
+        <Modal
+          visible={dialog === 'join'}
           onDismiss={() => setDialog(null)}
-            style={{
-              borderRadius: 35, //  increasing or decreasing
-              ...(keyboardVisible ? { marginBottom: 150 } : {})
-            }}
+          contentContainerStyle={[
+            styles.modalContainer,
+            keyboardVisible && { marginBottom: 150 }
+          ]}
         >
-          <Dialog.Title>Join group</Dialog.Title>
-          <Dialog.Content>
+          <GlassView style={styles.glassCard}>
+            <Text variant="headlineSmall" style={styles.modalTitle}>Join group</Text>
+            <Text variant="bodyMedium" style={styles.label}>Invite code</Text>
             <TextInput
-              label="Invite code"
               value={inviteCode}
               onChangeText={setInviteCode}
               autoCapitalize="characters"
+              mode="outlined"
+              outlineColor="rgba(0,0,0,0.1)"
+              theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
             />
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setDialog(null)}>Cancel</Button>
-            <Button onPress={handleJoin} disabled={!inviteCode}>
-              Join
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
+            <View style={styles.modalActions}>
+              <Button onPress={() => setDialog(null)}>Cancel</Button>
+              <Button mode="contained" onPress={handleJoin} disabled={!inviteCode}>
+                Join
+              </Button>
+            </View>
+          </GlassView>
+        </Modal>
       </Portal>
-    </View>
+    </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
     padding: 16,
   },
   actions: {
@@ -194,12 +210,18 @@ const styles = StyleSheet.create({
   field: {
     marginBottom: 12,
   },
+  label: {
+    marginBottom: 4,
+    marginLeft: 4,
+    fontWeight: '500',
+    color: '#555',
+  },
   currencyList: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: 'rgba(0,0,0,0.1)',
     borderTopWidth: 0,
     maxHeight: 150,
-    backgroundColor: 'white',
+    backgroundColor: 'rgba(255,255,255,0.85)',
     elevation: 4,
     borderBottomLeftRadius: 20,
     borderBottomRightRadius: 20,
@@ -208,7 +230,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: 'rgba(0,0,0,0.05)',
     alignItems: 'center',
+  },
+  modalContainer: {
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  glassCard: {
+    width: '100%',
+    maxWidth: 400,
+    padding: 24,
+    borderRadius: 30,
+  },
+  modalTitle: {
+    marginBottom: 20,
+    textAlign: 'center',
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 20,
+    gap: 10,
   },
 });

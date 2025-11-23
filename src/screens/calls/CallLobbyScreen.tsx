@@ -1,3 +1,5 @@
+import { GlassView } from '@/components/GlassView';
+import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors } from '@/constants';
 import { useChat } from '@/context/ChatContext';
 import type { ChatThread } from '@/models';
@@ -12,36 +14,48 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
   const { threads } = useChat();
 
   return (
-    <View style={styles.container}>
-      <FlatList
-        data={threads}
-        keyExtractor={(item) => item.chatId}
-        renderItem={({ item }) => (
-          <List.Item
-            title={item.participants.map((p) => p.displayName).join(', ')}
-            description={item.lastMessage?.content ?? 'Start a call'}
-            right={() => (
-              <View style={styles.callActions}>
-                <Button compact mode="text" onPress={() => onStartCall(item, 'audio')}>
-                  Audio
-                </Button>
-                <Button compact mode="text" onPress={() => onStartCall(item, 'video')}>
-                  Video
-                </Button>
-              </View>
-            )}
-          />
-        )}
-        ListEmptyComponent={<Text style={styles.empty}>No chats available for calls.</Text>}
-      />
-    </View>
+    <LiquidBackground>
+      <View style={styles.container}>
+        <FlatList
+          data={threads}
+          keyExtractor={(item) => item.chatId}
+          contentContainerStyle={styles.listContent}
+          renderItem={({ item }) => (
+            <GlassView style={styles.card}>
+              <List.Item
+                title={item.participants.map((p) => p.displayName).join(', ')}
+                description={item.lastMessage?.content ?? 'Start a call'}
+                right={() => (
+                  <View style={styles.callActions}>
+                    <Button compact mode="text" onPress={() => onStartCall(item, 'audio')}>
+                      Audio
+                    </Button>
+                    <Button compact mode="text" onPress={() => onStartCall(item, 'video')}>
+                      Video
+                    </Button>
+                  </View>
+                )}
+              />
+            </GlassView>
+          )}
+          ListEmptyComponent={<Text style={styles.empty}>No chats available for calls.</Text>}
+        />
+      </View>
+    </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+  },
+  listContent: {
+    padding: 16,
+    gap: 12,
+  },
+  card: {
+    borderRadius: 16,
+    overflow: 'hidden',
   },
   callActions: {
     flexDirection: 'row',
