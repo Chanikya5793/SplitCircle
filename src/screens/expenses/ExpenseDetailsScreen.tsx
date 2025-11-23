@@ -1,4 +1,6 @@
-import { colors, ROUTES } from '@/constants';
+import { GlassView } from '@/components/GlassView';
+import { LiquidBackground } from '@/components/LiquidBackground';
+import { colors, ROUTES, theme } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { formatCurrency } from '@/utils/currency';
@@ -63,158 +65,167 @@ export const ExpenseDetailsScreen = ({ route, navigation }: ExpenseDetailsScreen
   const payerName = memberMap[expense.paidBy] || 'Unknown';
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text variant="headlineMedium">{expense.title}</Text>
-          <Text variant="titleMedium" style={styles.amount}>
-            {formatCurrency(expense.amount, group.currency)}
-          </Text>
-        </View>
-        <Chip icon="tag">{expense.category}</Chip>
-      </View>
-
-      <Text style={styles.meta}>
-        Added by {payerName} on {new Date(expense.createdAt).toLocaleDateString()}
-      </Text>
-
-      {expense.receipt?.url && (
-        <View style={styles.section}>
-          <Text variant="titleMedium" style={styles.sectionTitle}>Receipt</Text>
-          {expense.receipt.fileName?.toLowerCase().endsWith('.pdf') || 
-           expense.receipt.fileName?.toLowerCase().endsWith('.doc') || 
-           expense.receipt.fileName?.toLowerCase().endsWith('.docx') ? (
-            <TouchableOpacity 
-              style={styles.documentContainer} 
-              onPress={() => Linking.openURL(expense.receipt!.url!)}
-            >
-              <IconButton icon="file-document" size={40} />
-              <Text variant="bodyLarge" style={{ flex: 1 }}>
-                {expense.receipt.fileName || 'Document'}
+    <LiquidBackground>
+      <ScrollView contentContainerStyle={styles.container}>
+        <GlassView style={styles.card}>
+          <View style={styles.header}>
+            <View>
+              <Text variant="headlineMedium" style={{ fontWeight: 'bold' }}>{expense.title}</Text>
+              <Text variant="titleMedium" style={styles.amount}>
+                {formatCurrency(expense.amount, group.currency)}
               </Text>
-              <IconButton icon="open-in-new" size={20} />
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity onPress={() => setShowImageModal(true)}>
-              <Image source={{ uri: expense.receipt.url }} style={styles.receiptThumbnail} resizeMode="cover" />
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
-
-      <Divider style={styles.divider} />
-
-      <View style={styles.section}>
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Paid by
-        </Text>
-        <View style={styles.row}>
-          <Text variant="bodyLarge">{payerName}</Text>
-          <Text variant="bodyLarge" style={{ fontWeight: 'bold' }}>
-            {formatCurrency(expense.amount, group.currency)}
-          </Text>
-        </View>
-      </View>
-
-      <Divider style={styles.divider} />
-
-      <View style={styles.section}>
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Split with
-        </Text>
-        {expense.participants.map((p) => (
-          <View key={p.userId} style={styles.row}>
-            <Text variant="bodyLarge">{memberMap[p.userId] || 'Unknown'}</Text>
-            <Text variant="bodyLarge">{formatCurrency(p.share, group.currency)}</Text>
+            </View>
+            <Chip icon="tag">{expense.category}</Chip>
           </View>
-        ))}
-      </View>
 
-      <Divider style={styles.divider} />
-
-      <View style={styles.section}>
-        <View style={styles.row}>
-          <Text variant="titleMedium" style={styles.sectionTitle}>
-            Notes & Comments
+          <Text style={styles.meta}>
+            Added by {payerName} on {new Date(expense.createdAt).toLocaleDateString()}
           </Text>
-          {!isEditingNote && (
-            <IconButton icon="pencil" size={20} onPress={() => setIsEditingNote(true)} />
+
+          {expense.receipt?.url && (
+            <View style={styles.section}>
+              <Text variant="titleMedium" style={styles.sectionTitle}>Receipt</Text>
+              {expense.receipt.fileName?.toLowerCase().endsWith('.pdf') || 
+              expense.receipt.fileName?.toLowerCase().endsWith('.doc') || 
+              expense.receipt.fileName?.toLowerCase().endsWith('.docx') ? (
+                <TouchableOpacity 
+                  style={styles.documentContainer} 
+                  onPress={() => Linking.openURL(expense.receipt!.url!)}
+                >
+                  <IconButton icon="file-document" size={40} />
+                  <Text variant="bodyLarge" style={{ flex: 1 }}>
+                    {expense.receipt.fileName || 'Document'}
+                  </Text>
+                  <IconButton icon="open-in-new" size={20} />
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity onPress={() => setShowImageModal(true)}>
+                  <Image source={{ uri: expense.receipt.url }} style={styles.receiptThumbnail} resizeMode="cover" />
+                </TouchableOpacity>
+              )}
+            </View>
           )}
-        </View>
-        {isEditingNote ? (
-          <View>
-            <TextInput
-              mode="outlined"
-              value={note}
-              onChangeText={setNote}
-              placeholder="Add a note..."
-              multiline
-              numberOfLines={3}
-              style={{ marginBottom: 8 }}
-            />
-            <View style={styles.noteActions}>
-              <Button onPress={() => setIsEditingNote(false)}>Cancel</Button>
-              <Button mode="contained" onPress={handleSaveNote}>
-                Save
-              </Button>
+
+          <Divider style={styles.divider} />
+
+          <View style={styles.section}>
+            <Text variant="titleMedium" style={styles.sectionTitle}>
+              Paid by
+            </Text>
+            <View style={styles.row}>
+              <Text variant="bodyLarge">{payerName}</Text>
+              <Text variant="bodyLarge" style={{ fontWeight: 'bold' }}>
+                {formatCurrency(expense.amount, group.currency)}
+              </Text>
             </View>
           </View>
-        ) : (
-          <Text variant="bodyMedium" style={{ color: note ? colors.text : colors.muted }}>
-            {note || 'No notes added.'}
-          </Text>
-        )}
-      </View>
 
-      <View style={styles.actions}>
-        <Button mode="outlined" icon="pencil" onPress={handleEditExpense} style={{ flex: 1 }}>
-          Edit Expense
-        </Button>
-        <Button
-          mode="outlined"
-          icon="delete"
-          textColor={colors.danger}
-          style={{ flex: 1, borderColor: colors.danger }}
-          onPress={() => setShowDeleteDialog(true)}
-        >
-          Delete
-        </Button>
-      </View>
+          <Divider style={styles.divider} />
 
-      <Portal>
-        <Dialog visible={showDeleteDialog} onDismiss={() => setShowDeleteDialog(false)}>
-          <Dialog.Title>Delete Expense</Dialog.Title>
-          <Dialog.Content>
-            <Text variant="bodyMedium">Are you sure you want to delete this expense? This cannot be undone.</Text>
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setShowDeleteDialog(false)}>Cancel</Button>
-            <Button textColor={colors.danger} onPress={handleDelete}>
+          <View style={styles.section}>
+            <Text variant="titleMedium" style={styles.sectionTitle}>
+              Split with
+            </Text>
+            {expense.participants.map((p) => (
+              <View key={p.userId} style={styles.row}>
+                <Text variant="bodyLarge">{memberMap[p.userId] || 'Unknown'}</Text>
+                <Text variant="bodyLarge">{formatCurrency(p.share, group.currency)}</Text>
+              </View>
+            ))}
+          </View>
+
+          <Divider style={styles.divider} />
+
+          <View style={styles.section}>
+            <View style={styles.row}>
+              <Text variant="titleMedium" style={styles.sectionTitle}>
+                Notes & Comments
+              </Text>
+              {!isEditingNote && (
+                <IconButton icon="pencil" size={20} onPress={() => setIsEditingNote(true)} />
+              )}
+            </View>
+            {isEditingNote ? (
+              <View>
+                <TextInput
+                  mode="outlined"
+                  value={note}
+                  onChangeText={setNote}
+                  placeholder="Add a note..."
+                  multiline
+                  numberOfLines={3}
+                  style={{ marginBottom: 8 }}
+                  outlineColor="rgba(0,0,0,0.1)"
+                  theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+                />
+                <View style={styles.noteActions}>
+                  <Button onPress={() => setIsEditingNote(false)}>Cancel</Button>
+                  <Button mode="contained" onPress={handleSaveNote}>
+                    Save
+                  </Button>
+                </View>
+              </View>
+            ) : (
+              <Text variant="bodyMedium" style={{ color: note ? theme.colors.onSurface : colors.muted }}>
+                {note || 'No notes added.'}
+              </Text>
+            )}
+          </View>
+
+          <View style={styles.actions}>
+            <Button mode="outlined" icon="pencil" onPress={handleEditExpense} style={{ flex: 1 }}>
+              Edit Expense
+            </Button>
+            <Button
+              mode="outlined"
+              icon="delete"
+              textColor={colors.danger}
+              style={{ flex: 1, borderColor: colors.danger }}
+              onPress={() => setShowDeleteDialog(true)}
+            >
               Delete
             </Button>
-          </Dialog.Actions>
-        </Dialog>
-      </Portal>
+          </View>
+        </GlassView>
 
-      <Modal visible={showImageModal} transparent={true} onRequestClose={() => setShowImageModal(false)}>
-        <View style={styles.modalContainer}>
-          <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowImageModal(false)}>
-            <Text style={{ color: 'white', fontSize: 18 }}>Close</Text>
-          </TouchableOpacity>
-          {expense.receipt?.url && (
-            <Image source={{ uri: expense.receipt.url }} style={styles.fullImage} resizeMode="contain" />
-          )}
-        </View>
-      </Modal>
-    </ScrollView>
+        <Portal>
+          <Dialog visible={showDeleteDialog} onDismiss={() => setShowDeleteDialog(false)}>
+            <Dialog.Title>Delete Expense</Dialog.Title>
+            <Dialog.Content>
+              <Text variant="bodyMedium">Are you sure you want to delete this expense? This cannot be undone.</Text>
+            </Dialog.Content>
+            <Dialog.Actions>
+              <Button onPress={() => setShowDeleteDialog(false)}>Cancel</Button>
+              <Button textColor={colors.danger} onPress={handleDelete}>
+                Delete
+              </Button>
+            </Dialog.Actions>
+          </Dialog>
+        </Portal>
+
+        <Modal visible={showImageModal} transparent={true} onRequestClose={() => setShowImageModal(false)}>
+          <View style={styles.modalContainer}>
+            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowImageModal(false)}>
+              <Text style={{ color: 'white', fontSize: 18 }}>Close</Text>
+            </TouchableOpacity>
+            {expense.receipt?.url && (
+              <Image source={{ uri: expense.receipt.url }} style={styles.fullImage} resizeMode="contain" />
+            )}
+          </View>
+        </Modal>
+      </ScrollView>
+    </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     padding: 16,
-    backgroundColor: colors.background,
     flexGrow: 1,
+  },
+  card: {
+    padding: 24,
+    borderRadius: 24,
   },
   center: {
     flex: 1,
@@ -238,6 +249,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     marginVertical: 16,
+    backgroundColor: 'rgba(0,0,0,0.05)',
   },
   section: {
     marginBottom: 8,

@@ -1,4 +1,5 @@
-import { colors } from '@/constants';
+import { GlassView } from '@/components/GlassView';
+import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
@@ -27,29 +28,50 @@ export const SignInScreen = ({ onSwitchToRegister, onForgotPassword }: SignInScr
   };
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={styles.card}>
-        <Text variant="headlineMedium" style={styles.title}>
-          Welcome back
-        </Text>
-        <TextInput label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" style={styles.field} />
-        <TextInput label="Password" value={password} onChangeText={setPassword} secureTextEntry style={styles.field} />
-        <Button mode="contained" onPress={handleSignIn} loading={loading} disabled={!email || !password}>
-          Sign in
-        </Button>
-        <Button mode="outlined" style={styles.field} onPress={signInWithGoogle} icon="google">
-          Continue with Google
-        </Button>
-        <View style={styles.links}>
-          <Button compact onPress={onForgotPassword}>
-            Forgot password?
+    <LiquidBackground>
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <GlassView style={styles.card}>
+          <Text variant="headlineMedium" style={styles.title}>
+            Welcome back
+          </Text>
+          <TextInput 
+            label="Email" 
+            value={email} 
+            onChangeText={setEmail} 
+            autoCapitalize="none" 
+            keyboardType="email-address" 
+            style={styles.field}
+            mode="outlined"
+            outlineColor="rgba(0,0,0,0.1)"
+            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+          />
+          <TextInput 
+            label="Password" 
+            value={password} 
+            onChangeText={setPassword} 
+            secureTextEntry 
+            style={styles.field}
+            mode="outlined"
+            outlineColor="rgba(0,0,0,0.1)"
+            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+          />
+          <Button mode="contained" onPress={handleSignIn} loading={loading} disabled={!email || !password}>
+            Sign in
           </Button>
-          <Button compact onPress={onSwitchToRegister}>
-            Create account
+          <Button mode="outlined" style={styles.field} onPress={signInWithGoogle} icon="google">
+            Continue with Google
           </Button>
-        </View>
-      </View>
-    </KeyboardAvoidingView>
+          <View style={styles.links}>
+            <Button compact onPress={onForgotPassword}>
+              Forgot password?
+            </Button>
+            <Button compact onPress={onSwitchToRegister}>
+              Create account
+            </Button>
+          </View>
+        </GlassView>
+      </KeyboardAvoidingView>
+    </LiquidBackground>
   );
 };
 
@@ -58,11 +80,9 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     padding: 24,
-    backgroundColor: colors.background,
   },
   card: {
     borderRadius: 20,
-    backgroundColor: colors.surface,
     padding: 24,
     gap: 12,
   },

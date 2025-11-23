@@ -1,9 +1,10 @@
+import { GlassView } from '@/components/GlassView';
+import { LiquidBackground } from '@/components/LiquidBackground';
 import { MessageBubble } from '@/components/MessageBubble';
-import { colors } from '@/constants';
 import { useChat } from '@/context/ChatContext';
 import type { ChatMessage, ChatThread } from '@/models';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
+import { FlatList, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { Button, TextInput } from 'react-native-paper';
 
 interface ChatRoomScreenProps {
@@ -46,41 +47,44 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const placeholder = useMemo(() => (thread.type === 'group' ? 'Message group' : 'Message user'), [thread.type]);
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={80}
-    >
-      <FlatList
-        ref={listRef}
-        data={messages}
-        keyExtractor={(item) => item.messageId}
-        renderItem={({ item }) => <MessageBubble message={item} />}
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
-        inverted
-      />
-      <View style={styles.composer}>
-        <TextInput
-          mode="outlined"
-          placeholder={placeholder}
-          value={text}
-          onChangeText={setText}
-          style={styles.input}
-          multiline
+    <LiquidBackground>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={80}
+      >
+        <FlatList
+          ref={listRef}
+          data={messages}
+          keyExtractor={(item) => item.messageId}
+          renderItem={({ item }) => <MessageBubble message={item} />}
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          inverted
         />
-        <Button mode="contained" icon="send" onPress={handleSend} disabled={!text.trim() || sending}>
-          Send
-        </Button>
-      </View>
-    </KeyboardAvoidingView>
+        <GlassView style={styles.composer}>
+          <TextInput
+            mode="outlined"
+            placeholder={placeholder}
+            value={text}
+            onChangeText={setText}
+            style={styles.input}
+            multiline
+            outlineColor="rgba(0,0,0,0.1)"
+            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+          />
+          <Button mode="contained" icon="send" onPress={handleSend} disabled={!text.trim() || sending}>
+            Send
+          </Button>
+        </GlassView>
+      </KeyboardAvoidingView>
+    </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   list: {
     flex: 1,
@@ -94,7 +98,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     gap: 12,
-    backgroundColor: colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    marginHorizontal: 0,
+    marginBottom: 0,
   },
   input: {
     flex: 1,

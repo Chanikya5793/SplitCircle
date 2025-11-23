@@ -1,7 +1,9 @@
+import { GlassView } from '@/components/GlassView';
+import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { Button, Text, TextInput } from 'react-native-paper';
 
 interface ForgotPasswordScreenProps {
@@ -19,26 +21,31 @@ export const ForgotPasswordScreen = ({ onBack }: ForgotPasswordScreenProps) => {
   };
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={styles.card}>
-        <Text variant="headlineMedium">Reset password</Text>
-        <TextInput
-          label="Email"
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          style={styles.field}
-        />
-        <Button mode="contained" onPress={handleSend} disabled={!email}>
-          Send reset link
-        </Button>
-        {sent && <Text style={styles.success}>Check your inbox for instructions.</Text>}
-        <Button compact onPress={onBack}>
-          Back to sign in
-        </Button>
-      </View>
-    </KeyboardAvoidingView>
+    <LiquidBackground>
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <GlassView style={styles.card}>
+          <Text variant="headlineMedium">Reset password</Text>
+          <TextInput
+            label="Email"
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            style={styles.field}
+            mode="outlined"
+            outlineColor="rgba(0,0,0,0.1)"
+            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+          />
+          <Button mode="contained" onPress={handleSend} disabled={!email}>
+            Send reset link
+          </Button>
+          {sent && <Text style={styles.success}>Check your inbox for instructions.</Text>}
+          <Button compact onPress={onBack}>
+            Back to sign in
+          </Button>
+        </GlassView>
+      </KeyboardAvoidingView>
+    </LiquidBackground>
   );
 };
 
@@ -47,10 +54,8 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     padding: 24,
-    backgroundColor: colors.background,
   },
   card: {
-    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 24,
     gap: 12,

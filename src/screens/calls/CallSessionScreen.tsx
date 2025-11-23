@@ -1,4 +1,6 @@
 import { CallControls } from '@/components/CallControls';
+import { GlassView } from '@/components/GlassView';
+import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors } from '@/constants';
 import { useCallManager } from '@/hooks/useCallManager';
 import type { CallType } from '@/models';
@@ -53,39 +55,49 @@ export const CallSessionScreen = ({ chatId, groupId, type, onHangUp }: CallSessi
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.status}>Call status: {status}</Text>
-      {type === 'video' && (
-        <View style={styles.videoGrid}>
-          {/* Mock Video Views */}
-          <View style={[styles.video, { justifyContent: 'center', alignItems: 'center' }]}>
-            <Text>Remote Video</Text>
+    <LiquidBackground>
+      <View style={styles.container}>
+        <GlassView style={styles.statusContainer}>
+          <Text style={styles.status}>Call status: {status}</Text>
+        </GlassView>
+        
+        {type === 'video' && (
+          <View style={styles.videoGrid}>
+            {/* Mock Video Views */}
+            <GlassView style={[styles.video, { justifyContent: 'center', alignItems: 'center' }]}>
+              <Text>Remote Video</Text>
+            </GlassView>
+            <GlassView style={[styles.video, { justifyContent: 'center', alignItems: 'center' }]}>
+              <Text>Local Video</Text>
+            </GlassView>
           </View>
-          <View style={[styles.video, { justifyContent: 'center', alignItems: 'center' }]}>
-            <Text>Local Video</Text>
-          </View>
-        </View>
-      )}
-      <CallControls
-        micEnabled={micEnabled}
-        cameraEnabled={cameraEnabled}
-        onToggleMic={() => setMicEnabled((prev) => !prev)}
-        onToggleCamera={() => setCameraEnabled((prev) => !prev)}
-        onHangUp={handleHangUp}
-      />
-    </View>
+        )}
+        <CallControls
+          micEnabled={micEnabled}
+          cameraEnabled={cameraEnabled}
+          onToggleMic={() => setMicEnabled((prev) => !prev)}
+          onToggleCamera={() => setCameraEnabled((prev) => !prev)}
+          onHangUp={handleHangUp}
+        />
+      </View>
+    </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
     justifyContent: 'center',
+    padding: 16,
+  },
+  statusContainer: {
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 16,
+    alignItems: 'center',
   },
   status: {
     textAlign: 'center',
-    marginTop: 32,
     color: colors.muted,
   },
   videoGrid: {
@@ -93,13 +105,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    padding: 16,
     gap: 12,
   },
   video: {
     width: '45%',
     height: 200,
     borderRadius: 16,
-    backgroundColor: colors.surface,
   },
 });

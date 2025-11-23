@@ -1,3 +1,4 @@
+import { GlassView } from '@/components/GlassView';
 import { colors } from '@/constants';
 import type { Expense } from '@/models';
 import { formatCurrency } from '@/utils/currency';
@@ -18,7 +19,7 @@ export const ExpenseCard = ({ expense, currency, memberMap, onEdit, onPress }: E
 
   return (
     <TouchableRipple onPress={onPress} style={styles.touchable}>
-      <View style={styles.container}>
+      <GlassView style={styles.container}>
         <View style={styles.row}>
           <View style={styles.meta}>
             <Text variant="titleMedium">{expense.title}</Text>
@@ -36,7 +37,7 @@ export const ExpenseCard = ({ expense, currency, memberMap, onEdit, onPress }: E
             {onEdit && <IconButton icon="pencil" size={18} onPress={onEdit} accessibilityLabel="Edit expense" />}
           </View>
         </View>
-      </View>
+      </GlassView>
     </TouchableRipple>
   );
 };
@@ -47,10 +48,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   container: {
-    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 16,
-    elevation: 1,
   },
   row: {
     flexDirection: 'row',

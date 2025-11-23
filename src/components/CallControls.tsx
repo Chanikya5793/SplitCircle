@@ -22,7 +22,7 @@ export const CallControls = ({
       icon={micEnabled ? 'microphone' : 'microphone-off'}
       mode="contained"
       onPress={onToggleMic}
-      containerColor={colors.surface}
+      containerColor="rgba(255, 255, 255, 0.8)"
       iconColor={colors.primary}
       accessibilityLabel="Toggle microphone"
     />
@@ -30,7 +30,7 @@ export const CallControls = ({
       icon={cameraEnabled ? 'video' : 'video-off'}
       mode="contained"
       onPress={onToggleCamera}
-      containerColor={colors.surface}
+      containerColor="rgba(255, 255, 255, 0.8)"
       iconColor={colors.primary}
       accessibilityLabel="Toggle camera"
     />
