@@ -4,11 +4,11 @@ import { FirebaseApp, getApp, getApps, initializeApp } from 'firebase/app';
 import type { Auth } from 'firebase/auth';
 import * as FirebaseAuth from 'firebase/auth';
 import {
-  CACHE_SIZE_UNLIMITED,
-  initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
-  type Firestore,
+    CACHE_SIZE_UNLIMITED,
+    initializeFirestore,
+    persistentLocalCache,
+    persistentMultipleTabManager,
+    type Firestore,
 } from 'firebase/firestore';
 import { getMessaging, isSupported, type Messaging } from 'firebase/messaging';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
