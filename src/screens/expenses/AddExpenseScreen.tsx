@@ -5,9 +5,10 @@ import { colors, theme } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import type { Group, ParticipantShare, SplitType } from '@/models';
+import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Chip, Dialog, HelperText, Menu, Provider as PaperProvider, Portal, SegmentedButtons, Text, TextInput, TouchableRipple } from 'react-native-paper';
 
@@ -20,6 +21,7 @@ interface AddExpenseScreenProps {
 const CATEGORIES = ['General', 'Food', 'Transport', 'Utilities', 'Entertainment', 'Shopping', 'Travel', 'Health'];
 
 export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreenProps) => {
+  const navigation = useNavigation();
   const { user } = useAuth();
   const { addExpense, updateExpense } = useGroups();
   const [title, setTitle] = useState('');
@@ -36,6 +38,12 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   const [showPayerDialog, setShowPayerDialog] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   const [showReceiptMenu, setShowReceiptMenu] = useState(false);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: false,
+    });
+  }, [navigation]);
 
   useEffect(() => {
     if (expenseId) {
@@ -236,7 +244,8 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                 value={amount} 
                 onChangeText={setAmount} 
                 keyboardType="decimal-pad" 
-                style={[styles.field, { flex: 1 }]} 
+                style={styles.field}
+                containerStyle={{ flex: 1 }}
                 left={<TextInput.Affix text="$" />}
               />
             </View>
