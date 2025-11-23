@@ -200,15 +200,15 @@ const FloatingLabelInput = ({ label, value, style, onFocus, onBlur, ...props }: 
     position: 'absolute' as const,
     left: animatedValue.interpolate({
       inputRange: [0, 1],
-      outputRange: [16, 4], // [Start X, End X] - Adjust horizontal position
+      outputRange: [16, 10], // [Start X, End X] - Adjust horizontal position
     }),
     top: animatedValue.interpolate({
       inputRange: [0, 1],
-      outputRange: [36, 0], // [Start Y, End Y] - Adjust vertical position
+      outputRange: [42, 5], // [Start Y, End Y] - Adjust vertical position
     }),
     fontSize: animatedValue.interpolate({
       inputRange: [0, 1],
-      outputRange: [18, 14], // [Start Size, End Size] - Adjust font size
+      outputRange: [19, 16], // [Start Size, End Size] - Adjust font size
     }),
     color: animatedValue.interpolate({
       inputRange: [0, 1],
