@@ -1,10 +1,11 @@
+import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
-import { Button, Text, TextInput } from 'react-native-paper';
+import { Button, Text } from 'react-native-paper';
 
 interface ForgotPasswordScreenProps {
   onBack?: () => void;
@@ -25,16 +26,13 @@ export const ForgotPasswordScreen = ({ onBack }: ForgotPasswordScreenProps) => {
       <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <GlassView style={styles.card}>
           <Text variant="headlineMedium">Reset password</Text>
-          <TextInput
+          <FloatingLabelInput
             label="Email"
             value={email}
             onChangeText={setEmail}
             keyboardType="email-address"
             autoCapitalize="none"
             style={styles.field}
-            mode="outlined"
-            outlineColor="rgba(0,0,0,0.1)"
-            theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
           />
           <Button mode="contained" onPress={handleSend} disabled={!email}>
             Send reset link

@@ -1,3 +1,4 @@
+import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { GroupCard } from '@/components/GroupCard';
 import { LiquidBackground } from '@/components/LiquidBackground';
@@ -5,15 +6,17 @@ import { colors } from '@/constants';
 import { CURRENCIES } from '@/constants/currencies';
 import { useGroups } from '@/context/GroupContext';
 import type { Group } from '@/models';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigation } from '@react-navigation/native';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, FlatList, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Button, Modal, Portal, Text, TextInput } from 'react-native-paper';
+import { Button, Modal, Portal, Text } from 'react-native-paper';
 
 interface GroupListScreenProps {
   onOpenGroup: (group: Group) => void;
 }
 
 export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
+  const navigation = useNavigation();
   const { groups, loading, createGroup, joinGroup } = useGroups();
   const [dialog, setDialog] = useState<'create' | 'join' | null>(null);
   const [name, setName] = useState('');
@@ -21,6 +24,20 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const [showCurrencyList, setShowCurrencyList] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const scrollY = useRef(new Animated.Value(0)).current;
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerTitle: '',
+      headerTransparent: true,
+    });
+  }, [navigation]);
+
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [0, 40],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener(
@@ -74,11 +91,30 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
 
   return (
     <LiquidBackground style={styles.container}>
+      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+        <GlassView style={styles.stickyHeaderGlass}>
+          <Text variant="titleMedium" style={styles.stickyHeaderTitle}>Groups</Text>
+        </GlassView>
+      </Animated.View>
+
       <FlatList
         data={groups}
         keyExtractor={(item) => item.groupId}
         renderItem={({ item }) => <GroupCard group={item} onPress={() => onOpenGroup(item)} />}
-        contentContainerStyle={groups.length === 0 ? styles.emptyContainer : undefined}
+        contentContainerStyle={[
+          groups.length === 0 ? styles.emptyContainer : undefined,
+          { paddingTop: 60, paddingBottom: 100 }
+        ]}
+        ListHeaderComponent={
+          <View style={styles.headerContainer}>
+            <Text variant="displaySmall" style={styles.headerTitle}>Groups</Text>
+          </View>
+        }
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: false }
+        )}
+        scrollEventThrottle={16}
         ListEmptyComponent={<Text style={styles.empty}>No groups yet. Create one!</Text>}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} />}
       />
@@ -180,70 +216,8 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   );
 };
 
-interface FloatingLabelInputProps extends React.ComponentProps<typeof TextInput> {
-  label: string;
-}
+// Removed local FloatingLabelInput definition
 
-const FloatingLabelInput = ({ label, value, style, onFocus, onBlur, ...props }: FloatingLabelInputProps) => {
-  const [isFocused, setIsFocused] = useState(false);
-  const animatedValue = useRef(new Animated.Value(value ? 1 : 0)).current;
-
-  useEffect(() => {
-    Animated.timing(animatedValue, {
-      toValue: (isFocused || value) ? 1 : 0,
-      duration: 200,
-      useNativeDriver: false,
-    }).start();
-  }, [isFocused, value]);
-
-  const labelStyle = {
-    position: 'absolute' as const,
-    left: animatedValue.interpolate({
-      inputRange: [0, 1],
-      outputRange: [18, 15], // [Start X, End X] - Adjust horizontal position
-    }),
-    top: animatedValue.interpolate({
-      inputRange: [0, 1],
-      outputRange: [36, 3], // [Start Y, End Y] - Adjust vertical position
-    }),
-    fontSize: animatedValue.interpolate({
-      inputRange: [0, 1],
-      outputRange: [19, 14], // [Start Size, End Size] - Adjust font size
-    }),
-    color: animatedValue.interpolate({
-      inputRange: [0, 1],
-      outputRange: [colors.muted, '#555'],
-    }),
-    zIndex: 1,
-  };
-
-  return (
-    <View style={{ 
-      marginBottom: 0, // Spacing between this field and the next element
-      paddingTop: 18   // Space reserved for the floating label at the top
-    }}>
-      <Animated.Text style={labelStyle} pointerEvents="none">
-        {label}
-      </Animated.Text>
-      <TextInput
-        {...props}
-        value={value}
-        style={style}
-        onFocus={(e) => {
-          setIsFocused(true);
-          onFocus?.(e);
-        }}
-        onBlur={(e) => {
-          setIsFocused(false);
-          onBlur?.(e);
-        }}
-        mode="outlined"
-        outlineColor="rgba(0,0,0,0.1)"
-        theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
-      />
-    </View>
-  );
-};
 
 const styles = StyleSheet.create({
   container: {
@@ -305,5 +279,35 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     marginTop: 20,
     gap: 10,
+  },
+  stickyHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    paddingTop: 50,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stickyHeaderGlass: {
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+  },
+  stickyHeaderTitle: {
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  headerContainer: {
+    paddingHorizontal: 8,
+    paddingBottom: 16,
+  },
+  headerTitle: {
+    fontWeight: 'bold',
+    color: '#333',
   },
 });
