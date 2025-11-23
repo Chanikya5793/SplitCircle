@@ -3,8 +3,8 @@ import { colors } from '@/constants';
 import { CURRENCIES } from '@/constants/currencies';
 import { useGroups } from '@/context/GroupContext';
 import type { Group } from '@/models';
-import { useMemo, useState } from 'react';
-import { Alert, FlatList, RefreshControl, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, FlatList, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Dialog, Portal, Text, TextInput } from 'react-native-paper';
 
 interface GroupListScreenProps {
@@ -18,6 +18,23 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const [currencyInput, setCurrencyInput] = useState('USD');
   const [showCurrencyList, setShowCurrencyList] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => setKeyboardVisible(true)
+    );
+    const hideSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboardVisible(false)
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   const filteredCurrencies = useMemo(() => {
     const input = currencyInput.toUpperCase();
@@ -73,45 +90,51 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       </View>
 
       <Portal>
-        <Dialog visible={dialog === 'create'} onDismiss={() => setDialog(null)}>
+        <Dialog 
+          visible={dialog === 'create'} 
+          onDismiss={() => setDialog(null)}
+            style={{
+              borderRadius: 65, //  increasing or decreasing
+              ...(keyboardVisible ? { marginBottom: 300 } : {})
+            }}
+        >
           <Dialog.Title>Create group</Dialog.Title>
-          <Dialog.Content>
-            <TextInput label="Name" value={name} onChangeText={setName} style={styles.field} />
-            <View>
-              <TextInput 
-                label="Currency" 
-                value={currencyInput} 
-                onChangeText={(text) => {
-                  setCurrencyInput(text);
-                  setShowCurrencyList(true);
-                }}
-                onFocus={() => setShowCurrencyList(true)}
-                autoCapitalize="characters" 
-              />
-              {showCurrencyList && (
-                <View style={styles.currencyList}>
-                  <FlatList
-                    data={filteredCurrencies}
-                    keyExtractor={(item) => item.code}
-                    keyboardShouldPersistTaps="handled"
-                    style={{ maxHeight: 150 }}
-                    renderItem={({ item }) => (
-                      <TouchableOpacity 
-                        style={styles.currencyItem} 
-                        onPress={() => {
-                          setCurrencyInput(item.code);
-                          setShowCurrencyList(false);
-                        }}
-                      >
-                        <Text style={{ fontWeight: 'bold' }}>{item.code}</Text>
-                        <Text numberOfLines={1} style={{ flex: 1, marginLeft: 8, color: colors.muted }}>{item.name}</Text>
-                      </TouchableOpacity>
-                    )}
-                  />
-                </View>
-              )}
-            </View>
-          </Dialog.Content>
+          <Dialog.ScrollArea>
+            <ScrollView contentContainerStyle={{ paddingHorizontal: 24 }} keyboardShouldPersistTaps="handled">
+              <TextInput label="Name" value={name} onChangeText={setName} style={styles.field} />
+              <View>
+                <TextInput 
+                  label="Currency" 
+                  value={currencyInput} 
+                  onChangeText={(text) => {
+                    setCurrencyInput(text);
+                    setShowCurrencyList(true);
+                  }}
+                  onFocus={() => setShowCurrencyList(true)}
+                  autoCapitalize="characters" 
+                />
+                {showCurrencyList && (
+                  <View style={styles.currencyList}>
+                    <ScrollView nestedScrollEnabled={true} keyboardShouldPersistTaps="handled">
+                      {filteredCurrencies.slice(0, 50).map((item) => (
+                        <TouchableOpacity 
+                          key={item.code}
+                          style={styles.currencyItem} 
+                          onPress={() => {
+                            setCurrencyInput(item.code);
+                            setShowCurrencyList(false);
+                          }}
+                        >
+                          <Text style={{ fontWeight: 'bold' }}>{item.code}</Text>
+                          <Text numberOfLines={1} style={{ flex: 1, marginLeft: 8, color: colors.muted }}>{item.name}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
+            </ScrollView>
+          </Dialog.ScrollArea>
           <Dialog.Actions>
             <Button onPress={() => setDialog(null)}>Cancel</Button>
             <Button onPress={handleCreate} disabled={!name}>
@@ -120,7 +143,14 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           </Dialog.Actions>
         </Dialog>
 
-        <Dialog visible={dialog === 'join'} onDismiss={() => setDialog(null)}>
+        <Dialog 
+          visible={dialog === 'join'} 
+          onDismiss={() => setDialog(null)}
+            style={{
+              borderRadius: 35, //  increasing or decreasing
+              ...(keyboardVisible ? { marginBottom: 150 } : {})
+            }}
+        >
           <Dialog.Title>Join group</Dialog.Title>
           <Dialog.Content>
             <TextInput
@@ -171,6 +201,8 @@ const styles = StyleSheet.create({
     maxHeight: 150,
     backgroundColor: 'white',
     elevation: 4,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
   },
   currencyItem: {
     flexDirection: 'row',
