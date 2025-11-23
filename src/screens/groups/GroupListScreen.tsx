@@ -200,15 +200,15 @@ const FloatingLabelInput = ({ label, value, style, onFocus, onBlur, ...props }: 
     position: 'absolute' as const,
     left: animatedValue.interpolate({
       inputRange: [0, 1],
-      outputRange: [16, 10], // [Start X, End X] - Adjust horizontal position
+      outputRange: [18, 15], // [Start X, End X] - Adjust horizontal position
     }),
     top: animatedValue.interpolate({
       inputRange: [0, 1],
-      outputRange: [42, 5], // [Start Y, End Y] - Adjust vertical position
+      outputRange: [36, 3], // [Start Y, End Y] - Adjust vertical position
     }),
     fontSize: animatedValue.interpolate({
       inputRange: [0, 1],
-      outputRange: [19, 16], // [Start Size, End Size] - Adjust font size
+      outputRange: [19, 14], // [Start Size, End Size] - Adjust font size
     }),
     color: animatedValue.interpolate({
       inputRange: [0, 1],
@@ -218,7 +218,10 @@ const FloatingLabelInput = ({ label, value, style, onFocus, onBlur, ...props }: 
   };
 
   return (
-    <View style={{ marginBottom: 12, paddingTop: 24 }}>
+    <View style={{ 
+      marginBottom: 0, // Spacing between this field and the next element
+      paddingTop: 18   // Space reserved for the floating label at the top
+    }}>
       <Animated.Text style={labelStyle} pointerEvents="none">
         {label}
       </Animated.Text>
@@ -261,7 +264,7 @@ const styles = StyleSheet.create({
     color: colors.muted,
   },
   field: {
-    marginBottom: 12,
+    marginBottom: 0,
   },
   currencyList: {
     borderWidth: 1,
@@ -292,7 +295,7 @@ const styles = StyleSheet.create({
     borderRadius: 30,
   },
   modalTitle: {
-    marginBottom: 20,
+    marginBottom: 0, // Spacing between title and first field
     textAlign: 'center',
     fontWeight: 'bold',
     color: '#333',
