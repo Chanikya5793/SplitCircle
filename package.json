@@ -27,6 +27,7 @@
     "expo-camera": "~17.0.9",
     "expo-clipboard": "~8.0.7",
     "expo-device": "~8.0.9",
+    "expo-document-picker": "~14.0.7",
     "expo-file-system": "~19.0.19",
     "expo-haptics": "~15.0.7",
     "expo-image-picker": "~17.0.8",

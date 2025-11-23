@@ -2,6 +2,7 @@ import { colors, ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { formatCurrency } from '@/utils/currency';
+import * as Linking from 'expo-linking';
 import { useMemo, useState } from 'react';
 import { Alert, Image, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Chip, Dialog, Divider, IconButton, Portal, Text, TextInput } from 'react-native-paper';
@@ -80,9 +81,24 @@ export const ExpenseDetailsScreen = ({ route, navigation }: ExpenseDetailsScreen
       {expense.receipt?.url && (
         <View style={styles.section}>
           <Text variant="titleMedium" style={styles.sectionTitle}>Receipt</Text>
-          <TouchableOpacity onPress={() => setShowImageModal(true)}>
-            <Image source={{ uri: expense.receipt.url }} style={styles.receiptThumbnail} />
-          </TouchableOpacity>
+          {expense.receipt.fileName?.toLowerCase().endsWith('.pdf') || 
+           expense.receipt.fileName?.toLowerCase().endsWith('.doc') || 
+           expense.receipt.fileName?.toLowerCase().endsWith('.docx') ? (
+            <TouchableOpacity 
+              style={styles.documentContainer} 
+              onPress={() => Linking.openURL(expense.receipt!.url!)}
+            >
+              <IconButton icon="file-document" size={40} />
+              <Text variant="bodyLarge" style={{ flex: 1 }}>
+                {expense.receipt.fileName || 'Document'}
+              </Text>
+              <IconButton icon="open-in-new" size={20} />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity onPress={() => setShowImageModal(true)}>
+              <Image source={{ uri: expense.receipt.url }} style={styles.receiptThumbnail} resizeMode="cover" />
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -252,6 +268,13 @@ const styles = StyleSheet.create({
     height: 200,
     borderRadius: 8,
     backgroundColor: '#f0f0f0',
+  },
+  documentContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+    padding: 8,
   },
   modalContainer: {
     flex: 1,

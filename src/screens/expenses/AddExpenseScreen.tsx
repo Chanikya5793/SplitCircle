@@ -1,11 +1,12 @@
-import { colors } from '@/constants';
+import { colors, theme } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import type { Group, ParticipantShare, SplitType } from '@/models';
+import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
-import { Button, Chip, Dialog, HelperText, Menu, Portal, SegmentedButtons, Text, TextInput, TouchableRipple } from 'react-native-paper';
+import { Button, Chip, Dialog, HelperText, Menu, Provider as PaperProvider, Portal, SegmentedButtons, Text, TextInput, TouchableRipple } from 'react-native-paper';
 
 interface AddExpenseScreenProps {
   group: Group;
@@ -25,10 +26,13 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   const [splitType, setSplitType] = useState<SplitType>('equal');
   const [selectedMembers, setSelectedMembers] = useState<string[]>(group.members.map((member) => member.userId));
   const [customShares, setCustomShares] = useState<Record<string, string>>({});
-  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [receiptUri, setReceiptUri] = useState<string | null>(null);
+  const [receiptType, setReceiptType] = useState<'image' | 'document' | null>(null);
+  const [receiptName, setReceiptName] = useState<string | null>(null);
 
   const [showPayerDialog, setShowPayerDialog] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
+  const [showReceiptMenu, setShowReceiptMenu] = useState(false);
 
   useEffect(() => {
     if (expenseId) {
@@ -40,7 +44,14 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
         setPaidBy(expense.paidBy);
         setSplitType(expense.splitType);
         setSelectedMembers(expense.participants.map((p) => p.userId));
-        setImageUri(expense.receipt?.url || null);
+        
+        if (expense.receipt?.url) {
+          setReceiptUri(expense.receipt.url);
+          // Infer type from filename or extension if possible, default to image for backward compat
+          const isPdf = expense.receipt.fileName?.toLowerCase().endsWith('.pdf');
+          setReceiptType(isPdf ? 'document' : 'image');
+          setReceiptName(expense.receipt.fileName || 'Receipt');
+        }
 
         if (expense.splitType === 'custom') {
           const shares: Record<string, string> = {};
@@ -52,6 +63,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       }
     }
   }, [expenseId, group.expenses]);
+
 
   const memberDisplayNames = useMemo(
     () => Object.fromEntries(group.members.map((member) => [member.userId, member.displayName])),
@@ -106,14 +118,56 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   };
 
   const handlePickImage = async () => {
+    setShowReceiptMenu(false);
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
+      allowsEditing: false,
       quality: 0.7,
     });
 
     if (!result.canceled) {
-      setImageUri(result.assets[0].uri);
+      setReceiptUri(result.assets[0].uri);
+      setReceiptType('image');
+      setReceiptName(result.assets[0].fileName || 'image.jpg');
+    }
+  };
+
+  const handleTakePhoto = async () => {
+    setShowReceiptMenu(false);
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission required', 'Camera permission is required to take photos.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: false,
+      quality: 0.7,
+    });
+
+    if (!result.canceled) {
+      setReceiptUri(result.assets[0].uri);
+      setReceiptType('image');
+      setReceiptName('camera_capture.jpg');
+    }
+  };
+
+  const handlePickDocument = async () => {
+    setShowReceiptMenu(false);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        setReceiptUri(asset.uri);
+        setReceiptType(asset.mimeType?.includes('image') ? 'image' : 'document');
+        setReceiptName(asset.name);
+      }
+    } catch (err) {
+      console.error('Error picking document:', err);
     }
   };
 
@@ -138,8 +192,8 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
         const originalUrl = existingExpense.receipt?.url || null;
         let newImageUriArg: string | null | undefined = undefined;
         
-        if (imageUri !== originalUrl) {
-          newImageUriArg = imageUri;
+        if (receiptUri !== originalUrl) {
+          newImageUriArg = receiptUri;
         }
 
         await updateExpense(group.groupId, {
@@ -147,9 +201,9 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
           ...expenseData,
           notes: existingExpense.notes || '',
           updatedAt: Date.now(),
-        }, newImageUriArg);
+        }, newImageUriArg, receiptName || undefined);
       } else {
-        await addExpense(group.groupId, expenseData, imageUri || undefined);
+        await addExpense(group.groupId, expenseData, receiptUri || undefined, receiptName || undefined);
       }
       onClose();
     } catch (error) {
@@ -158,9 +212,11 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     }
   };
 
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text variant="headlineMedium">{expenseId ? 'Edit expense' : 'Add expense'}</Text>
+    <PaperProvider theme={theme}>
+      <ScrollView contentContainerStyle={styles.container}>
+        <Text variant="headlineMedium">{expenseId ? 'Edit expense' : 'Add expense'}</Text>
       
       <TextInput label="Title" value={title} onChangeText={setTitle} style={styles.field} />
       
@@ -196,16 +252,36 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       </View>
 
       <View style={styles.field}>
-        <Button mode="outlined" icon="camera" onPress={handlePickImage}>
-          {imageUri ? 'Change Receipt' : 'Add Receipt'}
-        </Button>
-        {imageUri && (
+        <Menu
+          visible={showReceiptMenu}
+          onDismiss={() => setShowReceiptMenu(false)}
+          anchor={
+            <Button mode="outlined" icon="paperclip" onPress={() => setShowReceiptMenu(true)}>
+              {receiptUri ? 'Change Receipt' : 'Add Receipt'}
+            </Button>
+          }
+        >
+          <Menu.Item onPress={handleTakePhoto} title="Take Photo" leadingIcon="camera" />
+          <Menu.Item onPress={handlePickImage} title="Choose from Gallery" leadingIcon="image" />
+          <Menu.Item onPress={handlePickDocument} title="Upload Document" leadingIcon="file-document" />
+        </Menu>
+
+        {receiptUri && (
           <View style={styles.imagePreviewContainer}>
-            <Image source={{ uri: imageUri }} style={styles.imagePreview} />
-            <Button onPress={() => setImageUri(null)} textColor={colors.danger}>Remove</Button>
+            {receiptType === 'image' ? (
+              <Image source={{ uri: receiptUri }} style={styles.imagePreview} resizeMode="contain" />
+            ) : (
+              <View style={styles.documentPreview}>
+                <Text variant="bodyLarge" style={{ marginBottom: 8 }}>📄 {receiptName || 'Document attached'}</Text>
+              </View>
+            )}
+            <Button onPress={() => { setReceiptUri(null); setReceiptType(null); setReceiptName(null); }} textColor={colors.danger}>
+              Remove
+            </Button>
           </View>
         )}
       </View>
+
 
       <SegmentedButtons
         value={splitType}
@@ -293,7 +369,8 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
           </Dialog.Actions>
         </Dialog>
       </Portal>
-    </ScrollView>
+      </ScrollView>
+    </PaperProvider>
   );
 };
 
@@ -346,6 +423,15 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 200,
     borderRadius: 8,
+    marginBottom: 8,
+    backgroundColor: '#f0f0f0',
+  },
+  documentPreview: {
+    width: '100%',
+    padding: 16,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+    alignItems: 'center',
     marginBottom: 8,
   },
 });
