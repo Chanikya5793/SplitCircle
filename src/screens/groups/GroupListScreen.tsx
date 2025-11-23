@@ -5,8 +5,8 @@ import { colors } from '@/constants';
 import { CURRENCIES } from '@/constants/currencies';
 import { useGroups } from '@/context/GroupContext';
 import type { Group } from '@/models';
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, FlatList, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Modal, Portal, Text, TextInput } from 'react-native-paper';
 
 interface GroupListScreenProps {
@@ -103,28 +103,22 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           <GlassView style={styles.glassCard}>
             <Text variant="headlineSmall" style={styles.modalTitle}>Create group</Text>
             <ScrollView contentContainerStyle={{ paddingHorizontal: 4 }} keyboardShouldPersistTaps="handled">
-              <Text variant="bodyMedium" style={styles.label}>Name</Text>
-              <TextInput 
+              <FloatingLabelInput 
+                label="Name"
                 value={name} 
                 onChangeText={setName} 
                 style={styles.field}
-                mode="outlined"
-                outlineColor="rgba(0,0,0,0.1)"
-                theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
               />
               <View>
-                <Text variant="bodyMedium" style={styles.label}>Currency</Text>
-                <TextInput 
+                <FloatingLabelInput 
+                  label="Currency"
                   value={currencyInput} 
-                  onChangeText={(text) => {
+                  onChangeText={(text: string) => {
                     setCurrencyInput(text);
                     setShowCurrencyList(true);
                   }}
                   onFocus={() => setShowCurrencyList(true)}
                   autoCapitalize="characters"
-                  mode="outlined"
-                  outlineColor="rgba(0,0,0,0.1)"
-                  theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
                   style={showCurrencyList ? { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } : undefined}
                 />
                 {showCurrencyList && (
@@ -167,14 +161,11 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         >
           <GlassView style={styles.glassCard}>
             <Text variant="headlineSmall" style={styles.modalTitle}>Join group</Text>
-            <Text variant="bodyMedium" style={styles.label}>Invite code</Text>
-            <TextInput
+            <FloatingLabelInput
+              label="Invite code"
               value={inviteCode}
               onChangeText={setInviteCode}
               autoCapitalize="characters"
-              mode="outlined"
-              outlineColor="rgba(0,0,0,0.1)"
-              theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
             />
             <View style={styles.modalActions}>
               <Button onPress={() => setDialog(null)}>Cancel</Button>
@@ -186,6 +177,68 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         </Modal>
       </Portal>
     </LiquidBackground>
+  );
+};
+
+interface FloatingLabelInputProps extends React.ComponentProps<typeof TextInput> {
+  label: string;
+}
+
+const FloatingLabelInput = ({ label, value, style, onFocus, onBlur, ...props }: FloatingLabelInputProps) => {
+  const [isFocused, setIsFocused] = useState(false);
+  const animatedValue = useRef(new Animated.Value(value ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(animatedValue, {
+      toValue: (isFocused || value) ? 1 : 0,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  }, [isFocused, value]);
+
+  const labelStyle = {
+    position: 'absolute' as const,
+    left: animatedValue.interpolate({
+      inputRange: [0, 1],
+      outputRange: [16, 4],
+    }),
+    top: animatedValue.interpolate({
+      inputRange: [0, 1],
+      outputRange: [36, 0],
+    }),
+    fontSize: animatedValue.interpolate({
+      inputRange: [0, 1],
+      outputRange: [16, 14],
+    }),
+    color: animatedValue.interpolate({
+      inputRange: [0, 1],
+      outputRange: [colors.muted, '#555'],
+    }),
+    zIndex: 1,
+  };
+
+  return (
+    <View style={{ marginBottom: 12, paddingTop: 24 }}>
+      <Animated.Text style={labelStyle} pointerEvents="none">
+        {label}
+      </Animated.Text>
+      <TextInput
+        {...props}
+        value={value}
+        style={style}
+        onFocus={(e) => {
+          setIsFocused(true);
+          onFocus?.(e);
+        }}
+        onBlur={(e) => {
+          setIsFocused(false);
+          onBlur?.(e);
+        }}
+        mode="outlined"
+        outlineColor="rgba(0,0,0,0.1)"
+        theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+      />
+    </View>
   );
 };
 
@@ -209,12 +262,6 @@ const styles = StyleSheet.create({
   },
   field: {
     marginBottom: 12,
-  },
-  label: {
-    marginBottom: 4,
-    marginLeft: 4,
-    fontWeight: '500',
-    color: '#555',
   },
   currencyList: {
     borderWidth: 1,
