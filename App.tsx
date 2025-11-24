@@ -1,3 +1,4 @@
+import { LiquidBackground } from '@/components/LiquidBackground';
 import { theme } from '@/constants/theme';
 import { AuthProvider } from '@/context/AuthContext';
 import { ChatProvider } from '@/context/ChatContext';
@@ -16,7 +17,9 @@ export default function App() {
           <GroupProvider>
             <ChatProvider>
               <StatusBar style="auto" />
-              <AppNavigator />
+              <LiquidBackground>
+                <AppNavigator />
+              </LiquidBackground>
             </ChatProvider>
           </GroupProvider>
         </AuthProvider>
