@@ -25,6 +25,12 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
   const insets = useSafeAreaInsets();
   const focusedOptions = descriptors[state.routes[state.index].key].options;
 
+  // @ts-ignore - tabBarStyle might not be fully typed in some versions or custom types
+  // CRITICAL: This check must be at the top, before any hooks
+  if (focusedOptions.tabBarStyle?.display === 'none') {
+    return null;
+  }
+
   // Animation values
   const indicatorPosition = useSharedValue(0);
   const indicatorWidth = useSharedValue(0);
@@ -48,11 +54,6 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
     // Map delta to a scale factor. 
     return interpolate(delta, [0, 10, 40], [1, 1.2, 1.5], Extrapolation.CLAMP);
   });
-
-  // @ts-ignore - tabBarStyle might not be fully typed in some versions or custom types
-  if (focusedOptions.tabBarStyle?.display === 'none') {
-    return null;
-  }
 
   useEffect(() => {
     // Only animate if we have layout data for the current index
