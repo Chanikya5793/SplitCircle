@@ -105,7 +105,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         renderItem={({ item }) => <GroupCard group={item} onPress={() => onOpenGroup(item)} />}
         contentContainerStyle={[
           groups.length === 0 ? styles.emptyContainer : undefined,
-          { paddingTop: 60, paddingBottom: 20 + insets.bottom}
+          { paddingTop: 80, paddingBottom: 100 + insets.bottom, paddingHorizontal: 16 }
         ]}
         ListHeaderComponent={
           <View style={styles.headerContainer}>
@@ -120,7 +120,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         ListEmptyComponent={<Text style={styles.empty}>No groups yet. Create one!</Text>}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} />}
       />
-      <View style={[styles.actions, { bottom:  -25 + insets.bottom }]}>
+      <View style={[styles.actions, { bottom:  60 + insets.bottom }]}>
         <Button mode="contained" onPress={() => setDialog('create')}>
           New group
         </Button>
@@ -238,9 +238,6 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 100,
   },
   actions: {
     position: 'absolute',
@@ -326,6 +323,7 @@ const styles = StyleSheet.create({
   headerContainer: {
     paddingHorizontal: 8,
     paddingBottom: 16,
+    marginTop: 16,
   },
   headerTitle: {
     fontWeight: 'bold',
