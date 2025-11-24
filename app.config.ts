@@ -37,6 +37,7 @@ const config: ExpoConfig = {
   name: 'SplitCircle',
   slug: 'SplitCircle',
   version: '1.0.0',
+  owner: 'chanikya6163',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'light',
@@ -54,6 +55,9 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: true,
     bundleIdentifier: 'com.splitcircle.app',
+    infoPlist: {
+      ITSAppUsesNonExemptEncryption: false,
+    },
   },
   android: {
     package: 'com.splitcircle.app',
@@ -90,7 +94,7 @@ const config: ExpoConfig = {
   ],
   extra: {
     eas: {
-      projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID ?? '00000000-0000-0000-0000-000000000000',
+      projectId: '5050e81d-9b1b-4f2b-bc3a-abc457137122',
     },
     firebase,
     google,
