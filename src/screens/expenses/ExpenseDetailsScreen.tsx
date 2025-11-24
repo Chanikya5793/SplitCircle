@@ -3,8 +3,8 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors, ROUTES, theme } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
-import { useNavigation } from '@react-navigation/native';
 import { formatCurrency } from '@/utils/currency';
+import { useNavigation } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Image, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -254,6 +254,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
 const styles = StyleSheet.create({
   container: {
     padding: 16,
+    paddingBottom: 180,
     flexGrow: 1,
   },
   card: {

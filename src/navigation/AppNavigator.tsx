@@ -1,4 +1,5 @@
-import { ROUTES, colors } from '@/constants';
+import { GlassTabBar } from '@/components/GlassTabBar';
+import { colors, ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
@@ -20,7 +21,7 @@ import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { NavigationContainer } from '@react-navigation/native';
+import { getFocusedRouteNameFromRoute, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useMemo } from 'react';
 
@@ -206,25 +207,65 @@ const CallStackNavigator = () => (
 
 const AppTabs = () => (
   <Tab.Navigator
-    screenOptions={({ route }) => ({
+    tabBar={(props) => <GlassTabBar {...props} />}
+    screenOptions={{
       headerShown: false,
       tabBarActiveTintColor: colors.primary,
-      tabBarIcon: ({ color, size }) => {
-        const iconMap: Record<string, keyof typeof MaterialCommunityIcons.glyphMap> = {
-          [ROUTES.APP.GROUPS_TAB]: 'account-group',
-          [ROUTES.APP.CHAT_TAB]: 'chat-processing',
-          [ROUTES.APP.CALLS_TAB]: 'phone',
-          [ROUTES.APP.SETTINGS]: 'cog',
-        };
-        const iconName = iconMap[route.name] ?? 'circle-outline';
-        return <MaterialCommunityIcons name={iconName} color={color} size={size} />;
-      },
-    })}
+    }}
   >
-    <Tab.Screen name={ROUTES.APP.GROUPS_TAB} component={GroupStackNavigator} options={{ title: 'Groups' }} />
-    <Tab.Screen name={ROUTES.APP.CHAT_TAB} component={ChatStackNavigator} options={{ title: 'Chat' }} />
-    <Tab.Screen name={ROUTES.APP.CALLS_TAB} component={CallStackNavigator} options={{ title: 'Calls' }} />
-    <Tab.Screen name={ROUTES.APP.SETTINGS} component={SettingsScreen} options={{ title: 'Settings' }} />
+    <Tab.Screen 
+      name={ROUTES.APP.GROUPS_TAB} 
+      component={GroupStackNavigator} 
+      options={({ route }) => ({
+        title: 'Groups',
+        tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="account-group" color={color} size={size} />,
+        tabBarStyle: ((route) => {
+          const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.GROUPS;
+          if (routeName === ROUTES.APP.GROUP_CHAT) {
+            return { display: 'none' };
+          }
+          return undefined;
+        })(route),
+      })} 
+    />
+    <Tab.Screen 
+      name={ROUTES.APP.CHAT_TAB} 
+      component={ChatStackNavigator} 
+      options={({ route }) => ({
+        title: 'Chat',
+        tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="chat-processing" color={color} size={size} />,
+        tabBarStyle: ((route) => {
+          const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CHAT;
+          if (routeName === ROUTES.APP.GROUP_CHAT) {
+            return { display: 'none' };
+          }
+          return undefined;
+        })(route),
+      })} 
+    />
+    <Tab.Screen 
+      name={ROUTES.APP.CALLS_TAB} 
+      component={CallStackNavigator} 
+      options={({ route }) => ({
+        title: 'Calls',
+        tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="phone" color={color} size={size} />,
+        tabBarStyle: ((route) => {
+          const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CALLS;
+          if (routeName === ROUTES.APP.CALL_DETAIL) {
+            return { display: 'none' };
+          }
+          return undefined;
+        })(route),
+      })} 
+    />
+    <Tab.Screen 
+      name={ROUTES.APP.SETTINGS} 
+      component={SettingsScreen} 
+      options={{ 
+        title: 'Settings',
+        tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="cog" color={color} size={size} />,
+      }} 
+    />
   </Tab.Navigator>
 );
 
