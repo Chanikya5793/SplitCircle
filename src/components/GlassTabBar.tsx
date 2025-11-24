@@ -17,8 +17,8 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
   }
 
   return (
-    <View style={[styles.container, { bottom: 0 + insets.bottom }]}>
-      <GlassView style={styles.glass} intensity={0}>
+    <View style={[styles.container, { bottom: -18 + insets.bottom }]}>
+      <GlassView style={styles.glass} intensity={20}>
         <View style={styles.tabRow}>
           {state.routes.map((route, index) => {
             const { options } = descriptors[route.key];
