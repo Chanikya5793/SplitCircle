@@ -20,16 +20,16 @@ import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { getFocusedRouteNameFromRoute, NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { DefaultTheme, getFocusedRouteNameFromRoute, NavigationContainer } from '@react-navigation/native';
 import { useMemo } from 'react';
 
-const AuthStack = createNativeStackNavigator();
-const GroupStack = createNativeStackNavigator();
-const ChatStack = createNativeStackNavigator();
-const CallStack = createNativeStackNavigator();
-const Tab = createBottomTabNavigator();
+import { AuthStack, CallStack, ChatStack, GroupStack, Tab } from './stacks';
+
+// const AuthStack = createNativeStackNavigator();
+// const GroupStack = createNativeStackNavigator();
+// const ChatStack = createNativeStackNavigator();
+// const CallStack = createNativeStackNavigator();
+// const Tab = createBottomTabNavigator();
 
 type GroupWithFallback = Group | undefined;
 
@@ -213,9 +213,9 @@ const AppTabs = () => (
       tabBarActiveTintColor: colors.primary,
     }}
   >
-    <Tab.Screen 
-      name={ROUTES.APP.GROUPS_TAB} 
-      component={GroupStackNavigator} 
+    <Tab.Screen
+      name={ROUTES.APP.GROUPS_TAB}
+      component={GroupStackNavigator}
       options={({ route }) => ({
         title: 'Groups',
         tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="account-group" color={color} size={size} />,
@@ -226,11 +226,11 @@ const AppTabs = () => (
           }
           return undefined;
         })(route),
-      })} 
+      })}
     />
-    <Tab.Screen 
-      name={ROUTES.APP.CHAT_TAB} 
-      component={ChatStackNavigator} 
+    <Tab.Screen
+      name={ROUTES.APP.CHAT_TAB}
+      component={ChatStackNavigator}
       options={({ route }) => ({
         title: 'Chat',
         tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="chat-processing" color={color} size={size} />,
@@ -241,11 +241,11 @@ const AppTabs = () => (
           }
           return undefined;
         })(route),
-      })} 
+      })}
     />
-    <Tab.Screen 
-      name={ROUTES.APP.CALLS_TAB} 
-      component={CallStackNavigator} 
+    <Tab.Screen
+      name={ROUTES.APP.CALLS_TAB}
+      component={CallStackNavigator}
       options={({ route }) => ({
         title: 'Calls',
         tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="phone" color={color} size={size} />,
@@ -256,15 +256,15 @@ const AppTabs = () => (
           }
           return undefined;
         })(route),
-      })} 
+      })}
     />
-    <Tab.Screen 
-      name={ROUTES.APP.SETTINGS} 
-      component={SettingsScreen} 
-      options={{ 
+    <Tab.Screen
+      name={ROUTES.APP.SETTINGS}
+      component={SettingsScreen}
+      options={{
         title: 'Settings',
         tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="cog" color={color} size={size} />,
-      }} 
+      }}
     />
   </Tab.Navigator>
 );
@@ -276,7 +276,17 @@ export const AppNavigator = () => {
     return <LoadingScreen />;
   }
 
-  return <NavigationContainer>{user ? <AppTabs /> : <AuthStackNavigator />}</NavigationContainer>;
+  const TransparentTheme = {
+    ...DefaultTheme,
+    colors: {
+      ...DefaultTheme.colors,
+      background: 'transparent',
+      card: 'transparent',
+      border: 'transparent',
+    },
+  };
+
+  return <NavigationContainer theme={TransparentTheme}>{user ? <AppTabs /> : <AuthStackNavigator />}</NavigationContainer>;
 };
 
 export default AppNavigator;

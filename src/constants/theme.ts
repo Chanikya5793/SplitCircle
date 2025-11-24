@@ -26,7 +26,7 @@ export const theme = {
     primary: colors.primary,
     secondary: colors.secondary,
     surface: colors.surface,
-    background: colors.background,
+    background: 'transparent', // Transparent to show LiquidBackground
     error: colors.danger,
   },
   roundness: 12,
