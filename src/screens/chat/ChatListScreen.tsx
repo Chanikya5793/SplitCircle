@@ -2,9 +2,10 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors } from '@/constants';
 import { useChat } from '@/context/ChatContext';
+import { useGroups } from '@/context/GroupContext';
 import type { ChatThread } from '@/models';
 import { useNavigation } from '@react-navigation/native';
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { Animated, FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 import { Avatar, List, Text } from 'react-native-paper';
 
@@ -15,6 +16,7 @@ interface ChatListScreenProps {
 export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const navigation = useNavigation();
   const { threads, loading } = useChat();
+  const { groups } = useGroups();
   const scrollY = useRef(new Animated.Value(0)).current;
 
   useLayoutEffect(() => {
@@ -29,6 +31,25 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
+
+  // Helper to get chat display name
+  const getChatTitle = useMemo(() => (thread: ChatThread) => {
+    if (thread.type === 'group' && thread.groupId) {
+      const group = groups.find(g => g.groupId === thread.groupId);
+      return group?.name || 'Group Chat';
+    }
+    return thread.participants.find(p => p.userId !== thread.participantIds[0])?.displayName || 'Direct Chat';
+  }, [groups]);
+
+  // Helper to get chat initials for avatar
+  const getChatInitials = useMemo(() => (thread: ChatThread) => {
+    if (thread.type === 'group' && thread.groupId) {
+      const group = groups.find(g => g.groupId === thread.groupId);
+      return (group?.name || 'GC').slice(0, 2).toUpperCase();
+    }
+    const otherParticipant = thread.participants.find(p => p.userId !== thread.participantIds[0]);
+    return (otherParticipant?.displayName || 'SC').slice(0, 2).toUpperCase();
+  }, [groups]);
 
   return (
     <LiquidBackground>
@@ -45,13 +66,20 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
           renderItem={({ item }) => (
             <GlassView style={styles.chatItem}>
               <List.Item
-                title={item.type === 'group' ? item.groupId ?? 'Group chat' : item.participants[1]?.displayName ?? 'Direct chat'}
+                title={getChatTitle(item)}
                 description={item.lastMessage?.content ?? 'No messages yet'}
                 left={() => (
-                  <Avatar.Text size={40} label={(item.participants[0]?.displayName ?? 'SC').slice(0, 2).toUpperCase()} style={{ backgroundColor: 'rgba(103, 80, 164, 0.1)' }} color="#6750A4" />
+                  <Avatar.Text
+                    size={48}
+                    label={getChatInitials(item)}
+                    style={{ backgroundColor: colors.primary }}
+                    color="#fff"
+                  />
                 )}
                 onPress={() => onOpenThread(item)}
-                titleStyle={{ fontWeight: 'bold' }}
+                titleStyle={{ fontWeight: 'bold', fontSize: 16 }}
+                descriptionStyle={{ color: '#666' }}
+                descriptionNumberOfLines={1}
               />
             </GlassView>
           )}

@@ -11,7 +11,7 @@ interface GlassViewProps {
 export const GlassView = ({ children, style, intensity = 50 }: GlassViewProps) => {
   return (
     <View style={[styles.container, style]}>
-      <BlurView intensity={intensity} tint="light" style={StyleSheet.absoluteFill} />
+      <BlurView intensity={intensity} tint="light" style={StyleSheet.absoluteFill} pointerEvents="none" />
       <View style={styles.content}>
         {children}
       </View>

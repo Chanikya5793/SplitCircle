@@ -114,11 +114,13 @@ const ChatListRoute = ({ navigation }: any) => (
 );
 
 const ChatRoomRoute = ({ route }: any) => {
-  const { threads } = useChat();
+  const { threads } = useChat(); // Hook must be called first, before any conditional returns
   const thread = threads.find((item) => item.chatId === route.params.chatId);
+
   if (!thread) {
     return <LoadingScreen />;
   }
+
   return <ChatRoomScreen thread={thread} />;
 };
 
