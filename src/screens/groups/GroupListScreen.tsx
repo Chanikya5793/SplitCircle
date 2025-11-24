@@ -10,6 +10,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, FlatList, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Modal, Portal, Text } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface GroupListScreenProps {
   onOpenGroup: (group: Group) => void;
@@ -17,6 +18,7 @@ interface GroupListScreenProps {
 
 export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const { groups, loading, createGroup, joinGroup } = useGroups();
   const [dialog, setDialog] = useState<'create' | 'join' | null>(null);
   const [name, setName] = useState('');
@@ -103,7 +105,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         renderItem={({ item }) => <GroupCard group={item} onPress={() => onOpenGroup(item)} />}
         contentContainerStyle={[
           groups.length === 0 ? styles.emptyContainer : undefined,
-          { paddingTop: 60, paddingBottom: 100 }
+          { paddingTop: 60, paddingBottom: 20 + insets.bottom}
         ]}
         ListHeaderComponent={
           <View style={styles.headerContainer}>
@@ -118,13 +120,27 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         ListEmptyComponent={<Text style={styles.empty}>No groups yet. Create one!</Text>}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} />}
       />
-      <View style={styles.actions}>
+      <View style={[styles.actions, { bottom:  -25 + insets.bottom }]}>
         <Button mode="contained" onPress={() => setDialog('create')}>
           New group
         </Button>
-        <Button mode="outlined" onPress={() => setDialog('join')}>
-          Join via code
-        </Button>
+
+        <TouchableOpacity
+          onPress={() => setDialog('join')}
+          activeOpacity={0.8}
+          style={{
+        borderRadius: 15,
+        overflow: 'hidden',
+        borderWidth: 0,
+        borderColor: 'rgba(0,0,0,0.08)',
+        minWidth: 100,
+          }}
+        >
+          {/* GlassView provides the blurred/frosted fill inside the button */}
+          <GlassView style={{ paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ color: colors.primary, fontWeight: '600' }}>Join via code</Text>
+          </GlassView>
+        </TouchableOpacity>
       </View>
 
       <Portal>
@@ -222,12 +238,17 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 100,
   },
   actions: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 12,
+    zIndex: 10,
   },
   emptyContainer: {
     flex: 1,

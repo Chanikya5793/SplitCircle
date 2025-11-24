@@ -98,6 +98,7 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
 const styles = StyleSheet.create({
   container: {
     padding: 16,
+    paddingBottom: 180,
     flexGrow: 1,
   },
   center: {

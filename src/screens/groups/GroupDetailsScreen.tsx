@@ -120,6 +120,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
 const styles = StyleSheet.create({
   container: {
     padding: 16,
+    paddingBottom: 180,
     gap: 16,
   },
   headerCard: {
