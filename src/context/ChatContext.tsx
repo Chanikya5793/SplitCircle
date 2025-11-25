@@ -1,21 +1,20 @@
 import { db, storage } from '@/firebase';
 import type { ChatMessage, ChatParticipant, ChatThread, MessageType } from '@/models';
 import {
-    addDoc,
-    collection,
-    doc,
-    limit,
-    onSnapshot,
-    orderBy,
-    query,
-    serverTimestamp,
-    setDoc,
-    updateDoc,
-    where,
+  collection,
+  doc,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where
 } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { v4 as uuid } from 'uuid';
+import { getChatMessages, initMessageDB, saveMessageLocally } from '../services/localMessageStorage';
+import { listenForMessages, queueMessage } from '../services/messageQueueService';
 import { useAuth } from './AuthContext';
 
 interface SendMessagePayload {
@@ -56,6 +55,20 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Initialize SQLite database on mount
+  useEffect(() => {
+    const initDB = async () => {
+      try {
+        await initMessageDB();
+        console.log('✅ SQLite database initialized');
+      } catch (error) {
+        console.error('❌ Failed to initialize database:', error);
+      }
+    };
+    
+    initDB();
+  }, []);
+
   useEffect(() => {
     if (!user) {
       setThreads([]);
@@ -86,17 +99,39 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   }, [user?.userId]);
 
   const subscribeToMessages = useCallback((chatId: string, onData: (messages: ChatMessage[]) => void) => {
-    const messagesRef = collection(db, 'chats', chatId, 'messages');
-    const q = query(messagesRef, orderBy('createdAt', 'desc'), limit(100));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map((docSnap) => {
-        const data = docSnap.data() as ChatMessage;
-        return { ...data, createdAt: normalizeTimestamp(data.createdAt) } satisfies ChatMessage;
+    if (!user) return () => {};
+
+    // 1. Load local messages immediately
+    const loadLocalMessages = () => {
+      getChatMessages(chatId).then((localMessages) => {
+        const sorted = localMessages.sort((a, b) => b.createdAt - a.createdAt);
+        onData(sorted);
       });
-      onData(items);
+    };
+
+    loadLocalMessages();
+
+    // 2. Listen for incoming messages from Realtime Database queue
+    // This ensures we get messages immediately when they arrive
+    const unsubscribeQueue = listenForMessages(user.userId, async (message) => {
+      // Save locally
+      await saveMessageLocally(message);
+      
+      // If this message belongs to the current chat, update UI immediately
+      if (message.chatId === chatId) {
+        console.log('📨 New message received via queue, updating UI');
+        loadLocalMessages();
+      }
     });
-    return unsubscribe;
-  }, []);
+    
+    // 3. Poll local storage as a backup (in case we missed something or for other updates)
+    const interval = setInterval(loadLocalMessages, 3000);
+
+    return () => {
+      clearInterval(interval);
+      unsubscribeQueue();
+    };
+  }, [user]);
 
   const sendMessage = useCallback(
     async ({ chatId, content, type = 'text', mediaUri, groupId }: SendMessagePayload) => {
@@ -113,31 +148,49 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         mediaUrl = await getDownloadURL(fileRef);
       }
 
+      const msgId = uuid();
+      const now = Date.now();
       const message: ChatMessage = {
-        messageId: uuid(),
+        id: msgId,
+        messageId: msgId,
         chatId,
         senderId: user.userId,
         type,
         content,
       ...(mediaUrl ? { mediaUrl } : {}),
         status: 'sent',
-        createdAt: Date.now(),
+        createdAt: now,
+        timestamp: now,
+        isFromMe: true,
         deliveredTo: [],
         readBy: [user.userId],
       };
 
-      await addDoc(collection(db, 'chats', chatId, 'messages'), {
-        ...message,
-        createdAt: serverTimestamp(),
-      });
-
+    // 1. Save message locally (AsyncStorage)
+    await saveMessageLocally(message);
+    
+    // 2. Queue message for each recipient (Realtime Database)
+    // Get recipient IDs from chat participants (exclude sender)
+    const participants = threads.find(t => t.chatId === chatId)?.participants || [];
+    const recipientIds = participants
+      .map(p => p.userId)
+      .filter(id => id !== user.userId);
+    
+    // Queue message for each recipient
+    for (const recipientId of recipientIds) {
+      await queueMessage(recipientId, message);
+    }
+    
+    console.log('✅ Message saved locally and queued (WhatsApp style)');
+    
+      // Update the chat thread's lastMessage (metadata only, not the full history)
       await updateDoc(doc(db, 'chats', chatId), {
         lastMessage: { ...message, createdAt: serverTimestamp() },
         groupId: groupId ?? null,
         updatedAt: Date.now(),
       });
     },
-    [user],
+    [user, threads],
   );
 
   const ensureGroupThread = useCallback(

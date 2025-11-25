@@ -11,6 +11,7 @@ export interface ChatParticipant {
 }
 
 export interface ChatMessage {
+  id: string;
   messageId: string;
   chatId: string;
   senderId: string;
@@ -21,6 +22,8 @@ export interface ChatMessage {
   duration?: number;
   status: MessageStatus;
   createdAt: number;
+  timestamp: number | Date;
+  isFromMe?: boolean;
   deliveredTo: string[];
   readBy: string[];
 }
