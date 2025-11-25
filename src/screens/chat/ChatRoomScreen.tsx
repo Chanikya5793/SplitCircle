@@ -8,7 +8,7 @@ import type { ChatMessage, ChatThread } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Avatar, Button, Text, TextInput } from 'react-native-paper';
+import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
 
 interface ChatRoomScreenProps {
   thread: ChatThread;
@@ -81,7 +81,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const handleHeaderPress = () => {
     if (thread.type === 'group' && thread.groupId) {
       // @ts-ignore - navigation types
-      navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: thread.groupId });
+      navigation.navigate(ROUTES.APP.GROUP_INFO, { groupId: thread.groupId });
     }
   };
 
@@ -155,7 +155,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           scrollEventThrottle={16}
         />
 
-        <View style={styles.composerContainer}>
+        <View style={styles.composerWrapper}>
           <GlassView style={styles.composer}>
             <TextInput
               mode="outlined"
@@ -165,6 +165,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               style={styles.input}
               outlineColor="transparent"
               activeOutlineColor={colors.primary}
+              multiline
+              numberOfLines={1}
+              maxLength={1000}
               theme={{
                 colors: {
                   background: 'transparent',
@@ -174,19 +177,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               returnKeyType="send"
               onSubmitEditing={handleSend}
               blurOnSubmit={false}
-              dense
             />
-            <Button
-              mode="contained"
-              icon="send"
-              onPress={handleSend}
-              disabled={!text.trim() || sending}
-              style={styles.sendButton}
-              contentStyle={styles.sendButtonContent}
-            >
-              Send
-            </Button>
           </GlassView>
+          <IconButton
+            icon="send"
+            mode="contained"
+            onPress={handleSend}
+            disabled={!text.trim() || sending}
+            containerColor={!text.trim() || sending ? '#ccc' : colors.primary}
+            iconColor="#fff"
+            size={24}
+            style={styles.sendButton}
+          />
         </View>
       </KeyboardAvoidingView>
     </LiquidBackground>
@@ -206,30 +208,26 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingBottom: 20,
   },
-  composerContainer: {
-    paddingHorizontal: 0,
-    paddingBottom: 0,
+  composerWrapper: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
   },
   composer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flex: 1,
     padding: 12,
-    gap: 12,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderBottomLeftRadius: 0,
-    borderBottomRightRadius: 0,
+    borderRadius: 24,
   },
   input: {
-    flex: 1,
     backgroundColor: 'transparent',
     maxHeight: 100,
+    minHeight: 45,
   },
   sendButton: {
-    alignSelf: 'flex-end',
-  },
-  sendButtonContent: {
-    paddingVertical: 4,
+    margin: 0,
+    marginBottom: 4,
   },
   stickyHeader: {
     position: 'absolute',

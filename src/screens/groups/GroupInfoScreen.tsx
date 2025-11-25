@@ -1,0 +1,315 @@
+import { GlassView } from '@/components/GlassView';
+import { LiquidBackground } from '@/components/LiquidBackground';
+import { colors, ROUTES } from '@/constants';
+import { useGroups } from '@/context/GroupContext';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { useMemo, useState } from 'react';
+import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Avatar, Button, Divider, List, Text, TextInput } from 'react-native-paper';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+export const GroupInfoScreen = () => {
+    const navigation = useNavigation();
+    const route = useRoute();
+    const { groupId } = route.params as { groupId: string };
+    const { groups } = useGroups();
+    const [isEditingName, setIsEditingName] = useState(false);
+    const [editedName, setEditedName] = useState('');
+
+    const group = useMemo(() => {
+        return groups.find(g => g.groupId === groupId);
+    }, [groups, groupId]);
+
+    if (!group) {
+        return (
+            <LiquidBackground>
+                <SafeAreaView style={styles.container}>
+                    <Text>Group not found</Text>
+                </SafeAreaView>
+            </LiquidBackground>
+        );
+    }
+
+    const groupInitials = group.name.slice(0, 2).toUpperCase();
+
+    const handleEditName = () => {
+        setEditedName(group.name);
+        setIsEditingName(true);
+    };
+
+    const handleSaveName = () => {
+        // TODO: Implement save name functionality
+        setIsEditingName(false);
+    };
+
+    const handleViewProfilePic = () => {
+        // TODO: Implement full screen profile picture view
+        console.log('View profile picture in full screen');
+    };
+
+    const handleChangeProfilePic = () => {
+        // TODO: Implement change profile picture functionality
+        console.log('Change profile picture');
+    };
+
+    const handleAddExpense = () => {
+        // @ts-ignore
+        navigation.navigate(ROUTES.APP.ADD_EXPENSE, { groupId: group.groupId });
+    };
+
+    const handleViewStats = () => {
+        // @ts-ignore
+        navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId });
+    };
+
+    const handleViewSplits = () => {
+        // @ts-ignore
+        navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: group.groupId });
+    };
+
+    return (
+        <LiquidBackground>
+            <SafeAreaView style={styles.container} edges={['bottom']}>
+                <ScrollView style={styles.scrollView}>
+                    {/* Group Profile Section */}
+                    <View style={styles.profileSection}>
+                        <TouchableOpacity onPress={handleViewProfilePic} activeOpacity={0.7}>
+                            <Avatar.Text
+                                size={120}
+                                label={groupInitials}
+                                style={{ backgroundColor: colors.primary }}
+                                color="#fff"
+                            />
+                            <TouchableOpacity
+                                style={styles.editPicButton}
+                                onPress={handleChangeProfilePic}
+                                activeOpacity={0.8}
+                            >
+                                <MaterialCommunityIcons name="camera" size={20} color="#fff" />
+                            </TouchableOpacity>
+                        </TouchableOpacity>
+
+                        <View style={styles.nameSection}>
+                            {isEditingName ? (
+                                <View style={styles.nameEditRow}>
+                                    <TextInput
+                                        mode="outlined"
+                                        value={editedName}
+                                        onChangeText={setEditedName}
+                                        style={styles.nameInput}
+                                        autoFocus
+                                    />
+                                    <Button mode="contained" onPress={handleSaveName} compact>
+                                        Save
+                                    </Button>
+                                </View>
+                            ) : (
+                                <TouchableOpacity onPress={handleEditName} activeOpacity={0.7}>
+                                    <View style={styles.nameRow}>
+                                        <Text variant="headlineSmall" style={styles.groupName}>
+                                            {group.name}
+                                        </Text>
+                                        <MaterialCommunityIcons name="pencil" size={20} color={colors.primary} />
+                                    </View>
+                                </TouchableOpacity>
+                            )}
+                            {group.description && (
+                                <Text variant="bodyMedium" style={styles.description}>
+                                    {group.description}
+                                </Text>
+                            )}
+                        </View>
+                    </View>
+
+                    {/* Quick Actions */}
+                    <GlassView style={styles.section}>
+                        <Text variant="titleSmall" style={styles.sectionTitle}>
+                            Quick Actions
+                        </Text>
+                        <View style={styles.actionButtons}>
+                            <TouchableOpacity style={styles.actionButton} onPress={handleAddExpense} activeOpacity={0.7}>
+                                <View style={styles.actionIcon}>
+                                    <MaterialCommunityIcons name="plus-circle" size={32} color={colors.primary} />
+                                </View>
+                                <Text variant="labelMedium">Add Expense</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity style={styles.actionButton} onPress={handleViewStats} activeOpacity={0.7}>
+                                <View style={styles.actionIcon}>
+                                    <MaterialCommunityIcons name="chart-bar" size={32} color={colors.primary} />
+                                </View>
+                                <Text variant="labelMedium">Stats</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity style={styles.actionButton} onPress={handleViewSplits} activeOpacity={0.7}>
+                                <View style={styles.actionIcon}>
+                                    <MaterialCommunityIcons name="receipt" size={32} color={colors.primary} />
+                                </View>
+                                <Text variant="labelMedium">View Splits</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </GlassView>
+
+                    {/* Group Info */}
+                    <GlassView style={styles.section}>
+                        <Text variant="titleSmall" style={styles.sectionTitle}>
+                            Group Information
+                        </Text>
+                        <List.Item
+                            title="Created by"
+                            description={group.members.find(m => m.userId === group.createdBy)?.displayName || 'Unknown'}
+                            left={(props) => <List.Icon {...props} icon="account" />}
+                        />
+                        <Divider />
+                        <List.Item
+                            title="Created on"
+                            description={new Date(group.createdAt).toLocaleDateString()}
+                            left={(props) => <List.Icon {...props} icon="calendar" />}
+                        />
+                        <Divider />
+                        <List.Item
+                            title="Currency"
+                            description={group.currency}
+                            left={(props) => <List.Icon {...props} icon="currency-usd" />}
+                        />
+                    </GlassView>
+
+                    {/* Members Section */}
+                    <GlassView style={styles.section}>
+                        <Text variant="titleSmall" style={styles.sectionTitle}>
+                            Members ({group.members.length})
+                        </Text>
+                        {group.members.map((member, index) => (
+                            <View key={member.userId}>
+                                <List.Item
+                                    title={member.displayName}
+                                    description={member.role.charAt(0).toUpperCase() + member.role.slice(1)}
+                                    left={() => (
+                                        <Avatar.Text
+                                            size={40}
+                                            label={member.displayName.slice(0, 2).toUpperCase()}
+                                            style={{ backgroundColor: colors.primary }}
+                                            color="#fff"
+                                        />
+                                    )}
+                                    right={() =>
+                                        member.userId === group.createdBy ? (
+                                            <View style={styles.ownerBadge}>
+                                                <MaterialCommunityIcons name="crown" size={16} color="#FFD700" />
+                                            </View>
+                                        ) : null
+                                    }
+                                />
+                                {index < group.members.length - 1 && <Divider />}
+                            </View>
+                        ))}
+                    </GlassView>
+
+                    {/* Danger Zone */}
+                    <GlassView style={styles.section}>
+                        <Button
+                            mode="outlined"
+                            textColor="#d32f2f"
+                            style={styles.dangerButton}
+                            onPress={() => { }}
+                        >
+                            Leave Group
+                        </Button>
+                    </GlassView>
+                </ScrollView>
+            </SafeAreaView>
+        </LiquidBackground>
+    );
+};
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+    },
+    scrollView: {
+        flex: 1,
+    },
+    profileSection: {
+        alignItems: 'center',
+        paddingVertical: 32,
+        paddingHorizontal: 16,
+    },
+    editPicButton: {
+        position: 'absolute',
+        bottom: 0,
+        right: 0,
+        backgroundColor: colors.primary,
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 3,
+        borderColor: '#fff',
+    },
+    nameSection: {
+        marginTop: 16,
+        alignItems: 'center',
+        width: '100%',
+    },
+    nameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    nameEditRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        width: '100%',
+    },
+    nameInput: {
+        flex: 1,
+    },
+    groupName: {
+        fontWeight: 'bold',
+        color: '#333',
+    },
+    description: {
+        marginTop: 4,
+        color: '#666',
+        textAlign: 'center',
+    },
+    section: {
+        marginHorizontal: 16,
+        marginBottom: 16,
+        padding: 16,
+        borderRadius: 16,
+    },
+    sectionTitle: {
+        fontWeight: 'bold',
+        marginBottom: 12,
+        color: '#333',
+    },
+    actionButtons: {
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+        marginTop: 8,
+    },
+    actionButton: {
+        alignItems: 'center',
+        gap: 8,
+    },
+    actionIcon: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: 'rgba(103, 80, 164, 0.1)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    ownerBadge: {
+        alignSelf: 'center',
+    },
+    dangerButton: {
+        borderColor: '#d32f2f',
+    },
+});
+
+export default GroupInfoScreen;
