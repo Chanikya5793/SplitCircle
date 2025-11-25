@@ -119,7 +119,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         senderId: user.userId,
         type,
         content,
-        mediaUrl,
+      ...(mediaUrl ? { mediaUrl } : {}),
         status: 'sent',
         createdAt: Date.now(),
         deliveredTo: [],
