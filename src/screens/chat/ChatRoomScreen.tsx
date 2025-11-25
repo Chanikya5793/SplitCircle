@@ -47,15 +47,26 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   });
 
   useEffect(() => {
-    const unsubscribe = subscribeToMessages(thread.chatId, (items) => setMessages(items));
-    return unsubscribe;
+    console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
+    
+    const unsubscribe = subscribeToMessages(thread.chatId, (items) => {
+      console.log(`📨 Received ${items.length} messages in ChatRoomScreen`);
+      setMessages(items);
+    });
+    
+    return () => {
+      console.log('👋 ChatRoomScreen unmounting');
+      unsubscribe();
+    };
   }, [subscribeToMessages, thread.chatId]);
 
   useEffect(() => {
     if (messages.length === 0) {
       return;
     }
-    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    // Scroll to bottom (which is top for inverted list) when new messages arrive
+    // But only if we are already near the bottom? For now, just scroll.
+    // listRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, [messages.length]);
 
   const handleSend = async () => {
@@ -159,11 +170,17 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         <FlatList
           ref={listRef}
           data={messages}
-          keyExtractor={(item) => item.messageId}
+          keyExtractor={(item) => item.messageId || item.id || Math.random().toString()}
           renderItem={({ item }) => <MessageBubble message={item} />}
           style={styles.list}
-          contentContainerStyle={styles.listContent}
-          inverted
+          contentContainerStyle={[styles.listContent, messages.length === 0 && { flex: 1, justifyContent: 'center' }]}
+          inverted={messages.length > 0}
+          ListEmptyComponent={
+            <View style={{ alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+              <Text style={{ color: colors.muted }}>No messages yet</Text>
+              <Text style={{ color: colors.muted, fontSize: 12 }}>Send a message to start chatting</Text>
+            </View>
+          }
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
             { useNativeDriver: false }
