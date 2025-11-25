@@ -1,21 +1,24 @@
 import { GlassView } from '@/components/GlassView';
-import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors, ROUTES } from '@/constants';
 import { useGroups } from '@/context/GroupContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { useMemo, useRef, useState } from 'react';
+import { Animated, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, Button, Divider, List, Text, TextInput } from 'react-native-paper';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { LiquidBackground } from '@/components/LiquidBackground';
 
 export const GroupInfoScreen = () => {
+    const insets = useSafeAreaInsets();
     const navigation = useNavigation();
     const route = useRoute();
     const { groupId } = route.params as { groupId: string };
     const { groups } = useGroups();
     const [isEditingName, setIsEditingName] = useState(false);
     const [editedName, setEditedName] = useState('');
+    const scrollY = useRef(new Animated.Value(0)).current;
 
     const group = useMemo(() => {
         return groups.find(g => g.groupId === groupId);
@@ -68,10 +71,55 @@ export const GroupInfoScreen = () => {
         navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: group.groupId });
     };
 
+    // Animated header opacity
+    const headerOpacity = scrollY.interpolate({
+        inputRange: [0, 100],
+        outputRange: [0, 1],
+        extrapolate: 'clamp',
+    });
+
+    const titleOpacity = scrollY.interpolate({
+        inputRange: [0, 100],
+        outputRange: [1, 0],
+        extrapolate: 'clamp',
+    });
+
     return (
         <LiquidBackground>
             <SafeAreaView style={styles.container} edges={['bottom']}>
-                <ScrollView style={styles.scrollView}>
+                {/* Sticky Header - Appears on scroll */}
+                <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity, paddingTop: insets.top }]}>
+                    <GlassView style={styles.stickyHeaderGlass}>
+                        <View style={styles.stickyHeaderContent}>
+                            <Avatar.Text
+                                size={32}
+                                label={groupInitials}
+                                style={{ backgroundColor: colors.primary, marginRight: 8 }}
+                                color="#fff"
+                            />
+                            <Text variant="titleMedium" style={styles.stickyHeaderTitle} numberOfLines={1}>
+                                {group.name}
+                            </Text>
+                        </View>
+                    </GlassView>
+                </Animated.View>
+
+                <Animated.ScrollView
+                    style={styles.scrollView}
+                    contentContainerStyle={{ paddingBottom: 100 }}
+                    onScroll={Animated.event(
+                        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                        { useNativeDriver: false }
+                    )}
+                    scrollEventThrottle={16}
+                >
+                    {/* Group Info Title - Fades out on scroll */}
+                    <Animated.View style={[styles.titleContainer, { opacity: titleOpacity, marginTop: insets.top + 40 }]}>
+                        <Text variant="headlineSmall" style={styles.screenTitle}>
+                            Group Info
+                        </Text>
+                    </Animated.View>
+
                     {/* Group Profile Section */}
                     <View style={styles.profileSection}>
                         <TouchableOpacity onPress={handleViewProfilePic} activeOpacity={0.7}>
@@ -217,7 +265,7 @@ export const GroupInfoScreen = () => {
                             Leave Group
                         </Button>
                     </GlassView>
-                </ScrollView>
+                </Animated.ScrollView>
             </SafeAreaView>
         </LiquidBackground>
     );
@@ -226,9 +274,45 @@ export const GroupInfoScreen = () => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+        backgroundColor: 'transparent',
     },
     scrollView: {
         flex: 1,
+    },
+    stickyHeader: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 100,
+        paddingTop: 8,
+        paddingHorizontal: 16,
+        paddingBottom: 10,
+    },
+    stickyHeaderGlass: {
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        borderRadius: 20,
+        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    },
+    stickyHeaderContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    stickyHeaderTitle: {
+        fontWeight: 'bold',
+        color: '#333',
+        flex: 1,
+    },
+    titleContainer: {
+        paddingHorizontal: 16,
+        paddingTop: 8,
+        paddingBottom: 8,
+        alignItems: 'center',
+    },
+    screenTitle: {
+        fontWeight: 'bold',
+        color: '#333',
     },
     profileSection: {
         alignItems: 'center',
