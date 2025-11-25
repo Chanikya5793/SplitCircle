@@ -18,11 +18,17 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const navigation = useNavigation();
   const { subscribeToMessages, sendMessage } = useChat();
   const { groups } = useGroups();
+  // Messages for this chat (inverted list - newest first)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Text input state for composer
   const [text, setText] = useState('');
+  // Sending flag - disables the send button while awaiting network
   const [sending, setSending] = useState(false);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
+  // Track focus state of the composer input so we can highlight the
+  // outer container (`GlassView`) with a border that matches the app color.
+  const [composerFocused, setComposerFocused] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -156,17 +162,29 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         />
 
         <View style={styles.composerWrapper}>
-          <GlassView style={styles.composer}>
+          <GlassView style={{ ...styles.composer, ...(composerFocused ? styles.composerFocused : {}) }}>
             <TextInput
-              mode="outlined"
+              // Use flat mode so the TextInput doesn't draw its own outline
+              // when focused. We rely on the surrounding `GlassView` for
+              // container radius and padding so the inner input stays visually
+              // consistent with the composer.
+              mode="flat"
               placeholder={placeholder}
               value={text}
               onChangeText={setText}
               style={styles.input}
-              outlineColor="transparent"
-              activeOutlineColor={colors.primary}
+              // control inner padding so text lines up with composer padding
+              contentStyle={styles.inputContent}
+              // ensure caret is visible
+              selectionColor={colors.primary}
+              // Remove underline by forcing no bottom border on the inner input
+              // and ensuring the TextInput doesn't render any underline color
+              underlineColor="transparent"
+              activeUnderlineColor="transparent"
+              onFocus={() => setComposerFocused(true)}
+              onBlur={() => setComposerFocused(false)}
               multiline
-              numberOfLines={1}
+              numberOfLines={2}
               maxLength={1000}
               theme={{
                 colors: {
@@ -186,8 +204,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             disabled={!text.trim() || sending}
             containerColor={!text.trim() || sending ? '#ccc' : colors.primary}
             iconColor="#fff"
-            size={24}
+            size={28}
             style={styles.sendButton}
+            accessibilityLabel="Send message"
           />
         </View>
       </KeyboardAvoidingView>
@@ -206,28 +225,54 @@ const styles = StyleSheet.create({
   listContent: {
     padding: 16,
     gap: 8,
-    paddingBottom: 20,
+    // Make bottom padding larger so composer doesn't overlap list items
+    paddingBottom: 10,
   },
   composerWrapper: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
+    // Increase horizontal padding to give the composer more breathing room
+    paddingHorizontal: 12,
+    // Vertical padding affects how snug the composer sits above the keyboard
+    paddingVertical: 0,
   },
   composer: {
     flex: 1,
+    // Container padding controls inner space around the text input
     padding: 12,
-    borderRadius: 24,
+    // Larger radius makes the composer pill feel more touch-friendly
+    borderRadius: 50,
   },
   input: {
     backgroundColor: 'transparent',
-    maxHeight: 100,
-    minHeight: 45,
+    // Tweak these min/max to change vertical size of the input box
+    maxHeight: 120,
+    minHeight: 40,
+    // make sure the inner text isn't clipped on Android
+    textAlignVertical: 'center',
+    // Internal padding is controlled via contentStyle; keep zero here
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+  },
+  inputContent: {
+    // controls the inner padding of the react-native-paper TextInput
+    paddingVertical: 10,
+    // move placeholder/text a bit to the right
+    paddingLeft: 16,
+    paddingRight: 8,
   },
   sendButton: {
     margin: 0,
-    marginBottom: 4,
+    // Keep the send button visually aligned with the composer baseline
+    marginBottom: 20,
+    // Add a little extra touch area by increasing container size if needed
+    width: 44,
+    height: 44,
+  },
+  composerFocused: {
+    borderWidth: 2,
+    borderColor: colors.primary,
   },
   stickyHeader: {
     position: 'absolute',
