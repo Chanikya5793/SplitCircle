@@ -152,7 +152,15 @@ const GroupStackNavigator = () => (
   <GroupStack.Navigator>
     <GroupStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ title: 'Groups' }} />
     <GroupStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
-    <GroupStack.Screen name={ROUTES.APP.GROUP_INFO} component={GroupInfoScreen} options={{ title: 'Group Info' }} />
+    <GroupStack.Screen
+      name={ROUTES.APP.GROUP_INFO}
+      component={GroupInfoScreen}
+      options={{
+        title: '',
+        headerTransparent: true,
+        headerTintColor: colors.primary,
+      }}
+    />
     <GroupStack.Screen
       name={ROUTES.APP.ADD_EXPENSE}
       component={AddExpenseRoute}
@@ -193,7 +201,32 @@ const ChatStackNavigator = () => (
         headerTintColor: colors.primary,
       }}
     />
-    <ChatStack.Screen name={ROUTES.APP.GROUP_INFO} component={GroupInfoScreen} options={{ title: 'Group Info' }} />
+    <ChatStack.Screen
+      name={ROUTES.APP.GROUP_INFO}
+      component={GroupInfoScreen}
+      options={{
+        title: '',
+        headerTransparent: true,
+        headerTintColor: colors.primary,
+      }}
+    />
+    <ChatStack.Screen
+      name={ROUTES.APP.ADD_EXPENSE}
+      component={AddExpenseRoute}
+      options={{ presentation: 'modal', headerShown: false }}
+    />
+    <ChatStack.Screen
+      name={ROUTES.APP.EXPENSE_DETAILS}
+      component={ExpenseDetailsScreen}
+      options={{ title: 'Expense Details' }}
+    />
+    <ChatStack.Screen
+      name={ROUTES.APP.SETTLEMENTS}
+      component={SettlementsRoute}
+      options={{ presentation: 'modal', headerShown: false }}
+    />
+    <ChatStack.Screen name={ROUTES.APP.GROUP_STATS} component={GroupStatsRoute} options={{ title: 'Group Stats' }} />
+    <ChatStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
   </ChatStack.Navigator>
 );
 
