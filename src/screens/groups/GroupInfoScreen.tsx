@@ -94,7 +94,7 @@ export const GroupInfoScreen = () => {
                             <Avatar.Text
                                 size={32}
                                 label={groupInitials}
-                                style={{ backgroundColor: colors.primary, marginRight: 8 }}
+                                style={{ backgroundColor: colors.primary }}
                                 color="#fff"
                             />
                             <Text variant="titleMedium" style={styles.stickyHeaderTitle} numberOfLines={1}>
@@ -288,21 +288,23 @@ const styles = StyleSheet.create({
         paddingTop: 8,
         paddingHorizontal: 16,
         paddingBottom: 10,
+        alignItems: 'center',
     },
     stickyHeaderGlass: {
-        paddingVertical: 8,
+        paddingVertical: 6,
         paddingHorizontal: 16,
-        borderRadius: 20,
+        borderRadius: 30,
         backgroundColor: 'rgba(255, 255, 255, 0.9)',
     },
     stickyHeaderContent: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
     },
     stickyHeaderTitle: {
         fontWeight: 'bold',
         color: '#333',
-        flex: 1,
     },
     titleContainer: {
         paddingHorizontal: 16,
