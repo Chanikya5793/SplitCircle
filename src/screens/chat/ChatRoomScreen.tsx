@@ -7,7 +7,7 @@ import { useGroups } from '@/context/GroupContext';
 import type { ChatMessage, ChatThread } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
 
 interface ChatRoomScreenProps {
@@ -29,6 +29,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Track focus state of the composer input so we can highlight the
   // outer container (`GlassView`) with a border that matches the app color.
   const [composerFocused, setComposerFocused] = useState(false);
+  // Animated value for focus border animation (0 = unfocused, 1 = focused)
+  const focusAnim = useRef(new Animated.Value(0)).current;
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -102,7 +104,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   return (
     <LiquidBackground>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
-        <TouchableOpacity onPress={thread.type === 'group' ? handleHeaderPress : undefined} activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={thread.type === 'group' ? handleHeaderPress : undefined}
+          activeOpacity={0.7}
+          // make header hit area predictable
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
           <GlassView style={styles.stickyHeaderGlass}>
             <View style={styles.headerRow}>
               {thread.type === 'group' && (
@@ -127,24 +134,27 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={90}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        // smaller offset so composer hugs the keyboard more closely
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
       >
-        <TouchableOpacity onPress={thread.type === 'group' ? handleHeaderPress : undefined} activeOpacity={0.8}>
-          <View style={styles.headerContainer}>
-            <View style={styles.headerRow}>
-              {thread.type === 'group' && (
-                <Avatar.Text
-                  size={48}
-                  label={groupInitials}
-                  style={{ backgroundColor: colors.primary, marginRight: 12 }}
-                  color="#fff"
-                />
-              )}
-              <Text variant="headlineMedium" style={styles.headerTitle}>{title}</Text>
-            </View>
+        <Pressable
+          onPress={thread.type === 'group' ? handleHeaderPress : undefined}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={({ pressed }) => [styles.headerContainer, pressed && { opacity: 0.6 }]}
+        >
+          <View style={styles.headerRow}>
+            {thread.type === 'group' && (
+              <Avatar.Text
+                size={48}
+                label={groupInitials}
+                style={{ backgroundColor: colors.primary, marginRight: 12 }}
+                color="#fff"
+              />
+            )}
+            <Text variant="headlineMedium" style={styles.headerTitle}>{title}</Text>
           </View>
-        </TouchableOpacity>
+        </Pressable>
 
         <FlatList
           ref={listRef}
@@ -162,7 +172,15 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         />
 
         <View style={styles.composerWrapper}>
-          <GlassView style={{ ...styles.composer, ...(composerFocused ? styles.composerFocused : {}) }}>
+          <Animated.View
+            style={{
+              ...styles.composerAnimated,
+              borderWidth: focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 2] }),
+              borderColor: colors.primary,
+              borderRadius: styles.composer.borderRadius,
+            }}
+          >
+            <GlassView style={styles.composer}>
             <TextInput
               // Use flat mode so the TextInput doesn't draw its own outline
               // when focused. We rely on the surrounding `GlassView` for
@@ -181,8 +199,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               // and ensuring the TextInput doesn't render any underline color
               underlineColor="transparent"
               activeUnderlineColor="transparent"
-              onFocus={() => setComposerFocused(true)}
-              onBlur={() => setComposerFocused(false)}
+              onFocus={() => {
+                setComposerFocused(true);
+                Animated.timing(focusAnim, { toValue: 1, duration: 150, useNativeDriver: false }).start();
+              }}
+              onBlur={() => {
+                setComposerFocused(false);
+                Animated.timing(focusAnim, { toValue: 0, duration: 150, useNativeDriver: false }).start();
+              }}
               multiline
               numberOfLines={2}
               maxLength={1000}
@@ -196,7 +220,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               onSubmitEditing={handleSend}
               blurOnSubmit={false}
             />
-          </GlassView>
+            </GlassView>
+          </Animated.View>
           <IconButton
             icon="send"
             mode="contained"
@@ -234,13 +259,13 @@ const styles = StyleSheet.create({
     gap: 8,
     // Increase horizontal padding to give the composer more breathing room
     paddingHorizontal: 12,
-    // Vertical padding affects how snug the composer sits above the keyboard
-    paddingVertical: 0,
+    // small vertical padding so composer sits nicely above keyboard
+    paddingVertical: 6,
   },
   composer: {
     flex: 1,
     // Container padding controls inner space around the text input
-    padding: 12,
+    padding: 0,
     // Larger radius makes the composer pill feel more touch-friendly
     borderRadius: 50,
   },
@@ -248,8 +273,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     // Tweak these min/max to change vertical size of the input box
     maxHeight: 120,
-    minHeight: 40,
-    // make sure the inner text isn't clipped on Android
+    minHeight: 0,
     textAlignVertical: 'center',
     // Internal padding is controlled via contentStyle; keep zero here
     paddingVertical: 0,
@@ -257,15 +281,21 @@ const styles = StyleSheet.create({
   },
   inputContent: {
     // controls the inner padding of the react-native-paper TextInput
-    paddingVertical: 10,
+    // reduce vertical padding so caret and placeholder align vertically
+    paddingVertical: 0,
     // move placeholder/text a bit to the right
     paddingLeft: 16,
     paddingRight: 8,
   },
+  composerAnimated: {
+    flex: 1,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
   sendButton: {
-    margin: 0,
+    margin: 5,
     // Keep the send button visually aligned with the composer baseline
-    marginBottom: 20,
+    marginBottom: 5.5,
     // Add a little extra touch area by increasing container size if needed
     width: 44,
     height: 44,
