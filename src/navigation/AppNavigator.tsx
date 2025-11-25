@@ -15,6 +15,7 @@ import { AddExpenseScreen } from '@/screens/expenses/AddExpenseScreen';
 import { ExpenseDetailsScreen } from '@/screens/expenses/ExpenseDetailsScreen';
 import { SettlementsScreen } from '@/screens/expenses/SettlementsScreen';
 import { GroupDetailsScreen } from '@/screens/groups/GroupDetailsScreen';
+import { GroupInfoScreen } from '@/screens/groups/GroupInfoScreen';
 import { GroupListScreen } from '@/screens/groups/GroupListScreen';
 import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
@@ -24,12 +25,6 @@ import { DefaultTheme, getFocusedRouteNameFromRoute, NavigationContainer } from 
 import { useMemo } from 'react';
 
 import { AuthStack, CallStack, ChatStack, GroupStack, Tab } from './stacks';
-
-// const AuthStack = createNativeStackNavigator();
-// const GroupStack = createNativeStackNavigator();
-// const ChatStack = createNativeStackNavigator();
-// const CallStack = createNativeStackNavigator();
-// const Tab = createBottomTabNavigator();
 
 type GroupWithFallback = Group | undefined;
 
@@ -157,6 +152,7 @@ const GroupStackNavigator = () => (
   <GroupStack.Navigator>
     <GroupStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ title: 'Groups' }} />
     <GroupStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
+    <GroupStack.Screen name={ROUTES.APP.GROUP_INFO} component={GroupInfoScreen} options={{ title: 'Group Info' }} />
     <GroupStack.Screen
       name={ROUTES.APP.ADD_EXPENSE}
       component={AddExpenseRoute}
@@ -197,6 +193,7 @@ const ChatStackNavigator = () => (
         headerTintColor: colors.primary,
       }}
     />
+    <ChatStack.Screen name={ROUTES.APP.GROUP_INFO} component={GroupInfoScreen} options={{ title: 'Group Info' }} />
   </ChatStack.Navigator>
 );
 

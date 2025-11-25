@@ -10,6 +10,7 @@ export const ROUTES = {
     GROUPS_TAB: 'GroupsTab',
     GROUPS: 'Groups',
     GROUP_DETAILS: 'GroupDetails',
+    GROUP_INFO: 'GroupInfo',
     ADD_EXPENSE: 'AddExpense',
     SETTLEMENTS: 'Settlements',
     CHAT_TAB: 'ChatTab',
