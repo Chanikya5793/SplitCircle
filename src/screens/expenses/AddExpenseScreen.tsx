@@ -1,16 +1,16 @@
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { colors, theme } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
+import { useTheme } from '@/context/ThemeContext';
 import type { Group, ParticipantShare, SplitType } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
-import { Button, Chip, Dialog, HelperText, Menu, Provider as PaperProvider, Portal, SegmentedButtons, Text, TextInput, TouchableRipple } from 'react-native-paper';
+import { Button, Chip, Dialog, HelperText, Menu, PaperProvider, Portal, SegmentedButtons, Text, TextInput, TouchableRipple } from 'react-native-paper';
 
 interface AddExpenseScreenProps {
   group: Group;
@@ -24,6 +24,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   const navigation = useNavigation();
   const { user } = useAuth();
   const { addExpense, updateExpense } = useGroups();
+  const { theme, isDark } = useTheme();
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('General');
@@ -55,7 +56,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
         setPaidBy(expense.paidBy);
         setSplitType(expense.splitType);
         setSelectedMembers(expense.participants.map((p) => p.userId));
-        
+
         if (expense.receipt?.url) {
           setReceiptUri(expense.receipt.url);
           // Infer type from filename or extension if possible, default to image for backward compat
@@ -93,10 +94,10 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     // Adjust for rounding errors on the last person
     const totalCalculated = share * selectedMembers.length;
     const diff = numericAmount - totalCalculated;
-    
-    return selectedMembers.map((userId, index) => ({ 
-      userId, 
-      share: index === selectedMembers.length - 1 ? Number((share + diff).toFixed(2)) : share 
+
+    return selectedMembers.map((userId, index) => ({
+      userId,
+      share: index === selectedMembers.length - 1 ? Number((share + diff).toFixed(2)) : share
     }));
   }, [amount, customShares, selectedMembers, splitType]);
 
@@ -105,9 +106,9 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
 
   const formValid = Boolean(
     title &&
-      amount &&
-      participantShares.length &&
-      (splitType !== 'custom' || (participantShares.every((entry) => entry.share >= 0) && matchesAmount))
+    amount &&
+    participantShares.length &&
+    (splitType !== 'custom' || (participantShares.every((entry) => entry.share >= 0) && matchesAmount))
   );
 
   const handleToggleMember = (userId: string) => {
@@ -202,7 +203,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
 
         const originalUrl = existingExpense.receipt?.url || null;
         let newImageUriArg: string | null | undefined = undefined;
-        
+
         if (receiptUri !== originalUrl) {
           newImageUriArg = receiptUri;
         }
@@ -229,21 +230,21 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       <LiquidBackground>
         <ScrollView contentContainerStyle={styles.container}>
           <GlassView style={styles.card}>
-            <Text variant="headlineMedium" style={styles.title}>{expenseId ? 'Edit expense' : 'Add expense'}</Text>
-          
-            <FloatingLabelInput 
-              label="Title" 
-              value={title} 
-              onChangeText={setTitle} 
+            <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>{expenseId ? 'Edit expense' : 'Add expense'}</Text>
+
+            <FloatingLabelInput
+              label="Title"
+              value={title}
+              onChangeText={setTitle}
               style={styles.field}
             />
-            
+
             <View style={styles.row}>
-              <FloatingLabelInput 
-                label="Amount" 
-                value={amount} 
-                onChangeText={setAmount} 
-                keyboardType="decimal-pad" 
+              <FloatingLabelInput
+                label="Amount"
+                value={amount}
+                onChangeText={setAmount}
+                keyboardType="decimal-pad"
                 style={styles.field}
                 containerStyle={{ flex: 1 }}
                 left={<TextInput.Affix text="$" />}
@@ -255,7 +256,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                 visible={showCategoryMenu}
                 onDismiss={() => setShowCategoryMenu(false)}
                 anchor={
-                  <Button mode="outlined" onPress={() => setShowCategoryMenu(true)} icon="tag">
+                  <Button mode="outlined" onPress={() => setShowCategoryMenu(true)} icon="tag" style={{ borderColor: theme.colors.outline }}>
                     {category}
                   </Button>
                 }
@@ -265,7 +266,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                 ))}
               </Menu>
 
-              <Button mode="outlined" onPress={() => setShowPayerDialog(true)} icon="account-cash">
+              <Button mode="outlined" onPress={() => setShowPayerDialog(true)} icon="account-cash" style={{ borderColor: theme.colors.outline }}>
                 Paid by {memberDisplayNames[paidBy] ?? 'Unknown'}
               </Button>
             </View>
@@ -275,7 +276,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                 visible={showReceiptMenu}
                 onDismiss={() => setShowReceiptMenu(false)}
                 anchor={
-                  <Button mode="outlined" icon="paperclip" onPress={() => setShowReceiptMenu(true)}>
+                  <Button mode="outlined" icon="paperclip" onPress={() => setShowReceiptMenu(true)} style={{ borderColor: theme.colors.outline }}>
                     {receiptUri ? 'Change Receipt' : 'Add Receipt'}
                   </Button>
                 }
@@ -288,13 +289,13 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
               {receiptUri && (
                 <View style={styles.imagePreviewContainer}>
                   {receiptType === 'image' ? (
-                    <Image source={{ uri: receiptUri }} style={styles.imagePreview} resizeMode="contain" />
+                    <Image source={{ uri: receiptUri }} style={[styles.imagePreview, { backgroundColor: isDark ? '#333' : '#f0f0f0' }]} resizeMode="contain" />
                   ) : (
-                    <View style={styles.documentPreview}>
-                      <Text variant="bodyLarge" style={{ marginBottom: 8 }}>📄 {receiptName || 'Document attached'}</Text>
+                    <View style={[styles.documentPreview, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#f0f0f0' }]}>
+                      <Text variant="bodyLarge" style={{ marginBottom: 8, color: theme.colors.onSurface }}>📄 {receiptName || 'Document attached'}</Text>
                     </View>
                   )}
-                  <Button onPress={() => { setReceiptUri(null); setReceiptType(null); setReceiptName(null); }} textColor={colors.danger}>
+                  <Button onPress={() => { setReceiptUri(null); setReceiptType(null); setReceiptName(null); }} textColor={theme.colors.error}>
                     Remove
                   </Button>
                 </View>
@@ -313,7 +314,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
             />
 
 
-            <Text variant="titleMedium" style={styles.section}>
+            <Text variant="titleMedium" style={[styles.section, { color: theme.colors.onSurface }]}>
               Split with
             </Text>
             <View style={styles.members}>
@@ -323,6 +324,8 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                   selected={selectedMembers.includes(member.userId)}
                   onPress={() => handleToggleMember(member.userId)}
                   showSelectedOverlay
+                  style={{ backgroundColor: selectedMembers.includes(member.userId) ? theme.colors.secondaryContainer : undefined }}
+                  textStyle={{ color: selectedMembers.includes(member.userId) ? theme.colors.onSecondaryContainer : theme.colors.onSurface }}
                 >
                   {member.displayName}
                 </Chip>
@@ -331,7 +334,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
 
             {splitType === 'custom' && (
               <View style={styles.customSplitContainer}>
-                <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
+                <Text variant="bodyMedium" style={{ marginBottom: 8, color: theme.colors.onSurface }}>
                   Remaining: ${(Number(amount) - customTotal).toFixed(2)}
                 </Text>
                 {selectedMembers.map((userId) => (
@@ -354,7 +357,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
             )}
 
             <View style={styles.actions}>
-              <Button mode="outlined" onPress={onClose}>
+              <Button mode="outlined" onPress={onClose} style={{ borderColor: theme.colors.outline }}>
                 Cancel
               </Button>
               <Button mode="contained" onPress={handleSubmit} disabled={!formValid}>
@@ -366,8 +369,8 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       </LiquidBackground>
 
       <Portal>
-        <Dialog visible={showPayerDialog} onDismiss={() => setShowPayerDialog(false)}>
-          <Dialog.Title>Who paid?</Dialog.Title>
+        <Dialog visible={showPayerDialog} onDismiss={() => setShowPayerDialog(false)} style={{ backgroundColor: theme.colors.surface }}>
+          <Dialog.Title style={{ color: theme.colors.onSurface }}>Who paid?</Dialog.Title>
           <Dialog.Content>
             <ScrollView style={{ maxHeight: 300 }}>
               {group.members.map((member) => (
@@ -379,8 +382,8 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                   }}
                 >
                   <View style={styles.payerRow}>
-                    <Text variant="bodyLarge">{member.displayName}</Text>
-                    {paidBy === member.userId && <Text style={{ color: colors.primary }}>Selected</Text>}
+                    <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>{member.displayName}</Text>
+                    {paidBy === member.userId && <Text style={{ color: theme.colors.primary }}>Selected</Text>}
                   </View>
                 </TouchableRipple>
               ))}
@@ -453,12 +456,10 @@ const styles = StyleSheet.create({
     height: 200,
     borderRadius: 8,
     marginBottom: 8,
-    backgroundColor: '#f0f0f0',
   },
   documentPreview: {
     width: '100%',
     padding: 16,
-    backgroundColor: '#f0f0f0',
     borderRadius: 8,
     alignItems: 'center',
     marginBottom: 8,

@@ -1,4 +1,4 @@
-import { colors } from '@/constants';
+import { useTheme } from '@/context/ThemeContext';
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, StyleProp, View, ViewStyle } from 'react-native';
 import { TextInput } from 'react-native-paper';
@@ -9,6 +9,7 @@ interface FloatingLabelInputProps extends React.ComponentProps<typeof TextInput>
 }
 
 export const FloatingLabelInput = ({ label, value, style, containerStyle, onFocus, onBlur, ...props }: FloatingLabelInputProps) => {
+  const { theme, isDark } = useTheme();
   const [isFocused, setIsFocused] = useState(false);
   const animatedValue = useRef(new Animated.Value(value ? 1 : 0)).current;
 
@@ -36,13 +37,13 @@ export const FloatingLabelInput = ({ label, value, style, containerStyle, onFocu
     }),
     color: animatedValue.interpolate({
       inputRange: [0, 1],
-      outputRange: [colors.muted, '#555'],
+      outputRange: [theme.colors.onSurfaceVariant, theme.colors.onSurface],
     }),
     zIndex: 1,
   };
 
   return (
-    <View style={[{ 
+    <View style={[{
       marginBottom: 0, // Spacing between this field and the next element
       paddingTop: 18   // Space reserved for the floating label at the top
     }, containerStyle]}>
@@ -62,8 +63,9 @@ export const FloatingLabelInput = ({ label, value, style, containerStyle, onFocu
           onBlur?.(e);
         }}
         mode="outlined"
-        outlineColor="rgba(0,0,0,0.1)"
-        theme={{ colors: { background: 'rgba(255,255,255,0.5)' } }}
+        outlineColor={isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)'}
+        theme={{ colors: { background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.5)' } }}
+        textColor={theme.colors.onSurface}
       />
     </View>
   );

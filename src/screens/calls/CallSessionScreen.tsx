@@ -1,7 +1,7 @@
 import { CallControls } from '@/components/CallControls';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { colors } from '@/constants';
+import { useTheme } from '@/context/ThemeContext';
 import { useCallManager } from '@/hooks/useCallManager';
 import type { CallType } from '@/models';
 import { useEffect, useState } from 'react';
@@ -18,6 +18,7 @@ interface CallSessionScreenProps {
 
 export const CallSessionScreen = ({ chatId, groupId, type, onHangUp }: CallSessionScreenProps) => {
   const { status, localStream, remoteStream, startCall, endCall } = useCallManager({ chatId, groupId });
+  const { theme } = useTheme();
   const [micEnabled, setMicEnabled] = useState(true);
   const [cameraEnabled, setCameraEnabled] = useState(type === 'video');
 
@@ -31,9 +32,9 @@ export const CallSessionScreen = ({ chatId, groupId, type, onHangUp }: CallSessi
   useEffect(() => {
     const stream = localStream.current;
     if (stream && stream.getAudioTracks) {
-        stream.getAudioTracks().forEach((track: any) => {
-            track.enabled = micEnabled;
-        });
+      stream.getAudioTracks().forEach((track: any) => {
+        track.enabled = micEnabled;
+      });
     }
   }, [micEnabled, localStream]);
 
@@ -43,9 +44,9 @@ export const CallSessionScreen = ({ chatId, groupId, type, onHangUp }: CallSessi
     }
     const stream = localStream.current;
     if (stream && stream.getVideoTracks) {
-        stream.getVideoTracks().forEach((track: any) => {
-            track.enabled = cameraEnabled;
-        });
+      stream.getVideoTracks().forEach((track: any) => {
+        track.enabled = cameraEnabled;
+      });
     }
   }, [cameraEnabled, localStream, type]);
 
@@ -58,17 +59,17 @@ export const CallSessionScreen = ({ chatId, groupId, type, onHangUp }: CallSessi
     <LiquidBackground>
       <View style={styles.container}>
         <GlassView style={styles.statusContainer}>
-          <Text style={styles.status}>Call status: {status}</Text>
+          <Text style={[styles.status, { color: theme.colors.onSurfaceVariant }]}>Call status: {status}</Text>
         </GlassView>
-        
+
         {type === 'video' && (
           <View style={styles.videoGrid}>
             {/* Mock Video Views */}
             <GlassView style={[styles.video, { justifyContent: 'center', alignItems: 'center' }]}>
-              <Text>Remote Video</Text>
+              <Text style={{ color: theme.colors.onSurface }}>Remote Video</Text>
             </GlassView>
             <GlassView style={[styles.video, { justifyContent: 'center', alignItems: 'center' }]}>
-              <Text>Local Video</Text>
+              <Text style={{ color: theme.colors.onSurface }}>Local Video</Text>
             </GlassView>
           </View>
         )}
@@ -98,7 +99,6 @@ const styles = StyleSheet.create({
   },
   status: {
     textAlign: 'center',
-    color: colors.muted,
   },
   videoGrid: {
     flex: 1,
