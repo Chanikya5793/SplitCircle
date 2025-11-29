@@ -1,4 +1,5 @@
 import { BalanceSummary } from '@/components/BalanceSummary';
+import { DebtsList } from '@/components/DebtsList';
 import { ExpenseCard } from '@/components/ExpenseCard';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
@@ -68,6 +69,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
 
           <BalanceSummary group={group} />
         </GlassView>
+
+        <DebtsList group={group} />
 
         <Text variant="titleMedium" style={[styles.section, { color: theme.colors.onSurface }]}>
           Recent expenses
