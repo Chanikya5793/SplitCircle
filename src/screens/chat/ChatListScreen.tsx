@@ -1,8 +1,8 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { colors } from '@/constants';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
+import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef } from 'react';
@@ -17,6 +17,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const navigation = useNavigation();
   const { threads, loading } = useChat();
   const { groups } = useGroups();
+  const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
 
   useLayoutEffect(() => {
@@ -54,8 +55,8 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   return (
     <LiquidBackground>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
-        <GlassView style={styles.stickyHeaderGlass}>
-          <Text variant="titleMedium" style={styles.stickyHeaderTitle}>Chats</Text>
+        <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)' }]}>
+          <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Chats</Text>
         </GlassView>
       </Animated.View>
 
@@ -72,23 +73,23 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                   <Avatar.Text
                     size={48}
                     label={getChatInitials(item)}
-                    style={{ backgroundColor: colors.primary }}
-                    color="#fff"
+                    style={{ backgroundColor: theme.colors.primary }}
+                    color={theme.colors.onPrimary}
                   />
                 )}
                 onPress={() => onOpenThread(item)}
-                titleStyle={{ fontWeight: 'bold', fontSize: 16 }}
-                descriptionStyle={{ color: '#666' }}
+                titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
+                descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
                 descriptionNumberOfLines={1}
               />
             </GlassView>
           )}
           refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} />}
-          ListEmptyComponent={<Text style={styles.empty}>No chats yet.</Text>}
+          ListEmptyComponent={<Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No chats yet.</Text>}
           contentContainerStyle={{ padding: 16, paddingTop: 60, paddingBottom: 100 }}
           ListHeaderComponent={
             <View style={styles.headerContainer}>
-              <Text variant="displaySmall" style={styles.headerTitle}>Chats</Text>
+              <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Chats</Text>
             </View>
           }
           onScroll={Animated.event(
@@ -114,7 +115,6 @@ const styles = StyleSheet.create({
   empty: {
     textAlign: 'center',
     marginTop: 32,
-    color: colors.muted,
   },
   stickyHeader: {
     position: 'absolute',
@@ -132,11 +132,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 20,
     borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
   },
   stickyHeaderTitle: {
     fontWeight: 'bold',
-    color: '#333',
   },
   headerContainer: {
     paddingHorizontal: 8,
@@ -144,6 +142,5 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontWeight: 'bold',
-    color: '#333',
   },
 });
