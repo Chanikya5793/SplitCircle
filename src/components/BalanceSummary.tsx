@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { colors } from '@/constants';
+import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { formatCurrency } from '@/utils/currency';
 import { StyleSheet, View } from 'react-native';
@@ -9,21 +10,25 @@ interface BalanceSummaryProps {
   group: Group;
 }
 
-export const BalanceSummary = ({ group }: BalanceSummaryProps) => (
-  <GlassView style={styles.container}>
-    <Text variant="titleMedium" style={styles.title}>
-      Balances
-    </Text>
-    {group.members.map((member) => (
-      <View key={member.userId} style={styles.row}>
-        <Text style={styles.name}>{member.displayName}</Text>
-        <Text style={[styles.amount, member.balance >= 0 ? styles.positive : styles.negative]}>
-          {formatCurrency(member.balance, group.currency)}
-        </Text>
-      </View>
-    ))}
-  </GlassView>
-);
+export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
+  const { theme } = useTheme();
+
+  return (
+    <GlassView style={styles.container}>
+      <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
+        Balances
+      </Text>
+      {group.members.map((member) => (
+        <View key={member.userId} style={styles.row}>
+          <Text style={[styles.name, { color: theme.colors.onSurface }]}>{member.displayName}</Text>
+          <Text style={[styles.amount, member.balance >= 0 ? styles.positive : { color: theme.colors.error }]}>
+            {formatCurrency(member.balance, group.currency)}
+          </Text>
+        </View>
+      ))}
+    </GlassView>
+  );
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -47,8 +52,5 @@ const styles = StyleSheet.create({
   },
   positive: {
     color: colors.success,
-  },
-  negative: {
-    color: colors.danger,
   },
 });

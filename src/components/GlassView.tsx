@@ -1,17 +1,29 @@
+import { useTheme } from '@/context/ThemeContext';
 import { BlurView } from 'expo-blur';
 import React from 'react';
-import { StyleSheet, View, ViewStyle } from 'react-native';
+import { StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 
 interface GlassViewProps {
   children: React.ReactNode;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   intensity?: number;
 }
 
 export const GlassView = ({ children, style, intensity = 50 }: GlassViewProps) => {
+  const { isDark } = useTheme();
+
   return (
-    <View style={[styles.container, style]}>
-      <BlurView intensity={intensity} tint="light" style={StyleSheet.absoluteFill} pointerEvents="none" />
+    <View style={[
+      styles.container,
+      isDark && styles.containerDark,
+      style
+    ]}>
+      <BlurView
+        intensity={intensity}
+        tint={isDark ? "dark" : "light"}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
       <View style={styles.content}>
         {children}
       </View>
@@ -35,6 +47,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 20,
     elevation: 5,
+  },
+  containerDark: {
+    backgroundColor: 'rgba(30, 30, 30, 0.4)', // Semi-transparent dark
+    borderColor: 'rgba(255, 255, 255, 0.1)', // Faint border
+    shadowOpacity: 0.3,
   },
   content: {
     // Ensure content is above the blur

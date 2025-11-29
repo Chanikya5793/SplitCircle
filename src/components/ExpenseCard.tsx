@@ -1,78 +1,73 @@
 import { GlassView } from '@/components/GlassView';
-import { colors } from '@/constants';
-import type { Expense } from '@/models';
+import { useTheme } from '@/context/ThemeContext';
+import type { GroupExpense } from '@/models';
 import { formatCurrency } from '@/utils/currency';
-import { formatRelativeTime } from '@/utils/format';
 import { StyleSheet, View } from 'react-native';
 import { IconButton, Text, TouchableRipple } from 'react-native-paper';
 
 interface ExpenseCardProps {
-  expense: Expense;
+  expense: GroupExpense;
   currency: string;
   memberMap: Record<string, string>;
-  onEdit?: () => void;
-  onPress?: () => void;
+  onPress: () => void;
 }
 
-export const ExpenseCard = ({ expense, currency, memberMap, onEdit, onPress }: ExpenseCardProps) => {
+export const ExpenseCard = ({ expense, currency, memberMap, onPress }: ExpenseCardProps) => {
+  const { theme, isDark } = useTheme();
   const payerName = memberMap[expense.paidBy] || 'Unknown';
+  const isSettlement = expense.category === 'Settlement';
 
   return (
-    <TouchableRipple onPress={onPress} style={styles.touchable}>
-      <GlassView style={styles.container}>
-        <View style={styles.row}>
-          <View style={styles.meta}>
-            <Text variant="titleMedium">{expense.title}</Text>
-            <Text variant="bodySmall" style={styles.subtitle}>
-              {expense.category} · Paid by {payerName}
-            </Text>
-            <Text variant="bodySmall" style={styles.date}>
-              {formatRelativeTime(expense.createdAt)}
-            </Text>
-          </View>
-          <View style={styles.amountContainer}>
-            <Text variant="titleMedium" style={styles.amount}>
-              {formatCurrency(expense.amount, currency)}
-            </Text>
-            {onEdit && <IconButton icon="pencil" size={18} onPress={onEdit} accessibilityLabel="Edit expense" />}
+    <GlassView style={styles.container}>
+      <TouchableRipple onPress={onPress} style={{ flex: 1 }}>
+        <View style={styles.content}>
+          <View style={styles.header}>
+            <View style={styles.titleRow}>
+              <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{expense.title}</Text>
+              <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
+                {expense.category} · Paid by {payerName}
+              </Text>
+              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                {new Date(expense.createdAt).toLocaleDateString()}
+              </Text>
+            </View>
+            <View style={styles.amountContainer}>
+              <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                {formatCurrency(expense.amount, currency)}
+              </Text>
+              {isSettlement && <IconButton icon="check-circle" size={20} iconColor={theme.colors.primary} />}
+            </View>
           </View>
         </View>
-      </GlassView>
-    </TouchableRipple>
+      </TouchableRipple>
+    </GlassView>
   );
 };
 
 const styles = StyleSheet.create({
-  touchable: {
-    borderRadius: 12,
-    marginBottom: 12,
-  },
   container: {
-    borderRadius: 12,
+    borderRadius: 24,
+    marginBottom: 12,
+    marginHorizontal: 4,
+  },
+  content: {
     padding: 16,
   },
-  row: {
+  header: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  meta: {
+  titleRow: {
     flex: 1,
+    gap: 4,
   },
   subtitle: {
-    color: colors.muted,
-    marginTop: 2,
-  },
-  date: {
-    color: colors.muted,
-    fontSize: 10,
-    marginTop: 2,
+    // color handled dynamically
   },
   amountContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  amount: {
-    fontWeight: 'bold',
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    marginLeft: 16,
   },
 });
