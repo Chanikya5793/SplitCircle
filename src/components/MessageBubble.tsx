@@ -1,5 +1,5 @@
-import { colors } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
+import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
 import { Image, StyleSheet, View } from 'react-native';
@@ -11,12 +11,13 @@ interface MessageBubbleProps {
 
 export const MessageBubble = ({ message }: MessageBubbleProps) => {
   const { user } = useAuth();
+  const { theme, isDark } = useTheme();
 
   if (message.type === 'system') {
     return (
       <View style={styles.systemContainer}>
-        <View style={styles.systemBubble}>
-          <Text style={styles.systemText}>{message.content}</Text>
+        <View style={[styles.systemBubble, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }]}>
+          <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>{message.content}</Text>
         </View>
       </View>
     );
@@ -24,10 +25,15 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
 
   const isMine = user?.userId === message.senderId;
   return (
-    <View style={[styles.container, isMine ? styles.mine : styles.other]}>
-      <Text style={[styles.text, isMine && styles.mineText]}>{message.content}</Text>
+    <View style={[
+      styles.container,
+      isMine
+        ? [styles.mine, { backgroundColor: theme.colors.primary }]
+        : [styles.other, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' }]
+    ]}>
+      <Text style={[styles.text, { color: isMine ? theme.colors.onPrimary : theme.colors.onSurface }]}>{message.content}</Text>
       {message.mediaUrl && <Image source={{ uri: message.mediaUrl }} style={styles.image} />}
-      <Text style={[styles.timestamp, isMine && styles.mineText]}>{formatRelativeTime(message.createdAt)}</Text>
+      <Text style={[styles.timestamp, { color: isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
     </View>
   );
 };
@@ -39,14 +45,12 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   systemBubble: {
-    backgroundColor: 'rgba(0, 0, 0, 0.1)',
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 12,
   },
   systemText: {
     fontSize: 12,
-    color: colors.muted,
     textAlign: 'center',
   },
   container: {
@@ -56,19 +60,14 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   mine: {
-    backgroundColor: colors.primary,
     marginLeft: 'auto',
     borderBottomRightRadius: 2,
   },
   other: {
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
     borderBottomLeftRadius: 2,
   },
   text: {
-    color: colors.muted,
-  },
-  mineText: {
-    color: colors.surface,
+    // color handled dynamically
   },
   timestamp: {
     fontSize: 10,

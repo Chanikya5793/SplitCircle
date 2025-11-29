@@ -1,9 +1,10 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { MessageBubble } from '@/components/MessageBubble';
-import { colors, ROUTES } from '@/constants';
+import { ROUTES } from '@/constants';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
+import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatThread } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -18,6 +19,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const navigation = useNavigation();
   const { subscribeToMessages, sendMessage } = useChat();
   const { groups } = useGroups();
+  const { theme, isDark } = useTheme();
   // Messages for this chat (inverted list - newest first)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Text input state for composer
@@ -36,9 +38,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     navigation.setOptions({
       headerTitle: '',
       headerTransparent: true,
-      headerTintColor: colors.primary,
+      headerTintColor: theme.colors.primary,
     });
-  }, [navigation]);
+  }, [navigation, theme.colors.primary]);
 
   const headerOpacity = scrollY.interpolate({
     inputRange: [0, 40],
@@ -48,12 +50,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
   useEffect(() => {
     console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
-    
+
     const unsubscribe = subscribeToMessages(thread.chatId, (items) => {
       console.log(`📨 Received ${items.length} messages in ChatRoomScreen`);
       setMessages(items);
     });
-    
+
     return () => {
       console.log('👋 ChatRoomScreen unmounting');
       unsubscribe();
@@ -121,19 +123,19 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           // make header hit area predictable
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <GlassView style={styles.stickyHeaderGlass}>
+          <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)' }]}>
             <View style={styles.headerRow}>
               {thread.type === 'group' && (
                 <Avatar.Text
                   size={32}
                   label={groupInitials}
-                  style={{ backgroundColor: colors.primary, marginRight: 8 }}
-                  color="#fff"
+                  style={{ backgroundColor: theme.colors.primary, marginRight: 8 }}
+                  color={theme.colors.onPrimary}
                 />
               )}
               <Text
                 variant="titleMedium"
-                style={styles.stickyHeaderTitle}
+                style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}
                 numberOfLines={1}
               >
                 {title}
@@ -159,11 +161,11 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               <Avatar.Text
                 size={48}
                 label={groupInitials}
-                style={{ backgroundColor: colors.primary, marginRight: 12 }}
-                color="#fff"
+                style={{ backgroundColor: theme.colors.primary, marginRight: 12 }}
+                color={theme.colors.onPrimary}
               />
             )}
-            <Text variant="headlineMedium" style={styles.headerTitle}>{title}</Text>
+            <Text variant="headlineMedium" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>{title}</Text>
           </View>
         </Pressable>
 
@@ -177,8 +179,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           inverted={messages.length > 0}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-              <Text style={{ color: colors.muted }}>No messages yet</Text>
-              <Text style={{ color: colors.muted, fontSize: 12 }}>Send a message to start chatting</Text>
+              <Text style={{ color: theme.colors.secondary }}>No messages yet</Text>
+              <Text style={{ color: theme.colors.secondary, fontSize: 12 }}>Send a message to start chatting</Text>
             </View>
           }
           onScroll={Animated.event(
@@ -193,50 +195,52 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             style={{
               ...styles.composerAnimated,
               borderWidth: focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 2] }),
-              borderColor: colors.primary,
+              borderColor: theme.colors.primary,
               borderRadius: styles.composer.borderRadius,
             }}
           >
             <GlassView style={styles.composer}>
-            <TextInput
-              // Use flat mode so the TextInput doesn't draw its own outline
-              // when focused. We rely on the surrounding `GlassView` for
-              // container radius and padding so the inner input stays visually
-              // consistent with the composer.
-              mode="flat"
-              placeholder={placeholder}
-              value={text}
-              onChangeText={setText}
-              style={styles.input}
-              // control inner padding so text lines up with composer padding
-              contentStyle={styles.inputContent}
-              // ensure caret is visible
-              selectionColor={colors.primary}
-              // Remove underline by forcing no bottom border on the inner input
-              // and ensuring the TextInput doesn't render any underline color
-              underlineColor="transparent"
-              activeUnderlineColor="transparent"
-              onFocus={() => {
-                setComposerFocused(true);
-                Animated.timing(focusAnim, { toValue: 1, duration: 150, useNativeDriver: false }).start();
-              }}
-              onBlur={() => {
-                setComposerFocused(false);
-                Animated.timing(focusAnim, { toValue: 0, duration: 150, useNativeDriver: false }).start();
-              }}
-              multiline
-              numberOfLines={2}
-              maxLength={1000}
-              theme={{
-                colors: {
-                  background: 'transparent',
-                  onSurfaceVariant: '#999'
-                }
-              }}
-              returnKeyType="send"
-              onSubmitEditing={handleSend}
-              blurOnSubmit={false}
-            />
+              <TextInput
+                // Use flat mode so the TextInput doesn't draw its own outline
+                // when focused. We rely on the surrounding `GlassView` for
+                // container radius and padding so the inner input stays visually
+                // consistent with the composer.
+                mode="flat"
+                placeholder={placeholder}
+                value={text}
+                onChangeText={setText}
+                style={styles.input}
+                // control inner padding so text lines up with composer padding
+                contentStyle={styles.inputContent}
+                // ensure caret is visible
+                selectionColor={theme.colors.primary}
+                // Remove underline by forcing no bottom border on the inner input
+                // and ensuring the TextInput doesn't render any underline color
+                underlineColor="transparent"
+                activeUnderlineColor="transparent"
+                onFocus={() => {
+                  setComposerFocused(true);
+                  Animated.timing(focusAnim, { toValue: 1, duration: 150, useNativeDriver: false }).start();
+                }}
+                onBlur={() => {
+                  setComposerFocused(false);
+                  Animated.timing(focusAnim, { toValue: 0, duration: 150, useNativeDriver: false }).start();
+                }}
+                multiline
+                numberOfLines={2}
+                maxLength={1000}
+                theme={{
+                  colors: {
+                    background: 'transparent',
+                    onSurfaceVariant: theme.colors.onSurfaceVariant,
+                    text: theme.colors.onSurface,
+                    placeholder: theme.colors.onSurfaceVariant,
+                  }
+                }}
+                returnKeyType="send"
+                onSubmitEditing={handleSend}
+                blurOnSubmit={false}
+              />
             </GlassView>
           </Animated.View>
           <IconButton
@@ -244,8 +248,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             mode="contained"
             onPress={handleSend}
             disabled={!text.trim() || sending}
-            containerColor={!text.trim() || sending ? '#ccc' : colors.primary}
-            iconColor="#fff"
+            containerColor={!text.trim() || sending ? (isDark ? '#555' : '#ccc') : theme.colors.primary}
+            iconColor={theme.colors.onPrimary}
             size={28}
             style={styles.sendButton}
             accessibilityLabel="Send message"
@@ -319,7 +323,7 @@ const styles = StyleSheet.create({
   },
   composerFocused: {
     borderWidth: 2,
-    borderColor: colors.primary,
+    // borderColor handled dynamically
   },
   stickyHeader: {
     position: 'absolute',
@@ -337,12 +341,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 24,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
     maxWidth: '85%',
   },
   stickyHeaderTitle: {
     fontWeight: 'bold',
-    color: '#333',
   },
   headerRow: {
     flexDirection: 'row',
@@ -355,7 +357,6 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontWeight: 'bold',
-    color: '#333',
     textAlign: 'center',
   },
 });

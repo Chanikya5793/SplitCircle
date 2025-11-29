@@ -1,6 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { colors } from '@/constants';
+import { useTheme } from '@/context/ThemeContext';
 import { Group } from '@/models';
 import { formatCurrency } from '@/utils/currency';
 import { useMemo } from 'react';
@@ -37,6 +37,8 @@ const PALETTE = [
 ];
 
 export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
+  const { theme, isDark } = useTheme();
+
   const categoryData = useMemo(() => {
     if (!group) return [];
     const totals: Record<string, number> = {};
@@ -48,15 +50,15 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
       name,
       amount,
       color: PALETTE[index % PALETTE.length],
-      legendFontColor: '#7F7F7F',
+      legendFontColor: isDark ? '#E0E0E0' : '#7F7F7F',
       legendFontSize: 15,
     }));
-  }, [group]);
+  }, [group, isDark]);
 
   if (!group) {
     return (
       <View style={styles.center}>
-        <Text>Group not found</Text>
+        <Text style={{ color: theme.colors.onSurface }}>Group not found</Text>
       </View>
     );
   }
@@ -67,10 +69,10 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
     <LiquidBackground>
       <ScrollView contentContainerStyle={styles.container}>
         <GlassView style={styles.card}>
-          <Text variant="headlineMedium" style={styles.title}>
+          <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
             Spending by Category
           </Text>
-          <Text variant="titleMedium" style={styles.subtitle}>
+          <Text variant="titleMedium" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
             Total: {formatCurrency(totalExpenses, group.currency)}
           </Text>
 
@@ -87,7 +89,7 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
               absolute
             />
           ) : (
-            <Text style={styles.empty}>No expenses yet.</Text>
+            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No expenses yet.</Text>
           )}
         </GlassView>
       </ScrollView>
@@ -119,11 +121,9 @@ const styles = StyleSheet.create({
   subtitle: {
     marginBottom: 24,
     textAlign: 'center',
-    color: colors.muted,
   },
   empty: {
     textAlign: 'center',
     marginTop: 40,
-    color: colors.muted,
   },
 });

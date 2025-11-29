@@ -1,8 +1,9 @@
 import { GlassTabBar } from '@/components/GlassTabBar';
-import { colors, ROUTES } from '@/constants';
+import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
+import { useTheme } from '@/context/ThemeContext';
 import type { CallType, Group, PresenceStatus } from '@/models';
 import { ForgotPasswordScreen } from '@/screens/auth/ForgotPasswordScreen';
 import { RegisterScreen } from '@/screens/auth/RegisterScreen';
@@ -21,7 +22,7 @@ import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { DefaultTheme, getFocusedRouteNameFromRoute, NavigationContainer } from '@react-navigation/native';
+import { DarkTheme, DefaultTheme, getFocusedRouteNameFromRoute, NavigationContainer } from '@react-navigation/native';
 import { useMemo } from 'react';
 
 import { AuthStack, CallStack, ChatStack, GroupStack, Tab } from './stacks';
@@ -148,87 +149,93 @@ const AuthStackNavigator = () => (
   </AuthStack.Navigator>
 );
 
-const GroupStackNavigator = () => (
-  <GroupStack.Navigator>
-    <GroupStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ title: 'Groups' }} />
-    <GroupStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
-    <GroupStack.Screen
-      name={ROUTES.APP.GROUP_INFO}
-      component={GroupInfoScreen}
-      options={{
-        title: '',
-        headerTransparent: true,
-        headerTintColor: colors.primary,
-      }}
-    />
-    <GroupStack.Screen
-      name={ROUTES.APP.ADD_EXPENSE}
-      component={AddExpenseRoute}
-      options={{ presentation: 'modal', headerShown: false }}
-    />
-    <GroupStack.Screen
-      name={ROUTES.APP.EXPENSE_DETAILS}
-      component={ExpenseDetailsScreen}
-      options={{ title: 'Expense Details' }}
-    />
-    <GroupStack.Screen
-      name={ROUTES.APP.SETTLEMENTS}
-      component={SettlementsRoute}
-      options={{ presentation: 'modal', headerShown: false }}
-    />
-    <GroupStack.Screen name={ROUTES.APP.GROUP_STATS} component={GroupStatsRoute} options={{ title: 'Group Stats' }} />
-    <GroupStack.Screen
-      name={ROUTES.APP.GROUP_CHAT}
-      component={ChatRoomRoute}
-      options={{
-        title: '',
-        headerTransparent: true,
-        headerTintColor: colors.primary,
-      }}
-    />
-  </GroupStack.Navigator>
-);
+const GroupStackNavigator = () => {
+  const { theme } = useTheme();
+  return (
+    <GroupStack.Navigator>
+      <GroupStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ headerShown: false }} />
+      <GroupStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
+      <GroupStack.Screen
+        name={ROUTES.APP.GROUP_INFO}
+        component={GroupInfoScreen}
+        options={{
+          title: '',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <GroupStack.Screen
+        name={ROUTES.APP.ADD_EXPENSE}
+        component={AddExpenseRoute}
+        options={{ presentation: 'modal', headerShown: false }}
+      />
+      <GroupStack.Screen
+        name={ROUTES.APP.EXPENSE_DETAILS}
+        component={ExpenseDetailsScreen}
+        options={{ title: 'Expense Details' }}
+      />
+      <GroupStack.Screen
+        name={ROUTES.APP.SETTLEMENTS}
+        component={SettlementsRoute}
+        options={{ presentation: 'modal', headerShown: false }}
+      />
+      <GroupStack.Screen name={ROUTES.APP.GROUP_STATS} component={GroupStatsRoute} options={{ title: 'Group Stats' }} />
+      <GroupStack.Screen
+        name={ROUTES.APP.GROUP_CHAT}
+        component={ChatRoomRoute}
+        options={{
+          title: '',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+    </GroupStack.Navigator>
+  );
+};
 
-const ChatStackNavigator = () => (
-  <ChatStack.Navigator>
-    <ChatStack.Screen name={ROUTES.APP.CHAT} component={ChatListRoute} options={{ title: 'Chats' }} />
-    <ChatStack.Screen
-      name={ROUTES.APP.GROUP_CHAT}
-      component={ChatRoomRoute}
-      options={{
-        title: '',
-        headerTransparent: true,
-        headerTintColor: colors.primary,
-      }}
-    />
-    <ChatStack.Screen
-      name={ROUTES.APP.GROUP_INFO}
-      component={GroupInfoScreen}
-      options={{
-        title: '',
-        headerTransparent: true,
-        headerTintColor: colors.primary,
-      }}
-    />
-    <ChatStack.Screen
-      name={ROUTES.APP.ADD_EXPENSE}
-      component={AddExpenseRoute}
-      options={{ presentation: 'modal', headerShown: false }}
-    />
-    <ChatStack.Screen
-      name={ROUTES.APP.EXPENSE_DETAILS}
-      component={ExpenseDetailsScreen}
-      options={{ title: 'Expense Details' }}
-    />
-    <ChatStack.Screen
-      name={ROUTES.APP.SETTLEMENTS}
-      component={SettlementsRoute}
-      options={{ presentation: 'modal', headerShown: false }}
-    />
-    <ChatStack.Screen name={ROUTES.APP.GROUP_STATS} component={GroupStatsRoute} options={{ title: 'Group Stats' }} />
-    <ChatStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
-  </ChatStack.Navigator>
-);
+const ChatStackNavigator = () => {
+  const { theme } = useTheme();
+  return (
+    <ChatStack.Navigator>
+      <ChatStack.Screen name={ROUTES.APP.CHAT} component={ChatListRoute} options={{ title: 'Chats' }} />
+      <ChatStack.Screen
+        name={ROUTES.APP.GROUP_CHAT}
+        component={ChatRoomRoute}
+        options={{
+          title: '',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <ChatStack.Screen
+        name={ROUTES.APP.GROUP_INFO}
+        component={GroupInfoScreen}
+        options={{
+          title: '',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <ChatStack.Screen
+        name={ROUTES.APP.ADD_EXPENSE}
+        component={AddExpenseRoute}
+        options={{ presentation: 'modal', headerShown: false }}
+      />
+      <ChatStack.Screen
+        name={ROUTES.APP.EXPENSE_DETAILS}
+        component={ExpenseDetailsScreen}
+        options={{ title: 'Expense Details' }}
+      />
+      <ChatStack.Screen
+        name={ROUTES.APP.SETTLEMENTS}
+        component={SettlementsRoute}
+        options={{ presentation: 'modal', headerShown: false }}
+      />
+      <ChatStack.Screen name={ROUTES.APP.GROUP_STATS} component={GroupStatsRoute} options={{ title: 'Group Stats' }} />
+      <ChatStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
+    </ChatStack.Navigator>
+  );
+};
 
 const CallStackNavigator = () => (
   <CallStack.Navigator>
@@ -237,88 +244,92 @@ const CallStackNavigator = () => (
   </CallStack.Navigator>
 );
 
-const AppTabs = () => (
-  <Tab.Navigator
-    tabBar={(props) => <GlassTabBar {...props} />}
-    screenOptions={{
-      headerShown: false,
-      tabBarActiveTintColor: colors.primary,
-    }}
-  >
-    <Tab.Screen
-      name={ROUTES.APP.GROUPS_TAB}
-      component={GroupStackNavigator}
-      options={({ route }) => ({
-        title: 'Groups',
-        tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="account-group" color={color} size={size} />,
-        tabBarStyle: ((route) => {
-          const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.GROUPS;
-          if (routeName === ROUTES.APP.GROUP_CHAT) {
-            return { display: 'none' };
-          }
-          return undefined;
-        })(route),
-      })}
-    />
-    <Tab.Screen
-      name={ROUTES.APP.CHAT_TAB}
-      component={ChatStackNavigator}
-      options={({ route }) => ({
-        title: 'Chat',
-        tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="chat-processing" color={color} size={size} />,
-        tabBarStyle: ((route) => {
-          const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CHAT;
-          if (routeName === ROUTES.APP.GROUP_CHAT) {
-            return { display: 'none' };
-          }
-          return undefined;
-        })(route),
-      })}
-    />
-    <Tab.Screen
-      name={ROUTES.APP.CALLS_TAB}
-      component={CallStackNavigator}
-      options={({ route }) => ({
-        title: 'Calls',
-        tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="phone" color={color} size={size} />,
-        tabBarStyle: ((route) => {
-          const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CALLS;
-          if (routeName === ROUTES.APP.CALL_DETAIL) {
-            return { display: 'none' };
-          }
-          return undefined;
-        })(route),
-      })}
-    />
-    <Tab.Screen
-      name={ROUTES.APP.SETTINGS}
-      component={SettingsScreen}
-      options={{
-        title: 'Settings',
-        tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="cog" color={color} size={size} />,
+const AppTabs = () => {
+  const { theme } = useTheme();
+  return (
+    <Tab.Navigator
+      tabBar={(props) => <GlassTabBar {...props} />}
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: theme.colors.primary,
       }}
-    />
-  </Tab.Navigator>
-);
+    >
+      <Tab.Screen
+        name={ROUTES.APP.GROUPS_TAB}
+        component={GroupStackNavigator}
+        options={({ route }) => ({
+          title: 'Groups',
+          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="account-group" color={color} size={size} />,
+          tabBarStyle: ((route) => {
+            const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.GROUPS;
+            if (routeName === ROUTES.APP.GROUP_CHAT) {
+              return { display: 'none' };
+            }
+            return undefined;
+          })(route),
+        })}
+      />
+      <Tab.Screen
+        name={ROUTES.APP.CHAT_TAB}
+        component={ChatStackNavigator}
+        options={({ route }) => ({
+          title: 'Chat',
+          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="chat-processing" color={color} size={size} />,
+          tabBarStyle: ((route) => {
+            const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CHAT;
+            if (routeName === ROUTES.APP.GROUP_CHAT) {
+              return { display: 'none' };
+            }
+            return undefined;
+          })(route),
+        })}
+      />
+      <Tab.Screen
+        name={ROUTES.APP.CALLS_TAB}
+        component={CallStackNavigator}
+        options={({ route }) => ({
+          title: 'Calls',
+          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="phone" color={color} size={size} />,
+          tabBarStyle: ((route) => {
+            const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CALLS;
+            if (routeName === ROUTES.APP.CALL_DETAIL) {
+              return { display: 'none' };
+            }
+            return undefined;
+          })(route),
+        })}
+      />
+      <Tab.Screen
+        name={ROUTES.APP.SETTINGS}
+        component={SettingsScreen}
+        options={{
+          title: 'Settings',
+          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="cog" color={color} size={size} />,
+        }}
+      />
+    </Tab.Navigator>
+  );
+};
 
 export const AppNavigator = () => {
   const { user, loading } = useAuth();
+  const { isDark } = useTheme();
 
   if (loading) {
     return <LoadingScreen />;
   }
 
-  const TransparentTheme = {
-    ...DefaultTheme,
+  const NavigationTheme = {
+    ...(isDark ? DarkTheme : DefaultTheme),
     colors: {
-      ...DefaultTheme.colors,
+      ...(isDark ? DarkTheme.colors : DefaultTheme.colors),
       background: 'transparent',
       card: 'transparent',
       border: 'transparent',
     },
   };
 
-  return <NavigationContainer theme={TransparentTheme}>{user ? <AppTabs /> : <AuthStackNavigator />}</NavigationContainer>;
+  return <NavigationContainer theme={NavigationTheme}>{user ? <AppTabs /> : <AuthStackNavigator />}</NavigationContainer>;
 };
 
 export default AppNavigator;

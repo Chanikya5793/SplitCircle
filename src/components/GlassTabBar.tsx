@@ -1,4 +1,4 @@
-import { colors } from '@/constants';
+import { useTheme } from '@/context/ThemeContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { BlurView } from 'expo-blur';
@@ -23,6 +23,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProps) => {
   const insets = useSafeAreaInsets();
+  const { theme, isDark } = useTheme();
   const focusedOptions = descriptors[state.routes[state.index].key].options;
 
   // @ts-ignore - tabBarStyle might not be fully typed in some versions or custom types
@@ -31,6 +32,7 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
     return null;
   }
 
+  // ... (keep existing hooks) ...
   // Animation values
   const indicatorPosition = useSharedValue(0);
   const indicatorWidth = useSharedValue(0);
@@ -183,17 +185,17 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
   return (
     <View style={[styles.container, { bottom: -18 + insets.bottom }]}>
       <GestureDetector gesture={pan}>
-        <BlurView style={styles.glass} intensity={20} tint="light">
+        <BlurView style={styles.glass} intensity={20} tint={isDark ? "dark" : "light"}>
           <View style={styles.tabRow}>
             {/* Animated Liquid Indicator */}
             {/* We render the indicator only if we have at least one layout measurement to avoid jumping */}
             {layout.length > 0 && (
               <Animated.View style={[styles.indicator, animatedIndicatorStyle]}>
                 <LinearGradient
-                  colors={[colors.primary, '#8A2BE2']} // Gradient from primary to a purple-ish hue
+                  colors={[theme.colors.primary, '#8A2BE2']} // Gradient from primary to a purple-ish hue
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
-                  style={styles.indicatorBlob}
+                  style={[styles.indicatorBlob, { shadowColor: theme.colors.primary }]}
                 >
                   <View style={styles.glare} />
                 </LinearGradient>
@@ -223,7 +225,7 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
                 });
               };
 
-              const color = isFocused ? '#fff' : '#666';
+              const color = isFocused ? '#fff' : (isDark ? '#aaa' : '#666');
               const IconComponent = options.tabBarIcon;
 
               return (
@@ -299,7 +301,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.3)', // Glass border
     opacity: 0.9,
-    shadowColor: colors.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 12,

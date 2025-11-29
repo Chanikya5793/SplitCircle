@@ -1,6 +1,8 @@
 import { GlassView } from '@/components/GlassView';
-import { colors, ROUTES } from '@/constants';
+import { LiquidBackground } from '@/components/LiquidBackground';
+import { ROUTES } from '@/constants';
 import { useGroups } from '@/context/GroupContext';
+import { useTheme } from '@/context/ThemeContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useMemo, useRef, useState } from 'react';
@@ -8,14 +10,13 @@ import { Animated, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, Button, Divider, List, Text, TextInput } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { LiquidBackground } from '@/components/LiquidBackground';
-
 export const GroupInfoScreen = () => {
     const insets = useSafeAreaInsets();
     const navigation = useNavigation();
     const route = useRoute();
     const { groupId } = route.params as { groupId: string };
     const { groups } = useGroups();
+    const { theme, isDark } = useTheme();
     const [isEditingName, setIsEditingName] = useState(false);
     const [editedName, setEditedName] = useState('');
     const scrollY = useRef(new Animated.Value(0)).current;
@@ -28,7 +29,7 @@ export const GroupInfoScreen = () => {
         return (
             <LiquidBackground>
                 <SafeAreaView style={styles.container}>
-                    <Text>Group not found</Text>
+                    <Text style={{ color: theme.colors.onSurface }}>Group not found</Text>
                 </SafeAreaView>
             </LiquidBackground>
         );
@@ -89,15 +90,15 @@ export const GroupInfoScreen = () => {
             <SafeAreaView style={styles.container} edges={['bottom']}>
                 {/* Sticky Header - Appears on scroll */}
                 <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity, paddingTop: insets.top }]}>
-                    <GlassView style={styles.stickyHeaderGlass}>
+                    <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.9)' : 'rgba(255, 255, 255, 0.9)' }]}>
                         <View style={styles.stickyHeaderContent}>
                             <Avatar.Text
                                 size={32}
                                 label={groupInitials}
-                                style={{ backgroundColor: colors.primary }}
-                                color="#fff"
+                                style={{ backgroundColor: theme.colors.primary }}
+                                color={theme.colors.onPrimary}
                             />
-                            <Text variant="titleMedium" style={styles.stickyHeaderTitle} numberOfLines={1}>
+                            <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
                                 {group.name}
                             </Text>
                         </View>
@@ -115,7 +116,7 @@ export const GroupInfoScreen = () => {
                 >
                     {/* Group Info Title - Fades out on scroll */}
                     <Animated.View style={[styles.titleContainer, { opacity: titleOpacity, marginTop: insets.top + 40 }]}>
-                        <Text variant="headlineSmall" style={styles.screenTitle}>
+                        <Text variant="headlineSmall" style={[styles.screenTitle, { color: theme.colors.onSurface }]}>
                             Group Info
                         </Text>
                     </Animated.View>
@@ -126,15 +127,15 @@ export const GroupInfoScreen = () => {
                             <Avatar.Text
                                 size={120}
                                 label={groupInitials}
-                                style={{ backgroundColor: colors.primary }}
-                                color="#fff"
+                                style={{ backgroundColor: theme.colors.primary }}
+                                color={theme.colors.onPrimary}
                             />
                             <TouchableOpacity
-                                style={styles.editPicButton}
+                                style={[styles.editPicButton, { backgroundColor: theme.colors.primary, borderColor: theme.colors.surface }]}
                                 onPress={handleChangeProfilePic}
                                 activeOpacity={0.8}
                             >
-                                <MaterialCommunityIcons name="camera" size={20} color="#fff" />
+                                <MaterialCommunityIcons name="camera" size={20} color={theme.colors.onPrimary} />
                             </TouchableOpacity>
                         </TouchableOpacity>
 
@@ -155,15 +156,15 @@ export const GroupInfoScreen = () => {
                             ) : (
                                 <TouchableOpacity onPress={handleEditName} activeOpacity={0.7}>
                                     <View style={styles.nameRow}>
-                                        <Text variant="headlineSmall" style={styles.groupName}>
+                                        <Text variant="headlineSmall" style={[styles.groupName, { color: theme.colors.onSurface }]}>
                                             {group.name}
                                         </Text>
-                                        <MaterialCommunityIcons name="pencil" size={20} color={colors.primary} />
+                                        <MaterialCommunityIcons name="pencil" size={20} color={theme.colors.primary} />
                                     </View>
                                 </TouchableOpacity>
                             )}
                             {group.description && (
-                                <Text variant="bodyMedium" style={styles.description}>
+                                <Text variant="bodyMedium" style={[styles.description, { color: theme.colors.onSurfaceVariant }]}>
                                     {group.description}
                                 </Text>
                             )}
@@ -172,36 +173,36 @@ export const GroupInfoScreen = () => {
 
                     {/* Quick Actions */}
                     <GlassView style={styles.section}>
-                        <Text variant="titleSmall" style={styles.sectionTitle}>
+                        <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
                             Quick Actions
                         </Text>
                         <View style={styles.actionButtons}>
                             <TouchableOpacity style={styles.actionButton} onPress={handleAddExpense} activeOpacity={0.7}>
-                                <View style={styles.actionIcon}>
-                                    <MaterialCommunityIcons name="plus-circle" size={32} color={colors.primary} />
+                                <View style={[styles.actionIcon, { backgroundColor: theme.colors.secondaryContainer }]}>
+                                    <MaterialCommunityIcons name="plus-circle" size={32} color={theme.colors.onSecondaryContainer} />
                                 </View>
-                                <Text variant="labelMedium">Add Expense</Text>
+                                <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>Add Expense</Text>
                             </TouchableOpacity>
 
                             <TouchableOpacity style={styles.actionButton} onPress={handleViewStats} activeOpacity={0.7}>
-                                <View style={styles.actionIcon}>
-                                    <MaterialCommunityIcons name="chart-bar" size={32} color={colors.primary} />
+                                <View style={[styles.actionIcon, { backgroundColor: theme.colors.secondaryContainer }]}>
+                                    <MaterialCommunityIcons name="chart-bar" size={32} color={theme.colors.onSecondaryContainer} />
                                 </View>
-                                <Text variant="labelMedium">Stats</Text>
+                                <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>Stats</Text>
                             </TouchableOpacity>
 
                             <TouchableOpacity style={styles.actionButton} onPress={handleViewSplits} activeOpacity={0.7}>
-                                <View style={styles.actionIcon}>
-                                    <MaterialCommunityIcons name="receipt" size={32} color={colors.primary} />
+                                <View style={[styles.actionIcon, { backgroundColor: theme.colors.secondaryContainer }]}>
+                                    <MaterialCommunityIcons name="receipt" size={32} color={theme.colors.onSecondaryContainer} />
                                 </View>
-                                <Text variant="labelMedium">View Splits</Text>
+                                <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>View Splits</Text>
                             </TouchableOpacity>
                         </View>
                     </GlassView>
 
                     {/* Group Info */}
                     <GlassView style={styles.section}>
-                        <Text variant="titleSmall" style={styles.sectionTitle}>
+                        <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
                             Group Information
                         </Text>
                         <List.Item
@@ -225,7 +226,7 @@ export const GroupInfoScreen = () => {
 
                     {/* Members Section */}
                     <GlassView style={styles.section}>
-                        <Text variant="titleSmall" style={styles.sectionTitle}>
+                        <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
                             Members ({group.members.length})
                         </Text>
                         {group.members.map((member, index) => (
@@ -237,8 +238,8 @@ export const GroupInfoScreen = () => {
                                         <Avatar.Text
                                             size={40}
                                             label={member.displayName.slice(0, 2).toUpperCase()}
-                                            style={{ backgroundColor: colors.primary }}
-                                            color="#fff"
+                                            style={{ backgroundColor: theme.colors.primary }}
+                                            color={theme.colors.onPrimary}
                                         />
                                     )}
                                     right={() =>
@@ -258,8 +259,8 @@ export const GroupInfoScreen = () => {
                     <GlassView style={styles.section}>
                         <Button
                             mode="outlined"
-                            textColor="#d32f2f"
-                            style={styles.dangerButton}
+                            textColor={theme.colors.error}
+                            style={[styles.dangerButton, { borderColor: theme.colors.error }]}
                             onPress={() => { }}
                         >
                             Leave Group
@@ -294,7 +295,6 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
         paddingHorizontal: 16,
         borderRadius: 30,
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
     },
     stickyHeaderContent: {
         flexDirection: 'row',
@@ -304,7 +304,6 @@ const styles = StyleSheet.create({
     },
     stickyHeaderTitle: {
         fontWeight: 'bold',
-        color: '#333',
     },
     titleContainer: {
         paddingHorizontal: 16,
@@ -314,7 +313,6 @@ const styles = StyleSheet.create({
     },
     screenTitle: {
         fontWeight: 'bold',
-        color: '#333',
     },
     profileSection: {
         alignItems: 'center',
@@ -325,14 +323,12 @@ const styles = StyleSheet.create({
         position: 'absolute',
         bottom: 0,
         right: 0,
-        backgroundColor: colors.primary,
         width: 36,
         height: 36,
         borderRadius: 18,
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 3,
-        borderColor: '#fff',
     },
     nameSection: {
         marginTop: 16,
@@ -355,11 +351,9 @@ const styles = StyleSheet.create({
     },
     groupName: {
         fontWeight: 'bold',
-        color: '#333',
     },
     description: {
         marginTop: 4,
-        color: '#666',
         textAlign: 'center',
     },
     section: {
@@ -371,7 +365,6 @@ const styles = StyleSheet.create({
     sectionTitle: {
         fontWeight: 'bold',
         marginBottom: 12,
-        color: '#333',
     },
     actionButtons: {
         flexDirection: 'row',
@@ -386,7 +379,6 @@ const styles = StyleSheet.create({
         width: 60,
         height: 60,
         borderRadius: 30,
-        backgroundColor: 'rgba(103, 80, 164, 0.1)',
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -394,7 +386,7 @@ const styles = StyleSheet.create({
         alignSelf: 'center',
     },
     dangerButton: {
-        borderColor: '#d32f2f',
+        // borderColor handled dynamically
     },
 });
 
