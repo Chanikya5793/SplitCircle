@@ -153,7 +153,7 @@ const GroupStackNavigator = () => {
   const { theme } = useTheme();
   return (
     <GroupStack.Navigator>
-      <GroupStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ title: 'Groups' }} />
+      <GroupStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ headerShown: false }} />
       <GroupStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
       <GroupStack.Screen
         name={ROUTES.APP.GROUP_INFO}

@@ -1,9 +1,9 @@
 import { GlassView } from '@/components/GlassView';
-import { colors } from '@/constants';
+import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { formatCurrency } from '@/utils/currency';
-import { StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Avatar, IconButton, Text } from 'react-native-paper';
+import { StyleSheet, View } from 'react-native';
+import { Avatar, IconButton, Text, TouchableRipple } from 'react-native-paper';
 
 interface GroupCardProps {
   group: Group;
@@ -11,34 +11,45 @@ interface GroupCardProps {
 }
 
 export const GroupCard = ({ group, onPress }: GroupCardProps) => {
+  const { theme, isDark } = useTheme();
   const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
-      <GlassView style={styles.container}>
-        <View style={styles.header}>
-          <Avatar.Text size={48} label={group.name.slice(0, 2).toUpperCase()} style={{ backgroundColor: 'rgba(103, 80, 164, 0.1)' }} color="#6750A4" />
-          <View style={styles.meta}>
-            <Text variant="titleMedium" style={{ fontWeight: 'bold' }}>{group.name}</Text>
-            <Text variant="bodySmall" style={styles.subtitle}>
-              {group.members.length} members · {group.currency}
-            </Text>
+    <GlassView style={styles.container}>
+      <TouchableRipple onPress={onPress} style={{ flex: 1 }}>
+        <View style={styles.content}>
+          <View style={styles.header}>
+            <Avatar.Text
+              size={48}
+              label={group.name.slice(0, 2).toUpperCase()}
+              style={{ backgroundColor: theme.colors.primaryContainer }}
+              color={theme.colors.onPrimaryContainer}
+            />
+            <View style={styles.meta}>
+              <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{group.name}</Text>
+              <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
+                {group.members.length} members · {group.currency}
+              </Text>
+            </View>
+            <IconButton icon="chevron-right" onPress={onPress} accessibilityLabel="Open group" iconColor={theme.colors.onSurfaceVariant} />
           </View>
-          <IconButton icon="chevron-right" onPress={onPress} accessibilityLabel="Open group" />
+          <Text variant="bodyMedium" style={[styles.total, { color: theme.colors.primary }]}>
+            Total spent {formatCurrency(total, group.currency)}
+          </Text>
         </View>
-        <Text variant="bodyMedium" style={styles.total}>
-          Total spent {formatCurrency(total, group.currency)}
-        </Text>
-      </GlassView>
-    </TouchableOpacity>
+      </TouchableRipple>
+    </GlassView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     borderRadius: 24,
-    padding: 16,
     marginBottom: 12,
     marginHorizontal: 4,
+  },
+  content: {
+    padding: 16,
   },
   header: {
     flexDirection: 'row',
@@ -49,12 +60,11 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
   subtitle: {
-    color: colors.muted,
+    // color handled dynamically
   },
   total: {
     marginTop: 12,
     fontWeight: '600',
     textAlign: 'right',
-    color: '#6750A4',
   },
 });
