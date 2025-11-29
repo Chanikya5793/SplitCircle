@@ -84,9 +84,9 @@ const Blob = ({ color, size, initialX, initialY, duration, delay }: any) => {
 export const LiquidBackground = ({ children, style }: LiquidBackgroundProps) => {
   const { isDark } = useTheme();
 
-  const bgColors = isDark ? ['#121212', '#000000'] : ['#fdfbfb', '#ebedee'];
+  const bgColors = isDark ? ['#000000', '#1A1A1A'] : ['#fdfbfb', '#ebedee'];
   const blobColors = isDark
-    ? ['#4527A0', '#283593', '#00695C', '#C62828'] // Deep Purple, Indigo, Teal, Red
+    ? ['#7C4DFF', '#448AFF', '#00E5FF', '#FF4081'] // Vibrant Purple, Blue, Cyan, Pink
     : ['#ff9a9e', '#fad0c4', '#a18cd1', '#84fab0']; // Light pastel colors
 
   return (
