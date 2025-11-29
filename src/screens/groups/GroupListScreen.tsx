@@ -2,9 +2,9 @@ import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { GroupCard } from '@/components/GroupCard';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { colors } from '@/constants';
 import { CURRENCIES } from '@/constants/currencies';
 import { useGroups } from '@/context/GroupContext';
+import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -20,6 +20,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { groups, loading, createGroup, joinGroup } = useGroups();
+  const { theme, isDark } = useTheme();
   const [dialog, setDialog] = useState<'create' | 'join' | null>(null);
   const [name, setName] = useState('');
   const [currencyInput, setCurrencyInput] = useState('USD');
@@ -64,7 +65,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
 
   const handleCreate = async () => {
     const selectedCurrency = CURRENCIES.find(c => c.code === currencyInput.toUpperCase());
-    
+
     if (!selectedCurrency) {
       Alert.alert('Invalid Currency', 'Please select a valid currency from the list.');
       return;
@@ -94,8 +95,8 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   return (
     <LiquidBackground style={styles.container}>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
-        <GlassView style={styles.stickyHeaderGlass}>
-          <Text variant="titleMedium" style={styles.stickyHeaderTitle}>Groups</Text>
+        <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)' }]}>
+          <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Groups</Text>
         </GlassView>
       </Animated.View>
 
@@ -109,7 +110,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         ]}
         ListHeaderComponent={
           <View style={styles.headerContainer}>
-            <Text variant="displaySmall" style={styles.headerTitle}>Groups</Text>
+            <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Groups</Text>
           </View>
         }
         onScroll={Animated.event(
@@ -117,10 +118,10 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           { useNativeDriver: false }
         )}
         scrollEventThrottle={16}
-        ListEmptyComponent={<Text style={styles.empty}>No groups yet. Create one!</Text>}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} />}
+        ListEmptyComponent={<Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No groups yet. Create one!</Text>}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} tintColor={theme.colors.primary} />}
       />
-      <View style={[styles.actions, { bottom:  60 + insets.bottom }]}>
+      <View style={[styles.actions, { bottom: 60 + insets.bottom }]}>
         <Button mode="contained" onPress={() => setDialog('create')}>
           New group
         </Button>
@@ -129,16 +130,16 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           onPress={() => setDialog('join')}
           activeOpacity={0.8}
           style={{
-        borderRadius: 15,
-        overflow: 'hidden',
-        borderWidth: 0,
-        borderColor: 'rgba(0,0,0,0.08)',
-        minWidth: 100,
+            borderRadius: 15,
+            overflow: 'hidden',
+            borderWidth: 0,
+            borderColor: 'rgba(0,0,0,0.08)',
+            minWidth: 100,
           }}
         >
           {/* GlassView provides the blurred/frosted fill inside the button */}
           <GlassView style={{ paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ color: colors.primary, fontWeight: '600' }}>Join via code</Text>
+            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Join via code</Text>
           </GlassView>
         </TouchableOpacity>
       </View>
@@ -153,18 +154,18 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           ]}
         >
           <GlassView style={styles.glassCard}>
-            <Text variant="headlineSmall" style={styles.modalTitle}>Create group</Text>
+            <Text variant="headlineSmall" style={[styles.modalTitle, { color: theme.colors.onSurface }]}>Create group</Text>
             <ScrollView contentContainerStyle={{ paddingHorizontal: 4 }} keyboardShouldPersistTaps="handled">
-              <FloatingLabelInput 
+              <FloatingLabelInput
                 label="Name"
-                value={name} 
-                onChangeText={setName} 
+                value={name}
+                onChangeText={setName}
                 style={styles.field}
               />
               <View>
-                <FloatingLabelInput 
+                <FloatingLabelInput
                   label="Currency"
-                  value={currencyInput} 
+                  value={currencyInput}
                   onChangeText={(text: string) => {
                     setCurrencyInput(text);
                     setShowCurrencyList(true);
@@ -174,19 +175,19 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
                   style={showCurrencyList ? { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } : undefined}
                 />
                 {showCurrencyList && (
-                  <View style={styles.currencyList}>
+                  <View style={[styles.currencyList, { backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.85)', borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
                     <ScrollView nestedScrollEnabled={true} keyboardShouldPersistTaps="handled">
                       {filteredCurrencies.slice(0, 50).map((item) => (
-                        <TouchableOpacity 
+                        <TouchableOpacity
                           key={item.code}
-                          style={styles.currencyItem} 
+                          style={[styles.currencyItem, { borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }]}
                           onPress={() => {
                             setCurrencyInput(item.code);
                             setShowCurrencyList(false);
                           }}
                         >
-                          <Text style={{ fontWeight: 'bold' }}>{item.code}</Text>
-                          <Text numberOfLines={1} style={{ flex: 1, marginLeft: 8, color: colors.muted }}>{item.name}</Text>
+                          <Text style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{item.code}</Text>
+                          <Text numberOfLines={1} style={{ flex: 1, marginLeft: 8, color: theme.colors.onSurfaceVariant }}>{item.name}</Text>
                         </TouchableOpacity>
                       ))}
                     </ScrollView>
@@ -195,7 +196,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
               </View>
             </ScrollView>
             <View style={styles.modalActions}>
-              <Button onPress={() => setDialog(null)}>Cancel</Button>
+              <Button onPress={() => setDialog(null)} textColor={theme.colors.primary}>Cancel</Button>
               <Button mode="contained" onPress={handleCreate} disabled={!name}>
                 Create
               </Button>
@@ -212,7 +213,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           ]}
         >
           <GlassView style={styles.glassCard}>
-            <Text variant="headlineSmall" style={styles.modalTitle}>Join group</Text>
+            <Text variant="headlineSmall" style={[styles.modalTitle, { color: theme.colors.onSurface }]}>Join group</Text>
             <FloatingLabelInput
               label="Invite code"
               value={inviteCode}
@@ -220,7 +221,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
               autoCapitalize="characters"
             />
             <View style={styles.modalActions}>
-              <Button onPress={() => setDialog(null)}>Cancel</Button>
+              <Button onPress={() => setDialog(null)} textColor={theme.colors.primary}>Cancel</Button>
               <Button mode="contained" onPress={handleJoin} disabled={!inviteCode}>
                 Join
               </Button>
@@ -253,17 +254,14 @@ const styles = StyleSheet.create({
   },
   empty: {
     textAlign: 'center',
-    color: colors.muted,
   },
   field: {
     marginBottom: 0,
   },
   currencyList: {
     borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.1)',
     borderTopWidth: 0,
     maxHeight: 150,
-    backgroundColor: 'rgba(255,255,255,0.85)',
     elevation: 4,
     borderBottomLeftRadius: 20,
     borderBottomRightRadius: 20,
@@ -272,7 +270,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.05)',
     alignItems: 'center',
   },
   modalContainer: {
@@ -290,7 +287,6 @@ const styles = StyleSheet.create({
     marginBottom: 0, // Spacing between title and first field
     textAlign: 'center',
     fontWeight: 'bold',
-    color: '#333',
   },
   modalActions: {
     flexDirection: 'row',
@@ -314,11 +310,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 20,
     borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
   },
   stickyHeaderTitle: {
     fontWeight: 'bold',
-    color: '#333',
   },
   headerContainer: {
     paddingHorizontal: 8,
@@ -327,6 +321,5 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontWeight: 'bold',
-    color: '#333',
   },
 });
