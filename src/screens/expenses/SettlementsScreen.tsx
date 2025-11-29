@@ -90,7 +90,7 @@ export const SettlementsScreen = ({ group, onClose }: SettlementsScreenProps) =>
             theme={inputTheme}
             textColor={theme.colors.onSurface}
             left={<TextInput.Affix text={group.currency} />}
-            contentStyle={{ paddingTop: 0, paddingBottom: 0, height: 50, textAlignVertical: 'center' }}
+            contentStyle={{ paddingHorizontal: 16 }}
           />
           <TextInput
             label="Note"
@@ -103,13 +103,17 @@ export const SettlementsScreen = ({ group, onClose }: SettlementsScreenProps) =>
             outlineColor={outlineColor}
             theme={inputTheme}
             textColor={theme.colors.onSurface}
-            contentStyle={{ paddingTop: 8, paddingBottom: 8, textAlignVertical: 'top' }}
+            contentStyle={{ paddingTop: 16, paddingBottom: 16, textAlignVertical: 'top' }}
           />
           <View style={styles.actions}>
             <Button mode="outlined" onPress={onClose} textColor={theme.colors.onSurface}>
               Cancel
             </Button>
-            <Button mode="contained" onPress={handleSettle} disabled={!amount}>
+            <Button
+              mode="contained"
+              onPress={handleSettle}
+              disabled={!amount || fromUserId === toUserId}
+            >
               Save settlement
             </Button>
           </View>

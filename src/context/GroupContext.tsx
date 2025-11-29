@@ -1,7 +1,7 @@
 import { db } from '@/firebase';
 import type { ChatMessage, ChatParticipant, Expense, Group, ParticipantShare, Settlement } from '@/models';
-import { deleteFile, uploadFile } from '@/services/storageService';
 import { queueMessage } from '@/services/messageQueueService';
+import { deleteFile, uploadFile } from '@/services/storageService';
 import {
   addDoc,
   arrayUnion,
@@ -68,6 +68,15 @@ const adaptGroup = (data: Group): Group => {
     expense.participants.forEach(p => {
       memberBalances[p.userId] = (memberBalances[p.userId] || 0) - p.share;
     });
+  });
+
+  // Apply settlements to balances
+  (data.settlements || []).forEach(settlement => {
+    // Payer (fromUserId) pays money, so their balance increases (debt reduces)
+    memberBalances[settlement.fromUserId] = (memberBalances[settlement.fromUserId] || 0) + settlement.amount;
+
+    // Receiver (toUserId) receives money, so their balance decreases (amount owed to them reduces)
+    memberBalances[settlement.toUserId] = (memberBalances[settlement.toUserId] || 0) - settlement.amount;
   });
 
   return {
@@ -170,7 +179,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       const chatDoc = chatSnapshot.docs[0];
       const chatId = chatDoc.id;
       const chatData = chatDoc.data();
-      
+
       const newParticipant: ChatParticipant = {
         userId: user.userId,
         displayName: user.displayName,
@@ -227,14 +236,14 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       console.log('Adding expense to group:', groupId, expense);
       const expenseId = uuid();
       const docRef = doc(db, 'groups', groupId);
-      
+
       let receipt = expense.receipt;
       if (fileUri) {
         // Determine extension from URI or default to jpg
         let fileName = originalFileName;
         if (!fileName) {
-             const extension = fileUri.split('.').pop()?.split('?')[0] || 'jpg';
-             fileName = `receipt.${extension}`;
+          const extension = fileUri.split('.').pop()?.split('?')[0] || 'jpg';
+          fileName = `receipt.${extension}`;
         }
         const path = `groups/${groupId}/expenses/${expenseId}/${fileName}`;
         const url = await uploadFile(fileUri, path);
@@ -260,7 +269,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         expenses: arrayUnion(newExpense),
         updatedAt: serverTimestamp(),
       });
-      
+
       // Also add to the top-level expenses collection for easier querying later
       await addDoc(collection(db, 'expenses'), {
         ...newExpense,
@@ -285,32 +294,32 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       if (newFileUri !== undefined) {
         // If explicitly null, delete existing image
         if (newFileUri === null && receipt?.url) {
-           // Try to guess path from previous filename or default
-           const fileName = receipt.fileName || 'receipt.jpg';
-           const path = `groups/${groupId}/expenses/${updatedExpense.expenseId}/${fileName}`;
-           await deleteFile(path);
-           receipt = undefined;
+          // Try to guess path from previous filename or default
+          const fileName = receipt.fileName || 'receipt.jpg';
+          const path = `groups/${groupId}/expenses/${updatedExpense.expenseId}/${fileName}`;
+          await deleteFile(path);
+          receipt = undefined;
         } else if (newFileUri) {
-           // If there was an old file, and the new filename is different, we should delete the old one
-           if (receipt?.fileName && newFileName && receipt.fileName !== newFileName) {
-               const oldPath = `groups/${groupId}/expenses/${updatedExpense.expenseId}/${receipt.fileName}`;
-               await deleteFile(oldPath);
-           }
+          // If there was an old file, and the new filename is different, we should delete the old one
+          if (receipt?.fileName && newFileName && receipt.fileName !== newFileName) {
+            const oldPath = `groups/${groupId}/expenses/${updatedExpense.expenseId}/${receipt.fileName}`;
+            await deleteFile(oldPath);
+          }
 
-           let fileName = newFileName;
-           if (!fileName) {
-                const extension = newFileUri.split('.').pop()?.split('?')[0] || 'jpg';
-                fileName = `receipt.${extension}`;
-           }
+          let fileName = newFileName;
+          if (!fileName) {
+            const extension = newFileUri.split('.').pop()?.split('?')[0] || 'jpg';
+            fileName = `receipt.${extension}`;
+          }
 
-           const path = `groups/${groupId}/expenses/${updatedExpense.expenseId}/${fileName}`;
-           const url = await uploadFile(newFileUri, path);
-           receipt = { url, fileName };
+          const path = `groups/${groupId}/expenses/${updatedExpense.expenseId}/${fileName}`;
+          const url = await uploadFile(newFileUri, path);
+          receipt = { url, fileName };
         }
       }
 
       const finalExpense: any = { ...updatedExpense, updatedAt: Date.now() };
-      
+
       if (receipt) {
         finalExpense.receipt = receipt;
       } else {
@@ -350,9 +359,9 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
 
       const expenseToDelete = group.expenses.find((exp) => exp.expenseId === expenseId);
       if (expenseToDelete?.receipt?.url) {
-         const fileName = expenseToDelete.receipt.fileName || 'receipt.jpg';
-         const path = `groups/${groupId}/expenses/${expenseId}/${fileName}`;
-         await deleteFile(path);
+        const fileName = expenseToDelete.receipt.fileName || 'receipt.jpg';
+        const path = `groups/${groupId}/expenses/${expenseId}/${fileName}`;
+        await deleteFile(path);
       }
 
       const updatedExpenses = group.expenses.filter((exp) => exp.expenseId !== expenseId);
