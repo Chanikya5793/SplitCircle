@@ -1,6 +1,7 @@
 import { db } from '@/firebase';
-import type { Expense, Group, ParticipantShare, Settlement } from '@/models';
+import type { ChatMessage, ChatParticipant, Expense, Group, ParticipantShare, Settlement } from '@/models';
 import { deleteFile, uploadFile } from '@/services/storageService';
+import { queueMessage } from '@/services/messageQueueService';
 import {
   addDoc,
   arrayUnion,
@@ -159,6 +160,61 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       }),
       updatedAt: serverTimestamp(),
     });
+
+    // Update associated chat thread if it exists
+    const chatsRef = collection(db, 'chats');
+    const chatQ = query(chatsRef, where('groupId', '==', snapshot.groupId));
+    const chatSnapshot = await getDocs(chatQ);
+
+    if (!chatSnapshot.empty) {
+      const chatDoc = chatSnapshot.docs[0];
+      const chatId = chatDoc.id;
+      const chatData = chatDoc.data();
+      
+      const newParticipant: ChatParticipant = {
+        userId: user.userId,
+        displayName: user.displayName,
+        photoURL: user.photoURL,
+        status: 'online',
+      };
+
+      const msgId = uuid();
+      const now = Date.now();
+      const systemMessage: ChatMessage = {
+        id: msgId,
+        messageId: msgId,
+        chatId,
+        senderId: 'system',
+        type: 'system',
+        content: `${user.displayName} joined the group`,
+        status: 'sent',
+        createdAt: now,
+        timestamp: now,
+        isFromMe: false,
+        deliveredTo: [],
+        readBy: [],
+      };
+
+      await updateDoc(doc(db, 'chats', chatId), {
+        participantIds: arrayUnion(user.userId),
+        participants: arrayUnion(newParticipant),
+        lastMessage: { ...systemMessage, createdAt: serverTimestamp() },
+        updatedAt: serverTimestamp(),
+      });
+
+      // Queue system message for all participants (including the new user)
+      const currentParticipantIds = (chatData.participantIds as string[]) || [];
+      const allRecipients = [...new Set([...currentParticipantIds, user.userId])];
+
+      for (const recipientId of allRecipients) {
+        try {
+          await queueMessage(recipientId, systemMessage);
+        } catch (error) {
+          console.error(`Failed to queue system message for ${recipientId}:`, error);
+          // Continue to next recipient even if one fails
+        }
+      }
+    }
   };
 
   const addExpense = async (

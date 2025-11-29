@@ -11,6 +11,17 @@ interface MessageBubbleProps {
 
 export const MessageBubble = ({ message }: MessageBubbleProps) => {
   const { user } = useAuth();
+
+  if (message.type === 'system') {
+    return (
+      <View style={styles.systemContainer}>
+        <View style={styles.systemBubble}>
+          <Text style={styles.systemText}>{message.content}</Text>
+        </View>
+      </View>
+    );
+  }
+
   const isMine = user?.userId === message.senderId;
   return (
     <View style={[styles.container, isMine ? styles.mine : styles.other]}>
@@ -22,6 +33,22 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
 };
 
 const styles = StyleSheet.create({
+  systemContainer: {
+    alignItems: 'center',
+    marginVertical: 12,
+    width: '100%',
+  },
+  systemBubble: {
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  systemText: {
+    fontSize: 12,
+    color: colors.muted,
+    textAlign: 'center',
+  },
   container: {
     maxWidth: '80%',
     padding: 12,

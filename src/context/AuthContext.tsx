@@ -14,7 +14,7 @@ import {
     updateProfile,
     type User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -70,7 +70,14 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   }, [request]);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    let unsubscribeSnapshot: (() => void) | undefined;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      if (unsubscribeSnapshot) {
+        unsubscribeSnapshot();
+        unsubscribeSnapshot = undefined;
+      }
+
       if (!firebaseUser) {
         setUser(null);
         setLoading(false);
@@ -78,20 +85,38 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       }
 
       const docRef = doc(db, 'users', firebaseUser.uid);
-      const snapshot = await getDoc(docRef);
-      const payload = buildUserProfile(firebaseUser, snapshot.data() as UserProfile | undefined);
-      if (!snapshot.exists()) {
-        await setDoc(docRef, {
-          ...payload,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      }
-      setUser(payload);
-      setLoading(false);
+      
+      unsubscribeSnapshot = onSnapshot(docRef, async (docSnap) => {
+        if (docSnap.exists()) {
+          const payload = buildUserProfile(firebaseUser, docSnap.data() as UserProfile);
+          setUser(payload);
+          setLoading(false);
+        } else {
+          // Document doesn't exist yet. 
+          // If we are registering, registerWithEmail will create it shortly.
+          // But to be safe (and for Google Sign In), we create it if missing.
+          const payload = buildUserProfile(firebaseUser);
+          try {
+            await setDoc(docRef, {
+              ...payload,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+            // The snapshot listener will fire again after this write.
+          } catch (error) {
+            console.error('Error creating user profile:', error);
+          }
+        }
+      }, (error) => {
+        console.error('Auth snapshot error:', error);
+        setLoading(false);
+      });
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeSnapshot) unsubscribeSnapshot();
+    };
   }, []);
 
   useEffect(() => {

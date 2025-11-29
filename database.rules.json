@@ -1,0 +1,51 @@
+{
+  "rules": {
+    "messageQueue": {
+      "$recipientId": {
+        ".read": "auth != null && auth.uid == $recipientId",
+        "$messageId": {
+          ".write": "auth != null",
+          ".validate": "newData.hasChildren(['senderId', 'content', 'timestamp', 'type'])",
+          "senderId": {
+            ".validate": "newData.isString()"
+          },
+          "content": {
+            ".validate": "newData.isString()"
+          },
+          "timestamp": {
+            ".validate": "newData.isNumber()"
+          },
+          "type": {
+            ".validate": "newData.isString() && (newData.val() == 'text' || newData.val() == 'image' || newData.val() == 'video' || newData.val() == 'audio' || newData.val() == 'system' || newData.val() == 'call' || newData.val() == 'file')"
+          },
+          "chatId": {
+            ".validate": "newData.isString()"
+          }
+        }
+      }
+    },
+    "receipts": {
+      "$chatId": {
+        "$messageId": {
+          ".read": "auth != null",
+          ".write": "auth != null",
+          "delivered": {
+            ".validate": "newData.isBoolean()"
+          },
+          "deliveredAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "read": {
+            ".validate": "newData.isBoolean()"
+          },
+          "readAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "recipientId": {
+            ".validate": "newData.isString()"
+          }
+        }
+      }
+    }
+  }
+}
