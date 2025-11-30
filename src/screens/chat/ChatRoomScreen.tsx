@@ -173,7 +173,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
   const isInverted = messages.length > 0;
   // Base padding for composer (approx 100) + keyboard height
-  const bottomPadding = 100 + keyboardHeight;
+  const bottomPadding = 160 + keyboardHeight;
 
   return (
     <LiquidBackground>
