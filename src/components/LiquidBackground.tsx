@@ -2,6 +2,7 @@ import { useTheme } from '@/context/ThemeContext';
 import React, { useEffect } from 'react';
 import { Dimensions, StyleSheet, View, ViewStyle } from 'react-native';
 import Animated, {
+  Easing,
   interpolateColor,
   useAnimatedStyle,
   useSharedValue,
@@ -18,13 +19,23 @@ interface LiquidBackgroundProps {
 }
 
 const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, duration = 5000 }: any) => {
-  const sv = useSharedValue(0);
+  const scaleSv = useSharedValue(1);
+  const translateSv = useSharedValue(0);
 
   useEffect(() => {
-    sv.value = withRepeat(
+    scaleSv.value = withRepeat(
       withSequence(
-        withTiming(1, { duration: duration / 2 }),
-        withTiming(0, { duration: duration / 2 })
+        withTiming(1.15, { duration: duration, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: duration, easing: Easing.inOut(Easing.ease) })
+      ),
+      -1,
+      true
+    );
+
+    translateSv.value = withRepeat(
+      withSequence(
+        withTiming(30, { duration: duration * 1.3, easing: Easing.inOut(Easing.ease) }),
+        withTiming(-30, { duration: duration * 1.3, easing: Easing.inOut(Easing.ease) })
       ),
       -1,
       true
@@ -43,9 +54,9 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, 
       left: initialX,
       top: initialY,
       transform: [
-        { scale: 1 + sv.value * 0.2 },
-        { translateX: sv.value * 20 },
-        { translateY: sv.value * 20 }
+        { scale: scaleSv.value },
+        { translateX: translateSv.value },
+        { translateY: translateSv.value * 0.5 } // Move less vertically
       ],
     };
   });
