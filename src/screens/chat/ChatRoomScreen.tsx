@@ -123,7 +123,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           // make header hit area predictable
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)' }]}>
+          <GlassView style={styles.stickyHeaderGlass}>
             <View style={styles.headerRow}>
               {thread.type === 'group' && (
                 <Avatar.Text
@@ -149,7 +149,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         // smaller offset so composer hugs the keyboard more closely
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
+        //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
       >
         <Pressable
           onPress={thread.type === 'group' ? handleHeaderPress : undefined}
@@ -169,7 +169,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           </View>
         </Pressable>
 
-        <FlatList
+        <Animated.FlatList
           ref={listRef}
           data={messages}
           keyExtractor={(item) => item.messageId || item.id || Math.random().toString()}
@@ -185,7 +185,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           }
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-            { useNativeDriver: false }
+            { useNativeDriver: true }
           )}
           scrollEventThrottle={16}
         />
@@ -240,6 +240,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 returnKeyType="send"
                 onSubmitEditing={handleSend}
                 blurOnSubmit={false}
+                keyboardAppearance={isDark ? 'dark' : 'light'}
               />
             </GlassView>
           </Animated.View>
@@ -281,7 +282,9 @@ const styles = StyleSheet.create({
     // Increase horizontal padding to give the composer more breathing room
     paddingHorizontal: 12,
     // small vertical padding so composer sits nicely above keyboard
-    paddingVertical: 6,
+    paddingVertical: 0,
+    // GAP BETWEEN KEYBOARD AND INPUT: Adjust this value to increase/decrease space
+    marginBottom: 10,
   },
   composer: {
     flex: 1,
@@ -294,15 +297,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     // Tweak these min/max to change vertical size of the input box
     maxHeight: 120,
-    minHeight: 0,
+    minHeight: 44, // Ensure minimum touch height
     textAlignVertical: 'center',
+    justifyContent: 'center',
     // Internal padding is controlled via contentStyle; keep zero here
     paddingVertical: 0,
     paddingHorizontal: 0,
   },
   inputContent: {
-    // controls the inner padding of the react-native-paper TextInput
-    // reduce vertical padding so caret and placeholder align vertically
+    // PLACEHOLDER ALIGNMENT: Adjust vertical padding to center text
     paddingVertical: 0,
     // move placeholder/text a bit to the right
     paddingLeft: 16,

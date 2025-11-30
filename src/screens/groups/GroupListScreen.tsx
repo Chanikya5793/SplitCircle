@@ -8,7 +8,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, FlatList, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Modal, Portal, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -79,6 +79,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       setShowCurrencyList(false);
     } catch (error) {
       console.error('Failed to create group', error);
+      Alert.alert('Error', 'Failed to create group');
     }
   };
 
@@ -89,18 +90,19 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       setInviteCode('');
     } catch (error) {
       console.error('Failed to join group', error);
+      Alert.alert('Error', 'Failed to join group');
     }
   };
 
   return (
     <LiquidBackground style={styles.container}>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
-        <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)' }]}>
+        <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Groups</Text>
         </GlassView>
       </Animated.View>
 
-      <FlatList
+      <Animated.FlatList
         data={groups}
         keyExtractor={(item) => item.groupId}
         renderItem={({ item }) => <GroupCard group={item} onPress={() => onOpenGroup(item)} />}
@@ -115,12 +117,21 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         }
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: false }
+          { useNativeDriver: true }
         )}
         scrollEventThrottle={16}
-        ListEmptyComponent={<Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No groups yet. Create one!</Text>}
+        removeClippedSubviews={true}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        ListEmptyComponent={
+          !loading ? (
+            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No groups yet. Create one!</Text>
+          ) : null
+        }
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} tintColor={theme.colors.primary} />}
       />
+
       <View style={[styles.actions, { bottom: 60 + insets.bottom }]}>
         <Button mode="contained" onPress={() => setDialog('create')}>
           New group
@@ -232,9 +243,6 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     </LiquidBackground>
   );
 };
-
-// Removed local FloatingLabelInput definition
-
 
 const styles = StyleSheet.create({
   container: {

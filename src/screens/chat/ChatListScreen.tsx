@@ -6,7 +6,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef } from 'react';
-import { Animated, FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import { Animated, RefreshControl, StyleSheet, View } from 'react-native';
 import { Avatar, List, Text } from 'react-native-paper';
 
 interface ChatListScreenProps {
@@ -55,13 +55,13 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   return (
     <LiquidBackground>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
-        <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)' }]}>
+        <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Chats</Text>
         </GlassView>
       </Animated.View>
 
       <View style={styles.container}>
-        <FlatList
+        <Animated.FlatList
           data={threads}
           keyExtractor={(item) => item.chatId}
           renderItem={({ item }) => (
@@ -94,7 +94,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
           }
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-            { useNativeDriver: false }
+            { useNativeDriver: true }
           )}
           scrollEventThrottle={16}
         />

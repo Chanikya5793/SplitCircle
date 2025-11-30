@@ -4,7 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useRef } from 'react';
-import { Animated, ScrollView, StyleSheet, View } from 'react-native';
+import { Animated, StyleSheet, View } from 'react-native';
 import { Avatar, Button, Divider, List, Switch, Text } from 'react-native-paper';
 
 export const SettingsScreen = () => {
@@ -29,16 +29,16 @@ export const SettingsScreen = () => {
   return (
     <LiquidBackground>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
-        <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)' }]}>
+        <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>Settings</Text>
         </GlassView>
       </Animated.View>
 
-      <ScrollView
+      <Animated.ScrollView
         contentContainerStyle={styles.container}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: false }
+          { useNativeDriver: true }
         )}
         scrollEventThrottle={16}
       >
@@ -73,7 +73,7 @@ export const SettingsScreen = () => {
             <List.Item title="Offline sync" description="Enabled" left={() => <List.Icon icon="cloud-sync" />} />
           </List.Section>
         </GlassView>
-      </ScrollView>
+      </Animated.ScrollView>
     </LiquidBackground>
   );
 };

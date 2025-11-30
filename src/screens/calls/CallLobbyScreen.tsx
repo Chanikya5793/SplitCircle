@@ -5,7 +5,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useRef } from 'react';
-import { Animated, FlatList, StyleSheet, View } from 'react-native';
+import { Animated, StyleSheet, View } from 'react-native';
 import { Button, List, Text } from 'react-native-paper';
 
 interface CallLobbyScreenProps {
@@ -34,13 +34,13 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
   return (
     <LiquidBackground>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
-        <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)' }]}>
+        <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Calls</Text>
         </GlassView>
       </Animated.View>
 
       <View style={styles.container}>
-        <FlatList
+        <Animated.FlatList
           data={threads}
           keyExtractor={(item) => item.chatId}
           contentContainerStyle={[styles.listContent, { paddingTop: 60, paddingBottom: 100 }]}
@@ -51,7 +51,7 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
           }
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-            { useNativeDriver: false }
+            { useNativeDriver: true }
           )}
           scrollEventThrottle={16}
           renderItem={({ item }) => (

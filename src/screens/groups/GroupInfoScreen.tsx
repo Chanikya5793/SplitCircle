@@ -90,7 +90,7 @@ export const GroupInfoScreen = () => {
             <SafeAreaView style={styles.container} edges={['bottom']}>
                 {/* Sticky Header - Appears on scroll */}
                 <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity, paddingTop: insets.top }]}>
-                    <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.9)' : 'rgba(255, 255, 255, 0.9)' }]}>
+                    <GlassView style={styles.stickyHeaderGlass}>
                         <View style={styles.stickyHeaderContent}>
                             <Avatar.Text
                                 size={32}
@@ -110,7 +110,7 @@ export const GroupInfoScreen = () => {
                     contentContainerStyle={{ paddingBottom: 100 }}
                     onScroll={Animated.event(
                         [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-                        { useNativeDriver: false }
+                        { useNativeDriver: true }
                     )}
                     scrollEventThrottle={16}
                 >
