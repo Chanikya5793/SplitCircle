@@ -1,7 +1,8 @@
 import { useTheme } from '@/context/ThemeContext';
-import React, { useEffect, useRef, useState } from 'react';
-import { Animated, StyleProp, View, ViewStyle } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { StyleProp, View, ViewStyle } from 'react-native';
 import { TextInput } from 'react-native-paper';
+import Animated, { interpolate, interpolateColor, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 interface FloatingLabelInputProps extends React.ComponentProps<typeof TextInput> {
   label: string;
@@ -11,43 +12,31 @@ interface FloatingLabelInputProps extends React.ComponentProps<typeof TextInput>
 export const FloatingLabelInput = ({ label, value, style, containerStyle, onFocus, onBlur, ...props }: FloatingLabelInputProps) => {
   const { theme, isDark } = useTheme();
   const [isFocused, setIsFocused] = useState(false);
-  const animatedValue = useRef(new Animated.Value(value ? 1 : 0)).current;
+  const animatedValue = useSharedValue(value ? 1 : 0);
 
   useEffect(() => {
-    Animated.timing(animatedValue, {
-      toValue: (isFocused || value) ? 1 : 0,
-      duration: 200,
-      useNativeDriver: false,
-    }).start();
+    animatedValue.value = withTiming((isFocused || value) ? 1 : 0, { duration: 200 });
   }, [isFocused, value]);
 
-  const labelStyle = {
-    position: 'absolute' as const,
-    left: animatedValue.interpolate({
-      inputRange: [0, 1],
-      outputRange: [18, 15], // [Start X, End X] - Adjust horizontal position
-    }),
-    top: animatedValue.interpolate({
-      inputRange: [0, 1],
-      outputRange: [36, 3], // [Start Y, End Y] - Adjust vertical position
-    }),
-    fontSize: animatedValue.interpolate({
-      inputRange: [0, 1],
-      outputRange: [19, 14], // [Start Size, End Size] - Adjust font size
-    }),
-    color: animatedValue.interpolate({
-      inputRange: [0, 1],
-      outputRange: [theme.colors.onSurfaceVariant, theme.colors.onSurface],
-    }),
-    zIndex: 1,
-  };
+  const labelStyle = useAnimatedStyle(() => {
+    return {
+      left: interpolate(animatedValue.value, [0, 1], [18, 15]),
+      top: interpolate(animatedValue.value, [0, 1], [36, 3]),
+      fontSize: interpolate(animatedValue.value, [0, 1], [19, 14]),
+      color: interpolateColor(
+        animatedValue.value,
+        [0, 1],
+        [theme.colors.onSurfaceVariant, theme.colors.onSurface]
+      ),
+    };
+  });
 
   return (
     <View style={[{
       marginBottom: 0, // Spacing between this field and the next element
       paddingTop: 18   // Space reserved for the floating label at the top
     }, containerStyle]}>
-      <Animated.Text style={labelStyle} pointerEvents="none">
+      <Animated.Text style={[{ position: 'absolute', zIndex: 1 }, labelStyle]} pointerEvents="none">
         {label}
       </Animated.Text>
       <TextInput
