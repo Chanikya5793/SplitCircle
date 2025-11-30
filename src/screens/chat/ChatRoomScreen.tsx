@@ -8,7 +8,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatThread } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, FlatList, Keyboard, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
 
 interface ChatRoomScreenProps {
@@ -149,16 +149,80 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     return 'GC';
   }, [thread.type, groupName]);
 
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e: any) => {
+        setKeyboardHeight(e.endCoordinates.height);
+      }
+    );
+    const hideSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardHeight(0);
+      }
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
   const isInverted = messages.length > 0;
+  // Base padding for composer (approx 100) + keyboard height
+  const bottomPadding = 100 + keyboardHeight;
 
   return (
     <LiquidBackground>
-      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+      <Animated.FlatList
+        ref={listRef}
+        data={messages}
+        keyExtractor={(item) => item.messageId || item.id || Math.random().toString()}
+        renderItem={({ item, index }) => {
+          const prevMessage = messages[index + 1];
+          const isFirstInSequence = !prevMessage || prevMessage.senderId !== item.senderId || prevMessage.type === 'system';
+          const participant = thread.participants.find(p => p.userId === item.senderId);
+          const senderName = participant?.displayName || 'Unknown';
+
+          return (
+            <MessageBubble
+              message={item}
+              showSenderInfo={isFirstInSequence}
+              senderName={senderName}
+              onSwipeReply={handleSwipeReply}
+            />
+          );
+        }}
+        style={styles.list}
+        contentContainerStyle={[
+          styles.listContent,
+          isInverted
+            ? { paddingTop: bottomPadding, paddingBottom: 120 } // Inverted: Top=Bottom(Composer+Keyboard), Bottom=Top(Header)
+            : { paddingTop: 120, paddingBottom: bottomPadding }, // Normal: Top=Header, Bottom=Composer+Keyboard
+          messages.length === 0 && { flex: 1, justifyContent: 'center', paddingTop: 0, paddingBottom: 0 }
+        ]}
+        inverted={isInverted}
+        ListEmptyComponent={
+          <View style={{ alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+            <Text style={{ color: theme.colors.secondary }}>No messages yet</Text>
+            <Text style={{ color: theme.colors.secondary, fontSize: 12 }}>Send a message to start chatting</Text>
+          </View>
+        }
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true }
+        )}
+        scrollEventThrottle={16}
+      />
+
+      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]} pointerEvents="box-none">
         <TouchableOpacity
           onPress={thread.type === 'group' ? handleHeaderPress : undefined}
           activeOpacity={0.7}
-          // make header hit area predictable
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
         >
           <GlassView style={styles.stickyHeaderGlass}>
             <View style={styles.headerRow}>
@@ -182,145 +246,96 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         </TouchableOpacity>
       </Animated.View>
 
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        // smaller offset so composer hugs the keyboard more closely
-        //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
+      <View
+        style={[styles.composerContainer, { bottom: keyboardHeight }]}
+        pointerEvents="auto"
       >
-        <Animated.FlatList
-          ref={listRef}
-          data={messages}
-          keyExtractor={(item) => item.messageId || item.id || Math.random().toString()}
-          renderItem={({ item, index }) => {
-            const prevMessage = messages[index + 1];
-            const isFirstInSequence = !prevMessage || prevMessage.senderId !== item.senderId || prevMessage.type === 'system';
-            const participant = thread.participants.find(p => p.userId === item.senderId);
-            const senderName = participant?.displayName || 'Unknown';
-
-            return (
-              <MessageBubble
-                message={item}
-                showSenderInfo={isFirstInSequence}
-                senderName={senderName}
-                onSwipeReply={handleSwipeReply}
-              />
-            );
-          }}
-          style={styles.list}
-          contentContainerStyle={[
-            styles.listContent,
-            isInverted
-              ? { paddingTop: 100, paddingBottom: 120 } // Inverted: Top=Bottom(Composer), Bottom=Top(Header)
-              : { paddingTop: 120, paddingBottom: 100 }, // Normal: Top=Header, Bottom=Composer
-            messages.length === 0 && { flex: 1, justifyContent: 'center', paddingTop: 0, paddingBottom: 0 }
-          ]}
-          inverted={isInverted}
-          ListEmptyComponent={
-            <View style={{ alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-              <Text style={{ color: theme.colors.secondary }}>No messages yet</Text>
-              <Text style={{ color: theme.colors.secondary, fontSize: 12 }}>Send a message to start chatting</Text>
+        {replyingTo && (
+          <View style={[styles.replyPreview, { backgroundColor: isDark ? '#1E1E1E' : '#F5F5F5', borderLeftColor: getSenderColor(replyingTo.senderId) }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.replyPreviewSender, { color: getSenderColor(replyingTo.senderId) }]}>
+                {thread.participants.find(p => p.userId === replyingTo.senderId)?.displayName || 'Unknown'}
+              </Text>
+              <Text numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
+                {replyingTo.content}
+              </Text>
             </View>
-          }
-          onScroll={Animated.event(
-            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-            { useNativeDriver: true }
-          )}
-          scrollEventThrottle={16}
-        />
-
-        <View style={styles.composerContainer}>
-          {replyingTo && (
-            <View style={[styles.replyPreview, { backgroundColor: isDark ? '#1E1E1E' : '#F5F5F5', borderLeftColor: getSenderColor(replyingTo.senderId) }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.replyPreviewSender, { color: getSenderColor(replyingTo.senderId) }]}>
-                  {thread.participants.find(p => p.userId === replyingTo.senderId)?.displayName || 'Unknown'}
-                </Text>
-                <Text numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
-                  {replyingTo.content}
-                </Text>
-              </View>
-              <IconButton
-                icon="close"
-                size={20}
-                onPress={() => setReplyingTo(null)}
-                iconColor={theme.colors.onSurfaceVariant}
-              />
-            </View>
-          )}
-
-          <View style={styles.composerWrapper}>
-            <Animated.View
-              style={{
-                ...styles.composerAnimated,
-                borderWidth: focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 2] }),
-                borderColor: theme.colors.primary,
-                borderRadius: styles.composer.borderRadius,
-              }}
-            >
-              <GlassView style={styles.composer}>
-                <TextInput
-                  ref={inputRef}
-                  mode="flat"
-                  placeholder={placeholder}
-                  value={text}
-                  onChangeText={setText}
-                  style={styles.input}
-                  contentStyle={styles.inputContent}
-                  selectionColor={theme.colors.primary}
-                  underlineColor="transparent"
-                  activeUnderlineColor="transparent"
-                  onFocus={() => {
-                    setComposerFocused(true);
-                    Animated.timing(focusAnim, { toValue: 1, duration: 150, useNativeDriver: false }).start();
-                  }}
-                  onBlur={() => {
-                    setComposerFocused(false);
-                    Animated.timing(focusAnim, { toValue: 0, duration: 150, useNativeDriver: false }).start();
-                  }}
-                  multiline
-                  numberOfLines={2}
-                  maxLength={1000}
-                  theme={{
-                    colors: {
-                      background: 'transparent',
-                      onSurfaceVariant: theme.colors.onSurfaceVariant,
-                      text: theme.colors.onSurface,
-                      placeholder: theme.colors.onSurfaceVariant,
-                    }
-                  }}
-                  returnKeyType="send"
-                  onSubmitEditing={handleSend}
-                  blurOnSubmit={false}
-                  keyboardAppearance={isDark ? 'dark' : 'light'}
-                />
-              </GlassView>
-            </Animated.View>
             <IconButton
-              icon="send"
-              mode="contained"
-              onPress={handleSend}
-              disabled={!text.trim() || sending}
-              containerColor={!text.trim() || sending ? (isDark ? '#555' : '#ccc') : theme.colors.primary}
-              iconColor={theme.colors.onPrimary}
-              size={28}
-              style={styles.sendButton}
-              accessibilityLabel="Send message"
+              icon="close"
+              size={20}
+              onPress={() => setReplyingTo(null)}
+              iconColor={theme.colors.onSurfaceVariant}
             />
           </View>
+        )}
+
+        <View style={styles.composerWrapper}>
+          <Animated.View
+            style={{
+              ...styles.composerAnimated,
+              borderWidth: focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 2] }),
+              borderColor: theme.colors.primary,
+              borderRadius: styles.composer.borderRadius,
+            }}
+          >
+            <GlassView style={styles.composer}>
+              <TextInput
+                ref={inputRef}
+                mode="flat"
+                placeholder={placeholder}
+                value={text}
+                onChangeText={setText}
+                style={styles.input}
+                contentStyle={styles.inputContent}
+                selectionColor={theme.colors.primary}
+                underlineColor="transparent"
+                activeUnderlineColor="transparent"
+                onFocus={() => {
+                  setComposerFocused(true);
+                  Animated.timing(focusAnim, { toValue: 1, duration: 150, useNativeDriver: false }).start();
+                }}
+                onBlur={() => {
+                  setComposerFocused(false);
+                  Animated.timing(focusAnim, { toValue: 0, duration: 150, useNativeDriver: false }).start();
+                }}
+                multiline
+                numberOfLines={2}
+                maxLength={1000}
+                theme={{
+                  colors: {
+                    background: 'transparent',
+                    onSurfaceVariant: theme.colors.onSurfaceVariant,
+                    text: theme.colors.onSurface,
+                    placeholder: theme.colors.onSurfaceVariant,
+                  }
+                }}
+                returnKeyType="send"
+                onSubmitEditing={handleSend}
+                blurOnSubmit={false}
+                keyboardAppearance={isDark ? 'dark' : 'light'}
+              />
+            </GlassView>
+          </Animated.View>
+          <IconButton
+            icon="send"
+            mode="contained"
+            onPress={handleSend}
+            disabled={!text.trim() || sending}
+            containerColor={!text.trim() || sending ? (isDark ? '#555' : '#ccc') : theme.colors.primary}
+            iconColor={theme.colors.onPrimary}
+            size={28}
+            style={styles.sendButton}
+            accessibilityLabel="Send message"
+          />
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    // Removed paddingTop to allow list to go behind header
-  },
   list: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
   },
   listContent: {
     paddingHorizontal: 16,
@@ -328,7 +343,6 @@ const styles = StyleSheet.create({
   },
   composerContainer: {
     position: 'absolute',
-    bottom: 0,
     left: 0,
     right: 0,
     paddingBottom: 10, // Base padding from bottom

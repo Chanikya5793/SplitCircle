@@ -75,9 +75,14 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     const replyColor = getSenderColor(message.replyTo.senderId);
 
     return (
-      <View style={[styles.replyContainer, { borderLeftColor: replyColor, backgroundColor: isMine ? 'rgba(0,0,0,0.1)' : (isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)') }]}>
+      <View style={[styles.replyContainer, {
+        borderLeftColor: replyColor,
+        backgroundColor: isMine ? 'rgba(0,0,0,0.1)' : theme.colors.surfaceVariant
+      }]}>
         <Text style={[styles.replySender, { color: replyColor }]}>{message.replyTo.senderName}</Text>
-        <Text numberOfLines={1} style={[styles.replyText, { color: isMine ? 'rgba(255,255,255,0.9)' : theme.colors.onSurfaceVariant }]}>
+        <Text numberOfLines={1} style={[styles.replyText, {
+          color: isMine ? 'rgba(255,255,255,0.9)' : theme.colors.onSurfaceVariant
+        }]}>
           {message.replyTo.content}
         </Text>
       </View>
@@ -130,15 +135,15 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         <View style={[
           styles.container,
           styles.other,
-          { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' }
+          { backgroundColor: theme.colors.secondaryContainer }
         ]}>
           <ReplyContent />
           {showSenderInfo && senderName && (
             <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
           )}
-          <Text style={[styles.text, { color: theme.colors.onSurface }]}>{message.content}</Text>
+          <Text style={[styles.text, { color: theme.colors.onSecondaryContainer }]}>{message.content}</Text>
           {message.mediaUrl && <Image source={{ uri: message.mediaUrl }} style={styles.image} />}
-          <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
+          <Text style={[styles.timestamp, { color: theme.colors.onSecondaryContainer, opacity: 0.7 }]}>{formatRelativeTime(message.createdAt)}</Text>
         </View>
       </View>
     </Swipeable>
