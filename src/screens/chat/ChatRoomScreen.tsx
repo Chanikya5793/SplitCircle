@@ -148,8 +148,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        // smaller offset so composer hugs the keyboard more closely
-        //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
+      // smaller offset so composer hugs the keyboard more closely
+      //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
       >
         <Pressable
           onPress={thread.type === 'group' ? handleHeaderPress : undefined}
@@ -173,7 +173,20 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           ref={listRef}
           data={messages}
           keyExtractor={(item) => item.messageId || item.id || Math.random().toString()}
-          renderItem={({ item }) => <MessageBubble message={item} />}
+          renderItem={({ item, index }) => {
+            const prevMessage = messages[index + 1];
+            const isFirstInSequence = !prevMessage || prevMessage.senderId !== item.senderId || prevMessage.type === 'system';
+            const participant = thread.participants.find(p => p.userId === item.senderId);
+            const senderName = participant?.displayName || 'Unknown';
+
+            return (
+              <MessageBubble
+                message={item}
+                showSenderInfo={isFirstInSequence}
+                senderName={senderName}
+              />
+            );
+          }}
           style={styles.list}
           contentContainerStyle={[styles.listContent, messages.length === 0 && { flex: 1, justifyContent: 'center' }]}
           inverted={messages.length > 0}
