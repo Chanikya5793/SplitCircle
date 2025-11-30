@@ -2,6 +2,7 @@ import { GlassView } from '@/components/GlassView';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { formatCurrency } from '@/utils/currency';
+import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Avatar, IconButton, Text, TouchableRipple } from 'react-native-paper';
 
@@ -10,7 +11,7 @@ interface GroupCardProps {
   onPress?: () => void;
 }
 
-export const GroupCard = ({ group, onPress }: GroupCardProps) => {
+export const GroupCard = React.memo(({ group, onPress }: GroupCardProps) => {
   const { theme, isDark } = useTheme();
   const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
 
@@ -40,7 +41,7 @@ export const GroupCard = ({ group, onPress }: GroupCardProps) => {
       </TouchableRipple>
     </GlassView>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {

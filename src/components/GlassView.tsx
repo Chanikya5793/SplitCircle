@@ -1,7 +1,8 @@
 import { useTheme } from '@/context/ThemeContext';
 import { BlurView } from 'expo-blur';
 import React from 'react';
-import { StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { Platform, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import Animated, { interpolateColor, useAnimatedStyle } from 'react-native-reanimated';
 
 interface GlassViewProps {
   children: React.ReactNode;
@@ -9,49 +10,60 @@ interface GlassViewProps {
   intensity?: number;
 }
 
-export const GlassView = ({ children, style, intensity = 50 }: GlassViewProps) => {
-  const { isDark } = useTheme();
+export const GlassView = React.memo(({ children, style, intensity = 30 }: GlassViewProps) => {
+  const { isDark, themeProgress } = useTheme();
+
+  const animatedStyle = useAnimatedStyle(() => {
+    const backgroundColor = interpolateColor(
+      themeProgress.value,
+      [0, 1],
+      ['rgba(255, 255, 255, 0.01)', 'rgba(30, 30, 30, 0.15)']
+    );
+
+    const androidBackgroundColor = interpolateColor(
+      themeProgress.value,
+      [0, 1],
+      ['rgba(255, 255, 255, 0.3)', 'rgba(30, 30, 30, 0.3)']
+    );
+
+    const borderColor = interpolateColor(
+      themeProgress.value,
+      [0, 1],
+      ['rgba(255, 255, 255, 0.2)', 'rgba(255, 255, 255, 0.05)']
+    );
+
+    return {
+      backgroundColor: Platform.OS === 'android' ? androidBackgroundColor : backgroundColor,
+      borderColor,
+    };
+  });
 
   return (
-    <View style={[
+    <Animated.View style={[
       styles.container,
-      isDark && styles.containerDark,
+      animatedStyle,
       style
     ]}>
-      <BlurView
-        intensity={intensity}
-        tint={isDark ? "dark" : "light"}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+      {Platform.OS === 'ios' && (
+        <BlurView
+          intensity={intensity}
+          tint={isDark ? "dark" : "light"}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      )}
       <View style={styles.content}>
         {children}
       </View>
-    </View>
+    </Animated.View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {
     overflow: 'hidden',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)', // Semi-transparent white
-    borderColor: 'rgba(255, 255, 255, 0.5)', // Light border
     borderWidth: 1,
     borderRadius: 20,
-    // Shadow for depth
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 10,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    elevation: 5,
-  },
-  containerDark: {
-    backgroundColor: 'rgba(30, 30, 30, 0.4)', // Semi-transparent dark
-    borderColor: 'rgba(255, 255, 255, 0.1)', // Faint border
-    shadowOpacity: 0.3,
   },
   content: {
     // Ensure content is above the blur

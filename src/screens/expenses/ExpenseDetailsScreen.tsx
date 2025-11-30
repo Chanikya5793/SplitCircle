@@ -8,7 +8,7 @@ import { formatCurrency } from '@/utils/currency';
 import { useNavigation } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Image, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Image, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Chip, Dialog, Divider, IconButton, Portal, Text, TextInput } from 'react-native-paper';
 
 interface ExpenseDetailsScreenProps {
@@ -86,18 +86,18 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   return (
     <LiquidBackground>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
-        <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)' }]}>
+        <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
             {expense.title}
           </Text>
         </GlassView>
       </Animated.View>
 
-      <ScrollView
+      <Animated.ScrollView
         contentContainerStyle={styles.container}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: false }
+          { useNativeDriver: true }
         )}
         scrollEventThrottle={16}
       >
@@ -250,7 +250,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             )}
           </View>
         </Modal>
-      </ScrollView>
+      </Animated.ScrollView>
     </LiquidBackground>
   );
 };
