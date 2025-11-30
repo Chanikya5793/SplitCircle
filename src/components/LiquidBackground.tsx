@@ -1,9 +1,13 @@
 import { useTheme } from '@/context/ThemeContext';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Dimensions, StyleSheet, View, ViewStyle } from 'react-native';
 import Animated, {
   interpolateColor,
-  useAnimatedStyle
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming
 } from 'react-native-reanimated';
 
 const { width, height } = Dimensions.get('window');
@@ -13,7 +17,20 @@ interface LiquidBackgroundProps {
   style?: ViewStyle;
 }
 
-const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY }: any) => {
+const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, duration = 5000 }: any) => {
+  const sv = useSharedValue(0);
+
+  useEffect(() => {
+    sv.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: duration / 2 }),
+        withTiming(0, { duration: duration / 2 })
+      ),
+      -1,
+      true
+    );
+  }, [duration]);
+
   const animatedStyle = useAnimatedStyle(() => {
     const backgroundColor = interpolateColor(
       themeProgress.value,
@@ -25,7 +42,11 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY }
       backgroundColor,
       left: initialX,
       top: initialY,
-      transform: [{ scale: 1 }], // Static scale
+      transform: [
+        { scale: 1 + sv.value * 0.2 },
+        { translateX: sv.value * 20 },
+        { translateY: sv.value * 20 }
+      ],
     };
   });
 

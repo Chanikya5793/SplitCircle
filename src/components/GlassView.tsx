@@ -23,7 +23,7 @@ export const GlassView = React.memo(({ children, style, intensity = 50 }: GlassV
     const androidBackgroundColor = interpolateColor(
       themeProgress.value,
       [0, 1],
-      ['rgba(255, 255, 255, 0.85)', 'rgba(30, 30, 30, 0.85)']
+      ['rgba(255, 255, 255, 0.65)', 'rgba(30, 30, 30, 0.65)']
     );
 
     const borderColor = interpolateColor(
