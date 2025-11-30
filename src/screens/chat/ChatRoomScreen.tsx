@@ -8,7 +8,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatThread } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
 
 interface ChatRoomScreenProps {
@@ -59,11 +59,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     });
   }, [navigation, theme.colors.primary]);
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 40],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
+  const headerOpacity = 1; // Persistent header
 
   useEffect(() => {
     console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
@@ -153,6 +149,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     return 'GC';
   }, [thread.type, groupName]);
 
+  const isInverted = messages.length > 0;
+
   return (
     <LiquidBackground>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
@@ -187,27 +185,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      // smaller offset so composer hugs the keyboard more closely
-      //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
+        // smaller offset so composer hugs the keyboard more closely
+        //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
       >
-        <Pressable
-          onPress={thread.type === 'group' ? handleHeaderPress : undefined}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          style={({ pressed }) => [styles.headerContainer, pressed && { opacity: 0.6 }]}
-        >
-          <View style={styles.headerRow}>
-            {thread.type === 'group' && (
-              <Avatar.Text
-                size={48}
-                label={groupInitials}
-                style={{ backgroundColor: theme.colors.primary, marginRight: 12 }}
-                color={theme.colors.onPrimary}
-              />
-            )}
-            <Text variant="headlineMedium" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>{title}</Text>
-          </View>
-        </Pressable>
-
         <Animated.FlatList
           ref={listRef}
           data={messages}
@@ -228,8 +208,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             );
           }}
           style={styles.list}
-          contentContainerStyle={[styles.listContent, messages.length === 0 && { flex: 1, justifyContent: 'center' }]}
-          inverted={messages.length > 0}
+          contentContainerStyle={[
+            styles.listContent,
+            isInverted
+              ? { paddingTop: 100, paddingBottom: 120 } // Inverted: Top=Bottom(Composer), Bottom=Top(Header)
+              : { paddingTop: 120, paddingBottom: 100 }, // Normal: Top=Header, Bottom=Composer
+            messages.length === 0 && { flex: 1, justifyContent: 'center', paddingTop: 0, paddingBottom: 0 }
+          ]}
+          inverted={isInverted}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', justifyContent: 'center', padding: 20 }}>
               <Text style={{ color: theme.colors.secondary }}>No messages yet</Text>
@@ -243,91 +229,85 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           scrollEventThrottle={16}
         />
 
-        {replyingTo && (
-          <View style={[styles.replyPreview, { backgroundColor: isDark ? '#1E1E1E' : '#F5F5F5', borderLeftColor: getSenderColor(replyingTo.senderId) }]}>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.replyPreviewSender, { color: getSenderColor(replyingTo.senderId) }]}>
-                {thread.participants.find(p => p.userId === replyingTo.senderId)?.displayName || 'Unknown'}
-              </Text>
-              <Text numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
-                {replyingTo.content}
-              </Text>
+        <View style={styles.composerContainer}>
+          {replyingTo && (
+            <View style={[styles.replyPreview, { backgroundColor: isDark ? '#1E1E1E' : '#F5F5F5', borderLeftColor: getSenderColor(replyingTo.senderId) }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.replyPreviewSender, { color: getSenderColor(replyingTo.senderId) }]}>
+                  {thread.participants.find(p => p.userId === replyingTo.senderId)?.displayName || 'Unknown'}
+                </Text>
+                <Text numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
+                  {replyingTo.content}
+                </Text>
+              </View>
+              <IconButton
+                icon="close"
+                size={20}
+                onPress={() => setReplyingTo(null)}
+                iconColor={theme.colors.onSurfaceVariant}
+              />
             </View>
+          )}
+
+          <View style={styles.composerWrapper}>
+            <Animated.View
+              style={{
+                ...styles.composerAnimated,
+                borderWidth: focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 2] }),
+                borderColor: theme.colors.primary,
+                borderRadius: styles.composer.borderRadius,
+              }}
+            >
+              <GlassView style={styles.composer}>
+                <TextInput
+                  ref={inputRef}
+                  mode="flat"
+                  placeholder={placeholder}
+                  value={text}
+                  onChangeText={setText}
+                  style={styles.input}
+                  contentStyle={styles.inputContent}
+                  selectionColor={theme.colors.primary}
+                  underlineColor="transparent"
+                  activeUnderlineColor="transparent"
+                  onFocus={() => {
+                    setComposerFocused(true);
+                    Animated.timing(focusAnim, { toValue: 1, duration: 150, useNativeDriver: false }).start();
+                  }}
+                  onBlur={() => {
+                    setComposerFocused(false);
+                    Animated.timing(focusAnim, { toValue: 0, duration: 150, useNativeDriver: false }).start();
+                  }}
+                  multiline
+                  numberOfLines={2}
+                  maxLength={1000}
+                  theme={{
+                    colors: {
+                      background: 'transparent',
+                      onSurfaceVariant: theme.colors.onSurfaceVariant,
+                      text: theme.colors.onSurface,
+                      placeholder: theme.colors.onSurfaceVariant,
+                    }
+                  }}
+                  returnKeyType="send"
+                  onSubmitEditing={handleSend}
+                  blurOnSubmit={false}
+                  keyboardAppearance={isDark ? 'dark' : 'light'}
+                />
+              </GlassView>
+            </Animated.View>
             <IconButton
-              icon="close"
-              size={20}
-              onPress={() => setReplyingTo(null)}
-              iconColor={theme.colors.onSurfaceVariant}
+              icon="send"
+              mode="contained"
+              onPress={handleSend}
+              disabled={!text.trim() || sending}
+              containerColor={!text.trim() || sending ? (isDark ? '#555' : '#ccc') : theme.colors.primary}
+              iconColor={theme.colors.onPrimary}
+              size={28}
+              style={styles.sendButton}
+              accessibilityLabel="Send message"
             />
           </View>
-        )}
-
-        <View style={styles.composerWrapper}>
-          <Animated.View
-            style={{
-              ...styles.composerAnimated,
-              borderWidth: focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 2] }),
-              borderColor: theme.colors.primary,
-              borderRadius: styles.composer.borderRadius,
-            }}
-          >
-            <GlassView style={styles.composer}>
-              <TextInput
-                ref={inputRef}
-                // Use flat mode so the TextInput doesn't draw its own outline
-                // when focused. We rely on the surrounding `GlassView` for
-                // container radius and padding so the inner input stays visually
-                // consistent with the composer.
-                mode="flat"
-                placeholder={placeholder}
-                value={text}
-                onChangeText={setText}
-                style={styles.input}
-                // control inner padding so text lines up with composer padding
-                contentStyle={styles.inputContent}
-                // ensure caret is visible
-                selectionColor={theme.colors.primary}
-                // Remove underline by forcing no bottom border on the inner input
-                // and ensuring the TextInput doesn't render any underline color
-                underlineColor="transparent"
-                activeUnderlineColor="transparent"
-                onFocus={() => {
-                  setComposerFocused(true);
-                  Animated.timing(focusAnim, { toValue: 1, duration: 150, useNativeDriver: false }).start();
-                }}
-                onBlur={() => {
-                  setComposerFocused(false);
-                  Animated.timing(focusAnim, { toValue: 0, duration: 150, useNativeDriver: false }).start();
-                }}
-                multiline
-                numberOfLines={2}
-                maxLength={1000}
-                theme={{
-                  colors: {
-                    background: 'transparent',
-                    onSurfaceVariant: theme.colors.onSurfaceVariant,
-                    text: theme.colors.onSurface,
-                    placeholder: theme.colors.onSurfaceVariant,
-                  }
-                }}
-                returnKeyType="send"
-                onSubmitEditing={handleSend}
-                blurOnSubmit={false}
-                keyboardAppearance={isDark ? 'dark' : 'light'}
-              />
-            </GlassView>
-          </Animated.View>
-          <IconButton
-            icon="send"
-            mode="contained"
-            onPress={handleSend}
-            disabled={!text.trim() || sending}
-            containerColor={!text.trim() || sending ? (isDark ? '#555' : '#ccc') : theme.colors.primary}
-            iconColor={theme.colors.onPrimary}
-            size={28}
-            style={styles.sendButton}
-            accessibilityLabel="Send message"
-          />
         </View>
       </KeyboardAvoidingView>
     </LiquidBackground>
@@ -337,16 +317,21 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 60,
+    // Removed paddingTop to allow list to go behind header
   },
   list: {
     flex: 1,
   },
   listContent: {
-    padding: 16,
+    paddingHorizontal: 16,
     gap: 8,
-    // Make bottom padding larger so composer doesn't overlap list items
-    paddingBottom: 10,
+  },
+  composerContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingBottom: 10, // Base padding from bottom
   },
   composerWrapper: {
     flexDirection: 'row',
@@ -370,17 +355,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     // Tweak these min/max to change vertical size of the input box
     maxHeight: 120,
-    minHeight: 44, // Ensure minimum touch height
+    minHeight: 44,
     textAlignVertical: 'center',
     justifyContent: 'center',
-    // Internal padding is controlled via contentStyle; keep zero here
     paddingVertical: 0,
     paddingHorizontal: 0,
   },
   inputContent: {
-    // PLACEHOLDER ALIGNMENT: Adjust vertical padding to center text
     paddingVertical: 0,
-    // move placeholder/text a bit to the right
     paddingLeft: 16,
     paddingRight: 8,
   },
@@ -391,15 +373,12 @@ const styles = StyleSheet.create({
   },
   sendButton: {
     margin: 5,
-    // Keep the send button visually aligned with the composer baseline
     marginBottom: 5.5,
-    // Add a little extra touch area by increasing container size if needed
     width: 44,
     height: 44,
   },
   composerFocused: {
     borderWidth: 2,
-    // borderColor handled dynamically
   },
   stickyHeader: {
     position: 'absolute',
@@ -424,11 +403,6 @@ const styles = StyleSheet.create({
   },
   headerRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-  },
-  headerContainer: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
     alignItems: 'center',
   },
   headerTitle: {
