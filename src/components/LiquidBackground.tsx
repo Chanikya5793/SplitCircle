@@ -18,29 +18,49 @@ interface LiquidBackgroundProps {
   style?: ViewStyle;
 }
 
-const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, duration = 5000 }: any) => {
+const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY }: any) => {
   const scaleSv = useSharedValue(1);
-  const translateSv = useSharedValue(0);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+
+  // Generate random animation parameters for more natural movement
+  // SLOWED DOWN: Increased durations significantly for a more relaxed feel
+  const durationX = 12000 + Math.random() * 6000;
+  const durationY = 10000 + Math.random() * 8000;
+  const durationScale = 9000 + Math.random() * 6000;
+
+  const rangeX = 60 + Math.random() * 60; // Move 60-120 units horizontally
+  const rangeY = 60 + Math.random() * 60; // Move 60-120 units vertically
 
   useEffect(() => {
     scaleSv.value = withRepeat(
       withSequence(
-        withTiming(1.15, { duration: duration, easing: Easing.inOut(Easing.ease) }),
-        withTiming(1, { duration: duration, easing: Easing.inOut(Easing.ease) })
+        withTiming(1.3, { duration: durationScale, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0.8, { duration: durationScale, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: durationScale, easing: Easing.inOut(Easing.ease) })
       ),
       -1,
       true
     );
 
-    translateSv.value = withRepeat(
+    translateX.value = withRepeat(
       withSequence(
-        withTiming(30, { duration: duration * 1.3, easing: Easing.inOut(Easing.ease) }),
-        withTiming(-30, { duration: duration * 1.3, easing: Easing.inOut(Easing.ease) })
+        withTiming(rangeX, { duration: durationX, easing: Easing.inOut(Easing.quad) }),
+        withTiming(-rangeX, { duration: durationX * 1.2, easing: Easing.inOut(Easing.quad) })
       ),
       -1,
       true
     );
-  }, [duration]);
+
+    translateY.value = withRepeat(
+      withSequence(
+        withTiming(-rangeY, { duration: durationY, easing: Easing.inOut(Easing.quad) }),
+        withTiming(rangeY, { duration: durationY * 1.1, easing: Easing.inOut(Easing.quad) })
+      ),
+      -1,
+      true
+    );
+  }, []);
 
   const animatedStyle = useAnimatedStyle(() => {
     const backgroundColor = interpolateColor(
@@ -55,8 +75,8 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, 
       top: initialY,
       transform: [
         { scale: scaleSv.value },
-        { translateX: translateSv.value },
-        { translateY: translateSv.value * 0.5 } // Move less vertically
+        { translateX: translateX.value },
+        { translateY: translateY.value }
       ],
     };
   });
