@@ -10,26 +10,26 @@ interface GlassViewProps {
   intensity?: number;
 }
 
-export const GlassView = React.memo(({ children, style, intensity = 50 }: GlassViewProps) => {
+export const GlassView = React.memo(({ children, style, intensity = 30 }: GlassViewProps) => {
   const { isDark, themeProgress } = useTheme();
 
   const animatedStyle = useAnimatedStyle(() => {
     const backgroundColor = interpolateColor(
       themeProgress.value,
       [0, 1],
-      ['rgba(255, 255, 255, 0.1)', 'rgba(30, 30, 30, 0.4)']
+      ['rgba(255, 255, 255, 0.01)', 'rgba(30, 30, 30, 0.15)']
     );
 
     const androidBackgroundColor = interpolateColor(
       themeProgress.value,
       [0, 1],
-      ['rgba(255, 255, 255, 0.65)', 'rgba(30, 30, 30, 0.65)']
+      ['rgba(255, 255, 255, 0.3)', 'rgba(30, 30, 30, 0.3)']
     );
 
     const borderColor = interpolateColor(
       themeProgress.value,
       [0, 1],
-      ['rgba(255, 255, 255, 0.5)', 'rgba(255, 255, 255, 0.1)']
+      ['rgba(255, 255, 255, 0.2)', 'rgba(255, 255, 255, 0.05)']
     );
 
     return {
