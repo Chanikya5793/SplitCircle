@@ -1,14 +1,9 @@
 import { useTheme } from '@/context/ThemeContext';
-import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Dimensions, StyleSheet, View, ViewStyle } from 'react-native';
 import Animated, {
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSequence,
-  withTiming,
+  interpolateColor,
+  useAnimatedStyle
 } from 'react-native-reanimated';
 
 const { width, height } = Dimensions.get('window');
@@ -18,50 +13,19 @@ interface LiquidBackgroundProps {
   style?: ViewStyle;
 }
 
-const Blob = ({ color, size, initialX, initialY, duration, delay }: any) => {
-  const translateX = useSharedValue(initialX);
-  const translateY = useSharedValue(initialY);
-  const scale = useSharedValue(1);
-
-  useEffect(() => {
-    translateX.value = withRepeat(
-      withSequence(
-        withTiming(initialX + 50, { duration: duration, easing: Easing.inOut(Easing.ease) }),
-        withTiming(initialX - 50, { duration: duration, easing: Easing.inOut(Easing.ease) }),
-        withTiming(initialX, { duration: duration, easing: Easing.inOut(Easing.ease) })
-      ),
-      -1,
-      true
-    );
-
-    translateY.value = withRepeat(
-      withSequence(
-        withTiming(initialY - 50, { duration: duration * 1.2, easing: Easing.inOut(Easing.ease) }),
-        withTiming(initialY + 50, { duration: duration * 1.2, easing: Easing.inOut(Easing.ease) }),
-        withTiming(initialY, { duration: duration * 1.2, easing: Easing.inOut(Easing.ease) })
-      ),
-      -1,
-      true
-    );
-
-    scale.value = withRepeat(
-      withSequence(
-        withTiming(1.1, { duration: duration * 1.5, easing: Easing.inOut(Easing.ease) }),
-        withTiming(0.9, { duration: duration * 1.5, easing: Easing.inOut(Easing.ease) }),
-        withTiming(1, { duration: duration * 1.5, easing: Easing.inOut(Easing.ease) })
-      ),
-      -1,
-      true
-    );
-  }, []);
-
+const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY }: any) => {
   const animatedStyle = useAnimatedStyle(() => {
+    const backgroundColor = interpolateColor(
+      themeProgress.value,
+      [0, 1],
+      [lightColor, darkColor]
+    );
+
     return {
-      transform: [
-        { translateX: translateX.value },
-        { translateY: translateY.value },
-        { scale: scale.value }
-      ],
+      backgroundColor,
+      left: initialX,
+      top: initialY,
+      transform: [{ scale: 1 }], // Static scale
     };
   });
 
@@ -70,7 +34,6 @@ const Blob = ({ color, size, initialX, initialY, duration, delay }: any) => {
       style={[
         styles.blob,
         {
-          backgroundColor: color,
           width: size,
           height: size,
           borderRadius: size / 2,
@@ -82,60 +45,65 @@ const Blob = ({ color, size, initialX, initialY, duration, delay }: any) => {
 };
 
 export const LiquidBackground = ({ children, style }: LiquidBackgroundProps) => {
-  const { isDark } = useTheme();
+  const { themeProgress } = useTheme();
 
-  const bgColors = isDark ? ['#121212', '#000000'] : ['#fdfbfb', '#ebedee'];
-  const blobColors = isDark
-    ? ['#4527A0', '#283593', '#00695C', '#C62828'] // Deep Purple, Indigo, Teal, Red
-    : ['#ff9a9e', '#fad0c4', '#a18cd1', '#84fab0']; // Light pastel colors
+  const lightBlobColors = ['#ff9a9e', '#fad0c4', '#a18cd1', '#84fab0'];
+  const darkBlobColors = ['#4527A0', '#283593', '#00695C', '#C62828'];
+
+  const containerStyle = useAnimatedStyle(() => {
+    const backgroundColor = interpolateColor(
+      themeProgress.value,
+      [0, 1],
+      ['#fdfbfb', '#121212']
+    );
+    return { backgroundColor };
+  });
 
   return (
-    <View style={[styles.container, { backgroundColor: isDark ? '#121212' : '#fdfbfb' }, style]}>
-      <LinearGradient
-        colors={bgColors as [string, string, ...string[]]}
-        style={StyleSheet.absoluteFill}
-      />
-
+    <Animated.View style={[styles.container, containerStyle, style]}>
       <Blob
-        color={blobColors[0]}
+        lightColor={lightBlobColors[0]}
+        darkColor={darkBlobColors[0]}
+        themeProgress={themeProgress}
         size={300}
         initialX={-50}
         initialY={-50}
-        duration={5000}
       />
       <Blob
-        color={blobColors[1]}
+        lightColor={lightBlobColors[1]}
+        darkColor={darkBlobColors[1]}
+        themeProgress={themeProgress}
         size={350}
         initialX={width - 200}
         initialY={height - 200}
-        duration={7000}
       />
       <Blob
-        color={blobColors[2]}
+        lightColor={lightBlobColors[2]}
+        darkColor={darkBlobColors[2]}
+        themeProgress={themeProgress}
         size={250}
         initialX={-50}
         initialY={height / 2}
-        duration={6000}
       />
       <Blob
-        color={blobColors[3]}
+        lightColor={lightBlobColors[3]}
+        darkColor={darkBlobColors[3]}
+        themeProgress={themeProgress}
         size={200}
         initialX={width - 100}
         initialY={100}
-        duration={8000}
       />
 
       <View style={styles.content}>
         {children}
       </View>
-    </View>
+    </Animated.View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fdfbfb',
     overflow: 'hidden', // Clip blobs that go outside
   },
   content: {
@@ -145,9 +113,5 @@ const styles = StyleSheet.create({
   blob: {
     position: 'absolute',
     opacity: 0.6,
-    // Blur effect for "liquid" look - requires specific implementation or image based blobs for true liquid, 
-    // but opacity + movement gives a good approximation. 
-    // On iOS we could use a BlurView over them, but that blurs the content too if not careful.
-    // For now, simple opacity overlap is good.
   },
 });

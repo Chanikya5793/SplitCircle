@@ -8,7 +8,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef } from 'react';
-import { Animated, ScrollView, StyleSheet, View } from 'react-native';
+import { Animated, StyleSheet, View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
 
 interface GroupDetailsScreenProps {
@@ -45,16 +45,16 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
   return (
     <LiquidBackground>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
-        <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)' }]}>
+        <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>{group.name}</Text>
         </GlassView>
       </Animated.View>
 
-      <ScrollView
+      <Animated.ScrollView
         contentContainerStyle={styles.container}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: false }
+          { useNativeDriver: true }
         )}
         scrollEventThrottle={16}
       >
@@ -117,7 +117,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
             Chat
           </Button>
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
     </LiquidBackground>
   );
 };

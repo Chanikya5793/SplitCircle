@@ -123,7 +123,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           // make header hit area predictable
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <GlassView style={[styles.stickyHeaderGlass, { backgroundColor: isDark ? 'rgba(30, 30, 30, 0.8)' : 'rgba(255, 255, 255, 0.8)' }]}>
+          <GlassView style={styles.stickyHeaderGlass}>
             <View style={styles.headerRow}>
               {thread.type === 'group' && (
                 <Avatar.Text
@@ -169,7 +169,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           </View>
         </Pressable>
 
-        <FlatList
+        <Animated.FlatList
           ref={listRef}
           data={messages}
           keyExtractor={(item) => item.messageId || item.id || Math.random().toString()}
@@ -185,7 +185,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           }
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-            { useNativeDriver: false }
+            { useNativeDriver: true }
           )}
           scrollEventThrottle={16}
         />
