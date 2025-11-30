@@ -26,6 +26,12 @@ export interface ChatMessage {
   isFromMe?: boolean;
   deliveredTo: string[];
   readBy: string[];
+  replyTo?: {
+    messageId: string;
+    senderId: string;
+    senderName: string;
+    content: string;
+  };
 }
 
 export interface ChatThread {

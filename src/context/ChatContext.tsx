@@ -23,6 +23,12 @@ interface SendMessagePayload {
   type?: MessageType;
   mediaUri?: string;
   groupId?: string;
+  replyTo?: {
+    messageId: string;
+    senderId: string;
+    senderName: string;
+    content: string;
+  };
 }
 
 interface ChatContextValue {
@@ -65,7 +71,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         console.error('❌ Failed to initialize database:', error);
       }
     };
-    
+
     initDB();
   }, []);
 
@@ -99,7 +105,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   }, [user?.userId]);
 
   const subscribeToMessages = useCallback((chatId: string, onData: (messages: ChatMessage[]) => void) => {
-    if (!user) return () => {};
+    if (!user) return () => { };
 
     // 1. Load local messages immediately
     const loadLocalMessages = () => {
@@ -116,14 +122,14 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     const unsubscribeQueue = listenForMessages(user.userId, async (message) => {
       // Save locally
       await saveMessageLocally(message);
-      
+
       // If this message belongs to the current chat, update UI immediately
       if (message.chatId === chatId) {
         console.log('📨 New message received via queue, updating UI');
         loadLocalMessages();
       }
     });
-    
+
     // 3. Poll local storage as a backup (in case we missed something or for other updates)
     const interval = setInterval(loadLocalMessages, 3000);
 
@@ -134,7 +140,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   }, [user]);
 
   const sendMessage = useCallback(
-    async ({ chatId, content, type = 'text', mediaUri, groupId }: SendMessagePayload) => {
+    async ({ chatId, content, type = 'text', mediaUri, groupId, replyTo }: SendMessagePayload) => {
       if (!user) {
         throw new Error('Missing user for chat send');
       }
@@ -157,7 +163,8 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         senderId: user.userId,
         type,
         content,
-      ...(mediaUrl ? { mediaUrl } : {}),
+        ...(mediaUrl ? { mediaUrl } : {}),
+        ...(replyTo ? { replyTo } : {}),
         status: 'sent',
         createdAt: now,
         timestamp: now,
@@ -166,23 +173,23 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         readBy: [user.userId],
       };
 
-    // 1. Save message locally (AsyncStorage)
-    await saveMessageLocally(message);
-    
-    // 2. Queue message for each recipient (Realtime Database)
-    // Get recipient IDs from chat participants (exclude sender)
-    const participants = threads.find(t => t.chatId === chatId)?.participants || [];
-    const recipientIds = participants
-      .map(p => p.userId)
-      .filter(id => id !== user.userId);
-    
-    // Queue message for each recipient
-    for (const recipientId of recipientIds) {
-      await queueMessage(recipientId, message);
-    }
-    
-    console.log('✅ Message saved locally and queued (WhatsApp style)');
-    
+      // 1. Save message locally (AsyncStorage)
+      await saveMessageLocally(message);
+
+      // 2. Queue message for each recipient (Realtime Database)
+      // Get recipient IDs from chat participants (exclude sender)
+      const participants = threads.find(t => t.chatId === chatId)?.participants || [];
+      const recipientIds = participants
+        .map(p => p.userId)
+        .filter(id => id !== user.userId);
+
+      // Queue message for each recipient
+      for (const recipientId of recipientIds) {
+        await queueMessage(recipientId, message);
+      }
+
+      console.log('✅ Message saved locally and queued (WhatsApp style)');
+
       // Update the chat thread's lastMessage (metadata only, not the full history)
       await updateDoc(doc(db, 'chats', chatId), {
         lastMessage: { ...message, createdAt: serverTimestamp() },

@@ -2,13 +2,16 @@ import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
-import { Image, StyleSheet, View } from 'react-native';
-import { Avatar, Text } from 'react-native-paper';
+import { useRef } from 'react';
+import { Animated, Image, StyleSheet, View } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
+import { Avatar, IconButton, Text } from 'react-native-paper';
 
 interface MessageBubbleProps {
   message: ChatMessage;
   showSenderInfo?: boolean;
   senderName?: string;
+  onSwipeReply?: (message: ChatMessage) => void;
 }
 
 const AVATAR_COLORS = [
@@ -25,9 +28,10 @@ const getSenderColor = (id: string) => {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 };
 
-export const MessageBubble = ({ message, showSenderInfo, senderName }: MessageBubbleProps) => {
+export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
+  const swipeableRef = useRef<Swipeable>(null);
 
   if (message.type === 'system') {
     return (
@@ -43,46 +47,101 @@ export const MessageBubble = ({ message, showSenderInfo, senderName }: MessageBu
   const senderColor = !isMine && message.senderId ? getSenderColor(message.senderId) : theme.colors.primary;
   const initials = senderName ? senderName.slice(0, 2).toUpperCase() : '??';
 
+  const renderLeftActions = (progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
+    const scale = dragX.interpolate({
+      inputRange: [0, 50],
+      outputRange: [0, 1],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <View style={styles.replyActionContainer}>
+        <Animated.View style={{ transform: [{ scale }] }}>
+          <IconButton icon="reply" iconColor={theme.colors.onSurface} size={20} />
+        </Animated.View>
+      </View>
+    );
+  };
+
+  const onSwipeableOpen = () => {
+    if (onSwipeReply) {
+      onSwipeReply(message);
+      swipeableRef.current?.close();
+    }
+  };
+
+  const ReplyContent = () => {
+    if (!message.replyTo) return null;
+    const replyColor = getSenderColor(message.replyTo.senderId);
+
+    return (
+      <View style={[styles.replyContainer, { borderLeftColor: replyColor, backgroundColor: isMine ? 'rgba(0,0,0,0.1)' : (isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)') }]}>
+        <Text style={[styles.replySender, { color: replyColor }]}>{message.replyTo.senderName}</Text>
+        <Text numberOfLines={1} style={[styles.replyText, { color: isMine ? 'rgba(255,255,255,0.9)' : theme.colors.onSurfaceVariant }]}>
+          {message.replyTo.content}
+        </Text>
+      </View>
+    );
+  };
+
   if (isMine) {
     return (
-      <View style={[
-        styles.container,
-        styles.mine,
-        { backgroundColor: theme.colors.primary }
-      ]}>
-        <Text style={[styles.text, { color: theme.colors.onPrimary }]}>{message.content}</Text>
-        {message.mediaUrl && <Image source={{ uri: message.mediaUrl }} style={styles.image} />}
-        <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
-      </View>
+      <Swipeable
+        ref={swipeableRef}
+        renderLeftActions={renderLeftActions}
+        onSwipeableOpen={onSwipeableOpen}
+        friction={2}
+        overshootLeft={false}
+      >
+        <View style={[
+          styles.container,
+          styles.mine,
+          { backgroundColor: theme.colors.primary }
+        ]}>
+          <ReplyContent />
+          <Text style={[styles.text, { color: theme.colors.onPrimary }]}>{message.content}</Text>
+          {message.mediaUrl && <Image source={{ uri: message.mediaUrl }} style={styles.image} />}
+          <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
+        </View>
+      </Swipeable>
     );
   }
 
   return (
-    <View style={styles.otherRow}>
-      <View style={styles.avatarContainer}>
-        {showSenderInfo && (
-          <Avatar.Text
-            size={28}
-            label={initials}
-            style={{ backgroundColor: senderColor }}
-            color="#FFF"
-            labelStyle={{ fontSize: 12, lineHeight: 28 }}
-          />
-        )}
+    <Swipeable
+      ref={swipeableRef}
+      renderLeftActions={renderLeftActions}
+      onSwipeableOpen={onSwipeableOpen}
+      friction={2}
+      overshootLeft={false}
+    >
+      <View style={styles.otherRow}>
+        <View style={styles.avatarContainer}>
+          {showSenderInfo && (
+            <Avatar.Text
+              size={28}
+              label={initials}
+              style={{ backgroundColor: senderColor }}
+              color="#FFF"
+              labelStyle={{ fontSize: 12, lineHeight: 28 }}
+            />
+          )}
+        </View>
+        <View style={[
+          styles.container,
+          styles.other,
+          { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' }
+        ]}>
+          <ReplyContent />
+          {showSenderInfo && senderName && (
+            <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
+          )}
+          <Text style={[styles.text, { color: theme.colors.onSurface }]}>{message.content}</Text>
+          {message.mediaUrl && <Image source={{ uri: message.mediaUrl }} style={styles.image} />}
+          <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
+        </View>
       </View>
-      <View style={[
-        styles.container,
-        styles.other,
-        { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' }
-      ]}>
-        {showSenderInfo && senderName && (
-          <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
-        )}
-        <Text style={[styles.text, { color: theme.colors.onSurface }]}>{message.content}</Text>
-        {message.mediaUrl && <Image source={{ uri: message.mediaUrl }} style={styles.image} />}
-        <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
-      </View>
-    </View>
+    </Swipeable>
   );
 };
 
@@ -103,7 +162,6 @@ const styles = StyleSheet.create({
   },
   otherRow: {
     flexDirection: 'row',
-    // The avatar is aligned with the TOP of the bubble.
     alignItems: 'flex-start',
     marginBottom: 8,
     maxWidth: '85%',
@@ -111,12 +169,10 @@ const styles = StyleSheet.create({
   avatarContainer: {
     width: 28,
     marginRight: 8,
-    // If we want top alignment, flex-start is correct.
   },
   container: {
     padding: 12,
     borderRadius: 16,
-    // marginBottom is handled by wrapper for 'other', but for 'mine' we need it.
   },
   mine: {
     maxWidth: '80%',
@@ -125,9 +181,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   other: {
-    flex: 1, // Take remaining space in row
+    flex: 1,
     borderBottomLeftRadius: 2,
-    borderTopLeftRadius: 16, // Ensure rounded top left even with avatar
+    borderTopLeftRadius: 16,
   },
   senderName: {
     fontSize: 12,
@@ -147,5 +203,25 @@ const styles = StyleSheet.create({
     width: 160,
     height: 160,
     borderRadius: 12,
+  },
+  replyActionContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 50,
+  },
+  replyContainer: {
+    borderLeftWidth: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    marginBottom: 8,
+  },
+  replySender: {
+    fontWeight: 'bold',
+    fontSize: 12,
+    marginBottom: 2,
+  },
+  replyText: {
+    fontSize: 12,
   },
 });

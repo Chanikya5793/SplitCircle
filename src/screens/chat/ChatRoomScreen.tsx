@@ -15,6 +15,20 @@ interface ChatRoomScreenProps {
   thread: ChatThread;
 }
 
+const AVATAR_COLORS = [
+  '#E57373', '#F06292', '#BA68C8', '#9575CD', '#7986CB',
+  '#64B5F6', '#4FC3F7', '#4DD0E1', '#4DB6AC', '#81C784',
+  '#AED581', '#FF8A65', '#D4E157', '#FFD54F', '#FFB74D'
+];
+
+const getSenderColor = (id: string) => {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = id.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+};
+
 export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const navigation = useNavigation();
   const { subscribeToMessages, sendMessage } = useChat();
@@ -33,6 +47,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [composerFocused, setComposerFocused] = useState(false);
   // Animated value for focus border animation (0 = unfocused, 1 = focused)
   const focusAnim = useRef(new Animated.Value(0)).current;
+
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const inputRef = useRef<any>(null);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -78,11 +95,33 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
     setSending(true);
     try {
-      await sendMessage({ chatId: thread.chatId, content: trimmed, groupId: thread.groupId });
+      let replyData = undefined;
+      if (replyingTo) {
+        const participant = thread.participants.find(p => p.userId === replyingTo.senderId);
+        replyData = {
+          messageId: replyingTo.messageId,
+          senderId: replyingTo.senderId,
+          senderName: participant?.displayName || 'Unknown',
+          content: replyingTo.content,
+        };
+      }
+
+      await sendMessage({
+        chatId: thread.chatId,
+        content: trimmed,
+        groupId: thread.groupId,
+        replyTo: replyData
+      });
       setText('');
+      setReplyingTo(null);
     } finally {
       setSending(false);
     }
+  };
+
+  const handleSwipeReply = (message: ChatMessage) => {
+    setReplyingTo(message);
+    inputRef.current?.focus();
   };
 
   // Get proper group name if this is a group chat
@@ -184,6 +223,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 message={item}
                 showSenderInfo={isFirstInSequence}
                 senderName={senderName}
+                onSwipeReply={handleSwipeReply}
               />
             );
           }}
@@ -203,6 +243,25 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           scrollEventThrottle={16}
         />
 
+        {replyingTo && (
+          <View style={[styles.replyPreview, { backgroundColor: isDark ? '#1E1E1E' : '#F5F5F5', borderLeftColor: getSenderColor(replyingTo.senderId) }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.replyPreviewSender, { color: getSenderColor(replyingTo.senderId) }]}>
+                {thread.participants.find(p => p.userId === replyingTo.senderId)?.displayName || 'Unknown'}
+              </Text>
+              <Text numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
+                {replyingTo.content}
+              </Text>
+            </View>
+            <IconButton
+              icon="close"
+              size={20}
+              onPress={() => setReplyingTo(null)}
+              iconColor={theme.colors.onSurfaceVariant}
+            />
+          </View>
+        )}
+
         <View style={styles.composerWrapper}>
           <Animated.View
             style={{
@@ -214,6 +273,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           >
             <GlassView style={styles.composer}>
               <TextInput
+                ref={inputRef}
                 // Use flat mode so the TextInput doesn't draw its own outline
                 // when focused. We rely on the surrounding `GlassView` for
                 // container radius and padding so the inner input stays visually
@@ -374,6 +434,19 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontWeight: 'bold',
     textAlign: 'center',
+  },
+  replyPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+    marginHorizontal: 12,
+    marginBottom: 8,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+  },
+  replyPreviewSender: {
+    fontWeight: 'bold',
+    marginBottom: 2,
   },
 });
 
