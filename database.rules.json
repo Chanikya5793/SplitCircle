@@ -26,6 +26,7 @@
     },
     "receipts": {
       "$chatId": {
+        ".read": "auth != null",
         "$messageId": {
           ".read": "auth != null",
           ".write": "auth != null",
@@ -43,6 +44,24 @@
           },
           "recipientId": {
             ".validate": "newData.isString()"
+          },
+          "$recipientId": {
+            ".validate": "newData.hasChildren(['delivered', 'deliveredAt', 'recipientId'])",
+            "delivered": {
+              ".validate": "newData.isBoolean()"
+            },
+            "deliveredAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "read": {
+              ".validate": "newData.isBoolean()"
+            },
+            "readAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "recipientId": {
+              ".validate": "newData.isString()"
+            }
           }
         }
       }

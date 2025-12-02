@@ -56,3 +56,149 @@ export const getChatMessages = async (chatId: string): Promise<ChatMessage[]> =>
     return [];
   }
 };
+
+// Update a message's status in local storage
+export const updateMessageStatus = async (
+  chatId: string,
+  messageId: string,
+  status: ChatMessage['status'],
+  deliveredTo?: string[],
+  readBy?: string[]
+): Promise<void> => {
+  try {
+    const key = `${MESSAGES_KEY_PREFIX}${chatId}`;
+    const data = await AsyncStorage.getItem(key);
+    
+    if (!data) return;
+    
+    const messages: ChatMessage[] = JSON.parse(data);
+    const messageIndex = messages.findIndex(m => m.id === messageId || m.messageId === messageId);
+    
+    if (messageIndex >= 0) {
+      messages[messageIndex] = {
+        ...messages[messageIndex],
+        status,
+        ...(deliveredTo !== undefined ? { deliveredTo } : {}),
+        ...(readBy !== undefined ? { readBy } : {}),
+      };
+      
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      console.log(`✅ Message ${messageId} status updated to ${status}`);
+    }
+  } catch (error) {
+    console.error('❌ Error updating message status:', error);
+  }
+};
+
+// Mark multiple messages as delivered by a specific user
+export const markMessagesDelivered = async (
+  chatId: string,
+  messageIds: string[],
+  deliveredByUserId: string
+): Promise<void> => {
+  try {
+    const key = `${MESSAGES_KEY_PREFIX}${chatId}`;
+    const data = await AsyncStorage.getItem(key);
+    
+    if (!data) return;
+    
+    const messages: ChatMessage[] = JSON.parse(data);
+    let updated = false;
+    
+    for (const messageId of messageIds) {
+      const messageIndex = messages.findIndex(m => m.id === messageId || m.messageId === messageId);
+      
+      if (messageIndex >= 0) {
+        const message = messages[messageIndex];
+        const deliveredTo = message.deliveredTo || [];
+        
+        if (!deliveredTo.includes(deliveredByUserId)) {
+          deliveredTo.push(deliveredByUserId);
+          messages[messageIndex] = {
+            ...message,
+            deliveredTo,
+            status: message.status === 'sent' ? 'delivered' : message.status,
+          };
+          updated = true;
+        }
+      }
+    }
+    
+    if (updated) {
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      console.log(`✅ Marked ${messageIds.length} messages as delivered by ${deliveredByUserId}`);
+    }
+  } catch (error) {
+    console.error('❌ Error marking messages delivered:', error);
+  }
+};
+
+// Mark multiple messages as read by a specific user
+export const markMessagesRead = async (
+  chatId: string,
+  messageIds: string[],
+  readByUserId: string
+): Promise<void> => {
+  try {
+    const key = `${MESSAGES_KEY_PREFIX}${chatId}`;
+    const data = await AsyncStorage.getItem(key);
+    
+    if (!data) return;
+    
+    const messages: ChatMessage[] = JSON.parse(data);
+    let updated = false;
+    
+    for (const messageId of messageIds) {
+      const messageIndex = messages.findIndex(m => m.id === messageId || m.messageId === messageId);
+      
+      if (messageIndex >= 0) {
+        const message = messages[messageIndex];
+        const readBy = message.readBy || [];
+        const deliveredTo = message.deliveredTo || [];
+        
+        // If someone read it, they also delivered it
+        if (!deliveredTo.includes(readByUserId)) {
+          deliveredTo.push(readByUserId);
+        }
+        
+        if (!readBy.includes(readByUserId)) {
+          readBy.push(readByUserId);
+          messages[messageIndex] = {
+            ...message,
+            deliveredTo,
+            readBy,
+            status: 'read',
+          };
+          updated = true;
+        }
+      }
+    }
+    
+    if (updated) {
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      console.log(`✅ Marked ${messageIds.length} messages as read by ${readByUserId}`);
+    }
+  } catch (error) {
+    console.error('❌ Error marking messages read:', error);
+  }
+};
+
+// Get unread messages from a specific sender (for triggering read receipts)
+export const getUnreadMessagesFromSender = async (
+  chatId: string,
+  senderId: string,
+  currentUserId: string
+): Promise<ChatMessage[]> => {
+  try {
+    const messages = await getChatMessages(chatId);
+    
+    return messages.filter(msg => 
+      msg.senderId === senderId && 
+      msg.senderId !== currentUserId &&
+      (!msg.readBy || !msg.readBy.includes(currentUserId))
+    );
+  } catch (error) {
+    console.error('❌ Error getting unread messages:', error);
+    return [];
+  }
+};
