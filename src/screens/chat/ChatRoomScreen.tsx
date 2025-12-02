@@ -254,21 +254,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             <GlassView style={styles.composer}>
               <TextInput
                 ref={inputRef}
-                // Use flat mode so the TextInput doesn't draw its own outline
-                // when focused. We rely on the surrounding `GlassView` for
-                // container radius and padding so the inner input stays visually
-                // consistent with the composer.
                 mode="flat"
+                dense
                 placeholder={placeholder}
                 value={text}
                 onChangeText={setText}
                 style={styles.input}
-                // control inner padding so text lines up with composer padding
                 contentStyle={styles.inputContent}
-                // ensure caret is visible
                 selectionColor={theme.colors.primary}
-                // Remove underline by forcing no bottom border on the inner input
-                // and ensuring the TextInput doesn't render any underline color
                 underlineColor="transparent"
                 activeUnderlineColor="transparent"
                 onFocus={() => {
@@ -280,7 +273,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                   Animated.timing(focusAnim, { toValue: 0, duration: 150, useNativeDriver: false }).start();
                 }}
                 multiline
-                numberOfLines={2}
+                numberOfLines={1}
                 maxLength={1000}
                 theme={{
                   colors: {
@@ -349,19 +342,16 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: 'transparent',
-    // Tweak these min/max to change vertical size of the input box
     maxHeight: 120,
-    minHeight: 60, // Ensure minimum touch height
-    textAlignVertical: 'center',
-    justifyContent: 'center',
-    // Internal padding is controlled via contentStyle; keep zero here
-    paddingVertical: 0,
-    paddingHorizontal: 0,
+    minHeight: 44,
+    paddingTop: 0,
+    paddingBottom: 0,
+    marginTop: 0,
+    marginBottom: 0,
   },
   inputContent: {
-    // PLACEHOLDER ALIGNMENT: Adjust vertical padding to center text
-    paddingVertical: 0,
-    // move placeholder/text a bit to the right
+    paddingTop: 15,
+    paddingBottom: 10,
     paddingLeft: 16,
     paddingRight: 8,
   },
