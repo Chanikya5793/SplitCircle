@@ -150,11 +150,10 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
   return (
     <LiquidBackground>
-      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+      <View style={styles.stickyHeader}>
         <TouchableOpacity
           onPress={thread.type === 'group' ? handleHeaderPress : undefined}
-          activeOpacity={0.7}
-          // make header hit area predictable
+          activeOpacity={thread.type === 'group' ? 0.7 : 1}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
           <GlassView style={styles.stickyHeaderGlass}>
@@ -177,7 +176,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             </View>
           </GlassView>
         </TouchableOpacity>
-      </Animated.View>
+      </View>
 
       <KeyboardAvoidingView
         style={styles.container}
