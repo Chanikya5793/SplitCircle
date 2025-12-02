@@ -20,6 +20,15 @@
           },
           "chatId": {
             ".validate": "newData.isString()"
+          },
+          "mediaUrl": {
+            ".validate": "newData.isString() || newData.val() == null"
+          },
+          "replyTo": {
+            ".validate": "newData.val() == null || newData.hasChildren(['messageId', 'senderId', 'senderName', 'content'])"
+          },
+          "isGroupChat": {
+            ".validate": "newData.isBoolean()"
           }
         }
       }

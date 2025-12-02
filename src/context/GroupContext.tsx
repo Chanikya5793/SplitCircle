@@ -3,18 +3,18 @@ import type { ChatMessage, ChatParticipant, Expense, Group, ParticipantShare, Se
 import { queueMessage } from '@/services/messageQueueService';
 import { deleteFile, uploadFile } from '@/services/storageService';
 import {
-  addDoc,
-  arrayUnion,
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
+    addDoc,
+    arrayUnion,
+    collection,
+    deleteDoc,
+    doc,
+    getDocs,
+    onSnapshot,
+    query,
+    serverTimestamp,
+    setDoc,
+    updateDoc,
+    where,
 } from 'firebase/firestore';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { v4 as uuid } from 'uuid';
@@ -217,7 +217,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
 
       for (const recipientId of allRecipients) {
         try {
-          await queueMessage(recipientId, systemMessage);
+          await queueMessage(recipientId, systemMessage, true); // isGroupChat = true
         } catch (error) {
           console.error(`Failed to queue system message for ${recipientId}:`, error);
           // Continue to next recipient even if one fails
