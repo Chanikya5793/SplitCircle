@@ -150,34 +150,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
   return (
     <LiquidBackground>
-      <View style={styles.stickyHeader}>
-        <TouchableOpacity
-          onPress={thread.type === 'group' ? handleHeaderPress : undefined}
-          activeOpacity={thread.type === 'group' ? 0.7 : 1}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <GlassView style={styles.stickyHeaderGlass}>
-            <View style={styles.headerRow}>
-              {thread.type === 'group' && (
-                <Avatar.Text
-                  size={32}
-                  label={groupInitials}
-                  style={{ backgroundColor: theme.colors.primary, marginRight: 8 }}
-                  color={theme.colors.onPrimary}
-                />
-              )}
-              <Text
-                variant="titleMedium"
-                style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}
-                numberOfLines={1}
-              >
-                {title}
-              </Text>
-            </View>
-          </GlassView>
-        </TouchableOpacity>
-      </View>
-
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
