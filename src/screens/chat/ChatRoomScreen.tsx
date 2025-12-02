@@ -8,7 +8,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatThread } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
 
 interface ChatRoomScreenProps {
@@ -157,20 +157,22 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
       >
         <View style={styles.headerContainer}>
-          <Pressable
+          <TouchableOpacity
             onPress={thread.type === 'group' ? handleHeaderPress : undefined}
-            style={({ pressed }) => [styles.headerPill, pressed && thread.type === 'group' && { opacity: 0.6 }]}
+            activeOpacity={thread.type === 'group' ? 0.7 : 1}
           >
-            {thread.type === 'group' && (
-              <Avatar.Text
-                size={40}
-                label={groupInitials}
-                style={{ backgroundColor: theme.colors.primary, marginRight: 10 }}
-                color={theme.colors.onPrimary}
-              />
-            )}
-            <Text variant="titleLarge" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>{title}</Text>
-          </Pressable>
+            <GlassView style={styles.headerPill}>
+              {thread.type === 'group' && (
+                <Avatar.Text
+                  size={55}
+                  label={groupInitials}
+                  style={{ backgroundColor: theme.colors.primary, marginRight: 0 }}
+                  color={theme.colors.onPrimary}
+                />
+              )}
+              <Text variant="titleLarge" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>{title}</Text>
+            </GlassView>
+          </TouchableOpacity>
         </View>
 
         <Animated.FlatList
@@ -408,9 +410,8 @@ const styles = StyleSheet.create({
   headerPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(150, 150, 150, 0.15)',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: 5,
+    paddingHorizontal: 70,
     borderRadius: 50,
   },
   headerTitle: {
