@@ -23,6 +23,12 @@ interface SendMessagePayload {
   type?: MessageType;
   mediaUri?: string;
   groupId?: string;
+  replyTo?: {
+    messageId: string;
+    senderId: string;
+    senderName: string;
+    content: string;
+  };
 }
 
 interface ChatContextValue {
@@ -134,7 +140,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   }, [user]);
 
   const sendMessage = useCallback(
-    async ({ chatId, content, type = 'text', mediaUri, groupId }: SendMessagePayload) => {
+    async ({ chatId, content, type = 'text', mediaUri, groupId, replyTo }: SendMessagePayload) => {
       if (!user) {
         throw new Error('Missing user for chat send');
       }
@@ -158,6 +164,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         type,
         content,
       ...(mediaUrl ? { mediaUrl } : {}),
+      ...(replyTo ? { replyTo } : {}),
         status: 'sent',
         createdAt: now,
         timestamp: now,
