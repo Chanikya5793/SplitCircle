@@ -161,16 +161,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             onPress={thread.type === 'group' ? handleHeaderPress : undefined}
             activeOpacity={thread.type === 'group' ? 0.7 : 1}
           >
-            <GlassView style={styles.headerPill}>
-              {thread.type === 'group' && (
-                <Avatar.Text
-                  size={55}
-                  label={groupInitials}
-                  style={{ backgroundColor: theme.colors.primary, marginRight: 0 }}
-                  color={theme.colors.onPrimary}
-                />
-              )}
-              <Text variant="titleLarge" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>{title}</Text>
+            <GlassView style={styles.headerPill} intensity={5}>
+              <View style={styles.headerPillContent}>
+                {thread.type === 'group' && (
+                  <Avatar.Text
+                    size={40}
+                    label={groupInitials}
+                    style={{ backgroundColor: theme.colors.primary, marginRight: 10 }}
+                    color={theme.colors.onPrimary}
+                  />
+                )}
+                <Text variant="titleLarge" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>{title}</Text>
+              </View>
             </GlassView>
           </TouchableOpacity>
         </View>
@@ -227,7 +229,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               </View>
               <IconButton
                 icon="close"
-                size={18}
+                size={22}
                 onPress={() => setReplyingTo(null)}
                 iconColor={theme.colors.onSurfaceVariant}
               />
@@ -324,8 +326,8 @@ const styles = StyleSheet.create({
   composerWrapper: {
     marginTop: -20,
     paddingHorizontal: 12,
-    paddingVertical: 0,
-    marginBottom: 10,
+    paddingVertical: 16,
+    marginBottom: -2,
   },
   inputRow: {
     flexDirection: 'row',
@@ -408,14 +410,17 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   headerPill: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 50,
+  },
+  headerPillContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 5,
-    paddingHorizontal: 70,
-    borderRadius: 50,
   },
   headerTitle: {
     fontWeight: 'bold',
+    fontSize: 28,
     textAlign: 'center',
   },
   replyPreview: {
