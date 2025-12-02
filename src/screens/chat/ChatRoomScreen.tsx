@@ -156,23 +156,22 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         // smaller offset so composer hugs the keyboard more closely
         //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
       >
-        <Pressable
-          onPress={thread.type === 'group' ? handleHeaderPress : undefined}
-          hitSlop={{ top: 20, bottom: 20, left: 30, right: 30 }}
-          style={({ pressed }) => [styles.headerContainer, pressed && thread.type === 'group' && { opacity: 0.6 }]}
-        >
-          <View style={styles.headerRow}>
+        <View style={styles.headerContainer}>
+          <Pressable
+            onPress={thread.type === 'group' ? handleHeaderPress : undefined}
+            style={({ pressed }) => [styles.headerPill, pressed && thread.type === 'group' && { opacity: 0.6 }]}
+          >
             {thread.type === 'group' && (
               <Avatar.Text
-                size={48}
+                size={40}
                 label={groupInitials}
-                style={{ backgroundColor: theme.colors.primary, marginRight: 12 }}
+                style={{ backgroundColor: theme.colors.primary, marginRight: 10 }}
                 color={theme.colors.onPrimary}
               />
             )}
-            <Text variant="headlineMedium" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>{title}</Text>
-          </View>
-        </Pressable>
+            <Text variant="titleLarge" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>{title}</Text>
+          </Pressable>
+        </View>
 
         <Animated.FlatList
           ref={listRef}
@@ -401,11 +400,18 @@ const styles = StyleSheet.create({
   headerContainer: {
     paddingHorizontal: 16,
     paddingTop: 8,
-    paddingBottom: 16,
+    paddingBottom: 12,
     alignItems: 'center',
-    minHeight: 60,
     zIndex: 100,
     elevation: 10,
+  },
+  headerPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(150, 150, 150, 0.15)',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 50,
   },
   headerTitle: {
     fontWeight: 'bold',
