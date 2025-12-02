@@ -404,6 +404,8 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     alignItems: 'center',
     minHeight: 60,
+    zIndex: 100,
+    elevation: 10,
   },
   headerTitle: {
     fontWeight: 'bold',
