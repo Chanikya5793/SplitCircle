@@ -13,8 +13,21 @@ import {
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { v4 as uuid } from 'uuid';
-import { getChatMessages, initMessageDB, saveMessageLocally } from '../services/localMessageStorage';
-import { listenForMessages, queueMessage } from '../services/messageQueueService';
+import { 
+    getChatMessages, 
+    initMessageDB, 
+    saveMessageLocally, 
+    updateMessageStatus,
+    markMessagesDelivered,
+    markMessagesRead,
+    getUnreadMessagesFromSender 
+} from '../services/localMessageStorage';
+import { 
+    listenForMessages, 
+    queueMessage, 
+    listenForReceipts,
+    sendBulkReadReceipts 
+} from '../services/messageQueueService';
 import { useAuth } from './AuthContext';
 
 interface SendMessagePayload {
@@ -37,6 +50,7 @@ interface ChatContextValue {
   sendMessage: (payload: SendMessagePayload) => Promise<void>;
   subscribeToMessages: (chatId: string, onData: (messages: ChatMessage[]) => void) => () => void;
   ensureGroupThread: (groupId: string, participants: ChatParticipant[]) => Promise<string>;
+  markChatAsRead: (chatId: string) => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextValue | undefined>(undefined);
@@ -107,6 +121,10 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const subscribeToMessages = useCallback((chatId: string, onData: (messages: ChatMessage[]) => void) => {
     if (!user) return () => {};
 
+    // Find thread to determine if it's a group chat
+    const thread = threads.find(t => t.chatId === chatId);
+    const isGroupChat = thread?.type === 'group';
+
     // 1. Load local messages immediately
     const loadLocalMessages = () => {
       getChatMessages(chatId).then((localMessages) => {
@@ -130,14 +148,39 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       }
     });
     
-    // 3. Poll local storage as a backup (in case we missed something or for other updates)
+    // 3. Listen for delivery/read receipts for messages we sent
+    const unsubscribeReceipts = listenForReceipts(
+      chatId,
+      async (messageId, status, recipientId, allDelivered, allRead) => {
+        console.log(`📬 Receipt received: ${messageId} -> ${status}`);
+        
+        if (isGroupChat && allDelivered !== undefined && allRead !== undefined) {
+          // Group chat: update with arrays of who delivered/read
+          await updateMessageStatus(chatId, messageId, status, allDelivered, allRead);
+        } else if (recipientId) {
+          // 1:1 chat: mark as delivered/read
+          if (status === 'read') {
+            await markMessagesRead(chatId, [messageId], recipientId);
+          } else if (status === 'delivered') {
+            await markMessagesDelivered(chatId, [messageId], recipientId);
+          }
+        }
+        
+        // Refresh UI
+        loadLocalMessages();
+      },
+      isGroupChat
+    );
+    
+    // 4. Poll local storage as a backup (in case we missed something or for other updates)
     const interval = setInterval(loadLocalMessages, 3000);
 
     return () => {
       clearInterval(interval);
       unsubscribeQueue();
+      unsubscribeReceipts();
     };
-  }, [user]);
+  }, [user, threads]);
 
   const sendMessage = useCallback(
     async ({ chatId, content, type = 'text', mediaUri, groupId, replyTo }: SendMessagePayload) => {
@@ -224,9 +267,51 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     [threads, user],
   );
 
+  /**
+   * Mark all unread messages in a chat as read
+   * This should be called when the user opens a chat room
+   */
+  const markChatAsRead = useCallback(
+    async (chatId: string) => {
+      if (!user) return;
+      
+      const thread = threads.find(t => t.chatId === chatId);
+      if (!thread) return;
+      
+      const isGroupChat = thread.type === 'group';
+      
+      // Get all messages in the chat
+      const messages = await getChatMessages(chatId);
+      
+      // Find messages from other users that we haven't read yet
+      const unreadMessageIds = messages
+        .filter(msg => 
+          msg.senderId !== user.userId && 
+          (!msg.readBy || !msg.readBy.includes(user.userId))
+        )
+        .map(msg => msg.id);
+      
+      if (unreadMessageIds.length === 0) {
+        console.log('📖 No unread messages to mark as read');
+        return;
+      }
+      
+      console.log(`📖 Marking ${unreadMessageIds.length} messages as read`);
+      
+      // Update local storage
+      await markMessagesRead(chatId, unreadMessageIds, user.userId);
+      
+      // Send read receipts to Firebase for the sender(s) to receive
+      await sendBulkReadReceipts(chatId, unreadMessageIds, user.userId, isGroupChat);
+      
+      console.log('✅ Read receipts sent');
+    },
+    [user, threads]
+  );
+
   const value = useMemo(
-    () => ({ threads, loading, sendMessage, subscribeToMessages, ensureGroupThread }),
-    [ensureGroupThread, loading, sendMessage, subscribeToMessages, threads],
+    () => ({ threads, loading, sendMessage, subscribeToMessages, ensureGroupThread, markChatAsRead }),
+    [ensureGroupThread, loading, markChatAsRead, sendMessage, subscribeToMessages, threads],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;

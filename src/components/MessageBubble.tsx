@@ -1,17 +1,20 @@
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { ChatMessage } from '@/models';
+import type { ChatMessage, MessageStatus } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
 import { useRef } from 'react';
 import { Animated, Image, StyleSheet, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
+import Ionicons from '@expo/vector-icons/Ionicons';
 
 interface MessageBubbleProps {
   message: ChatMessage;
   showSenderInfo?: boolean;
   senderName?: string;
   onSwipeReply?: (message: ChatMessage) => void;
+  isGroupChat?: boolean;
+  totalRecipients?: number;
 }
 
 const AVATAR_COLORS = [
@@ -28,7 +31,48 @@ const getSenderColor = (id: string) => {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 };
 
-export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply }: MessageBubbleProps) => {
+// WhatsApp-style message status indicator component
+const MessageStatusIndicator = ({ status, isGroupChat, totalRecipients, deliveredCount, readCount }: {
+  status: MessageStatus;
+  isGroupChat?: boolean;
+  totalRecipients?: number;
+  deliveredCount?: number;
+  readCount?: number;
+}) => {
+  // For group chats, we check if all recipients have delivered/read
+  const allDelivered = isGroupChat && totalRecipients ? (deliveredCount || 0) >= totalRecipients : status === 'delivered' || status === 'read';
+  const allRead = isGroupChat && totalRecipients ? (readCount || 0) >= totalRecipients : status === 'read';
+
+  const getIconConfig = () => {
+    switch (status) {
+      case 'sending':
+        return { name: 'time-outline' as const, color: 'rgba(255,255,255,0.6)', size: 14 };
+      case 'failed':
+        return { name: 'alert-circle-outline' as const, color: '#FF6B6B', size: 14 };
+      case 'sent':
+        return { name: 'checkmark' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
+      case 'delivered':
+        // In group chat, use grey if not all delivered
+        if (isGroupChat && !allDelivered) {
+          return { name: 'checkmark' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
+        }
+        return { name: 'checkmark-done' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
+      case 'read':
+        // In group chat, show blue only if all have read
+        if (isGroupChat && !allRead) {
+          return { name: 'checkmark-done' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
+        }
+        return { name: 'checkmark-done' as const, color: '#53BDEB', size: 14 }; // WhatsApp blue
+      default:
+        return { name: 'checkmark' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
+    }
+  };
+
+  const { name, color, size } = getIconConfig();
+  return <Ionicons name={name} size={size} color={color} style={{ marginLeft: 4 }} />;
+};
+
+export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, isGroupChat, totalRecipients }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
@@ -104,7 +148,16 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           <ReplyContent />
           <Text style={[styles.text, { color: theme.colors.onPrimary }]}>{message.content}</Text>
           {message.mediaUrl && <Image source={{ uri: message.mediaUrl }} style={styles.image} />}
-          <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
+          <View style={styles.timestampRow}>
+            <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
+            <MessageStatusIndicator
+              status={message.status}
+              isGroupChat={isGroupChat}
+              totalRecipients={totalRecipients}
+              deliveredCount={message.deliveredTo?.length || 0}
+              readCount={message.readBy?.length || 0}
+            />
+          </View>
         </View>
       </Swipeable>
     );
@@ -198,6 +251,12 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 4,
     textAlign: 'right',
+  },
+  timestampRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: 4,
   },
   image: {
     marginTop: 8,

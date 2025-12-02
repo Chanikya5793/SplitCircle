@@ -3,11 +3,25 @@
 // Messages are cached in Firebase until delivered, then deleted
 // Local storage is the primary message store (SQLite)
 
-import { getDatabase, onValue, ref, remove, set } from 'firebase/database';
+import { getDatabase, onValue, ref, remove, set, get } from 'firebase/database';
 import { ChatMessage } from '../models';
 
 // Get Realtime Database instance
 const rtdb = getDatabase();
+
+// Type for receipt data structure
+interface ReceiptData {
+  delivered?: boolean;
+  deliveredAt?: number;
+  read?: boolean;
+  readAt?: number;
+  recipientId: string;
+}
+
+// Type for group receipt structure (per-user receipts)
+interface GroupReceiptData {
+  [recipientId: string]: ReceiptData;
+}
 
 /**
  * Send a message to recipient's queue in Realtime Database
@@ -92,15 +106,22 @@ export const listenForMessages = (
 };
 
 /**
- * Send delivery receipt to sender
+ * Send delivery receipt to sender (supports both 1:1 and group chats)
+ * For group chats, stores per-user receipt under the messageId
  */
 export const sendDeliveryReceipt = async (
   chatId: string,
   messageId: string,
-  recipientId: string
+  recipientId: string,
+  isGroupChat: boolean = false
 ): Promise<void> => {
   try {
-    const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}`);
+    // For group chats, store receipt per user
+    const receiptPath = isGroupChat
+      ? `receipts/${chatId}/${messageId}/${recipientId}`
+      : `receipts/${chatId}/${messageId}`;
+    
+    const receiptRef = ref(rtdb, receiptPath);
     
     await set(receiptRef, {
       delivered: true,
@@ -115,15 +136,21 @@ export const sendDeliveryReceipt = async (
 };
 
 /**
- * Send read receipt
+ * Send read receipt (supports both 1:1 and group chats)
  */
 export const sendReadReceipt = async (
   chatId: string,
   messageId: string,
-  recipientId: string
+  recipientId: string,
+  isGroupChat: boolean = false
 ): Promise<void> => {
   try {
-    const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}`);
+    // For group chats, store receipt per user
+    const receiptPath = isGroupChat
+      ? `receipts/${chatId}/${messageId}/${recipientId}`
+      : `receipts/${chatId}/${messageId}`;
+    
+    const receiptRef = ref(rtdb, receiptPath);
     
     await set(receiptRef, {
       delivered: true,
@@ -140,11 +167,39 @@ export const sendReadReceipt = async (
 };
 
 /**
- * Listen for delivery and read receipts
+ * Send read receipts for multiple messages at once
+ */
+export const sendBulkReadReceipts = async (
+  chatId: string,
+  messageIds: string[],
+  recipientId: string,
+  isGroupChat: boolean = false
+): Promise<void> => {
+  try {
+    const promises = messageIds.map(messageId => 
+      sendReadReceipt(chatId, messageId, recipientId, isGroupChat)
+    );
+    await Promise.all(promises);
+    console.log(`✅ Bulk read receipts sent for ${messageIds.length} messages`);
+  } catch (error) {
+    console.error('❌ Error sending bulk read receipts:', error);
+  }
+};
+
+/**
+ * Listen for delivery and read receipts (enhanced for group chats)
+ * For group chats, aggregates per-user receipts
  */
 export const listenForReceipts = (
   chatId: string,
-  onReceiptReceived: (messageId: string, status: 'delivered' | 'read') => void
+  onReceiptReceived: (
+    messageId: string,
+    status: 'delivered' | 'read',
+    recipientId?: string,
+    allDelivered?: string[],
+    allRead?: string[]
+  ) => void,
+  isGroupChat: boolean = false
 ): (() => void) => {
   const receiptsRef = ref(rtdb, `receipts/${chatId}`);
   
@@ -153,16 +208,83 @@ export const listenForReceipts = (
       const receipts = snapshot.val();
       
       for (const messageId in receipts) {
-        const receipt = receipts[messageId];
+        const messageReceipts = receipts[messageId];
         
-        if (receipt.read) {
-          onReceiptReceived(messageId, 'read');
-        } else if (receipt.delivered) {
-          onReceiptReceived(messageId, 'delivered');
+        if (isGroupChat) {
+          // Group chat: messageReceipts is an object with recipientId keys
+          const allDelivered: string[] = [];
+          const allRead: string[] = [];
+          
+          for (const recipientId in messageReceipts) {
+            const receipt = messageReceipts[recipientId] as ReceiptData;
+            if (receipt.delivered) allDelivered.push(recipientId);
+            if (receipt.read) allRead.push(recipientId);
+          }
+          
+          // Determine overall status for this message
+          const hasRead = allRead.length > 0;
+          const hasDelivered = allDelivered.length > 0;
+          
+          if (hasRead) {
+            onReceiptReceived(messageId, 'read', undefined, allDelivered, allRead);
+          } else if (hasDelivered) {
+            onReceiptReceived(messageId, 'delivered', undefined, allDelivered, allRead);
+          }
+        } else {
+          // 1:1 chat: messageReceipts is a single receipt object
+          const receipt = messageReceipts as ReceiptData;
+          
+          if (receipt.read) {
+            onReceiptReceived(messageId, 'read', receipt.recipientId);
+          } else if (receipt.delivered) {
+            onReceiptReceived(messageId, 'delivered', receipt.recipientId);
+          }
         }
       }
     }
   });
   
   return unsubscribe;
+};
+
+/**
+ * Get current receipt status for a message (one-time fetch)
+ */
+export const getReceiptStatus = async (
+  chatId: string,
+  messageId: string,
+  isGroupChat: boolean = false
+): Promise<{ deliveredTo: string[]; readBy: string[] }> => {
+  try {
+    const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}`);
+    const snapshot = await get(receiptRef);
+    
+    if (!snapshot.exists()) {
+      return { deliveredTo: [], readBy: [] };
+    }
+    
+    const receipts = snapshot.val();
+    
+    if (isGroupChat) {
+      const deliveredTo: string[] = [];
+      const readBy: string[] = [];
+      
+      for (const recipientId in receipts) {
+        const receipt = receipts[recipientId] as ReceiptData;
+        if (receipt.delivered) deliveredTo.push(recipientId);
+        if (receipt.read) readBy.push(recipientId);
+      }
+      
+      return { deliveredTo, readBy };
+    } else {
+      const receipt = receipts as ReceiptData;
+      return {
+        deliveredTo: receipt.delivered ? [receipt.recipientId] : [],
+        readBy: receipt.read ? [receipt.recipientId] : [],
+      };
+    }
+  } catch (error) {
+    console.error('❌ Error getting receipt status:', error);
+    return { deliveredTo: [], readBy: [] };
+  }
 };

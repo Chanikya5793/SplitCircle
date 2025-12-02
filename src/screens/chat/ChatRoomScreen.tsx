@@ -8,7 +8,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatThread } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, AppState, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
 
 interface ChatRoomScreenProps {
@@ -17,7 +17,7 @@ interface ChatRoomScreenProps {
 
 export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const navigation = useNavigation();
-  const { subscribeToMessages, sendMessage } = useChat();
+  const { subscribeToMessages, sendMessage, markChatAsRead } = useChat();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   // Messages for this chat (inverted list - newest first)
@@ -59,11 +59,22 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       setMessages(items);
     });
 
+    // Mark all messages as read when opening the chat
+    markChatAsRead(thread.chatId);
+
+    // Also mark as read when app comes back to foreground
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        markChatAsRead(thread.chatId);
+      }
+    });
+
     return () => {
       console.log('👋 ChatRoomScreen unmounting');
       unsubscribe();
+      subscription.remove();
     };
-  }, [subscribeToMessages, thread.chatId]);
+  }, [subscribeToMessages, thread.chatId, markChatAsRead]);
 
   useEffect(() => {
     if (messages.length === 0) {
@@ -187,6 +198,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             const isFirstInSequence = !prevMessage || prevMessage.senderId !== item.senderId || prevMessage.type === 'system';
             const participant = thread.participants.find(p => p.userId === item.senderId);
             const senderName = participant?.displayName || 'Unknown';
+            // Calculate total recipients for group chat receipt display (excluding sender)
+            const totalRecipients = thread.participants.length - 1;
 
             return (
               <MessageBubble
@@ -194,6 +207,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 showSenderInfo={thread.type === 'group' ? isFirstInSequence : undefined}
                 senderName={senderName}
                 onSwipeReply={handleSwipeReply}
+                isGroupChat={thread.type === 'group'}
+                totalRecipients={totalRecipients}
               />
             );
           }}
