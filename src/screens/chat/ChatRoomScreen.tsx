@@ -8,7 +8,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatThread } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
 
 interface ChatRoomScreenProps {
@@ -33,6 +33,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [composerFocused, setComposerFocused] = useState(false);
   // Animated value for focus border animation (0 = unfocused, 1 = focused)
   const focusAnim = useRef(new Animated.Value(0)).current;
+  // Reply state
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const inputRef = useRef<any>(null);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -78,11 +81,42 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
     setSending(true);
     try {
-      await sendMessage({ chatId: thread.chatId, content: trimmed, groupId: thread.groupId });
+      // Build replyTo data if replying
+      let replyData = undefined;
+      if (replyingTo) {
+        const participant = thread.participants.find(p => p.userId === replyingTo.senderId);
+        replyData = {
+          messageId: replyingTo.messageId,
+          senderId: replyingTo.senderId,
+          senderName: participant?.displayName || 'Unknown',
+          content: replyingTo.content,
+        };
+      }
+      await sendMessage({ chatId: thread.chatId, content: trimmed, groupId: thread.groupId, replyTo: replyData });
       setText('');
+      setReplyingTo(null);
     } finally {
       setSending(false);
     }
+  };
+
+  // Handle swipe reply from message bubble
+  const handleSwipeReply = (message: ChatMessage) => {
+    setReplyingTo(message);
+    inputRef.current?.focus();
+  };
+
+  // Get sender color for reply preview
+  const getSenderColor = (id: string) => {
+    const AVATAR_COLORS = [
+      '#E57373', '#F06292', '#BA68C8', '#9575CD', '#7986CB',
+      '#64B5F6', '#4FC3F7', '#4DD0E1', '#4DB6AC', '#81C784',
+    ];
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+      hash = id.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
   };
 
   // Get proper group name if this is a group chat
@@ -116,64 +150,53 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
   return (
     <LiquidBackground>
-      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
-        <TouchableOpacity
-          onPress={thread.type === 'group' ? handleHeaderPress : undefined}
-          activeOpacity={0.7}
-          // make header hit area predictable
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <GlassView style={styles.stickyHeaderGlass}>
-            <View style={styles.headerRow}>
-              {thread.type === 'group' && (
-                <Avatar.Text
-                  size={32}
-                  label={groupInitials}
-                  style={{ backgroundColor: theme.colors.primary, marginRight: 8 }}
-                  color={theme.colors.onPrimary}
-                />
-              )}
-              <Text
-                variant="titleMedium"
-                style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}
-                numberOfLines={1}
-              >
-                {title}
-              </Text>
-            </View>
-          </GlassView>
-        </TouchableOpacity>
-      </Animated.View>
-
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         // smaller offset so composer hugs the keyboard more closely
         //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
       >
-        <Pressable
-          onPress={thread.type === 'group' ? handleHeaderPress : undefined}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          style={({ pressed }) => [styles.headerContainer, pressed && { opacity: 0.6 }]}
-        >
-          <View style={styles.headerRow}>
-            {thread.type === 'group' && (
-              <Avatar.Text
-                size={48}
-                label={groupInitials}
-                style={{ backgroundColor: theme.colors.primary, marginRight: 12 }}
-                color={theme.colors.onPrimary}
-              />
-            )}
-            <Text variant="headlineMedium" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>{title}</Text>
-          </View>
-        </Pressable>
+        <View style={styles.headerContainer}>
+          <TouchableOpacity
+            onPress={thread.type === 'group' ? handleHeaderPress : undefined}
+            activeOpacity={thread.type === 'group' ? 0.7 : 1}
+          >
+            <GlassView style={styles.headerPill} intensity={5}>
+              <View style={styles.headerPillContent}>
+                {thread.type === 'group' && (
+                  <Avatar.Text
+                    size={40}
+                    label={groupInitials}
+                    style={{ backgroundColor: theme.colors.primary, marginRight: 10 }}
+                    color={theme.colors.onPrimary}
+                  />
+                )}
+                <Text variant="titleLarge" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>{title}</Text>
+              </View>
+            </GlassView>
+          </TouchableOpacity>
+        </View>
 
         <Animated.FlatList
           ref={listRef}
           data={messages}
           keyExtractor={(item) => item.messageId || item.id || Math.random().toString()}
-          renderItem={({ item }) => <MessageBubble message={item} />}
+          renderItem={({ item, index }) => {
+            // Show sender info for first message in a sequence (group chats)
+            const prevMessage = messages[index + 1]; // +1 because inverted
+            const isFirstInSequence = !prevMessage || prevMessage.senderId !== item.senderId || prevMessage.type === 'system';
+            const participant = thread.participants.find(p => p.userId === item.senderId);
+            const senderName = participant?.displayName || 'Unknown';
+
+            return (
+              <MessageBubble
+                message={item}
+                showSenderInfo={thread.type === 'group' ? isFirstInSequence : undefined}
+                senderName={senderName}
+                onSwipeReply={handleSwipeReply}
+              />
+            );
+          }}
           style={styles.list}
           contentContainerStyle={[styles.listContent, messages.length === 0 && { flex: 1, justifyContent: 'center' }]}
           inverted={messages.length > 0}
@@ -190,8 +213,37 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           scrollEventThrottle={16}
         />
 
-        <View style={styles.composerWrapper}>
-          <Animated.View
+        <GlassView style={styles.composerWrapper}>
+          {/* Reply preview bar */}
+          {replyingTo && (
+            <View style={styles.replyPreviewContainer}>
+              <View style={[styles.replyPreview, { 
+                borderLeftColor: getSenderColor(replyingTo.senderId)
+              }]}>
+                <Text style={[styles.replyPreviewSender, { color: getSenderColor(replyingTo.senderId) }]}>
+                  {thread.participants.find(p => p.userId === replyingTo.senderId)?.displayName || 'Unknown'}
+                </Text>
+                <Text numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant, fontSize: 13 }}>
+                  {replyingTo.content}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setReplyingTo(null)}
+                style={[styles.replyCloseButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }]}
+                activeOpacity={0.6}
+              >
+                <IconButton
+                  icon="close"
+                  size={22}
+                  iconColor={theme.colors.onSurfaceVariant}
+                  style={{ margin: 0 }}
+                />
+              </TouchableOpacity>
+            </View>
+          )}
+          
+          <View style={styles.inputRow}>
+            <Animated.View
             style={{
               ...styles.composerAnimated,
               borderWidth: focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 2] }),
@@ -201,21 +253,15 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           >
             <GlassView style={styles.composer}>
               <TextInput
-                // Use flat mode so the TextInput doesn't draw its own outline
-                // when focused. We rely on the surrounding `GlassView` for
-                // container radius and padding so the inner input stays visually
-                // consistent with the composer.
+                ref={inputRef}
                 mode="flat"
+                dense
                 placeholder={placeholder}
                 value={text}
                 onChangeText={setText}
                 style={styles.input}
-                // control inner padding so text lines up with composer padding
                 contentStyle={styles.inputContent}
-                // ensure caret is visible
                 selectionColor={theme.colors.primary}
-                // Remove underline by forcing no bottom border on the inner input
-                // and ensuring the TextInput doesn't render any underline color
                 underlineColor="transparent"
                 activeUnderlineColor="transparent"
                 onFocus={() => {
@@ -227,7 +273,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                   Animated.timing(focusAnim, { toValue: 0, duration: 150, useNativeDriver: false }).start();
                 }}
                 multiline
-                numberOfLines={2}
+                numberOfLines={1}
                 maxLength={1000}
                 theme={{
                   colors: {
@@ -255,7 +301,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             style={styles.sendButton}
             accessibilityLabel="Send message"
           />
-        </View>
+          </View>
+        </GlassView>
       </KeyboardAvoidingView>
     </LiquidBackground>
   );
@@ -268,23 +315,23 @@ const styles = StyleSheet.create({
   },
   list: {
     flex: 1,
+    overflow: 'visible',
   },
   listContent: {
     padding: 16,
     gap: 8,
-    // Make bottom padding larger so composer doesn't overlap list items
     paddingBottom: 10,
   },
   composerWrapper: {
+    marginTop: -20,
+    paddingHorizontal: 12,
+    paddingVertical: 16,
+    marginBottom: -2,
+  },
+  inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
-    // Increase horizontal padding to give the composer more breathing room
-    paddingHorizontal: 12,
-    // small vertical padding so composer sits nicely above keyboard
-    paddingVertical: 0,
-    // GAP BETWEEN KEYBOARD AND INPUT: Adjust this value to increase/decrease space
-    marginBottom: 10,
   },
   composer: {
     flex: 1,
@@ -295,19 +342,16 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: 'transparent',
-    // Tweak these min/max to change vertical size of the input box
     maxHeight: 120,
-    minHeight: 44, // Ensure minimum touch height
-    textAlignVertical: 'center',
-    justifyContent: 'center',
-    // Internal padding is controlled via contentStyle; keep zero here
-    paddingVertical: 0,
-    paddingHorizontal: 0,
+    minHeight: 44,
+    paddingTop: 0,
+    paddingBottom: 0,
+    marginTop: 0,
+    marginBottom: 0,
   },
   inputContent: {
-    // PLACEHOLDER ALIGNMENT: Adjust vertical padding to center text
-    paddingVertical: 0,
-    // move placeholder/text a bit to the right
+    paddingTop: 15,
+    paddingBottom: 10,
     paddingLeft: 16,
     paddingRight: 8,
   },
@@ -355,12 +399,52 @@ const styles = StyleSheet.create({
   },
   headerContainer: {
     paddingHorizontal: 16,
+    paddingTop: 8,
     paddingBottom: 12,
+    alignItems: 'center',
+    zIndex: 100,
+    elevation: 10,
+  },
+  headerPill: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 50,
+  },
+  headerPillContent: {
+    flexDirection: 'row',
     alignItems: 'center',
   },
   headerTitle: {
     fontWeight: 'bold',
+    fontSize: 28,
     textAlign: 'center',
+  },
+  replyPreviewContainer: {
+    position: 'relative',
+    marginBottom: 8,
+  },
+  replyPreview: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingRight: 40,
+    borderRadius: 12,
+    borderLeftWidth: 3,
+  },
+  replyCloseButton: {
+    position: 'absolute',
+    right: 8,
+    top: '50%',
+    transform: [{ translateY: -16 }],
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  replyPreviewSender: {
+    fontWeight: 'bold',
+    fontSize: 13,
+    marginBottom: 2,
   },
 });
 
