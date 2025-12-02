@@ -13,20 +13,19 @@ import {
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { v4 as uuid } from 'uuid';
-import { 
-    getChatMessages, 
-    initMessageDB, 
-    saveMessageLocally, 
-    updateMessageStatus,
+import {
+    getChatMessages,
+    initMessageDB,
     markMessagesDelivered,
     markMessagesRead,
-    getUnreadMessagesFromSender 
+    saveMessageLocally,
+    updateMessageStatus
 } from '../services/localMessageStorage';
-import { 
-    listenForMessages, 
-    queueMessage, 
+import {
+    listenForMessages,
     listenForReceipts,
-    sendBulkReadReceipts 
+    queueMessage,
+    sendBulkReadReceipts
 } from '../services/messageQueueService';
 import { useAuth } from './AuthContext';
 
@@ -221,14 +220,16 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     
     // 2. Queue message for each recipient (Realtime Database)
     // Get recipient IDs from chat participants (exclude sender)
-    const participants = threads.find(t => t.chatId === chatId)?.participants || [];
+    const thread = threads.find(t => t.chatId === chatId);
+    const participants = thread?.participants || [];
+    const isGroupChat = thread?.type === 'group';
     const recipientIds = participants
       .map(p => p.userId)
       .filter(id => id !== user.userId);
     
     // Queue message for each recipient
     for (const recipientId of recipientIds) {
-      await queueMessage(recipientId, message);
+      await queueMessage(recipientId, message, isGroupChat);
     }
     
     console.log('✅ Message saved locally and queued (WhatsApp style)');

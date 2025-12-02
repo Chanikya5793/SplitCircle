@@ -3,7 +3,7 @@
 // Messages are cached in Firebase until delivered, then deleted
 // Local storage is the primary message store (SQLite)
 
-import { getDatabase, onValue, ref, remove, set, get } from 'firebase/database';
+import { get, getDatabase, onValue, ref, remove, set } from 'firebase/database';
 import { ChatMessage } from '../models';
 
 // Get Realtime Database instance
@@ -29,7 +29,8 @@ interface GroupReceiptData {
  */
 export const queueMessage = async (
   recipientId: string,
-  message: ChatMessage
+  message: ChatMessage,
+  isGroupChat: boolean = false
 ): Promise<void> => {
   try {
     const messageQueueRef = ref(rtdb, `messageQueue/${recipientId}/${message.id}`);
@@ -41,6 +42,8 @@ export const queueMessage = async (
       type: message.type,
       timestamp: message.timestamp,
       mediaUrl: message.mediaUrl || null,
+      replyTo: message.replyTo || null,
+      isGroupChat,
     });
     
     console.log('✅ Message queued for:', recipientId);
@@ -78,6 +81,7 @@ export const listenForMessages = (
           timestamp: messageData.timestamp,
           createdAt: messageData.timestamp,
           mediaUrl: messageData.mediaUrl,
+          replyTo: messageData.replyTo || undefined,
           status: 'delivered',
           isFromMe: false,
           deliveredTo: [],
@@ -88,8 +92,9 @@ export const listenForMessages = (
           // Save message locally
           await onMessageReceived(message);
           
-          // Send delivery receipt
-          await sendDeliveryReceipt(messageData.chatId, messageId, userId);
+          // Send delivery receipt (use isGroupChat flag from message)
+          const isGroupChat = messageData.isGroupChat || false;
+          await sendDeliveryReceipt(messageData.chatId, messageId, userId, isGroupChat);
           
           // Delete from queue after successful delivery
           await remove(ref(rtdb, `messageQueue/${userId}/${messageId}`));
