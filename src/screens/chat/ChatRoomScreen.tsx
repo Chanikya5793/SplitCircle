@@ -210,11 +210,10 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           scrollEventThrottle={16}
         />
 
-        <View style={styles.composerWrapper}>
+        <GlassView style={styles.composerWrapper}>
           {/* Reply preview bar */}
           {replyingTo && (
             <View style={[styles.replyPreview, { 
-              backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
               borderLeftColor: getSenderColor(replyingTo.senderId)
             }]}>
               <View style={{ flex: 1 }}>
@@ -301,7 +300,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             accessibilityLabel="Send message"
           />
           </View>
-        </View>
+        </GlassView>
       </KeyboardAvoidingView>
     </LiquidBackground>
   );
