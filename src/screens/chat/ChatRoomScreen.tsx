@@ -33,6 +33,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [composerFocused, setComposerFocused] = useState(false);
   // Animated value for focus border animation (0 = unfocused, 1 = focused)
   const focusAnim = useRef(new Animated.Value(0)).current;
+  // Reply state
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const inputRef = useRef<any>(null);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -78,11 +81,42 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
     setSending(true);
     try {
-      await sendMessage({ chatId: thread.chatId, content: trimmed, groupId: thread.groupId });
+      // Build replyTo data if replying
+      let replyData = undefined;
+      if (replyingTo) {
+        const participant = thread.participants.find(p => p.userId === replyingTo.senderId);
+        replyData = {
+          messageId: replyingTo.messageId,
+          senderId: replyingTo.senderId,
+          senderName: participant?.displayName || 'Unknown',
+          content: replyingTo.content,
+        };
+      }
+      await sendMessage({ chatId: thread.chatId, content: trimmed, groupId: thread.groupId, replyTo: replyData });
       setText('');
+      setReplyingTo(null);
     } finally {
       setSending(false);
     }
+  };
+
+  // Handle swipe reply from message bubble
+  const handleSwipeReply = (message: ChatMessage) => {
+    setReplyingTo(message);
+    inputRef.current?.focus();
+  };
+
+  // Get sender color for reply preview
+  const getSenderColor = (id: string) => {
+    const AVATAR_COLORS = [
+      '#E57373', '#F06292', '#BA68C8', '#9575CD', '#7986CB',
+      '#64B5F6', '#4FC3F7', '#4DD0E1', '#4DB6AC', '#81C784',
+    ];
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+      hash = id.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
   };
 
   // Get proper group name if this is a group chat
@@ -173,7 +207,22 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           ref={listRef}
           data={messages}
           keyExtractor={(item) => item.messageId || item.id || Math.random().toString()}
-          renderItem={({ item }) => <MessageBubble message={item} />}
+          renderItem={({ item, index }) => {
+            // Show sender info for first message in a sequence (group chats)
+            const prevMessage = messages[index + 1]; // +1 because inverted
+            const isFirstInSequence = !prevMessage || prevMessage.senderId !== item.senderId || prevMessage.type === 'system';
+            const participant = thread.participants.find(p => p.userId === item.senderId);
+            const senderName = participant?.displayName || 'Unknown';
+
+            return (
+              <MessageBubble
+                message={item}
+                showSenderInfo={thread.type === 'group' ? isFirstInSequence : undefined}
+                senderName={senderName}
+                onSwipeReply={handleSwipeReply}
+              />
+            );
+          }}
           style={styles.list}
           contentContainerStyle={[styles.listContent, messages.length === 0 && { flex: 1, justifyContent: 'center' }]}
           inverted={messages.length > 0}
@@ -191,7 +240,31 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         />
 
         <View style={styles.composerWrapper}>
-          <Animated.View
+          {/* Reply preview bar */}
+          {replyingTo && (
+            <View style={[styles.replyPreview, { 
+              backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
+              borderLeftColor: getSenderColor(replyingTo.senderId)
+            }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.replyPreviewSender, { color: getSenderColor(replyingTo.senderId) }]}>
+                  {thread.participants.find(p => p.userId === replyingTo.senderId)?.displayName || 'Unknown'}
+                </Text>
+                <Text numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant, fontSize: 13 }}>
+                  {replyingTo.content}
+                </Text>
+              </View>
+              <IconButton
+                icon="close"
+                size={18}
+                onPress={() => setReplyingTo(null)}
+                iconColor={theme.colors.onSurfaceVariant}
+              />
+            </View>
+          )}
+          
+          <View style={styles.inputRow}>
+            <Animated.View
             style={{
               ...styles.composerAnimated,
               borderWidth: focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 2] }),
@@ -201,6 +274,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           >
             <GlassView style={styles.composer}>
               <TextInput
+                ref={inputRef}
                 // Use flat mode so the TextInput doesn't draw its own outline
                 // when focused. We rely on the surrounding `GlassView` for
                 // container radius and padding so the inner input stays visually
@@ -255,6 +329,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             style={styles.sendButton}
             accessibilityLabel="Send message"
           />
+          </View>
         </View>
       </KeyboardAvoidingView>
     </LiquidBackground>
@@ -276,15 +351,14 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   composerWrapper: {
+    paddingHorizontal: 12,
+    paddingVertical: 0,
+    marginBottom: 10,
+  },
+  inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
-    // Increase horizontal padding to give the composer more breathing room
-    paddingHorizontal: 12,
-    // small vertical padding so composer sits nicely above keyboard
-    paddingVertical: 0,
-    // GAP BETWEEN KEYBOARD AND INPUT: Adjust this value to increase/decrease space
-    marginBottom: 10,
   },
   composer: {
     flex: 1,
@@ -361,6 +435,20 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontWeight: 'bold',
     textAlign: 'center',
+  },
+  replyPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+    borderRadius: 12,
+    borderLeftWidth: 3,
+  },
+  replyPreviewSender: {
+    fontWeight: 'bold',
+    fontSize: 13,
+    marginBottom: 2,
   },
 });
 
