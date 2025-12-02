@@ -10,6 +10,13 @@ export interface ChatParticipant {
   status: PresenceStatus;
 }
 
+export interface ReplyTo {
+  messageId: string;
+  senderId: string;
+  senderName: string;
+  content: string;
+}
+
 export interface ChatMessage {
   id: string;
   messageId: string;
@@ -26,6 +33,7 @@ export interface ChatMessage {
   isFromMe?: boolean;
   deliveredTo: string[];
   readBy: string[];
+  replyTo?: ReplyTo;
 }
 
 export interface ChatThread {
