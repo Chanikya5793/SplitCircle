@@ -1,14 +1,14 @@
 import { db, storage } from '@/firebase';
 import type { ChatMessage, ChatParticipant, ChatThread, MessageType } from '@/models';
 import {
-  collection,
-  doc,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where
+    collection,
+    doc,
+    onSnapshot,
+    query,
+    serverTimestamp,
+    setDoc,
+    updateDoc,
+    where
 } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
