@@ -313,14 +313,15 @@ const styles = StyleSheet.create({
   },
   list: {
     flex: 1,
+    overflow: 'visible',
   },
   listContent: {
     padding: 16,
     gap: 8,
-    // Make bottom padding larger so composer doesn't overlap list items
     paddingBottom: 10,
   },
   composerWrapper: {
+    marginTop: -20,
     paddingHorizontal: 12,
     paddingVertical: 0,
     marginBottom: 10,
