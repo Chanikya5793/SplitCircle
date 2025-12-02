@@ -35,16 +35,29 @@ export const queueMessage = async (
   try {
     const messageQueueRef = ref(rtdb, `messageQueue/${recipientId}/${message.id}`);
     
-    await set(messageQueueRef, {
+    // Build the message data, only including replyTo if it exists
+    const messageData: Record<string, unknown> = {
       senderId: message.senderId,
       chatId: message.chatId,
       content: message.content,
       type: message.type,
       timestamp: message.timestamp,
       mediaUrl: message.mediaUrl || null,
-      replyTo: message.replyTo || null,
       isGroupChat,
-    });
+    };
+    
+    // Only add replyTo if it exists and has valid data
+    if (message.replyTo && message.replyTo.messageId) {
+      messageData.replyTo = {
+        messageId: message.replyTo.messageId,
+        senderId: message.replyTo.senderId,
+        senderName: message.replyTo.senderName,
+        content: message.replyTo.content,
+      };
+      console.log('📎 Queuing message with replyTo:', message.replyTo.messageId);
+    }
+    
+    await set(messageQueueRef, messageData);
     
     console.log('✅ Message queued for:', recipientId);
   } catch (error) {
@@ -71,6 +84,18 @@ export const listenForMessages = (
       for (const messageId in messages) {
         const messageData = messages[messageId];
         
+        // Properly extract replyTo if it exists and has valid data
+        let replyTo: ChatMessage['replyTo'] | undefined;
+        if (messageData.replyTo && messageData.replyTo.messageId) {
+          replyTo = {
+            messageId: messageData.replyTo.messageId,
+            senderId: messageData.replyTo.senderId,
+            senderName: messageData.replyTo.senderName,
+            content: messageData.replyTo.content,
+          };
+          console.log('📎 Received message with replyTo:', replyTo.messageId);
+        }
+        
         const message: ChatMessage = {
           id: messageId,
           messageId: messageId,
@@ -81,7 +106,7 @@ export const listenForMessages = (
           timestamp: messageData.timestamp,
           createdAt: messageData.timestamp,
           mediaUrl: messageData.mediaUrl,
-          replyTo: messageData.replyTo || undefined,
+          replyTo,
           status: 'delivered',
           isFromMe: false,
           deliveredTo: [],
