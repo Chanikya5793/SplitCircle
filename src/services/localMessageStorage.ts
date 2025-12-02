@@ -19,11 +19,20 @@ export const saveMessageLocally = async (message: ChatMessage): Promise<void> =>
     const existingIndex = messages.findIndex(m => m.id === message.id);
     
     if (existingIndex >= 0) {
-      // Update existing message
-      messages[existingIndex] = message;
+      // Merge with existing message to preserve fields like replyTo
+      // that might not be included in status updates
+      const existingMessage = messages[existingIndex];
+      messages[existingIndex] = {
+        ...existingMessage,  // Keep existing data (especially replyTo)
+        ...message,          // Overlay new data
+        // Explicitly preserve replyTo - use new value if provided, otherwise keep existing
+        replyTo: message.replyTo || existingMessage.replyTo,
+      };
+      console.log('✅ Message updated locally:', message.id, message.replyTo ? '(with replyTo)' : '');
     } else {
       // Add new message
       messages.push(message);
+      console.log('✅ New message saved locally:', message.id, message.replyTo ? '(with replyTo)' : '');
     }
 
     // Sort by timestamp to ensure order
@@ -34,7 +43,6 @@ export const saveMessageLocally = async (message: ChatMessage): Promise<void> =>
     });
 
     await AsyncStorage.setItem(key, JSON.stringify(messages));
-    console.log('✅ Message saved locally:', message.id);
   } catch (error) {
     console.error('❌ Error saving message locally:', error);
     throw error;
