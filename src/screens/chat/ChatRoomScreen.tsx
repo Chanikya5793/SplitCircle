@@ -216,10 +216,10 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         <GlassView style={styles.composerWrapper}>
           {/* Reply preview bar */}
           {replyingTo && (
-            <View style={[styles.replyPreview, { 
-              borderLeftColor: getSenderColor(replyingTo.senderId)
-            }]}>
-              <View style={{ flex: 1 }}>
+            <View style={styles.replyPreviewContainer}>
+              <View style={[styles.replyPreview, { 
+                borderLeftColor: getSenderColor(replyingTo.senderId)
+              }]}>
                 <Text style={[styles.replyPreviewSender, { color: getSenderColor(replyingTo.senderId) }]}>
                   {thread.participants.find(p => p.userId === replyingTo.senderId)?.displayName || 'Unknown'}
                 </Text>
@@ -227,12 +227,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                   {replyingTo.content}
                 </Text>
               </View>
-              <IconButton
-                icon="close"
-                size={22}
+              <TouchableOpacity
                 onPress={() => setReplyingTo(null)}
-                iconColor={theme.colors.onSurfaceVariant}
-              />
+                style={[styles.replyCloseButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }]}
+                activeOpacity={0.6}
+              >
+                <IconButton
+                  icon="close"
+                  size={22}
+                  iconColor={theme.colors.onSurfaceVariant}
+                  style={{ margin: 0 }}
+                />
+              </TouchableOpacity>
             </View>
           )}
           
@@ -345,7 +351,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     // Tweak these min/max to change vertical size of the input box
     maxHeight: 120,
-    minHeight: 44, // Ensure minimum touch height
+    minHeight: 60, // Ensure minimum touch height
     textAlignVertical: 'center',
     justifyContent: 'center',
     // Internal padding is controlled via contentStyle; keep zero here
@@ -423,14 +429,27 @@ const styles = StyleSheet.create({
     fontSize: 28,
     textAlign: 'center',
   },
+  replyPreviewContainer: {
+    position: 'relative',
+    marginBottom: 8,
+  },
   replyPreview: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingVertical: 8,
     paddingHorizontal: 12,
-    marginBottom: 8,
+    paddingRight: 40,
     borderRadius: 12,
     borderLeftWidth: 3,
+  },
+  replyCloseButton: {
+    position: 'absolute',
+    right: 8,
+    top: '50%',
+    transform: [{ translateY: -16 }],
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   replyPreviewSender: {
     fontWeight: 'bold',
