@@ -158,8 +158,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       >
         <Pressable
           onPress={thread.type === 'group' ? handleHeaderPress : undefined}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          style={({ pressed }) => [styles.headerContainer, pressed && { opacity: 0.6 }]}
+          hitSlop={{ top: 20, bottom: 20, left: 30, right: 30 }}
+          style={({ pressed }) => [styles.headerContainer, pressed && thread.type === 'group' && { opacity: 0.6 }]}
         >
           <View style={styles.headerRow}>
             {thread.type === 'group' && (
@@ -400,8 +400,10 @@ const styles = StyleSheet.create({
   },
   headerContainer: {
     paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingTop: 8,
+    paddingBottom: 16,
     alignItems: 'center',
+    minHeight: 60,
   },
   headerTitle: {
     fontWeight: 'bold',
