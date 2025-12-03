@@ -5,7 +5,7 @@
 
 import { get, getDatabase, onValue, ref, remove, set } from 'firebase/database';
 import { ChatMessage } from '../models';
-import { downloadAndSaveMedia } from './localMediaStorage';
+import { downloadMedia } from './mediaService';
 
 // Get Realtime Database instance
 const rtdb = getDatabase();
@@ -131,15 +131,19 @@ export const listenForMessages = (
         let localMediaPath: string | undefined;
         let mediaDownloaded = false;
         const hasMedia = messageData.type !== 'text' && messageData.type !== 'system' && messageData.type !== 'location';
+        const mediaUrl = messageData.mediaUrl as string | undefined;
         
-        if (hasMedia) {
+        if (hasMedia && mediaUrl) {
           try {
-            // Download and save media from RTDB
-            const downloadedPath = await downloadAndSaveMedia(userId, messageData.chatId, messageId);
-            if (downloadedPath) {
-              localMediaPath = downloadedPath;
+            // Determine filename
+            const fileName = mediaMetadata?.fileName || `${messageId}.${messageData.type === 'image' ? 'jpg' : 'dat'}`;
+
+            // Download media from Firebase Storage URL
+            const result = await downloadMedia(mediaUrl, messageData.chatId, messageId, fileName);
+            if (result && result.localPath) {
+              localMediaPath = result.localPath;
               mediaDownloaded = true;
-              console.log('📥 Media downloaded and saved:', downloadedPath);
+              console.log('📥 Media downloaded and saved:', localMediaPath);
             }
           } catch (error) {
             console.error('❌ Error downloading media:', error);
@@ -156,7 +160,8 @@ export const listenForMessages = (
           type: messageData.type,
           timestamp: messageData.timestamp,
           createdAt: messageData.timestamp,
-          // Use local path instead of cloud URL
+          mediaUrl: mediaUrl,
+          // Use local path if download succeeded
           ...(localMediaPath ? { localMediaPath, mediaDownloaded } : {}),
           mediaMetadata,
           replyTo,
