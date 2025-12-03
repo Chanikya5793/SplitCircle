@@ -70,7 +70,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     // - Only update messages state when count or last message id changes.
     // - Throttle console logging to once per LOG_INTERVAL, otherwise only log new messages.
     let lastLogAt = 0;
-    const LOG_INTERVAL = 10_000; // 10s
+    const LOG_INTERVAL = 30_000; // 30s
     let prevCount = 0;
     let prevLastMessageId: string | null = null;
 
@@ -165,8 +165,15 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
   // Handle media selection from attachment menu
   const handleMediaSelected = (media: SelectedMedia) => {
-    setSelectedMedia(media);
-    setMediaPreviewVisible(true);
+    // Close attachment menu first
+    setAttachmentMenuVisible(false);
+    
+    // Wait for menu close animation to finish before showing preview
+    // This prevents modal conflict issues on iOS/Android
+    setTimeout(() => {
+      setSelectedMedia(media);
+      setMediaPreviewVisible(true);
+    }, 500);
   };
 
   // Handle sending media with optional caption
