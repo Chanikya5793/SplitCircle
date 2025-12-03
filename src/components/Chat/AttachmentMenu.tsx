@@ -5,12 +5,12 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useRef } from 'react';
 import {
-  Alert, Animated,
-  Dimensions,
-  Modal, Platform, Pressable,
-  StyleSheet,
-  TouchableOpacity,
-  View
+    Alert, Animated,
+    Dimensions,
+    Modal, Platform, Pressable,
+    StyleSheet,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { Text } from 'react-native-paper';
 
