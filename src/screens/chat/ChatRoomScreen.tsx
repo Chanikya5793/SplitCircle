@@ -1,3 +1,5 @@
+import { AttachmentMenu, MediaPreview } from '@/components/Chat';
+import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { MessageBubble } from '@/components/MessageBubble';
@@ -5,10 +7,10 @@ import { ROUTES } from '@/constants';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { ChatMessage, ChatThread } from '@/models';
+import type { ChatMessage, ChatThread, MessageType } from '@/models';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, AppState, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Animated, AppState, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
 
 interface ChatRoomScreenProps {
@@ -36,6 +38,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Reply state
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const inputRef = useRef<any>(null);
+  // Attachment menu state
+  const [attachmentMenuVisible, setAttachmentMenuVisible] = useState(false);
+  // Media preview state
+  const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
+  const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
+  const [sendingMedia, setSendingMedia] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -115,6 +123,102 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const handleSwipeReply = (message: ChatMessage) => {
     setReplyingTo(message);
     inputRef.current?.focus();
+  };
+
+  // Handle media selection from attachment menu
+  const handleMediaSelected = (media: SelectedMedia) => {
+    setSelectedMedia(media);
+    setMediaPreviewVisible(true);
+  };
+
+  // Handle sending media with optional caption
+  const handleSendMedia = async (caption: string) => {
+    if (!selectedMedia) return;
+    
+    setSendingMedia(true);
+    setMediaPreviewVisible(false);
+    
+    try {
+      // Map attachment type to message type
+      let messageType: MessageType;
+      switch (selectedMedia.type) {
+        case 'camera':
+        case 'image':
+          messageType = 'image';
+          break;
+        case 'video':
+          messageType = 'video';
+          break;
+        case 'audio':
+          messageType = 'audio';
+          break;
+        case 'document':
+          messageType = 'file';
+          break;
+        case 'location':
+          messageType = 'location';
+          break;
+        default:
+          messageType = 'file';
+      }
+
+      // Build replyTo data if replying
+      let replyData = undefined;
+      if (replyingTo) {
+        const participant = thread.participants.find(p => p.userId === replyingTo.senderId);
+        replyData = {
+          messageId: replyingTo.messageId,
+          senderId: replyingTo.senderId,
+          senderName: participant?.displayName || 'Unknown',
+          content: replyingTo.content,
+          type: replyingTo.type,
+        };
+      }
+
+      // Build mediaMetadata with only defined values
+      const mediaMetadata: Record<string, unknown> = {};
+      if (selectedMedia.fileName) mediaMetadata.fileName = selectedMedia.fileName;
+      if (selectedMedia.fileSize) mediaMetadata.fileSize = selectedMedia.fileSize;
+      if (selectedMedia.mimeType) mediaMetadata.mimeType = selectedMedia.mimeType;
+      if (selectedMedia.width) mediaMetadata.width = selectedMedia.width;
+      if (selectedMedia.height) mediaMetadata.height = selectedMedia.height;
+      if (selectedMedia.duration) mediaMetadata.duration = selectedMedia.duration;
+      if (selectedMedia.width && selectedMedia.height) {
+        mediaMetadata.aspectRatio = selectedMedia.width / selectedMedia.height;
+      }
+
+      // Send the message directly - ChatContext handles upload
+      await sendMessage({
+        chatId: thread.chatId,
+        content: caption || getMediaPlaceholder(messageType),
+        type: messageType,
+        mediaUri: selectedMedia.uri,
+        groupId: thread.groupId,
+        replyTo: replyData,
+        mediaMetadata: Object.keys(mediaMetadata).length > 0 ? mediaMetadata as any : undefined,
+      });
+      
+      setSelectedMedia(null);
+      setReplyingTo(null);
+    } catch (error) {
+      console.error('Failed to send media:', error);
+      // Show error to user
+      alert(error instanceof Error ? error.message : 'Failed to send media');
+    } finally {
+      setSendingMedia(false);
+    }
+  };
+
+  // Get placeholder text for media messages
+  const getMediaPlaceholder = (type: MessageType): string => {
+    switch (type) {
+      case 'image': return '📷 Photo';
+      case 'video': return '🎥 Video';
+      case 'audio': return '🎵 Audio';
+      case 'file': return '📄 Document';
+      case 'location': return '📍 Location';
+      default: return '📎 Attachment';
+    }
   };
 
   // Get sender color for reply preview
@@ -258,6 +362,17 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           )}
           
           <View style={styles.inputRow}>
+            {/* Attachment button (WhatsApp-style +) */}
+            <IconButton
+              icon="plus"
+              mode="contained"
+              onPress={() => setAttachmentMenuVisible(true)}
+              containerColor={isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'}
+              iconColor={theme.colors.onSurfaceVariant}
+              size={24}
+              style={styles.attachButton}
+              accessibilityLabel="Add attachment"
+            />
             <Animated.View
             style={{
               ...styles.composerAnimated,
@@ -319,6 +434,35 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           </View>
         </GlassView>
       </KeyboardAvoidingView>
+
+      {/* Attachment Menu (WhatsApp-style bottom sheet) */}
+      <AttachmentMenu
+        visible={attachmentMenuVisible}
+        onClose={() => setAttachmentMenuVisible(false)}
+        onMediaSelected={handleMediaSelected}
+      />
+
+      {/* Media Preview Modal */}
+      <MediaPreview
+        media={selectedMedia}
+        visible={mediaPreviewVisible}
+        onClose={() => {
+          setMediaPreviewVisible(false);
+          setSelectedMedia(null);
+        }}
+        onSend={handleSendMedia}
+        sending={sendingMedia}
+      />
+
+      {/* Loading overlay when sending media */}
+      {sendingMedia && (
+        <View style={styles.sendingOverlay}>
+          <View style={styles.sendingContent}>
+            <ActivityIndicator size="large" color={theme.colors.primary} />
+            <Text style={{ color: '#fff', marginTop: 12 }}>Sending...</Text>
+          </View>
+        </View>
+      )}
     </LiquidBackground>
   );
 };
@@ -380,6 +524,12 @@ const styles = StyleSheet.create({
     // Keep the send button visually aligned with the composer baseline
     marginBottom: 5.5,
     // Add a little extra touch area by increasing container size if needed
+    width: 44,
+    height: 44,
+  },
+  attachButton: {
+    margin: 5,
+    marginBottom: 5.5,
     width: 44,
     height: 44,
   },
@@ -460,6 +610,19 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 13,
     marginBottom: 2,
+  },
+  sendingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  sendingContent: {
+    alignItems: 'center',
+    padding: 24,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.8)',
   },
 });
 

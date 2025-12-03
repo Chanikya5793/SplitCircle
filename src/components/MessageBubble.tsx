@@ -1,12 +1,14 @@
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { ChatMessage, MessageStatus } from '@/models';
+import type { ChatMessage, MessageStatus, MessageType } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
-import { useRef } from 'react';
-import { Animated, Image, StyleSheet, View } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { ResizeMode, Video } from 'expo-av';
+import * as WebBrowser from 'expo-web-browser';
+import { useCallback, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
-import Ionicons from '@expo/vector-icons/Ionicons';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -29,6 +31,50 @@ const getSenderColor = (id: string) => {
     hash = id.charCodeAt(i) + ((hash << 5) - hash);
   }
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+};
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const MAX_IMAGE_WIDTH = SCREEN_WIDTH * 0.65;
+const MAX_IMAGE_HEIGHT = 300;
+
+// Helper to format file size
+const formatFileSize = (bytes?: number): string => {
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+// Helper to format duration
+const formatDuration = (ms?: number): string => {
+  if (!ms) return '';
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+};
+
+// Get icon for message type (used in reply previews)
+const getMediaIcon = (type?: MessageType): keyof typeof Ionicons.glyphMap => {
+  switch (type) {
+    case 'image': return 'image';
+    case 'video': return 'videocam';
+    case 'audio': return 'musical-notes';
+    case 'file': return 'document';
+    case 'location': return 'location';
+    default: return 'chatbubble';
+  }
+};
+
+// Get document icon based on mime type
+const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
+  if (!mimeType) return 'document';
+  if (mimeType.startsWith('application/pdf')) return 'document-text';
+  if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) return 'grid';
+  if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return 'easel';
+  if (mimeType.includes('word') || mimeType.includes('document')) return 'document-text';
+  if (mimeType.includes('zip') || mimeType.includes('compressed')) return 'archive';
+  return 'document';
 };
 
 // WhatsApp-style message status indicator component
@@ -76,6 +122,9 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
+  const [imageLoading, setImageLoading] = useState(true);
+  const [fullScreenVisible, setFullScreenVisible] = useState(false);
+  const videoRef = useRef<Video>(null);
 
   if (message.type === 'system') {
     return (
@@ -90,6 +139,26 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   const isMine = user?.userId === message.senderId;
   const senderColor = !isMine && message.senderId ? getSenderColor(message.senderId) : theme.colors.primary;
   const initials = senderName ? senderName.slice(0, 2).toUpperCase() : '??';
+
+  // Calculate image dimensions maintaining aspect ratio
+  const getImageDimensions = useCallback(() => {
+    const metadata = message.mediaMetadata;
+    if (metadata?.width && metadata?.height) {
+      const aspectRatio = metadata.width / metadata.height;
+      let width = Math.min(metadata.width, MAX_IMAGE_WIDTH);
+      let height = width / aspectRatio;
+      
+      if (height > MAX_IMAGE_HEIGHT) {
+        height = MAX_IMAGE_HEIGHT;
+        width = height * aspectRatio;
+      }
+      
+      return { width, height };
+    }
+    return { width: MAX_IMAGE_WIDTH, height: 200 };
+  }, [message.mediaMetadata]);
+
+  const imageDimensions = getImageDimensions();
 
   const renderLeftActions = (progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
     const scale = dragX.interpolate({
@@ -118,6 +187,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   const ReplyContent = () => {
     if (!message.replyTo) return null;
     const replyColor = getSenderColor(message.replyTo.senderId);
+    const isMediaReply = message.replyTo.type && message.replyTo.type !== 'text';
 
     return (
       <View style={[styles.replyContainer, {
@@ -125,18 +195,314 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
       }]}>
         <Text style={[styles.replySender, { color: isMine ? 'rgba(255,255,255,0.9)' : replyColor }]}>{message.replyTo.senderName}</Text>
-        <Text numberOfLines={1} style={[styles.replyText, {
-          color: isMine ? 'rgba(255,255,255,0.8)' : theme.colors.onSurfaceVariant
-        }]}>
-          {message.replyTo.content}
+        <View style={styles.replyContentRow}>
+          {isMediaReply && (
+            <Ionicons 
+              name={getMediaIcon(message.replyTo.type)} 
+              size={14} 
+              color={isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant}
+              style={{ marginRight: 4 }}
+            />
+          )}
+          <Text numberOfLines={1} style={[styles.replyText, {
+            color: isMine ? 'rgba(255,255,255,0.8)' : theme.colors.onSurfaceVariant
+          }]}>
+            {message.replyTo.content}
+          </Text>
+        </View>
+      </View>
+    );
+  };
+
+  // Image content with loading state
+  const ImageContent = () => {
+    if (!message.mediaUrl) return null;
+
+    return (
+      <TouchableOpacity 
+        activeOpacity={0.9}
+        onPress={() => setFullScreenVisible(true)}
+        style={[styles.mediaContainer, imageDimensions]}
+      >
+        {imageLoading && (
+          <View style={[styles.imagePlaceholder, imageDimensions]}>
+            <ActivityIndicator color={theme.colors.primary} />
+          </View>
+        )}
+        <Image
+          source={{ uri: message.mediaUrl }}
+          style={[styles.mediaImage, imageDimensions]}
+          resizeMode="cover"
+          onLoadStart={() => setImageLoading(true)}
+          onLoadEnd={() => setImageLoading(false)}
+        />
+      </TouchableOpacity>
+    );
+  };
+
+  // Video content with player
+  const VideoContent = () => {
+    if (!message.mediaUrl) return null;
+
+    return (
+      <View style={[styles.mediaContainer, imageDimensions]}>
+        <Video
+          ref={videoRef}
+          source={{ uri: message.mediaUrl }}
+          style={[styles.mediaVideo, imageDimensions]}
+          resizeMode={ResizeMode.COVER}
+          useNativeControls
+          shouldPlay={false}
+          isLooping={false}
+        />
+        {message.mediaMetadata?.duration && (
+          <View style={styles.videoDuration}>
+            <Ionicons name="play" size={10} color="#fff" />
+            <Text style={styles.videoDurationText}>
+              {formatDuration(message.mediaMetadata.duration)}
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  // Handle opening/downloading document
+  const handleOpenDocument = async () => {
+    if (!message.mediaUrl) return;
+    
+    const mimeType = message.mediaMetadata?.mimeType || '';
+    const fileName = message.mediaMetadata?.fileName || 'Document';
+    
+    try {
+      // For PDFs and web-viewable documents, open in in-app browser
+      if (mimeType.includes('pdf') || 
+          mimeType.includes('text') || 
+          mimeType.includes('html')) {
+        await WebBrowser.openBrowserAsync(message.mediaUrl, {
+          presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+          toolbarColor: theme.colors.surface,
+          controlsColor: theme.colors.primary,
+        });
+      } else {
+        // For other documents (docx, xlsx, etc.), try to open externally
+        const canOpen = await Linking.canOpenURL(message.mediaUrl);
+        if (canOpen) {
+          await Linking.openURL(message.mediaUrl);
+        } else {
+          // Fallback: Open in browser which might trigger download
+          await WebBrowser.openBrowserAsync(message.mediaUrl, {
+            presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+            toolbarColor: theme.colors.surface,
+            controlsColor: theme.colors.primary,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error opening document:', error);
+      Alert.alert(
+        'Cannot Open Document',
+        `Unable to open "${fileName}". The file may not be accessible or the format is not supported.`,
+        [{ text: 'OK' }]
+      );
+    }
+  };
+
+  // Document attachment
+  const DocumentContent = () => {
+    if (!message.mediaUrl) return null;
+    const metadata = message.mediaMetadata;
+
+    return (
+      <TouchableOpacity 
+        style={[styles.documentContainer, { 
+          backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
+        }]}
+        activeOpacity={0.7}
+        onPress={handleOpenDocument}
+      >
+        <View style={[styles.documentIconContainer, { backgroundColor: theme.colors.primary }]}>
+          <Ionicons 
+            name={getDocumentIcon(metadata?.mimeType)} 
+            size={24} 
+            color="#fff" 
+          />
+        </View>
+        <View style={styles.documentInfo}>
+          <Text 
+            numberOfLines={1} 
+            style={[styles.documentName, { color: isMine ? '#fff' : theme.colors.onSurface }]}
+          >
+            {metadata?.fileName || 'Document'}
+          </Text>
+          {metadata?.fileSize && (
+            <Text style={[styles.documentSize, { color: isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant }]}>
+              {formatFileSize(metadata.fileSize)}
+            </Text>
+          )}
+        </View>
+        <Ionicons 
+          name="open-outline" 
+          size={20} 
+          color={isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant} 
+        />
+      </TouchableOpacity>
+    );
+  };
+
+  // Audio message
+  const AudioContent = () => {
+    if (!message.mediaUrl) return null;
+    const metadata = message.mediaMetadata;
+
+    return (
+      <View style={[styles.audioContainer, { 
+        backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
+      }]}>
+        <TouchableOpacity 
+          style={[styles.audioPlayButton, { backgroundColor: theme.colors.primary }]}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="play" size={20} color="#fff" />
+        </TouchableOpacity>
+        <View style={styles.audioWaveform}>
+          {/* Simple waveform visualization placeholder */}
+          {[...Array(20)].map((_, i) => (
+            <View 
+              key={i}
+              style={[
+                styles.audioBar, 
+                { 
+                  height: Math.random() * 16 + 4,
+                  backgroundColor: isMine ? 'rgba(255,255,255,0.5)' : theme.colors.primary 
+                }
+              ]} 
+            />
+          ))}
+        </View>
+        <Text style={[styles.audioDuration, { color: isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant }]}>
+          {formatDuration(metadata?.duration) || '0:00'}
         </Text>
       </View>
     );
   };
 
+  // Location message
+  const LocationContent = () => {
+    if (!message.location) return null;
+
+    return (
+      <View style={styles.locationContainer}>
+        <View style={[styles.locationPreview, { backgroundColor: isDark ? '#2a2a2a' : '#f0f0f0' }]}>
+          <Ionicons name="location" size={40} color={theme.colors.primary} />
+        </View>
+        {message.location.address && (
+          <Text 
+            numberOfLines={2} 
+            style={[styles.locationAddress, { color: isMine ? '#fff' : theme.colors.onSurface }]}
+          >
+            {message.location.address}
+          </Text>
+        )}
+      </View>
+    );
+  };
+
+  // Full screen image viewer
+  const FullScreenImage = () => (
+    <Modal
+      visible={fullScreenVisible}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setFullScreenVisible(false)}
+    >
+      <View style={styles.fullScreenContainer}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setFullScreenVisible(false)}>
+          <View style={styles.fullScreenBackdrop} />
+        </Pressable>
+        <Image
+          source={{ uri: message.mediaUrl }}
+          style={styles.fullScreenImage}
+          resizeMode="contain"
+        />
+        <TouchableOpacity 
+          style={styles.fullScreenClose}
+          onPress={() => setFullScreenVisible(false)}
+        >
+          <Ionicons name="close" size={28} color="#fff" />
+        </TouchableOpacity>
+      </View>
+    </Modal>
+  );
+
+  // Render media based on type
+  const renderMedia = () => {
+    switch (message.type) {
+      case 'image':
+        return <ImageContent />;
+      case 'video':
+        return <VideoContent />;
+      case 'file':
+        return <DocumentContent />;
+      case 'audio':
+        return <AudioContent />;
+      case 'location':
+        return <LocationContent />;
+      default:
+        // For text or unknown, render old image style if mediaUrl exists
+        if (message.mediaUrl) {
+          return <ImageContent />;
+        }
+        return null;
+    }
+  };
+
+  // Check if message has text content to display
+  const hasTextContent = message.content && 
+    !message.content.startsWith('📷') && 
+    !message.content.startsWith('🎥') && 
+    !message.content.startsWith('🎵') && 
+    !message.content.startsWith('📄') && 
+    !message.content.startsWith('📍') &&
+    !message.content.startsWith('📎');
+
   // My message (right side)
   if (isMine) {
     return (
+      <>
+        <Swipeable
+          ref={swipeableRef}
+          renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
+          onSwipeableOpen={onSwipeableOpen}
+          friction={2}
+          overshootLeft={false}
+        >
+          <View style={[styles.container, styles.mine, { backgroundColor: theme.colors.primary }]}>
+            <ReplyContent />
+            {renderMedia()}
+            {hasTextContent && (
+              <Text style={[styles.text, { color: theme.colors.onPrimary }]}>{message.content}</Text>
+            )}
+            <View style={styles.timestampRow}>
+              <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
+              <MessageStatusIndicator
+                status={message.status}
+                isGroupChat={isGroupChat}
+                totalRecipients={totalRecipients}
+                deliveredCount={message.deliveredTo?.length || 0}
+                readCount={message.readBy?.length || 0}
+              />
+            </View>
+          </View>
+        </Swipeable>
+        <FullScreenImage />
+      </>
+    );
+  }
+
+  // Other's message (left side with optional avatar)
+  return (
+    <>
       <Swipeable
         ref={swipeableRef}
         renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
@@ -144,59 +510,35 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         friction={2}
         overshootLeft={false}
       >
-        <View style={[styles.container, styles.mine, { backgroundColor: theme.colors.primary }]}>
-          <ReplyContent />
-          <Text style={[styles.text, { color: theme.colors.onPrimary }]}>{message.content}</Text>
-          {message.mediaUrl && <Image source={{ uri: message.mediaUrl }} style={styles.image} />}
-          <View style={styles.timestampRow}>
-            <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
-            <MessageStatusIndicator
-              status={message.status}
-              isGroupChat={isGroupChat}
-              totalRecipients={totalRecipients}
-              deliveredCount={message.deliveredTo?.length || 0}
-              readCount={message.readBy?.length || 0}
-            />
+        <View style={styles.otherRow}>
+          {showSenderInfo !== undefined && (
+            <View style={styles.avatarContainer}>
+              {showSenderInfo && (
+                <Avatar.Text
+                  size={28}
+                  label={initials}
+                  style={{ backgroundColor: senderColor }}
+                  color="#FFF"
+                  labelStyle={{ fontSize: 12, lineHeight: 28 }}
+                />
+              )}
+            </View>
+          )}
+          <View style={[styles.container, styles.other, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' }]}>
+            <ReplyContent />
+            {showSenderInfo && senderName && (
+              <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
+            )}
+            {renderMedia()}
+            {hasTextContent && (
+              <Text style={[styles.text, { color: theme.colors.onSurface }]}>{message.content}</Text>
+            )}
+            <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
           </View>
         </View>
       </Swipeable>
-    );
-  }
-
-  // Other's message (left side with optional avatar)
-  return (
-    <Swipeable
-      ref={swipeableRef}
-      renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
-      onSwipeableOpen={onSwipeableOpen}
-      friction={2}
-      overshootLeft={false}
-    >
-      <View style={styles.otherRow}>
-        {showSenderInfo !== undefined && (
-          <View style={styles.avatarContainer}>
-            {showSenderInfo && (
-              <Avatar.Text
-                size={28}
-                label={initials}
-                style={{ backgroundColor: senderColor }}
-                color="#FFF"
-                labelStyle={{ fontSize: 12, lineHeight: 28 }}
-              />
-            )}
-          </View>
-        )}
-        <View style={[styles.container, styles.other, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' }]}>
-          <ReplyContent />
-          {showSenderInfo && senderName && (
-            <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
-          )}
-          <Text style={[styles.text, { color: theme.colors.onSurface }]}>{message.content}</Text>
-          {message.mediaUrl && <Image source={{ uri: message.mediaUrl }} style={styles.image} />}
-          <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
-        </View>
-      </View>
-    </Swipeable>
+      <FullScreenImage />
+    </>
   );
 };
 
@@ -283,5 +625,146 @@ const styles = StyleSheet.create({
   },
   replyText: {
     fontSize: 12,
+    flex: 1,
+  },
+  replyContentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // Media styles
+  mediaContainer: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 4,
+  },
+  mediaImage: {
+    borderRadius: 12,
+  },
+  mediaVideo: {
+    borderRadius: 12,
+  },
+  imagePlaceholder: {
+    position: 'absolute',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.1)',
+    borderRadius: 12,
+  },
+  videoDuration: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  videoDurationText: {
+    color: '#fff',
+    fontSize: 11,
+    marginLeft: 3,
+  },
+  // Document styles
+  documentContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 4,
+  },
+  documentIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  documentInfo: {
+    flex: 1,
+    marginLeft: 12,
+    marginRight: 8,
+  },
+  documentName: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  documentSize: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  // Audio styles
+  audioContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+    borderRadius: 12,
+    marginBottom: 4,
+  },
+  audioPlayButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  audioWaveform: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 12,
+    height: 24,
+    gap: 2,
+  },
+  audioBar: {
+    width: 3,
+    borderRadius: 2,
+  },
+  audioDuration: {
+    fontSize: 12,
+    minWidth: 35,
+    textAlign: 'right',
+  },
+  // Location styles
+  locationContainer: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 4,
+  },
+  locationPreview: {
+    width: 200,
+    height: 120,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  locationAddress: {
+    fontSize: 13,
+    padding: 8,
+  },
+  // Full screen image styles
+  fullScreenContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullScreenBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+  },
+  fullScreenImage: {
+    width: SCREEN_WIDTH,
+    height: '80%',
+  },
+  fullScreenClose: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

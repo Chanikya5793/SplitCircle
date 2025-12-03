@@ -1,5 +1,5 @@
 import { db, storage } from '@/firebase';
-import type { ChatMessage, ChatParticipant, ChatThread, MessageType } from '@/models';
+import type { ChatMessage, ChatParticipant, ChatThread, MediaMetadata, MessageType } from '@/models';
 import {
     collection,
     doc,
@@ -34,12 +34,14 @@ interface SendMessagePayload {
   content: string;
   type?: MessageType;
   mediaUri?: string;
+  mediaMetadata?: MediaMetadata;
   groupId?: string;
   replyTo?: {
     messageId: string;
     senderId: string;
     senderName: string;
     content: string;
+    type?: MessageType;
   };
 }
 
@@ -67,6 +69,24 @@ const normalizeTimestamp = (value: unknown): number => {
     }
   }
   return Date.now();
+};
+
+/**
+ * Remove undefined values from an object (Firebase doesn't accept undefined)
+ */
+const removeUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> => {
+  const result: Partial<T> = {};
+  for (const key of Object.keys(obj) as (keyof T)[]) {
+    const value = obj[key];
+    if (value !== undefined) {
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        result[key] = removeUndefined(value as Record<string, unknown>) as T[keyof T];
+      } else {
+        result[key] = value;
+      }
+    }
+  }
+  return result;
 };
 
 export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
@@ -182,18 +202,46 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   }, [user, threads]);
 
   const sendMessage = useCallback(
-    async ({ chatId, content, type = 'text', mediaUri, groupId, replyTo }: SendMessagePayload) => {
+    async ({ chatId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo }: SendMessagePayload) => {
       if (!user) {
         throw new Error('Missing user for chat send');
       }
 
       let mediaUrl: string | undefined;
+      let thumbnailUrl: string | undefined;
+      
       if (mediaUri) {
-        const response = await fetch(mediaUri);
-        const blob = await response.blob();
-        const fileRef = ref(storage, `chats/${chatId}/${uuid()}`);
-        await uploadBytes(fileRef, blob);
-        mediaUrl = await getDownloadURL(fileRef);
+        try {
+          // Convert URI to blob - handle both file:// and ph:// URIs
+          let blob: Blob;
+          
+          // For iOS Photos Library assets (ph://) and all other URIs
+          // fetch() should work with file:// URIs from expo-image-picker
+          const response = await fetch(mediaUri);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch media: ${response.status}`);
+          }
+          blob = await response.blob();
+          
+          // Determine file extension from metadata or type
+          const extension = getFileExtension(mediaMetadata?.mimeType, type);
+          const fileName = `${uuid()}${extension}`;
+          const fileRef = ref(storage, `chats/${chatId}/${fileName}`);
+          
+          await uploadBytes(fileRef, blob);
+          mediaUrl = await getDownloadURL(fileRef);
+          
+          // For images and videos, we could generate thumbnails here
+          // For now, we'll use the same URL for images
+          if (type === 'image') {
+            thumbnailUrl = mediaUrl;
+          }
+        } catch (error) {
+          console.error('Failed to upload media:', error);
+          // Provide more specific error message
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          throw new Error(`Failed to upload media: ${errorMessage}`);
+        }
       }
 
       const msgId = uuid();
@@ -205,8 +253,10 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         senderId: user.userId,
         type,
         content,
-      ...(mediaUrl ? { mediaUrl } : {}),
-      ...(replyTo ? { replyTo } : {}),
+        ...(mediaUrl ? { mediaUrl } : {}),
+        ...(thumbnailUrl ? { thumbnailUrl } : {}),
+        ...(mediaMetadata ? { mediaMetadata } : {}),
+        ...(replyTo ? { replyTo } : {}),
         status: 'sent',
         createdAt: now,
         timestamp: now,
@@ -232,17 +282,47 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       await queueMessage(recipientId, message, isGroupChat);
     }
     
-    console.log('✅ Message saved locally and queued (WhatsApp style)');
+    console.log(`✅ ${type} message saved locally and queued (WhatsApp style)`);
     
       // Update the chat thread's lastMessage (metadata only, not the full history)
+      // Clean the message object to remove undefined values (Firebase doesn't accept them)
+      const cleanMessage = removeUndefined({ ...message, createdAt: serverTimestamp() });
       await updateDoc(doc(db, 'chats', chatId), {
-        lastMessage: { ...message, createdAt: serverTimestamp() },
+        lastMessage: cleanMessage,
         groupId: groupId ?? null,
         updatedAt: Date.now(),
       });
     },
     [user, threads],
   );
+
+  // Helper to get file extension from mime type
+  const getFileExtension = (mimeType?: string, type?: MessageType): string => {
+    if (mimeType) {
+      const mimeMap: Record<string, string> = {
+        'image/jpeg': '.jpg',
+        'image/png': '.png',
+        'image/gif': '.gif',
+        'image/webp': '.webp',
+        'video/mp4': '.mp4',
+        'video/quicktime': '.mov',
+        'audio/mpeg': '.mp3',
+        'audio/mp4': '.m4a',
+        'audio/wav': '.wav',
+        'application/pdf': '.pdf',
+      };
+      if (mimeMap[mimeType]) return mimeMap[mimeType];
+    }
+    
+    // Fallback based on type
+    switch (type) {
+      case 'image': return '.jpg';
+      case 'video': return '.mp4';
+      case 'audio': return '.mp3';
+      case 'file': return '';
+      default: return '';
+    }
+  };
 
   const ensureGroupThread = useCallback(
     async (groupId: string, participants: ChatParticipant[]) => {
