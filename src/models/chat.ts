@@ -1,6 +1,6 @@
 import type { PresenceStatus } from './user';
 
-export type MessageType = 'text' | 'image' | 'audio' | 'file' | 'system' | 'call';
+export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'location' | 'system' | 'call';
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 
 export interface ChatParticipant {
@@ -15,6 +15,24 @@ export interface ReplyTo {
   senderId: string;
   senderName: string;
   content: string;
+  type?: MessageType; // To show appropriate icon for media replies
+}
+
+export interface MediaMetadata {
+  fileName?: string;
+  fileSize?: number; // in bytes
+  mimeType?: string;
+  width?: number; // for images/videos
+  height?: number; // for images/videos
+  duration?: number; // for audio/video in ms
+  aspectRatio?: number; // width/height
+  thumbnailUri?: string; // for video thumbnails
+}
+
+export interface LocationData {
+  latitude: number;
+  longitude: number;
+  address?: string;
 }
 
 export interface ChatMessage {
@@ -26,7 +44,8 @@ export interface ChatMessage {
   content: string;
   mediaUrl?: string;
   thumbnailUrl?: string;
-  duration?: number;
+  mediaMetadata?: MediaMetadata;
+  location?: LocationData;
   status: MessageStatus;
   createdAt: number;
   timestamp: number | Date;

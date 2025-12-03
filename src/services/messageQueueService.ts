@@ -43,8 +43,23 @@ export const queueMessage = async (
       type: message.type,
       timestamp: message.timestamp,
       mediaUrl: message.mediaUrl || null,
+      thumbnailUrl: message.thumbnailUrl || null,
       isGroupChat,
     };
+    
+    // Include mediaMetadata if it exists (for documents, audio, video, images)
+    if (message.mediaMetadata) {
+      messageData.mediaMetadata = {
+        ...(message.mediaMetadata.fileName && { fileName: message.mediaMetadata.fileName }),
+        ...(message.mediaMetadata.fileSize && { fileSize: message.mediaMetadata.fileSize }),
+        ...(message.mediaMetadata.mimeType && { mimeType: message.mediaMetadata.mimeType }),
+        ...(message.mediaMetadata.width && { width: message.mediaMetadata.width }),
+        ...(message.mediaMetadata.height && { height: message.mediaMetadata.height }),
+        ...(message.mediaMetadata.duration && { duration: message.mediaMetadata.duration }),
+        ...(message.mediaMetadata.aspectRatio && { aspectRatio: message.mediaMetadata.aspectRatio }),
+      };
+      console.log('📎 Queuing message with mediaMetadata:', message.mediaMetadata.fileName || message.type);
+    }
     
     // Only add replyTo if it exists and has valid data
     if (message.replyTo && message.replyTo.messageId) {
@@ -96,6 +111,21 @@ export const listenForMessages = (
           console.log('📎 Received message with replyTo:', replyTo.messageId);
         }
         
+        // Extract mediaMetadata if it exists
+        let mediaMetadata: ChatMessage['mediaMetadata'] | undefined;
+        if (messageData.mediaMetadata) {
+          mediaMetadata = {
+            ...(messageData.mediaMetadata.fileName && { fileName: messageData.mediaMetadata.fileName }),
+            ...(messageData.mediaMetadata.fileSize && { fileSize: messageData.mediaMetadata.fileSize }),
+            ...(messageData.mediaMetadata.mimeType && { mimeType: messageData.mediaMetadata.mimeType }),
+            ...(messageData.mediaMetadata.width && { width: messageData.mediaMetadata.width }),
+            ...(messageData.mediaMetadata.height && { height: messageData.mediaMetadata.height }),
+            ...(messageData.mediaMetadata.duration && { duration: messageData.mediaMetadata.duration }),
+            ...(messageData.mediaMetadata.aspectRatio && { aspectRatio: messageData.mediaMetadata.aspectRatio }),
+          };
+          console.log('📎 Received message with mediaMetadata:', mediaMetadata.fileName || messageData.type);
+        }
+        
         const message: ChatMessage = {
           id: messageId,
           messageId: messageId,
@@ -106,6 +136,8 @@ export const listenForMessages = (
           timestamp: messageData.timestamp,
           createdAt: messageData.timestamp,
           mediaUrl: messageData.mediaUrl,
+          thumbnailUrl: messageData.thumbnailUrl,
+          mediaMetadata,
           replyTo,
           status: 'delivered',
           isFromMe: false,
