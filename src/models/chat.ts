@@ -45,6 +45,8 @@ export interface ChatMessage {
   mediaUrl?: string;
   thumbnailUrl?: string;
   mediaMetadata?: MediaMetadata;
+  localMediaPath?: string; // Local file path for downloaded media
+  mediaDownloaded?: boolean; // Whether media has been downloaded locally
   location?: LocationData;
   status: MessageStatus;
   createdAt: number;

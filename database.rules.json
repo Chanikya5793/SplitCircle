@@ -33,6 +33,30 @@
         }
       }
     },
+    "mediaQueue": {
+      "$recipientId": {
+        ".read": "auth != null && auth.uid == $recipientId",
+        "$messageId": {
+          ".write": "auth != null",
+          ".read": "auth != null && auth.uid == $recipientId",
+          "base64Data": {
+            ".validate": "newData.isString()"
+          },
+          "fileName": {
+            ".validate": "newData.isString()"
+          },
+          "mimeType": {
+            ".validate": "newData.isString()"
+          },
+          "fileSize": {
+            ".validate": "newData.isNumber()"
+          },
+          "timestamp": {
+            ".validate": "newData.isNumber()"
+          }
+        }
+      }
+    },
     "receipts": {
       "$chatId": {
         ".read": "auth != null",

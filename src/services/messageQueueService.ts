@@ -5,6 +5,7 @@
 
 import { get, getDatabase, onValue, ref, remove, set } from 'firebase/database';
 import { ChatMessage } from '../models';
+import { downloadAndSaveMedia } from './localMediaStorage';
 
 // Get Realtime Database instance
 const rtdb = getDatabase();
@@ -126,6 +127,26 @@ export const listenForMessages = (
           console.log('📎 Received message with mediaMetadata:', mediaMetadata.fileName || messageData.type);
         }
         
+        // Download media if this message has media attached
+        let localMediaPath: string | undefined;
+        let mediaDownloaded = false;
+        const hasMedia = messageData.type !== 'text' && messageData.type !== 'system' && messageData.type !== 'location';
+        
+        if (hasMedia) {
+          try {
+            // Download and save media from RTDB
+            const downloadedPath = await downloadAndSaveMedia(userId, messageData.chatId, messageId);
+            if (downloadedPath) {
+              localMediaPath = downloadedPath;
+              mediaDownloaded = true;
+              console.log('📥 Media downloaded and saved:', downloadedPath);
+            }
+          } catch (error) {
+            console.error('❌ Error downloading media:', error);
+            // Continue processing message even if media download fails
+          }
+        }
+        
         const message: ChatMessage = {
           id: messageId,
           messageId: messageId,
@@ -135,8 +156,8 @@ export const listenForMessages = (
           type: messageData.type,
           timestamp: messageData.timestamp,
           createdAt: messageData.timestamp,
-          mediaUrl: messageData.mediaUrl,
-          thumbnailUrl: messageData.thumbnailUrl,
+          // Use local path instead of cloud URL
+          ...(localMediaPath ? { localMediaPath, mediaDownloaded } : {}),
           mediaMetadata,
           replyTo,
           status: 'delivered',

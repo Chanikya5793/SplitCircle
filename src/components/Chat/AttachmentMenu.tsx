@@ -4,14 +4,12 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useRef } from 'react';
 import {
-    Animated,
-    Dimensions,
-    Modal,
-    Platform,
-    Pressable,
-    StyleSheet,
-    TouchableOpacity,
-    View,
+  Alert, Animated,
+  Dimensions,
+  Modal, Platform, Pressable,
+  StyleSheet,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { Text } from 'react-native-paper';
 
@@ -126,25 +124,38 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
   const requestCameraPermission = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    return status === 'granted';
+    if (status !== 'granted') {
+      Alert.alert(
+        'Camera Permission Required',
+        'Please enable camera access in your device settings to take photos.',
+        [{ text: 'OK' }]
+      );
+      return false;
+    }
+    return true;
   };
 
   const requestMediaLibraryPermission = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    return status === 'granted';
+    if (status !== 'granted') {
+      Alert.alert(
+        'Photo Library Permission Required',
+        'Please enable photo library access in your device settings to select media.',
+        [{ text: 'OK' }]
+      );
+      return false;
+    }
+    return true;
   };
 
   const handleCamera = useCallback(async () => {
     const hasPermission = await requestCameraPermission();
-    if (!hasPermission) {
-      console.log('Camera permission denied');
-      return;
-    }
+    if (!hasPermission) return;
 
     try {
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
-        quality: 0.7,
+        quality: 0.8,
         allowsEditing: false,
         exif: false,
       });
@@ -154,7 +165,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
         onMediaSelected({
           type: 'camera',
           uri: asset.uri,
-          fileName: asset.fileName || `capture_${Date.now()}.jpg`,
+          fileName: asset.fileName || `IMG_${Date.now()}.jpg`,
           fileSize: asset.fileSize,
           mimeType: asset.mimeType || 'image/jpeg',
           width: asset.width,
@@ -164,20 +175,18 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       }
     } catch (error) {
       console.error('Camera error:', error);
+      Alert.alert('Camera Error', 'Failed to capture photo. Please try again.');
     }
   }, [onMediaSelected, onClose]);
 
   const handleGalleryImage = useCallback(async () => {
     const hasPermission = await requestMediaLibraryPermission();
-    if (!hasPermission) {
-      console.log('Media library permission denied');
-      return;
-    }
+    if (!hasPermission) return;
 
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
-        quality: 0.7,
+        quality: 0.8,
         allowsMultipleSelection: false,
         allowsEditing: false,
         exif: false,
@@ -188,7 +197,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
         onMediaSelected({
           type: 'image',
           uri: asset.uri,
-          fileName: asset.fileName || `image_${Date.now()}.jpg`,
+          fileName: asset.fileName || `IMG_${Date.now()}.jpg`,
           fileSize: asset.fileSize,
           mimeType: asset.mimeType || 'image/jpeg',
           width: asset.width,
@@ -198,15 +207,13 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       }
     } catch (error) {
       console.error('Gallery image error:', error);
+      Alert.alert('Selection Error', 'Failed to select image. Please try again.');
     }
   }, [onMediaSelected, onClose]);
 
   const handleGalleryVideo = useCallback(async () => {
     const hasPermission = await requestMediaLibraryPermission();
-    if (!hasPermission) {
-      console.log('Media library permission denied');
-      return;
-    }
+    if (!hasPermission) return;
 
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -225,7 +232,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
         onMediaSelected({
           type: 'video',
           uri: asset.uri,
-          fileName: asset.fileName || `video_${Date.now()}.mp4`,
+          fileName: asset.fileName || `VID_${Date.now()}.mp4`,
           fileSize: asset.fileSize,
           mimeType: asset.mimeType || 'video/mp4',
           width: asset.width,
@@ -236,6 +243,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       }
     } catch (error) {
       console.error('Gallery video error:', error);
+      Alert.alert('Selection Error', 'Failed to select video. Please try again.');
     }
   }, [onMediaSelected, onClose]);
 
@@ -259,6 +267,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       }
     } catch (error) {
       console.error('Document picker error:', error);
+      Alert.alert('Selection Error', 'Failed to select document. Please try again.');
     }
   }, [onMediaSelected, onClose]);
 
@@ -282,6 +291,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       }
     } catch (error) {
       console.error('Audio picker error:', error);
+      Alert.alert('Selection Error', 'Failed to select audio. Please try again.');
     }
   }, [onMediaSelected, onClose]);
 

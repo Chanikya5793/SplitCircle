@@ -210,3 +210,32 @@ export const getUnreadMessagesFromSender = async (
     return [];
   }
 };
+
+// Update a message's local media path (after downloading media)
+export const updateMessageLocalPath = async (
+  chatId: string,
+  messageId: string,
+  localMediaPath: string
+): Promise<void> => {
+  try {
+    const key = `${MESSAGES_KEY_PREFIX}${chatId}`;
+    const data = await AsyncStorage.getItem(key);
+    
+    if (!data) return;
+    
+    const messages: ChatMessage[] = JSON.parse(data);
+    const messageIndex = messages.findIndex(m => m.id === messageId || m.messageId === messageId);
+    
+    if (messageIndex >= 0) {
+      messages[messageIndex] = {
+        ...messages[messageIndex],
+        localMediaPath,
+      };
+      
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      console.log(`✅ Message ${messageId} local path updated to ${localMediaPath}`);
+    }
+  } catch (error) {
+    console.error('❌ Error updating message local path:', error);
+  }
+};
