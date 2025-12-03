@@ -182,6 +182,7 @@ export const getFileSize = async (uri: string): Promise<number> => {
 /**
  * Store media data temporarily in Firebase Realtime Database
  * This is for the recipient to download
+ * @deprecated Use mediaService.uploadMedia instead (uploads to Storage)
  */
 export const storeMediaInRTDB = async (
   recipientId: string,
@@ -191,103 +192,44 @@ export const storeMediaInRTDB = async (
   mimeType: string,
   fileSize: number
 ): Promise<void> => {
-  try {
-    const mediaRef = ref(rtdb, `mediaQueue/${recipientId}/${messageId}`);
-    
-    await set(mediaRef, {
-      base64Data,
-      fileName,
-      mimeType,
-      fileSize,
-      timestamp: Date.now(),
-    });
-    
-    console.log('✅ Media stored in RTDB for recipient:', recipientId);
-  } catch (error) {
-    console.error('❌ Error storing media in RTDB:', error);
-    throw error;
-  }
+  console.warn('storeMediaInRTDB is deprecated. Use mediaService.uploadMedia instead.');
 };
 
 /**
  * Fetch media data from Firebase Realtime Database
+ * @deprecated Use mediaService.downloadMedia instead (downloads from Storage)
  */
 export const fetchMediaFromRTDB = async (
   userId: string,
   messageId: string
 ): Promise<{ base64Data: string; fileName: string; mimeType: string; fileSize: number } | null> => {
-  try {
-    const mediaRef = ref(rtdb, `mediaQueue/${userId}/${messageId}`);
-    const snapshot = await get(mediaRef);
-    
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      return {
-        base64Data: data.base64Data,
-        fileName: data.fileName,
-        mimeType: data.mimeType,
-        fileSize: data.fileSize,
-      };
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('❌ Error fetching media from RTDB:', error);
-    return null;
-  }
+  console.warn('fetchMediaFromRTDB is deprecated. Use mediaService.downloadMedia instead.');
+  return null;
 };
 
 /**
  * Delete media from Firebase Realtime Database after download
+ * @deprecated
  */
 export const deleteMediaFromRTDB = async (
   userId: string,
   messageId: string
 ): Promise<void> => {
-  try {
-    const mediaRef = ref(rtdb, `mediaQueue/${userId}/${messageId}`);
-    await remove(mediaRef);
-    console.log('✅ Media deleted from RTDB:', messageId);
-  } catch (error) {
-    console.error('❌ Error deleting media from RTDB:', error);
-  }
+  console.warn('deleteMediaFromRTDB is deprecated.');
 };
 
 /**
  * Download and save media for a received message
  * Returns the local file path, or null if no media to download
+ * @deprecated Use mediaService.downloadMedia instead
  */
 export const downloadAndSaveMedia = async (
   userId: string,
   chatId: string,
   messageId: string
 ): Promise<string | null> => {
-  try {
-    // Fetch media from RTDB
-    const mediaData = await fetchMediaFromRTDB(userId, messageId);
-    
-    if (!mediaData) {
-      console.log('📭 No media to download for message:', messageId);
-      return null;
-    }
-    
-    // Save to local storage
-    const localPath = await saveMediaFromBase64(
-      chatId,
-      messageId,
-      mediaData.base64Data,
-      mediaData.fileName
-    );
-    
-    // Delete from RTDB after successful download
-    await deleteMediaFromRTDB(userId, messageId);
-    
-    console.log('✅ Media downloaded and saved:', localPath);
-    return localPath;
-  } catch (error) {
-    console.error('❌ Error downloading and saving media:', error);
-    return null;
-  }
+  console.warn('downloadAndSaveMedia is deprecated. Use mediaService.downloadMedia instead.');
+  return null;
 };
 
 /**
