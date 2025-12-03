@@ -578,7 +578,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         </TouchableOpacity>
         <View style={styles.audioWaveform}>
           {/* Simple waveform visualization placeholder */}
-          {[...Array(20)].map((_, i) => (
+          {[...Array(16)].map((_, i) => (
             <View 
               key={i}
               style={[
@@ -926,9 +926,9 @@ const styles = StyleSheet.create({
   audioContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 8,
-    borderRadius: 12,
-    marginBottom: 4,
+    padding: 12,
+    borderRadius: 50,
+    marginBottom: 0,
   },
   audioPlayButton: {
     width: 36,
@@ -941,9 +941,10 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 12,
+    marginLeft: 10,
+    marginRight: 100,
     height: 24,
-    gap: 2,
+    gap: 4,
   },
   audioBar: {
     width: 3,
