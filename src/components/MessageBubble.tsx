@@ -241,7 +241,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   };
 
   // Reply preview component
-  const ReplyContent = () => {
+  const renderReplyContent = () => {
     if (!message.replyTo) return null;
     const replyColor = getSenderColor(message.replyTo.senderId);
     const isMediaReply = message.replyTo.type && message.replyTo.type !== 'text';
@@ -328,7 +328,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   }, [message.localMediaPath, message.mediaUrl, message.type, message.isFromMe, message.chatId, message.messageId, message.id, message.mediaMetadata?.fileName]);
 
   // Image content with loading state
-  const ImageContent = () => {
+  const renderImageContent = () => {
     if (!mediaUri && !isDownloading) return null;
 
     // Show sending state
@@ -392,7 +392,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   };
 
   // Video content with player
-  const VideoContent = () => {
+  const renderVideoContent = () => {
     if (!mediaUri && !isDownloading) return null;
 
     // Show sending state
@@ -514,7 +514,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   };
 
   // Document attachment
-  const DocumentContent = () => {
+  const renderDocumentContent = () => {
     if (!mediaUri && !message.mediaMetadata && !isDownloading) return null;
     const metadata = message.mediaMetadata;
     const isDownloaded = !!mediaUri && !isDownloading;
@@ -561,7 +561,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   };
 
   // Audio message
-  const AudioContent = () => {
+  const renderAudioContent = () => {
     if (!mediaUri) return null;
     const metadata = message.mediaMetadata;
 
@@ -599,7 +599,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   };
 
   // Location message
-  const LocationContent = () => {
+  const renderLocationContent = () => {
     if (!message.location) return null;
 
     return (
@@ -620,7 +620,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   };
 
   // Full screen image viewer
-  const FullScreenImage = () => (
+  const renderFullScreenImage = () => (
     <Modal
       visible={fullScreenVisible}
       transparent
@@ -650,19 +650,19 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   const renderMedia = () => {
     switch (message.type) {
       case 'image':
-        return <ImageContent />;
+        return renderImageContent();
       case 'video':
-        return <VideoContent />;
+        return renderVideoContent();
       case 'file':
-        return <DocumentContent />;
+        return renderDocumentContent();
       case 'audio':
-        return <AudioContent />;
+        return renderAudioContent();
       case 'location':
-        return <LocationContent />;
+        return renderLocationContent();
       default:
         // For text or unknown, render old image style if local path or mediaUrl exists
         if (mediaUri) {
-          return <ImageContent />;
+          return renderImageContent();
         }
         return null;
     }
@@ -689,7 +689,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           overshootLeft={false}
         >
           <View style={[styles.container, styles.mine, { backgroundColor: theme.colors.primary }]}>
-            <ReplyContent />
+            {renderReplyContent()}
             {renderMedia()}
             {hasTextContent && (
               <Text style={[styles.text, { color: theme.colors.onPrimary }]}>{message.content}</Text>
@@ -706,7 +706,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
             </View>
           </View>
         </Swipeable>
-        <FullScreenImage />
+        {renderFullScreenImage()}
       </>
     );
   }
@@ -736,7 +736,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
             </View>
           )}
           <View style={[styles.container, styles.other, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' }]}>
-            <ReplyContent />
+            {renderReplyContent()}
             {showSenderInfo && senderName && (
               <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
             )}
@@ -748,7 +748,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           </View>
         </View>
       </Swipeable>
-      <FullScreenImage />
+      {renderFullScreenImage()}
     </>
   );
 };

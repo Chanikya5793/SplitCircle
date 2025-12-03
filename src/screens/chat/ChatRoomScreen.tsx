@@ -361,7 +361,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         <Animated.FlatList
           ref={listRef}
           data={messages}
-          keyExtractor={(item) => item.messageId || item.id || Math.random().toString()}
+          keyExtractor={(item) => item.messageId || item.id || `${item.createdAt}_${item.senderId}`}
           renderItem={({ item, index }) => {
             // Show sender info for first message in a sequence (group chats)
             const prevMessage = messages[index + 1]; // +1 because inverted
