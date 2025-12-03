@@ -1,5 +1,6 @@
 import { useTheme } from '@/context/ThemeContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { Audio } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useRef } from 'react';
@@ -280,12 +281,27 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
+        let duration: number | undefined;
+
+        // Try to get duration
+        try {
+          const { sound } = await Audio.Sound.createAsync({ uri: asset.uri });
+          const status = await sound.getStatusAsync();
+          if (status.isLoaded) {
+            duration = status.durationMillis;
+          }
+          await sound.unloadAsync();
+        } catch (e) {
+          console.warn('Failed to get audio duration:', e);
+        }
+
         onMediaSelected({
           type: 'audio',
           uri: asset.uri,
           fileName: asset.name,
           fileSize: asset.size,
           mimeType: asset.mimeType || 'audio/mpeg',
+          duration: duration,
         });
         onClose();
       }
