@@ -58,14 +58,28 @@ export const processImage = async (
       actions.push({ resize: { width: newWidth, height: newHeight } });
     }
 
-    const result = await ImageManipulator.manipulateAsync(
-      uri,
-      actions,
-      {
-        compress: compressQuality,
-        format: ImageManipulator.SaveFormat.JPEG,
-      }
-    );
+    let result;
+    try {
+      result = await ImageManipulator.manipulateAsync(
+        uri,
+        actions,
+        {
+          compress: compressQuality,
+          format: ImageManipulator.SaveFormat.JPEG,
+        }
+      );
+    } catch (manipulationError) {
+      console.warn('Image manipulation failed, falling back to original:', manipulationError);
+      // Fallback to original image if manipulation fails (e.g. context lost)
+      const fileInfo = await getInfoAsync(uri);
+      const size = fileInfo.exists && 'size' in fileInfo ? fileInfo.size : 0;
+      return {
+        uri,
+        width,
+        height,
+        size,
+      };
+    }
 
     // Check file size
     const fileInfo = await getInfoAsync(result.uri);
@@ -79,6 +93,7 @@ export const processImage = async (
     };
   } catch (error) {
     console.error('Image processing error:', error);
+    // If even the fallback fails (e.g. Image.getSize fails), rethrow
     throw error;
   }
 };

@@ -66,9 +66,43 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   useEffect(() => {
     console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
 
+    // Reduce noisy logging and unnecessary state updates:
+    // - Only update messages state when count or last message id changes.
+    // - Throttle console logging to once per LOG_INTERVAL, otherwise only log new messages.
+    let lastLogAt = 0;
+    const LOG_INTERVAL = 10_000; // 10s
+    let prevCount = 0;
+    let prevLastMessageId: string | null = null;
+
     const unsubscribe = subscribeToMessages(thread.chatId, (items) => {
-      console.log(`📨 Received ${items.length} messages in ChatRoomScreen`);
+      // Keep the previous count/last id for comparisons
+      const prevCountBefore = prevCount;
+      const prevLastIdBefore = prevLastMessageId;
+
+      const lastItem = items[0]; // inverted list: incoming array has newest first
+      const lastId = lastItem?.messageId || lastItem?.id || null;
+
+      const countChanged = items.length !== prevCountBefore;
+      const lastIdChanged = lastId !== prevLastIdBefore;
+
+      // Only update state if it's a meaningful change to reduce re-renders
+      if (countChanged || lastIdChanged) {
       setMessages(items);
+      prevCount = items.length;
+      prevLastMessageId = lastId;
+      }
+
+      // Throttled logging to avoid spamming the console
+      const now = Date.now();
+      if (now - lastLogAt > LOG_INTERVAL) {
+      console.log(`📨 Received ${items.length} messages in ChatRoomScreen`);
+      lastLogAt = now;
+      } else if (countChanged && items.length > prevCountBefore) {
+      // If new messages arrived and we are within the throttle window,
+      // log a concise "new messages" note.
+      console.log(`📨 New message(s) — total: ${items.length}`);
+      lastLogAt = now;
+      }
     });
 
     // Mark all messages as read when opening the chat
