@@ -4,7 +4,7 @@ import type { ChatMessage, MessageStatus, MessageType } from '@/models';
 import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { formatRelativeTime } from '@/utils/format';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { ResizeMode, Video } from 'expo-av';
+import { Audio, ResizeMode, Video } from 'expo-av';
 import { getContentUriAsync, getInfoAsync } from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
@@ -128,6 +128,60 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   const [imageLoading, setImageLoading] = useState(true);
   const [fullScreenVisible, setFullScreenVisible] = useState(false);
   const videoRef = useRef<Video>(null);
+  
+  // Audio playback state
+  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  // Unload sound on unmount
+  useEffect(() => {
+    return () => {
+      if (sound) {
+        sound.unloadAsync();
+      }
+    };
+  }, [sound]);
+
+  const handlePlayPause = async () => {
+    if (!mediaUri) return;
+
+    try {
+      if (sound) {
+        if (isPlaying) {
+          await sound.pauseAsync();
+          setIsPlaying(false);
+        } else {
+          await sound.playAsync();
+          setIsPlaying(true);
+        }
+      } else {
+        // Configure audio session for playback
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+        });
+
+        const { sound: newSound } = await Audio.Sound.createAsync(
+          { uri: mediaUri },
+          { shouldPlay: true },
+          (status) => {
+            if (status.isLoaded) {
+              setIsPlaying(status.isPlaying);
+              if (status.didJustFinish) {
+                setIsPlaying(false);
+                newSound.setPositionAsync(0);
+              }
+            }
+          }
+        );
+        setSound(newSound);
+        setIsPlaying(true);
+      }
+    } catch (error) {
+      console.error('Error playing audio:', error);
+      Alert.alert('Error', 'Could not play audio message.');
+    }
+  };
 
   if (message.type === 'system') {
     return (
@@ -518,8 +572,9 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         <TouchableOpacity 
           style={[styles.audioPlayButton, { backgroundColor: theme.colors.primary }]}
           activeOpacity={0.8}
+          onPress={handlePlayPause}
         >
-          <Ionicons name="play" size={20} color="#fff" />
+          <Ionicons name={isPlaying ? "pause" : "play"} size={20} color="#fff" />
         </TouchableOpacity>
         <View style={styles.audioWaveform}>
           {/* Simple waveform visualization placeholder */}
@@ -529,7 +584,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
               style={[
                 styles.audioBar, 
                 { 
-                  height: Math.random() * 16 + 4,
+                  height: isPlaying ? Math.random() * 16 + 4 : 4, // Animate height if playing (simple effect)
                   backgroundColor: isMine ? 'rgba(255,255,255,0.5)' : theme.colors.primary 
                 }
               ]} 
