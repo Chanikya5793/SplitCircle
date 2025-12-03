@@ -163,19 +163,16 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
+        onMediaSelected({
+          type: 'camera',
+          uri: asset.uri,
+          fileName: asset.fileName || `IMG_${Date.now()}.jpg`,
+          fileSize: asset.fileSize,
+          mimeType: asset.mimeType || 'image/jpeg',
+          width: asset.width,
+          height: asset.height,
+        });
         onClose();
-        // Small delay to allow modal to close before opening preview
-        setTimeout(() => {
-          onMediaSelected({
-            type: 'camera',
-            uri: asset.uri,
-            fileName: asset.fileName || `IMG_${Date.now()}.jpg`,
-            fileSize: asset.fileSize,
-            mimeType: asset.mimeType || 'image/jpeg',
-            width: asset.width,
-            height: asset.height,
-          });
-        }, 500);
       }
     } catch (error) {
       console.error('Camera error:', error);
@@ -198,19 +195,16 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
+        onMediaSelected({
+          type: 'image',
+          uri: asset.uri,
+          fileName: asset.fileName || `IMG_${Date.now()}.jpg`,
+          fileSize: asset.fileSize,
+          mimeType: asset.mimeType || 'image/jpeg',
+          width: asset.width,
+          height: asset.height,
+        });
         onClose();
-        // Small delay to allow modal to close before opening preview
-        setTimeout(() => {
-          onMediaSelected({
-            type: 'image',
-            uri: asset.uri,
-            fileName: asset.fileName || `IMG_${Date.now()}.jpg`,
-            fileSize: asset.fileSize,
-            mimeType: asset.mimeType || 'image/jpeg',
-            width: asset.width,
-            height: asset.height,
-          });
-        }, 500);
       }
     } catch (error) {
       console.error('Gallery image error:', error);
@@ -236,20 +230,17 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
+        onMediaSelected({
+          type: 'video',
+          uri: asset.uri,
+          fileName: asset.fileName || `VID_${Date.now()}.mp4`,
+          fileSize: asset.fileSize,
+          mimeType: asset.mimeType || 'video/mp4',
+          width: asset.width,
+          height: asset.height,
+          duration: asset.duration ? asset.duration * 1000 : undefined,
+        });
         onClose();
-        // Small delay to allow modal to close before opening preview
-        setTimeout(() => {
-          onMediaSelected({
-            type: 'video',
-            uri: asset.uri,
-            fileName: asset.fileName || `VID_${Date.now()}.mp4`,
-            fileSize: asset.fileSize,
-            mimeType: asset.mimeType || 'video/mp4',
-            width: asset.width,
-            height: asset.height,
-            duration: asset.duration ? asset.duration * 1000 : undefined,
-          });
-        }, 500);
       }
     } catch (error) {
       console.error('Gallery video error:', error);
@@ -266,17 +257,14 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
+        onMediaSelected({
+          type: 'document',
+          uri: asset.uri,
+          fileName: asset.name,
+          fileSize: asset.size,
+          mimeType: asset.mimeType || 'application/octet-stream',
+        });
         onClose();
-        // Small delay to allow modal to close before opening preview
-        setTimeout(() => {
-          onMediaSelected({
-            type: 'document',
-            uri: asset.uri,
-            fileName: asset.name,
-            fileSize: asset.size,
-            mimeType: asset.mimeType || 'application/octet-stream',
-          });
-        }, 500);
       }
     } catch (error) {
       console.error('Document picker error:', error);
@@ -307,18 +295,15 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           console.warn('Failed to get audio duration:', e);
         }
 
+        onMediaSelected({
+          type: 'audio',
+          uri: asset.uri,
+          fileName: asset.name,
+          fileSize: asset.size,
+          mimeType: asset.mimeType || 'audio/mpeg',
+          duration: duration,
+        });
         onClose();
-        // Small delay to allow modal to close before opening preview
-        setTimeout(() => {
-          onMediaSelected({
-            type: 'audio',
-            uri: asset.uri,
-            fileName: asset.name,
-            fileSize: asset.size,
-            mimeType: asset.mimeType || 'audio/mpeg',
-            duration: duration,
-          });
-        }, 500);
       }
     } catch (error) {
       console.error('Audio picker error:', error);
