@@ -17,7 +17,7 @@ import {
     readAsStringAsync,
     writeAsStringAsync,
 } from 'expo-file-system/legacy';
-import { get, getDatabase, ref, remove, set } from 'firebase/database';
+import { getDatabase } from 'firebase/database';
 
 const rtdb = getDatabase();
 
