@@ -3,13 +3,14 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { ResizeMode, Video } from 'expo-av';
 import { useRef, useState } from 'react';
 import {
-    ActivityIndicator,
     Dimensions,
     Image,
+    KeyboardAvoidingView,
     Modal,
+    Platform,
     StyleSheet,
     TouchableOpacity,
-    View,
+    View
 } from 'react-native';
 import { IconButton, Text, TextInput } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,12 +18,13 @@ import type { SelectedMedia } from './AttachmentMenu';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+export type QualityLevel = 'HD' | 'SD';
+
 interface MediaPreviewProps {
   media: SelectedMedia | null;
   visible: boolean;
   onClose: () => void;
-  onSend: (caption: string) => void;
-  sending?: boolean;
+  onSend: (caption: string, quality: QualityLevel) => void;
 }
 
 // Helper to format file size
@@ -57,13 +59,14 @@ export const MediaPreview = ({ media, visible, onClose, onSend, sending }: Media
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const [caption, setCaption] = useState('');
+  const [quality, setQuality] = useState<QualityLevel>('HD');
   const [videoError, setVideoError] = useState(false);
   const videoRef = useRef<Video>(null);
 
   const handleSend = () => {
     const captionToSend = caption;
     setCaption('');
-    onSend(captionToSend);
+    onSend(captionToSend, quality);
   };
 
   const handleClose = () => {
@@ -173,6 +176,7 @@ export const MediaPreview = ({ media, visible, onClose, onSend, sending }: Media
   };
 
   const showCaptionInput = media.type === 'image' || media.type === 'video' || media.type === 'camera';
+  const showQualityControl = media.type === 'image' || media.type === 'video' || media.type === 'camera';
 
   return (
     <Modal
@@ -183,6 +187,10 @@ export const MediaPreview = ({ media, visible, onClose, onSend, sending }: Media
       onRequestClose={handleClose}
     >
       <View style={[styles.container, { backgroundColor: '#000' }]}>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
         {/* Header */}
         <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
           <IconButton
@@ -205,7 +213,22 @@ export const MediaPreview = ({ media, visible, onClose, onSend, sending }: Media
               </Text>
             )}
           </View>
-          <View style={{ width: 48 }} />
+          
+          {/* Quality Toggle */}
+          {showQualityControl && (
+            <View style={styles.qualityContainer}>
+              <TouchableOpacity 
+                style={[styles.qualityButton, quality === 'HD' && styles.qualityButtonActive]}
+                onPress={() => setQuality(quality === 'HD' ? 'SD' : 'HD')}
+              >
+                <Text style={[styles.qualityText, quality === 'HD' && styles.qualityTextActive]}>
+                  {quality}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          
+          <View style={{ width: showQualityControl ? 0 : 48 }} />
         </View>
 
         {/* Media Content */}
@@ -235,16 +258,12 @@ export const MediaPreview = ({ media, visible, onClose, onSend, sending }: Media
           <TouchableOpacity
             style={[styles.sendButton, { backgroundColor: theme.colors.primary }]}
             onPress={handleSend}
-            disabled={sending}
             activeOpacity={0.8}
           >
-            {sending ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Ionicons name="send" size={24} color="#fff" />
-            )}
+            <Ionicons name="send" size={24} color="#fff" />
           </TouchableOpacity>
         </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
@@ -363,6 +382,29 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 4,
+  },
+  qualityContainer: {
+    marginRight: 8,
+  },
+  qualityButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  qualityButtonActive: {
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    borderColor: '#fff',
+  },
+  qualityText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  qualityTextActive: {
+    color: '#000',
   },
 });
 

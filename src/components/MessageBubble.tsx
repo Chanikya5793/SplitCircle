@@ -1,12 +1,15 @@
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, MessageStatus, MessageType } from '@/models';
+import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { formatRelativeTime } from '@/utils/format';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { ResizeMode, Video } from 'expo-av';
-import * as WebBrowser from 'expo-web-browser';
-import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { getContentUriAsync, getInfoAsync } from 'expo-file-system/legacy';
+import * as IntentLauncher from 'expo-intent-launcher';
+import * as Sharing from 'expo-sharing';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
 
@@ -214,9 +217,103 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     );
   };
 
+  // Get the media URI - prefer local path over remote URL
+  // Also handles automatic downloading for received media
+  const [mediaUri, setMediaUri] = useState<string | undefined>(
+    message.localMediaPath || message.mediaUrl
+  );
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState(false);
+
+  // Check and download media if needed
+  useEffect(() => {
+    const checkAndDownloadMedia = async () => {
+      // Skip if no media or already have local path
+      if (message.type === 'text' || message.type === 'system' || message.type === 'call') {
+        return;
+      }
+
+      // If we already have a local path, check if it exists
+      if (message.localMediaPath) {
+        const exists = await mediaExistsLocally(message.localMediaPath);
+        if (exists) {
+          setMediaUri(message.localMediaPath);
+          return;
+        }
+      }
+
+      // If we have a remote URL but no local file, download it
+      if (message.mediaUrl && !message.isFromMe) {
+        setIsDownloading(true);
+        setDownloadError(false);
+        try {
+          const fileName = message.mediaMetadata?.fileName || `${message.type}_${message.messageId}`;
+          const result = await downloadMedia(
+            message.mediaUrl,
+            message.chatId,
+            message.messageId || message.id,
+            fileName
+          );
+          setMediaUri(result.localPath);
+          console.log('✅ Media downloaded for message:', message.messageId);
+        } catch (error) {
+          console.error('❌ Failed to download media:', error);
+          setDownloadError(true);
+          // Fall back to remote URL
+          setMediaUri(message.mediaUrl);
+        } finally {
+          setIsDownloading(false);
+        }
+      } else if (message.mediaUrl) {
+        // For sender's messages, use mediaUrl if local path doesn't exist
+        setMediaUri(message.mediaUrl);
+      }
+    };
+
+    checkAndDownloadMedia();
+  }, [message.localMediaPath, message.mediaUrl, message.type, message.isFromMe, message.chatId, message.messageId, message.id, message.mediaMetadata?.fileName]);
+
   // Image content with loading state
   const ImageContent = () => {
-    if (!message.mediaUrl) return null;
+    if (!mediaUri && !isDownloading) return null;
+
+    // Show sending state
+    if (message.status === 'sending' && mediaUri) {
+      return (
+        <View style={[styles.mediaContainer, imageDimensions]}>
+          <Image
+            source={{ uri: mediaUri }}
+            style={[styles.mediaImage, imageDimensions]}
+            resizeMode="cover"
+          />
+          <View style={styles.uploadingOverlay}>
+            <ActivityIndicator color="#fff" size="large" />
+          </View>
+        </View>
+      );
+    }
+
+    // Show downloading placeholder
+    if (isDownloading) {
+      return (
+        <View style={[styles.mediaContainer, imageDimensions, styles.downloadingContainer]}>
+          <ActivityIndicator color={theme.colors.primary} size="large" />
+          <Text style={styles.downloadingText}>Downloading...</Text>
+        </View>
+      );
+    }
+
+    // Show error state
+    if (downloadError && !mediaUri) {
+      return (
+        <View style={[styles.mediaContainer, imageDimensions, styles.downloadingContainer]}>
+          <Ionicons name="cloud-offline-outline" size={40} color={theme.colors.error} />
+          <Text style={[styles.downloadingText, { color: theme.colors.error }]}>
+            Failed to download
+          </Text>
+        </View>
+      );
+    }
 
     return (
       <TouchableOpacity 
@@ -230,7 +327,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           </View>
         )}
         <Image
-          source={{ uri: message.mediaUrl }}
+          source={{ uri: mediaUri }}
           style={[styles.mediaImage, imageDimensions]}
           resizeMode="cover"
           onLoadStart={() => setImageLoading(true)}
@@ -242,13 +339,40 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
 
   // Video content with player
   const VideoContent = () => {
-    if (!message.mediaUrl) return null;
+    if (!mediaUri && !isDownloading) return null;
+
+    // Show sending state
+    if (message.status === 'sending' && mediaUri) {
+      return (
+        <View style={[styles.mediaContainer, imageDimensions]}>
+          <Video
+            source={{ uri: mediaUri }}
+            style={[styles.mediaVideo, imageDimensions]}
+            resizeMode={ResizeMode.COVER}
+            shouldPlay={false}
+          />
+          <View style={styles.uploadingOverlay}>
+            <ActivityIndicator color="#fff" size="large" />
+          </View>
+        </View>
+      );
+    }
+
+    // Show downloading placeholder
+    if (isDownloading) {
+      return (
+        <View style={[styles.mediaContainer, imageDimensions, styles.downloadingContainer]}>
+          <ActivityIndicator color={theme.colors.primary} size="large" />
+          <Text style={styles.downloadingText}>Downloading video...</Text>
+        </View>
+      );
+    }
 
     return (
       <View style={[styles.mediaContainer, imageDimensions]}>
         <Video
           ref={videoRef}
-          source={{ uri: message.mediaUrl }}
+          source={{ uri: mediaUri }}
           style={[styles.mediaVideo, imageDimensions]}
           resizeMode={ResizeMode.COVER}
           useNativeControls
@@ -269,33 +393,60 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
 
   // Handle opening/downloading document
   const handleOpenDocument = async () => {
-    if (!message.mediaUrl) return;
+    if (!mediaUri) {
+      Alert.alert('File Not Available', 'The file has not been downloaded yet.');
+      return;
+    }
     
-    const mimeType = message.mediaMetadata?.mimeType || '';
+    const mimeType = message.mediaMetadata?.mimeType || 'application/octet-stream';
     const fileName = message.mediaMetadata?.fileName || 'Document';
     
     try {
-      // For PDFs and web-viewable documents, open in in-app browser
-      if (mimeType.includes('pdf') || 
-          mimeType.includes('text') || 
-          mimeType.includes('html')) {
-        await WebBrowser.openBrowserAsync(message.mediaUrl, {
-          presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
-          toolbarColor: theme.colors.surface,
-          controlsColor: theme.colors.primary,
+      // Check if file exists
+      const fileInfo = await getInfoAsync(mediaUri);
+      if (!fileInfo.exists) {
+        Alert.alert('File Not Found', 'The file could not be found on this device.');
+        return;
+      }
+
+      // Check if sharing is available
+      const isAvailable = await Sharing.isAvailableAsync();
+      
+      if (isAvailable) {
+        // Use sharing to open the file with the system's default app
+        await Sharing.shareAsync(mediaUri, {
+          mimeType,
+          dialogTitle: `Open ${fileName}`,
+          UTI: mimeType, // iOS specific
         });
-      } else {
-        // For other documents (docx, xlsx, etc.), try to open externally
-        const canOpen = await Linking.canOpenURL(message.mediaUrl);
-        if (canOpen) {
-          await Linking.openURL(message.mediaUrl);
-        } else {
-          // Fallback: Open in browser which might trigger download
-          await WebBrowser.openBrowserAsync(message.mediaUrl, {
-            presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
-            toolbarColor: theme.colors.surface,
-            controlsColor: theme.colors.primary,
+      } else if (Platform.OS === 'android') {
+        // On Android, try to open with intent
+        try {
+          const contentUri = await getContentUriAsync(mediaUri);
+          await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+            data: contentUri,
+            type: mimeType,
+            flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
           });
+        } catch (intentError) {
+          console.error('Intent error:', intentError);
+          Alert.alert(
+            'Cannot Open File',
+            'No app is available to open this file type.',
+            [{ text: 'OK' }]
+          );
+        }
+      } else {
+        // Fallback for iOS if sharing isn't available
+        const canOpen = await Linking.canOpenURL(mediaUri);
+        if (canOpen) {
+          await Linking.openURL(mediaUri);
+        } else {
+          Alert.alert(
+            'Cannot Open File',
+            'No app is available to open this file type.',
+            [{ text: 'OK' }]
+          );
         }
       }
     } catch (error) {
@@ -310,8 +461,10 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
 
   // Document attachment
   const DocumentContent = () => {
-    if (!message.mediaUrl) return null;
+    if (!mediaUri && !message.mediaMetadata && !isDownloading) return null;
     const metadata = message.mediaMetadata;
+    const isDownloaded = !!mediaUri && !isDownloading;
+    const isSending = message.status === 'sending';
 
     return (
       <TouchableOpacity 
@@ -320,13 +473,18 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         }]}
         activeOpacity={0.7}
         onPress={handleOpenDocument}
+        disabled={isDownloading || isSending}
       >
         <View style={[styles.documentIconContainer, { backgroundColor: theme.colors.primary }]}>
-          <Ionicons 
-            name={getDocumentIcon(metadata?.mimeType)} 
-            size={24} 
-            color="#fff" 
-          />
+          {isDownloading || isSending ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <Ionicons 
+              name={getDocumentIcon(metadata?.mimeType)} 
+              size={24} 
+              color="#fff" 
+            />
+          )}
         </View>
         <View style={styles.documentInfo}>
           <Text 
@@ -335,14 +493,12 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           >
             {metadata?.fileName || 'Document'}
           </Text>
-          {metadata?.fileSize && (
-            <Text style={[styles.documentSize, { color: isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant }]}>
-              {formatFileSize(metadata.fileSize)}
-            </Text>
-          )}
+          <Text style={[styles.documentSize, { color: isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant }]}>
+            {isDownloading ? 'Downloading...' : (metadata?.fileSize ? formatFileSize(metadata.fileSize) : '')}
+          </Text>
         </View>
         <Ionicons 
-          name="open-outline" 
+          name={isDownloaded ? "open-outline" : "cloud-download-outline"}
           size={20} 
           color={isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant} 
         />
@@ -352,7 +508,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
 
   // Audio message
   const AudioContent = () => {
-    if (!message.mediaUrl) return null;
+    if (!mediaUri) return null;
     const metadata = message.mediaMetadata;
 
     return (
@@ -421,7 +577,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           <View style={styles.fullScreenBackdrop} />
         </Pressable>
         <Image
-          source={{ uri: message.mediaUrl }}
+          source={{ uri: mediaUri }}
           style={styles.fullScreenImage}
           resizeMode="contain"
         />
@@ -449,8 +605,8 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       case 'location':
         return <LocationContent />;
       default:
-        // For text or unknown, render old image style if mediaUrl exists
-        if (message.mediaUrl) {
+        // For text or unknown, render old image style if local path or mediaUrl exists
+        if (mediaUri) {
           return <ImageContent />;
         }
         return null;
@@ -649,6 +805,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.1)',
     borderRadius: 12,
+  },
+  downloadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    minHeight: 150,
+  },
+  downloadingText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+    marginTop: 8,
+  },
+  uploadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   videoDuration: {
     position: 'absolute',

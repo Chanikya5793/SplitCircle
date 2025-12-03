@@ -1,16 +1,19 @@
 import { AttachmentMenu, MediaPreview } from '@/components/Chat';
 import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
+import type { QualityLevel } from '@/components/Chat/MediaPreview';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { LoadingOverlay } from '@/components/LoadingOverlay';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatThread, MessageType } from '@/models';
+import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, AppState, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, AppState, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
 
 interface ChatRoomScreenProps {
@@ -43,7 +46,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Media preview state
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
-  const [sendingMedia, setSendingMedia] = useState(false);
+  // Media processing state
+  const [isProcessingMedia, setIsProcessingMedia] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -132,13 +136,34 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   };
 
   // Handle sending media with optional caption
-  const handleSendMedia = async (caption: string) => {
+  const handleSendMedia = async (caption: string, quality: QualityLevel) => {
     if (!selectedMedia) return;
     
-    setSendingMedia(true);
     setMediaPreviewVisible(false);
+    setIsProcessingMedia(true);
     
     try {
+      // Process media based on quality selection
+      let processedUri = selectedMedia.uri;
+      let processedWidth = selectedMedia.width;
+      let processedHeight = selectedMedia.height;
+      let processedSize = selectedMedia.fileSize;
+
+      if (selectedMedia.type === 'image' || selectedMedia.type === 'camera') {
+        const result = await processImage(selectedMedia.uri, quality);
+        processedUri = result.uri;
+        processedWidth = result.width;
+        processedHeight = result.height;
+        processedSize = result.size;
+      } else if (selectedMedia.type === 'video') {
+        const result = await processVideo(selectedMedia.uri, quality);
+        processedUri = result.uri;
+        // Video processing might not return dimensions if we can't read them easily
+        if (result.width > 0) processedWidth = result.width;
+        if (result.height > 0) processedHeight = result.height;
+        processedSize = result.size;
+      }
+
       // Map attachment type to message type
       let messageType: MessageType;
       switch (selectedMedia.type) {
@@ -178,13 +203,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       // Build mediaMetadata with only defined values
       const mediaMetadata: Record<string, unknown> = {};
       if (selectedMedia.fileName) mediaMetadata.fileName = selectedMedia.fileName;
-      if (selectedMedia.fileSize) mediaMetadata.fileSize = selectedMedia.fileSize;
+      if (processedSize) mediaMetadata.fileSize = processedSize;
       if (selectedMedia.mimeType) mediaMetadata.mimeType = selectedMedia.mimeType;
-      if (selectedMedia.width) mediaMetadata.width = selectedMedia.width;
-      if (selectedMedia.height) mediaMetadata.height = selectedMedia.height;
+      if (processedWidth) mediaMetadata.width = processedWidth;
+      if (processedHeight) mediaMetadata.height = processedHeight;
       if (selectedMedia.duration) mediaMetadata.duration = selectedMedia.duration;
-      if (selectedMedia.width && selectedMedia.height) {
-        mediaMetadata.aspectRatio = selectedMedia.width / selectedMedia.height;
+      if (processedWidth && processedHeight) {
+        mediaMetadata.aspectRatio = processedWidth / processedHeight;
       }
 
       // Send the message directly - ChatContext handles upload
@@ -192,7 +217,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         chatId: thread.chatId,
         content: caption || getMediaPlaceholder(messageType),
         type: messageType,
-        mediaUri: selectedMedia.uri,
+        mediaUri: processedUri,
         groupId: thread.groupId,
         replyTo: replyData,
         mediaMetadata: Object.keys(mediaMetadata).length > 0 ? mediaMetadata as any : undefined,
@@ -205,7 +230,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       // Show error to user
       alert(error instanceof Error ? error.message : 'Failed to send media');
     } finally {
-      setSendingMedia(false);
+      setIsProcessingMedia(false);
     }
   };
 
@@ -451,18 +476,10 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           setSelectedMedia(null);
         }}
         onSend={handleSendMedia}
-        sending={sendingMedia}
       />
 
-      {/* Loading overlay when sending media */}
-      {sendingMedia && (
-        <View style={styles.sendingOverlay}>
-          <View style={styles.sendingContent}>
-            <ActivityIndicator size="large" color={theme.colors.primary} />
-            <Text style={{ color: '#fff', marginTop: 12 }}>Sending...</Text>
-          </View>
-        </View>
-      )}
+      {/* Processing Overlay */}
+      <LoadingOverlay visible={isProcessingMedia} message="Processing media..." />
     </LiquidBackground>
   );
 };
