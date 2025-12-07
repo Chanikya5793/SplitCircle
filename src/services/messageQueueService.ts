@@ -4,7 +4,7 @@
 // Local storage is the primary message store (SQLite)
 
 import { get, getDatabase, onValue, ref, remove, set } from 'firebase/database';
-import { ChatMessage } from '../models';
+import { ChatMessage, MessageType } from '../models';
 import { downloadMedia } from './mediaService';
 
 // Get Realtime Database instance
@@ -23,6 +23,13 @@ interface ReceiptData {
 interface GroupReceiptData {
   [recipientId: string]: ReceiptData;
 }
+
+/**
+ * Utility: Check if a message type requires media download
+ */
+const hasMediaContent = (type: MessageType): boolean => {
+  return type !== 'text' && type !== 'system' && type !== 'location';
+};
 
 /**
  * Send a message to recipient's queue in Realtime Database
@@ -160,8 +167,7 @@ export const listenForMessages = (
           console.log('✅ Message delivered and removed from queue:', messageId);
           
           // Download media asynchronously after message is delivered
-          const hasMedia = messageData.type !== 'text' && messageData.type !== 'system' && messageData.type !== 'location';
-          if (hasMedia && mediaUrl) {
+          if (hasMediaContent(messageData.type) && mediaUrl) {
             // Don't await - download in background
             (async () => {
               try {

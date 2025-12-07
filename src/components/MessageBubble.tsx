@@ -328,7 +328,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     };
 
     checkAndDownloadMedia();
-  }, [message.id, message.messageId]);
+  }, [message.id, message.messageId, message.mediaUrl, message.localMediaPath]);
 
   // Image content with loading state
   const renderImageContent = () => {
