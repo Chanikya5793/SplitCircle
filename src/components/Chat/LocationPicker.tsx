@@ -2,10 +2,10 @@ import { useTheme } from '@/context/ThemeContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Location from 'expo-location';
-import { useEffect, useState, useRef } from 'react';
-import { ActivityIndicator, Alert, Dimensions, Linking, Modal, Platform, StyleSheet, TouchableOpacity, View, TextInput } from 'react-native';
-import MapView, { Marker, PROVIDER_DEFAULT, Region } from 'react-native-maps';
-import { Button, Text, IconButton } from 'react-native-paper';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Dimensions, Linking, Modal, Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import MapView, { PROVIDER_DEFAULT, Region } from 'react-native-maps';
+import { Button, Text } from 'react-native-paper';
 
 interface LocationPickerProps {
   visible: boolean;
