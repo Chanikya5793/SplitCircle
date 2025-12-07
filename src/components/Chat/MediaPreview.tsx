@@ -55,7 +55,7 @@ const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
   return 'document';
 };
 
-export const MediaPreview = ({ media, visible, onClose, onSend, sending }: MediaPreviewProps) => {
+export const MediaPreview = ({ media, visible, onClose, onSend }: MediaPreviewProps) => {
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const [caption, setCaption] = useState('');

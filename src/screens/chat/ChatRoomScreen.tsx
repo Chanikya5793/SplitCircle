@@ -9,7 +9,7 @@ import { ROUTES } from '@/constants';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { ChatMessage, ChatThread, MessageType } from '@/models';
+import type { ChatMessage, ChatThread, MediaMetadata, MessageType } from '@/models';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -242,7 +242,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       }
 
       // Build mediaMetadata with only defined values
-      const mediaMetadata: Record<string, unknown> = {};
+      const mediaMetadata: Partial<MediaMetadata> = {};
       if (selectedMedia.fileName) mediaMetadata.fileName = selectedMedia.fileName;
       if (processedSize) mediaMetadata.fileSize = processedSize;
       if (selectedMedia.mimeType) mediaMetadata.mimeType = selectedMedia.mimeType;
@@ -261,7 +261,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         mediaUri: processedUri,
         groupId: thread.groupId,
         replyTo: replyData,
-        mediaMetadata: Object.keys(mediaMetadata).length > 0 ? mediaMetadata as any : undefined,
+        mediaMetadata: Object.keys(mediaMetadata).length > 0 ? mediaMetadata : undefined,
       });
       
       setSelectedMedia(null);
