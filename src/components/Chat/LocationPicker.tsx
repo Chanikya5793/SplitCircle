@@ -1,8 +1,9 @@
 import { useTheme } from '@/context/ThemeContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import * as IntentLauncher from 'expo-intent-launcher';
 import * as Location from 'expo-location';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Dimensions, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Dimensions, Linking, Modal, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { Button, Text } from 'react-native-paper';
 
@@ -91,6 +92,43 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     }
   };
 
+  const handleLiveLocation = async () => {
+    try {
+      // Check background permissions
+      const { status: backgroundStatus } = await Location.getBackgroundPermissionsAsync();
+      
+      if (backgroundStatus === 'granted') {
+        // Permission already granted, proceed with live location logic
+        Alert.alert('Coming Soon', 'Live location sharing will be available in the next update.');
+        return;
+      }
+
+      // If not granted, we need to ask or guide user
+      Alert.alert(
+        'Background Location Required',
+        'To share your live location, you need to allow "Always" location access in settings.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Open Settings', 
+            onPress: async () => {
+              if (Platform.OS === 'ios') {
+                await Linking.openSettings();
+              } else {
+                await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.APPLICATION_DETAILS_SETTINGS, {
+                  data: 'package:' + 'com.splitcircle.app' // Ensure this matches your package name
+                });
+              }
+            } 
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error checking background permissions:', error);
+      Alert.alert('Error', 'Could not check location permissions');
+    }
+  };
+
   return (
     <Modal
       visible={visible}
@@ -171,7 +209,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
               
               <Button 
                 mode="outlined" 
-                onPress={() => Alert.alert('Coming Soon', 'Live location sharing will be available in the next update.')}
+                onPress={handleLiveLocation}
                 style={[styles.sendButton, { marginTop: 10, borderColor: theme.colors.primary }]}
                 textColor={theme.colors.primary}
                 icon="clock-outline"

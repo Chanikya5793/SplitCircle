@@ -82,6 +82,9 @@ const config: ExpoConfig = {
       'WAKE_LOCK',
       'ACCESS_COARSE_LOCATION',
       'ACCESS_FINE_LOCATION',
+      'ACCESS_BACKGROUND_LOCATION',
+      'FOREGROUND_SERVICE',
+      'FOREGROUND_SERVICE_LOCATION',
       'com.google.android.c2dm.permission.RECEIVE',
     ],
     config: {
