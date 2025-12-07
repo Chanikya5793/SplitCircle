@@ -1,5 +1,5 @@
-import { db, storage } from '@/firebase';
-import type { ChatMessage, ChatParticipant, ChatThread, MessageType } from '@/models';
+import { db } from '@/firebase';
+import type { ChatMessage, ChatParticipant, ChatThread, MediaMetadata, MessageType } from '@/models';
 import {
     collection,
     doc,
@@ -10,7 +10,6 @@ import {
     updateDoc,
     where
 } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { v4 as uuid } from 'uuid';
 import {
@@ -21,6 +20,11 @@ import {
     saveMessageLocally,
     updateMessageStatus
 } from '../services/localMessageStorage';
+import {
+    copyToLocalStorage,
+    initMediaDirectory,
+    uploadMedia,
+} from '../services/mediaService';
 import {
     listenForMessages,
     listenForReceipts,
@@ -34,12 +38,14 @@ interface SendMessagePayload {
   content: string;
   type?: MessageType;
   mediaUri?: string;
+  mediaMetadata?: MediaMetadata;
   groupId?: string;
   replyTo?: {
     messageId: string;
     senderId: string;
     senderName: string;
     content: string;
+    type?: MessageType;
   };
 }
 
@@ -69,17 +75,36 @@ const normalizeTimestamp = (value: unknown): number => {
   return Date.now();
 };
 
+/**
+ * Remove undefined values from an object (Firebase doesn't accept undefined)
+ */
+const removeUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> => {
+  const result: Partial<T> = {};
+  for (const key of Object.keys(obj) as (keyof T)[]) {
+    const value = obj[key];
+    if (value !== undefined) {
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        result[key] = removeUndefined(value as Record<string, unknown>) as T[keyof T];
+      } else {
+        result[key] = value;
+      }
+    }
+  }
+  return result;
+};
+
 export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   const { user } = useAuth();
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Initialize SQLite database on mount
+  // Initialize SQLite database and media storage on mount
   useEffect(() => {
     const initDB = async () => {
       try {
         await initMessageDB();
-        console.log('✅ SQLite database initialized');
+        await initMediaDirectory();
+        console.log('✅ Message and media storage initialized');
       } catch (error) {
         console.error('❌ Failed to initialize database:', error);
       }
@@ -182,22 +207,28 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   }, [user, threads]);
 
   const sendMessage = useCallback(
-    async ({ chatId, content, type = 'text', mediaUri, groupId, replyTo }: SendMessagePayload) => {
+    async ({ chatId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo }: SendMessagePayload) => {
       if (!user) {
         throw new Error('Missing user for chat send');
       }
 
-      let mediaUrl: string | undefined;
-      if (mediaUri) {
-        const response = await fetch(mediaUri);
-        const blob = await response.blob();
-        const fileRef = ref(storage, `chats/${chatId}/${uuid()}`);
-        await uploadBytes(fileRef, blob);
-        mediaUrl = await getDownloadURL(fileRef);
-      }
-
       const msgId = uuid();
       const now = Date.now();
+      
+      // 1. Prepare initial message object
+      let localMediaPath = mediaUri;
+      
+      // If media, try to copy to local storage immediately for stable path
+      if (mediaUri && type !== 'text') {
+        try {
+          const fileName = mediaMetadata?.fileName || `${type}_${msgId}`;
+          // We don't await this long, just enough to get the path if possible
+          localMediaPath = await copyToLocalStorage(mediaUri, chatId, msgId, fileName);
+        } catch (e) {
+          console.warn('Failed to copy media locally, using original URI', e);
+        }
+      }
+
       const message: ChatMessage = {
         id: msgId,
         messageId: msgId,
@@ -205,9 +236,11 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         senderId: user.userId,
         type,
         content,
-      ...(mediaUrl ? { mediaUrl } : {}),
-      ...(replyTo ? { replyTo } : {}),
-        status: 'sent',
+        // Store local path for sender
+        ...(localMediaPath ? { localMediaPath, mediaDownloaded: true } : {}),
+        ...(mediaMetadata ? { mediaMetadata } : {}),
+        ...(replyTo ? { replyTo } : {}),
+        status: 'sending', // Optimistic status
         createdAt: now,
         timestamp: now,
         isFromMe: true,
@@ -215,31 +248,80 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         readBy: [user.userId],
       };
 
-    // 1. Save message locally (AsyncStorage)
-    await saveMessageLocally(message);
-    
-    // 2. Queue message for each recipient (Realtime Database)
-    // Get recipient IDs from chat participants (exclude sender)
-    const thread = threads.find(t => t.chatId === chatId);
-    const participants = thread?.participants || [];
-    const isGroupChat = thread?.type === 'group';
-    const recipientIds = participants
-      .map(p => p.userId)
-      .filter(id => id !== user.userId);
-    
-    // Queue message for each recipient
-    for (const recipientId of recipientIds) {
-      await queueMessage(recipientId, message, isGroupChat);
-    }
-    
-    console.log('✅ Message saved locally and queued (WhatsApp style)');
-    
-      // Update the chat thread's lastMessage (metadata only, not the full history)
-      await updateDoc(doc(db, 'chats', chatId), {
-        lastMessage: { ...message, createdAt: serverTimestamp() },
-        groupId: groupId ?? null,
-        updatedAt: Date.now(),
-      });
+      // 2. Save optimistic message locally
+      await saveMessageLocally(message);
+      
+      // 3. Start background process (don't await this for the UI to unblock)
+      (async () => {
+        try {
+            let mediaUrl: string | undefined;
+            let permanentLocalPath: string | undefined;
+
+            if (mediaUri && type !== 'text') {
+                const fileName = mediaMetadata?.fileName || `${type}_${msgId}`;
+                const mimeType = mediaMetadata?.mimeType || 'application/octet-stream';
+                
+                console.log('📤 Uploading media to Firebase Storage...');
+                
+                // Upload to Firebase Storage
+                // Note: uploadMedia will check if file is already at destination (which we did above)
+                const uploadResult = await uploadMedia(
+                  localMediaPath || mediaUri, // Use the local path if we have it
+                  chatId,
+                  msgId,
+                  fileName,
+                  mimeType,
+                  (progress) => {
+                    console.log(`📤 Upload progress: ${progress.toFixed(1)}%`);
+                  }
+                );
+                
+                mediaUrl = uploadResult.downloadUrl;
+                permanentLocalPath = uploadResult.localPath;
+                
+                console.log('✅ Media uploaded successfully:', mediaUrl);
+                
+                // Update message with permanent path and URL
+                message.mediaUrl = mediaUrl;
+                message.localMediaPath = permanentLocalPath;
+                message.mediaDownloaded = true;
+            }
+            
+            message.status = 'sent';
+            
+            // Update local storage with success
+            await saveMessageLocally(message);
+            
+            // Queue message for each recipient (Realtime Database)
+            const thread = threads.find(t => t.chatId === chatId);
+            const participants = thread?.participants || [];
+            const isGroupChat = thread?.type === 'group';
+            const recipientIds = participants
+              .map(p => p.userId)
+              .filter(id => id !== user.userId);
+            
+            for (const recipientId of recipientIds) {
+              await queueMessage(recipientId, message, isGroupChat);
+            }
+            
+            console.log(`✅ ${type} message sent and queued`);
+            
+            // Update the chat thread's lastMessage
+            const threadMessage = { ...message };
+            delete (threadMessage as { localMediaPath?: string }).localMediaPath;
+            const cleanMessage = removeUndefined({ ...threadMessage, createdAt: serverTimestamp() });
+            await updateDoc(doc(db, 'chats', chatId), {
+              lastMessage: cleanMessage,
+              groupId: groupId ?? null,
+              updatedAt: Date.now(),
+            });
+            
+        } catch (error) {
+            console.error("Send failed", error);
+            message.status = 'failed';
+            await saveMessageLocally(message);
+        }
+      })();
     },
     [user, threads],
   );

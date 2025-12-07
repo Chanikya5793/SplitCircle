@@ -5,6 +5,7 @@
 
 import { get, getDatabase, onValue, ref, remove, set } from 'firebase/database';
 import { ChatMessage } from '../models';
+import { downloadMedia } from './mediaService';
 
 // Get Realtime Database instance
 const rtdb = getDatabase();
@@ -43,8 +44,23 @@ export const queueMessage = async (
       type: message.type,
       timestamp: message.timestamp,
       mediaUrl: message.mediaUrl || null,
+      thumbnailUrl: message.thumbnailUrl || null,
       isGroupChat,
     };
+    
+    // Include mediaMetadata if it exists (for documents, audio, video, images)
+    if (message.mediaMetadata) {
+      messageData.mediaMetadata = {
+        ...(message.mediaMetadata.fileName && { fileName: message.mediaMetadata.fileName }),
+        ...(message.mediaMetadata.fileSize && { fileSize: message.mediaMetadata.fileSize }),
+        ...(message.mediaMetadata.mimeType && { mimeType: message.mediaMetadata.mimeType }),
+        ...(message.mediaMetadata.width && { width: message.mediaMetadata.width }),
+        ...(message.mediaMetadata.height && { height: message.mediaMetadata.height }),
+        ...(message.mediaMetadata.duration && { duration: message.mediaMetadata.duration }),
+        ...(message.mediaMetadata.aspectRatio && { aspectRatio: message.mediaMetadata.aspectRatio }),
+      };
+      console.log('📎 Queuing message with mediaMetadata:', message.mediaMetadata.fileName || message.type);
+    }
     
     // Only add replyTo if it exists and has valid data
     if (message.replyTo && message.replyTo.messageId) {
@@ -96,6 +112,45 @@ export const listenForMessages = (
           console.log('📎 Received message with replyTo:', replyTo.messageId);
         }
         
+        // Extract mediaMetadata if it exists
+        let mediaMetadata: ChatMessage['mediaMetadata'] | undefined;
+        if (messageData.mediaMetadata) {
+          mediaMetadata = {
+            ...(messageData.mediaMetadata.fileName && { fileName: messageData.mediaMetadata.fileName }),
+            ...(messageData.mediaMetadata.fileSize && { fileSize: messageData.mediaMetadata.fileSize }),
+            ...(messageData.mediaMetadata.mimeType && { mimeType: messageData.mediaMetadata.mimeType }),
+            ...(messageData.mediaMetadata.width && { width: messageData.mediaMetadata.width }),
+            ...(messageData.mediaMetadata.height && { height: messageData.mediaMetadata.height }),
+            ...(messageData.mediaMetadata.duration && { duration: messageData.mediaMetadata.duration }),
+            ...(messageData.mediaMetadata.aspectRatio && { aspectRatio: messageData.mediaMetadata.aspectRatio }),
+          };
+          console.log('📎 Received message with mediaMetadata:', mediaMetadata.fileName || messageData.type);
+        }
+        
+        // Download media if this message has media attached
+        let localMediaPath: string | undefined;
+        let mediaDownloaded = false;
+        const hasMedia = messageData.type !== 'text' && messageData.type !== 'system' && messageData.type !== 'location';
+        const mediaUrl = messageData.mediaUrl as string | undefined;
+        
+        if (hasMedia && mediaUrl) {
+          try {
+            // Determine filename
+            const fileName = mediaMetadata?.fileName || `${messageId}.${messageData.type === 'image' ? 'jpg' : 'dat'}`;
+
+            // Download media from Firebase Storage URL
+            const result = await downloadMedia(mediaUrl, messageData.chatId, messageId, fileName);
+            if (result && result.localPath) {
+              localMediaPath = result.localPath;
+              mediaDownloaded = true;
+              console.log('📥 Media downloaded and saved:', localMediaPath);
+            }
+          } catch (error) {
+            console.error('❌ Error downloading media:', error);
+            // Continue processing message even if media download fails
+          }
+        }
+        
         const message: ChatMessage = {
           id: messageId,
           messageId: messageId,
@@ -105,7 +160,10 @@ export const listenForMessages = (
           type: messageData.type,
           timestamp: messageData.timestamp,
           createdAt: messageData.timestamp,
-          mediaUrl: messageData.mediaUrl,
+          mediaUrl: mediaUrl,
+          // Use local path if download succeeded
+          ...(localMediaPath ? { localMediaPath, mediaDownloaded } : {}),
+          mediaMetadata,
           replyTo,
           status: 'delivered',
           isFromMe: false,
