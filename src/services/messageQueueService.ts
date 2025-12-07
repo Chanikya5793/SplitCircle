@@ -127,30 +127,7 @@ export const listenForMessages = (
           console.log('📎 Received message with mediaMetadata:', mediaMetadata.fileName || messageData.type);
         }
         
-        // Download media if this message has media attached
-        let localMediaPath: string | undefined;
-        let mediaDownloaded = false;
-        const hasMedia = messageData.type !== 'text' && messageData.type !== 'system' && messageData.type !== 'location';
-        const mediaUrl = messageData.mediaUrl as string | undefined;
-        
-        if (hasMedia && mediaUrl) {
-          try {
-            // Determine filename
-            const fileName = mediaMetadata?.fileName || `${messageId}.${messageData.type === 'image' ? 'jpg' : 'dat'}`;
-
-            // Download media from Firebase Storage URL
-            const result = await downloadMedia(mediaUrl, messageData.chatId, messageId, fileName);
-            if (result && result.localPath) {
-              localMediaPath = result.localPath;
-              mediaDownloaded = true;
-              console.log('📥 Media downloaded and saved:', localMediaPath);
-            }
-          } catch (error) {
-            console.error('❌ Error downloading media:', error);
-            // Continue processing message even if media download fails
-          }
-        }
-        
+        // Create message object first without media
         const message: ChatMessage = {
           id: messageId,
           messageId: messageId,
@@ -161,8 +138,6 @@ export const listenForMessages = (
           timestamp: messageData.timestamp,
           createdAt: messageData.timestamp,
           mediaUrl: mediaUrl,
-          // Use local path if download succeeded
-          ...(localMediaPath ? { localMediaPath, mediaDownloaded } : {}),
           mediaMetadata,
           replyTo,
           status: 'delivered',
@@ -172,7 +147,7 @@ export const listenForMessages = (
         };
         
         try {
-          // Save message locally
+          // Deliver message to UI immediately
           await onMessageReceived(message);
           
           // Send delivery receipt (use isGroupChat flag from message)
@@ -183,6 +158,24 @@ export const listenForMessages = (
           await remove(ref(rtdb, `messageQueue/${userId}/${messageId}`));
           
           console.log('✅ Message delivered and removed from queue:', messageId);
+          
+          // Download media asynchronously after message is delivered
+          const hasMedia = messageData.type !== 'text' && messageData.type !== 'system' && messageData.type !== 'location';
+          if (hasMedia && mediaUrl) {
+            // Don't await - download in background
+            (async () => {
+              try {
+                const fileName = mediaMetadata?.fileName || `${messageId}.${messageData.type === 'image' ? 'jpg' : 'dat'}`;
+                const result = await downloadMedia(mediaUrl, messageData.chatId, messageId, fileName);
+                if (result && result.localPath) {
+                  console.log('📥 Media downloaded in background:', result.localPath);
+                  // Note: The message bubble component will detect the downloaded media on its own
+                }
+              } catch (error) {
+                console.error('❌ Background media download failed:', error);
+              }
+            })();
+          }
         } catch (error) {
           console.error('❌ Error processing message:', error);
         }

@@ -260,7 +260,10 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       // 2. Save optimistic message locally
       await saveMessageLocally(message);
       
-      // 3. Start background process (don't await this for the UI to unblock)
+      // 3. Start background upload process (IIFE pattern for non-blocking operation)
+      // Note: This IIFE runs asynchronously without blocking the caller.
+      // Errors are caught and the message status is updated to 'failed' in local storage.
+      // The UI will reflect the failure state through the message status.
       (async () => {
         try {
             let mediaUrl: string | undefined;

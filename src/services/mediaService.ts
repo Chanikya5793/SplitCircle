@@ -150,8 +150,9 @@ export const uploadMedia = async (
     const storagePath = `chat_media/${chatId}/${messageId}/${fileName}`;
     const fileRef = storageRef(storage, storagePath);
     
-    // Get the upload URL for direct upload
-    // We'll use Firebase Storage REST API through expo-file-system
+    // Use Firebase Storage REST API through expo-file-system for React Native compatibility
+    // The standard Firebase SDK's uploadBytes/uploadBytesResumable work with Blob objects
+    // which have limited support in React Native. expo-file-system provides native file upload.
     const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${storage.app.options.storageBucket}/o?uploadType=media&name=${encodeURIComponent(storagePath)}`;
     
     // Get auth token for the upload
@@ -166,12 +167,12 @@ export const uploadMedia = async (
     console.log('📤 Uploading to Firebase Storage...');
     onProgress?.(10);
     
-    // Upload using expo-file-system
+    // Upload using expo-file-system with proper authentication
     const uploadResult = await uploadAsync(uploadUrl, fileUri, {
       httpMethod: 'POST',
       uploadType: FileSystemUploadType.BINARY_CONTENT,
       headers: {
-        'Authorization': `Firebase ${token}`,
+        'Authorization': `Bearer ${token}`,
         'Content-Type': mimeType,
       },
     });

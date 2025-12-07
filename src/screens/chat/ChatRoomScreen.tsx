@@ -182,20 +182,33 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     setIsProcessingMedia(true);
     
     try {
-      // Process media based on quality selection
+      // Process media based on quality selection with timeout
       let processedUri = selectedMedia.uri;
       let processedWidth = selectedMedia.width;
       let processedHeight = selectedMedia.height;
       let processedSize = selectedMedia.fileSize;
 
+      // Add timeout to prevent indefinite hangs
+      const PROCESSING_TIMEOUT = 30000; // 30 seconds
+
       if (selectedMedia.type === 'image' || selectedMedia.type === 'camera') {
-        const result = await processImage(selectedMedia.uri, quality);
+        const result = await Promise.race([
+          processImage(selectedMedia.uri, quality),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Image processing timed out')), PROCESSING_TIMEOUT)
+          ),
+        ]);
         processedUri = result.uri;
         processedWidth = result.width;
         processedHeight = result.height;
         processedSize = result.size;
       } else if (selectedMedia.type === 'video') {
-        const result = await processVideo(selectedMedia.uri, quality);
+        const result = await Promise.race([
+          processVideo(selectedMedia.uri, quality),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Video processing timed out')), PROCESSING_TIMEOUT)
+          ),
+        ]);
         processedUri = result.uri;
         // Video processing might not return dimensions if we can't read them easily
         if (result.width > 0) processedWidth = result.width;
