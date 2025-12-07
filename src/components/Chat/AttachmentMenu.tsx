@@ -88,6 +88,9 @@ const ATTACHMENT_OPTIONS: AttachmentOption[] = [
   },
 ];
 
+// Animation timing constants
+export const ATTACHMENT_MENU_ANIMATION_DURATION = 250; // Close animation duration
+
 export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: AttachmentMenuProps) => {
   const { theme, isDark } = useTheme();
   const slideAnim = useRef(new Animated.Value(300)).current;
@@ -111,7 +114,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       Animated.parallel([
         Animated.timing(slideAnim, {
           toValue: 300,
-          duration: 250,
+          duration: ATTACHMENT_MENU_ANIMATION_DURATION,
           useNativeDriver: true,
         }),
         Animated.timing(fadeAnim, {

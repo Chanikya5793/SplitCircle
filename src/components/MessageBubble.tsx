@@ -8,7 +8,7 @@ import { Audio, ResizeMode, Video } from 'expo-av';
 import { getContentUriAsync, getInfoAsync } from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
@@ -79,6 +79,9 @@ const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
   if (mimeType.includes('zip') || mimeType.includes('compressed')) return 'archive';
   return 'document';
 };
+
+// Static waveform pattern for audio visualization
+const AUDIO_WAVEFORM_PATTERN = [8, 12, 6, 14, 10, 16, 8, 12, 10, 14, 6, 12, 8, 14, 10, 12];
 
 // WhatsApp-style message status indicator component
 const MessageStatusIndicator = ({ status, isGroupChat, totalRecipients, deliveredCount, readCount }: {
@@ -325,7 +328,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     };
 
     checkAndDownloadMedia();
-  }, [message.localMediaPath, message.mediaUrl, message.type, message.isFromMe, message.chatId, message.messageId, message.id, message.mediaMetadata?.fileName]);
+  }, [message.id, message.messageId]);
 
   // Image content with loading state
   const renderImageContent = () => {
@@ -577,14 +580,14 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           <Ionicons name={isPlaying ? "pause" : "play"} size={20} color="#fff" />
         </TouchableOpacity>
         <View style={styles.audioWaveform}>
-          {/* Simple waveform visualization placeholder */}
-          {[...Array(16)].map((_, i) => (
+          {/* Static waveform visualization */}
+          {AUDIO_WAVEFORM_PATTERN.map((height, i) => (
             <View 
               key={i}
               style={[
                 styles.audioBar, 
                 { 
-                  height: isPlaying ? Math.random() * 16 + 4 : 4, // Animate height if playing (simple effect)
+                  height: isPlaying ? height : 4,
                   backgroundColor: isMine ? 'rgba(255,255,255,0.5)' : theme.colors.primary 
                 }
               ]} 

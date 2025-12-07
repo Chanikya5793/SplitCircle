@@ -1,4 +1,4 @@
-import { AttachmentMenu, MediaPreview } from '@/components/Chat';
+import { AttachmentMenu, ATTACHMENT_MENU_ANIMATION_DURATION, MediaPreview } from '@/components/Chat';
 import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
 import type { QualityLevel } from '@/components/Chat/MediaPreview';
 import { GlassView } from '@/components/GlassView';
@@ -167,11 +167,11 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     setAttachmentMenuVisible(false);
     
     // Wait for menu close animation to finish before showing preview
-    // This prevents modal conflict issues on iOS/Android
+    // Add small buffer to ensure smooth transition
     setTimeout(() => {
       setSelectedMedia(media);
       setMediaPreviewVisible(true);
-    }, 500);
+    }, ATTACHMENT_MENU_ANIMATION_DURATION + 50);
   };
 
   // Handle sending media with optional caption
