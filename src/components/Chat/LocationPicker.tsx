@@ -2,10 +2,10 @@ import { useTheme } from '@/context/ThemeContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Location from 'expo-location';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Dimensions, Linking, Modal, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
-import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
-import { Button, Text } from 'react-native-paper';
+import { useEffect, useState, useRef } from 'react';
+import { ActivityIndicator, Alert, Dimensions, Linking, Modal, Platform, StyleSheet, TouchableOpacity, View, TextInput } from 'react-native';
+import MapView, { Marker, PROVIDER_DEFAULT, Region } from 'react-native-maps';
+import { Button, Text, IconButton } from 'react-native-paper';
 
 interface LocationPickerProps {
   visible: boolean;
@@ -15,16 +15,21 @@ interface LocationPickerProps {
 
 const { width, height } = Dimensions.get('window');
 const ASPECT_RATIO = width / height;
-const LATITUDE_DELTA = 0.01; // Zoom level
+const LATITUDE_DELTA = 0.005; // Closer zoom for pinning
 const LONGITUDE_DELTA = LATITUDE_DELTA * ASPECT_RATIO;
 
 export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPickerProps) => {
   const { theme, isDark } = useTheme();
-  const [location, setLocation] = useState<Location.LocationObject | null>(null);
+  const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [address, setAddress] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [permissionGranted, setPermissionGranted] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const mapRef = useRef<MapView>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -44,32 +49,17 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       }
 
       setPermissionGranted(true);
-      const currentLocation = await Location.getCurrentPositionAsync({
+      const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
-      setLocation(currentLocation);
       
-      // Reverse geocode to get address
-      try {
-        const reverseGeocode = await Location.reverseGeocodeAsync({
-          latitude: currentLocation.coords.latitude,
-          longitude: currentLocation.coords.longitude,
-        });
-        
-        if (reverseGeocode.length > 0) {
-          const addr = reverseGeocode[0];
-          const addressString = [
-            addr.name,
-            addr.street,
-            addr.city,
-            addr.region,
-            addr.country
-          ].filter(Boolean).join(', ');
-          setAddress(addressString);
-        }
-      } catch (e) {
-        console.log('Error reverse geocoding:', e);
-      }
+      setCurrentLocation(location);
+      setSelectedLocation({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      });
+      
+      await fetchAddress(location.coords.latitude, location.coords.longitude);
       
     } catch (error) {
       console.error('Error getting location:', error);
@@ -79,16 +69,95 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     }
   };
 
+  const fetchAddress = async (latitude: number, longitude: number) => {
+    try {
+      const reverseGeocode = await Location.reverseGeocodeAsync({
+        latitude,
+        longitude,
+      });
+      
+      if (reverseGeocode.length > 0) {
+        const addr = reverseGeocode[0];
+        const addressString = [
+          addr.name,
+          addr.street,
+          addr.city,
+          addr.region,
+          addr.country
+        ].filter(Boolean).join(', ');
+        setAddress(addressString);
+      }
+    } catch (e) {
+      console.log('Error reverse geocoding:', e);
+      setAddress(`${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+    }
+  };
+
+  const handleRegionChange = () => {
+    setIsDragging(true);
+  };
+
+  const handleRegionChangeComplete = async (region: Region) => {
+    setIsDragging(false);
+    setSelectedLocation({
+      latitude: region.latitude,
+      longitude: region.longitude,
+    });
+    await fetchAddress(region.latitude, region.longitude);
+  };
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    
+    setIsSearching(true);
+    try {
+      const geocoded = await Location.geocodeAsync(searchQuery);
+      
+      if (geocoded.length > 0) {
+        const { latitude, longitude } = geocoded[0];
+        const newRegion = {
+          latitude,
+          longitude,
+          latitudeDelta: LATITUDE_DELTA,
+          longitudeDelta: LONGITUDE_DELTA,
+        };
+        
+        mapRef.current?.animateToRegion(newRegion, 1000);
+        setSelectedLocation({ latitude, longitude });
+        // Address will be updated by onRegionChangeComplete
+      } else {
+        Alert.alert('Not Found', 'Could not find location');
+      }
+    } catch (error) {
+      console.error('Search error:', error);
+      Alert.alert('Error', 'Failed to search location');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
   const handleSend = () => {
-    if (location) {
+    if (selectedLocation) {
       setSending(true);
       onSendLocation({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
+        latitude: selectedLocation.latitude,
+        longitude: selectedLocation.longitude,
         address: address || undefined,
       });
       setSending(false);
       onClose();
+    }
+  };
+
+  const goToCurrentLocation = () => {
+    if (currentLocation && mapRef.current) {
+      const newRegion = {
+        latitude: currentLocation.coords.latitude,
+        longitude: currentLocation.coords.longitude,
+        latitudeDelta: LATITUDE_DELTA,
+        longitudeDelta: LONGITUDE_DELTA,
+      };
+      mapRef.current.animateToRegion(newRegion, 1000);
     }
   };
 
@@ -160,39 +229,69 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
           </View>
         ) : (
           <>
+            <View style={styles.searchContainer}>
+              <View style={[styles.searchBar, { backgroundColor: theme.colors.surfaceVariant }]}>
+                <Ionicons name="search" size={20} color={theme.colors.onSurfaceVariant} style={{ marginLeft: 10 }} />
+                <TextInput
+                  style={[styles.searchInput, { color: theme.colors.onSurface }]}
+                  placeholder="Search for a place..."
+                  placeholderTextColor={theme.colors.onSurfaceVariant}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  onSubmitEditing={handleSearch}
+                  returnKeyType="search"
+                />
+                {isSearching && <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginRight: 10 }} />}
+                {searchQuery.length > 0 && !isSearching && (
+                  <TouchableOpacity onPress={() => setSearchQuery('')}>
+                    <Ionicons name="close-circle" size={20} color={theme.colors.onSurfaceVariant} style={{ marginRight: 10 }} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
             <View style={styles.mapContainer}>
-              {location && (
+              {currentLocation && (
                 <MapView
+                  ref={mapRef}
                   provider={PROVIDER_DEFAULT}
                   style={styles.map}
                   initialRegion={{
-                    latitude: location.coords.latitude,
-                    longitude: location.coords.longitude,
+                    latitude: currentLocation.coords.latitude,
+                    longitude: currentLocation.coords.longitude,
                     latitudeDelta: LATITUDE_DELTA,
                     longitudeDelta: LONGITUDE_DELTA,
                   }}
                   showsUserLocation
-                  showsMyLocationButton
-                >
-                  <Marker
-                    coordinate={{
-                      latitude: location.coords.latitude,
-                      longitude: location.coords.longitude,
-                    }}
-                    title="Current Location"
-                    description={address || ''}
-                  />
-                </MapView>
+                  showsMyLocationButton={false}
+                  onRegionChange={handleRegionChange}
+                  onRegionChangeComplete={handleRegionChangeComplete}
+                />
               )}
+              
+              {/* Center Pin */}
+              <View style={styles.centerPinContainer} pointerEvents="none">
+                <Ionicons name="location" size={40} color={theme.colors.primary} style={{ marginBottom: 40 }} />
+              </View>
+
+              {/* My Location Button */}
+              <TouchableOpacity 
+                style={[styles.myLocationButton, { backgroundColor: theme.colors.surface }]}
+                onPress={goToCurrentLocation}
+              >
+                <Ionicons name="locate" size={24} color={theme.colors.primary} />
+              </TouchableOpacity>
             </View>
 
             <View style={[styles.footer, { backgroundColor: theme.colors.surface }]}>
               <View style={styles.locationInfo}>
                 <Ionicons name="location" size={24} color={theme.colors.primary} />
                 <View style={{ marginLeft: 10, flex: 1 }}>
-                  <Text variant="labelLarge" style={{ color: theme.colors.onSurface }}>Current Location</Text>
+                  <Text variant="labelLarge" style={{ color: theme.colors.onSurface }}>
+                    {isDragging ? 'Locating...' : 'Selected Location'}
+                  </Text>
                   <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
-                    {address || `${location?.coords.latitude.toFixed(6)}, ${location?.coords.longitude.toFixed(6)}`}
+                    {isDragging ? '...' : (address || `${selectedLocation?.latitude.toFixed(6)}, ${selectedLocation?.longitude.toFixed(6)}`)}
                   </Text>
                 </View>
               </View>
@@ -201,10 +300,11 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                 mode="contained" 
                 onPress={handleSend} 
                 loading={sending}
+                disabled={isDragging || !selectedLocation}
                 style={styles.sendButton}
                 buttonColor={theme.colors.primary}
               >
-                Share Current Location
+                Share This Location
               </Button>
               
               <Button 
@@ -244,11 +344,57 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  searchContainer: {
+    position: 'absolute',
+    top: 70,
+    left: 16,
+    right: 16,
+    zIndex: 10,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 25,
+    height: 50,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  searchInput: {
+    flex: 1,
+    height: 50,
+    paddingHorizontal: 10,
+    fontSize: 16,
+  },
   mapContainer: {
     flex: 1,
+    position: 'relative',
   },
   map: {
     ...StyleSheet.absoluteFillObject,
+  },
+  centerPinContainer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 5,
+  },
+  myLocationButton: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
   },
   footer: {
     padding: 16,
