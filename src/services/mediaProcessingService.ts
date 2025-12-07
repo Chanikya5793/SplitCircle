@@ -26,13 +26,18 @@ export const processImage = async (
     const compressQuality = quality === 'HD' ? 0.8 : 0.6;
 
     // Get original dimensions to calculate resize target
-    const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-      Image.getSize(
-        uri,
-        (w, h) => resolve({ width: w, height: h }),
-        (error) => reject(error)
-      );
-    });
+    const { width, height } = await Promise.race([
+      new Promise<{ width: number; height: number }>((resolve, reject) => {
+        Image.getSize(
+          uri,
+          (w, h) => resolve({ width: w, height: h }),
+          (error) => reject(error)
+        );
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Image.getSize timed out')), 10000)
+      ),
+    ]);
 
     const actions: ImageManipulator.Action[] = [];
 

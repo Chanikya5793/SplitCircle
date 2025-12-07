@@ -66,18 +66,16 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   useEffect(() => {
     console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
 
-    // Reduce noisy logging and unnecessary state updates:
-    // - Only update messages state when count or last message id changes.
-    // - Throttle console logging to once per LOG_INTERVAL, otherwise only log new messages.
-    let lastLogAt = 0;
+    // Use refs to properly scope closure variables across multiple calls
+    const lastLogAtRef = { current: 0 };
     const LOG_INTERVAL = 30_000; // 30s
-    let prevCount = 0;
-    let prevLastMessageId: string | null = null;
+    const prevCountRef = { current: 0 };
+    const prevLastMessageIdRef = { current: null as string | null };
 
     const unsubscribe = subscribeToMessages(thread.chatId, (items) => {
       // Keep the previous count/last id for comparisons
-      const prevCountBefore = prevCount;
-      const prevLastIdBefore = prevLastMessageId;
+      const prevCountBefore = prevCountRef.current;
+      const prevLastIdBefore = prevLastMessageIdRef.current;
 
       const lastItem = items[0]; // inverted list: incoming array has newest first
       const lastId = lastItem?.messageId || lastItem?.id || null;
@@ -88,20 +86,20 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       // Only update state if it's a meaningful change to reduce re-renders
       if (countChanged || lastIdChanged) {
       setMessages(items);
-      prevCount = items.length;
-      prevLastMessageId = lastId;
+      prevCountRef.current = items.length;
+      prevLastMessageIdRef.current = lastId;
       }
 
       // Throttled logging to avoid spamming the console
       const now = Date.now();
-      if (now - lastLogAt > LOG_INTERVAL) {
+      if (now - lastLogAtRef.current > LOG_INTERVAL) {
       console.log(`📨 Received ${items.length} messages in ChatRoomScreen`);
-      lastLogAt = now;
+      lastLogAtRef.current = now;
       } else if (countChanged && items.length > prevCountBefore) {
       // If new messages arrived and we are within the throttle window,
       // log a concise "new messages" note.
       console.log(`📨 New message(s) — total: ${items.length}`);
-      lastLogAt = now;
+      lastLogAtRef.current = now;
       }
     });
 

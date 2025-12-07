@@ -136,7 +136,13 @@ export const uploadMedia = async (
     
     // Check file size
     const fileInfo = await getInfoAsync(fileUri);
-    if (fileInfo.exists && 'size' in fileInfo && fileInfo.size > MAX_FILE_SIZE) {
+    if (!fileInfo.exists) {
+      throw new Error('File does not exist at the specified URI.');
+    }
+    if (!('size' in fileInfo) || typeof fileInfo.size !== 'number') {
+      throw new Error('Unable to determine file size. Upload aborted.');
+    }
+    if (fileInfo.size > MAX_FILE_SIZE) {
       throw new Error(`File too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB`);
     }
     

@@ -77,19 +77,28 @@ const normalizeTimestamp = (value: unknown): number => {
 
 /**
  * Remove undefined values from an object (Firebase doesn't accept undefined)
+ * Includes cycle detection to prevent stack overflow from circular references
  */
-const removeUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> => {
+const removeUndefined = <T extends Record<string, unknown>>(obj: T, seen = new Set<object>()): Partial<T> => {
   const result: Partial<T> = {};
+  // Add the current object to the seen set to detect cycles
+  seen.add(obj as object);
   for (const key of Object.keys(obj) as (keyof T)[]) {
     const value = obj[key];
     if (value !== undefined) {
       if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-        result[key] = removeUndefined(value as Record<string, unknown>) as T[keyof T];
+        // If we've already seen this object, skip to avoid cycles
+        if (seen.has(value as object)) {
+          continue;
+        }
+        result[key] = removeUndefined(value as Record<string, unknown>, seen) as T[keyof T];
       } else {
         result[key] = value;
       }
     }
   }
+  // Remove the current object from the seen set before returning
+  seen.delete(obj as object);
   return result;
 };
 
