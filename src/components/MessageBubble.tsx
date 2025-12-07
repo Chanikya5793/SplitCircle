@@ -11,6 +11,7 @@ import * as Sharing from 'expo-sharing';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
+import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { Avatar, IconButton, Text } from 'react-native-paper';
 
 interface MessageBubbleProps {
@@ -598,24 +599,65 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     );
   };
 
+  // Open location in maps app
+  const openLocation = () => {
+    if (!message.location) return;
+    const { latitude, longitude } = message.location;
+    const label = message.location.address || 'Location';
+    
+    const url = Platform.select({
+      ios: `maps:0,0?q=${label}@${latitude},${longitude}`,
+      android: `geo:0,0?q=${latitude},${longitude}(${label})`,
+    });
+    
+    if (url) Linking.openURL(url);
+  };
+
   // Location message
   const renderLocationContent = () => {
     if (!message.location) return null;
 
     return (
-      <View style={styles.locationContainer}>
-        <View style={[styles.locationPreview, { backgroundColor: isDark ? '#2a2a2a' : '#f0f0f0' }]}>
-          <Ionicons name="location" size={40} color={theme.colors.primary} />
+      <TouchableOpacity 
+        activeOpacity={0.9}
+        onPress={openLocation}
+        style={styles.locationContainer}
+      >
+        <View style={styles.locationPreview}>
+          <MapView
+            provider={PROVIDER_DEFAULT}
+            style={StyleSheet.absoluteFillObject}
+            initialRegion={{
+              latitude: message.location.latitude,
+              longitude: message.location.longitude,
+              latitudeDelta: 0.01,
+              longitudeDelta: 0.01,
+            }}
+            scrollEnabled={false}
+            zoomEnabled={false}
+            rotateEnabled={false}
+            pitchEnabled={false}
+            cacheEnabled={true}
+          >
+            <Marker
+              coordinate={{
+                latitude: message.location.latitude,
+                longitude: message.location.longitude,
+              }}
+            />
+          </MapView>
         </View>
         {message.location.address && (
-          <Text 
-            numberOfLines={2} 
-            style={[styles.locationAddress, { color: isMine ? '#fff' : theme.colors.onSurface }]}
-          >
-            {message.location.address}
-          </Text>
+          <View style={{ padding: 8, backgroundColor: isMine ? 'transparent' : (isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.5)') }}>
+            <Text 
+              numberOfLines={2} 
+              style={[styles.locationAddress, { color: isMine ? '#fff' : theme.colors.onSurface }]}
+            >
+              {message.location.address}
+            </Text>
+          </View>
         )}
-      </View>
+      </TouchableOpacity>
     );
   };
 
