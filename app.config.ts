@@ -57,6 +57,8 @@ const config: ExpoConfig = {
     bundleIdentifier: 'com.splitcircle.app',
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
+      NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
+      NSLocationAlwaysAndWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
     },
   },
   android: {
@@ -78,8 +80,15 @@ const config: ExpoConfig = {
       'READ_MEDIA_AUDIO',
       'VIBRATE',
       'WAKE_LOCK',
+      'ACCESS_COARSE_LOCATION',
+      'ACCESS_FINE_LOCATION',
       'com.google.android.c2dm.permission.RECEIVE',
     ],
+    config: {
+      googleMaps: {
+        apiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
+      },
+    },
   },
   web: {
     favicon: './assets/favicon.png',

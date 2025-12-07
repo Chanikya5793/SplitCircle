@@ -16,7 +16,10 @@
             ".validate": "newData.isNumber()"
           },
           "type": {
-            ".validate": "newData.isString() && (newData.val() == 'text' || newData.val() == 'image' || newData.val() == 'video' || newData.val() == 'audio' || newData.val() == 'system' || newData.val() == 'call' || newData.val() == 'file')"
+            ".validate": "newData.isString() && (newData.val() == 'text' || newData.val() == 'image' || newData.val() == 'video' || newData.val() == 'audio' || newData.val() == 'system' || newData.val() == 'call' || newData.val() == 'file' || newData.val() == 'location')"
+          },
+          "location": {
+            ".validate": "newData.val() == null || newData.hasChildren(['latitude', 'longitude'])"
           },
           "chatId": {
             ".validate": "newData.isString()"

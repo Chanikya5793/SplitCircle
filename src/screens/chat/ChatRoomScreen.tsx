@@ -1,4 +1,4 @@
-import { AttachmentMenu, MediaPreview } from '@/components/Chat';
+import { AttachmentMenu, LocationPicker, MediaPreview } from '@/components/Chat';
 import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
 import type { QualityLevel } from '@/components/Chat/MediaPreview';
 import { GlassView } from '@/components/GlassView';
@@ -48,6 +48,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
   // Media processing state
   const [isProcessingMedia, setIsProcessingMedia] = useState(false);
+  // Location picker state
+  const [locationPickerVisible, setLocationPickerVisible] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -171,8 +173,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     // Wait for menu close animation to finish before showing preview
     // This prevents modal conflict issues on iOS/Android
     setTimeout(() => {
-      setSelectedMedia(media);
-      setMediaPreviewVisible(true);
+      if (media.type === 'location') {
+        setLocationPickerVisible(true);
+      } else {
+        setSelectedMedia(media);
+        setMediaPreviewVisible(true);
+      }
     }, 500);
   };
 
@@ -272,6 +278,22 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       alert(error instanceof Error ? error.message : 'Failed to send media');
     } finally {
       setIsProcessingMedia(false);
+    }
+  };
+
+  // Handle sending location
+  const handleSendLocation = async (location: { latitude: number; longitude: number; address?: string }) => {
+    try {
+      await sendMessage({
+        chatId: thread.chatId,
+        content: '📍 Location',
+        type: 'location',
+        groupId: thread.groupId,
+        location: location,
+      });
+    } catch (error) {
+      console.error('Failed to send location:', error);
+      alert('Failed to send location');
     }
   };
 
@@ -517,6 +539,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           setSelectedMedia(null);
         }}
         onSend={handleSendMedia}
+      />
+
+      {/* Location Picker Modal */}
+      <LocationPicker
+        visible={locationPickerVisible}
+        onClose={() => setLocationPickerVisible(false)}
+        onSendLocation={handleSendLocation}
       />
 
       {/* Processing Overlay */}

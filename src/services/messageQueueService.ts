@@ -72,6 +72,16 @@ export const queueMessage = async (
       };
       console.log('📎 Queuing message with replyTo:', message.replyTo.messageId);
     }
+
+    // Add location data if it exists
+    if (message.location) {
+      messageData.location = {
+        latitude: message.location.latitude,
+        longitude: message.location.longitude,
+        address: message.location.address,
+      };
+      console.log('📍 Queuing message with location');
+    }
     
     await set(messageQueueRef, messageData);
     
@@ -165,6 +175,7 @@ export const listenForMessages = (
           ...(localMediaPath ? { localMediaPath, mediaDownloaded } : {}),
           mediaMetadata,
           replyTo,
+          location: messageData.location,
           status: 'delivered',
           isFromMe: false,
           deliveredTo: [],

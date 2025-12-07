@@ -312,10 +312,12 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
   }, [onMediaSelected, onClose]);
 
   const handleLocation = useCallback(() => {
-    // Location sharing would require additional setup
-    console.log('Location sharing coming soon');
+    onMediaSelected({
+      type: 'location',
+      uri: '', // No URI needed for initial selection
+    });
     onClose();
-  }, [onClose]);
+  }, [onMediaSelected, onClose]);
 
   const handleOptionPress = useCallback((option: AttachmentOption) => {
     switch (option.id) {
