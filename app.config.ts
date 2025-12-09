@@ -58,7 +58,12 @@ const config: ExpoConfig = {
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
-      NSLocationAlwaysAndWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
+      NSLocationAlwaysAndWhenInUseUsageDescription: 'This app uses your location to share live location with your friends.',
+      NSLocationAlwaysUsageDescription: 'This app uses your location to share live location with your friends.',
+      UIBackgroundModes: ['location', 'fetch'],
+    },
+    config: {
+      googleMapsApiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
     },
   },
   android: {
@@ -110,6 +115,7 @@ const config: ExpoConfig = {
         locationWhenInUsePermission: 'Allow $(PRODUCT_NAME) to use your location to share it with your friends.',
         isAndroidBackgroundLocationEnabled: true,
         isAndroidForegroundServiceEnabled: true,
+        isIosBackgroundLocationEnabled: true,
       },
     ],
     ['expo-build-properties', { android: { minSdkVersion: 24 } }],
