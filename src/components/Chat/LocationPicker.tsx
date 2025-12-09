@@ -1,5 +1,6 @@
 import { useTheme } from '@/context/ThemeContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import Constants from 'expo-constants';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Location from 'expo-location';
 import { useEffect, useRef, useState } from 'react';
@@ -161,7 +162,20 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     }
   };
 
+  // Check if running in Expo Go (which doesn't support background location)
+  const isExpoGo = Constants.appOwnership === 'expo';
+
   const handleLiveLocation = async () => {
+    // Background location is not supported in Expo Go
+    if (isExpoGo) {
+      Alert.alert(
+        'Development Build Required',
+        'Live location sharing requires a development or production build. This feature is not available in Expo Go.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     try {
       // First ensure foreground permissions are granted
       const { status: foregroundStatus } = await Location.getForegroundPermissionsAsync();
@@ -217,7 +231,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       );
     } catch (error) {
       console.error('Error requesting background permissions:', error);
-      Alert.alert('Error', 'Could not request location permissions');
+      Alert.alert('Error', 'Could not request location permissions. If you are using Expo Go, please use a development build instead.');
     }
   };
 
