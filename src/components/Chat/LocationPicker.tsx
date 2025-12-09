@@ -163,6 +163,18 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
 
   const handleLiveLocation = async () => {
     try {
+      // First ensure foreground permissions are granted
+      const { status: foregroundStatus } = await Location.getForegroundPermissionsAsync();
+      
+      if (foregroundStatus !== 'granted') {
+        // Need to request foreground permissions first
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Denied', 'Foreground location permission is required before enabling background location.');
+          return;
+        }
+      }
+
       // Check background permissions
       const { status: backgroundStatus } = await Location.getBackgroundPermissionsAsync();
       
@@ -172,10 +184,21 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
         return;
       }
 
-      // If not granted, we need to ask or guide user
+      // Request background permissions programmatically
+      // On Android, this will show the "Allow all the time" option
+      const { status: newBackgroundStatus } = await Location.requestBackgroundPermissionsAsync();
+      
+      if (newBackgroundStatus === 'granted') {
+        // Permission granted, proceed with live location logic
+        Alert.alert('Coming Soon', 'Live location sharing will be available in the next update.');
+        return;
+      }
+
+      // If still not granted after request, guide user to settings
+      // This handles cases where the user denied or the system requires manual settings change
       Alert.alert(
         'Background Location Required',
-        'To share your live location, you need to allow "Always" location access in settings.',
+        'To share your live location, please select "Allow all the time" in location settings.',
         [
           { text: 'Cancel', style: 'cancel' },
           { 
@@ -193,8 +216,8 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
         ]
       );
     } catch (error) {
-      console.error('Error checking background permissions:', error);
-      Alert.alert('Error', 'Could not check location permissions');
+      console.error('Error requesting background permissions:', error);
+      Alert.alert('Error', 'Could not request location permissions');
     }
   };
 
