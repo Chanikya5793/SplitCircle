@@ -97,10 +97,21 @@ const config: ExpoConfig = {
     favicon: './assets/favicon.png',
   },
   plugins: [
+    'expo-font',
     'expo-secure-store',
     'expo-web-browser',
     'expo-sqlite',
     'expo-notifications',
+    [
+      'expo-location',
+      {
+        locationAlwaysAndWhenInUsePermission: 'Allow $(PRODUCT_NAME) to use your location to share it with your friends.',
+        locationAlwaysPermission: 'Allow $(PRODUCT_NAME) to use your location to share live location.',
+        locationWhenInUsePermission: 'Allow $(PRODUCT_NAME) to use your location to share it with your friends.',
+        isAndroidBackgroundLocationEnabled: true,
+        isAndroidForegroundServiceEnabled: true,
+      },
+    ],
     ['expo-build-properties', { android: { minSdkVersion: 24 } }],
     '@config-plugins/react-native-webrtc',
   ],
