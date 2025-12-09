@@ -3,24 +3,17 @@
     "appVersionSource": "local"
   },
   "build": {
-    "base": {
-      "node": "20.19.4",
-      "installDependencies": "npm install"
-    },
     "development": {
-      "extends": "base",
       "developmentClient": true,
       "distribution": "internal"
     },
     "preview": {
-      "extends": "base",
       "distribution": "internal",
       "ios": {
         "resourceClass": "m-medium"
       }
     },
     "production": {
-      "extends": "base",
       "ios": {
         "resourceClass": "m-medium"
       },
