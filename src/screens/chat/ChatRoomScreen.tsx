@@ -36,8 +36,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Track focus state of the composer input so we can highlight the
   // outer container (`GlassView`) with a border that matches the app color.
   const [composerFocused, setComposerFocused] = useState(false);
-  // Animated value for focus border animation (0 = unfocused, 1 = focused)
-  const focusAnim = useRef(new Animated.Value(0)).current;
   // Reply state
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const inputRef = useRef<any>(null);
@@ -461,14 +459,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               style={styles.attachButton}
               accessibilityLabel="Add attachment"
             />
-            <Animated.View
-            style={{
-              ...styles.composerAnimated,
-              borderWidth: focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 2] }),
-              borderColor: theme.colors.primary,
-              borderRadius: styles.composer.borderRadius,
-            }}
-          >
+            <View
+              style={[
+                styles.composerAnimated,
+                composerFocused && { borderWidth: 2, borderColor: theme.colors.primary },
+              ]}
+            >
             <GlassView style={styles.composer}>
               <TextInput
                 ref={inputRef}
@@ -482,14 +478,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 selectionColor={theme.colors.primary}
                 underlineColor="transparent"
                 activeUnderlineColor="transparent"
-                onFocus={() => {
-                  setComposerFocused(true);
-                  Animated.timing(focusAnim, { toValue: 1, duration: 150, useNativeDriver: false }).start();
-                }}
-                onBlur={() => {
-                  setComposerFocused(false);
-                  Animated.timing(focusAnim, { toValue: 0, duration: 150, useNativeDriver: false }).start();
-                }}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => setComposerFocused(false)}
                 multiline
                 numberOfLines={1}
                 maxLength={1000}
@@ -507,7 +497,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 keyboardAppearance={isDark ? 'dark' : 'light'}
               />
             </GlassView>
-          </Animated.View>
+          </View>
           <IconButton
             icon="send"
             mode="contained"

@@ -8,11 +8,14 @@ import { Audio, ResizeMode, Video } from 'expo-av';
 import { getContentUriAsync, getInfoAsync } from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
-import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { Avatar, IconButton, Text } from 'react-native-paper';
+
+// Lazy load MapView to prevent crashes in production builds
+const MapView = React.lazy(() => import('react-native-maps').then(mod => ({ default: mod.default })));
+const Marker = React.lazy(() => import('react-native-maps').then(mod => ({ default: mod.Marker })));
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -624,28 +627,34 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         style={styles.locationContainer}
       >
         <View style={styles.locationPreview}>
-          <MapView
-            provider={PROVIDER_DEFAULT}
-            style={StyleSheet.absoluteFillObject}
-            initialRegion={{
-              latitude: message.location.latitude,
-              longitude: message.location.longitude,
-              latitudeDelta: 0.01,
-              longitudeDelta: 0.01,
-            }}
-            scrollEnabled={false}
-            zoomEnabled={false}
-            rotateEnabled={false}
-            pitchEnabled={false}
-            cacheEnabled={true}
-          >
-            <Marker
-              coordinate={{
+          <React.Suspense fallback={
+            <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
+              <Ionicons name="location" size={32} color={theme.colors.primary} />
+              <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4, fontSize: 12 }}>Loading map...</Text>
+            </View>
+          }>
+            <MapView
+              style={StyleSheet.absoluteFillObject}
+              initialRegion={{
                 latitude: message.location.latitude,
                 longitude: message.location.longitude,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
               }}
-            />
-          </MapView>
+              scrollEnabled={false}
+              zoomEnabled={false}
+              rotateEnabled={false}
+              pitchEnabled={false}
+              liteMode={Platform.OS === 'android'}
+            >
+              <Marker
+                coordinate={{
+                  latitude: message.location.latitude,
+                  longitude: message.location.longitude,
+                }}
+              />
+            </MapView>
+          </React.Suspense>
         </View>
         {message.location.address && (
           <View style={{ padding: 8, backgroundColor: isMine ? 'transparent' : (isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.5)') }}>
@@ -1008,10 +1017,16 @@ const styles = StyleSheet.create({
     height: 120,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.1)',
   },
   locationAddress: {
     fontSize: 13,
     padding: 8,
+  },
+  mapFallback: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.05)',
   },
   // Full screen image styles
   fullScreenContainer: {
