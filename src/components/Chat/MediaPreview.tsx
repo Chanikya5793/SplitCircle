@@ -1,7 +1,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { ResizeMode, Video } from 'expo-av';
-import { useRef, useState } from 'react';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { useEffect, useState } from 'react';
 import {
     Dimensions,
     Image,
@@ -55,13 +55,30 @@ const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
   return 'document';
 };
 
-export const MediaPreview = ({ media, visible, onClose, onSend, sending }: MediaPreviewProps) => {
+export const MediaPreview = ({ media, visible, onClose, onSend }: MediaPreviewProps) => {
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const [caption, setCaption] = useState('');
   const [quality, setQuality] = useState<QualityLevel>('HD');
   const [videoError, setVideoError] = useState(false);
-  const videoRef = useRef<Video>(null);
+
+  // Create video player for video media
+  const videoSource = media?.type === 'video' ? media.uri : null;
+  const player = useVideoPlayer(videoSource, (player) => {
+    player.loop = false;
+  });
+
+  // Handle player status changes
+  useEffect(() => {
+    if (!player) return;
+    const subscription = player.addListener('statusChange', (status) => {
+      if (status.error) {
+        console.log('Video preview error:', status.error);
+        setVideoError(true);
+      }
+    });
+    return () => subscription.remove();
+  }, [player]);
 
   const handleSend = () => {
     const captionToSend = caption;
@@ -109,18 +126,11 @@ export const MediaPreview = ({ media, visible, onClose, onSend, sending }: Media
         }
         return (
           <View style={styles.videoContainer}>
-            <Video
-              ref={videoRef}
-              source={{ uri: media.uri }}
+            <VideoView
+              player={player}
               style={styles.videoPreview}
-              resizeMode={ResizeMode.CONTAIN}
-              useNativeControls
-              shouldPlay={false}
-              isLooping={false}
-              onError={(error) => {
-                console.log('Video preview error:', error);
-                setVideoError(true);
-              }}
+              contentFit="contain"
+              nativeControls
             />
           </View>
         );

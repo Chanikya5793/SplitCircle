@@ -107,6 +107,7 @@ const config: ExpoConfig = {
     'expo-web-browser',
     'expo-sqlite',
     'expo-notifications',
+    'expo-video',
     [
       'expo-location',
       {
