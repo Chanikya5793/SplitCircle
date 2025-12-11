@@ -3,10 +3,16 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import Constants from 'expo-constants';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Location from 'expo-location';
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, Linking, Modal, Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
-import MapView, { PROVIDER_DEFAULT, Region } from 'react-native-maps';
+import type { Region } from 'react-native-maps';
 import { Button, Text } from 'react-native-paper';
+
+// Lazy load MapView to prevent crashes on Android production builds
+const MapView = React.lazy(() => import('react-native-maps').then(mod => ({ default: mod.default })));
+
+// Type for MapView ref
+type MapViewRef = InstanceType<typeof import('react-native-maps').default>;
 
 interface LocationPickerProps {
   visible: boolean;
@@ -29,8 +35,9 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<MapViewRef>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -289,21 +296,28 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
 
             <View style={styles.mapContainer}>
               {currentLocation && (
-                <MapView
-                  ref={mapRef}
-                  provider={PROVIDER_DEFAULT}
-                  style={styles.map}
-                  initialRegion={{
-                    latitude: currentLocation.coords.latitude,
-                    longitude: currentLocation.coords.longitude,
-                    latitudeDelta: LATITUDE_DELTA,
-                    longitudeDelta: LONGITUDE_DELTA,
-                  }}
-                  showsUserLocation
-                  showsMyLocationButton={false}
-                  onRegionChange={handleRegionChange}
-                  onRegionChangeComplete={handleRegionChangeComplete}
-                />
+                <React.Suspense fallback={
+                  <View style={[styles.map, styles.mapLoading]}>
+                    <ActivityIndicator size="large" color={theme.colors.primary} />
+                    <Text style={{ marginTop: 10, color: theme.colors.onSurface }}>Loading map...</Text>
+                  </View>
+                }>
+                  <MapView
+                    ref={mapRef as any}
+                    style={styles.map}
+                    initialRegion={{
+                      latitude: currentLocation.coords.latitude,
+                      longitude: currentLocation.coords.longitude,
+                      latitudeDelta: LATITUDE_DELTA,
+                      longitudeDelta: LONGITUDE_DELTA,
+                    }}
+                    showsUserLocation
+                    showsMyLocationButton={false}
+                    onRegionChange={handleRegionChange}
+                    onRegionChangeComplete={handleRegionChangeComplete}
+                    onMapReady={() => setMapReady(true)}
+                  />
+                </React.Suspense>
               )}
               
               {/* Center Pin */}
@@ -411,6 +425,11 @@ const styles = StyleSheet.create({
   },
   map: {
     ...StyleSheet.absoluteFillObject,
+  },
+  mapLoading: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.05)',
   },
   centerPinContainer: {
     ...StyleSheet.absoluteFillObject,
