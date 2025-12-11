@@ -45,6 +45,7 @@
     "expo-sqlite": "~16.0.9",
     "expo-status-bar": "~3.0.8",
     "expo-task-manager": "~14.0.8",
+    "expo-video": "~3.0.15",
     "expo-video-thumbnails": "~10.0.7",
     "expo-web-browser": "~15.0.9",
     "firebase": "^11.10.0",

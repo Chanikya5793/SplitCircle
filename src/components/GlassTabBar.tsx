@@ -7,15 +7,16 @@ import { useEffect, useState } from 'react';
 import { Dimensions, LayoutChangeEvent, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  Extrapolation,
-  interpolate,
-  runOnJS,
-  useAnimatedStyle,
-  useDerivedValue,
-  useSharedValue,
-  withSequence,
-  withSpring,
-  withTiming,
+    Extrapolation,
+    interpolate,
+    runOnJS,
+    useAnimatedReaction,
+    useAnimatedStyle,
+    useDerivedValue,
+    useSharedValue,
+    withSequence,
+    withSpring,
+    withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -26,13 +27,6 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
   const { theme, isDark } = useTheme();
   const focusedOptions = descriptors[state.routes[state.index].key].options;
 
-  // @ts-ignore - tabBarStyle might not be fully typed in some versions or custom types
-  // CRITICAL: This check must be at the top, before any hooks
-  if (focusedOptions.tabBarStyle?.display === 'none') {
-    return null;
-  }
-
-  // ... (keep existing hooks) ...
   // Animation values
   const indicatorPosition = useSharedValue(0);
   const indicatorWidth = useSharedValue(0);
@@ -49,43 +43,60 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
   // Scale effect shared value
   const activeScale = useSharedValue(1);
 
+  // Movement scale for stretch effect - derived without mutations
   const movementScale = useDerivedValue(() => {
     const delta = Math.abs(indicatorPosition.value - prevPosition.value);
-    prevPosition.value = indicatorPosition.value;
     // Stronger stretch for "liquid" feel
     // Map delta to a scale factor. 
     return interpolate(delta, [0, 10, 40], [1, 1.2, 1.5], Extrapolation.CLAMP);
   });
 
-  useEffect(() => {
-    // Only animate if we have layout data for the current index
-    if (layout[state.index] && !isDragging.value) {
-      const targetX = layout[state.index].x;
-      const targetWidth = layout[state.index].width;
-
-      // Trigger wobble on arrival
-      wobble.value = withSequence(
-        withTiming(0, { duration: 0 }), // Reset
-        withSpring(1, { damping: 10, stiffness: 200 }) // Initial impact
-      );
-
-      // Trigger scale pulse on arrival/tap
-      activeScale.value = withSequence(
-        withTiming(1.15, { duration: 150 }),
-        withSpring(1, { damping: 12, stiffness: 150 })
-      );
-
-      indicatorPosition.value = withSpring(targetX, {
-        damping: 14,
-        stiffness: 150,
-        mass: 1,
-      });
-      indicatorWidth.value = withSpring(targetWidth, {
-        damping: 15,
-        stiffness: 100,
-      });
+  // Update prevPosition reactively when indicatorPosition changes
+  // Using useAnimatedReaction for side effects instead of useDerivedValue
+  useAnimatedReaction(
+    () => indicatorPosition.value,
+    (currentValue) => {
+      prevPosition.value = currentValue;
     }
-  }, [state.index, layout]);
+  );
+
+  // Track dragging state in React state to avoid reading shared value during render
+  const [isDraggingState, setIsDraggingState] = useState(false);
+
+  // @ts-ignore - tabBarStyle might not be fully typed in some versions or custom types
+  // Check if tab bar should be hidden - moved after all hooks to comply with rules of hooks
+  const shouldHideTabBar = focusedOptions.tabBarStyle?.display === 'none';
+
+  useEffect(() => {
+    // Only animate if we have layout data for the current index and tab bar is visible
+    if (shouldHideTabBar || !layout[state.index] || isDraggingState) {
+      return;
+    }
+    const targetX = layout[state.index].x;
+    const targetWidth = layout[state.index].width;
+
+    // Trigger wobble on arrival
+    wobble.value = withSequence(
+      withTiming(0, { duration: 0 }), // Reset
+      withSpring(1, { damping: 10, stiffness: 200 }) // Initial impact
+    );
+
+    // Trigger scale pulse on arrival/tap
+    activeScale.value = withSequence(
+      withTiming(1.15, { duration: 150 }),
+      withSpring(1, { damping: 12, stiffness: 150 })
+    );
+
+    indicatorPosition.value = withSpring(targetX, {
+      damping: 14,
+      stiffness: 150,
+      mass: 1,
+    });
+    indicatorWidth.value = withSpring(targetWidth, {
+      damping: 15,
+      stiffness: 100,
+    });
+  }, [state.index, layout, isDraggingState, shouldHideTabBar]);
 
   const animatedIndicatorStyle = useAnimatedStyle(() => {
     // If we don't have a valid width yet, hide the indicator to prevent it appearing in wrong place
@@ -142,6 +153,7 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
   const pan = Gesture.Pan()
     .onStart(() => {
       isDragging.value = true;
+      runOnJS(setIsDraggingState)(true);
       // Scale up when dragging starts
       activeScale.value = withSpring(1.15, { damping: 12, stiffness: 150 });
     })
@@ -151,6 +163,7 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
     })
     .onFinalize((e) => {
       isDragging.value = false;
+      runOnJS(setIsDraggingState)(false);
       // Scale back down when dragging ends
       activeScale.value = withSpring(1, { damping: 12, stiffness: 150 });
 
@@ -181,6 +194,11 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
         });
       }
     });
+
+  // Return null if tab bar should be hidden - placed after all hooks to comply with rules of hooks
+  if (shouldHideTabBar) {
+    return null;
+  }
 
   return (
     <View style={[styles.container, { bottom: -18 + insets.bottom }]}>

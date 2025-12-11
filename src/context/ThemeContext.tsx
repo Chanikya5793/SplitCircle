@@ -43,7 +43,6 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
             if (savedTheme) {
                 const isDarkSaved = savedTheme === 'dark';
                 setIsDark(isDarkSaved);
-                themeProgress.value = isDarkSaved ? 1 : 0;
             }
         } catch (error) {
             console.error('Failed to load theme preference', error);

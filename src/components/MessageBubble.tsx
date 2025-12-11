@@ -4,12 +4,13 @@ import type { ChatMessage, MessageStatus, MessageType } from '@/models';
 import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { formatRelativeTime } from '@/utils/format';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Audio, ResizeMode, Video } from 'expo-av';
+import { Audio } from 'expo-av';
 import { getContentUriAsync, getInfoAsync } from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View, ViewStyle } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
 
@@ -125,13 +126,42 @@ const MessageStatusIndicator = ({ status, isGroupChat, totalRecipients, delivere
   return <Ionicons name={name} size={size} color={color} style={{ marginLeft: 4 }} />;
 };
 
+// Video player component using expo-video
+interface VideoPlayerComponentProps {
+  uri: string;
+  style: ViewStyle | ViewStyle[];
+  showControls?: boolean;
+  showOverlay?: boolean;
+}
+
+const VideoPlayerComponent = ({ uri, style, showControls = true, showOverlay = false }: VideoPlayerComponentProps) => {
+  const player = useVideoPlayer(uri, (player) => {
+    player.loop = false;
+  });
+
+  return (
+    <View style={style}>
+      <VideoView
+        player={player}
+        style={{ width: '100%', height: '100%' }}
+        contentFit="cover"
+        nativeControls={showControls}
+      />
+      {showOverlay && (
+        <View style={styles.uploadingOverlay}>
+          <ActivityIndicator color="#fff" size="large" />
+        </View>
+      )}
+    </View>
+  );
+};
+
 export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, isGroupChat, totalRecipients }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
   const [imageLoading, setImageLoading] = useState(true);
   const [fullScreenVisible, setFullScreenVisible] = useState(false);
-  const videoRef = useRef<Video>(null);
   
   // Audio playback state
   const [sound, setSound] = useState<Audio.Sound | null>(null);
@@ -402,17 +432,12 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     // Show sending state
     if (message.status === 'sending' && mediaUri) {
       return (
-        <View style={[styles.mediaContainer, imageDimensions]}>
-          <Video
-            source={{ uri: mediaUri }}
-            style={[styles.mediaVideo, imageDimensions]}
-            resizeMode={ResizeMode.COVER}
-            shouldPlay={false}
-          />
-          <View style={styles.uploadingOverlay}>
-            <ActivityIndicator color="#fff" size="large" />
-          </View>
-        </View>
+        <VideoPlayerComponent
+          uri={mediaUri}
+          style={[styles.mediaContainer, styles.mediaVideo, imageDimensions]}
+          showControls={false}
+          showOverlay={true}
+        />
       );
     }
 
@@ -426,16 +451,15 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       );
     }
 
+    // Return null if no media URI available
+    if (!mediaUri) return null;
+
     return (
       <View style={[styles.mediaContainer, imageDimensions]}>
-        <Video
-          ref={videoRef}
-          source={{ uri: mediaUri }}
+        <VideoPlayerComponent
+          uri={mediaUri}
           style={[styles.mediaVideo, imageDimensions]}
-          resizeMode={ResizeMode.COVER}
-          useNativeControls
-          shouldPlay={false}
-          isLooping={false}
+          showControls={true}
         />
         {message.mediaMetadata?.duration && (
           <View style={styles.videoDuration}>
