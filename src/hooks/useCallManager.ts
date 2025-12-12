@@ -12,8 +12,8 @@ import {
     subscribeToCallSession,
     subscribeToIceCandidates
 } from '@/services/callService';
-import { useCallback, useEffect, useRef, useState } from 'react';
 import Constants from 'expo-constants';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 // Check if we're in Expo Go (no native modules available)
 const isExpoGo = Constants.appOwnership === 'expo';
@@ -72,6 +72,9 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   
   const unsubscribes = useRef<Array<() => void>>([]);
   const isInitiator = useRef(false);
+  const answerProcessed = useRef(false);
+  const pendingIceCandidates = useRef<RTCIceCandidateInit[]>([]);
+  const callIdRef = useRef<string | null>(null);
 
   // Cleanup subscriptions
   const cleanupSubscriptions = useCallback(() => {
@@ -110,8 +113,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     
     // Handle ICE candidates
     pc.onicecandidate = (event: any) => {
-      if (event.candidate && callId) {
-        addIceCandidate(callId, event.candidate.toJSON(), isInitiator.current).catch(console.error);
+      if (event.candidate && callIdRef.current) {
+        addIceCandidate(callIdRef.current, event.candidate.toJSON(), isInitiator.current).catch(console.error);
       }
     };
     
@@ -217,6 +220,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         offer
       );
       setCallId(newCallId);
+      callIdRef.current = newCallId;
       
       // Subscribe to call session updates
       const unsubSession = subscribeToCallSession(newCallId, async (session) => {
@@ -226,13 +230,46 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         }
         
         // Handle answer from remote peer
-        if (session.answer && !pc.currentRemoteDescription && RTCSessionDescription) {
-          const answerDesc = new RTCSessionDescription(session.answer);
-          await pc.setRemoteDescription(answerDesc);
+        // Check signalingState and use flag to prevent duplicate processing
+        if (session.answer && !answerProcessed.current && pc.signalingState === 'have-local-offer' && RTCSessionDescription) {
+          answerProcessed.current = true;
+          try {
+            const answerDesc = new RTCSessionDescription(session.answer);
+            await pc.setRemoteDescription(answerDesc);
+            
+            // Process any pending ICE candidates that arrived before the answer
+            for (const candidate of pendingIceCandidates.current) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+              } catch (icErr) {
+                console.warn('Error adding pending ICE candidate:', icErr);
+              }
+            }
+            pendingIceCandidates.current = [];
+          } catch (descErr) {
+            console.error('Error setting remote description:', descErr);
+            answerProcessed.current = false; // Reset on error to allow retry
+          }
         }
         
         if (session.status === 'ended') {
+          // Clean up local resources when remote ends the call
+          if (localStream && localStream.getTracks) {
+            localStream.getTracks().forEach((track: any) => track.stop());
+            setLocalStream(null);
+          }
+          if (peerConnection.current) {
+            peerConnection.current.close();
+            peerConnection.current = null;
+          }
+          cleanupSubscriptions();
+          setRemoteStream(null);
           setStatus('ended');
+          setCallId(null);
+          callIdRef.current = null;
+          isInitiator.current = false;
+          answerProcessed.current = false;
+          pendingIceCandidates.current = [];
         }
       });
       unsubscribes.current.push(unsubSession);
@@ -240,8 +277,12 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       // Subscribe to ICE candidates from answerer
       const unsubCandidates = subscribeToIceCandidates(newCallId, true, async (candidate) => {
         try {
-          if (pc.remoteDescription) {
+          // Only add ICE candidates after remote description is set
+          if (pc.remoteDescription && pc.signalingState === 'stable') {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          } else {
+            // Queue candidates that arrive before remote description
+            pendingIceCandidates.current.push(candidate);
           }
         } catch (err) {
           console.warn('Error adding ICE candidate:', err);
@@ -279,6 +320,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setStatus('ringing');
       isInitiator.current = false;
       setCallId(existingCallId);
+      callIdRef.current = existingCallId;
       
       // Get call session
       const session = await getCallSession(existingCallId);
@@ -341,7 +383,23 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       // Subscribe to call session updates
       const unsubSession = subscribeToCallSession(existingCallId, (updatedSession) => {
         if (!updatedSession || updatedSession.status === 'ended') {
+          // Clean up local resources when remote ends the call
+          if (localStream && localStream.getTracks) {
+            localStream.getTracks().forEach((track: any) => track.stop());
+            setLocalStream(null);
+          }
+          if (peerConnection.current) {
+            peerConnection.current.close();
+            peerConnection.current = null;
+          }
+          cleanupSubscriptions();
+          setRemoteStream(null);
           setStatus('ended');
+          setCallId(null);
+          callIdRef.current = null;
+          isInitiator.current = false;
+          answerProcessed.current = false;
+          pendingIceCandidates.current = [];
         }
       });
       unsubscribes.current.push(unsubSession);
@@ -391,7 +449,10 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setRemoteStream(null);
       setStatus('ended');
       setCallId(null);
+      callIdRef.current = null;
       isInitiator.current = false;
+      answerProcessed.current = false;
+      pendingIceCandidates.current = [];
       
     } catch (err) {
       console.error('Error ending call:', err);
