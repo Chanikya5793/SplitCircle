@@ -24,9 +24,10 @@ const { width, height } = Dimensions.get('window');
 const ASPECT_RATIO = width / height;
 const LATITUDE_DELTA = 0.005; // Closer zoom for pinning
 const LONGITUDE_DELTA = LATITUDE_DELTA * ASPECT_RATIO;
+const LIVE_LOCATION_DURATION_MINUTES = 15;
 
 export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPickerProps) => {
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
   const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
   const [selectedLocation, setSelectedLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [address, setAddress] = useState<string | null>(null);
@@ -37,7 +38,6 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   const [isSearching, setIsSearching] = useState(false);
   const mapRef = useRef<MapViewRef>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -101,7 +101,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     }
   };
 
-  const handleRegionChange = () => {
+  const handleRegionChangeStart = () => {
     setIsDragging(true);
   };
 
@@ -228,8 +228,9 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
               if (Platform.OS === 'ios') {
                 await Linking.openSettings();
               } else {
+                const packageName = Constants.expoConfig?.android?.package || 'com.splitcircle.app';
                 await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.APPLICATION_DETAILS_SETTINGS, {
-                  data: 'package:' + 'com.splitcircle.app' // Ensure this matches your package name
+                  data: 'package:' + packageName
                 });
               }
             } 
@@ -313,9 +314,8 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                     }}
                     showsUserLocation
                     showsMyLocationButton={false}
-                    onRegionChange={handleRegionChange}
+                    onRegionChange={handleRegionChangeStart}
                     onRegionChangeComplete={handleRegionChangeComplete}
-                    onMapReady={() => setMapReady(true)}
                   />
                 </React.Suspense>
               )}
@@ -365,7 +365,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                 textColor={theme.colors.primary}
                 icon="clock-outline"
               >
-                Share Live Location (15 min)
+                Share Live Location ({LIVE_LOCATION_DURATION_MINUTES} min)
               </Button>
             </View>
           </>
