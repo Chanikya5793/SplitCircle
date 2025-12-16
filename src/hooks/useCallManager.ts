@@ -20,7 +20,6 @@ const isExpoGo = Constants.appOwnership === 'expo';
 
 // Conditionally import WebRTC - only available in development builds
 let mediaDevices: any;
-let MediaStream: any;
 let RTCIceCandidate: any;
 let RTCPeerConnection: any;
 let RTCSessionDescription: any;
@@ -29,7 +28,6 @@ if (!isExpoGo) {
   try {
     const webrtc = require('react-native-webrtc');
     mediaDevices = webrtc.mediaDevices;
-    MediaStream = webrtc.MediaStream;
     RTCIceCandidate = webrtc.RTCIceCandidate;
     RTCPeerConnection = webrtc.RTCPeerConnection;
     RTCSessionDescription = webrtc.RTCSessionDescription;
@@ -62,6 +60,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const { user } = useAuth();
   const peerConnection = useRef<any>(null);
   const [localStream, setLocalStream] = useState<any>(null);
+  const localStreamRef = useRef<any>(null);
   const [remoteStream, setRemoteStream] = useState<any>(null);
   const [status, setStatus] = useState<CallStatus>('idle');
   const [callId, setCallId] = useState<string | null>(null);
@@ -75,11 +74,18 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const answerProcessed = useRef(false);
   const pendingIceCandidates = useRef<RTCIceCandidateInit[]>([]);
   const callIdRef = useRef<string | null>(null);
+  const pendingLocalIceCandidates = useRef<any[]>([]);
 
   // Cleanup subscriptions
   const cleanupSubscriptions = useCallback(() => {
     unsubscribes.current.forEach((unsub) => unsub());
     unsubscribes.current = [];
+  }, []);
+
+  // Helper to update local stream (both state and ref)
+  const updateLocalStream = useCallback((stream: any) => {
+    localStreamRef.current = stream;
+    setLocalStream(stream);
   }, []);
 
   // Get local media stream
@@ -113,8 +119,13 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     
     // Handle ICE candidates
     pc.onicecandidate = (event: any) => {
-      if (event.candidate && callIdRef.current) {
-        addIceCandidate(callIdRef.current, event.candidate.toJSON(), isInitiator.current).catch(console.error);
+      if (event.candidate) {
+        if (callIdRef.current) {
+          addIceCandidate(callIdRef.current, event.candidate.toJSON(), isInitiator.current).catch(console.error);
+        } else {
+          // Store ICE candidates that are generated before we have a callId
+          pendingLocalIceCandidates.current.push(event.candidate.toJSON());
+        }
       }
     };
     
@@ -182,7 +193,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       
       // Get local media
       const stream = await getLocalStream(type);
-      setLocalStream(stream);
+      updateLocalStream(stream);
       
       // Create peer connection
       const pc = createPeerConnection();
@@ -222,6 +233,12 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setCallId(newCallId);
       callIdRef.current = newCallId;
       
+      // Send any pending ICE candidates that were generated before we had the callId
+      for (const candidate of pendingLocalIceCandidates.current) {
+        await addIceCandidate(newCallId, candidate, isInitiator.current).catch(console.error);
+      }
+      pendingLocalIceCandidates.current = [];
+      
       // Subscribe to call session updates
       const unsubSession = subscribeToCallSession(newCallId, async (session) => {
         if (!session) {
@@ -254,9 +271,9 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         
         if (session.status === 'ended') {
           // Clean up local resources when remote ends the call
-          if (localStream && localStream.getTracks) {
-            localStream.getTracks().forEach((track: any) => track.stop());
-            setLocalStream(null);
+          if (localStreamRef.current && localStreamRef.current.getTracks) {
+            localStreamRef.current.getTracks().forEach((track: any) => track.stop());
+            updateLocalStream(null);
           }
           if (peerConnection.current) {
             peerConnection.current.close();
@@ -270,6 +287,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
           isInitiator.current = false;
           answerProcessed.current = false;
           pendingIceCandidates.current = [];
+          pendingLocalIceCandidates.current = [];
         }
       });
       unsubscribes.current.push(unsubSession);
@@ -295,7 +313,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setError(err instanceof Error ? err.message : 'Failed to start call');
       setStatus('failed');
     }
-  }, [chatId, groupId, user, getLocalStream, createPeerConnection]);
+  }, [chatId, groupId, user, getLocalStream, createPeerConnection, updateLocalStream, cleanupSubscriptions]);
 
   // Join an existing call (as answerer)
   const joinExistingCall = useCallback(async (existingCallId: string) => {
@@ -340,7 +358,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       
       // Get local media
       const stream = await getLocalStream(session.type);
-      setLocalStream(stream);
+      updateLocalStream(stream);
       
       // Create peer connection
       const pc = createPeerConnection();
@@ -384,9 +402,9 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       const unsubSession = subscribeToCallSession(existingCallId, (updatedSession) => {
         if (!updatedSession || updatedSession.status === 'ended') {
           // Clean up local resources when remote ends the call
-          if (localStream && localStream.getTracks) {
-            localStream.getTracks().forEach((track: any) => track.stop());
-            setLocalStream(null);
+          if (localStreamRef.current && localStreamRef.current.getTracks) {
+            localStreamRef.current.getTracks().forEach((track: any) => track.stop());
+            updateLocalStream(null);
           }
           if (peerConnection.current) {
             peerConnection.current.close();
@@ -400,6 +418,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
           isInitiator.current = false;
           answerProcessed.current = false;
           pendingIceCandidates.current = [];
+          pendingLocalIceCandidates.current = [];
         }
       });
       unsubscribes.current.push(unsubSession);
@@ -421,15 +440,15 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setError(err instanceof Error ? err.message : 'Failed to join call');
       setStatus('failed');
     }
-  }, [user, getLocalStream, createPeerConnection]);
+  }, [user, getLocalStream, createPeerConnection, updateLocalStream, cleanupSubscriptions]);
 
   // End the call
   const endCall = useCallback(async () => {
     try {
       // Stop local stream tracks
-      if (localStream && localStream.getTracks) {
-        localStream.getTracks().forEach((track: any) => track.stop());
-        setLocalStream(null);
+      if (localStreamRef.current && localStreamRef.current.getTracks) {
+        localStreamRef.current.getTracks().forEach((track: any) => track.stop());
+        updateLocalStream(null);
       }
       
       // Close peer connection
@@ -453,11 +472,12 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       isInitiator.current = false;
       answerProcessed.current = false;
       pendingIceCandidates.current = [];
+      pendingLocalIceCandidates.current = [];
       
     } catch (err) {
       console.error('Error ending call:', err);
     }
-  }, [callId, user, localStream, cleanupSubscriptions]);
+  }, [callId, user, updateLocalStream, cleanupSubscriptions]);
 
   // Toggle mute
   const toggleMute = useCallback(() => {
@@ -489,14 +509,14 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   useEffect(() => {
     return () => {
       cleanupSubscriptions();
-      if (localStream && localStream.getTracks) {
-        localStream.getTracks().forEach((track: any) => track.stop());
+      if (localStreamRef.current && localStreamRef.current.getTracks) {
+        localStreamRef.current.getTracks().forEach((track: any) => track.stop());
       }
       if (peerConnection.current) {
         peerConnection.current.close();
       }
     };
-  }, []);
+  }, [cleanupSubscriptions]);
 
   // Watch for incoming calls
   useEffect(() => {
