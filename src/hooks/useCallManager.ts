@@ -60,6 +60,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const { user } = useAuth();
   const peerConnection = useRef<any>(null);
   const [localStream, setLocalStream] = useState<any>(null);
+  // Using ref to prevent stale closures in cleanup callbacks
   const localStreamRef = useRef<any>(null);
   const [remoteStream, setRemoteStream] = useState<any>(null);
   const [status, setStatus] = useState<CallStatus>('idle');
@@ -74,7 +75,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const answerProcessed = useRef(false);
   const pendingIceCandidates = useRef<RTCIceCandidateInit[]>([]);
   const callIdRef = useRef<string | null>(null);
-  const pendingLocalIceCandidates = useRef<any[]>([]);
+  // Queue for ICE candidates generated before callId is available
+  const pendingLocalIceCandidates = useRef<RTCIceCandidateInit[]>([]);
 
   // Cleanup subscriptions
   const cleanupSubscriptions = useCallback(() => {

@@ -5,9 +5,7 @@
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
-    "android:comment": "Uses 'expo run' instead of 'expo start' because native modules (WebRTC, location) require building",
     "ios": "expo run:ios",
-    "ios:comment": "Uses 'expo run' instead of 'expo start' because native modules (WebRTC, location) require building",
     "web": "expo start --web"
   },
   "dependencies": {
@@ -67,7 +65,6 @@
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
     "react-native-svg": "15.12.1",
-    "react-native-svg-comment": "Pinned to 15.12.1 for compatibility with Expo SDK 54 and react-native-chart-kit",
     "react-native-tab-view": "^4.2.0",
     "react-native-vector-icons": "^10.3.0",
     "react-native-web": "^0.21.0",
