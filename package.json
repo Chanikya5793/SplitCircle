@@ -5,7 +5,9 @@
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
+    "android:comment": "Uses 'expo run' instead of 'expo start' because native modules (WebRTC, location) require building",
     "ios": "expo run:ios",
+    "ios:comment": "Uses 'expo run' instead of 'expo start' because native modules (WebRTC, location) require building",
     "web": "expo start --web"
   },
   "dependencies": {
