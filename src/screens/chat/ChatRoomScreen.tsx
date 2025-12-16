@@ -11,6 +11,7 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatThread, MessageType } from '@/models';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
+import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -136,6 +137,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     if (!trimmed) {
       return;
     }
+    lightHaptic();
     setSending(true);
     try {
       // Build replyTo data if replying
@@ -150,6 +152,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         };
       }
       await sendMessage({ chatId: thread.chatId, content: trimmed, groupId: thread.groupId, replyTo: replyData });
+      successHaptic();
       setText('');
       setReplyingTo(null);
     } finally {
@@ -159,6 +162,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
   // Handle swipe reply from message bubble
   const handleSwipeReply = (message: ChatMessage) => {
+    lightHaptic();
     setReplyingTo(message);
     inputRef.current?.focus();
   };

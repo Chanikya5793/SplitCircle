@@ -1,9 +1,11 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { ChatListSkeleton } from '@/components/SkeletonLoader';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
+import { lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { Animated, RefreshControl, StyleSheet, View } from 'react-native';
@@ -52,6 +54,11 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     return (otherParticipant?.displayName || 'SC').slice(0, 2).toUpperCase();
   }, [groups]);
 
+  const handleOpenThread = (thread: ChatThread) => {
+    lightHaptic();
+    onOpenThread(thread);
+  };
+
   return (
     <LiquidBackground>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
@@ -77,7 +84,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                     color={theme.colors.onPrimary}
                   />
                 )}
-                onPress={() => onOpenThread(item)}
+                onPress={() => handleOpenThread(item)}
                 titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
                 descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
                 descriptionNumberOfLines={1}
@@ -85,7 +92,17 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
             </GlassView>
           )}
           refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} />}
-          ListEmptyComponent={<Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No chats yet.</Text>}
+          ListEmptyComponent={
+            loading ? (
+              <View>
+                <ChatListSkeleton />
+                <ChatListSkeleton />
+                <ChatListSkeleton />
+              </View>
+            ) : (
+              <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No chats yet.</Text>
+            )
+          }
           contentContainerStyle={{ padding: 16, paddingTop: 60, paddingBottom: 100 }}
           ListHeaderComponent={
             <View style={styles.headerContainer}>

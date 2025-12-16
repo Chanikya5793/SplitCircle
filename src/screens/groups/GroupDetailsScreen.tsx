@@ -1,14 +1,17 @@
 import { BalanceSummary } from '@/components/BalanceSummary';
 import { DebtsList } from '@/components/DebtsList';
-import { ExpenseCard } from '@/components/ExpenseCard';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { ExpenseCardSkeleton } from '@/components/SkeletonLoader';
+import { SwipeableExpenseCard } from '@/components/SwipeableExpenseCard';
 import { ROUTES } from '@/constants';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { Group } from '@/models';
+import type { Expense, Group } from '@/models';
+import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useLayoutEffect, useMemo, useRef } from 'react';
-import { Animated, StyleSheet, View } from 'react-native';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, StyleSheet, View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
 
 interface GroupDetailsScreenProps {
@@ -20,6 +23,7 @@ interface GroupDetailsScreenProps {
 
 export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }: GroupDetailsScreenProps) => {
   const navigation = useNavigation<any>();
+  const { deleteExpense, loading } = useGroups();
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
 
@@ -41,6 +45,29 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
+
+  const handleDeleteExpense = (expense: Expense) => {
+    Alert.alert(
+      'Delete Expense',
+      `Are you sure you want to delete "${expense.title}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteExpense(group.groupId, expense.expenseId);
+              errorHaptic();
+            } catch (error) {
+              console.error('Failed to delete expense:', error);
+              Alert.alert('Error', 'Failed to delete expense');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <LiquidBackground>
@@ -75,18 +102,27 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
         <Text variant="titleMedium" style={[styles.section, { color: theme.colors.onSurface }]}>
           Recent expenses
         </Text>
-        {group.expenses.length === 0 ? (
+        {loading ? (
+          <View>
+            <ExpenseCardSkeleton />
+            <ExpenseCardSkeleton />
+          </View>
+        ) : group.expenses.length === 0 ? (
           <GlassView style={styles.emptyCard}>
             <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No expenses yet.</Text>
           </GlassView>
         ) : (
           group.expenses.map((expense) => (
-            <ExpenseCard
+            <SwipeableExpenseCard
               key={expense.expenseId}
               expense={expense}
               currency={group.currency}
               memberMap={memberMap}
-              onPress={() => navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, { groupId: group.groupId, expenseId: expense.expenseId })}
+              onPress={() => {
+                lightHaptic();
+                navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, { groupId: group.groupId, expenseId: expense.expenseId });
+              }}
+              onDelete={handleDeleteExpense}
             />
           ))
         )}
