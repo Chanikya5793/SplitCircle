@@ -10,7 +10,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Expense, Group } from '@/models';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { Alert, Animated, StyleSheet, View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
 
