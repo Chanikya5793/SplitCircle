@@ -1,11 +1,13 @@
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
-import { GroupCard } from '@/components/GroupCard';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GroupCardSkeleton } from '@/components/SkeletonLoader';
+import { SwipeableGroupCard } from '@/components/SwipeableGroupCard';
 import { CURRENCIES } from '@/constants/currencies';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
+import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -73,6 +75,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
 
     try {
       await createGroup(name.trim(), selectedCurrency.code);
+      successHaptic();
       setDialog(null);
       setName('');
       setCurrencyInput('USD');
@@ -86,12 +89,28 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const handleJoin = async () => {
     try {
       await joinGroup(inviteCode.trim().toUpperCase());
+      successHaptic();
       setDialog(null);
       setInviteCode('');
     } catch (error) {
       console.error('Failed to join group', error);
       Alert.alert('Error', 'Failed to join group');
     }
+  };
+
+  const handleArchive = (group: Group) => {
+    // TODO: Implement archive functionality in GroupContext
+    Alert.alert(
+      'Archive Group',
+      `Are you sure you want to archive "${group.name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Archive', style: 'destructive', onPress: () => {
+          // Future: archiveGroup(group.groupId);
+          Alert.alert('Coming Soon', 'Group archiving will be available in a future update.');
+        }},
+      ]
+    );
   };
 
   return (
@@ -105,9 +124,15 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       <Animated.FlatList
         data={groups}
         keyExtractor={(item) => item.groupId}
-        renderItem={({ item }) => <GroupCard group={item} onPress={() => onOpenGroup(item)} />}
+        renderItem={({ item }) => (
+          <SwipeableGroupCard
+            group={item}
+            onPress={() => onOpenGroup(item)}
+            onArchive={handleArchive}
+          />
+        )}
         contentContainerStyle={[
-          groups.length === 0 ? styles.emptyContainer : undefined,
+          groups.length === 0 && !loading ? styles.emptyContainer : undefined,
           { paddingTop: 80, paddingBottom: 100 + insets.bottom, paddingHorizontal: 16 }
         ]}
         ListHeaderComponent={
@@ -125,20 +150,26 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         maxToRenderPerBatch={10}
         windowSize={5}
         ListEmptyComponent={
-          !loading ? (
+          loading ? (
+            <View>
+              <GroupCardSkeleton />
+              <GroupCardSkeleton />
+              <GroupCardSkeleton />
+            </View>
+          ) : (
             <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No groups yet. Create one!</Text>
-          ) : null
+          )
         }
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} tintColor={theme.colors.primary} />}
       />
 
       <View style={[styles.actions, { bottom: 60 + insets.bottom }]}>
-        <Button mode="contained" onPress={() => setDialog('create')}>
+        <Button mode="contained" onPress={() => { lightHaptic(); setDialog('create'); }}>
           New group
         </Button>
 
         <TouchableOpacity
-          onPress={() => setDialog('join')}
+          onPress={() => { lightHaptic(); setDialog('join'); }}
           activeOpacity={0.8}
           style={{
             borderRadius: 15,
