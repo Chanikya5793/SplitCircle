@@ -1,14 +1,13 @@
-import { GlassView } from '@/components/GlassView';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { db, storage } from '@/firebase';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import * as ImagePicker from 'expo-image-picker';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import React, { useState } from 'react';
 import { Alert, Image, StyleSheet, View } from 'react-native';
-import { ActivityIndicator, Avatar, IconButton, Text, TouchableRipple } from 'react-native-paper';
+import { ActivityIndicator, Avatar, IconButton, TouchableRipple } from 'react-native-paper';
 
 interface ProfilePhotoUploaderProps {
   size?: number;
