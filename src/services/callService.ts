@@ -2,15 +2,15 @@ import { db } from '@/firebase';
 import { callsCollection } from '@/firebase/queries';
 import type { CallParticipant, CallSession, CallStatus, CallType } from '@/models';
 import {
-    addDoc,
-    collection,
-    doc,
-    getDoc,
-    onSnapshot,
-    query,
-    updateDoc,
-    where,
-    type Unsubscribe
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  onSnapshot,
+  query,
+  updateDoc,
+  where,
+  type Unsubscribe
 } from 'firebase/firestore';
 
 // ICE servers configuration for STUN/TURN
@@ -41,20 +41,20 @@ export async function createCallSession(
   const participant: CallParticipant = {
     userId: config.userId,
     displayName: config.displayName,
-    photoURL: config.photoURL,
     muted: false,
     cameraEnabled: type === 'video',
+    ...(config.photoURL ? { photoURL: config.photoURL } : {}),
   };
 
   const callSession: Omit<CallSession, 'callId'> = {
     chatId: config.chatId,
-    groupId: config.groupId,
     initiatorId: config.userId,
     participants: [participant],
     type,
     status: 'ringing',
     startedAt: Date.now(),
     offer,
+    ...(config.groupId ? { groupId: config.groupId } : {}),
   };
 
   const docRef = await addDoc(callsCollection, callSession);
@@ -184,8 +184,16 @@ export async function joinCall(
   if (existingParticipant) {
     return; // Already joined
   }
+  const sanitizedParticipant: CallParticipant = {
+    userId: participant.userId,
+    displayName: participant.displayName,
+    muted: participant.muted,
+    cameraEnabled: participant.cameraEnabled,
+    ...(participant.photoURL ? { photoURL: participant.photoURL } : {}),
+  };
+
   await updateDoc(docRef, {
-    participants: [...session.participants, participant],
+    participants: [...session.participants, sanitizedParticipant],
   });
 }
 
@@ -199,20 +207,17 @@ export async function leaveCall(callId: string, userId: string): Promise<void> {
     return;
   }
   const session = docSnap.data() as CallSession;
-  const remainingParticipants = session.participants.filter(p => p.userId !== userId);
   
-  if (remainingParticipants.length === 0) {
-    // End the call if no participants left
-    await updateDoc(docRef, {
-      status: 'ended',
-      endedAt: Date.now(),
-      participants: [],
-    } satisfies Partial<CallSession>);
-  } else {
-    await updateDoc(docRef, {
-      participants: remainingParticipants,
-    });
+  // If the call is already ended, don't update again
+  if (session.status === 'ended') {
+    return;
   }
+  
+  // For 1:1 calls, when either party leaves, end the call for both
+  await updateDoc(docRef, {
+    status: 'ended',
+    endedAt: Date.now(),
+  } satisfies Partial<CallSession>);
 }
 
 /**
