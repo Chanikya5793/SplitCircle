@@ -44,6 +44,8 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
   const activeScale = useSharedValue(1);
 
   // Movement scale for stretch effect - derived without mutations
+  // Note: prevPosition is updated via useAnimatedReaction AFTER this calculation,
+  // which correctly gives us the delta between consecutive frames
   const movementScale = useDerivedValue(() => {
     const delta = Math.abs(indicatorPosition.value - prevPosition.value);
     // Stronger stretch for "liquid" feel
