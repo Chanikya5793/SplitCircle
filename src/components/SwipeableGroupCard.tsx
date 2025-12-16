@@ -110,7 +110,6 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 12,
   },
-  subtitle: {},
   total: {
     marginTop: 12,
     fontWeight: '600',
