@@ -1,6 +1,8 @@
 import { GlassTabBar } from '@/components/GlassTabBar';
+import { IncomingCallModal } from '@/components/IncomingCallModal';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
+import { useCallContext } from '@/context/CallContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -22,8 +24,9 @@ import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { DarkTheme, DefaultTheme, getFocusedRouteNameFromRoute, NavigationContainer } from '@react-navigation/native';
+import { DarkTheme, DefaultTheme, getFocusedRouteNameFromRoute, NavigationContainer, useNavigation } from '@react-navigation/native';
 import { useMemo } from 'react';
+import { View } from 'react-native';
 
 import { AuthStack, CallStack, ChatStack, GroupStack, Tab } from './stacks';
 
@@ -137,6 +140,7 @@ const CallSessionRoute = ({ route, navigation }: any) => (
     chatId={route.params.chatId}
     groupId={route.params.groupId}
     type={route.params.type as CallType}
+    joinCallId={route.params.joinCallId}
     onHangUp={() => navigation.goBack()}
   />
 );
@@ -311,6 +315,37 @@ const AppTabs = () => {
   );
 };
 
+// Incoming call handler - must be inside NavigationContainer
+const IncomingCallHandler = () => {
+  const { incomingCall, dismissIncomingCall, acceptCall } = useCallContext();
+  const navigation = useNavigation<any>();
+
+  const handleAccept = () => {
+    const call = acceptCall();
+    if (call) {
+      navigation.navigate(ROUTES.APP.CALLS_TAB, {
+        screen: ROUTES.APP.CALL_DETAIL,
+        params: {
+          chatId: call.chatId,
+          groupId: call.groupId,
+          type: call.type,
+          joinCallId: call.callId,
+        },
+      });
+    }
+  };
+
+  return (
+    <IncomingCallModal
+      visible={!!incomingCall}
+      callerName={incomingCall?.initiatorName || 'Unknown'}
+      callType={incomingCall?.type || 'audio'}
+      onAccept={handleAccept}
+      onDecline={dismissIncomingCall}
+    />
+  );
+};
+
 export const AppNavigator = () => {
   const { user, loading } = useAuth();
   const { isDark } = useTheme();
@@ -329,7 +364,14 @@ export const AppNavigator = () => {
     },
   };
 
-  return <NavigationContainer theme={NavigationTheme}>{user ? <AppTabs /> : <AuthStackNavigator />}</NavigationContainer>;
+  return (
+    <NavigationContainer theme={NavigationTheme}>
+      <View style={{ flex: 1 }}>
+        {user ? <AppTabs /> : <AuthStackNavigator />}
+        {user && <IncomingCallHandler />}
+      </View>
+    </NavigationContainer>
+  );
 };
 
 export default AppNavigator;

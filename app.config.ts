@@ -57,6 +57,13 @@ const config: ExpoConfig = {
     bundleIdentifier: 'com.splitcircle.app',
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
+      NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
+      NSLocationAlwaysAndWhenInUseUsageDescription: 'This app uses your location to share live location with your friends.',
+      NSLocationAlwaysUsageDescription: 'This app uses your location to share live location with your friends.',
+      UIBackgroundModes: ['location', 'fetch'],
+    },
+    config: {
+      googleMapsApiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
     },
   },
   android: {
@@ -78,17 +85,40 @@ const config: ExpoConfig = {
       'READ_MEDIA_AUDIO',
       'VIBRATE',
       'WAKE_LOCK',
+      'ACCESS_COARSE_LOCATION',
+      'ACCESS_FINE_LOCATION',
+      'ACCESS_BACKGROUND_LOCATION',
+      'FOREGROUND_SERVICE',
+      'FOREGROUND_SERVICE_LOCATION',
       'com.google.android.c2dm.permission.RECEIVE',
     ],
+    config: {
+      googleMaps: {
+        apiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
+      },
+    },
   },
   web: {
     favicon: './assets/favicon.png',
   },
   plugins: [
+    'expo-font',
     'expo-secure-store',
     'expo-web-browser',
     'expo-sqlite',
     'expo-notifications',
+    'expo-video',
+    [
+      'expo-location',
+      {
+        locationAlwaysAndWhenInUsePermission: 'Allow $(PRODUCT_NAME) to use your location to share it with your friends.',
+        locationAlwaysPermission: 'Allow $(PRODUCT_NAME) to use your location to share live location.',
+        locationWhenInUsePermission: 'Allow $(PRODUCT_NAME) to use your location to share it with your friends.',
+        isAndroidBackgroundLocationEnabled: true,
+        isAndroidForegroundServiceEnabled: true,
+        isIosBackgroundLocationEnabled: true,
+      },
+    ],
     ['expo-build-properties', { android: { minSdkVersion: 24 } }],
     '@config-plugins/react-native-webrtc',
   ],

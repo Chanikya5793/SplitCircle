@@ -1,4 +1,4 @@
-import { AttachmentMenu, MediaPreview } from '@/components/Chat';
+import { AttachmentMenu, LocationPicker, MediaPreview } from '@/components/Chat';
 import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
 import type { QualityLevel } from '@/components/Chat/MediaPreview';
 import { GlassView } from '@/components/GlassView';
@@ -11,6 +11,7 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatThread, MessageType } from '@/models';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
+import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -36,8 +37,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Track focus state of the composer input so we can highlight the
   // outer container (`GlassView`) with a border that matches the app color.
   const [composerFocused, setComposerFocused] = useState(false);
-  // Animated value for focus border animation (0 = unfocused, 1 = focused)
-  const focusAnim = useRef(new Animated.Value(0)).current;
   // Reply state
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const inputRef = useRef<any>(null);
@@ -48,6 +47,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
   // Media processing state
   const [isProcessingMedia, setIsProcessingMedia] = useState(false);
+  // Location picker state
+  const [locationPickerVisible, setLocationPickerVisible] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -136,6 +137,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     if (!trimmed) {
       return;
     }
+    lightHaptic();
     setSending(true);
     try {
       // Build replyTo data if replying
@@ -150,6 +152,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         };
       }
       await sendMessage({ chatId: thread.chatId, content: trimmed, groupId: thread.groupId, replyTo: replyData });
+      successHaptic();
       setText('');
       setReplyingTo(null);
     } finally {
@@ -159,6 +162,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
   // Handle swipe reply from message bubble
   const handleSwipeReply = (message: ChatMessage) => {
+    lightHaptic();
     setReplyingTo(message);
     inputRef.current?.focus();
   };
@@ -171,8 +175,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     // Wait for menu close animation to finish before showing preview
     // This prevents modal conflict issues on iOS/Android
     setTimeout(() => {
-      setSelectedMedia(media);
-      setMediaPreviewVisible(true);
+      if (media.type === 'location') {
+        setLocationPickerVisible(true);
+      } else {
+        setSelectedMedia(media);
+        setMediaPreviewVisible(true);
+      }
     }, 500);
   };
 
@@ -272,6 +280,22 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       alert(error instanceof Error ? error.message : 'Failed to send media');
     } finally {
       setIsProcessingMedia(false);
+    }
+  };
+
+  // Handle sending location
+  const handleSendLocation = async (location: { latitude: number; longitude: number; address?: string }) => {
+    try {
+      await sendMessage({
+        chatId: thread.chatId,
+        content: '📍 Location',
+        type: 'location',
+        groupId: thread.groupId,
+        location: location,
+      });
+    } catch (error) {
+      console.error('Failed to send location:', error);
+      alert('Failed to send location');
     }
   };
 
@@ -439,14 +463,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               style={styles.attachButton}
               accessibilityLabel="Add attachment"
             />
-            <Animated.View
-            style={{
-              ...styles.composerAnimated,
-              borderWidth: focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 2] }),
-              borderColor: theme.colors.primary,
-              borderRadius: styles.composer.borderRadius,
-            }}
-          >
+            <View
+              style={[
+                styles.composerAnimated,
+                composerFocused && { borderWidth: 2, borderColor: theme.colors.primary },
+              ]}
+            >
             <GlassView style={styles.composer}>
               <TextInput
                 ref={inputRef}
@@ -460,14 +482,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 selectionColor={theme.colors.primary}
                 underlineColor="transparent"
                 activeUnderlineColor="transparent"
-                onFocus={() => {
-                  setComposerFocused(true);
-                  Animated.timing(focusAnim, { toValue: 1, duration: 150, useNativeDriver: false }).start();
-                }}
-                onBlur={() => {
-                  setComposerFocused(false);
-                  Animated.timing(focusAnim, { toValue: 0, duration: 150, useNativeDriver: false }).start();
-                }}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => setComposerFocused(false)}
                 multiline
                 numberOfLines={1}
                 maxLength={1000}
@@ -485,7 +501,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 keyboardAppearance={isDark ? 'dark' : 'light'}
               />
             </GlassView>
-          </Animated.View>
+          </View>
           <IconButton
             icon="send"
             mode="contained"
@@ -517,6 +533,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           setSelectedMedia(null);
         }}
         onSend={handleSendMedia}
+      />
+
+      {/* Location Picker Modal */}
+      <LocationPicker
+        visible={locationPickerVisible}
+        onClose={() => setLocationPickerVisible(false)}
+        onSendLocation={handleSendLocation}
       />
 
       {/* Processing Overlay */}
