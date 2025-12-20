@@ -63,7 +63,7 @@ export const MediaPreview = ({ media, visible, onClose, onSend }: MediaPreviewPr
   const [videoError, setVideoError] = useState(false);
 
   // Create video player for video media
-  const videoSource = media?.type === 'video' ? media.uri : null;
+  const videoSource = media?.type === 'video' ? media.uri : undefined;
   const player = useVideoPlayer(videoSource, (player) => {
     player.loop = false;
   });

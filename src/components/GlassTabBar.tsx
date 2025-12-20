@@ -44,6 +44,8 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
   const activeScale = useSharedValue(1);
 
   // Movement scale for stretch effect - derived without mutations
+  // Note: prevPosition is updated via useAnimatedReaction AFTER this calculation,
+  // which correctly gives us the delta between consecutive frames
   const movementScale = useDerivedValue(() => {
     const delta = Math.abs(indicatorPosition.value - prevPosition.value);
     // Stronger stretch for "liquid" feel
@@ -63,8 +65,8 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
   // Track dragging state in React state to avoid reading shared value during render
   const [isDraggingState, setIsDraggingState] = useState(false);
 
+  // Check if tab bar should be hidden - needs to be after all hooks per rules of hooks
   // @ts-ignore - tabBarStyle might not be fully typed in some versions or custom types
-  // Check if tab bar should be hidden - moved after all hooks to comply with rules of hooks
   const shouldHideTabBar = focusedOptions.tabBarStyle?.display === 'none';
 
   useEffect(() => {
