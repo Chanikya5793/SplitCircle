@@ -64,6 +64,9 @@ EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=...
 npm install
 ```
 
+**Important notes:**
+- `react-native-svg` is pinned to version `15.12.1` for compatibility with Expo SDK 54 and `react-native-chart-kit`. Do not upgrade without testing chart rendering.
+
 ## Running the App
 
 Local development via Expo:
@@ -75,10 +78,12 @@ npm run start
 Optional platform shortcuts:
 
 ```bash
-npm run android
-npm run ios
-npm run web
+npm run android  # Builds and runs on Android device/emulator
+npm run ios      # Builds and runs on iOS device/simulator
+npm run web      # Starts web development server
 ```
+
+**Note on `android` and `ios` scripts:** These use `expo run:android` and `expo run:ios` (instead of `expo start --android/ios`) because the app includes native modules (WebRTC, location services) that require native compilation. This means the commands will build the native app, which takes longer than just starting the Metro bundler. For faster development iterations with Expo Go, use `npm run start` and scan the QR code.
 
 The Metro bundler QR code can be scanned using Expo Go. Ensure your Firebase project allows the configured bundle IDs/package names.
 

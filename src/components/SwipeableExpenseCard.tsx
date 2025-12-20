@@ -119,7 +119,6 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 4,
   },
-  subtitle: {},
   amountContainer: {
     alignItems: 'flex-end',
     justifyContent: 'center',
