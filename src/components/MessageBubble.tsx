@@ -4,14 +4,19 @@ import type { ChatMessage, MessageStatus, MessageType } from '@/models';
 import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { formatRelativeTime } from '@/utils/format';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Audio, ResizeMode, Video } from 'expo-av';
+import { Audio } from 'expo-av';
 import { getContentUriAsync, getInfoAsync } from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View, ViewStyle } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
+
+// Lazy load MapView to prevent crashes in production builds
+const MapView = React.lazy(() => import('react-native-maps').then(mod => ({ default: mod.default })));
+const Marker = React.lazy(() => import('react-native-maps').then(mod => ({ default: mod.Marker })));
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -121,13 +126,42 @@ const MessageStatusIndicator = ({ status, isGroupChat, totalRecipients, delivere
   return <Ionicons name={name} size={size} color={color} style={{ marginLeft: 4 }} />;
 };
 
+// Video player component using expo-video
+interface VideoPlayerComponentProps {
+  uri: string;
+  style: ViewStyle | ViewStyle[];
+  showControls?: boolean;
+  showOverlay?: boolean;
+}
+
+const VideoPlayerComponent = ({ uri, style, showControls = true, showOverlay = false }: VideoPlayerComponentProps) => {
+  const player = useVideoPlayer(uri, (player) => {
+    player.loop = false;
+  });
+
+  return (
+    <View style={style}>
+      <VideoView
+        player={player}
+        style={{ width: '100%', height: '100%' }}
+        contentFit="cover"
+        nativeControls={showControls}
+      />
+      {showOverlay && (
+        <View style={styles.uploadingOverlay}>
+          <ActivityIndicator color="#fff" size="large" />
+        </View>
+      )}
+    </View>
+  );
+};
+
 export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, isGroupChat, totalRecipients }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
   const [imageLoading, setImageLoading] = useState(true);
   const [fullScreenVisible, setFullScreenVisible] = useState(false);
-  const videoRef = useRef<Video>(null);
   
   // Audio playback state
   const [sound, setSound] = useState<Audio.Sound | null>(null);
@@ -398,17 +432,12 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     // Show sending state
     if (message.status === 'sending' && mediaUri) {
       return (
-        <View style={[styles.mediaContainer, imageDimensions]}>
-          <Video
-            source={{ uri: mediaUri }}
-            style={[styles.mediaVideo, imageDimensions]}
-            resizeMode={ResizeMode.COVER}
-            shouldPlay={false}
-          />
-          <View style={styles.uploadingOverlay}>
-            <ActivityIndicator color="#fff" size="large" />
-          </View>
-        </View>
+        <VideoPlayerComponent
+          uri={mediaUri}
+          style={[styles.mediaContainer, styles.mediaVideo, imageDimensions]}
+          showControls={false}
+          showOverlay={true}
+        />
       );
     }
 
@@ -422,16 +451,15 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       );
     }
 
+    // Return null if no media URI available
+    if (!mediaUri) return null;
+
     return (
       <View style={[styles.mediaContainer, imageDimensions]}>
-        <Video
-          ref={videoRef}
-          source={{ uri: mediaUri }}
+        <VideoPlayerComponent
+          uri={mediaUri}
           style={[styles.mediaVideo, imageDimensions]}
-          resizeMode={ResizeMode.COVER}
-          useNativeControls
-          shouldPlay={false}
-          isLooping={false}
+          showControls={true}
         />
         {message.mediaMetadata?.duration && (
           <View style={styles.videoDuration}>
@@ -598,24 +626,71 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     );
   };
 
+  // Open location in maps app
+  const openLocation = () => {
+    if (!message.location) return;
+    const { latitude, longitude } = message.location;
+    const label = message.location.address || 'Location';
+    
+    const url = Platform.select({
+      ios: `maps:0,0?q=${label}@${latitude},${longitude}`,
+      android: `geo:0,0?q=${latitude},${longitude}(${label})`,
+    });
+    
+    if (url) Linking.openURL(url);
+  };
+
   // Location message
   const renderLocationContent = () => {
     if (!message.location) return null;
 
     return (
-      <View style={styles.locationContainer}>
-        <View style={[styles.locationPreview, { backgroundColor: isDark ? '#2a2a2a' : '#f0f0f0' }]}>
-          <Ionicons name="location" size={40} color={theme.colors.primary} />
+      <TouchableOpacity 
+        activeOpacity={0.9}
+        onPress={openLocation}
+        style={styles.locationContainer}
+      >
+        <View style={styles.locationPreview}>
+          <React.Suspense fallback={
+            <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
+              <Ionicons name="location" size={32} color={theme.colors.primary} />
+              <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4, fontSize: 12 }}>Loading map...</Text>
+            </View>
+          }>
+            <MapView
+              style={StyleSheet.absoluteFillObject}
+              initialRegion={{
+                latitude: message.location.latitude,
+                longitude: message.location.longitude,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+              }}
+              scrollEnabled={false}
+              zoomEnabled={false}
+              rotateEnabled={false}
+              pitchEnabled={false}
+              liteMode={Platform.OS === 'android'}
+            >
+              <Marker
+                coordinate={{
+                  latitude: message.location.latitude,
+                  longitude: message.location.longitude,
+                }}
+              />
+            </MapView>
+          </React.Suspense>
         </View>
         {message.location.address && (
-          <Text 
-            numberOfLines={2} 
-            style={[styles.locationAddress, { color: isMine ? '#fff' : theme.colors.onSurface }]}
-          >
-            {message.location.address}
-          </Text>
+          <View style={{ padding: 8, backgroundColor: isMine ? 'transparent' : (isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.5)') }}>
+            <Text 
+              numberOfLines={2} 
+              style={[styles.locationAddress, { color: isMine ? '#fff' : theme.colors.onSurface }]}
+            >
+              {message.location.address}
+            </Text>
+          </View>
         )}
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -966,10 +1041,16 @@ const styles = StyleSheet.create({
     height: 120,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.1)',
   },
   locationAddress: {
     fontSize: 13,
     padding: 8,
+  },
+  mapFallback: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.05)',
   },
   // Full screen image styles
   fullScreenContainer: {

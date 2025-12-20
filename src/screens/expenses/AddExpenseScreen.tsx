@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group, ParticipantShare, SplitType } from '@/models';
+import { selectionHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -112,6 +113,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   );
 
   const handleToggleMember = (userId: string) => {
+    selectionHaptic();
     setSelectedMembers((prev) => {
       if (prev.includes(userId)) {
         setCustomShares((shares) => {
@@ -217,6 +219,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       } else {
         await addExpense(group.groupId, expenseData, receiptUri || undefined, receiptName || undefined);
       }
+      successHaptic();
       onClose();
     } catch (error) {
       console.error('Failed to save expense:', error);

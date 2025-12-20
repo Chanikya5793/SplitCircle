@@ -1,11 +1,13 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useRef } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
-import { Avatar, Button, Divider, List, Switch, Text } from 'react-native-paper';
+import { Button, Divider, List, Switch, Text } from 'react-native-paper';
 
 export const SettingsScreen = () => {
   const navigation = useNavigation();
@@ -25,6 +27,16 @@ export const SettingsScreen = () => {
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
+
+  const handleToggleTheme = () => {
+    selectionHaptic();
+    toggleTheme();
+  };
+
+  const handleSignOut = () => {
+    lightHaptic();
+    signOutUser();
+  };
 
   return (
     <LiquidBackground>
@@ -47,15 +59,10 @@ export const SettingsScreen = () => {
         </View>
 
         <GlassView style={styles.profileCard}>
-          <Avatar.Text
-            size={64}
-            label={user?.displayName?.slice(0, 2).toUpperCase() ?? 'SC'}
-            style={{ backgroundColor: theme.colors.primaryContainer }}
-            color={theme.colors.onPrimaryContainer}
-          />
-          <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{user?.displayName}</Text>
+          <ProfilePhotoUploader size={80} editable />
+          <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface, marginTop: 12 }}>{user?.displayName}</Text>
           <Text style={{ color: theme.colors.secondary }}>{user?.email}</Text>
-          <Button mode="outlined" onPress={signOutUser} style={{ marginTop: 8 }}>
+          <Button mode="outlined" onPress={handleSignOut} style={{ marginTop: 12 }}>
             Sign out
           </Button>
         </GlassView>
@@ -65,7 +72,7 @@ export const SettingsScreen = () => {
             <List.Item
               title="Dark Mode"
               left={() => <List.Icon icon="theme-light-dark" />}
-              right={() => <Switch value={isDark} onValueChange={toggleTheme} />}
+              right={() => <Switch value={isDark} onValueChange={handleToggleTheme} />}
             />
             <Divider />
             <List.Item title="Push notifications" description="Managed automatically via device settings" left={() => <List.Icon icon="bell" />} />

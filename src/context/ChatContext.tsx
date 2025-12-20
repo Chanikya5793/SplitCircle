@@ -47,6 +47,11 @@ interface SendMessagePayload {
     content: string;
     type?: MessageType;
   };
+  location?: {
+    latitude: number;
+    longitude: number;
+    address?: string;
+  };
 }
 
 interface ChatContextValue {
@@ -207,7 +212,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   }, [user, threads]);
 
   const sendMessage = useCallback(
-    async ({ chatId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo }: SendMessagePayload) => {
+    async ({ chatId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo, location }: SendMessagePayload) => {
       if (!user) {
         throw new Error('Missing user for chat send');
       }
@@ -240,6 +245,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         ...(localMediaPath ? { localMediaPath, mediaDownloaded: true } : {}),
         ...(mediaMetadata ? { mediaMetadata } : {}),
         ...(replyTo ? { replyTo } : {}),
+        ...(location ? { location } : {}),
         status: 'sending', // Optimistic status
         createdAt: now,
         timestamp: now,

@@ -1,12 +1,12 @@
 import { GlassView } from '@/components/GlassView';
 import { useTheme } from '@/context/ThemeContext';
-import type { GroupExpense } from '@/models';
+import type { Expense } from '@/models';
 import { formatCurrency } from '@/utils/currency';
 import { StyleSheet, View } from 'react-native';
 import { IconButton, Text, TouchableRipple } from 'react-native-paper';
 
 interface ExpenseCardProps {
-  expense: GroupExpense;
+  expense: Expense;
   currency: string;
   memberMap: Record<string, string>;
   onPress: () => void;

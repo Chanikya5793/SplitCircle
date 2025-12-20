@@ -1,5 +1,6 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { AuthProvider } from '@/context/AuthContext';
+import { CallProvider } from '@/context/CallContext';
 import { ChatProvider } from '@/context/ChatContext';
 import { GroupProvider } from '@/context/GroupContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
@@ -18,10 +19,12 @@ function AppContent() {
       <AuthProvider>
         <GroupProvider>
           <ChatProvider>
-            <StatusBar style={isDark ? "light" : "dark"} />
-            <LiquidBackground>
-              <AppNavigator />
-            </LiquidBackground>
+            <CallProvider>
+              <StatusBar style={isDark ? "light" : "dark"} />
+              <LiquidBackground>
+                <AppNavigator />
+              </LiquidBackground>
+            </CallProvider>
           </ChatProvider>
         </GroupProvider>
       </AuthProvider>
