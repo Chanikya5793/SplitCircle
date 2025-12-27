@@ -10,9 +10,9 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Expense, Group } from '@/models';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useLayoutEffect, useMemo, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, StyleSheet, View } from 'react-native';
-import { Button, Text } from 'react-native-paper';
+import { Button, IconButton, Text } from 'react-native-paper';
 
 interface GroupDetailsScreenProps {
   group: Group;
@@ -26,6 +26,19 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
   const { deleteExpense, loading } = useGroups();
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const [isCompact, setIsCompact] = useState(false);
+
+  const labelOpacity = scrollY.interpolate({
+    inputRange: [0, 50],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+
+  const iconButtonOpacity = scrollY.interpolate({
+    inputRange: [50, 100],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -81,7 +94,13 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
         contentContainerStyle={styles.container}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: true }
+          { 
+            useNativeDriver: true,
+            listener: (event: any) => {
+              const y = event.nativeEvent.contentOffset.y;
+              setIsCompact(y > 50);
+            }
+          }
         )}
         scrollEventThrottle={16}
       >
@@ -127,33 +146,71 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
           ))
         )}
 
-        <View style={styles.actions}>
-          <Button mode="contained" onPress={() => onAddExpense(group)} style={{ flex: 1 }}>
-            Add expense
-          </Button>
-          <Button mode="outlined" onPress={() => onSettle(group)} style={{ flex: 1, borderColor: theme.colors.outline }}>
-            Settle up
-          </Button>
-        </View>
-        <View style={styles.secondaryActions}>
-          <Button
-            mode="outlined"
-            icon="chart-pie"
-            onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId })}
-            style={[styles.secondaryButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
-          >
-            Stats
-          </Button>
-          <Button
-            mode="outlined"
-            icon="chat"
-            onPress={() => onOpenChat(group)}
-            style={[styles.secondaryButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
-          >
-            Chat
-          </Button>
-        </View>
       </Animated.ScrollView>
+
+      <View style={[styles.floatingActions, { height: isCompact ? 56 : 120 }]}>
+        {/* Expanded buttons with labels - visible when not scrolled */}
+        <Animated.View style={[styles.expandedContainer, { opacity: labelOpacity }]} pointerEvents={isCompact ? 'none' : 'auto'}>
+          <View style={styles.buttonRow}>
+            <Button mode="contained" onPress={() => onAddExpense(group)} style={styles.expandedButton} icon="plus">
+              Add expense
+            </Button>
+            <Button mode="outlined" onPress={() => onSettle(group)} style={[styles.expandedButton, { borderColor: theme.colors.outline }]} icon="handshake">
+              Settle up
+            </Button>
+          </View>
+          <View style={styles.buttonRow}>
+            <Button
+              mode="outlined"
+              icon="chart-pie"
+              onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId })}
+              style={[styles.expandedButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
+            >
+              Stats
+            </Button>
+            <Button
+              mode="outlined"
+              icon="chat"
+              onPress={() => onOpenChat(group)}
+              style={[styles.expandedButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
+            >
+              Chat
+            </Button>
+          </View>
+        </Animated.View>
+
+        {/* Compact icon buttons - visible when scrolled */}
+        <Animated.View style={[styles.compactContainer, { opacity: iconButtonOpacity }]} pointerEvents={isCompact ? 'auto' : 'none'}>
+          <IconButton
+            icon="plus"
+            mode="contained"
+            onPress={() => onAddExpense(group)}
+            size={24}
+            style={styles.iconButton}
+          />
+          <IconButton
+            icon="handshake"
+            mode="outlined"
+            onPress={() => onSettle(group)}
+            size={24}
+            style={[styles.iconButton, { borderColor: theme.colors.outline }]}
+          />
+          <IconButton
+            icon="chart-pie"
+            mode="outlined"
+            onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId })}
+            size={24}
+            style={[styles.iconButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
+          />
+          <IconButton
+            icon="chat"
+            mode="outlined"
+            onPress={() => onOpenChat(group)}
+            size={24}
+            style={[styles.iconButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
+          />
+        </Animated.View>
+      </View>
     </LiquidBackground>
   );
 };
@@ -189,18 +246,36 @@ const styles = StyleSheet.create({
   empty: {
     // color handled dynamically
   },
-  actions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
+  floatingActions: {
+    position: 'absolute',
+    bottom: 90,
+    left: 16,
+    right: 16,
+  },
+  expandedContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
     gap: 12,
   },
-  secondaryActions: {
+  buttonRow: {
     flexDirection: 'row',
     gap: 12,
-    marginTop: 4,
   },
-  secondaryButton: {
+  expandedButton: {
+    flex: 1,
+  },
+  compactContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    gap: 16,
+  },
+  iconButton: {
     flex: 1,
   },
   stickyHeader: {
