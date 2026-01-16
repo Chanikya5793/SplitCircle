@@ -10,26 +10,47 @@ import { Avatar, Button, IconButton, Text, TextInput, TouchableRipple } from 're
 interface SettlementsScreenProps {
   group: Group;
   onClose: () => void;
+  settlementId?: string;
 }
 
-export const SettlementsScreen = ({ group, onClose }: SettlementsScreenProps) => {
-  const { settleUp } = useGroups();
+export const SettlementsScreen = ({ group, onClose, settlementId }: SettlementsScreenProps) => {
+  const { settleUp, updateSettlement } = useGroups();
   const { theme, isDark } = useTheme();
-  const [fromUserId, setFromUserId] = useState(group.members[0]?.userId ?? '');
-  const [toUserId, setToUserId] = useState(group.members[1]?.userId ?? '');
-  const [amount, setAmount] = useState('');
-  const [note, setNote] = useState('');
+
+  // Find existing settlement if editing
+  const existingSettlement = settlementId
+    ? group.settlements.find(s => s.settlementId === settlementId)
+    : undefined;
+
+  const [fromUserId, setFromUserId] = useState(existingSettlement?.fromUserId ?? group.members[0]?.userId ?? '');
+  const [toUserId, setToUserId] = useState(existingSettlement?.toUserId ?? group.members[1]?.userId ?? '');
+  const [amount, setAmount] = useState(existingSettlement?.amount.toString() ?? '');
+  const [note, setNote] = useState(existingSettlement?.note ?? '');
 
   const [showMemberSelector, setShowMemberSelector] = useState(false);
   const [selectionMode, setSelectionMode] = useState<'from' | 'to'>('from');
 
+  const isEditMode = !!settlementId && !!existingSettlement;
+
   const handleSettle = async () => {
-    await settleUp(group.groupId, {
-      fromUserId,
-      toUserId,
-      amount: Number(amount),
-      note,
-    });
+    if (isEditMode && existingSettlement) {
+      // Update existing settlement
+      await updateSettlement(group.groupId, {
+        ...existingSettlement,
+        fromUserId,
+        toUserId,
+        amount: Number(amount),
+        note,
+      });
+    } else {
+      // Create new settlement
+      await settleUp(group.groupId, {
+        fromUserId,
+        toUserId,
+        amount: Number(amount),
+        note,
+      });
+    }
     onClose();
   };
 
@@ -59,7 +80,9 @@ export const SettlementsScreen = ({ group, onClose }: SettlementsScreenProps) =>
     <LiquidBackground>
       <ScrollView contentContainerStyle={styles.container}>
         <GlassView style={styles.card}>
-          <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>Record settlement</Text>
+          <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
+            {isEditMode ? 'Edit settlement' : 'Record settlement'}
+          </Text>
 
           <TouchableRipple onPress={() => openSelector('from')} style={styles.touchableInput}>
             <View style={[styles.fakeInput, { borderColor: outlineColor, backgroundColor: inputTheme.colors.background }]}>
@@ -114,7 +137,7 @@ export const SettlementsScreen = ({ group, onClose }: SettlementsScreenProps) =>
               onPress={handleSettle}
               disabled={!amount || fromUserId === toUserId}
             >
-              Save settlement
+              {isEditMode ? 'Update settlement' : 'Save settlement'}
             </Button>
           </View>
         </GlassView>

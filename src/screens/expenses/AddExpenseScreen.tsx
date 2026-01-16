@@ -5,13 +5,14 @@ import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group, ParticipantShare, SplitType } from '@/models';
-import { selectionHaptic, successHaptic } from '@/utils/haptics';
+import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
+import { selectionHaptic, successHaptic, mediumHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
-import { Button, Chip, Dialog, HelperText, Menu, PaperProvider, Portal, SegmentedButtons, Text, TextInput, TouchableRipple } from 'react-native-paper';
+import { ActivityIndicator, Button, Chip, Dialog, HelperText, Menu, PaperProvider, Portal, SegmentedButtons, Text, TextInput, TouchableRipple } from 'react-native-paper';
 
 interface AddExpenseScreenProps {
   group: Group;
@@ -40,6 +41,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   const [showPayerDialog, setShowPayerDialog] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   const [showReceiptMenu, setShowReceiptMenu] = useState(false);
+  const [isProcessingOCR, setIsProcessingOCR] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -140,9 +142,50 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     });
 
     if (!result.canceled) {
-      setReceiptUri(result.assets[0].uri);
+      const uri = result.assets[0].uri;
+      setReceiptUri(uri);
       setReceiptType('image');
       setReceiptName(result.assets[0].fileName || 'image.jpg');
+
+      // Process OCR if not editing existing expense
+      if (!expenseId) {
+        await processReceiptOCR(uri);
+      }
+    }
+  };
+
+  const processReceiptOCR = async (imageUri: string) => {
+    setIsProcessingOCR(true);
+    try {
+      const ocrResult = await extractReceiptData(imageUri);
+      if (ocrResult.success && ocrResult.parsedData) {
+        mediumHaptic();
+        const { total, title: extractedTitle, date } = ocrResult.parsedData;
+
+        // Auto-fill fields if empty
+        if (total && !amount) {
+          setAmount(total.toFixed(2));
+        }
+        if (extractedTitle && !title) {
+          setTitle(extractedTitle);
+        }
+
+        // Infer category from OCR text
+        if (ocrResult.extractedText && category === 'General') {
+          const inferredCategory = inferCategoryFromText(ocrResult.extractedText);
+          setCategory(inferredCategory);
+        }
+
+        Alert.alert(
+          'Receipt Scanned',
+          `Found: ${total ? `$${total.toFixed(2)}` : 'No total'}${extractedTitle ? `, ${extractedTitle}` : ''}`,
+          [{ text: 'OK' }]
+        );
+      }
+    } catch (error) {
+      console.error('OCR processing error:', error);
+    } finally {
+      setIsProcessingOCR(false);
     }
   };
 

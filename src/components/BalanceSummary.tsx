@@ -32,8 +32,8 @@ export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 16,
-    gap: 12,
+    padding: 10,
+    gap: 6,
     borderRadius: 16,
   },
   title: {

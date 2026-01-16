@@ -4,17 +4,19 @@ import type { Group } from '@/models';
 import { formatCurrency } from '@/utils/currency';
 import { heavyHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
-import { Animated, StyleSheet, View } from 'react-native';
+import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text, TouchableRipple } from 'react-native-paper';
+import Animated, { FadeInRight } from 'react-native-reanimated';
 
 interface SwipeableGroupCardProps {
   group: Group;
   onPress?: () => void;
   onArchive?: (group: Group) => void;
+  index?: number;
 }
 
-export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive }: SwipeableGroupCardProps) => {
+export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, index = 0 }: SwipeableGroupCardProps) => {
   const { theme } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
   const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
@@ -25,8 +27,8 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive }: Swi
   };
 
   const renderRightActions = (
-    progress: Animated.AnimatedInterpolation<number>,
-    dragX: Animated.AnimatedInterpolation<number>
+    progress: RNAnimated.AnimatedInterpolation<number>,
+    dragX: RNAnimated.AnimatedInterpolation<number>
   ) => {
     const translateX = dragX.interpolate({
       inputRange: [-100, 0],
@@ -41,7 +43,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive }: Swi
     });
 
     return (
-      <Animated.View style={[styles.rightAction, { transform: [{ translateX }, { scale }] }]}>
+      <RNAnimated.View style={[styles.rightAction, { transform: [{ translateX }, { scale }] }]}>
         <RectButton
           style={[styles.archiveButton, { backgroundColor: theme.colors.tertiary || '#FF9500' }]}
           onPress={() => {
@@ -53,43 +55,45 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive }: Swi
           <IconButton icon="archive" iconColor="#fff" size={24} />
           <Text style={styles.actionText}>Archive</Text>
         </RectButton>
-      </Animated.View>
+      </RNAnimated.View>
     );
   };
 
   return (
-    <Swipeable
-      ref={swipeableRef}
-      renderRightActions={onArchive ? renderRightActions : undefined}
-      friction={2}
-      rightThreshold={40}
-      overshootRight={false}
-    >
-      <GlassView style={styles.container}>
-        <TouchableRipple onPress={handlePress} style={{ flex: 1 }}>
-          <View style={styles.content}>
-            <View style={styles.header}>
-              <Avatar.Text
-                size={48}
-                label={group.name.slice(0, 2).toUpperCase()}
-                style={{ backgroundColor: theme.colors.primaryContainer }}
-                color={theme.colors.onPrimaryContainer}
-              />
-              <View style={styles.meta}>
-                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{group.name}</Text>
-                <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
-                  {group.members.length} members · {group.currency}
-                </Text>
+    <Animated.View entering={FadeInRight.delay(index * 80).springify()}>
+      <Swipeable
+        ref={swipeableRef}
+        renderRightActions={onArchive ? renderRightActions : undefined}
+        friction={2}
+        rightThreshold={40}
+        overshootRight={false}
+      >
+        <GlassView style={styles.container}>
+          <TouchableRipple onPress={handlePress} style={{ flex: 1 }}>
+            <View style={styles.content}>
+              <View style={styles.header}>
+                <Avatar.Text
+                  size={48}
+                  label={group.name.slice(0, 2).toUpperCase()}
+                  style={{ backgroundColor: theme.colors.primaryContainer }}
+                  color={theme.colors.onPrimaryContainer}
+                />
+                <View style={styles.meta}>
+                  <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{group.name}</Text>
+                  <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
+                    {group.members.length} members · {group.currency}
+                  </Text>
+                </View>
+                <IconButton icon="chevron-right" onPress={handlePress} accessibilityLabel="Open group" iconColor={theme.colors.onSurfaceVariant} />
               </View>
-              <IconButton icon="chevron-right" onPress={handlePress} accessibilityLabel="Open group" iconColor={theme.colors.onSurfaceVariant} />
+              <Text variant="bodyMedium" style={[styles.total, { color: theme.colors.primary }]}>
+                Total spent {formatCurrency(total, group.currency)}
+              </Text>
             </View>
-            <Text variant="bodyMedium" style={[styles.total, { color: theme.colors.primary }]}>
-              Total spent {formatCurrency(total, group.currency)}
-            </Text>
-          </View>
-        </TouchableRipple>
-      </GlassView>
-    </Swipeable>
+          </TouchableRipple>
+        </GlassView>
+      </Swipeable>
+    </Animated.View>
   );
 });
 
@@ -109,6 +113,9 @@ const styles = StyleSheet.create({
   meta: {
     flex: 1,
     marginLeft: 12,
+  },
+  subtitle: {
+    // color handled dynamically
   },
   total: {
     marginTop: 12,

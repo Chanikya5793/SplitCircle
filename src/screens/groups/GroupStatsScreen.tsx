@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { SpendingChart } from '@/components/SpendingChart';
 import { useTheme } from '@/context/ThemeContext';
 import { Group } from '@/models';
 import { formatCurrency } from '@/utils/currency';
@@ -68,6 +69,9 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
   return (
     <LiquidBackground>
       <ScrollView contentContainerStyle={styles.container}>
+        {/* Spending Trend Chart */}
+        <SpendingChart expenses={group.expenses} currency={group.currency} showPieChart={false} />
+
         <GlassView style={styles.card}>
           <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
             Spending by Category
