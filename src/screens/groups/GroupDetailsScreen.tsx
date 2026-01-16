@@ -311,6 +311,17 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
           <View style={styles.actionGrid}>
             {/* Primary row */}
             <TouchableRipple
+              onPress={() => { lightHaptic(); onSettle(group); }}
+              style={styles.compactButton}
+              borderless
+            >
+              <View style={[styles.compactButtonInner, { backgroundColor: '#10b981' }]}>
+                <IconButton icon="handshake" size={20} iconColor="#fff" style={{ margin: 0 }} />
+                <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Settle Up</Text>
+              </View>
+            </TouchableRipple>
+
+            <TouchableRipple
               onPress={() => { lightHaptic(); onAddExpense(group); }}
               style={styles.compactButton}
               borderless
@@ -318,17 +329,6 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
               <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.primary }]}>
                 <IconButton icon="plus" size={20} iconColor="#fff" style={{ margin: 0 }} />
                 <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Add Expense</Text>
-              </View>
-            </TouchableRipple>
-
-            <TouchableRipple
-              onPress={() => { lightHaptic(); onSettle(group); }}
-              style={styles.compactButton}
-              borderless
-            >
-              <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.tertiary }]}>
-                <IconButton icon="handshake" size={20} iconColor="#fff" style={{ margin: 0 }} />
-                <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Settle Up</Text>
               </View>
             </TouchableRipple>
           </View>
@@ -374,13 +374,6 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
         {/* Compact icon buttons - visible when scrolled */}
         <Animated.View style={[styles.compactContainer, { opacity: iconButtonOpacity }]} pointerEvents={isCompact ? 'auto' : 'none'}>
           <IconButton
-            icon="plus"
-            mode="contained"
-            onPress={() => onAddExpense(group)}
-            size={24}
-            style={styles.iconButton}
-          />
-          <IconButton
             icon="handshake"
             mode="outlined"
             onPress={() => onSettle(group)}
@@ -407,6 +400,13 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
             onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId })}
             size={24}
             style={[styles.iconButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
+          />
+          <IconButton
+            icon="plus"
+            mode="contained"
+            onPress={() => onAddExpense(group)}
+            size={24}
+            style={styles.iconButton}
           />
         </Animated.View>
       </View>
