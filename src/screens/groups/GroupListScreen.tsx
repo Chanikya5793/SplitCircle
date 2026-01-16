@@ -105,10 +105,12 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       `Are you sure you want to archive "${group.name}"?`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Archive', style: 'destructive', onPress: () => {
-          // Future: archiveGroup(group.groupId);
-          Alert.alert('Coming Soon', 'Group archiving will be available in a future update.');
-        }},
+        {
+          text: 'Archive', style: 'destructive', onPress: () => {
+            // Future: archiveGroup(group.groupId);
+            Alert.alert('Coming Soon', 'Group archiving will be available in a future update.');
+          }
+        },
       ]
     );
   };
@@ -124,11 +126,12 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       <Animated.FlatList
         data={groups}
         keyExtractor={(item) => item.groupId}
-        renderItem={({ item }) => (
+        renderItem={({ item, index }) => (
           <SwipeableGroupCard
             group={item}
             onPress={() => onOpenGroup(item)}
             onArchive={handleArchive}
+            index={index}
           />
         )}
         contentContainerStyle={[

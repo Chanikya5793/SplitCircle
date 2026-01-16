@@ -2,7 +2,8 @@ import { GlassView } from '@/components/GlassView';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { formatCurrency } from '@/utils/currency';
-import { useState } from 'react';
+import { minimizeDebts, type Debt } from '@/utils/debtMinimizer';
+import { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Modal, Portal, Text } from 'react-native-paper';
 
@@ -10,54 +11,22 @@ interface DebtsListProps {
     group: Group;
 }
 
-interface Debt {
-    from: string;
-    to: string;
-    amount: number;
-}
-
 export const DebtsList = ({ group }: DebtsListProps) => {
     const { theme, isDark } = useTheme();
     const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
+    const [isCollapsed, setIsCollapsed] = useState(false);
 
-    // Simple debt calculation (not fully optimized for minimum transactions, but sufficient for display)
-    // This logic matches the "simplify debts" feature often found in splitwise apps
-    const calculateDebts = (): Debt[] => {
-        const balances = { ...group.members.reduce((acc, m) => ({ ...acc, [m.userId]: m.balance }), {} as Record<string, number>) };
-        const debts: Debt[] = [];
+    // Use the optimized debt minimization algorithm
+    const debts = useMemo(() => {
+        const balances = group.members.reduce(
+            (acc, m) => ({ ...acc, [m.userId]: m.balance }),
+            {} as Record<string, number>
+        );
+        return minimizeDebts(balances);
+    }, [group.members]);
 
-        const debtors = Object.keys(balances).filter(id => balances[id] < -0.01);
-        const creditors = Object.keys(balances).filter(id => balances[id] > 0.01);
-
-        // Sort by magnitude to settle largest debts first
-        debtors.sort((a, b) => balances[a] - balances[b]);
-        creditors.sort((a, b) => balances[b] - balances[a]);
-
-        let i = 0;
-        let j = 0;
-
-        while (i < debtors.length && j < creditors.length) {
-            const debtor = debtors[i];
-            const creditor = creditors[j];
-
-            const amount = Math.min(Math.abs(balances[debtor]), balances[creditor]);
-
-            if (amount > 0.01) {
-                debts.push({ from: debtor, to: creditor, amount });
-            }
-
-            balances[debtor] += amount;
-            balances[creditor] -= amount;
-
-            if (Math.abs(balances[debtor]) < 0.01) i++;
-            if (balances[creditor] < 0.01) j++;
-        }
-
-        return debts;
-    };
-
-    const debts = calculateDebts();
     const memberMap = Object.fromEntries(group.members.map(m => [m.userId, m]));
+
 
     const getBreakdown = (debt: Debt) => {
         const transactions: {
@@ -138,58 +107,72 @@ export const DebtsList = ({ group }: DebtsListProps) => {
     return (
         <>
             <GlassView style={styles.container}>
-                <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
-                    Who owes whom
-                </Text>
-                <View style={styles.list}>
-                    {debts.map((debt, index) => {
-                        const fromMember = memberMap[debt.from];
-                        const toMember = memberMap[debt.to];
+                <TouchableOpacity
+                    onPress={() => setIsCollapsed(!isCollapsed)}
+                    style={styles.headerRow}
+                    activeOpacity={0.7}
+                >
+                    <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
+                        Who owes whom
+                    </Text>
+                    <IconButton
+                        icon={isCollapsed ? 'chevron-down' : 'chevron-up'}
+                        size={20}
+                        iconColor={theme.colors.onSurfaceVariant}
+                        style={{ margin: 0 }}
+                    />
+                </TouchableOpacity>
 
-                        if (!fromMember || !toMember) return null;
+                {!isCollapsed && (
+                    <View style={styles.list}>
+                        {debts.map((debt, index) => {
+                            const fromMember = memberMap[debt.from];
+                            const toMember = memberMap[debt.to];
 
-                        return (
-                            <TouchableOpacity
-                                key={`${debt.from}-${debt.to}-${index}`}
-                                style={styles.row}
-                                onPress={() => setSelectedDebt(debt)}
-                                activeOpacity={0.7}
-                            >
-                                <View style={styles.member}>
-                                    <Avatar.Text
-                                        size={32}
-                                        label={fromMember.displayName.slice(0, 2).toUpperCase()}
-                                        style={{ backgroundColor: theme.colors.errorContainer }}
-                                        color={theme.colors.onErrorContainer}
-                                    />
-                                    <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                                        {fromMember.displayName}
-                                    </Text>
-                                </View>
+                            if (!fromMember || !toMember) return null;
 
-                                <View style={styles.amountContainer}>
-                                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>owes</Text>
-                                    <Text style={[styles.amount, { color: theme.colors.error }]}>
-                                        {formatCurrency(debt.amount, group.currency)}
-                                    </Text>
-                                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>to</Text>
-                                </View>
+                            return (
+                                <TouchableOpacity
+                                    key={`${debt.from}-${debt.to}-${index}`}
+                                    style={styles.row}
+                                    onPress={() => setSelectedDebt(debt)}
+                                    activeOpacity={0.7}
+                                >
+                                    <View style={styles.member}>
+                                        <Avatar.Text
+                                            size={28}
+                                            label={fromMember.displayName.slice(0, 2).toUpperCase()}
+                                            style={{ backgroundColor: theme.colors.errorContainer }}
+                                            color={theme.colors.onErrorContainer}
+                                        />
+                                        <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
+                                            {fromMember.displayName}
+                                        </Text>
+                                    </View>
 
-                                <View style={styles.member}>
-                                    <Avatar.Text
-                                        size={32}
-                                        label={toMember.displayName.slice(0, 2).toUpperCase()}
-                                        style={{ backgroundColor: theme.colors.primaryContainer }}
-                                        color={theme.colors.onPrimaryContainer}
-                                    />
-                                    <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                                        {toMember.displayName}
-                                    </Text>
-                                </View>
-                            </TouchableOpacity>
-                        );
-                    })}
-                </View>
+                                    <View style={styles.amountContainer}>
+                                        <Text style={[styles.amount, { color: theme.colors.error }]}>
+                                            {formatCurrency(debt.amount, group.currency)}
+                                        </Text>
+                                        <IconButton icon="arrow-right" size={16} iconColor={theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
+                                    </View>
+
+                                    <View style={styles.member}>
+                                        <Avatar.Text
+                                            size={28}
+                                            label={toMember.displayName.slice(0, 2).toUpperCase()}
+                                            style={{ backgroundColor: theme.colors.primaryContainer }}
+                                            color={theme.colors.onPrimaryContainer}
+                                        />
+                                        <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
+                                            {toMember.displayName}
+                                        </Text>
+                                    </View>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+                )}
             </GlassView>
 
             <Portal>
@@ -256,8 +239,14 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         marginBottom: 4,
     },
+    headerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 4,
+    },
     list: {
-        gap: 16,
+        gap: 10,
     },
     row: {
         flexDirection: 'row',
@@ -276,8 +265,8 @@ const styles = StyleSheet.create({
     },
     amountContainer: {
         alignItems: 'center',
-        paddingHorizontal: 8,
-        width: 100,
+        flexDirection: 'row',
+        gap: 4,
     },
     amount: {
         fontWeight: 'bold',

@@ -21,6 +21,7 @@ import { GroupDetailsScreen } from '@/screens/groups/GroupDetailsScreen';
 import { GroupInfoScreen } from '@/screens/groups/GroupInfoScreen';
 import { GroupListScreen } from '@/screens/groups/GroupListScreen';
 import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
+import { RecurringBillsScreen } from '@/screens/expenses/RecurringBillsScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -97,7 +98,7 @@ const SettlementsRoute = ({ route, navigation }: any) => {
   if (!group) {
     return <LoadingScreen />;
   }
-  return <SettlementsScreen group={group} onClose={() => navigation.goBack()} />;
+  return <SettlementsScreen group={group} onClose={() => navigation.goBack()} settlementId={route.params.settlementId} />;
 };
 
 const GroupStatsRoute = ({ route, navigation }: any) => {
@@ -106,6 +107,12 @@ const GroupStatsRoute = ({ route, navigation }: any) => {
     return <LoadingScreen />;
   }
   return <GroupStatsScreen group={group} />;
+};
+
+const RecurringBillsRoute = ({ route, navigation }: any) => {
+  const group = useGroupById(route.params.groupId);
+  if (!group) return <LoadingScreen />;
+  return <RecurringBillsScreen group={group} />;
 };
 
 const ChatListRoute = ({ navigation }: any) => (
@@ -184,6 +191,7 @@ const GroupStackNavigator = () => {
         options={{ presentation: 'modal', headerShown: false }}
       />
       <GroupStack.Screen name={ROUTES.APP.GROUP_STATS} component={GroupStatsRoute} options={{ title: 'Group Stats' }} />
+      <GroupStack.Screen name={ROUTES.APP.RECURRING_BILLS} component={RecurringBillsRoute} options={{ title: 'Recurring Bills' }} />
       <GroupStack.Screen
         name={ROUTES.APP.GROUP_CHAT}
         component={ChatRoomRoute}

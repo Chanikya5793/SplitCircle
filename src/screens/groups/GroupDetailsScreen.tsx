@@ -4,15 +4,16 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ExpenseCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableExpenseCard } from '@/components/SwipeableExpenseCard';
+import { SettlementCard } from '@/components/SettlementCard';
 import { ROUTES } from '@/constants';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { Expense, Group } from '@/models';
+import type { Expense, Group, Settlement } from '@/models';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, StyleSheet, View } from 'react-native';
-import { Button, IconButton, Text } from 'react-native-paper';
+import { Button, IconButton, Menu, Text, TouchableRipple } from 'react-native-paper';
 
 interface GroupDetailsScreenProps {
   group: Group;
@@ -23,10 +24,12 @@ interface GroupDetailsScreenProps {
 
 export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }: GroupDetailsScreenProps) => {
   const navigation = useNavigation<any>();
-  const { deleteExpense, loading } = useGroups();
+  const { deleteExpense, deleteSettlement, loading } = useGroups();
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
   const [isCompact, setIsCompact] = useState(false);
+  const [sortType, setSortType] = useState<'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'title'>('date-desc');
+  const [showSortMenu, setShowSortMenu] = useState(false);
 
   const labelOpacity = scrollY.interpolate({
     inputRange: [0, 50],
@@ -82,6 +85,99 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
     );
   };
 
+  const handleDeleteSettlement = (settlement: Settlement) => {
+    Alert.alert(
+      'Delete Settlement',
+      `Are you sure you want to delete this settlement?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteSettlement(group.groupId, settlement.settlementId);
+              errorHaptic();
+            } catch (error) {
+              console.error('Failed to delete settlement:', error);
+              Alert.alert('Error', 'Failed to delete settlement');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleEditSettlement = (settlement: Settlement) => {
+    // Navigate to settlements screen in edit mode
+    navigation.navigate(ROUTES.APP.SETTLEMENTS, {
+      groupId: group.groupId,
+      settlementId: settlement.settlementId
+    });
+  };
+
+  // Helper functions for sorting (must be defined before useMemo)
+  const getSortKey = (expense: Expense, sort: typeof sortType): number | string => {
+    switch (sort) {
+      case 'date-desc':
+      case 'date-asc':
+        return expense.createdAt;
+      case 'amount-desc':
+      case 'amount-asc':
+        return expense.amount;
+      case 'title':
+        return expense.title.toLowerCase();
+      default:
+        return expense.createdAt;
+    }
+  };
+
+  const getSettlementSortKey = (settlement: Settlement, sort: typeof sortType): number | string => {
+    switch (sort) {
+      case 'date-desc':
+      case 'date-asc':
+        return settlement.createdAt;
+      case 'amount-desc':
+      case 'amount-asc':
+        return settlement.amount;
+      case 'title':
+        return 'settlement'; // Group all settlements together when sorting by title
+      default:
+        return settlement.createdAt;
+    }
+  };
+
+  // Combined activity list (expenses + settlements)
+  type ActivityItem =
+    | { type: 'expense'; data: Expense; sortKey: number | string }
+    | { type: 'settlement'; data: Settlement; sortKey: number | string };
+
+  const sortedActivities = useMemo(() => {
+    const activities: ActivityItem[] = [
+      ...group.expenses.map(exp => ({
+        type: 'expense' as const,
+        data: exp,
+        sortKey: getSortKey(exp, sortType),
+      })),
+      ...group.settlements.map(set => ({
+        type: 'settlement' as const,
+        data: set,
+        sortKey: getSettlementSortKey(set, sortType),
+      })),
+    ];
+
+    return activities.sort((a, b) => {
+      if (typeof a.sortKey === 'number' && typeof b.sortKey === 'number') {
+        return sortType.includes('desc') ? b.sortKey - a.sortKey : a.sortKey - b.sortKey;
+      }
+      if (typeof a.sortKey === 'string' && typeof b.sortKey === 'string') {
+        return a.sortKey.localeCompare(b.sortKey);
+      }
+      return 0;
+    });
+  }, [group.expenses, group.settlements, sortType]);
+
+
   return (
     <LiquidBackground>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
@@ -94,7 +190,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
         contentContainerStyle={styles.container}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { 
+          {
             useNativeDriver: true,
             listener: (event: any) => {
               const y = event.nativeEvent.contentOffset.y;
@@ -104,7 +200,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
         )}
         scrollEventThrottle={16}
       >
-        <View style={{ height: 70 }} />
+        <View style={{ height: 40 }} />
         <GlassView style={styles.headerCard}>
           <View style={styles.header}>
             <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{group.name}</Text>
@@ -118,65 +214,161 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
 
         <DebtsList group={group} />
 
-        <Text variant="titleMedium" style={[styles.section, { color: theme.colors.onSurface }]}>
-          Recent expenses
-        </Text>
+        <View style={styles.sectionHeader}>
+          <Text variant="titleMedium" style={[styles.section, { color: theme.colors.onSurface }]}>
+            Recent activity
+          </Text>
+          <Menu
+            visible={showSortMenu}
+            onDismiss={() => setShowSortMenu(false)}
+            anchor={
+              <IconButton
+                icon="sort"
+                size={20}
+                onPress={() => setShowSortMenu(true)}
+                iconColor={theme.colors.onSurfaceVariant}
+              />
+            }
+          >
+            <Menu.Item
+              onPress={() => { setSortType('date-desc'); setShowSortMenu(false); }}
+              title="Date (newest first)"
+              leadingIcon={sortType === 'date-desc' ? 'check' : undefined}
+            />
+            <Menu.Item
+              onPress={() => { setSortType('date-asc'); setShowSortMenu(false); }}
+              title="Date (oldest first)"
+              leadingIcon={sortType === 'date-asc' ? 'check' : undefined}
+            />
+            <Menu.Item
+              onPress={() => { setSortType('amount-desc'); setShowSortMenu(false); }}
+              title="Amount (high to low)"
+              leadingIcon={sortType === 'amount-desc' ? 'check' : undefined}
+            />
+            <Menu.Item
+              onPress={() => { setSortType('amount-asc'); setShowSortMenu(false); }}
+              title="Amount (low to high)"
+              leadingIcon={sortType === 'amount-asc' ? 'check' : undefined}
+            />
+            <Menu.Item
+              onPress={() => { setSortType('title'); setShowSortMenu(false); }}
+              title="Title (A-Z)"
+              leadingIcon={sortType === 'title' ? 'check' : undefined}
+            />
+          </Menu>
+        </View>
+
         {loading ? (
           <View>
             <ExpenseCardSkeleton />
             <ExpenseCardSkeleton />
           </View>
-        ) : group.expenses.length === 0 ? (
+        ) : sortedActivities.length === 0 ? (
           <GlassView style={styles.emptyCard}>
-            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No expenses yet.</Text>
+            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No activity yet.</Text>
           </GlassView>
         ) : (
-          group.expenses.map((expense) => (
-            <SwipeableExpenseCard
-              key={expense.expenseId}
-              expense={expense}
-              currency={group.currency}
-              memberMap={memberMap}
-              onPress={() => {
-                lightHaptic();
-                navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, { groupId: group.groupId, expenseId: expense.expenseId });
-              }}
-              onDelete={handleDeleteExpense}
-            />
-          ))
+          sortedActivities.map((activity, index) => {
+            if (activity.type === 'expense') {
+              return (
+                <SwipeableExpenseCard
+                  key={`expense-${activity.data.expenseId}`}
+                  expense={activity.data}
+                  currency={group.currency}
+                  memberMap={memberMap}
+                  index={index}
+                  onPress={() => {
+                    lightHaptic();
+                    navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, {
+                      groupId: group.groupId,
+                      expenseId: activity.data.expenseId
+                    });
+                  }}
+                  onDelete={handleDeleteExpense}
+                />
+              );
+            } else {
+              return (
+                <SettlementCard
+                  key={`settlement-${activity.data.settlementId}`}
+                  settlement={activity.data}
+                  currency={group.currency}
+                  memberMap={memberMap}
+                  index={index}
+                  onPress={() => handleEditSettlement(activity.data)}
+                  onDelete={handleDeleteSettlement}
+                />
+              );
+            }
+          })
         )}
 
       </Animated.ScrollView>
 
-      <View style={[styles.floatingActions, { height: isCompact ? 56 : 120 }]}>
-        {/* Expanded buttons with labels - visible when not scrolled */}
+      <View style={[styles.floatingActions, { height: isCompact ? 56 : 100 }]}>
+        {/* Expanded buttons - compact and appealing */}
         <Animated.View style={[styles.expandedContainer, { opacity: labelOpacity }]} pointerEvents={isCompact ? 'none' : 'auto'}>
-          <View style={styles.buttonRow}>
-            <Button mode="contained" onPress={() => onAddExpense(group)} style={styles.expandedButton} icon="plus">
-              Add expense
-            </Button>
-            <Button mode="outlined" onPress={() => onSettle(group)} style={[styles.expandedButton, { borderColor: theme.colors.outline }]} icon="handshake">
-              Settle up
-            </Button>
-          </View>
-          <View style={styles.buttonRow}>
-            <Button
-              mode="outlined"
-              icon="chart-pie"
-              onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId })}
-              style={[styles.expandedButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
+          <View style={styles.actionGrid}>
+            {/* Primary row */}
+            <TouchableRipple
+              onPress={() => { lightHaptic(); onAddExpense(group); }}
+              style={styles.compactButton}
+              borderless
             >
-              Stats
-            </Button>
-            <Button
-              mode="outlined"
-              icon="chat"
-              onPress={() => onOpenChat(group)}
-              style={[styles.expandedButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
+              <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.primary }]}>
+                <IconButton icon="plus" size={20} iconColor="#fff" style={{ margin: 0 }} />
+                <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Add Expense</Text>
+              </View>
+            </TouchableRipple>
+
+            <TouchableRipple
+              onPress={() => { lightHaptic(); onSettle(group); }}
+              style={styles.compactButton}
+              borderless
             >
-              Chat
-            </Button>
+              <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.tertiary }]}>
+                <IconButton icon="handshake" size={20} iconColor="#fff" style={{ margin: 0 }} />
+                <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Settle Up</Text>
+              </View>
+            </TouchableRipple>
           </View>
+
+          {/* Secondary row */}
+          <View style={styles.actionGrid}>
+            <TouchableRipple
+              onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId }); }}
+              style={styles.compactButtonSmall}
+              borderless
+            >
+              <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }]}>
+                <IconButton icon="chart-pie" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
+              </View>
+            </TouchableRipple>
+
+            <TouchableRipple
+              onPress={() => { lightHaptic(); onOpenChat(group); }}
+              style={styles.compactButtonSmall}
+              borderless
+            >
+              <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }]}>
+                <IconButton icon="chat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
+              </View>
+            </TouchableRipple>
+
+            <TouchableRipple
+              onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId }); }}
+              style={styles.compactButtonSmall}
+              borderless
+            >
+              <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }]}>
+                <IconButton icon="repeat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
+              </View>
+            </TouchableRipple>
+          </View>
+
         </Animated.View>
 
         {/* Compact icon buttons - visible when scrolled */}
@@ -209,6 +401,13 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
             size={24}
             style={[styles.iconButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
           />
+          <IconButton
+            icon="repeat"
+            mode="outlined"
+            onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId })}
+            size={24}
+            style={[styles.iconButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
+          />
         </Animated.View>
       </View>
     </LiquidBackground>
@@ -217,26 +416,33 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
 
 const styles = StyleSheet.create({
   container: {
-    padding: 16,
+    padding: 8,
     paddingBottom: 180,
-    gap: 16,
+    gap: 8,
   },
   headerCard: {
-    padding: 16,
-    borderRadius: 24,
+    padding: 10,
+    borderRadius: 16,
   },
   header: {
-    marginBottom: 12,
+    marginBottom: 6,
     alignItems: 'center',
   },
   subtitle: {
     marginTop: 4,
   },
   section: {
-    marginTop: 8,
+    marginTop: 4,
     marginBottom: 4,
     marginLeft: 8,
     fontWeight: 'bold',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+    marginBottom: 4,
   },
   emptyCard: {
     padding: 24,
@@ -257,14 +463,43 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    gap: 12,
+    gap: 8,
+    paddingHorizontal: 4,
   },
-  buttonRow: {
+  actionGrid: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 8,
   },
-  expandedButton: {
+  compactButton: {
     flex: 1,
+    borderRadius: 14,
+    overflow: 'hidden',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+  },
+  compactButtonInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 4,
+  },
+  compactButtonSmall: {
+    flex: 1,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  compactButtonSmallInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    gap: 2,
   },
   compactContainer: {
     position: 'absolute',
