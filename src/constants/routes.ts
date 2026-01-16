@@ -20,6 +20,7 @@ export const ROUTES = {
     CALLS: 'Calls',
     CALL_DETAIL: 'CallDetail',
     EXPENSE_DETAILS: 'ExpenseDetails',
+    RECURRING_BILLS: 'RecurringBills',
     GROUP_STATS: 'GroupStats',
     SETTINGS: 'Settings',
     PROFILE: 'Profile',

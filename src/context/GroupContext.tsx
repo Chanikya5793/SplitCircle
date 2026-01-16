@@ -3,18 +3,18 @@ import type { ChatMessage, ChatParticipant, Expense, Group, ParticipantShare, Se
 import { queueMessage } from '@/services/messageQueueService';
 import { deleteFile, uploadFile } from '@/services/storageService';
 import {
-    addDoc,
-    arrayUnion,
-    collection,
-    deleteDoc,
-    doc,
-    getDocs,
-    onSnapshot,
-    query,
-    serverTimestamp,
-    setDoc,
-    updateDoc,
-    where,
+  addDoc,
+  arrayUnion,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
 } from 'firebase/firestore';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { v4 as uuid } from 'uuid';
@@ -29,6 +29,8 @@ interface GroupContextValue {
   updateExpense: (groupId: string, expense: Expense, newFileUri?: string | null, newFileName?: string) => Promise<void>;
   deleteExpense: (groupId: string, expenseId: string) => Promise<void>;
   settleUp: (groupId: string, settlement: Omit<Settlement, 'settlementId' | 'createdAt' | 'status'>) => Promise<void>;
+  updateSettlement: (groupId: string, settlement: Settlement) => Promise<void>;
+  deleteSettlement: (groupId: string, settlementId: string) => Promise<void>;
 }
 
 const GroupContext = createContext<GroupContextValue | undefined>(undefined);
@@ -401,8 +403,46 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     });
   };
 
+  const updateSettlement = async (groupId: string, updatedSettlement: Settlement) => {
+    try {
+      const group = groups.find((g) => g.groupId === groupId);
+      if (!group) throw new Error('Group not found');
+
+      const updatedSettlements = group.settlements.map((settlement) =>
+        settlement.settlementId === updatedSettlement.settlementId ? updatedSettlement : settlement
+      );
+
+      const docRef = doc(db, 'groups', groupId);
+      await updateDoc(docRef, {
+        settlements: updatedSettlements,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error('Error updating settlement:', error);
+      throw error;
+    }
+  };
+
+  const deleteSettlement = async (groupId: string, settlementId: string) => {
+    try {
+      const group = groups.find((g) => g.groupId === groupId);
+      if (!group) throw new Error('Group not found');
+
+      const updatedSettlements = group.settlements.filter((s) => s.settlementId !== settlementId);
+
+      const docRef = doc(db, 'groups', groupId);
+      await updateDoc(docRef, {
+        settlements: updatedSettlements,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error('Error deleting settlement:', error);
+      throw error;
+    }
+  };
+
   const value = useMemo(
-    () => ({ groups, loading, createGroup, joinGroup, addExpense, updateExpense, deleteExpense, settleUp }),
+    () => ({ groups, loading, createGroup, joinGroup, addExpense, updateExpense, deleteExpense, settleUp, updateSettlement, deleteSettlement }),
     [groups, loading],
   );
 

@@ -1,5 +1,5 @@
 import { useTheme } from '@/context/ThemeContext';
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Dimensions, StyleSheet, View, ViewStyle } from 'react-native';
 import Animated, {
   Easing,
@@ -13,10 +13,27 @@ import Animated, {
 
 const { width, height } = Dimensions.get('window');
 
+export type HealthStatus = 'settled' | 'balanced' | 'debts';
+
 interface LiquidBackgroundProps {
   children: React.ReactNode;
   style?: ViewStyle;
+  healthStatus?: HealthStatus;
 }
+
+// Color palettes for different health statuses
+const COLOR_PALETTES = {
+  light: {
+    settled: ['#84fab0', '#a8edea', '#b8f6e6', '#c6f6d5'],
+    balanced: ['#ff9a9e', '#fad0c4', '#a18cd1', '#84fab0'],
+    debts: ['#ff6b6b', '#ffa07a', '#ff7f50', '#ff8c00'],
+  },
+  dark: {
+    settled: ['#00695C', '#00897B', '#26A69A', '#4DB6AC'],
+    balanced: ['#4527A0', '#283593', '#00695C', '#C62828'],
+    debts: ['#B71C1C', '#C62828', '#D84315', '#E65100'],
+  },
+};
 
 const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY }: any) => {
   const scaleSv = useSharedValue(1);
@@ -96,11 +113,14 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY }
   );
 };
 
-export const LiquidBackground = ({ children, style }: LiquidBackgroundProps) => {
-  const { themeProgress } = useTheme();
+export const LiquidBackground = ({ children, style, healthStatus = 'balanced' }: LiquidBackgroundProps) => {
+  const { themeProgress, isDark } = useTheme();
 
-  const lightBlobColors = ['#ff9a9e', '#fad0c4', '#a18cd1', '#84fab0'];
-  const darkBlobColors = ['#4527A0', '#283593', '#00695C', '#C62828'];
+  // Memoize color selection based on health status
+  const { lightBlobColors, darkBlobColors } = useMemo(() => ({
+    lightBlobColors: COLOR_PALETTES.light[healthStatus],
+    darkBlobColors: COLOR_PALETTES.dark[healthStatus],
+  }), [healthStatus]);
 
   const containerStyle = useAnimatedStyle(() => {
     const backgroundColor = interpolateColor(
