@@ -13,7 +13,12 @@ import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, StyleSheet, View } from 'react-native';
-import { Button, IconButton, Menu, Text, TouchableRipple } from 'react-native-paper';
+import {
+  withSequence,
+  withTiming
+} from 'react-native-reanimated';
+import { BlurView } from 'expo-blur';
+import { Text, TouchableRipple, Button, IconButton, Menu } from 'react-native-paper';
 
 interface GroupDetailsScreenProps {
   group: Group;
@@ -305,7 +310,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
 
       </Animated.ScrollView>
 
-      <View style={[styles.floatingActions, { height: isCompact ? 56 : 100 }]}>
+      <View style={[styles.floatingActions, { height: isCompact ? 56 : 80 }]}>
         {/* Expanded buttons - compact and appealing */}
         <Animated.View style={[styles.expandedContainer, { opacity: labelOpacity }]} pointerEvents={isCompact ? 'none' : 'auto'}>
           <View style={styles.actionGrid}>
@@ -340,9 +345,12 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
               style={styles.compactButtonSmall}
               borderless
             >
-              <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }]}>
-                <IconButton icon="chart-pie" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
-                <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
+              <View style={{ flex: 1 }}>
+                <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+                <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
+                  <IconButton icon="chart-pie" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
+                </View>
               </View>
             </TouchableRipple>
 
@@ -351,9 +359,12 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
               style={styles.compactButtonSmall}
               borderless
             >
-              <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }]}>
-                <IconButton icon="chat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
-                <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
+              <View style={{ flex: 1 }}>
+                <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+                <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
+                  <IconButton icon="chat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
+                </View>
               </View>
             </TouchableRipple>
 
@@ -362,9 +373,12 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
               style={styles.compactButtonSmall}
               borderless
             >
-              <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }]}>
-                <IconButton icon="repeat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
-                <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
+              <View style={{ flex: 1 }}>
+                <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+                <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
+                  <IconButton icon="repeat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
+                </View>
               </View>
             </TouchableRipple>
           </View>
@@ -472,7 +486,7 @@ const styles = StyleSheet.create({
   },
   compactButton: {
     flex: 1,
-    borderRadius: 14,
+    borderRadius: 50,
     overflow: 'hidden',
     elevation: 2,
     shadowColor: '#000',
@@ -484,21 +498,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     gap: 4,
   },
   compactButtonSmall: {
     flex: 1,
-    borderRadius: 12,
+    borderRadius: 50,
     overflow: 'hidden',
   },
   compactButtonSmallInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
     gap: 2,
   },
   compactContainer: {
