@@ -5,6 +5,7 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { ExpenseCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableExpenseCard } from '@/components/SwipeableExpenseCard';
 import { SettlementCard } from '@/components/SettlementCard';
+import { FilterSortSheet, SortField, SortOrder, ActivityTypeFilter, DateRange } from '@/components/FilterSortSheet';
 import { ROUTES } from '@/constants';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -18,7 +19,7 @@ import {
   withTiming
 } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
-import { Text, TouchableRipple, Button, IconButton, Menu } from 'react-native-paper';
+import { Text, TouchableRipple, Button, IconButton } from 'react-native-paper';
 
 interface GroupDetailsScreenProps {
   group: Group;
@@ -33,8 +34,12 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
   const [isCompact, setIsCompact] = useState(false);
-  const [sortType, setSortType] = useState<'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'title'>('date-desc');
-  const [showSortMenu, setShowSortMenu] = useState(false);
+  const [showFilterSheet, setShowFilterSheet] = useState(false);
+  const [sortField, setSortField] = useState<SortField>('date');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [activityType, setActivityType] = useState<ActivityTypeFilter>('all');
+  const [dateRange, setDateRange] = useState<DateRange>('all');
 
   const labelOpacity = scrollY.interpolate({
     inputRange: [0, 50],
@@ -121,14 +126,12 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
     });
   };
 
-  // Helper functions for sorting (must be defined before useMemo)
-  const getSortKey = (expense: Expense, sort: typeof sortType): number | string => {
-    switch (sort) {
-      case 'date-desc':
-      case 'date-asc':
+  // Helper functions for sorting
+  const getSortKey = (expense: Expense): number | string => {
+    switch (sortField) {
+      case 'date':
         return expense.createdAt;
-      case 'amount-desc':
-      case 'amount-asc':
+      case 'amount':
         return expense.amount;
       case 'title':
         return expense.title.toLowerCase();
@@ -137,13 +140,11 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
     }
   };
 
-  const getSettlementSortKey = (settlement: Settlement, sort: typeof sortType): number | string => {
-    switch (sort) {
-      case 'date-desc':
-      case 'date-asc':
+  const getSettlementSortKey = (settlement: Settlement): number | string => {
+    switch (sortField) {
+      case 'date':
         return settlement.createdAt;
-      case 'amount-desc':
-      case 'amount-asc':
+      case 'amount':
         return settlement.amount;
       case 'title':
         return 'settlement'; // Group all settlements together when sorting by title
@@ -152,35 +153,96 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
     }
   };
 
-  // Combined activity list (expenses + settlements)
+  const handleCategoryToggle = (category: string) => {
+    if (category === 'all') {
+      setSelectedCategories([]);
+    } else {
+      setSelectedCategories(prev =>
+        prev.includes(category)
+          ? prev.filter(c => c !== category)
+          : [...prev, category]
+      );
+    }
+  };
+
+  // Check date range helper
+  const checkDateRange = (dateString: string | number) => {
+    if (dateRange === 'all') return true;
+
+    const timestamp = typeof dateString === 'string' ? new Date(dateString).getTime() : dateString;
+    const date = new Date(timestamp);
+    const now = new Date();
+
+    // Clear time part for accurate date comparison
+    date.setHours(0, 0, 0, 0);
+    now.setHours(0, 0, 0, 0);
+
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+    const startOf3MonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+
+    switch (dateRange) {
+      case 'this-month':
+        return date >= startOfMonth;
+      case 'last-month':
+        return date >= startOfLastMonth && date <= endOfLastMonth;
+      case 'last-3-months':
+        return date >= startOf3MonthsAgo;
+      default:
+        return true;
+    }
+  };
+
+  // Combined activity list (expenses + settlements) with filtering
   type ActivityItem =
     | { type: 'expense'; data: Expense; sortKey: number | string }
     | { type: 'settlement'; data: Settlement; sortKey: number | string };
 
   const sortedActivities = useMemo(() => {
-    const activities: ActivityItem[] = [
-      ...group.expenses.map(exp => ({
-        type: 'expense' as const,
-        data: exp,
-        sortKey: getSortKey(exp, sortType),
-      })),
-      ...group.settlements.map(set => ({
-        type: 'settlement' as const,
-        data: set,
-        sortKey: getSettlementSortKey(set, sortType),
-      })),
-    ];
+    // Filter expenses by category
+    const filteredExpenses = selectedCategories.length === 0
+      ? group.expenses
+      : group.expenses.filter(exp => selectedCategories.includes(exp.category.toLowerCase()));
 
+    // Filter by date range
+    const dateFilteredExpenses = filteredExpenses.filter(exp => checkDateRange(exp.createdAt));
+    const dateFilteredSettlements = group.settlements.filter(set => checkDateRange(set.createdAt));
+
+    // Build activity list based on activity type filter
+    let activities: ActivityItem[] = [];
+    if (activityType === 'all' || activityType === 'expenses') {
+      activities = [
+        ...activities,
+        ...dateFilteredExpenses.map(exp => ({
+          type: 'expense' as const,
+          data: exp,
+          sortKey: getSortKey(exp),
+        })),
+      ];
+    }
+    if (activityType === 'all' || activityType === 'settlements') {
+      activities = [
+        ...activities,
+        ...dateFilteredSettlements.map(set => ({
+          type: 'settlement' as const,
+          data: set,
+          sortKey: getSettlementSortKey(set),
+        })),
+      ];
+    }
+
+    // Sort activities
     return activities.sort((a, b) => {
       if (typeof a.sortKey === 'number' && typeof b.sortKey === 'number') {
-        return sortType.includes('desc') ? b.sortKey - a.sortKey : a.sortKey - b.sortKey;
+        return sortOrder === 'desc' ? b.sortKey - a.sortKey : a.sortKey - b.sortKey;
       }
       if (typeof a.sortKey === 'string' && typeof b.sortKey === 'string') {
-        return a.sortKey.localeCompare(b.sortKey);
+        return sortOrder === 'desc' ? b.sortKey.localeCompare(a.sortKey) : a.sortKey.localeCompare(b.sortKey);
       }
       return 0;
     });
-  }, [group.expenses, group.settlements, sortType]);
+  }, [group.expenses, group.settlements, sortField, sortOrder, selectedCategories, activityType, dateRange]);
 
 
   return (
@@ -223,44 +285,33 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
           <Text variant="titleMedium" style={[styles.section, { color: theme.colors.onSurface }]}>
             Recent activity
           </Text>
-          <Menu
-            visible={showSortMenu}
-            onDismiss={() => setShowSortMenu(false)}
-            anchor={
-              <IconButton
-                icon="sort"
-                size={20}
-                onPress={() => setShowSortMenu(true)}
-                iconColor={theme.colors.onSurfaceVariant}
-              />
-            }
+          <TouchableRipple
+            onPress={() => { lightHaptic(); setShowFilterSheet(true); }}
+            style={[
+              styles.filterButton,
+              { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }
+            ]}
+            borderless
           >
-            <Menu.Item
-              onPress={() => { setSortType('date-desc'); setShowSortMenu(false); }}
-              title="Date (newest first)"
-              leadingIcon={sortType === 'date-desc' ? 'check' : undefined}
-            />
-            <Menu.Item
-              onPress={() => { setSortType('date-asc'); setShowSortMenu(false); }}
-              title="Date (oldest first)"
-              leadingIcon={sortType === 'date-asc' ? 'check' : undefined}
-            />
-            <Menu.Item
-              onPress={() => { setSortType('amount-desc'); setShowSortMenu(false); }}
-              title="Amount (high to low)"
-              leadingIcon={sortType === 'amount-desc' ? 'check' : undefined}
-            />
-            <Menu.Item
-              onPress={() => { setSortType('amount-asc'); setShowSortMenu(false); }}
-              title="Amount (low to high)"
-              leadingIcon={sortType === 'amount-asc' ? 'check' : undefined}
-            />
-            <Menu.Item
-              onPress={() => { setSortType('title'); setShowSortMenu(false); }}
-              title="Title (A-Z)"
-              leadingIcon={sortType === 'title' ? 'check' : undefined}
-            />
-          </Menu>
+            <View style={styles.filterButtonContent}>
+              <IconButton
+                icon="filter-variant"
+                size={18}
+                iconColor={theme.colors.primary}
+                style={{ margin: 0 }}
+              />
+              <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                Filter & Sort
+              </Text>
+              {(selectedCategories.length > 0 || activityType !== 'all' || dateRange !== 'all') && (
+                <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary }]}>
+                  <Text variant="labelSmall" style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
+                    {selectedCategories.length + (activityType !== 'all' ? 1 : 0) + (dateRange !== 'all' ? 1 : 0)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </TouchableRipple>
         </View>
 
         {loading ? (
@@ -424,6 +475,21 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
           />
         </Animated.View>
       </View>
+
+      <FilterSortSheet
+        visible={showFilterSheet}
+        onClose={() => setShowFilterSheet(false)}
+        sortField={sortField}
+        sortOrder={sortOrder}
+        selectedCategories={selectedCategories}
+        activityType={activityType}
+        dateRange={dateRange}
+        onSortFieldChange={setSortField}
+        onSortOrderChange={setSortOrder}
+        onCategoryToggle={handleCategoryToggle}
+        onActivityTypeChange={setActivityType}
+        onDateRangeChange={setDateRange}
+      />
     </LiquidBackground>
   );
 };
@@ -547,4 +613,24 @@ const styles = StyleSheet.create({
   stickyHeaderTitle: {
     fontWeight: 'bold',
   },
+  filterButton: {
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  filterButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    gap: 4,
+  },
+  filterBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
+  },
 });
+
