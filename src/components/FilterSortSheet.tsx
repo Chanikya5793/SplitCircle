@@ -103,17 +103,17 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
     if (!visible) return null;
 
     return (
-        <Modal transparent visible={visible} animationType="slide" onRequestClose={onClose}>
+        <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
             <View style={styles.overlay}>
                 <Pressable style={styles.backdrop} onPress={onClose} />
 
-                <View style={styles.sheetContainer}>
+                <Animated.View entering={SlideInDown.springify().damping(30).stiffness(350).mass(1)} style={styles.sheetContainer}>
                     <BlurView
                         intensity={80}
                         tint={isDark ? 'dark' : 'light'}
                         style={StyleSheet.absoluteFill}
                     />
-                    <View style={[styles.sheet, { backgroundColor: isDark ? 'rgba(30,30,40,0.7)' : 'rgba(255,255,255,0.8)' }]}>
+                    <View style={[styles.sheet, { backgroundColor: isDark ? 'rgba(30,30,40,0.35)' : 'rgba(255,255,255,0.4)' }]}>
                         {/* Handle bar */}
                         <View style={styles.handleContainer}>
                             <View style={[styles.handle, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)' }]} />
@@ -218,7 +218,7 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                             </View>
                         </ScrollView>
                     </View>
-                </View>
+                </Animated.View>
             </View>
         </Modal>
     );
@@ -238,6 +238,9 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 28,
         borderTopRightRadius: 28,
         overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.15)',
+        borderBottomWidth: 0,
     },
     blurView: {
         flex: 1,
