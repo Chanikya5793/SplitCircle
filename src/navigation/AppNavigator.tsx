@@ -98,7 +98,16 @@ const SettlementsRoute = ({ route, navigation }: any) => {
   if (!group) {
     return <LoadingScreen />;
   }
-  return <SettlementsScreen group={group} onClose={() => navigation.goBack()} settlementId={route.params.settlementId} />;
+  return (
+    <SettlementsScreen
+      group={group}
+      onClose={() => navigation.goBack()}
+      settlementId={route.params.settlementId}
+      initialFromUserId={route.params.initialFromUserId}
+      initialToUserId={route.params.initialToUserId}
+      initialAmount={route.params.initialAmount}
+    />
+  );
 };
 
 const GroupStatsRoute = ({ route, navigation }: any) => {

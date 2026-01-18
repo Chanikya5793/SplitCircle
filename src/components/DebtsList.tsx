@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { ROUTES } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { formatCurrency } from '@/utils/currency';
@@ -6,6 +7,7 @@ import { minimizeDebts, type Debt } from '@/utils/debtMinimizer';
 import { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Modal, Portal, Text } from 'react-native-paper';
+import { useNavigation } from '@react-navigation/native';
 
 interface DebtsListProps {
     group: Group;
@@ -13,6 +15,7 @@ interface DebtsListProps {
 
 export const DebtsList = ({ group }: DebtsListProps) => {
     const { theme, isDark } = useTheme();
+    const navigation = useNavigation<any>();
     const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
     const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -168,6 +171,21 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                                             {toMember.displayName}
                                         </Text>
                                     </View>
+
+                                    <IconButton
+                                        icon="handshake"
+                                        size={20}
+                                        iconColor={theme.colors.primary}
+                                        style={{ margin: 0, marginLeft: 8 }}
+                                        onPress={() => {
+                                            navigation.navigate(ROUTES.APP.SETTLEMENTS, {
+                                                groupId: group.groupId,
+                                                initialFromUserId: debt.from,
+                                                initialToUserId: debt.to,
+                                                initialAmount: debt.amount,
+                                            });
+                                        }}
+                                    />
                                 </TouchableOpacity>
                             );
                         })}
