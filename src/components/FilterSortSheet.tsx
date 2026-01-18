@@ -122,7 +122,7 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                         {/* Header */}
                         <View style={styles.header}>
                             <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                                Filter & Sort
+                                Filters
                             </Text>
                             <IconButton
                                 icon="close"
@@ -142,7 +142,7 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                                     <Chip label="Date" selected={sortField === 'date'} onPress={() => onSortFieldChange('date')} icon="calendar" />
                                     <Chip label="Amount" selected={sortField === 'amount'} onPress={() => onSortFieldChange('amount')} icon="currency-usd" />
                                     <Chip
-                                        label="Title"
+                                        label="A-Z"
                                         selected={sortField === 'title'}
                                         onPress={() => onSortFieldChange('title')}
                                         icon="alphabetical"
