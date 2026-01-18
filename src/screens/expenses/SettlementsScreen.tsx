@@ -11,9 +11,19 @@ interface SettlementsScreenProps {
   group: Group;
   onClose: () => void;
   settlementId?: string;
+  initialFromUserId?: string;
+  initialToUserId?: string;
+  initialAmount?: number;
 }
 
-export const SettlementsScreen = ({ group, onClose, settlementId }: SettlementsScreenProps) => {
+export const SettlementsScreen = ({
+  group,
+  onClose,
+  settlementId,
+  initialFromUserId,
+  initialToUserId,
+  initialAmount
+}: SettlementsScreenProps) => {
   const { settleUp, updateSettlement } = useGroups();
   const { theme, isDark } = useTheme();
 
@@ -22,9 +32,15 @@ export const SettlementsScreen = ({ group, onClose, settlementId }: SettlementsS
     ? group.settlements.find(s => s.settlementId === settlementId)
     : undefined;
 
-  const [fromUserId, setFromUserId] = useState(existingSettlement?.fromUserId ?? group.members[0]?.userId ?? '');
-  const [toUserId, setToUserId] = useState(existingSettlement?.toUserId ?? group.members[1]?.userId ?? '');
-  const [amount, setAmount] = useState(existingSettlement?.amount.toString() ?? '');
+  const [fromUserId, setFromUserId] = useState(
+    existingSettlement?.fromUserId ?? initialFromUserId ?? group.members[0]?.userId ?? ''
+  );
+  const [toUserId, setToUserId] = useState(
+    existingSettlement?.toUserId ?? initialToUserId ?? group.members[1]?.userId ?? ''
+  );
+  const [amount, setAmount] = useState(
+    existingSettlement?.amount.toString() ?? (initialAmount ? initialAmount.toString() : '')
+  );
   const [note, setNote] = useState(existingSettlement?.note ?? '');
 
   const [showMemberSelector, setShowMemberSelector] = useState(false);
