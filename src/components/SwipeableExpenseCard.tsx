@@ -41,8 +41,8 @@ export const SwipeableExpenseCard = ({
     dragX: RNAnimated.AnimatedInterpolation<number>
   ) => {
     const translateX = dragX.interpolate({
-      inputRange: [-80, 0],
-      outputRange: [0, 80],
+      inputRange: [-120, 0],
+      outputRange: [0, 120],
       extrapolate: 'clamp',
     });
 
@@ -55,28 +55,31 @@ export const SwipeableExpenseCard = ({
     return (
       <RNAnimated.View style={[styles.rightAction, { transform: [{ translateX }, { scale }] }]}>
         <RectButton
-          style={[styles.deleteButton, { backgroundColor: theme.colors.error }]}
+          style={styles.rightActionPressable}
           onPress={() => {
             errorHaptic();
             swipeableRef.current?.close();
             onDelete?.(expense);
           }}
         >
-          <IconButton icon="delete" iconColor="#fff" size={24} />
-          <Text style={styles.actionText}>Delete</Text>
+          <View style={styles.deleteButtonPill}>
+            <IconButton icon="delete" iconColor="#fff" size={24} style={{ margin: 0 }} />
+            <Text style={styles.actionText}>Delete</Text>
+          </View>
         </RectButton>
       </RNAnimated.View>
     );
   };
 
   return (
-    <Animated.View entering={FadeInDown.delay(index * 50).springify()}>
+    <Animated.View entering={FadeInDown.delay(index * 50).springify()} style={{ marginBottom: 12, marginHorizontal: 4 }}>
       <Swipeable
         ref={swipeableRef}
         renderRightActions={onDelete ? renderRightActions : undefined}
         friction={2}
         rightThreshold={40}
         overshootRight={false}
+        containerStyle={{ borderRadius: 24, overflow: 'hidden' }}
       >
         <GlassView style={styles.container}>
           <TouchableRipple onPress={handlePress} style={{ flex: 1 }}>
@@ -108,9 +111,8 @@ export const SwipeableExpenseCard = ({
 
 const styles = StyleSheet.create({
   container: {
-    borderRadius: 24,
-    marginBottom: 12,
-    marginHorizontal: 4,
+    // borderRadius handled by Swipeable containerStyle
+    flex: 1,
   },
   content: {
     padding: 16,
@@ -133,21 +135,35 @@ const styles = StyleSheet.create({
     marginLeft: 16,
   },
   rightAction: {
-    justifyContent: 'center',
-    marginBottom: 12,
-    marginRight: 4,
-  },
-  deleteButton: {
-    flex: 1,
+    width: 120,
     justifyContent: 'center',
     alignItems: 'center',
-    width: 80,
-    borderRadius: 24,
+  },
+  rightActionPressable: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteButtonPill: {
+    width: 100,
+    height: 56, // Horizontal pill shape
+    backgroundColor: '#ff6b6b', // Liquid Background 'debts' red
+    borderRadius: 100,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
   },
   actionText: {
     color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: -8,
+    fontSize: 13,
+    fontWeight: 'bold',
+    marginRight: 8,
   },
 });
