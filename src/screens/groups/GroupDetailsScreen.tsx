@@ -67,7 +67,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
   );
 
   const headerOpacity = scrollY.interpolate({
-    inputRange: [40, 80],
+    inputRange: [90, 130],
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
@@ -276,7 +276,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
         )}
         scrollEventThrottle={16}
       >
-        <View style={{ height: 40 }} />
+        <View style={{ height: 110 }} />
         <GlassView style={styles.headerCard}>
           <View style={styles.header}>
             <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{group.name}</Text>
