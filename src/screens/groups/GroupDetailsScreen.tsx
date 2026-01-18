@@ -244,6 +244,15 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
     });
   }, [group.expenses, group.settlements, sortField, sortOrder, selectedCategories, activityType, dateRange]);
 
+  const handleClearFilters = () => {
+    setSelectedCategories([]);
+    setActivityType('all');
+    setDateRange('all');
+    lightHaptic();
+  };
+
+  const activeFilters = selectedCategories.length + (activityType !== 'all' ? 1 : 0) + (dateRange !== 'all' ? 1 : 0);
+
 
   return (
     <LiquidBackground>
@@ -282,36 +291,42 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
         <DebtsList group={group} />
 
         <View style={styles.sectionHeader}>
-          <Text variant="titleMedium" style={[styles.section, { color: theme.colors.onSurface }]}>
+          <Text variant="titleMedium" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '600', paddingHorizontal: 4, flex: 1 }}>
             Recent activity
           </Text>
-          <TouchableRipple
-            onPress={() => { lightHaptic(); setShowFilterSheet(true); }}
-            style={[
-              styles.filterButton,
-              { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }
-            ]}
-            borderless
-          >
-            <View style={styles.filterButtonContent}>
-              <IconButton
-                icon="filter-variant"
-                size={18}
-                iconColor={theme.colors.primary}
-                style={{ margin: 0 }}
-              />
-              <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                Filter & Sort
-              </Text>
-              {(selectedCategories.length > 0 || activityType !== 'all' || dateRange !== 'all') && (
-                <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary }]}>
-                  <Text variant="labelSmall" style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
-                    {selectedCategories.length + (activityType !== 'all' ? 1 : 0) + (dateRange !== 'all' ? 1 : 0)}
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {activeFilters > 0 && (
+              <TouchableRipple
+                onPress={handleClearFilters}
+                style={[styles.filterButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+              >
+                <View style={[styles.filterButtonContent, { paddingHorizontal: 12 }]}>
+                  <IconButton icon="close" size={16} iconColor={theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
+                  <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '600' }}>
+                    Clear
                   </Text>
                 </View>
-              )}
-            </View>
-          </TouchableRipple>
+              </TouchableRipple>
+            )}
+            <TouchableRipple
+              onPress={() => setShowFilterSheet(true)}
+              style={[styles.filterButton, { backgroundColor: activeFilters > 0 ? theme.colors.primaryContainer : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)') }]}
+            >
+              <View style={styles.filterButtonContent}>
+                <IconButton icon="filter-variant" size={16} iconColor={activeFilters > 0 ? theme.colors.primary : theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
+                <Text variant="labelMedium" style={{ color: activeFilters > 0 ? theme.colors.primary : theme.colors.onSurfaceVariant, fontWeight: '600' }}>
+                  Filters
+                </Text>
+                {activeFilters > 0 && (
+                  <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary }]}>
+                    <Text variant="labelSmall" style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
+                      {activeFilters}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </TouchableRipple>
+          </View>
         </View>
 
         {loading ? (
