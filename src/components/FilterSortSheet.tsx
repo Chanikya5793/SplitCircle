@@ -152,27 +152,33 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                             </View>
 
                             {/* Order */}
-                            {sortField !== 'title' && (
-                                <View style={styles.section}>
-                                    <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
-                                        Order
-                                    </Text>
-                                    <View style={styles.chipRow}>
-                                        <Chip
-                                            label={sortField === 'date' ? 'Newest first' : 'Highest first'}
-                                            selected={sortOrder === 'desc'}
-                                            onPress={() => onSortOrderChange('desc')}
-                                            icon="arrow-down"
-                                        />
-                                        <Chip
-                                            label={sortField === 'date' ? 'Oldest first' : 'Lowest first'}
-                                            selected={sortOrder === 'asc'}
-                                            onPress={() => onSortOrderChange('asc')}
-                                            icon="arrow-up"
-                                        />
-                                    </View>
+                            <View style={styles.section}>
+                                <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
+                                    Order
+                                </Text>
+                                <View style={styles.chipRow}>
+                                    <Chip
+                                        label={
+                                            sortField === 'date' ? 'Newest first' :
+                                                sortField === 'amount' ? 'Highest first' :
+                                                    'Z to A'
+                                        }
+                                        selected={sortOrder === 'desc'}
+                                        onPress={() => onSortOrderChange('desc')}
+                                        icon="arrow-down"
+                                    />
+                                    <Chip
+                                        label={
+                                            sortField === 'date' ? 'Oldest first' :
+                                                sortField === 'amount' ? 'Lowest first' :
+                                                    'A to Z'
+                                        }
+                                        selected={sortOrder === 'asc'}
+                                        onPress={() => onSortOrderChange('asc')}
+                                        icon="arrow-up"
+                                    />
                                 </View>
-                            )}
+                            </View>
 
                             {/* Timeframe */}
                             <View style={styles.section}>
