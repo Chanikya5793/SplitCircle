@@ -244,6 +244,55 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
     });
   }, [group.expenses, group.settlements, sortField, sortOrder, selectedCategories, activityType, dateRange]);
 
+  // Group activities by month/year
+  type GroupedSection = {
+    monthYear: string;
+    label: string;
+    items: ActivityItem[];
+  };
+
+  const groupedActivities = useMemo(() => {
+    const groups: Record<string, ActivityItem[]> = {};
+
+    sortedActivities.forEach(activity => {
+      const timestamp = activity.type === 'expense' ? activity.data.createdAt : activity.data.createdAt;
+      const date = new Date(timestamp);
+      const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+      if (!groups[monthYear]) {
+        groups[monthYear] = [];
+      }
+      groups[monthYear].push(activity);
+    });
+
+    // Convert to array with labels
+    const sections: GroupedSection[] = Object.entries(groups).map(([monthYear, items]) => {
+      const [year, month] = monthYear.split('-').map(Number);
+      const date = new Date(year, month - 1);
+      const now = new Date();
+
+      let label: string;
+      if (date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()) {
+        label = 'This Month';
+      } else if (
+        date.getMonth() === now.getMonth() - 1 ||
+        (now.getMonth() === 0 && date.getMonth() === 11 && date.getFullYear() === now.getFullYear() - 1)
+      ) {
+        label = 'Last Month';
+      } else {
+        label = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      }
+
+      return { monthYear, label, items };
+    });
+
+    // Sort sections by date (descending for default, ascending for asc sort order)
+    return sections.sort((a, b) => {
+      const comparison = b.monthYear.localeCompare(a.monthYear);
+      return sortOrder === 'desc' ? comparison : -comparison;
+    });
+  }, [sortedActivities, sortOrder]);
+
   const handleClearFilters = () => {
     setSelectedCategories([]);
     setActivityType('all');
@@ -339,39 +388,50 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
             <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No activity yet.</Text>
           </GlassView>
         ) : (
-          sortedActivities.map((activity, index) => {
-            if (activity.type === 'expense') {
-              return (
-                <SwipeableExpenseCard
-                  key={`expense-${activity.data.expenseId}`}
-                  expense={activity.data}
-                  currency={group.currency}
-                  memberMap={memberMap}
-                  index={index}
-                  onPress={() => {
-                    lightHaptic();
-                    navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, {
-                      groupId: group.groupId,
-                      expenseId: activity.data.expenseId
-                    });
-                  }}
-                  onDelete={handleDeleteExpense}
-                />
-              );
-            } else {
-              return (
-                <SettlementCard
-                  key={`settlement-${activity.data.settlementId}`}
-                  settlement={activity.data}
-                  currency={group.currency}
-                  memberMap={memberMap}
-                  index={index}
-                  onPress={() => handleEditSettlement(activity.data)}
-                  onDelete={handleDeleteSettlement}
-                />
-              );
-            }
-          })
+          groupedActivities.map((section, sectionIndex) => (
+            <View key={section.monthYear}>
+              {/* Section Header */}
+              <View style={styles.monthHeader}>
+                <Text variant="labelLarge" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '600' }}>
+                  {section.label}
+                </Text>
+              </View>
+              {/* Section Items */}
+              {section.items.map((activity, index) => {
+                if (activity.type === 'expense') {
+                  return (
+                    <SwipeableExpenseCard
+                      key={`expense-${activity.data.expenseId}`}
+                      expense={activity.data}
+                      currency={group.currency}
+                      memberMap={memberMap}
+                      index={sectionIndex * 10 + index}
+                      onPress={() => {
+                        lightHaptic();
+                        navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, {
+                          groupId: group.groupId,
+                          expenseId: activity.data.expenseId
+                        });
+                      }}
+                      onDelete={handleDeleteExpense}
+                    />
+                  );
+                } else {
+                  return (
+                    <SettlementCard
+                      key={`settlement-${activity.data.settlementId}`}
+                      settlement={activity.data}
+                      currency={group.currency}
+                      memberMap={memberMap}
+                      index={sectionIndex * 10 + index}
+                      onPress={() => handleEditSettlement(activity.data)}
+                      onDelete={handleDeleteSettlement}
+                    />
+                  );
+                }
+              })}
+            </View>
+          ))
         )}
 
       </Animated.ScrollView>
@@ -646,6 +706,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 4,
+  },
+  monthHeader: {
+    paddingHorizontal: 4,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
 });
 
