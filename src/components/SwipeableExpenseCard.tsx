@@ -9,6 +9,22 @@ import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { IconButton, Text, TouchableRipple } from 'react-native-paper';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
+// Category to Icon mapping
+const getCategoryIcon = (category: string): string => {
+  const iconMap: Record<string, string> = {
+    'General': 'tag',
+    'Food': 'food',
+    'Transport': 'car',
+    'Utilities': 'flash',
+    'Entertainment': 'movie',
+    'Shopping': 'cart',
+    'Travel': 'airplane',
+    'Health': 'medical-bag',
+    'Settlement': 'handshake',
+  };
+  return iconMap[category] || 'tag';
+};
+
 interface SwipeableExpenseCardProps {
   expense: Expense;
   currency: string;
@@ -72,33 +88,42 @@ export const SwipeableExpenseCard = ({
   };
 
   return (
-    <Animated.View entering={FadeInDown.delay(index * 50).springify()} style={{ marginBottom: 12, marginHorizontal: 4 }}>
+    <Animated.View entering={FadeInDown.delay(index * 50).springify()} style={{ marginBottom: 1 }}>
       <Swipeable
         ref={swipeableRef}
         renderRightActions={onDelete ? renderRightActions : undefined}
         friction={2}
         rightThreshold={40}
         overshootRight={false}
-        containerStyle={{ borderRadius: 24, overflow: 'hidden' }}
+        containerStyle={{ borderRadius: 16, overflow: 'hidden' }}
       >
         <GlassView style={styles.container}>
           <TouchableRipple onPress={handlePress} style={{ flex: 1 }}>
             <View style={styles.content}>
               <View style={styles.header}>
                 <View style={styles.titleRow}>
-                  <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{expense.title}</Text>
-                  <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
-                    {expense.category} · Paid by {payerName}
-                  </Text>
-                  <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                    {new Date(expense.createdAt).toLocaleDateString()}
-                  </Text>
+                  <View style={styles.iconContainer}>
+                    <IconButton
+                      icon={getCategoryIcon(expense.category)}
+                      size={20}
+                      iconColor={theme.colors.primary}
+                      style={{ margin: 0 }}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{expense.title}</Text>
+                    <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
+                      {expense.category} · Paid by {payerName}
+                    </Text>
+                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                      {new Date(expense.createdAt).toLocaleDateString()}
+                    </Text>
+                  </View>
                 </View>
                 <View style={styles.amountContainer}>
                   <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
                     {formatCurrency(expense.amount, currency)}
                   </Text>
-                  {isSettlement && <IconButton icon="check-circle" size={20} iconColor={theme.colors.primary} />}
                 </View>
               </View>
             </View>
@@ -115,7 +140,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    padding: 16,
+    padding: 10, // Ultra-compact
   },
   header: {
     flexDirection: 'row',
@@ -124,7 +149,16 @@ const styles = StyleSheet.create({
   },
   titleRow: {
     flex: 1,
-    gap: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  iconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   subtitle: {
     // color handled dynamically

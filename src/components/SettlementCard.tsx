@@ -72,14 +72,14 @@ export const SettlementCard = ({
     };
 
     return (
-        <Animated.View entering={FadeInDown.delay(index * 50).springify()} style={{ marginBottom: 12 }}>
+        <Animated.View entering={FadeInDown.delay(index * 50).springify()} style={{ marginBottom: 1 }}>
             <Swipeable
                 ref={swipeableRef}
                 renderRightActions={onDelete ? renderRightActions : undefined}
                 friction={2}
                 rightThreshold={40}
                 overshootRight={false}
-                containerStyle={{ borderRadius: 24, overflow: 'hidden' }}
+                containerStyle={{ borderRadius: 16, overflow: 'hidden' }}
             >
                 <GlassView style={styles.container}>
                     <TouchableRipple onPress={handlePress} style={{ flex: 1 }}>
@@ -115,7 +115,6 @@ export const SettlementCard = ({
                                     <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.primary }}>
                                         {formatCurrency(settlement.amount, currency)}
                                     </Text>
-                                    <IconButton icon="check-circle" size={20} iconColor={theme.colors.primary} />
                                 </View>
                             </View>
                         </View>
@@ -132,12 +131,12 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     content: {
-        padding: 16,
+        padding: 10, // Ultra-compact
     },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
+        gap: 8, // Reduced gap
     },
     titleRow: {
         flex: 1,

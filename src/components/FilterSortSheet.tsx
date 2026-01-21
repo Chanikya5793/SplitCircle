@@ -12,6 +12,7 @@ export type DateRange = 'all' | 'this-month' | 'last-month' | 'last-3-months';
 
 const CATEGORIES = [
     { id: 'all', label: 'All', icon: 'view-grid' },
+    { id: 'general', label: 'General', icon: 'tag' },
     { id: 'food', label: 'Food', icon: 'food' },
     { id: 'transport', label: 'Transport', icon: 'car' },
     { id: 'entertainment', label: 'Entertainment', icon: 'movie-open' },

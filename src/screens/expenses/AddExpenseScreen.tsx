@@ -22,6 +22,21 @@ interface AddExpenseScreenProps {
 
 const CATEGORIES = ['General', 'Food', 'Transport', 'Utilities', 'Entertainment', 'Shopping', 'Travel', 'Health'];
 
+// Category to Icon mapping
+const getCategoryIcon = (cat: string): string => {
+  const iconMap: Record<string, string> = {
+    'General': 'tag',
+    'Food': 'food',
+    'Transport': 'car',
+    'Utilities': 'flash',
+    'Entertainment': 'movie',
+    'Shopping': 'cart',
+    'Travel': 'airplane',
+    'Health': 'medical-bag',
+  };
+  return iconMap[cat] || 'tag';
+};
+
 export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreenProps) => {
   const navigation = useNavigation();
   const { user } = useAuth();
@@ -302,13 +317,13 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                 visible={showCategoryMenu}
                 onDismiss={() => setShowCategoryMenu(false)}
                 anchor={
-                  <Button mode="outlined" onPress={() => setShowCategoryMenu(true)} icon="tag" style={{ borderColor: theme.colors.outline }}>
+                  <Button mode="outlined" onPress={() => setShowCategoryMenu(true)} icon={getCategoryIcon(category)} style={{ borderColor: theme.colors.outline }}>
                     {category}
                   </Button>
                 }
               >
                 {CATEGORIES.map((cat) => (
-                  <Menu.Item key={cat} onPress={() => { setCategory(cat); setShowCategoryMenu(false); }} title={cat} />
+                  <Menu.Item key={cat} onPress={() => { setCategory(cat); setShowCategoryMenu(false); }} title={cat} leadingIcon={getCategoryIcon(cat)} />
                 ))}
               </Menu>
 
