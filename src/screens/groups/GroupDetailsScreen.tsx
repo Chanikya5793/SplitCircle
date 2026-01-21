@@ -444,22 +444,24 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
         ) : (
           yearGroupedActivities.map((yearSection, yearIndex) => (
             <View key={yearSection.year}>
-              {/* Year Header (only show if more than one year or not current year) */}
-              {(yearGroupedActivities.length > 1 || yearSection.yearLabel !== 'This Year') && (
-                <TouchableRipple onPress={() => toggleYear(yearSection.year)} style={styles.yearHeader}>
-                  <View style={styles.collapsibleHeader}>
-                    <IconButton
-                      icon={collapsedYears.has(yearSection.year) ? 'chevron-right' : 'chevron-down'}
-                      size={20}
-                      iconColor={theme.colors.onSurface}
-                      style={{ margin: 0 }}
-                    />
-                    <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold', flex: 1 }}>
-                      {yearSection.yearLabel}
-                    </Text>
-                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                      {yearSection.totalItems} item{yearSection.totalItems !== 1 ? 's' : ''}
-                    </Text>
+              {/* Collapsed Year Header (only show when year IS collapsed) */}
+              {collapsedYears.has(yearSection.year) && (
+                <TouchableRipple onPress={() => toggleYear(yearSection.year)} style={styles.combinedHeaderRow} borderless>
+                  <View style={[styles.collapsibleHeader, { flex: 1, justifyContent: 'space-between' }]}>
+                    <View style={styles.collapsibleHeader}>
+                      <IconButton
+                        icon="chevron-right"
+                        size={16}
+                        iconColor={theme.colors.onSurface}
+                        style={{ margin: 0 }}
+                      />
+                      <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                        {yearSection.yearLabel}
+                      </Text>
+                      <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
+                        · {yearSection.totalItems} item{yearSection.totalItems !== 1 ? 's' : ''}
+                      </Text>
+                    </View>
                   </View>
                 </TouchableRipple>
               )}
@@ -467,23 +469,43 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
               {/* Months (hidden if year is collapsed) */}
               {!collapsedYears.has(yearSection.year) && yearSection.months.map((monthSection, monthIndex) => (
                 <View key={monthSection.monthKey}>
-                  {/* Month Header */}
-                  <TouchableRipple onPress={() => toggleMonth(monthSection.monthKey)} style={styles.monthHeader}>
-                    <View style={styles.collapsibleHeader}>
-                      <IconButton
-                        icon={collapsedMonths.has(monthSection.monthKey) ? 'chevron-right' : 'chevron-down'}
-                        size={18}
-                        iconColor={theme.colors.onSurfaceVariant}
-                        style={{ margin: 0 }}
-                      />
-                      <Text variant="labelLarge" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '600', flex: 1 }}>
-                        {monthSection.monthLabel}
-                      </Text>
-                      <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
-                        {monthSection.items.length}
-                      </Text>
-                    </View>
-                  </TouchableRipple>
+                  {/* Combined Header Row: Month on LEFT, Year on RIGHT */}
+                  <View style={styles.combinedHeaderRow}>
+                    {/* Month (Left side) */}
+                    <TouchableRipple onPress={() => toggleMonth(monthSection.monthKey)} style={styles.monthHeaderCompact} borderless>
+                      <View style={styles.collapsibleHeader}>
+                        <IconButton
+                          icon={collapsedMonths.has(monthSection.monthKey) ? 'chevron-right' : 'chevron-down'}
+                          size={16}
+                          iconColor={theme.colors.onSurfaceVariant}
+                          style={{ margin: 0 }}
+                        />
+                        <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '600' }}>
+                          {monthSection.monthLabel}
+                        </Text>
+                        <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
+                          · {monthSection.items.length}
+                        </Text>
+                      </View>
+                    </TouchableRipple>
+
+                    {/* Year (Right side) - only show on first month of each year or if multiple years */}
+                    {(monthIndex === 0 && (yearGroupedActivities.length > 1 || yearSection.yearLabel !== 'This Year')) && (
+                      <TouchableRipple onPress={() => toggleYear(yearSection.year)} style={styles.yearHeaderCompact} borderless>
+                        <View style={styles.collapsibleHeader}>
+                          <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
+                            {yearSection.yearLabel} · {yearSection.totalItems}
+                          </Text>
+                          <IconButton
+                            icon={collapsedYears.has(yearSection.year) ? 'chevron-right' : 'chevron-down'}
+                            size={16}
+                            iconColor={theme.colors.onSurfaceVariant}
+                            style={{ margin: 0 }}
+                          />
+                        </View>
+                      </TouchableRipple>
+                    )}
+                  </View>
 
                   {/* Items (hidden if month is collapsed) */}
                   {!collapsedMonths.has(monthSection.monthKey) && monthSection.items.map((activity, index) => {
@@ -802,13 +824,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     paddingTop: 4,
     paddingBottom: 2,
-    borderRadius: 8,
+    borderRadius: 50,
   },
   yearHeader: {
     paddingHorizontal: 4,
     paddingTop: 12,
     paddingBottom: 4,
-    borderRadius: 8,
+    borderRadius: 50,
+  },
+  combinedHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+    paddingBottom: 4,
+    paddingHorizontal: 4,
+  },
+  monthHeaderCompact: {
+    borderRadius: 50,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  yearHeaderCompact: {
+    borderRadius: 50,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
   },
   collapsibleHeader: {
     flexDirection: 'row',
