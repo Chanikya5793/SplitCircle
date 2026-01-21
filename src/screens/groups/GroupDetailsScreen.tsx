@@ -40,6 +40,34 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [activityType, setActivityType] = useState<ActivityTypeFilter>('all');
   const [dateRange, setDateRange] = useState<DateRange>('all');
+  const [collapsedYears, setCollapsedYears] = useState<Set<number>>(new Set());
+  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
+
+  const toggleYear = (year: number) => {
+    setCollapsedYears(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(year)) {
+        newSet.delete(year);
+      } else {
+        newSet.add(year);
+      }
+      return newSet;
+    });
+    lightHaptic();
+  };
+
+  const toggleMonth = (monthKey: string) => {
+    setCollapsedMonths(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(monthKey)) {
+        newSet.delete(monthKey);
+      } else {
+        newSet.add(monthKey);
+      }
+      return newSet;
+    });
+    lightHaptic();
+  };
 
   const labelOpacity = scrollY.interpolate({
     inputRange: [0, 50],
@@ -244,53 +272,79 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
     });
   }, [group.expenses, group.settlements, sortField, sortOrder, selectedCategories, activityType, dateRange]);
 
-  // Group activities by month/year
-  type GroupedSection = {
-    monthYear: string;
-    label: string;
+  // Group activities by year, then by month
+  type MonthSection = {
+    monthKey: string;
+    monthLabel: string;
     items: ActivityItem[];
   };
 
-  const groupedActivities = useMemo(() => {
-    const groups: Record<string, ActivityItem[]> = {};
+  type YearSection = {
+    year: number;
+    yearLabel: string;
+    months: MonthSection[];
+    totalItems: number;
+  };
+
+  const yearGroupedActivities = useMemo(() => {
+    const yearMap: Record<number, Record<string, ActivityItem[]>> = {};
 
     sortedActivities.forEach(activity => {
       const timestamp = activity.type === 'expense' ? activity.data.createdAt : activity.data.createdAt;
       const date = new Date(timestamp);
-      const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const year = date.getFullYear();
+      const monthKey = `${year}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 
-      if (!groups[monthYear]) {
-        groups[monthYear] = [];
+      if (!yearMap[year]) {
+        yearMap[year] = {};
       }
-      groups[monthYear].push(activity);
-    });
-
-    // Convert to array with labels
-    const sections: GroupedSection[] = Object.entries(groups).map(([monthYear, items]) => {
-      const [year, month] = monthYear.split('-').map(Number);
-      const date = new Date(year, month - 1);
-      const now = new Date();
-
-      let label: string;
-      if (date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()) {
-        label = 'This Month';
-      } else if (
-        date.getMonth() === now.getMonth() - 1 ||
-        (now.getMonth() === 0 && date.getMonth() === 11 && date.getFullYear() === now.getFullYear() - 1)
-      ) {
-        label = 'Last Month';
-      } else {
-        label = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      if (!yearMap[year][monthKey]) {
+        yearMap[year][monthKey] = [];
       }
-
-      return { monthYear, label, items };
+      yearMap[year][monthKey].push(activity);
     });
 
-    // Sort sections by date (descending for default, ascending for asc sort order)
-    return sections.sort((a, b) => {
-      const comparison = b.monthYear.localeCompare(a.monthYear);
-      return sortOrder === 'desc' ? comparison : -comparison;
+    const now = new Date();
+
+    // Convert to array structure
+    const years: YearSection[] = Object.entries(yearMap).map(([yearStr, months]) => {
+      const year = Number(yearStr);
+      const yearLabel = year === now.getFullYear() ? 'This Year' : String(year);
+
+      const monthSections: MonthSection[] = Object.entries(months).map(([monthKey, items]) => {
+        const [yr, mo] = monthKey.split('-').map(Number);
+        const date = new Date(yr, mo - 1);
+
+        let monthLabel: string;
+        if (date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()) {
+          monthLabel = 'This Month';
+        } else if (
+          (date.getMonth() === now.getMonth() - 1 && date.getFullYear() === now.getFullYear()) ||
+          (now.getMonth() === 0 && date.getMonth() === 11 && date.getFullYear() === now.getFullYear() - 1)
+        ) {
+          monthLabel = 'Last Month';
+        } else {
+          monthLabel = date.toLocaleDateString('en-US', { month: 'long' });
+        }
+
+        return { monthKey, monthLabel, items };
+      });
+
+      // Sort months within year
+      monthSections.sort((a, b) => {
+        const comparison = b.monthKey.localeCompare(a.monthKey);
+        return sortOrder === 'desc' ? comparison : -comparison;
+      });
+
+      const totalItems = monthSections.reduce((sum, m) => sum + m.items.length, 0);
+
+      return { year, yearLabel, months: monthSections, totalItems };
     });
+
+    // Sort years
+    years.sort((a, b) => sortOrder === 'desc' ? b.year - a.year : a.year - b.year);
+
+    return years;
   }, [sortedActivities, sortOrder]);
 
   const handleClearFilters = () => {
@@ -388,48 +442,85 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
             <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No activity yet.</Text>
           </GlassView>
         ) : (
-          groupedActivities.map((section, sectionIndex) => (
-            <View key={section.monthYear}>
-              {/* Section Header */}
-              <View style={styles.monthHeader}>
-                <Text variant="labelLarge" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '600' }}>
-                  {section.label}
-                </Text>
-              </View>
-              {/* Section Items */}
-              {section.items.map((activity, index) => {
-                if (activity.type === 'expense') {
-                  return (
-                    <SwipeableExpenseCard
-                      key={`expense-${activity.data.expenseId}`}
-                      expense={activity.data}
-                      currency={group.currency}
-                      memberMap={memberMap}
-                      index={sectionIndex * 10 + index}
-                      onPress={() => {
-                        lightHaptic();
-                        navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, {
-                          groupId: group.groupId,
-                          expenseId: activity.data.expenseId
-                        });
-                      }}
-                      onDelete={handleDeleteExpense}
+          yearGroupedActivities.map((yearSection, yearIndex) => (
+            <View key={yearSection.year}>
+              {/* Year Header (only show if more than one year or not current year) */}
+              {(yearGroupedActivities.length > 1 || yearSection.yearLabel !== 'This Year') && (
+                <TouchableRipple onPress={() => toggleYear(yearSection.year)} style={styles.yearHeader}>
+                  <View style={styles.collapsibleHeader}>
+                    <IconButton
+                      icon={collapsedYears.has(yearSection.year) ? 'chevron-right' : 'chevron-down'}
+                      size={20}
+                      iconColor={theme.colors.onSurface}
+                      style={{ margin: 0 }}
                     />
-                  );
-                } else {
-                  return (
-                    <SettlementCard
-                      key={`settlement-${activity.data.settlementId}`}
-                      settlement={activity.data}
-                      currency={group.currency}
-                      memberMap={memberMap}
-                      index={sectionIndex * 10 + index}
-                      onPress={() => handleEditSettlement(activity.data)}
-                      onDelete={handleDeleteSettlement}
-                    />
-                  );
-                }
-              })}
+                    <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold', flex: 1 }}>
+                      {yearSection.yearLabel}
+                    </Text>
+                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                      {yearSection.totalItems} item{yearSection.totalItems !== 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                </TouchableRipple>
+              )}
+
+              {/* Months (hidden if year is collapsed) */}
+              {!collapsedYears.has(yearSection.year) && yearSection.months.map((monthSection, monthIndex) => (
+                <View key={monthSection.monthKey}>
+                  {/* Month Header */}
+                  <TouchableRipple onPress={() => toggleMonth(monthSection.monthKey)} style={styles.monthHeader}>
+                    <View style={styles.collapsibleHeader}>
+                      <IconButton
+                        icon={collapsedMonths.has(monthSection.monthKey) ? 'chevron-right' : 'chevron-down'}
+                        size={18}
+                        iconColor={theme.colors.onSurfaceVariant}
+                        style={{ margin: 0 }}
+                      />
+                      <Text variant="labelLarge" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '600', flex: 1 }}>
+                        {monthSection.monthLabel}
+                      </Text>
+                      <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
+                        {monthSection.items.length}
+                      </Text>
+                    </View>
+                  </TouchableRipple>
+
+                  {/* Items (hidden if month is collapsed) */}
+                  {!collapsedMonths.has(monthSection.monthKey) && monthSection.items.map((activity, index) => {
+                    if (activity.type === 'expense') {
+                      return (
+                        <SwipeableExpenseCard
+                          key={`expense-${activity.data.expenseId}`}
+                          expense={activity.data}
+                          currency={group.currency}
+                          memberMap={memberMap}
+                          index={yearIndex * 100 + monthIndex * 10 + index}
+                          onPress={() => {
+                            lightHaptic();
+                            navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, {
+                              groupId: group.groupId,
+                              expenseId: activity.data.expenseId
+                            });
+                          }}
+                          onDelete={handleDeleteExpense}
+                        />
+                      );
+                    } else {
+                      return (
+                        <SettlementCard
+                          key={`settlement-${activity.data.settlementId}`}
+                          settlement={activity.data}
+                          currency={group.currency}
+                          memberMap={memberMap}
+                          index={yearIndex * 100 + monthIndex * 10 + index}
+                          onPress={() => handleEditSettlement(activity.data)}
+                          onDelete={handleDeleteSettlement}
+                        />
+                      );
+                    }
+                  })}
+                </View>
+              ))}
             </View>
           ))
         )}
@@ -709,8 +800,20 @@ const styles = StyleSheet.create({
   },
   monthHeader: {
     paddingHorizontal: 4,
-    paddingTop: 16,
-    paddingBottom: 8,
+    paddingTop: 4,
+    paddingBottom: 2,
+    borderRadius: 8,
+  },
+  yearHeader: {
+    paddingHorizontal: 4,
+    paddingTop: 12,
+    paddingBottom: 4,
+    borderRadius: 8,
+  },
+  collapsibleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
   },
 });
 
