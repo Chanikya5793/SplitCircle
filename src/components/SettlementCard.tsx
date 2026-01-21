@@ -72,7 +72,7 @@ export const SettlementCard = ({
     };
 
     return (
-        <Animated.View entering={FadeInDown.delay(index * 50).springify()} style={{ marginBottom: 1 }}>
+        <Animated.View entering={FadeInDown.springify()} style={{ marginBottom: 1 }}>
             <Swipeable
                 ref={swipeableRef}
                 renderRightActions={onDelete ? renderRightActions : undefined}
