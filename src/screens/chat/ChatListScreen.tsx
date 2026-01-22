@@ -7,9 +7,10 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
 import { lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useLayoutEffect, useMemo, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, RefreshControl, StyleSheet, View } from 'react-native';
-import { Avatar, List, Text } from 'react-native-paper';
+import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
+import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
 interface ChatListScreenProps {
   onOpenThread: (thread: ChatThread) => void;
@@ -21,6 +22,11 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
+
+  // Filter & Sort State
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [sortField, setSortField] = useState<ChatSortField>('updatedAt');
+  const [sortOrder, setSortOrder] = useState<ChatSortOrder>('desc');
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -54,6 +60,34 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     return (otherParticipant?.displayName || 'SC').slice(0, 2).toUpperCase();
   }, [groups]);
 
+  // Sort Logic
+  const processedThreads = useMemo(() => {
+    let result = [...threads];
+
+    result.sort((a, b) => {
+      let comparison = 0;
+      switch (sortField) {
+        case 'name':
+          const nameA = getChatTitle(a);
+          const nameB = getChatTitle(b);
+          comparison = nameA.localeCompare(nameB);
+          break;
+        case 'unread':
+          comparison = a.unreadCount - b.unreadCount;
+          break;
+        case 'updatedAt':
+          // Use updatedAt or lastMessage.timestamp or fall back to 0
+          const timeA = a.updatedAt || (a.lastMessage?.timestamp ? new Date(a.lastMessage.timestamp).getTime() : 0);
+          const timeB = b.updatedAt || (b.lastMessage?.timestamp ? new Date(b.lastMessage.timestamp).getTime() : 0);
+          comparison = timeA - timeB;
+          break;
+      }
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
+    return result;
+  }, [threads, sortField, sortOrder, getChatTitle]);
+
   const handleOpenThread = (thread: ChatThread) => {
     lightHaptic();
     onOpenThread(thread);
@@ -69,7 +103,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
 
       <View style={styles.container}>
         <Animated.FlatList
-          data={threads}
+          data={processedThreads}
           keyExtractor={(item) => item.chatId}
           renderItem={({ item }) => (
             <GlassView style={styles.chatItem}>
@@ -77,12 +111,21 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                 title={getChatTitle(item)}
                 description={item.lastMessage?.content ?? 'No messages yet'}
                 left={() => (
-                  <Avatar.Text
-                    size={48}
-                    label={getChatInitials(item)}
-                    style={{ backgroundColor: theme.colors.primary }}
-                    color={theme.colors.onPrimary}
-                  />
+                  <View>
+                    <Avatar.Text
+                      size={48}
+                      label={getChatInitials(item)}
+                      style={{ backgroundColor: theme.colors.primary }}
+                      color={theme.colors.onPrimary}
+                    />
+                    {item.unreadCount > 0 && (
+                      <View style={[styles.unreadBadge, { backgroundColor: theme.colors.error, borderColor: theme.colors.background }]}>
+                        <Text style={{ color: theme.colors.onError, fontSize: 10, fontWeight: 'bold' }}>
+                          {item.unreadCount > 9 ? '9+' : item.unreadCount}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
                 )}
                 onPress={() => handleOpenThread(item)}
                 titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
@@ -106,7 +149,24 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
           contentContainerStyle={{ padding: 16, paddingTop: 60, paddingBottom: 100 }}
           ListHeaderComponent={
             <View style={styles.headerContainer}>
-              <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Chats</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Chats</Text>
+
+                <View>
+                  <TouchableRipple
+                    onPress={() => { lightHaptic(); setFilterVisible(true); }}
+                    style={[styles.filterButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}
+                    borderless
+                  >
+                    <View style={styles.filterButtonContent}>
+                      <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
+                    </View>
+                  </TouchableRipple>
+                  {/* Badge can show if non-default sort is active? Or maybe just sorting doesn't need a badge. 
+                      User only had Badge for currency filter count in groups. 
+                      Let's stick to simple button for now unless we add filtering logic later. */}
+                </View>
+              </View>
             </View>
           }
           onScroll={Animated.event(
@@ -116,6 +176,17 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
           scrollEventThrottle={16}
         />
       </View>
+
+      <Portal>
+        <ChatFilterSortSheet
+          visible={filterVisible}
+          onClose={() => setFilterVisible(false)}
+          sortField={sortField}
+          sortOrder={sortOrder}
+          onSortFieldChange={setSortField}
+          onSortOrderChange={setSortOrder}
+        />
+      </Portal>
     </LiquidBackground>
   );
 };
@@ -128,6 +199,17 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderRadius: 16,
     overflow: 'hidden',
+  },
+  unreadBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   empty: {
     textAlign: 'center',
@@ -159,5 +241,16 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontWeight: 'bold',
+  },
+  filterButton: {
+    borderRadius: 50,
+    width: 44,
+    height: 44,
+    overflow: 'hidden',
+  },
+  filterButtonContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

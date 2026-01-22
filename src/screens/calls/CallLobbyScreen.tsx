@@ -1,12 +1,15 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useChat } from '@/context/ChatContext';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
+import { lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
-import { Button, List, Text } from 'react-native-paper';
+import { Button, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
+import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
 interface CallLobbyScreenProps {
   onStartCall: (thread: ChatThread, type: 'audio' | 'video') => void;
@@ -15,8 +18,14 @@ interface CallLobbyScreenProps {
 export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
   const navigation = useNavigation();
   const { threads } = useChat();
+  const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
+
+  // Filter & Sort State
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [sortField, setSortField] = useState<ChatSortField>('updatedAt');
+  const [sortOrder, setSortOrder] = useState<ChatSortOrder>('desc');
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -31,6 +40,43 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
     extrapolate: 'clamp',
   });
 
+  // Helper to get chat display name
+  const getChatTitle = useMemo(() => (thread: ChatThread) => {
+    if (thread.type === 'group' && thread.groupId) {
+      const group = groups.find(g => g.groupId === thread.groupId);
+      return group?.name || 'Group Chat';
+    }
+    return thread.participants.find(p => p.userId !== thread.participantIds[0])?.displayName || 'Direct Chat';
+  }, [groups]);
+
+  // Sort Logic
+  const processedThreads = useMemo(() => {
+    let result = [...threads];
+
+    result.sort((a, b) => {
+      let comparison = 0;
+      switch (sortField) {
+        case 'name':
+          const nameA = getChatTitle(a);
+          const nameB = getChatTitle(b);
+          comparison = nameA.localeCompare(nameB);
+          break;
+        case 'unread':
+          comparison = a.unreadCount - b.unreadCount;
+          break;
+        case 'updatedAt':
+          // Use updatedAt or lastMessage.timestamp or fall back to 0
+          const timeA = a.updatedAt || (a.lastMessage?.timestamp ? new Date(a.lastMessage.timestamp).getTime() : 0);
+          const timeB = b.updatedAt || (b.lastMessage?.timestamp ? new Date(b.lastMessage.timestamp).getTime() : 0);
+          comparison = timeA - timeB;
+          break;
+      }
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
+    return result;
+  }, [threads, sortField, sortOrder, getChatTitle]);
+
   return (
     <LiquidBackground>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
@@ -41,12 +87,26 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
 
       <View style={styles.container}>
         <Animated.FlatList
-          data={threads}
+          data={processedThreads}
           keyExtractor={(item) => item.chatId}
           contentContainerStyle={[styles.listContent, { paddingTop: 60, paddingBottom: 100 }]}
           ListHeaderComponent={
             <View style={styles.headerContainer}>
-              <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Calls</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Calls</Text>
+
+                <View>
+                  <TouchableRipple
+                    onPress={() => { lightHaptic(); setFilterVisible(true); }}
+                    style={[styles.filterButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}
+                    borderless
+                  >
+                    <View style={styles.filterButtonContent}>
+                      <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
+                    </View>
+                  </TouchableRipple>
+                </View>
+              </View>
             </View>
           }
           onScroll={Animated.event(
@@ -57,7 +117,7 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
           renderItem={({ item }) => (
             <GlassView style={styles.card}>
               <List.Item
-                title={item.participants.map((p) => p.displayName).join(', ')}
+                title={getChatTitle(item)}
                 description={item.lastMessage?.content ?? 'Start a call'}
                 titleStyle={{ color: theme.colors.onSurface }}
                 descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
@@ -74,9 +134,20 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
               />
             </GlassView>
           )}
-          ListEmptyComponent={<Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No chats available for calls.</Text>}
+          ListEmptyComponent={<Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No contacts available for calls.</Text>}
         />
       </View>
+
+      <Portal>
+        <ChatFilterSortSheet
+          visible={filterVisible}
+          onClose={() => setFilterVisible(false)}
+          sortField={sortField}
+          sortOrder={sortOrder}
+          onSortFieldChange={setSortField}
+          onSortOrderChange={setSortOrder}
+        />
+      </Portal>
     </LiquidBackground>
   );
 };
@@ -128,5 +199,16 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontWeight: 'bold',
+  },
+  filterButton: {
+    borderRadius: 50,
+    width: 44,
+    height: 44,
+    overflow: 'hidden',
+  },
+  filterButtonContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
