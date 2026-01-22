@@ -3,16 +3,24 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { Audio } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect } from 'react';
 import {
-    Alert, Animated,
-    Dimensions,
-    Modal, Platform, Pressable,
-    StyleSheet,
-    TouchableOpacity,
-    View
+  Alert,
+  Dimensions,
+  Modal, Platform, Pressable,
+  StyleSheet,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { Text } from 'react-native-paper';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSpring,
+  runOnJS
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -90,38 +98,54 @@ const ATTACHMENT_OPTIONS: AttachmentOption[] = [
 
 export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: AttachmentMenuProps) => {
   const { theme, isDark } = useTheme();
-  const slideAnim = useRef(new Animated.Value(300)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Reanimated shared values
+  const slideAnim = useSharedValue(300);
+  const fadeAnim = useSharedValue(0);
+  const context = useSharedValue({ y: 0 });
 
   useEffect(() => {
     if (visible) {
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start();
+      slideAnim.value = withTiming(0, { duration: 300 });
+      fadeAnim.value = withTiming(1, { duration: 200 });
     } else {
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: 300,
-          duration: 250,
-          useNativeDriver: true,
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 0,
-          duration: 150,
-          useNativeDriver: true,
-        }),
-      ]).start();
+      slideAnim.value = withTiming(300, { duration: 250 });
+      fadeAnim.value = withTiming(0, { duration: 150 });
     }
-  }, [visible, slideAnim, fadeAnim]);
+  }, [visible]);
+
+  // Gesture handler with context for smooth dragging
+  const gesture = Gesture.Pan()
+    .onStart(() => {
+      context.value = { y: slideAnim.value };
+    })
+    .onUpdate((event) => {
+      // Allow dragging down (positive translation)
+      // Add minimal resistance for dragging up (negative translation)
+      const resistance = event.translationY < 0 ? 0.2 : 1;
+      const potentialValue = context.value.y + (event.translationY * resistance);
+      slideAnim.value = Math.max(-50, potentialValue); // Cap upward drag
+    })
+    .onEnd((event) => {
+      if (slideAnim.value > 100 || event.velocityY > 500) {
+        // Dragged down enough or flicked down -> Close
+        slideAnim.value = withTiming(300, { duration: 200 }, () => {
+          runOnJS(onClose)();
+        });
+      } else {
+        // Spring back to open state
+        slideAnim.value = withSpring(0, { damping: 50 });
+      }
+    });
+
+  const menuStyle = useAnimatedStyle(() => ({
+    backgroundColor: isDark ? 'rgba(30, 30, 30, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+    transform: [{ translateY: slideAnim.value }],
+  }));
+
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: fadeAnim.value,
+  }));
 
   const requestCameraPermission = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -374,43 +398,42 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           <Animated.View
             style={[
               styles.backdrop,
-              { opacity: fadeAnim },
+              backdropStyle,
             ]}
           />
         </Pressable>
 
         {/* Menu */}
-        <Animated.View
-          style={[
-            styles.menuContainer,
-            {
-              backgroundColor: isDark ? 'rgba(30, 30, 30, 0.98)' : 'rgba(255, 255, 255, 0.98)',
-              transform: [{ translateY: slideAnim }],
-            },
-          ]}
-        >
-          {/* Handle */}
-          <View style={styles.handleContainer}>
-            <View style={[styles.handle, { backgroundColor: isDark ? '#555' : '#ccc' }]} />
-          </View>
-
-          {/* Options Grid */}
-          <View style={styles.optionsGrid}>
-            {ATTACHMENT_OPTIONS.map((option) => renderOption(option))}
-          </View>
-
-          {/* Cancel Button */}
-          <TouchableOpacity
+        <GestureDetector gesture={gesture}>
+          <Animated.View
             style={[
-              styles.cancelButton,
-              { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' },
+              styles.menuContainer,
+              menuStyle,
             ]}
-            onPress={onClose}
-            activeOpacity={0.7}
           >
-            <Text style={[styles.cancelText, { color: theme.colors.error }]}>Cancel</Text>
-          </TouchableOpacity>
-        </Animated.View>
+            {/* Handle */}
+            <View style={styles.handleContainer}>
+              <View style={[styles.handle, { backgroundColor: isDark ? '#555' : '#ccc' }]} />
+            </View>
+
+            {/* Options Grid */}
+            <View style={styles.optionsGrid}>
+              {ATTACHMENT_OPTIONS.map((option) => renderOption(option))}
+            </View>
+
+            {/* Cancel Button */}
+            <TouchableOpacity
+              style={[
+                styles.cancelButton,
+                { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' },
+              ]}
+              onPress={onClose}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.cancelText, { color: theme.colors.error }]}>Cancel</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </GestureDetector>
       </View>
     </Modal>
   );

@@ -19,7 +19,7 @@ import {
   withTiming
 } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
-import { Text, TouchableRipple, Button, IconButton } from 'react-native-paper';
+import { Text, TouchableRipple, Button, IconButton, Icon } from 'react-native-paper';
 
 interface GroupDetailsScreenProps {
   group: Group;
@@ -446,22 +446,15 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
             <View key={yearSection.year}>
               {/* Collapsed Year Header (only show when year IS collapsed) */}
               {collapsedYears.has(yearSection.year) && (
-                <TouchableRipple onPress={() => toggleYear(yearSection.year)} style={styles.combinedHeaderRow} borderless>
-                  <View style={[styles.collapsibleHeader, { flex: 1, justifyContent: 'space-between' }]}>
-                    <View style={styles.collapsibleHeader}>
-                      <IconButton
-                        icon="chevron-right"
-                        size={16}
-                        iconColor={theme.colors.onSurface}
-                        style={{ margin: 0 }}
-                      />
-                      <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
-                        {yearSection.yearLabel}
-                      </Text>
-                      <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
-                        · {yearSection.totalItems} item{yearSection.totalItems !== 1 ? 's' : ''}
-                      </Text>
-                    </View>
+                <TouchableRipple onPress={() => toggleYear(yearSection.year)} style={styles.yearHeaderCompact} borderless>
+                  <View style={styles.collapsibleHeader}>
+                    <Icon source="chevron-right" size={16} color={theme.colors.onSurface} />
+                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                      {yearSection.yearLabel}
+                    </Text>
+                    <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
+                      · {yearSection.totalItems} item{yearSection.totalItems !== 1 ? 's' : ''}
+                    </Text>
                   </View>
                 </TouchableRipple>
               )}
@@ -836,8 +829,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 8,
-    paddingBottom: 4,
+    paddingTop: 2,
+    paddingBottom: 2,
     paddingHorizontal: 4,
   },
   monthHeaderCompact: {
