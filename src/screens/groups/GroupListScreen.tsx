@@ -3,6 +3,7 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GroupCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableGroupCard } from '@/components/SwipeableGroupCard';
+import { GroupFilterSortSheet, GroupSortField, GroupSortOrder } from '@/components/GroupFilterSortSheet';
 import { CURRENCIES } from '@/constants/currencies';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -11,7 +12,7 @@ import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Button, Modal, Portal, Text } from 'react-native-paper';
+import { Button, Modal, Portal, Text, IconButton, Chip, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface GroupListScreenProps {
@@ -30,6 +31,12 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const [inviteCode, setInviteCode] = useState('');
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const scrollY = useRef(new Animated.Value(0)).current;
+
+  // Filter & Sort State
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [sortField, setSortField] = useState<GroupSortField>('updatedAt');
+  const [sortOrder, setSortOrder] = useState<GroupSortOrder>('desc');
+  const [selectedCurrencies, setSelectedCurrencies] = useState<string[]>([]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -64,6 +71,49 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     const input = currencyInput.toUpperCase();
     return CURRENCIES.filter(c => c.code.includes(input) || c.name.toUpperCase().includes(input));
   }, [currencyInput]);
+
+  // Derived state: Available currencies in existing groups
+  const availableCurrencies = useMemo(() => {
+    const currencies = new Set(groups.map(g => g.currency));
+    return Array.from(currencies).sort();
+  }, [groups]);
+
+  // Filter and Sort Logic
+  const processedGroups = useMemo(() => {
+    let result = [...groups];
+
+    // Filter by Currency
+    if (selectedCurrencies.length > 0) {
+      result = result.filter(g => selectedCurrencies.includes(g.currency));
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      let comparison = 0;
+      switch (sortField) {
+        case 'name':
+          comparison = a.name.localeCompare(b.name);
+          break;
+        case 'createdAt':
+          comparison = a.createdAt - b.createdAt;
+          break;
+        case 'updatedAt':
+          // Fallback to createdAt if updatedAt is missing
+          const timeA = a.updatedAt || a.createdAt;
+          const timeB = b.updatedAt || b.createdAt;
+          comparison = timeA - timeB;
+          break;
+        case 'totalSpent':
+          const totalA = a.expenses.reduce((sum, e) => sum + e.amount, 0);
+          const totalB = b.expenses.reduce((sum, e) => sum + e.amount, 0);
+          comparison = totalA - totalB;
+          break;
+      }
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
+    return result;
+  }, [groups, selectedCurrencies, sortField, sortOrder]);
 
   const handleCreate = async () => {
     const selectedCurrency = CURRENCIES.find(c => c.code === currencyInput.toUpperCase());
@@ -115,6 +165,14 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     );
   };
 
+  const toggleCurrency = (currency: string) => {
+    setSelectedCurrencies(prev =>
+      prev.includes(currency)
+        ? prev.filter(c => c !== currency)
+        : [...prev, currency]
+    );
+  };
+
   return (
     <LiquidBackground style={styles.container}>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
@@ -124,7 +182,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       </Animated.View>
 
       <Animated.FlatList
-        data={groups}
+        data={processedGroups}
         keyExtractor={(item) => item.groupId}
         renderItem={({ item, index }) => (
           <SwipeableGroupCard
@@ -140,7 +198,26 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         ]}
         ListHeaderComponent={
           <View style={styles.headerContainer}>
-            <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Groups</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Groups</Text>
+              <TouchableRipple
+                onPress={() => { lightHaptic(); setFilterVisible(true); }}
+                style={styles.filterButton}
+                borderless
+              >
+                <GlassView intensity={40} style={styles.filterButtonContent}>
+                  <IconButton icon="filter-variant" size={20} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
+                  <Text variant="labelLarge" style={{ color: theme.colors.onSurface, marginRight: 4 }}>Filters</Text>
+                  {(selectedCurrencies.length > 0) && (
+                    <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary }]}>
+                      <Text style={{ color: theme.colors.onPrimary, fontSize: 10, fontWeight: 'bold' }}>
+                        {selectedCurrencies.length}
+                      </Text>
+                    </View>
+                  )}
+                </GlassView>
+              </TouchableRipple>
+            </View>
           </View>
         }
         onScroll={Animated.event(
@@ -160,7 +237,9 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
               <GroupCardSkeleton />
             </View>
           ) : (
-            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No groups yet. Create one!</Text>
+            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
+              {groups.length > 0 ? 'No groups match your filters.' : 'No groups yet. Create one!'}
+            </Text>
           )
         }
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} tintColor={theme.colors.primary} />}
@@ -190,6 +269,18 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       </View>
 
       <Portal>
+        <GroupFilterSortSheet
+          visible={filterVisible}
+          onClose={() => setFilterVisible(false)}
+          sortField={sortField}
+          sortOrder={sortOrder}
+          selectedCurrencies={selectedCurrencies}
+          availableCurrencies={availableCurrencies}
+          onSortFieldChange={setSortField}
+          onSortOrderChange={setSortOrder}
+          onCurrencyToggle={toggleCurrency}
+        />
+
         <Modal
           visible={dialog === 'create'}
           onDismiss={() => setDialog(null)}
@@ -352,6 +443,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 20,
     borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   stickyHeaderTitle: {
     fontWeight: 'bold',
@@ -363,5 +456,24 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontWeight: 'bold',
+  },
+  filterButton: {
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  filterButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    gap: 4,
+  },
+  filterBadge: {
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
   },
 });
