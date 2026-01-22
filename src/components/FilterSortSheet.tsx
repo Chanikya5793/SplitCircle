@@ -3,7 +3,8 @@ import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { IconButton, Text } from 'react-native-paper';
 import { BlurView } from 'expo-blur';
 import { useTheme } from '@/context/ThemeContext';
-import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutDown } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutDown, useSharedValue, useAnimatedStyle, withSpring, withTiming, runOnJS } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 export type SortField = 'date' | 'amount' | 'title';
 export type SortOrder = 'desc' | 'asc';
@@ -54,6 +55,36 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
     onDateRangeChange,
 }) => {
     const { theme, isDark } = useTheme();
+    const translateY = useSharedValue(0);
+    const context = useSharedValue({ y: 0 });
+
+    const gesture = Gesture.Pan()
+        .onStart(() => {
+            context.value = { y: translateY.value };
+        })
+        .onUpdate((event) => {
+            translateY.value = Math.max(0, event.translationY + context.value.y);
+        })
+        .onEnd((event) => {
+            if (translateY.value > 100 || event.velocityY > 500) {
+                translateY.value = withTiming(1000, { duration: 200 }, () => {
+                    runOnJS(onClose)();
+                });
+            } else {
+                translateY.value = withSpring(0, { damping: 50 });
+            }
+        });
+
+    const animatedStyle = useAnimatedStyle(() => ({
+        transform: [{ translateY: translateY.value }],
+    }));
+
+    // Reset translation when visible becomes true
+    React.useEffect(() => {
+        if (visible) {
+            translateY.value = 0;
+        }
+    }, [visible]);
 
     const Chip = ({
         label,
@@ -108,124 +139,129 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
             <View style={styles.overlay}>
                 <Pressable style={styles.backdrop} onPress={onClose} />
 
-                <Animated.View entering={SlideInDown.springify().damping(30).stiffness(350).mass(1)} style={styles.sheetContainer}>
-                    <BlurView
-                        intensity={80}
-                        tint={isDark ? 'dark' : 'light'}
-                        style={StyleSheet.absoluteFill}
-                    />
-                    <View style={[styles.sheet, { backgroundColor: isDark ? 'rgba(30,30,40,0.35)' : 'rgba(255,255,255,0.4)' }]}>
-                        {/* Handle bar */}
-                        <View style={styles.handleContainer}>
-                            <View style={[styles.handle, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)' }]} />
-                        </View>
-
-                        {/* Header */}
-                        <View style={styles.header}>
-                            <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                                Filters
-                            </Text>
-                            <IconButton
-                                icon="close"
-                                size={22}
-                                onPress={onClose}
-                                iconColor={theme.colors.onSurfaceVariant}
-                            />
-                        </View>
-
-                        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-                            {/* Sort by */}
-                            <View style={styles.section}>
-                                <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
-                                    Sort by
-                                </Text>
-                                <View style={styles.chipRow}>
-                                    <Chip label="Date" selected={sortField === 'date'} onPress={() => onSortFieldChange('date')} icon="calendar" />
-                                    <Chip label="Amount" selected={sortField === 'amount'} onPress={() => onSortFieldChange('amount')} icon="currency-usd" />
-                                    <Chip
-                                        label="A-Z"
-                                        selected={sortField === 'title'}
-                                        onPress={() => onSortFieldChange('title')}
-                                        icon="alphabetical"
-                                        disabled={activityType === 'settlements'}
-                                    />
-                                </View>
+                <GestureDetector gesture={gesture}>
+                    <Animated.View
+                        entering={SlideInDown.springify().damping(30).stiffness(350).mass(1)}
+                        style={[styles.sheetContainer, animatedStyle]}
+                    >
+                        <BlurView
+                            intensity={80}
+                            tint={isDark ? 'dark' : 'light'}
+                            style={StyleSheet.absoluteFill}
+                        />
+                        <View style={[styles.sheet, { backgroundColor: isDark ? 'rgba(30,30,40,0.35)' : 'rgba(255,255,255,0.4)' }]}>
+                            {/* Handle bar */}
+                            <View style={styles.handleContainer}>
+                                <View style={[styles.handle, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)' }]} />
                             </View>
 
-                            {/* Order */}
-                            <View style={styles.section}>
-                                <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
-                                    Order
+                            {/* Header */}
+                            <View style={styles.header}>
+                                <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                                    Filters
                                 </Text>
-                                <View style={styles.chipRow}>
-                                    <Chip
-                                        label={
-                                            sortField === 'date' ? 'Newest first' :
-                                                sortField === 'amount' ? 'Highest first' :
-                                                    'Z to A'
-                                        }
-                                        selected={sortOrder === 'desc'}
-                                        onPress={() => onSortOrderChange('desc')}
-                                        icon="arrow-down"
-                                    />
-                                    <Chip
-                                        label={
-                                            sortField === 'date' ? 'Oldest first' :
-                                                sortField === 'amount' ? 'Lowest first' :
-                                                    'A to Z'
-                                        }
-                                        selected={sortOrder === 'asc'}
-                                        onPress={() => onSortOrderChange('asc')}
-                                        icon="arrow-up"
-                                    />
-                                </View>
+                                <IconButton
+                                    icon="close"
+                                    size={22}
+                                    onPress={onClose}
+                                    iconColor={theme.colors.onSurfaceVariant}
+                                />
                             </View>
 
-                            {/* Timeframe */}
-                            <View style={styles.section}>
-                                <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
-                                    Timeframe
-                                </Text>
-                                <View style={styles.chipWrap}>
-                                    <Chip label="All Time" selected={dateRange === 'all'} onPress={() => onDateRangeChange('all')} />
-                                    <Chip label="This Month" selected={dateRange === 'this-month'} onPress={() => onDateRangeChange('this-month')} />
-                                    <Chip label="Last Month" selected={dateRange === 'last-month'} onPress={() => onDateRangeChange('last-month')} />
-                                    <Chip label="Last 3 Months" selected={dateRange === 'last-3-months'} onPress={() => onDateRangeChange('last-3-months')} />
-                                </View>
-                            </View>
-
-                            {/* Categories */}
-                            <View style={[styles.section, activityType === 'settlements' && { opacity: 0.5 }]}>
-                                <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
-                                    Categories
-                                </Text>
-                                <View style={styles.chipWrap} pointerEvents={activityType === 'settlements' ? 'none' : 'auto'}>
-                                    {CATEGORIES.map((cat) => (
+                            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+                                {/* Sort by */}
+                                <View style={styles.section}>
+                                    <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
+                                        Sort by
+                                    </Text>
+                                    <View style={styles.chipRow}>
+                                        <Chip label="Date" selected={sortField === 'date'} onPress={() => onSortFieldChange('date')} icon="calendar" />
+                                        <Chip label="Amount" selected={sortField === 'amount'} onPress={() => onSortFieldChange('amount')} icon="currency-usd" />
                                         <Chip
-                                            key={cat.id}
-                                            label={cat.label}
-                                            icon={cat.icon}
-                                            selected={cat.id === 'all' ? selectedCategories.length === 0 : selectedCategories.includes(cat.id)}
-                                            onPress={() => onCategoryToggle(cat.id)}
+                                            label="A-Z"
+                                            selected={sortField === 'title'}
+                                            onPress={() => onSortFieldChange('title')}
+                                            icon="alphabetical"
+                                            disabled={activityType === 'settlements'}
                                         />
-                                    ))}
+                                    </View>
                                 </View>
-                            </View>
 
-                            {/* Activity Type */}
-                            <View style={styles.section}>
-                                <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
-                                    Show
-                                </Text>
-                                <View style={styles.chipRow}>
-                                    <Chip label="All" selected={activityType === 'all'} onPress={() => onActivityTypeChange('all')} icon="view-list" />
-                                    <Chip label="Expenses" selected={activityType === 'expenses'} onPress={() => onActivityTypeChange('expenses')} icon="receipt" />
-                                    <Chip label="Settlements" selected={activityType === 'settlements'} onPress={() => onActivityTypeChange('settlements')} icon="handshake" />
+                                {/* Order */}
+                                <View style={styles.section}>
+                                    <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
+                                        Order
+                                    </Text>
+                                    <View style={styles.chipRow}>
+                                        <Chip
+                                            label={
+                                                sortField === 'date' ? 'Newest first' :
+                                                    sortField === 'amount' ? 'Highest first' :
+                                                        'Z to A'
+                                            }
+                                            selected={sortOrder === 'desc'}
+                                            onPress={() => onSortOrderChange('desc')}
+                                            icon="arrow-down"
+                                        />
+                                        <Chip
+                                            label={
+                                                sortField === 'date' ? 'Oldest first' :
+                                                    sortField === 'amount' ? 'Lowest first' :
+                                                        'A to Z'
+                                            }
+                                            selected={sortOrder === 'asc'}
+                                            onPress={() => onSortOrderChange('asc')}
+                                            icon="arrow-up"
+                                        />
+                                    </View>
                                 </View>
-                            </View>
-                        </ScrollView>
-                    </View>
-                </Animated.View>
+
+                                {/* Timeframe */}
+                                <View style={styles.section}>
+                                    <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
+                                        Timeframe
+                                    </Text>
+                                    <View style={styles.chipWrap}>
+                                        <Chip label="All Time" selected={dateRange === 'all'} onPress={() => onDateRangeChange('all')} />
+                                        <Chip label="This Month" selected={dateRange === 'this-month'} onPress={() => onDateRangeChange('this-month')} />
+                                        <Chip label="Last Month" selected={dateRange === 'last-month'} onPress={() => onDateRangeChange('last-month')} />
+                                        <Chip label="Last 3 Months" selected={dateRange === 'last-3-months'} onPress={() => onDateRangeChange('last-3-months')} />
+                                    </View>
+                                </View>
+
+                                {/* Categories */}
+                                <View style={[styles.section, activityType === 'settlements' && { opacity: 0.5 }]}>
+                                    <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
+                                        Categories
+                                    </Text>
+                                    <View style={styles.chipWrap} pointerEvents={activityType === 'settlements' ? 'none' : 'auto'}>
+                                        {CATEGORIES.map((cat) => (
+                                            <Chip
+                                                key={cat.id}
+                                                label={cat.label}
+                                                icon={cat.icon}
+                                                selected={cat.id === 'all' ? selectedCategories.length === 0 : selectedCategories.includes(cat.id)}
+                                                onPress={() => onCategoryToggle(cat.id)}
+                                            />
+                                        ))}
+                                    </View>
+                                </View>
+
+                                {/* Activity Type */}
+                                <View style={styles.section}>
+                                    <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
+                                        Show
+                                    </Text>
+                                    <View style={styles.chipRow}>
+                                        <Chip label="All" selected={activityType === 'all'} onPress={() => onActivityTypeChange('all')} icon="view-list" />
+                                        <Chip label="Expenses" selected={activityType === 'expenses'} onPress={() => onActivityTypeChange('expenses')} icon="receipt" />
+                                        <Chip label="Settlements" selected={activityType === 'settlements'} onPress={() => onActivityTypeChange('settlements')} icon="handshake" />
+                                    </View>
+                                </View>
+                            </ScrollView>
+                        </View>
+                    </Animated.View>
+                </GestureDetector>
             </View>
         </Modal>
     );
