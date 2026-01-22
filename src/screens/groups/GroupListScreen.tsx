@@ -206,10 +206,9 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
                 borderless
               >
                 <GlassView intensity={40} style={styles.filterButtonContent}>
-                  <IconButton icon="filter-variant" size={20} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
-                  <Text variant="labelLarge" style={{ color: theme.colors.onSurface, marginRight: 4 }}>Filters</Text>
+                  <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
                   {(selectedCurrencies.length > 0) && (
-                    <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary }]}>
+                    <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary, borderColor: theme.colors.background }]}>
                       <Text style={{ color: theme.colors.onPrimary, fontSize: 10, fontWeight: 'bold' }}>
                         {selectedCurrencies.length}
                       </Text>
@@ -459,21 +458,24 @@ const styles = StyleSheet.create({
   },
   filterButton: {
     borderRadius: 50,
+    width: 44,
+    height: 44,
     overflow: 'hidden',
   },
   filterButtonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    gap: 4,
-  },
-  filterBadge: {
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 4,
+  },
+  filterBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

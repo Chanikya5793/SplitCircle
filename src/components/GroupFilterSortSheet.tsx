@@ -175,7 +175,7 @@ export const GroupFilterSortSheet: React.FC<GroupFilterSortSheetProps> = ({
                                     <View style={styles.chipWrap}>
                                         <Chip
                                             label={
-                                                sortField === 'createdAt' ? 'Newest first' :
+                                                (sortField === 'createdAt' || sortField === 'updatedAt') ? 'Newest first' :
                                                     sortField === 'totalSpent' ? 'Highest first' :
                                                         'Z to A'
                                             }
@@ -185,7 +185,7 @@ export const GroupFilterSortSheet: React.FC<GroupFilterSortSheetProps> = ({
                                         />
                                         <Chip
                                             label={
-                                                sortField === 'createdAt' ? 'Oldest first' :
+                                                (sortField === 'createdAt' || sortField === 'updatedAt') ? 'Oldest first' :
                                                     sortField === 'totalSpent' ? 'Lowest first' :
                                                         'A to Z'
                                             }
