@@ -46,7 +46,7 @@ const config: ExpoConfig = {
   splash: {
     image: './assets/splash-icon.png',
     resizeMode: 'contain',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#101010',
   },
   notification: {
     color: '#1F6FEB',
@@ -70,7 +70,7 @@ const config: ExpoConfig = {
     package: 'com.splitcircle.app',
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
-      backgroundColor: '#ffffff',
+      backgroundColor: '#101010',
     },
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
