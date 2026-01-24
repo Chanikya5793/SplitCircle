@@ -83,6 +83,14 @@
     "dotenv": "^16.4.5",
     "typescript": "~5.9.2"
   },
+  "overrides": {
+    "@firebase/auth": {
+      "@react-native-async-storage/async-storage": "$@react-native-async-storage/async-storage"
+    },
+    "@firebase/auth-compat": {
+      "@react-native-async-storage/async-storage": "$@react-native-async-storage/async-storage"
+    }
+  },
   "expo": {
     "doctor": {
       "reactNativeDirectoryCheck": {
