@@ -3,6 +3,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, MessageStatus, MessageType } from '@/models';
 import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { formatRelativeTime } from '@/utils/format';
+import { hasGoogleMapsApiKey } from '@/utils/hasGoogleMapsApiKey';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Audio } from 'expo-av';
 import { getContentUriAsync, getInfoAsync } from 'expo-file-system/legacy';
@@ -188,7 +189,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   const swipeableRef = useRef<Swipeable>(null);
   const [imageLoading, setImageLoading] = useState(true);
   const [fullScreenVisible, setFullScreenVisible] = useState(false);
-  
+
   // Audio playback state
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -264,12 +265,12 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       const aspectRatio = metadata.width / metadata.height;
       let width = Math.min(metadata.width, MAX_IMAGE_WIDTH);
       let height = width / aspectRatio;
-      
+
       if (height > MAX_IMAGE_HEIGHT) {
         height = MAX_IMAGE_HEIGHT;
         width = height * aspectRatio;
       }
-      
+
       return { width, height };
     }
     return { width: MAX_IMAGE_WIDTH, height: 200 };
@@ -314,9 +315,9 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         <Text style={[styles.replySender, { color: isMine ? 'rgba(255,255,255,0.9)' : replyColor }]}>{message.replyTo.senderName}</Text>
         <View style={styles.replyContentRow}>
           {isMediaReply && (
-            <Ionicons 
-              name={getMediaIcon(message.replyTo.type)} 
-              size={14} 
+            <Ionicons
+              name={getMediaIcon(message.replyTo.type)}
+              size={14}
               color={isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant}
               style={{ marginRight: 4 }}
             />
@@ -430,7 +431,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     }
 
     return (
-      <TouchableOpacity 
+      <TouchableOpacity
         activeOpacity={0.9}
         onPress={() => setFullScreenVisible(true)}
         style={[styles.mediaContainer, imageDimensions]}
@@ -505,10 +506,10 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       Alert.alert('File Not Available', 'The file has not been downloaded yet.');
       return;
     }
-    
+
     const mimeType = message.mediaMetadata?.mimeType || 'application/octet-stream';
     const fileName = message.mediaMetadata?.fileName || 'Document';
-    
+
     try {
       // Check if file exists
       const fileInfo = await getInfoAsync(mediaUri);
@@ -519,7 +520,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
 
       // Check if sharing is available
       const isAvailable = await Sharing.isAvailableAsync();
-      
+
       if (isAvailable) {
         // Use sharing to open the file with the system's default app
         await Sharing.shareAsync(mediaUri, {
@@ -575,8 +576,8 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     const isSending = message.status === 'sending';
 
     return (
-      <TouchableOpacity 
-        style={[styles.documentContainer, { 
+      <TouchableOpacity
+        style={[styles.documentContainer, {
           backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
         }]}
         activeOpacity={0.7}
@@ -587,16 +588,16 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           {isDownloading || isSending ? (
             <ActivityIndicator color="#fff" size="small" />
           ) : (
-            <Ionicons 
-              name={getDocumentIcon(metadata?.mimeType)} 
-              size={24} 
-              color="#fff" 
+            <Ionicons
+              name={getDocumentIcon(metadata?.mimeType)}
+              size={24}
+              color="#fff"
             />
           )}
         </View>
         <View style={styles.documentInfo}>
-          <Text 
-            numberOfLines={1} 
+          <Text
+            numberOfLines={1}
             style={[styles.documentName, { color: isMine ? '#fff' : theme.colors.onSurface }]}
           >
             {metadata?.fileName || 'Document'}
@@ -605,10 +606,10 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
             {isDownloading ? 'Downloading...' : (metadata?.fileSize ? formatFileSize(metadata.fileSize) : '')}
           </Text>
         </View>
-        <Ionicons 
+        <Ionicons
           name={isDownloaded ? "open-outline" : "cloud-download-outline"}
-          size={20} 
-          color={isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant} 
+          size={20}
+          color={isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant}
         />
       </TouchableOpacity>
     );
@@ -620,10 +621,10 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     const metadata = message.mediaMetadata;
 
     return (
-      <View style={[styles.audioContainer, { 
+      <View style={[styles.audioContainer, {
         backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
       }]}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.audioPlayButton, { backgroundColor: theme.colors.primary }]}
           activeOpacity={0.8}
           onPress={handlePlayPause}
@@ -633,15 +634,15 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         <View style={styles.audioWaveform}>
           {/* Simple waveform visualization placeholder */}
           {[...Array(16)].map((_, i) => (
-            <View 
+            <View
               key={i}
               style={[
-                styles.audioBar, 
-                { 
+                styles.audioBar,
+                {
                   height: isPlaying ? Math.random() * 16 + 4 : 4, // Animate height if playing (simple effect)
-                  backgroundColor: isMine ? 'rgba(255,255,255,0.5)' : theme.colors.primary 
+                  backgroundColor: isMine ? 'rgba(255,255,255,0.5)' : theme.colors.primary
                 }
-              ]} 
+              ]}
             />
           ))}
         </View>
@@ -657,68 +658,81 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     if (!message.location) return;
     const { latitude, longitude } = message.location;
     const label = message.location.address || 'Location';
-    
+
     const url = Platform.select({
       ios: `maps:0,0?q=${label}@${latitude},${longitude}`,
       android: `geo:0,0?q=${latitude},${longitude}(${label})`,
     });
-    
+
     if (url) Linking.openURL(url);
   };
+
+  // Check if Maps API key is available (cached at component level to avoid repeated checks)
+  const mapsAvailable = hasGoogleMapsApiKey();
 
   // Location message
   const renderLocationContent = () => {
     if (!message.location) return null;
 
+    // Static fallback when Maps API key is not configured
+    const renderStaticLocationFallback = () => (
+      <View style={[StyleSheet.absoluteFillObject, styles.mapFallback, { backgroundColor: isDark ? 'rgba(30,30,40,0.9)' : 'rgba(240,240,245,0.95)' }]}>
+        <Ionicons name="location" size={40} color={theme.colors.primary} />
+        <Text style={{ color: theme.colors.onSurface, marginTop: 8, fontSize: 14, fontWeight: '600' }}>Location Shared</Text>
+        <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4, fontSize: 11, textAlign: 'center', paddingHorizontal: 16 }}>
+          Tap to open in Maps
+        </Text>
+      </View>
+    );
+
     return (
-      <TouchableOpacity 
+      <TouchableOpacity
         activeOpacity={0.9}
         onPress={openLocation}
         style={styles.locationContainer}
       >
         <View style={styles.locationPreview}>
-          <MapErrorBoundary
-            fallback={
-              <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
-                <Ionicons name="location" size={32} color={theme.colors.primary} />
-                <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4, fontSize: 12 }}>Map unavailable</Text>
-              </View>
-            }
-          >
-            <React.Suspense fallback={
-              <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
-                <Ionicons name="location" size={32} color={theme.colors.primary} />
-                <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4, fontSize: 12 }}>Loading map...</Text>
-              </View>
-            }>
-              <MapView
-                style={StyleSheet.absoluteFillObject}
-                initialRegion={{
-                  latitude: message.location.latitude,
-                  longitude: message.location.longitude,
-                  latitudeDelta: 0.01,
-                  longitudeDelta: 0.01,
-                }}
-                scrollEnabled={false}
-                zoomEnabled={false}
-                rotateEnabled={false}
-                pitchEnabled={false}
-                liteMode={Platform.OS === 'android'}
-              >
-                <Marker
-                  coordinate={{
+          {mapsAvailable ? (
+            <MapErrorBoundary
+              fallback={renderStaticLocationFallback()}
+            >
+              <React.Suspense fallback={
+                <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
+                  <Ionicons name="location" size={32} color={theme.colors.primary} />
+                  <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4, fontSize: 12 }}>Loading map...</Text>
+                </View>
+              }>
+                <MapView
+                  style={StyleSheet.absoluteFillObject}
+                  initialRegion={{
                     latitude: message.location.latitude,
                     longitude: message.location.longitude,
+                    latitudeDelta: 0.01,
+                    longitudeDelta: 0.01,
                   }}
-                />
-              </MapView>
-            </React.Suspense>
-          </MapErrorBoundary>
+                  scrollEnabled={false}
+                  zoomEnabled={false}
+                  rotateEnabled={false}
+                  pitchEnabled={false}
+                  liteMode={Platform.OS === 'android'}
+                >
+                  <Marker
+                    coordinate={{
+                      latitude: message.location.latitude,
+                      longitude: message.location.longitude,
+                    }}
+                  />
+                </MapView>
+              </React.Suspense>
+            </MapErrorBoundary>
+          ) : (
+            renderStaticLocationFallback()
+          )}
         </View>
         {message.location.address && (
           <View style={{ padding: 8, backgroundColor: isMine ? 'transparent' : (isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.5)') }}>
-            <Text 
-              numberOfLines={2} 
+            <Text
+              numberOfLines={2}
               style={[styles.locationAddress, { color: isMine ? '#fff' : theme.colors.onSurface }]}
             >
               {message.location.address}
@@ -746,7 +760,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           style={styles.fullScreenImage}
           resizeMode="contain"
         />
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.fullScreenClose}
           onPress={() => setFullScreenVisible(false)}
         >
@@ -779,11 +793,11 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   };
 
   // Check if message has text content to display
-  const hasTextContent = message.content && 
-    !message.content.startsWith('📷') && 
-    !message.content.startsWith('🎥') && 
-    !message.content.startsWith('🎵') && 
-    !message.content.startsWith('📄') && 
+  const hasTextContent = message.content &&
+    !message.content.startsWith('📷') &&
+    !message.content.startsWith('🎥') &&
+    !message.content.startsWith('🎵') &&
+    !message.content.startsWith('📄') &&
     !message.content.startsWith('📍') &&
     !message.content.startsWith('📎');
 
