@@ -88,21 +88,21 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
       // Only update state if it's a meaningful change to reduce re-renders
       if (countChanged || lastIdChanged) {
-      setMessages(items);
-      prevCount = items.length;
-      prevLastMessageId = lastId;
+        setMessages(items);
+        prevCount = items.length;
+        prevLastMessageId = lastId;
       }
 
       // Throttled logging to avoid spamming the console
       const now = Date.now();
       if (now - lastLogAt > LOG_INTERVAL) {
-      console.log(`📨 Received ${items.length} messages in ChatRoomScreen`);
-      lastLogAt = now;
+        console.log(`📨 Received ${items.length} messages in ChatRoomScreen`);
+        lastLogAt = now;
       } else if (countChanged && items.length > prevCountBefore) {
-      // If new messages arrived and we are within the throttle window,
-      // log a concise "new messages" note.
-      console.log(`📨 New message(s) — total: ${items.length}`);
-      lastLogAt = now;
+        // If new messages arrived and we are within the throttle window,
+        // log a concise "new messages" note.
+        console.log(`📨 New message(s) — total: ${items.length}`);
+        lastLogAt = now;
       }
     });
 
@@ -171,7 +171,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const handleMediaSelected = (media: SelectedMedia) => {
     // Close attachment menu first
     setAttachmentMenuVisible(false);
-    
+
     // Wait for menu close animation to finish before showing preview
     // This prevents modal conflict issues on iOS/Android
     setTimeout(() => {
@@ -187,10 +187,10 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Handle sending media with optional caption
   const handleSendMedia = async (caption: string, quality: QualityLevel) => {
     if (!selectedMedia) return;
-    
+
     setMediaPreviewVisible(false);
     setIsProcessingMedia(true);
-    
+
     try {
       // Process media based on quality selection
       let processedUri = selectedMedia.uri;
@@ -271,7 +271,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         replyTo: replyData,
         mediaMetadata: Object.keys(mediaMetadata).length > 0 ? mediaMetadata as any : undefined,
       });
-      
+
       setSelectedMedia(null);
       setReplyingTo(null);
     } catch (error) {
@@ -358,8 +358,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        // smaller offset so composer hugs the keyboard more closely
-        //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
+      // smaller offset so composer hugs the keyboard more closely
+      //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
       >
         <View style={styles.headerContainer}>
           <TouchableOpacity
@@ -426,7 +426,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           {/* Reply preview bar */}
           {replyingTo && (
             <View style={styles.replyPreviewContainer}>
-              <View style={[styles.replyPreview, { 
+              <View style={[styles.replyPreview, {
                 borderLeftColor: getSenderColor(replyingTo.senderId)
               }]}>
                 <Text style={[styles.replyPreviewSender, { color: getSenderColor(replyingTo.senderId) }]}>
@@ -450,7 +450,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               </TouchableOpacity>
             </View>
           )}
-          
+
           <View style={styles.inputRow}>
             {/* Attachment button (WhatsApp-style +) */}
             <IconButton
@@ -469,50 +469,50 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 composerFocused && { borderWidth: 2, borderColor: theme.colors.primary },
               ]}
             >
-            <GlassView style={styles.composer}>
-              <TextInput
-                ref={inputRef}
-                mode="flat"
-                dense
-                placeholder={placeholder}
-                value={text}
-                onChangeText={setText}
-                style={styles.input}
-                contentStyle={styles.inputContent}
-                selectionColor={theme.colors.primary}
-                underlineColor="transparent"
-                activeUnderlineColor="transparent"
-                onFocus={() => setComposerFocused(true)}
-                onBlur={() => setComposerFocused(false)}
-                multiline
-                numberOfLines={1}
-                maxLength={1000}
-                theme={{
-                  colors: {
-                    background: 'transparent',
-                    onSurfaceVariant: theme.colors.onSurfaceVariant,
-                    text: theme.colors.onSurface,
-                    placeholder: theme.colors.onSurfaceVariant,
-                  }
-                }}
-                returnKeyType="send"
-                onSubmitEditing={handleSend}
-                blurOnSubmit={false}
-                keyboardAppearance={isDark ? 'dark' : 'light'}
-              />
-            </GlassView>
-          </View>
-          <IconButton
-            icon="send"
-            mode="contained"
-            onPress={handleSend}
-            disabled={!text.trim() || sending}
-            containerColor={!text.trim() || sending ? (isDark ? '#555' : '#ccc') : theme.colors.primary}
-            iconColor={theme.colors.onPrimary}
-            size={28}
-            style={styles.sendButton}
-            accessibilityLabel="Send message"
-          />
+              <GlassView style={styles.composer}>
+                <TextInput
+                  ref={inputRef}
+                  mode="flat"
+                  dense
+                  placeholder={placeholder}
+                  value={text}
+                  onChangeText={setText}
+                  style={styles.input}
+                  contentStyle={styles.inputContent}
+                  selectionColor={theme.colors.primary}
+                  underlineColor="transparent"
+                  activeUnderlineColor="transparent"
+                  onFocus={() => setComposerFocused(true)}
+                  onBlur={() => setComposerFocused(false)}
+                  multiline
+                  numberOfLines={1}
+                  maxLength={1000}
+                  theme={{
+                    colors: {
+                      background: 'transparent',
+                      onSurfaceVariant: theme.colors.onSurfaceVariant,
+                      text: theme.colors.onSurface,
+                      placeholder: theme.colors.onSurfaceVariant,
+                    }
+                  }}
+                  returnKeyType="send"
+                  onSubmitEditing={handleSend}
+                  blurOnSubmit={false}
+                  keyboardAppearance={isDark ? 'dark' : 'light'}
+                />
+              </GlassView>
+            </View>
+            <IconButton
+              icon="send"
+              mode="contained"
+              onPress={handleSend}
+              disabled={!text.trim() || sending}
+              containerColor={!text.trim() || sending ? (isDark ? '#555' : '#ccc') : theme.colors.primary}
+              iconColor={theme.colors.onPrimary}
+              size={28}
+              style={styles.sendButton}
+              accessibilityLabel="Send message"
+            />
           </View>
         </GlassView>
       </KeyboardAvoidingView>
