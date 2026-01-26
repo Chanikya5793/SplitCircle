@@ -1,4 +1,5 @@
 import { useTheme } from '@/context/ThemeContext';
+import { hasGoogleMapsApiKey } from '@/utils/hasGoogleMapsApiKey';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Constants from 'expo-constants';
 import * as IntentLauncher from 'expo-intent-launcher';
@@ -27,7 +28,7 @@ const LONGITUDE_DELTA = LATITUDE_DELTA * ASPECT_RATIO;
 const LIVE_LOCATION_DURATION_MINUTES = 15;
 
 export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPickerProps) => {
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
   const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
   const [selectedLocation, setSelectedLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [address, setAddress] = useState<string | null>(null);
@@ -38,6 +39,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   const [isSearching, setIsSearching] = useState(false);
   const mapRef = useRef<MapViewRef>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const mapsApiKeyAvailable = hasGoogleMapsApiKey();
 
   useEffect(() => {
     if (visible) {
@@ -60,15 +62,15 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
-      
+
       setCurrentLocation(location);
       setSelectedLocation({
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
       });
-      
+
       await fetchAddress(location.coords.latitude, location.coords.longitude);
-      
+
     } catch (error) {
       console.error('Error getting location:', error);
       Alert.alert('Error', 'Could not fetch location');
@@ -83,7 +85,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
         latitude,
         longitude,
       });
-      
+
       if (reverseGeocode.length > 0) {
         const addr = reverseGeocode[0];
         const addressString = [
@@ -116,11 +118,11 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
-    
+
     setIsSearching(true);
     try {
       const geocoded = await Location.geocodeAsync(searchQuery);
-      
+
       if (geocoded.length > 0) {
         const { latitude, longitude } = geocoded[0];
         const newRegion = {
@@ -129,7 +131,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
           latitudeDelta: LATITUDE_DELTA,
           longitudeDelta: LONGITUDE_DELTA,
         };
-        
+
         mapRef.current?.animateToRegion(newRegion, 1000);
         setSelectedLocation({ latitude, longitude });
         // Address will be updated by onRegionChangeComplete
@@ -186,7 +188,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     try {
       // First ensure foreground permissions are granted
       const { status: foregroundStatus } = await Location.getForegroundPermissionsAsync();
-      
+
       if (foregroundStatus !== 'granted') {
         // Need to request foreground permissions first
         const { status } = await Location.requestForegroundPermissionsAsync();
@@ -198,7 +200,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
 
       // Check background permissions
       const { status: backgroundStatus } = await Location.getBackgroundPermissionsAsync();
-      
+
       if (backgroundStatus === 'granted') {
         // Permission already granted, proceed with live location logic
         Alert.alert('Coming Soon', 'Live location sharing will be available in the next update.');
@@ -208,7 +210,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       // Request background permissions programmatically
       // On Android, this will show the "Allow all the time" option
       const { status: newBackgroundStatus } = await Location.requestBackgroundPermissionsAsync();
-      
+
       if (newBackgroundStatus === 'granted') {
         // Permission granted, proceed with live location logic
         Alert.alert('Coming Soon', 'Live location sharing will be available in the next update.');
@@ -222,8 +224,8 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
         'To share your live location, please select "Allow all the time" in location settings.',
         [
           { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Open Settings', 
+          {
+            text: 'Open Settings',
             onPress: async () => {
               if (Platform.OS === 'ios') {
                 await Linking.openSettings();
@@ -233,7 +235,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                   data: 'package:' + packageName
                 });
               }
-            } 
+            }
           }
         ]
       );
@@ -297,41 +299,63 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
 
             <View style={styles.mapContainer}>
               {currentLocation && (
-                <React.Suspense fallback={
-                  <View style={[styles.map, styles.mapLoading]}>
-                    <ActivityIndicator size="large" color={theme.colors.primary} />
-                    <Text style={{ marginTop: 10, color: theme.colors.onSurface }}>Loading map...</Text>
+                mapsApiKeyAvailable ? (
+                  <React.Suspense fallback={
+                    <View style={[styles.map, styles.mapLoading]}>
+                      <ActivityIndicator size="large" color={theme.colors.primary} />
+                      <Text style={{ marginTop: 10, color: theme.colors.onSurface }}>Loading map...</Text>
+                    </View>
+                  }>
+                    <MapView
+                      ref={mapRef as any}
+                      style={styles.map}
+                      initialRegion={{
+                        latitude: currentLocation.coords.latitude,
+                        longitude: currentLocation.coords.longitude,
+                        latitudeDelta: LATITUDE_DELTA,
+                        longitudeDelta: LONGITUDE_DELTA,
+                      }}
+                      showsUserLocation
+                      showsMyLocationButton={false}
+                      onRegionChange={handleRegionChangeStart}
+                      onRegionChangeComplete={handleRegionChangeComplete}
+                    />
+                  </React.Suspense>
+                ) : (
+                  // Fallback UI when Maps API key is not configured
+                  <View style={[styles.map, styles.mapLoading, { backgroundColor: isDark ? 'rgba(30,30,40,0.95)' : 'rgba(245,245,250,0.95)' }]}>
+                    <Ionicons name="location" size={60} color={theme.colors.primary} />
+                    <Text style={{ marginTop: 16, color: theme.colors.onSurface, fontSize: 16, fontWeight: '600' }}>GPS Location</Text>
+                    <Text style={{ marginTop: 8, color: theme.colors.onSurfaceVariant, fontSize: 13, textAlign: 'center', paddingHorizontal: 32 }}>
+                      Map preview unavailable, but you can still share your current location
+                    </Text>
+                    <TouchableOpacity
+                      style={{ marginTop: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.primaryContainer, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 }}
+                      onPress={goToCurrentLocation}
+                    >
+                      <Ionicons name="locate" size={18} color={theme.colors.primary} />
+                      <Text style={{ marginLeft: 8, color: theme.colors.primary, fontWeight: '500' }}>Refresh Location</Text>
+                    </TouchableOpacity>
                   </View>
-                }>
-                  <MapView
-                    ref={mapRef as any}
-                    style={styles.map}
-                    initialRegion={{
-                      latitude: currentLocation.coords.latitude,
-                      longitude: currentLocation.coords.longitude,
-                      latitudeDelta: LATITUDE_DELTA,
-                      longitudeDelta: LONGITUDE_DELTA,
-                    }}
-                    showsUserLocation
-                    showsMyLocationButton={false}
-                    onRegionChange={handleRegionChangeStart}
-                    onRegionChangeComplete={handleRegionChangeComplete}
-                  />
-                </React.Suspense>
+                )
               )}
-              
-              {/* Center Pin */}
-              <View style={styles.centerPinContainer} pointerEvents="none">
-                <Ionicons name="location" size={40} color={theme.colors.primary} style={{ marginBottom: 40 }} />
-              </View>
 
-              {/* My Location Button */}
-              <TouchableOpacity 
-                style={[styles.myLocationButton, { backgroundColor: theme.colors.surface }]}
-                onPress={goToCurrentLocation}
-              >
-                <Ionicons name="locate" size={24} color={theme.colors.primary} />
-              </TouchableOpacity>
+              {/* Center Pin - only show when map is available */}
+              {mapsApiKeyAvailable && (
+                <View style={styles.centerPinContainer} pointerEvents="none">
+                  <Ionicons name="location" size={40} color={theme.colors.primary} style={{ marginBottom: 40 }} />
+                </View>
+              )}
+
+              {/* My Location Button - only show when map is available */}
+              {mapsApiKeyAvailable && (
+                <TouchableOpacity
+                  style={[styles.myLocationButton, { backgroundColor: theme.colors.surface }]}
+                  onPress={goToCurrentLocation}
+                >
+                  <Ionicons name="locate" size={24} color={theme.colors.primary} />
+                </TouchableOpacity>
+              )}
             </View>
 
             <View style={[styles.footer, { backgroundColor: theme.colors.surface }]}>
@@ -346,10 +370,10 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                   </Text>
                 </View>
               </View>
-              
-              <Button 
-                mode="contained" 
-                onPress={handleSend} 
+
+              <Button
+                mode="contained"
+                onPress={handleSend}
                 loading={sending}
                 disabled={isDragging || !selectedLocation}
                 style={styles.sendButton}
@@ -357,9 +381,9 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
               >
                 Share This Location
               </Button>
-              
-              <Button 
-                mode="outlined" 
+
+              <Button
+                mode="outlined"
                 onPress={handleLiveLocation}
                 style={[styles.sendButton, { marginTop: 10, borderColor: theme.colors.primary }]}
                 textColor={theme.colors.primary}
