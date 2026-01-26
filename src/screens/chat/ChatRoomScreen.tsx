@@ -555,7 +555,6 @@ const styles = StyleSheet.create({
   },
   list: {
     flex: 1,
-    overflow: 'visible',
   },
   listContent: {
     padding: 16,
