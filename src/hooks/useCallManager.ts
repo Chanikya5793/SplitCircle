@@ -9,6 +9,7 @@ import {
   subscribeToCallSession
 } from '@/services/callService';
 import { LiveKitService } from '@/services/LiveKitService';
+import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { AudioSession } from '@livekit/react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -47,6 +48,9 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const [serverUrl, setServerUrl] = useState<string | null>(null);
 
   const callIdRef = useRef<string | null>(null);
+  const callStartedAtRef = useRef<number | null>(null);
+  const otherParticipantRef = useRef<{ userId: string; displayName: string } | null>(null);
+  const isInitiatorRef = useRef<boolean>(false);
   const unsubscribes = useRef<Array<() => void>>([]);
 
   // Cleanup subscriptions
@@ -70,9 +74,11 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setError(null);
       setStatus('ringing'); // UI shows "Calling..."
       setCallType(type);
+      isInitiatorRef.current = true;
+      callStartedAtRef.current = Date.now();
 
-      // 1. Create Call Session in Firestore (Ringing)
-      console.log('📞 Creating call session in Firestore...');
+      // 1. Create Call Session in Realtime DB (Ringing)
+      console.log('📞 Creating call session in Realtime DB...');
       const newCallId = await createCallSession(
         {
           chatId,
@@ -81,8 +87,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
           displayName: user.displayName || 'Unknown',
           photoURL: user.photoURL || undefined,
         },
-        type,
-        {} // No offer needed for LiveKit
+        type
       );
       console.log(`📞 Call session created: ${newCallId}`);
       setCallId(newCallId);
@@ -108,13 +113,18 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       const unsubSession = subscribeToCallSession(newCallId, async (session) => {
         console.log(`📞 Call session update: status=${session?.status}`);
         if (!session || session.status === 'ended') {
-          console.log('📞 Call ended by Firestore update');
+          console.log('📞 Call ended by Realtime DB update');
           endCall();
           return;
         }
         if (session.status === 'connected') {
           console.log('📞 Call connected! Other party joined.');
           setStatus('connected');
+          // Track other participant for history
+          const other = session.participants.find(p => p.userId !== user.userId);
+          if (other) {
+            otherParticipantRef.current = { userId: other.userId, displayName: other.displayName };
+          }
         }
       });
       unsubscribes.current.push(unsubSession);
@@ -141,6 +151,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setStatus('ringing');
       setCallId(existingCallId);
       callIdRef.current = existingCallId;
+      isInitiatorRef.current = false;
+      callStartedAtRef.current = Date.now();
 
       const session = await getCallSession(existingCallId);
       if (!session) {
@@ -159,6 +171,12 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       console.log(`📞 Call found: type=${session.type}, status=${session.status}`);
       setCallType(session.type);
 
+      // Track initiator as other participant for history
+      const initiator = session.participants.find(p => p.userId === session.initiatorId);
+      if (initiator) {
+        otherParticipantRef.current = { userId: initiator.userId, displayName: initiator.displayName };
+      }
+
       // 1. Fetch LiveKit Token
       console.log('📞 Fetching LiveKit token for joining...');
       const { token: roomToken, url } = await LiveKitService.getToken(
@@ -175,8 +193,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       await AudioSession.startAudioSession();
       console.log('📞 Audio session started');
 
-      // 3. Update Firestore (Join) - This also updates status to 'connected'
-      console.log('📞 Joining call in Firestore...');
+      // 3. Update Realtime DB (Join) - This also updates status to 'connected'
+      console.log('📞 Joining call in Realtime DB...');
       await joinCall(existingCallId, {
         userId: user.userId,
         displayName: user.displayName || 'Unknown',
@@ -190,7 +208,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       const unsubSession = subscribeToCallSession(existingCallId, (updatedSession) => {
         console.log(`📞 Call session update: status=${updatedSession?.status}`);
         if (!updatedSession || updatedSession.status === 'ended') {
-          console.log('📞 Call ended by Firestore update');
+          console.log('📞 Call ended by Realtime DB update');
           endCall();
         }
       });
@@ -209,8 +227,31 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     try {
       cleanupSubscriptions();
 
+      // Save call history locally before deleting from Realtime DB
+      if (callIdRef.current && user && callStartedAtRef.current && chatId) {
+        const endedAt = Date.now();
+        const duration = Math.floor((endedAt - callStartedAtRef.current) / 1000);
+
+        const historyEntry: CallHistoryEntry = {
+          callId: callIdRef.current,
+          chatId,
+          groupId,
+          type: callType,
+          direction: isInitiatorRef.current ? 'outgoing' : 'incoming',
+          otherParticipant: otherParticipantRef.current || { userId: 'unknown', displayName: 'Unknown' },
+          startedAt: callStartedAtRef.current,
+          endedAt,
+          duration,
+          status: duration > 0 ? 'completed' : 'missed',
+        };
+
+        console.log(`📞 Saving call to local history: ${callIdRef.current}`);
+        await saveCallToHistory(historyEntry);
+      }
+
+      // Delete signaling from Realtime DB
       if (callIdRef.current && user) {
-        console.log(`📞 Leaving call in Firestore: ${callIdRef.current}`);
+        console.log(`📞 Deleting call from Realtime DB: ${callIdRef.current}`);
         await leaveCall(callIdRef.current, user.userId);
       }
 
@@ -219,6 +260,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setStatus('ended');
       setCallId(null);
       callIdRef.current = null;
+      callStartedAtRef.current = null;
+      otherParticipantRef.current = null;
 
       console.log('📞 Stopping audio session...');
       AudioSession.stopAudioSession();
@@ -227,7 +270,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     } catch (err) {
       console.error('📞 Error ending call:', err);
     }
-  }, [user, cleanupSubscriptions]);
+  }, [user, chatId, groupId, callType, cleanupSubscriptions]);
 
   // Local state toggles (actual media toggle happens in the UI via LiveKitRoom)
   const toggleMute = useCallback(() => {

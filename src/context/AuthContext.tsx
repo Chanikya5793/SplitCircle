@@ -4,15 +4,15 @@ import * as Google from 'expo-auth-session/providers/google';
 import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
 import {
-    createUserWithEmailAndPassword,
-    GoogleAuthProvider,
-    onAuthStateChanged,
-    sendPasswordResetEmail,
-    signInWithCredential,
-    signInWithEmailAndPassword,
-    signOut,
-    updateProfile,
-    type User as FirebaseUser,
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithCredential,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile,
+  type User as FirebaseUser,
 } from 'firebase/auth';
 import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
@@ -37,7 +37,7 @@ const buildUserProfile = (firebaseUser: FirebaseUser, existing?: UserProfile): U
   userId: firebaseUser.uid,
   email: firebaseUser.email ?? '',
   displayName: firebaseUser.displayName ?? existing?.displayName ?? '',
-  photoURL: firebaseUser.photoURL ?? existing?.photoURL,
+  photoURL: firebaseUser.photoURL ?? existing?.photoURL ?? null,  // Must be null, not undefined for Firestore
   groups: existing?.groups ?? [],
   status: 'online',
   createdAt: existing?.createdAt ?? Date.now(),
@@ -47,6 +47,20 @@ const buildUserProfile = (firebaseUser: FirebaseUser, existing?: UserProfile): U
     emailEnabled: true,
   },
 });
+
+/**
+ * Remove undefined values from object before sending to Firestore
+ * Firestore doesn't accept undefined as a value
+ */
+const sanitizeForFirestore = <T extends Record<string, any>>(obj: T): T => {
+  const result: Record<string, any> = {};
+  for (const key in obj) {
+    if (obj[key] !== undefined) {
+      result[key] = obj[key];
+    }
+  }
+  return result as T;
+};
 
 export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -62,10 +76,10 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
   useEffect(() => {
     console.log('Google Auth Request initialized:', {
-        request: !!request,
-        expoClientId: googleConfig.webClientId ? 'Set (app.json)' : (process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID ? 'Set (env)' : 'Missing'),
-        androidClientId: googleConfig.androidClientId ? 'Set (app.json)' : (process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ? 'Set (env)' : 'Missing'),
-        iosClientId: googleConfig.iosClientId ? 'Set (app.json)' : (process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ? 'Set (env)' : 'Missing'),
+      request: !!request,
+      expoClientId: googleConfig.webClientId ? 'Set (app.json)' : (process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID ? 'Set (env)' : 'Missing'),
+      androidClientId: googleConfig.androidClientId ? 'Set (app.json)' : (process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ? 'Set (env)' : 'Missing'),
+      iosClientId: googleConfig.iosClientId ? 'Set (app.json)' : (process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ? 'Set (env)' : 'Missing'),
     });
   }, [request]);
 
@@ -85,7 +99,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       }
 
       const docRef = doc(db, 'users', firebaseUser.uid);
-      
+
       unsubscribeSnapshot = onSnapshot(docRef, async (docSnap) => {
         if (docSnap.exists()) {
           const payload = buildUserProfile(firebaseUser, docSnap.data() as UserProfile);
@@ -97,11 +111,11 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           // But to be safe (and for Google Sign In), we create it if missing.
           const payload = buildUserProfile(firebaseUser);
           try {
-            await setDoc(docRef, {
+            await setDoc(docRef, sanitizeForFirestore({
               ...payload,
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
-            });
+            }));
             // The snapshot listener will fire again after this write.
           } catch (error) {
             console.error('Error creating user profile:', error);
@@ -124,7 +138,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       console.log('Google Auth Response:', response?.type, JSON.stringify(response, null, 2));
       if (response?.type !== 'success' || !response.authentication?.idToken) {
         if (response?.type === 'error') {
-            console.error('Google Auth Error:', response.error);
+          console.error('Google Auth Error:', response.error);
         }
         return;
       }
