@@ -13,7 +13,7 @@ import {
   VideoTrack,
 } from '@livekit/react-native';
 import { ConnectionState, Track } from 'livekit-client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Text } from 'react-native-paper';
 
@@ -42,8 +42,13 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
   } = useCallManager({ chatId, groupId });
   const { theme } = useTheme();
   const [callDuration, setCallDuration] = useState(0);
+  const hasInitializedRef = useRef(false);
 
   useEffect(() => {
+    // Prevent double initialization
+    if (hasInitializedRef.current) return;
+    hasInitializedRef.current = true;
+
     console.log('🎬 CallSessionScreen mounted');
     if (joinCallId) {
       console.log(`🎬 Joining existing call: ${joinCallId}`);
@@ -102,17 +107,27 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
     const participants = useParticipants();
     const tracks = useTracks([Track.Source.Camera]);
 
-    // Log connection state changes
+    // Use refs to only log when values actually change
+    const prevConnectionState = useRef<ConnectionState | null>(null);
+    const prevParticipantCount = useRef<number | null>(null);
+
+    // Log connection state changes only when they actually change
     useEffect(() => {
-      console.log(`🎥 LiveKit connection state: ${connectionState}`);
+      if (prevConnectionState.current !== connectionState) {
+        console.log(`🎥 LiveKit connection state: ${connectionState}`);
+        prevConnectionState.current = connectionState;
+      }
     }, [connectionState]);
 
-    // Log participant changes
+    // Log participant changes only when count changes
     useEffect(() => {
-      console.log(`👥 Participants in room: ${participants.length}`);
-      participants.forEach((p) => {
-        console.log(`   - ${p.identity} (local: ${p.isLocal})`);
-      });
+      if (prevParticipantCount.current !== participants.length) {
+        console.log(`👥 Participants in room: ${participants.length}`);
+        participants.forEach((p) => {
+          console.log(`   - ${p.identity} (local: ${p.isLocal})`);
+        });
+        prevParticipantCount.current = participants.length;
+      }
     }, [participants]);
 
     // Find remote track (first one that isn't local, simplified for 1:1)
@@ -159,7 +174,7 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
               </View>
               <Text style={[styles.placeholderText, { color: theme.colors.onSurfaceVariant }]}>
                 {connectionState === ConnectionState.Connected
-                  ? 'Waiting for video...'
+                  ? participants.length > 1 ? 'Waiting for video...' : 'Waiting for participant...'
                   : 'Connecting...'}
               </Text>
             </View>
@@ -199,8 +214,21 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
     const connectionState = useConnectionState();
     const participants = useParticipants();
 
+    // Use refs to only log when values actually change
+    const prevConnectionState = useRef<ConnectionState | null>(null);
+    const prevParticipantCount = useRef<number | null>(null);
+
     useEffect(() => {
-      console.log(`🔊 Audio call - connection: ${connectionState}, participants: ${participants.length}`);
+      if (prevConnectionState.current !== connectionState || prevParticipantCount.current !== participants.length) {
+        if (prevConnectionState.current !== connectionState) {
+          console.log(`🔊 Audio call - connection: ${connectionState}`);
+          prevConnectionState.current = connectionState;
+        }
+        if (prevParticipantCount.current !== participants.length) {
+          console.log(`🔊 Audio call - participants: ${participants.length}`);
+          prevParticipantCount.current = participants.length;
+        }
+      }
     }, [connectionState, participants]);
 
     const remoteParticipant = participants.find((p) => !p.isLocal);
