@@ -36,7 +36,7 @@ export interface CallServiceConfig {
 export async function createCallSession(
   config: CallServiceConfig,
   type: CallType,
-  offer: RTCSessionDescriptionInit
+  offer?: any // livekit doesn't use SDP offers in firestore
 ): Promise<string> {
   const participant: CallParticipant = {
     userId: config.userId,
@@ -86,28 +86,13 @@ export async function updateCallStatus(callId: string, status: CallStatus): Prom
 }
 
 /**
- * Set the answer for a call session
+ * CLEANUP: Legacy WebRTC signaling functions (addIceCandidate, setCallAnswer, etc.)
+ * were removed as we migrated to LiveKit.
+ * 
+ * We only retain the Firestore "Invitation" logic below.
  */
-export async function setCallAnswer(callId: string, answer: RTCSessionDescriptionInit): Promise<void> {
-  const docRef = doc(db, 'calls', callId);
-  await updateDoc(docRef, {
-    answer,
-    status: 'connected',
-  } satisfies Partial<CallSession>);
-}
 
-/**
- * Add ICE candidate to call session
- */
-export async function addIceCandidate(
-  callId: string,
-  candidate: RTCIceCandidateInit,
-  isOffer: boolean
-): Promise<void> {
-  const candidatesPath = isOffer ? 'offerCandidates' : 'answerCandidates';
-  const candidatesRef = collection(db, 'calls', callId, candidatesPath);
-  await addDoc(candidatesRef, candidate);
-}
+// ... (ICE server config is also less relevant but can be kept if we ever need to debug TURN)
 
 /**
  * Subscribe to call session changes
@@ -126,24 +111,7 @@ export function subscribeToCallSession(
   });
 }
 
-/**
- * Subscribe to ICE candidates
- */
-export function subscribeToIceCandidates(
-  callId: string,
-  isOffer: boolean,
-  callback: (candidate: RTCIceCandidateInit) => void
-): Unsubscribe {
-  const candidatesPath = isOffer ? 'answerCandidates' : 'offerCandidates';
-  const candidatesRef = collection(db, 'calls', callId, candidatesPath);
-  return onSnapshot(candidatesRef, (snapshot) => {
-    snapshot.docChanges().forEach((change) => {
-      if (change.type === 'added') {
-        callback(change.doc.data() as RTCIceCandidateInit);
-      }
-    });
-  });
-}
+
 
 /**
  * Find active call for a chat
@@ -194,6 +162,7 @@ export async function joinCall(
 
   await updateDoc(docRef, {
     participants: [...session.participants, sanitizedParticipant],
+    status: 'connected', // Mark as connected when recipient joins
   });
 }
 
@@ -207,12 +176,12 @@ export async function leaveCall(callId: string, userId: string): Promise<void> {
     return;
   }
   const session = docSnap.data() as CallSession;
-  
+
   // If the call is already ended, don't update again
   if (session.status === 'ended') {
     return;
   }
-  
+
   // For 1:1 calls, when either party leaves, end the call for both
   await updateDoc(docRef, {
     status: 'ended',
