@@ -1,8 +1,13 @@
+import { registerGlobals } from '@livekit/react-native';
 import '@expo/metro-runtime';
 import { registerRootComponent } from 'expo';
 import 'react-native-get-random-values';
 
 import App from './App';
+
+// Initialize LiveKit WebRTC globals - MUST be called before any LiveKit usage
+registerGlobals();
+console.log('✅ LiveKit WebRTC globals registered');
 
 console.log('Bootstrapping SplitCircle app entry');
 
