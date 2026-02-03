@@ -7,7 +7,7 @@
  * - LiveKit: Actual audio/video handling
  */
 
-import { getDatabase, onValue, ref, remove, set, type Unsubscribe } from 'firebase/database';
+import { get, getDatabase, onValue, ref, remove, set, type Unsubscribe } from 'firebase/database';
 import type { CallParticipant, CallSession, CallType } from '@/models';
 
 // Get Realtime Database instance
@@ -89,28 +89,28 @@ export async function createCallSession(
 export async function getCallSession(callId: string): Promise<CallSession | null> {
   console.log(`📞 callService.getCallSession: Fetching ${callId}`);
 
-  return new Promise((resolve) => {
+  try {
     const callRef = ref(rtdb, `calls/${callId}`);
-    const unsubscribe = onValue(callRef, (snapshot) => {
-      unsubscribe(); // Unsubscribe immediately for one-time fetch
+    const snapshot = await get(callRef);
 
-      if (!snapshot.exists()) {
-        console.log(`📞 callService.getCallSession: Call ${callId} not found`);
-        resolve(null);
-        return;
-      }
+    if (!snapshot.exists()) {
+      console.log(`📞 callService.getCallSession: Call ${callId} not found`);
+      return null;
+    }
 
-      const data = snapshot.val();
-      console.log(`📞 callService.getCallSession: Found call ${callId}, status=${data.status}`);
+    const data = snapshot.val();
+    console.log(`📞 callService.getCallSession: Found call ${callId}, status=${data.status}`);
 
-      // Normalize participants array
-      const session: CallSession = {
-        ...data,
-        participants: normalizeParticipants(data.participants),
-      };
-      resolve(session);
-    }, { onlyOnce: true });
-  });
+    // Normalize participants array
+    const session: CallSession = {
+      ...data,
+      participants: normalizeParticipants(data.participants),
+    };
+    return session;
+  } catch (error) {
+    console.error(`📞 callService.getCallSession: Error fetching ${callId}:`, error);
+    return null;
+  }
 }
 
 /**
@@ -165,9 +165,13 @@ export function subscribeToActiveCall(
   // Listen to all calls
   const callsRef = ref(rtdb, 'calls');
 
-  return onValue(callsRef, (snapshot) => {
+  console.log(`📞 [${chatId.slice(0, 8)}] Setting up onValue listener...`);
+
+  const unsubscribe = onValue(callsRef, (snapshot) => {
+    console.log(`📞 [${chatId.slice(0, 8)}] onValue FIRED! exists=${snapshot.exists()}`);
+
     if (!snapshot.exists()) {
-      console.log(`📞 subscribeToActiveCall: No calls in database`);
+      console.log(`📞 [${chatId.slice(0, 8)}] No calls in database`);
       callback(null);
       return;
     }
@@ -176,7 +180,7 @@ export function subscribeToActiveCall(
     const now = Date.now();
     const callIds = Object.keys(calls);
 
-    console.log(`📞 subscribeToActiveCall: Checking ${callIds.length} call(s) for chat ${chatId}`);
+    console.log(`📞 [${chatId.slice(0, 8)}] Checking ${callIds.length} call(s)`);
 
     // Filter calls for this chat that are active and not stale
     const validCalls: CallSession[] = [];
@@ -195,7 +199,8 @@ export function subscribeToActiveCall(
       const age = now - call.startedAt;
       const isNotStale = age < MAX_CALL_AGE_MS;
 
-      console.log(`📞   - ${callId}: chatId=${call.chatId} (match=${matchesChatId}), status=${call.status}, age=${Math.round(age / 1000)}s`);
+      // Log every call being checked
+      console.log(`📞   - ${callId.slice(0, 20)}: chat=${call.chatId?.slice(0, 8)} match=${matchesChatId}, status=${call.status}, age=${Math.round(age / 1000)}s, stale=${!isNotStale}`);
 
       if (matchesChatId && isActiveStatus && isNotStale) {
         validCalls.push(call);
@@ -203,7 +208,7 @@ export function subscribeToActiveCall(
     }
 
     if (validCalls.length === 0) {
-      console.log(`📞 subscribeToActiveCall: No active calls found for chat ${chatId}`);
+      console.log(`📞 [${chatId.slice(0, 8)}] No active calls found`);
       callback(null);
       return;
     }
@@ -211,18 +216,16 @@ export function subscribeToActiveCall(
     // Sort by startedAt descending (newest first)
     validCalls.sort((a, b) => b.startedAt - a.startedAt);
 
-    // Log for debugging
-    console.log(`📞 Found ${validCalls.length} active call(s) for chat ${chatId}:`);
-    validCalls.forEach((call, index) => {
-      const age = Math.round((now - call.startedAt) / 1000);
-      console.log(`   ${index + 1}. ${call.callId} (status=${call.status}, age=${age}s, initiator=${call.initiatorId})`);
-    });
-
     // Return the newest call
     const newestCall = validCalls[0];
-    console.log(`📞 Using newest call: ${newestCall.callId}`);
+    console.log(`📞 [${chatId.slice(0, 8)}] ✅ FOUND ACTIVE CALL: ${newestCall.callId}, initiator=${newestCall.initiatorId}`);
     callback(newestCall);
+  }, (error) => {
+    console.error(`📞 [${chatId.slice(0, 8)}] ❌ onValue ERROR:`, error);
   });
+
+  console.log(`📞 [${chatId.slice(0, 8)}] Listener setup complete`);
+  return unsubscribe;
 }
 
 /**
