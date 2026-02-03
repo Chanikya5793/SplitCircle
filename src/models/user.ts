@@ -16,7 +16,7 @@ export interface UserProfile {
   userId: string;
   email: string;
   displayName: string;
-  photoURL?: string;
+  photoURL: string | null;  // Must be null not undefined for Firestore compatibility
   phoneNumber?: string;
   groups: LinkedGroup[];
   status: PresenceStatus;
