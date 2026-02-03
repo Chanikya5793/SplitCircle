@@ -97,3 +97,6 @@ END CALL:
 - **Auth**: Firebase Auth
 - **Video/Audio**: LiveKit
 - **UI**: React Native Paper + Custom Components
+
+
+/* a safe view option with safety pin in chats to just stalk the chatd like kinda incognito so we wont send any read receipts and also diable sending any kind of messages */
