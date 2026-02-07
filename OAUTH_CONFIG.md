@@ -33,7 +33,7 @@ This document explains how to provision and manage Google OAuth credentials for 
 
 - Ensure **Google** and **Email/Password** providers are enabled in Firebase Auth.
 - Confirm the OAuth consent screen is linked to the same Firebase project so tokens are trusted.
-- No Firebase config values live in the repo—`app.config.ts` pulls everything from `EXPO_PUBLIC_FIREBASE_*` variables.
+- `app.config.ts` prefers `EXPO_PUBLIC_FIREBASE_*` values from `.env`/CI env; if missing, it may use checked-in public defaults to avoid accidental local breakage.
 
 ## Rotation & Incident Response
 
@@ -43,5 +43,4 @@ This document explains how to provision and manage Google OAuth credentials for 
 4. If a previous commit accidentally contained a secret, use `git filter-repo` or a forced rebase **before** pushing, as demonstrated in this change.
 
 Keeping actual values out of Git ensures GitHub push protection and secret scanning stay green and prevents costly credential leaks.
-
 

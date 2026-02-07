@@ -14,7 +14,12 @@ import { getMessaging, isSupported, type Messaging } from 'firebase/messaging';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
 import { Platform } from 'react-native';
 
-const firebaseConfig = Constants.expoConfig?.extra?.firebase ?? Constants?.manifest?.extra?.firebase;
+type LegacyManifestExtra = {
+  firebase?: Record<string, string>;
+};
+
+const legacyExtra = (Constants as unknown as { manifest?: { extra?: LegacyManifestExtra } }).manifest?.extra;
+const firebaseConfig = Constants.expoConfig?.extra?.firebase ?? legacyExtra?.firebase;
 
 if (!firebaseConfig) {
   console.warn('Firebase config is missing. Populate EXPO_PUBLIC_FIREBASE_* env vars.');
@@ -38,13 +43,16 @@ if (Platform.OS === 'web') {
   }
 }
 
-const db: Firestore = initializeFirestore(app, {
-  experimentalForceLongPolling: Platform.OS !== 'web',
-  localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager(),
-    cacheSizeBytes: CACHE_SIZE_UNLIMITED,
-  }),
-});
+const db: Firestore = Platform.OS === 'web'
+  ? initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+        cacheSizeBytes: CACHE_SIZE_UNLIMITED,
+      }),
+    })
+  : initializeFirestore(app, {
+      experimentalForceLongPolling: true,
+    });
 
 const storage: FirebaseStorage = getStorage(app);
 

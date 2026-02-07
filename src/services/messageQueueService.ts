@@ -134,7 +134,7 @@ export const listenForMessages = (
             ...(messageData.mediaMetadata.duration && { duration: messageData.mediaMetadata.duration }),
             ...(messageData.mediaMetadata.aspectRatio && { aspectRatio: messageData.mediaMetadata.aspectRatio }),
           };
-          console.log('📎 Received message with mediaMetadata:', mediaMetadata.fileName || messageData.type);
+          console.log('📎 Received message with mediaMetadata:', mediaMetadata?.fileName || messageData.type);
         }
         
         // Download media if this message has media attached
