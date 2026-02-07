@@ -70,12 +70,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
 
     // Reduce noisy logging and unnecessary state updates:
-    // - Only update messages state when count or last message id changes.
+    // - Update messages when list composition or delivery/read state changes.
     // - Throttle console logging to once per LOG_INTERVAL, otherwise only log new messages.
     let lastLogAt = 0;
     const LOG_INTERVAL = 30_000; // 30s
     let prevCount = 0;
     let prevLastMessageId: string | null = null;
+    let prevStatusFingerprint = '';
 
     const unsubscribe = subscribeToMessages(thread.chatId, (items) => {
       // Keep the previous count/last id for comparisons
@@ -87,12 +88,22 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
       const countChanged = items.length !== prevCountBefore;
       const lastIdChanged = lastId !== prevLastIdBefore;
+      const statusFingerprint = items
+        .map((item) => {
+          const id = item.messageId || item.id;
+          const deliveredCount = item.deliveredTo?.length ?? 0;
+          const readCount = item.readBy?.length ?? 0;
+          return `${id}:${item.status}:${deliveredCount}:${readCount}`;
+        })
+        .join('|');
+      const statusChanged = statusFingerprint !== prevStatusFingerprint;
 
-      // Only update state if it's a meaningful change to reduce re-renders
-      if (countChanged || lastIdChanged) {
+      // Update when list composition or delivery/read status changes.
+      if (countChanged || lastIdChanged || statusChanged) {
         setMessages(items);
         prevCount = items.length;
         prevLastMessageId = lastId;
+        prevStatusFingerprint = statusFingerprint;
       }
 
       // Throttled logging to avoid spamming the console
