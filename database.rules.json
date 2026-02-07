@@ -71,27 +71,10 @@
         ".read": "auth != null",
         "$messageId": {
           ".read": "auth != null",
-          ".write": "auth != null && ((newData.exists() && newData.child('recipientId').isString() && newData.child('recipientId').val() == auth.uid) || (!newData.exists() && data.child('recipientId').val() == auth.uid))",
-          ".validate": "newData.exists() ? newData.hasChildren(['delivered', 'deliveredAt', 'recipientId']) : true",
-          "delivered": {
-            ".validate": "!newData.exists() || newData.isBoolean()"
-          },
-          "deliveredAt": {
-            ".validate": "!newData.exists() || newData.isNumber()"
-          },
-          "read": {
-            ".validate": "!newData.exists() || newData.isBoolean()"
-          },
-          "readAt": {
-            ".validate": "!newData.exists() || newData.isNumber()"
-          },
-          "recipientId": {
-            ".validate": "!newData.exists() || newData.isString()"
-          },
           "$recipientId": {
             ".read": "auth != null",
             ".write": "auth != null && auth.uid == $recipientId",
-            ".validate": "newData.exists() ? (newData.hasChildren(['delivered', 'deliveredAt', 'recipientId']) && newData.child('recipientId').val() == auth.uid) : true",
+            ".validate": "newData.exists() ? (newData.hasChildren(['delivered', 'deliveredAt', 'recipientId']) && newData.child('recipientId').isString() && newData.child('recipientId').val() == $recipientId && newData.child('recipientId').val() == auth.uid && newData.child('delivered').isBoolean() && newData.child('deliveredAt').isNumber() && (!newData.child('read').exists() || newData.child('read').isBoolean()) && (!newData.child('readAt').exists() || newData.child('readAt').isNumber())) : true",
             "delivered": {
               ".validate": "!newData.exists() || newData.isBoolean()"
             },
