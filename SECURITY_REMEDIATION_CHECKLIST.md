@@ -22,6 +22,7 @@ This file tracks audit findings and remediation progress.
 - [x] H8: Fix premature call teardown race (stale call listeners and development unmount simulation causing self-disconnect).
 - [x] H9: Ensure remote hangup ends local call reliably (RTDB session removal + LiveKit participant-left fallback).
 - [x] H10: Stabilize LiveKit call screen rendering to avoid repeated reconnect attempts and lost remote-leave state.
+- [x] H11: Fix chat receipt permission denials by aligning receipt write shape with RTDB rules.
 
 ## Medium
 
