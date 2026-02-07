@@ -38,6 +38,12 @@ This file tracks audit findings and remediation progress.
 
 - Progress policy: check off items only after code changes are implemented and validated.
 - Order of execution: Critical -> High -> Medium.
+- Re-verified on 2026-02-07:
+  - All currently checked findings were revalidated against live code/rules/config.
+  - `H12` integrity gaps were fixed:
+    - `src/context/ChatContext.tsx`: outgoing messages no longer initialize `readBy` with sender ID (prevents premature read ticks).
+    - `src/screens/chat/ChatRoomScreen.tsx`: message list updates now react to receipt/status changes, not only count/last-message changes.
+  - Validation rerun: root `npx tsc --noEmit` and `npm --prefix functions run build` both pass.
 - Key management policy:
   - Public client config (`EXPO_PUBLIC_*`) is sourced from `.env`/EAS env and documented in `.env.example`.
   - Server secrets (e.g., LiveKit API secret) must live in Firebase Functions Secret Manager, not in app source/env committed to git.
