@@ -24,6 +24,39 @@ interface GroupReceiptData {
   [recipientId: string]: ReceiptData;
 }
 
+const isReceiptData = (value: unknown): value is ReceiptData => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const data = value as Partial<ReceiptData>;
+  return typeof data.recipientId === 'string';
+};
+
+/**
+ * Normalize receipts to per-recipient map format.
+ * Supports:
+ * - Legacy direct-chat shape: { delivered, deliveredAt, recipientId, ... }
+ * - Current unified shape: { recipientIdA: { ... }, recipientIdB: { ... } }
+ */
+const normalizeReceiptMap = (messageReceipts: unknown): GroupReceiptData => {
+  if (isReceiptData(messageReceipts)) {
+    return { [messageReceipts.recipientId]: messageReceipts };
+  }
+
+  if (!messageReceipts || typeof messageReceipts !== 'object') {
+    return {};
+  }
+
+  const mapped: GroupReceiptData = {};
+  for (const [recipientId, receiptValue] of Object.entries(messageReceipts as Record<string, unknown>)) {
+    if (isReceiptData(receiptValue)) {
+      mapped[recipientId] = receiptValue;
+    }
+  }
+  return mapped;
+};
+
 /**
  * Send a message to recipient's queue in Realtime Database
  * Message will be temporarily stored until delivered
@@ -212,13 +245,12 @@ export const sendDeliveryReceipt = async (
   chatId: string,
   messageId: string,
   recipientId: string,
-  isGroupChat: boolean = false
+  _isGroupChat: boolean = false
 ): Promise<void> => {
   try {
-    // For group chats, store receipt per user
-    const receiptPath = isGroupChat
-      ? `receipts/${chatId}/${messageId}/${recipientId}`
-      : `receipts/${chatId}/${messageId}`;
+    // Unified path for both direct and group chats.
+    // Keeping per-recipient keys avoids rules/data-model divergence.
+    const receiptPath = `receipts/${chatId}/${messageId}/${recipientId}`;
     
     const receiptRef = ref(rtdb, receiptPath);
     
@@ -241,13 +273,11 @@ export const sendReadReceipt = async (
   chatId: string,
   messageId: string,
   recipientId: string,
-  isGroupChat: boolean = false
+  _isGroupChat: boolean = false
 ): Promise<void> => {
   try {
-    // For group chats, store receipt per user
-    const receiptPath = isGroupChat
-      ? `receipts/${chatId}/${messageId}/${recipientId}`
-      : `receipts/${chatId}/${messageId}`;
+    // Unified path for both direct and group chats.
+    const receiptPath = `receipts/${chatId}/${messageId}/${recipientId}`;
     
     const receiptRef = ref(rtdb, receiptPath);
     
@@ -308,18 +338,15 @@ export const listenForReceipts = (
       
       for (const messageId in receipts) {
         const messageReceipts = receipts[messageId];
+        const receiptMap = normalizeReceiptMap(messageReceipts);
+        const allDelivered = Object.entries(receiptMap)
+          .filter(([, receipt]) => receipt.delivered)
+          .map(([recipientId]) => recipientId);
+        const allRead = Object.entries(receiptMap)
+          .filter(([, receipt]) => receipt.read)
+          .map(([recipientId]) => recipientId);
         
         if (isGroupChat) {
-          // Group chat: messageReceipts is an object with recipientId keys
-          const allDelivered: string[] = [];
-          const allRead: string[] = [];
-          
-          for (const recipientId in messageReceipts) {
-            const receipt = messageReceipts[recipientId] as ReceiptData;
-            if (receipt.delivered) allDelivered.push(recipientId);
-            if (receipt.read) allRead.push(recipientId);
-          }
-          
           // Determine overall status for this message
           const hasRead = allRead.length > 0;
           const hasDelivered = allDelivered.length > 0;
@@ -330,13 +357,14 @@ export const listenForReceipts = (
             onReceiptReceived(messageId, 'delivered', undefined, allDelivered, allRead);
           }
         } else {
-          // 1:1 chat: messageReceipts is a single receipt object
-          const receipt = messageReceipts as ReceiptData;
-          
-          if (receipt.read) {
-            onReceiptReceived(messageId, 'read', receipt.recipientId);
-          } else if (receipt.delivered) {
-            onReceiptReceived(messageId, 'delivered', receipt.recipientId);
+          // 1:1 chat: support both legacy flat and nested-per-recipient formats.
+          const firstReadRecipientId = allRead[0];
+          const firstDeliveredRecipientId = allDelivered[0];
+
+          if (firstReadRecipientId) {
+            onReceiptReceived(messageId, 'read', firstReadRecipientId);
+          } else if (firstDeliveredRecipientId) {
+            onReceiptReceived(messageId, 'delivered', firstDeliveredRecipientId);
           }
         }
       }
@@ -362,26 +390,23 @@ export const getReceiptStatus = async (
       return { deliveredTo: [], readBy: [] };
     }
     
-    const receipts = snapshot.val();
-    
-    if (isGroupChat) {
-      const deliveredTo: string[] = [];
-      const readBy: string[] = [];
-      
-      for (const recipientId in receipts) {
-        const receipt = receipts[recipientId] as ReceiptData;
-        if (receipt.delivered) deliveredTo.push(recipientId);
-        if (receipt.read) readBy.push(recipientId);
-      }
-      
-      return { deliveredTo, readBy };
-    } else {
-      const receipt = receipts as ReceiptData;
+    const receiptMap = normalizeReceiptMap(snapshot.val());
+    const deliveredTo = Object.entries(receiptMap)
+      .filter(([, receipt]) => receipt.delivered)
+      .map(([recipientId]) => recipientId);
+    const readBy = Object.entries(receiptMap)
+      .filter(([, receipt]) => receipt.read)
+      .map(([recipientId]) => recipientId);
+
+    if (!isGroupChat && deliveredTo.length > 1) {
+      // Defensive: direct chats should have at most one peer receipt.
       return {
-        deliveredTo: receipt.delivered ? [receipt.recipientId] : [],
-        readBy: receipt.read ? [receipt.recipientId] : [],
+        deliveredTo: deliveredTo.slice(0, 1),
+        readBy: readBy.slice(0, 1),
       };
     }
+
+    return { deliveredTo, readBy };
   } catch (error) {
     console.error('❌ Error getting receipt status:', error);
     return { deliveredTo: [], readBy: [] };
