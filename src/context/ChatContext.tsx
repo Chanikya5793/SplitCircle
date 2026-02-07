@@ -252,7 +252,8 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         timestamp: now,
         isFromMe: true,
         deliveredTo: [],
-        readBy: [user.userId],
+        // Keep receipt arrays peer-only so WhatsApp-style ticks are accurate.
+        readBy: [],
       };
 
       // 2. Save optimistic message locally
