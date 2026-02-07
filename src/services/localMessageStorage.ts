@@ -2,6 +2,40 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ChatMessage } from '../models';
 
 const MESSAGES_KEY_PREFIX = 'chat_messages_';
+const messageListeners = new Map<string, Set<() => void>>();
+
+const notifyMessageListeners = (chatId: string) => {
+  const listeners = messageListeners.get(chatId);
+  if (!listeners || listeners.size === 0) {
+    return;
+  }
+
+  listeners.forEach((listener) => {
+    try {
+      listener();
+    } catch (error) {
+      console.error('❌ Error in local message listener:', error);
+    }
+  });
+};
+
+export const subscribeToLocalMessages = (
+  chatId: string,
+  listener: () => void
+): (() => void) => {
+  const existing = messageListeners.get(chatId) ?? new Set<() => void>();
+  existing.add(listener);
+  messageListeners.set(chatId, existing);
+
+  return () => {
+    const current = messageListeners.get(chatId);
+    if (!current) return;
+    current.delete(listener);
+    if (current.size === 0) {
+      messageListeners.delete(chatId);
+    }
+  };
+};
 
 // Initialize the storage (No-op for AsyncStorage but kept for API compatibility)
 export const initMessageDB = async (): Promise<void> => {
@@ -43,6 +77,7 @@ export const saveMessageLocally = async (message: ChatMessage): Promise<void> =>
     });
 
     await AsyncStorage.setItem(key, JSON.stringify(messages));
+    notifyMessageListeners(message.chatId);
   } catch (error) {
     console.error('❌ Error saving message locally:', error);
     throw error;
@@ -92,6 +127,7 @@ export const updateMessageStatus = async (
       
       await AsyncStorage.setItem(key, JSON.stringify(messages));
       console.log(`✅ Message ${messageId} status updated to ${status}`);
+      notifyMessageListeners(chatId);
     }
   } catch (error) {
     console.error('❌ Error updating message status:', error);
@@ -135,6 +171,7 @@ export const markMessagesDelivered = async (
     if (updated) {
       await AsyncStorage.setItem(key, JSON.stringify(messages));
       console.log(`✅ Marked ${messageIds.length} messages as delivered by ${deliveredByUserId}`);
+      notifyMessageListeners(chatId);
     }
   } catch (error) {
     console.error('❌ Error marking messages delivered:', error);
@@ -185,6 +222,7 @@ export const markMessagesRead = async (
     if (updated) {
       await AsyncStorage.setItem(key, JSON.stringify(messages));
       console.log(`✅ Marked ${messageIds.length} messages as read by ${readByUserId}`);
+      notifyMessageListeners(chatId);
     }
   } catch (error) {
     console.error('❌ Error marking messages read:', error);
@@ -234,6 +272,7 @@ export const updateMessageLocalPath = async (
       
       await AsyncStorage.setItem(key, JSON.stringify(messages));
       console.log(`✅ Message ${messageId} local path updated to ${localMediaPath}`);
+      notifyMessageListeners(chatId);
     }
   } catch (error) {
     console.error('❌ Error updating message local path:', error);
