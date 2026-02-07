@@ -1,6 +1,7 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ChatListSkeleton } from '@/components/SkeletonLoader';
+import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -19,6 +20,7 @@ interface ChatListScreenProps {
 export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const navigation = useNavigation();
   const { threads, loading } = useChat();
+  const { user } = useAuth();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -47,8 +49,9 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
       const group = groups.find(g => g.groupId === thread.groupId);
       return group?.name || 'Group Chat';
     }
-    return thread.participants.find(p => p.userId !== thread.participantIds[0])?.displayName || 'Direct Chat';
-  }, [groups]);
+    const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+    return otherParticipant?.displayName || 'Direct Chat';
+  }, [groups, user?.userId]);
 
   // Helper to get chat initials for avatar
   const getChatInitials = useMemo(() => (thread: ChatThread) => {
@@ -56,9 +59,9 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
       const group = groups.find(g => g.groupId === thread.groupId);
       return (group?.name || 'GC').slice(0, 2).toUpperCase();
     }
-    const otherParticipant = thread.participants.find(p => p.userId !== thread.participantIds[0]);
+    const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
     return (otherParticipant?.displayName || 'SC').slice(0, 2).toUpperCase();
-  }, [groups]);
+  }, [groups, user?.userId]);
 
   // Sort Logic
   const processedThreads = useMemo(() => {

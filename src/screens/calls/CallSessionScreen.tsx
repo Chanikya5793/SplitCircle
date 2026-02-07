@@ -17,6 +17,12 @@ import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Text } from 'react-native-paper';
 
+const debugLog = (...args: unknown[]) => {
+  if (__DEV__) {
+    console.log(...args);
+  }
+};
+
 interface CallSessionScreenProps {
   chatId: string;
   groupId?: string;
@@ -49,13 +55,13 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
     if (hasInitializedRef.current) return;
     hasInitializedRef.current = true;
 
-    console.log('🎬 CallSessionScreen mounted');
+    debugLog('CallSessionScreen mounted');
     if (joinCallId) {
-      console.log(`🎬 Joining existing call: ${joinCallId}`);
-      joinExistingCall(joinCallId);
+      debugLog('CallSessionScreen joining existing call');
+      void joinExistingCall(joinCallId);
     } else {
-      console.log(`🎬 Starting new ${type} call`);
-      startCall(type);
+      debugLog('CallSessionScreen starting new call');
+      void startCall(type);
     }
   }, []); // Only run on mount to start
 
@@ -73,8 +79,8 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
   }, [status]);
 
   const handleHangUp = () => {
-    console.log('🎬 Hang up pressed');
-    endCall();
+    debugLog('CallSessionScreen hang up');
+    void endCall();
     onHangUp();
   };
 
@@ -114,7 +120,7 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
     // Log connection state changes only when they actually change
     useEffect(() => {
       if (prevConnectionState.current !== connectionState) {
-        console.log(`🎥 LiveKit connection state: ${connectionState}`);
+        debugLog(`LiveKit connection state: ${connectionState}`);
         prevConnectionState.current = connectionState;
       }
     }, [connectionState]);
@@ -122,10 +128,7 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
     // Log participant changes only when count changes
     useEffect(() => {
       if (prevParticipantCount.current !== participants.length) {
-        console.log(`👥 Participants in room: ${participants.length}`);
-        participants.forEach((p) => {
-          console.log(`   - ${p.identity} (local: ${p.isLocal})`);
-        });
+        debugLog(`LiveKit participant count: ${participants.length}`);
         prevParticipantCount.current = participants.length;
       }
     }, [participants]);
@@ -221,11 +224,11 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
     useEffect(() => {
       if (prevConnectionState.current !== connectionState || prevParticipantCount.current !== participants.length) {
         if (prevConnectionState.current !== connectionState) {
-          console.log(`🔊 Audio call - connection: ${connectionState}`);
+          debugLog(`Audio call connection: ${connectionState}`);
           prevConnectionState.current = connectionState;
         }
         if (prevParticipantCount.current !== participants.length) {
-          console.log(`🔊 Audio call - participants: ${participants.length}`);
+          debugLog(`Audio call participant count: ${participants.length}`);
           prevParticipantCount.current = participants.length;
         }
       }
@@ -288,8 +291,8 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
               }}
               video={callType === 'video' && !isCameraOff}
               audio={!isMuted}
-              onConnected={() => console.log('🎥 LiveKitRoom: Connected!')}
-              onDisconnected={() => console.log('🎥 LiveKitRoom: Disconnected')}
+              onConnected={() => debugLog('LiveKitRoom connected')}
+              onDisconnected={() => debugLog('LiveKitRoom disconnected')}
               onError={(error) => console.error('🎥 LiveKitRoom error:', error)}
             >
               {callType === 'video' ? <RoomContent /> : <AudioCallContent />}
