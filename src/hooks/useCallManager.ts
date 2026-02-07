@@ -140,7 +140,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         }
 
         if (!session) {
-          debugLog('useCallManager call session missing; waiting for explicit end state');
+          debugLog('useCallManager call session removed; ending call');
+          void endCallRef.current('session-ended');
           return;
         }
 
@@ -258,7 +259,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         }
 
         if (!updatedSession) {
-          debugLog('useCallManager joined call session missing; waiting for explicit end state');
+          debugLog('useCallManager joined call session removed; ending call');
+          void endCallRef.current('session-ended');
           return;
         }
 

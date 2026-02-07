@@ -157,7 +157,13 @@ const CallSessionRoute = ({ route, navigation }: any) => (
     groupId={route.params.groupId}
     type={route.params.type as CallType}
     joinCallId={route.params.joinCallId}
-    onHangUp={() => navigation.goBack()}
+    onHangUp={() => {
+      if (typeof navigation.canGoBack === 'function' && navigation.canGoBack()) {
+        navigation.goBack();
+        return;
+      }
+      navigation.navigate(ROUTES.APP.CALLS);
+    }}
   />
 );
 
