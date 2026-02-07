@@ -6,6 +6,7 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { LoadingOverlay } from '@/components/LoadingOverlay';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
+import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -24,6 +25,7 @@ interface ChatRoomScreenProps {
 export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const navigation = useNavigation();
   const { subscribeToMessages, sendMessage, markChatAsRead } = useChat();
+  const { user } = useAuth();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   // Messages for this chat (inverted list - newest first)
@@ -334,9 +336,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   }, [thread.type, thread.groupId, groups]);
 
   const placeholder = useMemo(() => (thread.type === 'group' ? 'Type a message...' : 'Message user'), [thread.type]);
+  const directParticipant = useMemo(
+    () => thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0],
+    [thread.participants, user?.userId],
+  );
   const title = thread.type === 'group'
     ? groupName || 'Group Chat'
-    : thread.participants.find(p => p.userId !== thread.participantIds[0])?.displayName || 'Direct Chat';
+    : directParticipant?.displayName || 'Direct Chat';
 
   const handleHeaderPress = () => {
     if (thread.type === 'group' && thread.groupId) {

@@ -18,6 +18,8 @@ export interface CallSession {
   groupId?: string;
   initiatorId: string;
   participants: CallParticipant[];
+  participantIds?: Record<string, boolean>;
+  allowedUserIds?: Record<string, boolean>;
   type: CallType;
   status: CallStatus;
   startedAt: number;

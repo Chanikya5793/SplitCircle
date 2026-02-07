@@ -1,4 +1,5 @@
 import { useAuth } from '@/context/AuthContext';
+import { useChat } from '@/context/ChatContext';
 import type { CallStatus, CallType } from '@/models';
 import {
   createCallSession,
@@ -12,6 +13,12 @@ import { LiveKitService } from '@/services/LiveKitService';
 import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { AudioSession } from '@livekit/react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
+
+const debugLog = (...args: unknown[]) => {
+  if (__DEV__) {
+    console.log(...args);
+  }
+};
 
 interface UseCallManagerArgs {
   chatId?: string;
@@ -36,6 +43,7 @@ interface UseCallManagerReturn {
 
 export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCallManagerReturn => {
   const { user } = useAuth();
+  const { threads } = useChat();
   const [status, setStatus] = useState<CallStatus>('idle');
   const [callId, setCallId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,11 +59,16 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const callStartedAtRef = useRef<number | null>(null);
   const otherParticipantRef = useRef<{ userId: string; displayName: string } | null>(null);
   const isInitiatorRef = useRef<boolean>(false);
+  const hasSessionToCleanupRef = useRef(false);
+  const allowUnmountCleanupRef = useRef(false);
+  const sessionVersionRef = useRef(0);
+  const isEndingRef = useRef(false);
+  const endCallRef = useRef<(reason?: 'manual' | 'session-ended' | 'unmount') => Promise<void>>(async () => undefined);
   const unsubscribes = useRef<Array<() => void>>([]);
 
   // Cleanup subscriptions
   const cleanupSubscriptions = useCallback(() => {
-    console.log('📞 Cleaning up call subscriptions');
+    debugLog('useCallManager cleanup subscriptions');
     unsubscribes.current.forEach((unsub) => unsub());
     unsubscribes.current = [];
   }, []);
@@ -63,62 +76,81 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   // Start a new call (as initiator)
   const startCall = useCallback(async (type: CallType = 'video') => {
     if (!chatId || !user) {
-      console.error('📞 Cannot start call: Missing chat ID or user');
+      console.error('Cannot start call: missing chat or user');
       setError('Missing chat ID or user');
       return;
     }
 
-    console.log(`📞 Starting ${type} call for chat: ${chatId}`);
+    const sessionVersion = ++sessionVersionRef.current;
 
     try {
+      let newCallId: string | null = null;
+      cleanupSubscriptions();
+      isEndingRef.current = false;
       setError(null);
       setStatus('ringing'); // UI shows "Calling..."
       setCallType(type);
       isInitiatorRef.current = true;
       callStartedAtRef.current = Date.now();
 
+      const threadParticipantIds = threads.find((thread) => thread.chatId === chatId)?.participantIds ?? [user.userId];
+
       // 1. Create Call Session in Realtime DB (Ringing)
-      console.log('📞 Creating call session in Realtime DB...');
-      const newCallId = await createCallSession(
+      newCallId = await createCallSession(
         {
           chatId,
           groupId,
           userId: user.userId,
           displayName: user.displayName || 'Unknown',
           photoURL: user.photoURL || undefined,
+          participantIds: threadParticipantIds,
         },
         type
       );
-      console.log(`📞 Call session created: ${newCallId}`);
+
+      if (sessionVersionRef.current !== sessionVersion) {
+        return;
+      }
+
       setCallId(newCallId);
       callIdRef.current = newCallId;
 
       // 2. Fetch LiveKit Token
-      console.log('📞 Fetching LiveKit token...');
       const { token: roomToken, url } = await LiveKitService.getToken(
         newCallId,
-        user.userId,
+        chatId,
         user.displayName || 'User'
       );
-      console.log(`📞 Token received! Server URL: ${url}`);
+
+      if (sessionVersionRef.current !== sessionVersion || callIdRef.current !== newCallId) {
+        return;
+      }
+
       setToken(roomToken);
       setServerUrl(url);
 
       // 3. Start Audio Session
-      console.log('📞 Starting audio session...');
       await AudioSession.startAudioSession();
-      console.log('📞 Audio session started');
 
       // 4. Subscribe to Call Session to see if answered or ended
-      const unsubSession = subscribeToCallSession(newCallId, async (session) => {
-        console.log(`📞 Call session update: status=${session?.status}`);
-        if (!session || session.status === 'ended') {
-          console.log('📞 Call ended by Realtime DB update');
-          endCall();
+      const unsubSession = subscribeToCallSession(newCallId, (session) => {
+        // Ignore stale callbacks from an older call lifecycle.
+        if (sessionVersionRef.current !== sessionVersion || callIdRef.current !== newCallId) {
           return;
         }
+
+        if (!session) {
+          debugLog('useCallManager call session missing; waiting for explicit end state');
+          return;
+        }
+
+        if (session.status === 'ended') {
+          void endCallRef.current('session-ended');
+          return;
+        }
+
         if (session.status === 'connected') {
-          console.log('📞 Call connected! Other party joined.');
+          debugLog('useCallManager call connected');
           setStatus('connected');
           // Track other participant for history
           const other = session.participants.find(p => p.userId !== user.userId);
@@ -130,23 +162,38 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       unsubscribes.current.push(unsubSession);
 
     } catch (err) {
-      console.error('📞 Error starting call:', err);
+      if (sessionVersionRef.current !== sessionVersion) {
+        return;
+      }
+
+      console.error('Error starting call', err);
+      if (callIdRef.current && user) {
+        try {
+          await leaveCall(callIdRef.current, user.userId);
+        } catch (cleanupError) {
+          console.warn('Failed to cleanup failed outbound call setup', cleanupError);
+        }
+      }
+      callIdRef.current = null;
+      setCallId(null);
       setError(err instanceof Error ? err.message : 'Failed to start call');
       setStatus('failed');
     }
-  }, [chatId, groupId, user, cleanupSubscriptions]);
+  }, [chatId, groupId, threads, user]);
 
   // Join an existing call (as answerer)
   const joinExistingCall = useCallback(async (existingCallId: string) => {
-    if (!user) {
-      console.error('📞 Cannot join call: User not authenticated');
-      setError('User not authenticated');
+    if (!user || !chatId) {
+      console.error('Cannot join call: missing user or chat ID');
+      setError('Missing authenticated user or chat ID');
       return;
     }
 
-    console.log(`📞 Joining existing call: ${existingCallId}`);
+    const sessionVersion = ++sessionVersionRef.current;
 
     try {
+      cleanupSubscriptions();
+      isEndingRef.current = false;
       setError(null);
       setStatus('ringing');
       setCallId(existingCallId);
@@ -156,19 +203,18 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
 
       const session = await getCallSession(existingCallId);
       if (!session) {
-        console.error('📞 Call not found');
+        console.error('Call not found');
         setError('Call not found');
         setStatus('ended');
         return;
       }
       if (session.status === 'ended') {
-        console.error('📞 Call already ended');
+        console.error('Call already ended');
         setError('Call already ended');
         setStatus('ended');
         return;
       }
 
-      console.log(`📞 Call found: type=${session.type}, status=${session.status}`);
       setCallType(session.type);
 
       // Track initiator as other participant for history
@@ -178,52 +224,67 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       }
 
       // 1. Fetch LiveKit Token
-      console.log('📞 Fetching LiveKit token for joining...');
       const { token: roomToken, url } = await LiveKitService.getToken(
         existingCallId,
-        user.userId,
+        chatId,
         user.displayName || 'User'
       );
-      console.log(`📞 Token received! Server URL: ${url}`);
+
+      if (sessionVersionRef.current !== sessionVersion || callIdRef.current !== existingCallId) {
+        return;
+      }
+
       setToken(roomToken);
       setServerUrl(url);
 
       // 2. Start Audio Session
-      console.log('📞 Starting audio session...');
       await AudioSession.startAudioSession();
-      console.log('📞 Audio session started');
 
       // 3. Update Realtime DB (Join) - This also updates status to 'connected'
-      console.log('📞 Joining call in Realtime DB...');
       await joinCall(existingCallId, {
         userId: user.userId,
         displayName: user.displayName || 'Unknown',
         muted: false,
         cameraEnabled: session.type === 'video',
       });
-      console.log('📞 Joined call successfully!');
+      debugLog('useCallManager joined call');
       setStatus('connected'); // Immediately set to connected since we just joined
 
       // 4. Subscribe to session for further updates
       const unsubSession = subscribeToCallSession(existingCallId, (updatedSession) => {
-        console.log(`📞 Call session update: status=${updatedSession?.status}`);
-        if (!updatedSession || updatedSession.status === 'ended') {
-          console.log('📞 Call ended by Realtime DB update');
-          endCall();
+        // Ignore stale callbacks from an older call lifecycle.
+        if (sessionVersionRef.current !== sessionVersion || callIdRef.current !== existingCallId) {
+          return;
+        }
+
+        if (!updatedSession) {
+          debugLog('useCallManager joined call session missing; waiting for explicit end state');
+          return;
+        }
+
+        if (updatedSession.status === 'ended') {
+          void endCallRef.current('session-ended');
         }
       });
       unsubscribes.current.push(unsubSession);
 
     } catch (err) {
-      console.error('📞 Error joining call:', err);
+      console.error('Error joining call', err);
       setError(err instanceof Error ? err.message : 'Failed to join call');
       setStatus('failed');
     }
-  }, [user, cleanupSubscriptions]);
+  }, [chatId, user]);
 
   // End the call
-  const endCall = useCallback(async () => {
-    console.log('📞 Ending call...');
+  const endCall = useCallback(async (reason: 'manual' | 'session-ended' | 'unmount' = 'manual') => {
+    if (isEndingRef.current) {
+      return;
+    }
+
+    isEndingRef.current = true;
+    sessionVersionRef.current += 1;
+    debugLog('useCallManager ending call', reason);
+
     try {
       cleanupSubscriptions();
 
@@ -245,13 +306,11 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
           status: duration > 0 ? 'completed' : 'missed',
         };
 
-        console.log(`📞 Saving call to local history: ${callIdRef.current}`);
         await saveCallToHistory(historyEntry);
       }
 
-      // Delete signaling from Realtime DB
+      // Remove this participant from signaling.
       if (callIdRef.current && user) {
-        console.log(`📞 Deleting call from Realtime DB: ${callIdRef.current}`);
         await leaveCall(callIdRef.current, user.userId);
       }
 
@@ -262,37 +321,63 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       callIdRef.current = null;
       callStartedAtRef.current = null;
       otherParticipantRef.current = null;
+      hasSessionToCleanupRef.current = false;
 
-      console.log('📞 Stopping audio session...');
-      AudioSession.stopAudioSession();
-      console.log('📞 Call ended successfully');
+      await AudioSession.stopAudioSession();
+      debugLog('useCallManager call ended');
 
     } catch (err) {
-      console.error('📞 Error ending call:', err);
+      console.error('Error ending call', err);
+    } finally {
+      // Keep `true` while idle; reset when starting/joining a new call.
     }
   }, [user, chatId, groupId, callType, cleanupSubscriptions]);
 
+  useEffect(() => {
+    endCallRef.current = endCall;
+  }, [endCall]);
+
+  useEffect(() => {
+    hasSessionToCleanupRef.current = Boolean(callIdRef.current || callId || token || serverUrl);
+  }, [callId, serverUrl, token, status]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // React StrictMode does a mount->cleanup->mount simulation in dev. Avoid treating
+      // that first cleanup pass as a real unmount that should terminate the call.
+      allowUnmountCleanupRef.current = true;
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, []);
+
   // Local state toggles (actual media toggle happens in the UI via LiveKitRoom)
   const toggleMute = useCallback(() => {
-    setIsMuted((prev) => {
-      console.log(`📞 Toggle mute: ${!prev ? 'muted' : 'unmuted'}`);
-      return !prev;
-    });
+    setIsMuted((prev) => !prev);
   }, []);
 
   const toggleCamera = useCallback(() => {
-    setIsCameraOff((prev) => {
-      console.log(`📞 Toggle camera: ${!prev ? 'off' : 'on'}`);
-      return !prev;
-    });
+    setIsCameraOff((prev) => !prev);
   }, []);
 
-  // Cleanup on unmount
+  // Cleanup on unmount:
+  // - If there is no active call session yet, only clean listeners.
+  // - If call state exists, end the call once.
   useEffect(() => {
     return () => {
-      endCall();
+      if (!allowUnmountCleanupRef.current) {
+        cleanupSubscriptions();
+        return;
+      }
+
+      if (!hasSessionToCleanupRef.current) {
+        cleanupSubscriptions();
+        return;
+      }
+
+      void endCallRef.current('unmount');
     };
-  }, []);
+  }, [cleanupSubscriptions]);
 
   // Watch for incoming calls
   useEffect(() => {
@@ -302,7 +387,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
 
     const unsubscribe = subscribeToActiveCall(chatId, (session) => {
       if (session && session.initiatorId !== user?.userId && session.status === 'ringing') {
-        console.log('📞 Incoming call detected:', session.callId);
+        debugLog('useCallManager incoming call detected');
         // You might want to trigger a ringtone here
       }
     });
