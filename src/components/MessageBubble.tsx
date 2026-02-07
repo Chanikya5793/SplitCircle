@@ -120,12 +120,30 @@ const MessageStatusIndicator = ({ status, isGroupChat, totalRecipients, delivere
   deliveredCount?: number;
   readCount?: number;
 }) => {
-  // For group chats, we check if all recipients have delivered/read
-  const allDelivered = isGroupChat && totalRecipients ? (deliveredCount || 0) >= totalRecipients : status === 'delivered' || status === 'read';
-  const allRead = isGroupChat && totalRecipients ? (readCount || 0) >= totalRecipients : status === 'read';
+  const delivered = deliveredCount || 0;
+  const read = readCount || 0;
+  const recipients = totalRecipients || 0;
+
+  // Prefer receipt arrays for accuracy; fall back to status field.
+  const effectiveStatus: MessageStatus =
+    status === 'sending' || status === 'failed'
+      ? status
+      : read > 0
+        ? 'read'
+        : delivered > 0
+          ? 'delivered'
+          : status;
+
+  // For group chats, blue appears only when all recipients read.
+  const allDelivered = isGroupChat && recipients > 0
+    ? delivered >= recipients
+    : effectiveStatus === 'delivered' || effectiveStatus === 'read';
+  const allRead = isGroupChat && recipients > 0
+    ? read >= recipients
+    : effectiveStatus === 'read';
 
   const getIconConfig = () => {
-    switch (status) {
+    switch (effectiveStatus) {
       case 'sending':
         return { name: 'time-outline' as const, color: 'rgba(255,255,255,0.6)', size: 14 };
       case 'failed':

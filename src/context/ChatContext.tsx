@@ -18,6 +18,7 @@ import {
     markMessagesDelivered,
     markMessagesRead,
     saveMessageLocally,
+    subscribeToLocalMessages,
     updateMessageStatus
 } from '../services/localMessageStorage';
 import {
@@ -201,13 +202,13 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       isGroupChat
     );
     
-    // 4. Poll local storage as a backup (in case we missed something or for other updates)
-    const interval = setInterval(loadLocalMessages, 3000);
+    // 4. React instantly to local storage writes (send status, receipts, downloads)
+    const unsubscribeLocal = subscribeToLocalMessages(chatId, loadLocalMessages);
 
     return () => {
-      clearInterval(interval);
       unsubscribeQueue();
       unsubscribeReceipts();
+      unsubscribeLocal();
     };
   }, [user, threads]);
 

@@ -23,6 +23,7 @@ This file tracks audit findings and remediation progress.
 - [x] H9: Ensure remote hangup ends local call reliably (RTDB session removal + LiveKit participant-left fallback).
 - [x] H10: Stabilize LiveKit call screen rendering to avoid repeated reconnect attempts and lost remote-leave state.
 - [x] H11: Fix chat receipt permission denials by aligning receipt write shape with RTDB rules.
+- [x] H12: Implement real-time WhatsApp-style sent/delivered/read tick updates in chat UI.
 
 ## Medium
 

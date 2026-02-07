@@ -134,6 +134,25 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     // listRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, [messages.length]);
 
+  // If chat is open and a new incoming message appears, mark it as read immediately.
+  useEffect(() => {
+    if (!user || messages.length === 0) {
+      return;
+    }
+
+    const hasUnreadIncoming = messages.some(
+      (message) =>
+        message.senderId !== user.userId &&
+        (!message.readBy || !message.readBy.includes(user.userId))
+    );
+
+    if (!hasUnreadIncoming) {
+      return;
+    }
+
+    void markChatAsRead(thread.chatId);
+  }, [markChatAsRead, messages, thread.chatId, user]);
+
   const handleSend = async () => {
     const trimmed = text.trim();
     if (!trimmed) {
