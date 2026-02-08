@@ -1,8 +1,92 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ChatMessage } from '../models';
+import type { ChatMessage } from '@/models';
 
 const MESSAGES_KEY_PREFIX = 'chat_messages_';
 const messageListeners = new Map<string, Set<() => void>>();
+const chatWriteChains = new Map<string, Promise<void>>();
+
+const getChatStorageKey = (chatId: string): string => `${MESSAGES_KEY_PREFIX}${chatId}`;
+
+const sortMessagesByTimestampAsc = (messages: ChatMessage[]): void => {
+  messages.sort((a, b) => {
+    const timeA = typeof a.timestamp === 'number' ? a.timestamp : new Date(a.timestamp).getTime();
+    const timeB = typeof b.timestamp === 'number' ? b.timestamp : new Date(b.timestamp).getTime();
+    return timeA - timeB;
+  });
+};
+
+const mergeUniqueIds = (existing: string[] | undefined, incoming: string[] | undefined): string[] => {
+  const merged = new Set<string>(existing ?? []);
+  for (const value of incoming ?? []) {
+    merged.add(value);
+  }
+  return Array.from(merged);
+};
+
+const deriveStatusFromReceipts = (
+  currentStatus: ChatMessage['status'],
+  deliveredTo: string[],
+  readBy: string[],
+  totalRecipients?: number
+): ChatMessage['status'] => {
+  if (currentStatus === 'failed') {
+    return 'failed';
+  }
+
+  const hasAnyDelivered = deliveredTo.length > 0;
+  const hasAnyRead = readBy.length > 0;
+  const hasAllReads = typeof totalRecipients === 'number' && totalRecipients > 0
+    ? readBy.length >= totalRecipients
+    : hasAnyRead;
+
+  if (hasAllReads) {
+    return 'read';
+  }
+
+  if (hasAnyDelivered || hasAnyRead) {
+    return 'delivered';
+  }
+
+  return currentStatus;
+};
+
+const withSerializedChatWrite = async (
+  chatId: string,
+  operation: () => Promise<void>
+): Promise<void> => {
+  const previousChain = chatWriteChains.get(chatId) ?? Promise.resolve();
+  const currentChain = previousChain
+    .catch(() => undefined)
+    .then(operation);
+
+  chatWriteChains.set(chatId, currentChain);
+
+  try {
+    await currentChain;
+  } finally {
+    if (chatWriteChains.get(chatId) === currentChain) {
+      chatWriteChains.delete(chatId);
+    }
+  }
+};
+
+const readMessages = async (chatId: string): Promise<ChatMessage[]> => {
+  const data = await AsyncStorage.getItem(getChatStorageKey(chatId));
+  if (!data) {
+    return [];
+  }
+
+  return JSON.parse(data) as ChatMessage[];
+};
+
+export const waitForChatWrites = async (chatId: string): Promise<void> => {
+  const activeChain = chatWriteChains.get(chatId);
+  if (!activeChain) {
+    return;
+  }
+
+  await activeChain.catch(() => undefined);
+};
 
 const notifyMessageListeners = (chatId: string) => {
   const listeners = messageListeners.get(chatId);
@@ -45,39 +129,31 @@ export const initMessageDB = async (): Promise<void> => {
 // Save a message to local storage
 export const saveMessageLocally = async (message: ChatMessage): Promise<void> => {
   try {
-    const key = `${MESSAGES_KEY_PREFIX}${message.chatId}`;
-    const existingData = await AsyncStorage.getItem(key);
-    let messages: ChatMessage[] = existingData ? JSON.parse(existingData) : [];
+    await withSerializedChatWrite(message.chatId, async () => {
+      const key = getChatStorageKey(message.chatId);
+      const messages = await readMessages(message.chatId);
 
-    // Check if message already exists
-    const existingIndex = messages.findIndex(m => m.id === message.id);
-    
-    if (existingIndex >= 0) {
-      // Merge with existing message to preserve fields like replyTo
-      // that might not be included in status updates
-      const existingMessage = messages[existingIndex];
-      messages[existingIndex] = {
-        ...existingMessage,  // Keep existing data (especially replyTo)
-        ...message,          // Overlay new data
-        // Explicitly preserve replyTo - use new value if provided, otherwise keep existing
-        replyTo: message.replyTo || existingMessage.replyTo,
-      };
-      console.log('✅ Message updated locally:', message.id, message.replyTo ? '(with replyTo)' : '');
-    } else {
-      // Add new message
-      messages.push(message);
-      console.log('✅ New message saved locally:', message.id, message.replyTo ? '(with replyTo)' : '');
-    }
+      const existingIndex = messages.findIndex((m) => m.id === message.id || m.messageId === message.messageId);
 
-    // Sort by timestamp to ensure order
-    messages.sort((a, b) => {
-        const timeA = typeof a.timestamp === 'number' ? a.timestamp : new Date(a.timestamp).getTime();
-        const timeB = typeof b.timestamp === 'number' ? b.timestamp : new Date(b.timestamp).getTime();
-        return timeA - timeB;
+      if (existingIndex >= 0) {
+        const existingMessage = messages[existingIndex];
+        messages[existingIndex] = {
+          ...existingMessage,
+          ...message,
+          replyTo: message.replyTo || existingMessage.replyTo,
+          deliveredTo: mergeUniqueIds(existingMessage.deliveredTo, message.deliveredTo),
+          readBy: mergeUniqueIds(existingMessage.readBy, message.readBy),
+        };
+        console.log('✅ Message updated locally:', message.id, message.replyTo ? '(with replyTo)' : '');
+      } else {
+        messages.push(message);
+        console.log('✅ New message saved locally:', message.id, message.replyTo ? '(with replyTo)' : '');
+      }
+
+      sortMessagesByTimestampAsc(messages);
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      notifyMessageListeners(message.chatId);
     });
-
-    await AsyncStorage.setItem(key, JSON.stringify(messages));
-    notifyMessageListeners(message.chatId);
   } catch (error) {
     console.error('❌ Error saving message locally:', error);
     throw error;
@@ -87,13 +163,7 @@ export const saveMessageLocally = async (message: ChatMessage): Promise<void> =>
 // Get all messages for a chat
 export const getChatMessages = async (chatId: string): Promise<ChatMessage[]> => {
   try {
-    const key = `${MESSAGES_KEY_PREFIX}${chatId}`;
-    const data = await AsyncStorage.getItem(key);
-    
-    if (!data) return [];
-    
-    const messages: ChatMessage[] = JSON.parse(data);
-    return messages;
+    return await readMessages(chatId);
   } catch (error) {
     console.error('❌ Error getting chat messages:', error);
     return [];
@@ -106,29 +176,35 @@ export const updateMessageStatus = async (
   messageId: string,
   status: ChatMessage['status'],
   deliveredTo?: string[],
-  readBy?: string[]
+  readBy?: string[],
+  totalRecipients?: number
 ): Promise<void> => {
   try {
-    const key = `${MESSAGES_KEY_PREFIX}${chatId}`;
-    const data = await AsyncStorage.getItem(key);
-    
-    if (!data) return;
-    
-    const messages: ChatMessage[] = JSON.parse(data);
-    const messageIndex = messages.findIndex(m => m.id === messageId || m.messageId === messageId);
-    
-    if (messageIndex >= 0) {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      const messageIndex = messages.findIndex((m) => m.id === messageId || m.messageId === messageId);
+
+      if (messageIndex < 0) {
+        return;
+      }
+
+      const existingMessage = messages[messageIndex];
+      const mergedDelivered = mergeUniqueIds(existingMessage.deliveredTo, deliveredTo);
+      const mergedRead = mergeUniqueIds(existingMessage.readBy, readBy);
+      const nextStatus = deriveStatusFromReceipts(status, mergedDelivered, mergedRead, totalRecipients);
+
       messages[messageIndex] = {
-        ...messages[messageIndex],
-        status,
-        ...(deliveredTo !== undefined ? { deliveredTo } : {}),
-        ...(readBy !== undefined ? { readBy } : {}),
+        ...existingMessage,
+        status: nextStatus,
+        deliveredTo: mergedDelivered,
+        readBy: mergedRead,
       };
-      
+
       await AsyncStorage.setItem(key, JSON.stringify(messages));
-      console.log(`✅ Message ${messageId} status updated to ${status}`);
+      console.log(`✅ Message ${messageId} status updated to ${nextStatus}`);
       notifyMessageListeners(chatId);
-    }
+    });
   } catch (error) {
     console.error('❌ Error updating message status:', error);
   }
@@ -141,38 +217,42 @@ export const markMessagesDelivered = async (
   deliveredByUserId: string
 ): Promise<void> => {
   try {
-    const key = `${MESSAGES_KEY_PREFIX}${chatId}`;
-    const data = await AsyncStorage.getItem(key);
-    
-    if (!data) return;
-    
-    const messages: ChatMessage[] = JSON.parse(data);
-    let updated = false;
-    
-    for (const messageId of messageIds) {
-      const messageIndex = messages.findIndex(m => m.id === messageId || m.messageId === messageId);
-      
-      if (messageIndex >= 0) {
-        const message = messages[messageIndex];
-        const deliveredTo = message.deliveredTo || [];
-        
-        if (!deliveredTo.includes(deliveredByUserId)) {
-          deliveredTo.push(deliveredByUserId);
-          messages[messageIndex] = {
-            ...message,
-            deliveredTo,
-            status: message.status === 'sent' ? 'delivered' : message.status,
-          };
-          updated = true;
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      let updated = false;
+
+      for (const messageId of messageIds) {
+        const messageIndex = messages.findIndex((m) => m.id === messageId || m.messageId === messageId);
+        if (messageIndex < 0) {
+          continue;
         }
+
+        const message = messages[messageIndex];
+        const deliveredTo = mergeUniqueIds(message.deliveredTo, [deliveredByUserId]);
+
+        if (deliveredTo.length === (message.deliveredTo?.length ?? 0)) {
+          continue;
+        }
+
+        messages[messageIndex] = {
+          ...message,
+          deliveredTo,
+          status: message.status === 'sent' || message.status === 'sending'
+            ? 'delivered'
+            : deriveStatusFromReceipts(message.status, deliveredTo, message.readBy ?? []),
+        };
+        updated = true;
       }
-    }
-    
-    if (updated) {
+
+      if (!updated) {
+        return;
+      }
+
       await AsyncStorage.setItem(key, JSON.stringify(messages));
       console.log(`✅ Marked ${messageIds.length} messages as delivered by ${deliveredByUserId}`);
       notifyMessageListeners(chatId);
-    }
+    });
   } catch (error) {
     console.error('❌ Error marking messages delivered:', error);
   }
@@ -182,70 +262,51 @@ export const markMessagesDelivered = async (
 export const markMessagesRead = async (
   chatId: string,
   messageIds: string[],
-  readByUserId: string
+  readByUserId: string,
+  totalRecipients?: number
 ): Promise<void> => {
   try {
-    const key = `${MESSAGES_KEY_PREFIX}${chatId}`;
-    const data = await AsyncStorage.getItem(key);
-    
-    if (!data) return;
-    
-    const messages: ChatMessage[] = JSON.parse(data);
-    let updated = false;
-    
-    for (const messageId of messageIds) {
-      const messageIndex = messages.findIndex(m => m.id === messageId || m.messageId === messageId);
-      
-      if (messageIndex >= 0) {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      let updated = false;
+
+      for (const messageId of messageIds) {
+        const messageIndex = messages.findIndex((m) => m.id === messageId || m.messageId === messageId);
+        if (messageIndex < 0) {
+          continue;
+        }
+
         const message = messages[messageIndex];
-        const readBy = message.readBy || [];
-        const deliveredTo = message.deliveredTo || [];
-        
-        // If someone read it, they also delivered it
-        if (!deliveredTo.includes(readByUserId)) {
-          deliveredTo.push(readByUserId);
+        const deliveredTo = mergeUniqueIds(message.deliveredTo, [readByUserId]);
+        const readBy = mergeUniqueIds(message.readBy, [readByUserId]);
+
+        const deliveredChanged = deliveredTo.length !== (message.deliveredTo?.length ?? 0);
+        const readChanged = readBy.length !== (message.readBy?.length ?? 0);
+
+        if (!deliveredChanged && !readChanged) {
+          continue;
         }
-        
-        if (!readBy.includes(readByUserId)) {
-          readBy.push(readByUserId);
-          messages[messageIndex] = {
-            ...message,
-            deliveredTo,
-            readBy,
-            status: 'read',
-          };
-          updated = true;
-        }
+
+        messages[messageIndex] = {
+          ...message,
+          deliveredTo,
+          readBy,
+          status: deriveStatusFromReceipts(message.status, deliveredTo, readBy, totalRecipients),
+        };
+        updated = true;
       }
-    }
-    
-    if (updated) {
+
+      if (!updated) {
+        return;
+      }
+
       await AsyncStorage.setItem(key, JSON.stringify(messages));
       console.log(`✅ Marked ${messageIds.length} messages as read by ${readByUserId}`);
       notifyMessageListeners(chatId);
-    }
+    });
   } catch (error) {
     console.error('❌ Error marking messages read:', error);
-  }
-};
-
-// Get unread messages from a specific sender (for triggering read receipts)
-export const getUnreadMessagesFromSender = async (
-  chatId: string,
-  senderId: string,
-  currentUserId: string
-): Promise<ChatMessage[]> => {
-  try {
-    const messages = await getChatMessages(chatId);
-    
-    return messages.filter(msg => 
-      msg.senderId === senderId && 
-      msg.senderId !== currentUserId &&
-      (!msg.readBy || !msg.readBy.includes(currentUserId))
-    );
-  } catch (error) {
-    console.error('❌ Error getting unread messages:', error);
-    return [];
   }
 };
 
@@ -256,24 +317,24 @@ export const updateMessageLocalPath = async (
   localMediaPath: string
 ): Promise<void> => {
   try {
-    const key = `${MESSAGES_KEY_PREFIX}${chatId}`;
-    const data = await AsyncStorage.getItem(key);
-    
-    if (!data) return;
-    
-    const messages: ChatMessage[] = JSON.parse(data);
-    const messageIndex = messages.findIndex(m => m.id === messageId || m.messageId === messageId);
-    
-    if (messageIndex >= 0) {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      const messageIndex = messages.findIndex((m) => m.id === messageId || m.messageId === messageId);
+
+      if (messageIndex < 0) {
+        return;
+      }
+
       messages[messageIndex] = {
         ...messages[messageIndex],
         localMediaPath,
       };
-      
+
       await AsyncStorage.setItem(key, JSON.stringify(messages));
       console.log(`✅ Message ${messageId} local path updated to ${localMediaPath}`);
       notifyMessageListeners(chatId);
-    }
+    });
   } catch (error) {
     console.error('❌ Error updating message local path:', error);
   }

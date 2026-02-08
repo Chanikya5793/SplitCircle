@@ -14,7 +14,7 @@ import type { ChatMessage, ChatThread, MessageType } from '@/models';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
 
@@ -51,6 +51,25 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [isProcessingMedia, setIsProcessingMedia] = useState(false);
   // Location picker state
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
+  const markReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const markReadInFlightRef = useRef(false);
+
+  const requestMarkAsRead = useCallback(() => {
+    if (markReadTimerRef.current) {
+      clearTimeout(markReadTimerRef.current);
+    }
+
+    markReadTimerRef.current = setTimeout(() => {
+      if (markReadInFlightRef.current) {
+        return;
+      }
+
+      markReadInFlightRef.current = true;
+      void markChatAsRead(thread.chatId).finally(() => {
+        markReadInFlightRef.current = false;
+      });
+    }, 100);
+  }, [markChatAsRead, thread.chatId]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -120,12 +139,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     });
 
     // Mark all messages as read when opening the chat
-    markChatAsRead(thread.chatId);
+    requestMarkAsRead();
 
     // Also mark as read when app comes back to foreground
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
-        markChatAsRead(thread.chatId);
+        requestMarkAsRead();
       }
     });
 
@@ -133,8 +152,11 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       console.log('👋 ChatRoomScreen unmounting');
       unsubscribe();
       subscription.remove();
+      if (markReadTimerRef.current) {
+        clearTimeout(markReadTimerRef.current);
+      }
     };
-  }, [subscribeToMessages, thread.chatId, markChatAsRead]);
+  }, [requestMarkAsRead, subscribeToMessages, thread.chatId]);
 
   useEffect(() => {
     if (messages.length === 0) {
@@ -161,8 +183,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       return;
     }
 
-    void markChatAsRead(thread.chatId);
-  }, [markChatAsRead, messages, thread.chatId, user]);
+    requestMarkAsRead();
+  }, [messages, requestMarkAsRead, user]);
 
   const handleSend = async () => {
     const trimmed = text.trim();
