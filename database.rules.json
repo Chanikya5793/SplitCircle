@@ -68,11 +68,18 @@
     },
     "receipts": {
       "$chatId": {
-        ".read": "auth != null",
+        ".read": "auth != null && data.child('__participants').child(auth.uid).val() == true",
+        "__participants": {
+          ".read": "auth != null && data.child(auth.uid).val() == true",
+          "$uid": {
+            ".write": "auth != null && auth.uid == $uid",
+            ".validate": "newData.isBoolean() && newData.val() == true"
+          }
+        },
         "$messageId": {
-          ".read": "auth != null",
+          ".read": "auth != null && root.child('receipts').child($chatId).child('__participants').child(auth.uid).val() == true",
           "$recipientId": {
-            ".read": "auth != null",
+            ".read": "auth != null && root.child('receipts').child($chatId).child('__participants').child(auth.uid).val() == true",
             ".write": "auth != null && auth.uid == $recipientId",
             ".validate": "newData.exists() ? (newData.hasChildren(['delivered', 'deliveredAt', 'recipientId']) && newData.child('recipientId').isString() && newData.child('recipientId').val() == $recipientId && newData.child('recipientId').val() == auth.uid && newData.child('delivered').isBoolean() && newData.child('deliveredAt').isNumber() && (!newData.child('read').exists() || newData.child('read').isBoolean()) && (!newData.child('readAt').exists() || newData.child('readAt').isNumber())) : true",
             "delivered": {

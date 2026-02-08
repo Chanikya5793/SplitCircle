@@ -124,7 +124,7 @@ const MessageStatusIndicator = ({ status, isGroupChat, totalRecipients, delivere
   const read = readCount || 0;
   const recipients = totalRecipients || 0;
 
-  // Prefer receipt arrays for accuracy; fall back to status field.
+  // Prefer receipt arrays for accuracy. Only rely on raw status for transient states.
   const effectiveStatus: MessageStatus =
     status === 'sending' || status === 'failed'
       ? status
@@ -132,7 +132,9 @@ const MessageStatusIndicator = ({ status, isGroupChat, totalRecipients, delivere
         ? 'read'
         : delivered > 0
           ? 'delivered'
-          : status;
+          : status === 'sent'
+            ? 'sent'
+            : 'sent';
 
   // For group chats, blue appears only when all recipients read.
   const allDelivered = isGroupChat && recipients > 0
