@@ -262,10 +262,12 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     }
 
     activeChatIdsRef.current.add(chatId);
-    void registerReceiptParticipant(chatId, currentUser.userId);
 
     let disposed = false;
     let pendingLoadTimer: ReturnType<typeof setTimeout> | null = null;
+    let receiptRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribeReceipts: (() => void) | null = null;
+    let isStartingReceiptListener = false;
 
     const loadLocalMessages = async () => {
       await waitForChatWrites(chatId);
@@ -298,32 +300,87 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       }, 75);
     };
 
+    const clearReceiptRetryTimer = () => {
+      if (!receiptRetryTimer) {
+        return;
+      }
+      clearTimeout(receiptRetryTimer);
+      receiptRetryTimer = null;
+    };
+
+    const scheduleReceiptListenerRetry = () => {
+      if (disposed || receiptRetryTimer) {
+        return;
+      }
+
+      receiptRetryTimer = setTimeout(() => {
+        receiptRetryTimer = null;
+        void startReceiptListener();
+      }, 600);
+    };
+
+    const startReceiptListener = async () => {
+      if (disposed || unsubscribeReceipts || isStartingReceiptListener) {
+        return;
+      }
+
+      isStartingReceiptListener = true;
+
+      try {
+        await registerReceiptParticipant(chatId, currentUser.userId);
+        if (disposed) {
+          return;
+        }
+
+        unsubscribeReceipts = listenForReceipts(
+          chatId,
+          async (messageId, status, recipientId, allDelivered, allRead) => {
+            const latestThread = getThreadByChatId(chatId);
+            const recipientCount = getRecipientCount(latestThread, currentUser.userId);
+
+            const deliveredUsers = allDelivered ?? (recipientId ? [recipientId] : []);
+            const readUsers = allRead ?? (status === 'read' && recipientId ? [recipientId] : []);
+
+            await updateMessageStatus(
+              chatId,
+              messageId,
+              status,
+              deliveredUsers,
+              readUsers,
+              recipientCount,
+            );
+          },
+          true,
+          (error) => {
+            const errorMessage = String(error?.message ?? error).toLowerCase();
+            if (errorMessage.includes('permission_denied')) {
+              console.warn('⚠️ Receipt listener permission denied; retrying after participant registration.');
+            } else {
+              console.warn('⚠️ Receipt listener cancelled; scheduling retry.', error);
+            }
+
+            if (unsubscribeReceipts) {
+              unsubscribeReceipts();
+              unsubscribeReceipts = null;
+            }
+
+            scheduleReceiptListenerRetry();
+          },
+        );
+      } catch (error) {
+        console.warn('⚠️ Failed to register receipt participant; scheduling retry.', error);
+        scheduleReceiptListenerRetry();
+      } finally {
+        isStartingReceiptListener = false;
+      }
+    };
+
     scheduleLocalLoad(true);
+    void startReceiptListener();
 
     const unsubscribeLocal = subscribeToLocalMessages(chatId, () => {
       scheduleLocalLoad(false);
     });
-
-    const unsubscribeReceipts = listenForReceipts(
-      chatId,
-      async (messageId, status, recipientId, allDelivered, allRead) => {
-        const latestThread = getThreadByChatId(chatId);
-        const recipientCount = getRecipientCount(latestThread, currentUser.userId);
-
-        const deliveredUsers = allDelivered ?? (recipientId ? [recipientId] : []);
-        const readUsers = allRead ?? (status === 'read' && recipientId ? [recipientId] : []);
-
-        await updateMessageStatus(
-          chatId,
-          messageId,
-          status,
-          deliveredUsers,
-          readUsers,
-          recipientCount,
-        );
-      },
-      true,
-    );
 
     return () => {
       disposed = true;
@@ -333,7 +390,11 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         clearTimeout(pendingLoadTimer);
       }
 
-      unsubscribeReceipts();
+      clearReceiptRetryTimer();
+      if (unsubscribeReceipts) {
+        unsubscribeReceipts();
+        unsubscribeReceipts = null;
+      }
       unsubscribeLocal();
     };
   }, [getRecipientCount, getThreadByChatId]);

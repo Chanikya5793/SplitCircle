@@ -4,7 +4,6 @@
 // Local storage is the primary message store (AsyncStorage)
 
 import {
-  get,
   getDatabase,
   onChildAdded,
   onChildChanged,
@@ -206,6 +205,7 @@ export const registerReceiptParticipant = async (chatId: string, userId: string)
     await set(ref(rtdb, `receipts/${chatId}/__participants/${userId}`), true);
   } catch (error) {
     console.error('❌ Error registering receipt participant:', error);
+    throw error;
   }
 };
 
@@ -314,13 +314,9 @@ export const sendDeliveryReceipt = async (
 ): Promise<void> => {
   try {
     const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}/${recipientId}`);
-    const existingSnapshot = await get(receiptRef);
-    const existingValue = existingSnapshot.exists() ? existingSnapshot.val() as Partial<ReceiptData> : null;
-    const deliveredAt = typeof existingValue?.deliveredAt === 'number' ? existingValue.deliveredAt : Date.now();
-
     await update(receiptRef, {
       delivered: true,
-      deliveredAt,
+      deliveredAt: Date.now(),
       recipientId,
     });
 
@@ -339,23 +335,30 @@ export const sendReadReceipt = async (
   recipientId: string,
   _isGroupChat: boolean = false
 ): Promise<void> => {
-  try {
-    const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}/${recipientId}`);
-    const existingSnapshot = await get(receiptRef);
-    const existingValue = existingSnapshot.exists() ? existingSnapshot.val() as Partial<ReceiptData> : null;
-    const now = Date.now();
+  const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}/${recipientId}`);
+  const now = Date.now();
 
+  try {
+    // Fast path: preserve existing delivery metadata by only updating read flags.
     await update(receiptRef, {
-      delivered: true,
-      deliveredAt: typeof existingValue?.deliveredAt === 'number' ? existingValue.deliveredAt : now,
       read: true,
       readAt: now,
-      recipientId,
     });
-
     console.log('✅ Read receipt sent for:', messageId);
   } catch (error) {
-    console.error('❌ Error sending read receipt:', error);
+    try {
+      // Fallback for missing delivery node: create a complete receipt atomically.
+      await update(receiptRef, {
+        delivered: true,
+        deliveredAt: now,
+        recipientId,
+        read: true,
+        readAt: now,
+      });
+      console.log('✅ Read receipt sent for:', messageId);
+    } catch (fallbackError) {
+      console.error('❌ Error sending read receipt:', fallbackError ?? error);
+    }
   }
 };
 
@@ -373,23 +376,12 @@ export const sendBulkReadReceipts = async (
       return;
     }
 
-    const receiptsSnapshot = await get(ref(rtdb, `receipts/${chatId}`));
-    const receiptsByMessage = receiptsSnapshot.exists()
-      ? receiptsSnapshot.val() as Record<string, unknown>
-      : {};
-
     const now = Date.now();
-    const updates: Record<string, boolean | number | string> = {};
+    const updates: Record<string, boolean | number> = {};
 
     for (const messageId of messageIds) {
-      const receiptMap = normalizeReceiptMap(receiptsByMessage[messageId]);
-      const existing = receiptMap[recipientId];
-      const deliveredAt = typeof existing?.deliveredAt === 'number' ? existing.deliveredAt : now;
       const basePath = `receipts/${chatId}/${messageId}/${recipientId}`;
 
-      updates[`${basePath}/delivered`] = true;
-      updates[`${basePath}/deliveredAt`] = deliveredAt;
-      updates[`${basePath}/recipientId`] = recipientId;
       updates[`${basePath}/read`] = true;
       updates[`${basePath}/readAt`] = now;
     }
@@ -417,7 +409,8 @@ export const listenForReceipts = (
     allDelivered?: string[],
     allRead?: string[]
   ) => void,
-  isGroupChat: boolean = false
+  isGroupChat: boolean = false,
+  onError?: (error: Error) => void,
 ): (() => void) => {
   const receiptsRef = ref(rtdb, `receipts/${chatId}`);
   const fingerprints = new Map<string, string>();
@@ -467,8 +460,22 @@ export const listenForReceipts = (
     }
   };
 
-  const unsubscribeAdded = onChildAdded(receiptsRef, processReceiptSnapshot);
-  const unsubscribeChanged = onChildChanged(receiptsRef, processReceiptSnapshot);
+  const unsubscribeAdded = onChildAdded(
+    receiptsRef,
+    processReceiptSnapshot,
+    (error: Error) => {
+      console.warn('⚠️ Receipt listener (added) cancelled:', error);
+      onError?.(error);
+    }
+  );
+  const unsubscribeChanged = onChildChanged(
+    receiptsRef,
+    processReceiptSnapshot,
+    (error: Error) => {
+      console.warn('⚠️ Receipt listener (changed) cancelled:', error);
+      onError?.(error);
+    }
+  );
 
   return () => {
     unsubscribeAdded();
