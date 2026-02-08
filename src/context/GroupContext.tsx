@@ -173,7 +173,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       members: arrayUnion({
         userId: user.userId,
         displayName: user.displayName,
-        photoURL: user.photoURL ?? undefined,
+        photoURL: user.photoURL ?? null,
         role: 'member',
         balance: 0,
       }),
@@ -191,7 +191,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       const newParticipant: ChatParticipant = {
         userId: user.userId,
         displayName: user.displayName,
-        photoURL: user.photoURL ?? undefined,
+        ...(user.photoURL ? { photoURL: user.photoURL } : {}),
         status: 'online',
       };
 
@@ -201,7 +201,8 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         id: msgId,
         messageId: msgId,
         chatId,
-        senderId: 'system',
+        // RTDB queue rules require senderId to match auth.uid on create.
+        senderId: user.userId,
         type: 'system',
         content: `${user.displayName} joined the group`,
         status: 'sent',

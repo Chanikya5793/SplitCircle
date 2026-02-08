@@ -113,64 +113,38 @@ const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
 };
 
 // WhatsApp-style message status indicator component
-const MessageStatusIndicator = ({ status, isGroupChat, totalRecipients, deliveredCount, readCount }: {
+const MessageStatusIndicator = ({ status, isGroupChat: _isGroupChat, totalRecipients: _totalRecipients, deliveredCount, readCount }: {
   status: MessageStatus;
   isGroupChat?: boolean;
   totalRecipients?: number;
   deliveredCount?: number;
   readCount?: number;
 }) => {
-  const delivered = deliveredCount || 0;
-  const read = readCount || 0;
-  const recipients = totalRecipients || 0;
+  const delivered = deliveredCount ?? 0;
+  const read = readCount ?? 0;
 
-  // Prefer receipt arrays for accuracy. Only rely on raw status for transient states.
-  const effectiveStatus: MessageStatus =
-    status === 'sending' || status === 'failed'
-      ? status
-      : read > 0
-        ? 'read'
-        : delivered > 0
-          ? 'delivered'
-          : status === 'sent'
-            ? 'sent'
-            : 'sent';
+  if (status === 'sending') {
+    return <Ionicons name="time-outline" size={14} color="rgba(255,255,255,0.6)" style={styles.statusIconSingle} />;
+  }
 
-  // For group chats, blue appears only when all recipients read.
-  const allDelivered = isGroupChat && recipients > 0
-    ? delivered >= recipients
-    : effectiveStatus === 'delivered' || effectiveStatus === 'read';
-  const allRead = isGroupChat && recipients > 0
-    ? read >= recipients
-    : effectiveStatus === 'read';
+  if (status === 'failed') {
+    return <Ionicons name="alert-circle-outline" size={14} color="#FF6B6B" style={styles.statusIconSingle} />;
+  }
 
-  const getIconConfig = () => {
-    switch (effectiveStatus) {
-      case 'sending':
-        return { name: 'time-outline' as const, color: 'rgba(255,255,255,0.6)', size: 14 };
-      case 'failed':
-        return { name: 'alert-circle-outline' as const, color: '#FF6B6B', size: 14 };
-      case 'sent':
-        return { name: 'checkmark' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
-      case 'delivered':
-        // In group chat, use grey if not all delivered
-        if (isGroupChat && !allDelivered) {
-          return { name: 'checkmark' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
-        }
-        return { name: 'checkmark-done' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
-      case 'read':
-        // In group chat, show blue only if all have read
-        if (isGroupChat && !allRead) {
-          return { name: 'checkmark-done' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
-        }
-        return { name: 'checkmark-done' as const, color: '#53BDEB', size: 14 }; // WhatsApp blue
-      default:
-        return { name: 'checkmark' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
-    }
-  };
+  const hasAnyRead = read > 0 || status === 'read';
+  const hasAnyDelivered = hasAnyRead || delivered > 0 || status === 'delivered';
 
-  const { name, color, size } = getIconConfig();
-  return <Ionicons name={name} size={size} color={color} style={{ marginLeft: 4 }} />;
+  if (!hasAnyDelivered) {
+    return <Ionicons name="checkmark" size={14} color="rgba(255,255,255,0.7)" style={styles.statusIconSingle} />;
+  }
+
+  const tickColor = hasAnyRead ? '#35C6FF' : 'rgba(255,255,255,0.7)';
+  return (
+    <View style={styles.statusDoubleTick}>
+      <Ionicons name="checkmark" size={13} color={tickColor} style={styles.statusTickBack} />
+      <Ionicons name="checkmark" size={13} color={tickColor} style={styles.statusTickFront} />
+    </View>
+  );
 };
 
 // Video player component using expo-video
@@ -954,6 +928,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-end',
     marginTop: 4,
+  },
+  statusIconSingle: {
+    marginLeft: 4,
+  },
+  statusDoubleTick: {
+    marginLeft: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: 18,
+  },
+  statusTickBack: {
+    marginRight: -6,
+  },
+  statusTickFront: {
+    marginLeft: 0,
   },
   image: {
     marginTop: 8,
