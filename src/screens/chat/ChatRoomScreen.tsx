@@ -221,6 +221,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     inputRef.current?.focus();
   };
 
+  const handleSwipeInfo = (message: ChatMessage) => {
+    lightHaptic();
+    // @ts-ignore - navigation route typing is intentionally loose in this app
+    navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread });
+  };
+
   // Handle media selection from attachment menu
   const handleMediaSelected = (media: SelectedMedia) => {
     // Close attachment menu first
@@ -459,6 +465,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 showSenderInfo={thread.type === 'group' ? isFirstInSequence : undefined}
                 senderName={senderName}
                 onSwipeReply={handleSwipeReply}
+                onSwipeInfo={thread.type === 'group' ? handleSwipeInfo : undefined}
                 isGroupChat={thread.type === 'group'}
                 totalRecipients={totalRecipients}
               />

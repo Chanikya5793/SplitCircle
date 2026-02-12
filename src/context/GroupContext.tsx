@@ -3,19 +3,19 @@ import type { ChatMessage, ChatParticipant, Expense, Group, ParticipantShare, Se
 import { queueMessage } from '@/services/messageQueueService';
 import { deleteFile, uploadFile } from '@/services/storageService';
 import {
-  addDoc,
-  arrayUnion,
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-  writeBatch,
+    addDoc,
+    arrayUnion,
+    collection,
+    deleteDoc,
+    doc,
+    getDocs,
+    onSnapshot,
+    query,
+    serverTimestamp,
+    setDoc,
+    updateDoc,
+    where,
+    writeBatch,
 } from 'firebase/firestore';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { v4 as uuid } from 'uuid';
