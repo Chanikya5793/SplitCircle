@@ -50,6 +50,7 @@ interface MessageBubbleProps {
   showSenderInfo?: boolean;
   senderName?: string;
   onSwipeReply?: (message: ChatMessage) => void;
+  onSwipeInfo?: (message: ChatMessage) => void;
   isGroupChat?: boolean;
   totalRecipients?: number;
 }
@@ -177,7 +178,7 @@ const VideoPlayerComponent = ({ uri, style, showControls = true, showOverlay = f
   );
 };
 
-export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, isGroupChat, totalRecipients }: MessageBubbleProps) => {
+export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, isGroupChat, totalRecipients }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
@@ -272,7 +273,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
 
   const imageDimensions = getImageDimensions();
 
-  const renderLeftActions = (progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
+  const renderLeftActions = (_progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
     const scale = dragX.interpolate({
       inputRange: [0, 50],
       outputRange: [0, 1],
@@ -288,11 +289,29 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     );
   };
 
-  const onSwipeableOpen = () => {
-    if (onSwipeReply) {
+  const renderRightActions = (_progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
+    const scale = dragX.interpolate({
+      inputRange: [-50, 0],
+      outputRange: [1, 0],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <View style={styles.infoActionContainer}>
+        <Animated.View style={{ transform: [{ scale }] }}>
+          <Ionicons name="information-circle-outline" size={22} color={theme.colors.primary} />
+        </Animated.View>
+      </View>
+    );
+  };
+
+  const onSwipeableOpen = (direction: 'left' | 'right') => {
+    if (direction === 'left' && onSwipeReply) {
       onSwipeReply(message);
-      swipeableRef.current?.close();
+    } else if (direction === 'right' && isGroupChat && onSwipeInfo) {
+      onSwipeInfo(message);
     }
+    swipeableRef.current?.close();
   };
 
   // Reply preview component
@@ -802,9 +821,11 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         <Swipeable
           ref={swipeableRef}
           renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
+          renderRightActions={isGroupChat && onSwipeInfo ? renderRightActions : undefined}
           onSwipeableOpen={onSwipeableOpen}
           friction={2}
           overshootLeft={false}
+          overshootRight={false}
         >
           <View style={[styles.container, styles.mine, { backgroundColor: theme.colors.primary }]}>
             {renderReplyContent()}
@@ -838,6 +859,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         onSwipeableOpen={onSwipeableOpen}
         friction={2}
         overshootLeft={false}
+        overshootRight={false}
       >
         <View style={styles.otherRow}>
           {showSenderInfo !== undefined && (
@@ -951,6 +973,11 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   replyActionContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 50,
+  },
+  infoActionContainer: {
     justifyContent: 'center',
     alignItems: 'center',
     width: 50,

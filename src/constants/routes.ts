@@ -16,6 +16,7 @@ export const ROUTES = {
     CHAT_TAB: 'ChatTab',
     CHAT: 'Chat',
     GROUP_CHAT: 'GroupChat',
+    MESSAGE_INFO: 'MessageInfo',
     CALLS_TAB: 'CallsTab',
     CALLS: 'Calls',
     CALL_DETAIL: 'CallDetail',
