@@ -13,6 +13,7 @@ import { SignInScreen } from '@/screens/auth/SignInScreen';
 import { CallLobbyScreen } from '@/screens/calls/CallLobbyScreen';
 import { CallSessionScreen } from '@/screens/calls/CallSessionScreen';
 import { ChatListScreen } from '@/screens/chat/ChatListScreen';
+import { MessageInfoScreen } from '@/screens/chat/MessageInfoScreen';
 import { ChatRoomScreen } from '@/screens/chat/ChatRoomScreen';
 import { AddExpenseScreen } from '@/screens/expenses/AddExpenseScreen';
 import { ExpenseDetailsScreen } from '@/screens/expenses/ExpenseDetailsScreen';
@@ -216,6 +217,15 @@ const GroupStackNavigator = () => {
           headerTintColor: theme.colors.primary,
         }}
       />
+      <GroupStack.Screen
+        name={ROUTES.APP.MESSAGE_INFO}
+        component={MessageInfoScreen}
+        options={{
+          title: '',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
     </GroupStack.Navigator>
   );
 };
@@ -228,6 +238,15 @@ const ChatStackNavigator = () => {
       <ChatStack.Screen
         name={ROUTES.APP.GROUP_CHAT}
         component={ChatRoomRoute}
+        options={{
+          title: '',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <ChatStack.Screen
+        name={ROUTES.APP.MESSAGE_INFO}
+        component={MessageInfoScreen}
         options={{
           title: '',
           headerTransparent: true,
@@ -289,7 +308,7 @@ const AppTabs = () => {
           tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="account-group" color={color} size={size} />,
           tabBarStyle: ((route) => {
             const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.GROUPS;
-            if (routeName === ROUTES.APP.GROUP_CHAT) {
+            if (routeName === ROUTES.APP.GROUP_CHAT || routeName === ROUTES.APP.MESSAGE_INFO) {
               return { display: 'none' };
             }
             return undefined;
@@ -304,7 +323,7 @@ const AppTabs = () => {
           tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="chat-processing" color={color} size={size} />,
           tabBarStyle: ((route) => {
             const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CHAT;
-            if (routeName === ROUTES.APP.GROUP_CHAT) {
+            if (routeName === ROUTES.APP.GROUP_CHAT || routeName === ROUTES.APP.MESSAGE_INFO) {
               return { display: 'none' };
             }
             return undefined;

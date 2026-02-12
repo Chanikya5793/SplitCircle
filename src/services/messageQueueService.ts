@@ -7,6 +7,7 @@ import {
   getDatabase,
   onChildAdded,
   onChildChanged,
+  onValue,
   ref,
   remove,
   set,
@@ -20,7 +21,7 @@ import { downloadMedia } from '@/services/mediaService';
 const rtdb = getDatabase();
 
 // Type for receipt data structure
-interface ReceiptData {
+export interface ReceiptData {
   delivered?: boolean;
   deliveredAt?: number;
   read?: boolean;
@@ -207,6 +208,34 @@ export const registerReceiptParticipant = async (chatId: string, userId: string)
     console.error('❌ Error registering receipt participant:', error);
     throw error;
   }
+};
+
+/**
+ * Listen for receipt updates for a single message.
+ * This includes per-recipient delivery/read timestamps from RTDB.
+ */
+export const listenForMessageReceipts = (
+  chatId: string,
+  messageId: string,
+  onReceiptsChanged: (receipts: Record<string, ReceiptData>) => void
+): (() => void) => {
+  const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}`);
+
+  const unsubscribe = onValue(
+    receiptRef,
+    (snapshot) => {
+      const normalized = normalizeReceiptMap(snapshot.val());
+      onReceiptsChanged(normalized);
+    },
+    (error) => {
+      console.error('❌ Error listening for message receipts:', error);
+      onReceiptsChanged({});
+    }
+  );
+
+  return () => {
+    unsubscribe();
+  };
 };
 
 /**
