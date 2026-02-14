@@ -1,3 +1,4 @@
+import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, MessageStatus, MessageType } from '@/models';
@@ -14,32 +15,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View, ViewStyle } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
-
-// Error boundary for lazy-loaded components
-class MapErrorBoundary extends React.Component<
-  { children: React.ReactNode; fallback: React.ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: { children: React.ReactNode; fallback: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('MapView loading error:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return this.props.fallback;
-    }
-    return this.props.children;
-  }
-}
 
 // Lazy load MapView to prevent crashes in production builds
 const MapView = React.lazy(() => import('react-native-maps').then(mod => ({ default: mod.default })));
@@ -686,6 +661,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   // Location message
   const renderLocationContent = () => {
     if (!message.location) return null;
+    const { latitude, longitude } = message.location;
 
     // Static fallback when Maps API key is not configured
     const renderStaticLocationFallback = () => (
@@ -706,9 +682,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       >
         <View style={styles.locationPreview}>
           {mapsAvailable ? (
-            <MapErrorBoundary
-              fallback={renderStaticLocationFallback()}
-            >
+            <MapErrorBoundary fallback={renderStaticLocationFallback()}>
               <React.Suspense fallback={
                 <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
                   <Ionicons name="location" size={32} color={theme.colors.primary} />
@@ -718,8 +692,8 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
                 <MapView
                   style={StyleSheet.absoluteFillObject}
                   initialRegion={{
-                    latitude: message.location.latitude,
-                    longitude: message.location.longitude,
+                    latitude,
+                    longitude,
                     latitudeDelta: 0.01,
                     longitudeDelta: 0.01,
                   }}
@@ -727,13 +701,18 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
                   zoomEnabled={false}
                   rotateEnabled={false}
                   pitchEnabled={false}
+                  showsPointsOfInterest={false}
+                  toolbarEnabled={false}
+                  loadingEnabled
+                  moveOnMarkerPress={false}
                   liteMode={Platform.OS === 'android'}
                 >
                   <Marker
                     coordinate={{
-                      latitude: message.location.latitude,
-                      longitude: message.location.longitude,
+                      latitude,
+                      longitude,
                     }}
+                    tracksViewChanges={false}
                   />
                 </MapView>
               </React.Suspense>
