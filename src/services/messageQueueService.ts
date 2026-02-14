@@ -4,6 +4,7 @@
 // Local storage is the primary message store (AsyncStorage)
 
 import {
+  get,
   getDatabase,
   onChildAdded,
   onChildChanged,
@@ -24,6 +25,14 @@ const rtdb = getDatabase();
 export interface ReceiptData {
   delivered?: boolean;
   deliveredAt?: number;
+  read?: boolean;
+  readAt?: number;
+  recipientId: string;
+}
+
+interface PersistedReceiptData {
+  delivered: boolean;
+  deliveredAt: number;
   read?: boolean;
   readAt?: number;
   recipientId: string;
@@ -368,26 +377,21 @@ export const sendReadReceipt = async (
   const now = Date.now();
 
   try {
-    // Fast path: preserve existing delivery metadata by only updating read flags.
+    const existingSnapshot = await get(receiptRef);
+    const existingValue = existingSnapshot.val() as Partial<ReceiptData> | null;
+    const deliveredAt = typeof existingValue?.deliveredAt === 'number' ? existingValue.deliveredAt : now;
+
+    // Always write a complete receipt object to satisfy strict RTDB validation.
     await update(receiptRef, {
+      delivered: true,
+      deliveredAt,
+      recipientId,
       read: true,
       readAt: now,
     });
     console.log('✅ Read receipt sent for:', messageId);
   } catch (error) {
-    try {
-      // Fallback for missing delivery node: create a complete receipt atomically.
-      await update(receiptRef, {
-        delivered: true,
-        deliveredAt: now,
-        recipientId,
-        read: true,
-        readAt: now,
-      });
-      console.log('✅ Read receipt sent for:', messageId);
-    } catch (fallbackError) {
-      console.error('❌ Error sending read receipt:', fallbackError ?? error);
-    }
+    console.error('❌ Error sending read receipt:', error);
   }
 };
 
@@ -406,14 +410,24 @@ export const sendBulkReadReceipts = async (
     }
 
     const now = Date.now();
-    const updates: Record<string, boolean | number> = {};
+    const updates: Record<string, PersistedReceiptData> = {};
 
-    for (const messageId of messageIds) {
-      const basePath = `receipts/${chatId}/${messageId}/${recipientId}`;
+    await Promise.all(
+      messageIds.map(async (messageId) => {
+        const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}/${recipientId}`);
+        const existingSnapshot = await get(receiptRef);
+        const existingValue = existingSnapshot.val() as Partial<ReceiptData> | null;
+        const deliveredAt = typeof existingValue?.deliveredAt === 'number' ? existingValue.deliveredAt : now;
 
-      updates[`${basePath}/read`] = true;
-      updates[`${basePath}/readAt`] = now;
-    }
+        updates[`receipts/${chatId}/${messageId}/${recipientId}`] = {
+          delivered: true,
+          deliveredAt,
+          recipientId,
+          read: true,
+          readAt: now,
+        };
+      })
+    );
 
     await update(ref(rtdb), updates);
     console.log(`✅ Bulk read receipts sent for ${messageIds.length} messages`);
