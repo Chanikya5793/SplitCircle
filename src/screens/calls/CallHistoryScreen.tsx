@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { ChatListSkeleton } from '@/components/SkeletonLoader';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { CallSession, CallType } from '@/models';
@@ -20,6 +21,7 @@ import {
   Button,
   Chip,
   Dialog,
+  FAB,
   IconButton,
   Menu,
   Portal,
@@ -88,6 +90,7 @@ export const CallHistoryScreen = () => {
   const scrollY = useRef(new Animated.Value(0)).current;
   
   const [calls, setCalls] = useState<CallSession[]>([]);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<CallFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -129,6 +132,7 @@ export const CallHistoryScreen = () => {
 
     const unsubscribe = subscribeToUserCallHistory(user.userId, (updatedCalls) => {
       setCalls(updatedCalls);
+      setLoading(false);
       setRefreshing(false);
     });
 
@@ -446,7 +450,16 @@ export const CallHistoryScreen = () => {
           )}
 
           {/* Call List */}
-          {groupedCalls.length === 0 ? (
+          {loading ? (
+            // Show skeleton loaders while loading
+            <>
+              <ChatListSkeleton />
+              <ChatListSkeleton />
+              <ChatListSkeleton />
+              <ChatListSkeleton />
+              <ChatListSkeleton />
+            </>
+          ) : groupedCalls.length === 0 ? (
             <View style={styles.emptyState}>
               <MaterialCommunityIcons
                 name="phone-off"
@@ -502,6 +515,17 @@ export const CallHistoryScreen = () => {
           </Dialog.Actions>
         </Dialog>
       </Portal>
+
+      {/* Floating Action Button */}
+      <FAB
+        icon="plus"
+        style={[styles.fab, { backgroundColor: theme.colors.primary }]}
+        onPress={() => {
+          lightHaptic();
+          navigation.goBack();
+        }}
+        label="New Call"
+      />
     </LiquidBackground>
   );
 };
@@ -631,5 +655,11 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: 'center',
     paddingHorizontal: 32,
+  },
+  fab: {
+    position: 'absolute',
+    right: 16,
+    bottom: 16,
+    borderRadius: 16,
   },
 });
