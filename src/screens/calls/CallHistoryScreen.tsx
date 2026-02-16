@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { CallSession, CallType } from '@/models';
 import { subscribeToUserCallHistory } from '@/services/callService';
+import { formatCallDuration, getCallStatusIcon, isMissedCall } from '@/utils/callUtils';
 import { lightHaptic } from '@/utils/haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -51,39 +52,6 @@ const formatCallTime = (timestamp: number): string => {
   } else {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
-};
-
-const formatDuration = (seconds?: number): string => {
-  if (!seconds || seconds === 0) return 'Not connected';
-  
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  
-  if (mins === 0) return `${secs}s`;
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
-};
-
-const isMissedCall = (call: CallSession, currentUserId: string): boolean => {
-  const isOutgoing = call.initiatorId === currentUserId;
-  return call.status === 'missed' || (call.status === 'ended' && !call.connectedAt && !isOutgoing);
-};
-
-const getCallStatusIcon = (call: CallSession, currentUserId: string): { icon: string; color: string } => {
-  const isOutgoing = call.initiatorId === currentUserId;
-  
-  if (isMissedCall(call, currentUserId)) {
-    return { icon: 'phone-missed', color: '#E03C31' };
-  }
-  
-  if (call.status === 'rejected') {
-    return { icon: 'phone-hangup', color: '#E03C31' };
-  }
-  
-  if (isOutgoing) {
-    return { icon: 'phone-outgoing', color: '#2BB673' };
-  }
-  
-  return { icon: 'phone-incoming', color: '#58A6FF' };
 };
 
 export const CallHistoryScreen = () => {
@@ -291,7 +259,7 @@ export const CallHistoryScreen = () => {
                       variant="bodySmall"
                       style={{ color: theme.colors.onSurfaceVariant }}
                     >
-                      {formatDuration(call.duration)}
+                      {formatCallDuration(call.duration)}
                     </Text>
                   </>
                 )}
@@ -405,7 +373,7 @@ export const CallHistoryScreen = () => {
                     variant="headlineSmall"
                     style={{ color: theme.colors.primary, fontWeight: 'bold' }}
                   >
-                    {calls.filter(c => c.duration && c.duration > 0).length}
+                    {calls.filter(c => c.connectedAt).length}
                   </Text>
                   <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                     Answered
@@ -419,7 +387,7 @@ export const CallHistoryScreen = () => {
                     variant="headlineSmall"
                     style={{ color: '#E03C31', fontWeight: 'bold' }}
                   >
-                    {calls.filter(c => isMissedCall(c, user.userId)).length}
+                    {user ? calls.filter(c => isMissedCall(c, user.userId)).length : 0}
                   </Text>
                   <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                     Missed

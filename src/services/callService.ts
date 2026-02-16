@@ -251,6 +251,10 @@ export async function cleanupCall(callId: string): Promise<void> {
 /**
  * Get call history for a user
  * Returns calls where the user was a participant, ordered by most recent first
+ * 
+ * Note: Client-side filtering is necessary because Firestore doesn't support
+ * array-contains queries on objects (participants array). For better performance
+ * at scale, consider adding a participantIds string array field to CallSession.
  */
 export async function getUserCallHistory(
   userId: string,
@@ -291,7 +295,10 @@ export async function getChatCallHistory(
 
 /**
  * Subscribe to call history updates for a user
- * Note: Filters client-side since Firestore doesn't support querying array of objects efficiently
+ * 
+ * Note: Client-side filtering is necessary because Firestore doesn't support
+ * array-contains queries on objects. For production, consider adding a participantIds
+ * string array field for more efficient server-side filtering.
  */
 export function subscribeToUserCallHistory(
   userId: string,
