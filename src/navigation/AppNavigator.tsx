@@ -10,6 +10,7 @@ import type { CallType, Group, PresenceStatus } from '@/models';
 import { ForgotPasswordScreen } from '@/screens/auth/ForgotPasswordScreen';
 import { RegisterScreen } from '@/screens/auth/RegisterScreen';
 import { SignInScreen } from '@/screens/auth/SignInScreen';
+import { CallHistoryScreen } from '@/screens/calls/CallHistoryScreen';
 import { CallLobbyScreen } from '@/screens/calls/CallLobbyScreen';
 import { CallSessionScreen } from '@/screens/calls/CallSessionScreen';
 import { ChatListScreen } from '@/screens/chat/ChatListScreen';
@@ -261,6 +262,7 @@ const ChatStackNavigator = () => {
 const CallStackNavigator = () => (
   <CallStack.Navigator>
     <CallStack.Screen name={ROUTES.APP.CALLS} component={CallLobbyRoute} options={{ title: 'Calls' }} />
+    <CallStack.Screen name={ROUTES.APP.CALL_HISTORY} component={CallHistoryScreen} options={{ title: 'Call History' }} />
     <CallStack.Screen name={ROUTES.APP.CALL_DETAIL} component={CallSessionRoute} options={{ title: 'Live call' }} />
   </CallStack.Navigator>
 );
@@ -313,7 +315,7 @@ const AppTabs = () => {
           tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="phone" color={color} size={size} />,
           tabBarStyle: ((route) => {
             const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CALLS;
-            if (routeName === ROUTES.APP.CALL_DETAIL) {
+            if (routeName === ROUTES.APP.CALL_DETAIL || routeName === ROUTES.APP.CALL_HISTORY) {
               return { display: 'none' };
             }
             return undefined;

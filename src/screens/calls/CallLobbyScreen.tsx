@@ -31,8 +31,18 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
     navigation.setOptions({
       headerTitle: '',
       headerTransparent: true,
+      headerRight: () => (
+        <IconButton
+          icon="history"
+          onPress={() => {
+            lightHaptic();
+            (navigation as any).navigate('CallHistory');
+          }}
+          iconColor={theme.colors.primary}
+        />
+      ),
     });
-  }, [navigation]);
+  }, [navigation, theme]);
 
   const headerOpacity = scrollY.interpolate({
     inputRange: [0, 40],

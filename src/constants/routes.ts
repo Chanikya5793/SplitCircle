@@ -19,6 +19,7 @@ export const ROUTES = {
     CALLS_TAB: 'CallsTab',
     CALLS: 'Calls',
     CALL_DETAIL: 'CallDetail',
+    CALL_HISTORY: 'CallHistory',
     EXPENSE_DETAILS: 'ExpenseDetails',
     RECURRING_BILLS: 'RecurringBills',
     GROUP_STATS: 'GroupStats',

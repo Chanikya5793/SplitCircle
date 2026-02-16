@@ -1,5 +1,6 @@
 export type CallType = 'audio' | 'video';
-export type CallStatus = 'idle' | 'ringing' | 'connected' | 'ended' | 'failed';
+export type CallStatus = 'idle' | 'ringing' | 'connected' | 'ended' | 'failed' | 'missed' | 'rejected';
+export type CallDirection = 'incoming' | 'outgoing';
 
 export interface CallParticipant {
   userId: string;
@@ -22,7 +23,27 @@ export interface CallSession {
   status: CallStatus;
   startedAt: number;
   endedAt?: number;
+  connectedAt?: number;
+  duration?: number; // Duration in seconds
   offer?: SessionDescriptionInit;
   answer?: SessionDescriptionInit;
   iceCandidates?: RTCIceCandidateInit[];
+}
+
+// Call History specific interface for display purposes
+export interface CallHistoryItem {
+  callId: string;
+  chatId: string;
+  groupId?: string;
+  type: CallType;
+  status: CallStatus;
+  direction: CallDirection;
+  startedAt: number;
+  endedAt?: number;
+  connectedAt?: number;
+  duration?: number;
+  participantName: string;
+  participantAvatar?: string;
+  participantIds: string[];
+  isGroupCall: boolean;
 }

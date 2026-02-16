@@ -6,7 +6,10 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
+  limit,
   onSnapshot,
+  orderBy,
   query,
   updateDoc,
   where,
@@ -79,9 +82,22 @@ export async function getCallSession(callId: string): Promise<CallSession | null
 export async function updateCallStatus(callId: string, status: CallStatus): Promise<void> {
   const docRef = doc(db, 'calls', callId);
   const updateData: Partial<CallSession> = { status };
+  
   if (status === 'ended') {
     updateData.endedAt = Date.now();
+    
+    // Calculate duration if call was connected
+    const callDoc = await getDoc(docRef);
+    if (callDoc.exists()) {
+      const callData = callDoc.data() as CallSession;
+      if (callData.connectedAt) {
+        updateData.duration = Math.floor((Date.now() - callData.connectedAt) / 1000);
+      }
+    }
+  } else if (status === 'connected') {
+    updateData.connectedAt = Date.now();
   }
+  
   await updateDoc(docRef, updateData);
 }
 
@@ -93,6 +109,7 @@ export async function setCallAnswer(callId: string, answer: RTCSessionDescriptio
   await updateDoc(docRef, {
     answer,
     status: 'connected',
+    connectedAt: Date.now(),
   } satisfies Partial<CallSession>);
 }
 
@@ -229,4 +246,68 @@ export async function cleanupCall(callId: string): Promise<void> {
   } catch (error) {
     console.warn('Error cleaning up call:', error);
   }
+}
+
+/**
+ * Get call history for a user
+ * Returns calls where the user was a participant, ordered by most recent first
+ */
+export async function getUserCallHistory(
+  userId: string,
+  limitCount: number = 50
+): Promise<CallSession[]> {
+  const q = query(
+    callsCollection,
+    orderBy('startedAt', 'desc'),
+    limit(limitCount * 2) // Get more to account for filtering
+  );
+  
+  const snapshot = await getDocs(q);
+  const calls = snapshot.docs
+    .map(doc => ({ ...doc.data(), callId: doc.id } as CallSession))
+    .filter(call => call.participants.some(p => p.userId === userId))
+    .slice(0, limitCount);
+  
+  return calls;
+}
+
+/**
+ * Get call history for a specific chat
+ */
+export async function getChatCallHistory(
+  chatId: string,
+  limitCount: number = 30
+): Promise<CallSession[]> {
+  const q = query(
+    callsCollection,
+    where('chatId', '==', chatId),
+    orderBy('startedAt', 'desc'),
+    limit(limitCount)
+  );
+  
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(doc => ({ ...doc.data(), callId: doc.id } as CallSession));
+}
+
+/**
+ * Subscribe to call history updates for a user
+ */
+export function subscribeToUserCallHistory(
+  userId: string,
+  callback: (calls: CallSession[]) => void,
+  limitCount: number = 50
+): Unsubscribe {
+  const q = query(
+    callsCollection,
+    orderBy('startedAt', 'desc')
+  );
+  
+  return onSnapshot(q, (snapshot) => {
+    const calls = snapshot.docs
+      .map(doc => ({ ...doc.data(), callId: doc.id } as CallSession))
+      .filter(call => call.participants.some(p => p.userId === userId))
+      .slice(0, limitCount);
+    
+    callback(calls);
+  });
 }
