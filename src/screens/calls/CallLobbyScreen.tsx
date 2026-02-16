@@ -5,10 +5,11 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
 import { lightHaptic } from '@/utils/haptics';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
-import { Button, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
+import { Avatar, Button, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
 interface CallLobbyScreenProps {
@@ -124,26 +125,52 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
             { useNativeDriver: true }
           )}
           scrollEventThrottle={16}
-          renderItem={({ item }) => (
-            <GlassView style={styles.card}>
-              <List.Item
-                title={getChatTitle(item)}
-                description={item.lastMessage?.content ?? 'Start a call'}
-                titleStyle={{ color: theme.colors.onSurface }}
-                descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
-                right={() => (
-                  <View style={styles.callActions}>
-                    <Button compact mode="text" onPress={() => onStartCall(item, 'audio')}>
-                      Audio
-                    </Button>
-                    <Button compact mode="text" onPress={() => onStartCall(item, 'video')}>
-                      Video
-                    </Button>
-                  </View>
-                )}
-              />
-            </GlassView>
-          )}
+          renderItem={({ item }) => {
+            const firstOtherParticipant = item.participants.find(p => p.userId !== item.participantIds[0]);
+            return (
+              <GlassView style={styles.card}>
+                <List.Item
+                  title={getChatTitle(item)}
+                  description={item.lastMessage?.content ?? 'Start a call'}
+                  titleStyle={{ color: theme.colors.onSurface }}
+                  descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
+                  left={() => (
+                    <Avatar.Image
+                      size={48}
+                      source={
+                        firstOtherParticipant?.photoURL
+                          ? { uri: firstOtherParticipant.photoURL }
+                          : require('../../../assets/icon.png')
+                      }
+                      style={{ marginVertical: 8 }}
+                    />
+                  )}
+                  right={() => (
+                    <View style={styles.callActions}>
+                      <IconButton
+                        icon="phone"
+                        size={24}
+                        iconColor={theme.colors.primary}
+                        onPress={() => {
+                          lightHaptic();
+                          onStartCall(item, 'audio');
+                        }}
+                      />
+                      <IconButton
+                        icon="video"
+                        size={24}
+                        iconColor={theme.colors.primary}
+                        onPress={() => {
+                          lightHaptic();
+                          onStartCall(item, 'video');
+                        }}
+                      />
+                    </View>
+                  )}
+                />
+              </GlassView>
+            );
+          }}
           ListEmptyComponent={<Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No contacts available for calls.</Text>}
         />
       </View>

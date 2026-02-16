@@ -19,8 +19,10 @@ import {
   Avatar,
   Button,
   Chip,
+  Dialog,
   IconButton,
   Menu,
+  Portal,
   Searchbar,
   SegmentedButtons,
   Text,
@@ -90,6 +92,7 @@ export const CallHistoryScreen = () => {
   const [filter, setFilter] = useState<CallFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [menuVisible, setMenuVisible] = useState(false);
+  const [clearDialogVisible, setClearDialogVisible] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -110,7 +113,7 @@ export const CallHistoryScreen = () => {
           <Menu.Item
             onPress={() => {
               setMenuVisible(false);
-              // TODO: Implement clear history
+              setClearDialogVisible(true);
             }}
             title="Clear History"
             leadingIcon="delete"
@@ -219,6 +222,16 @@ export const CallHistoryScreen = () => {
     extrapolate: 'clamp',
   });
 
+  const handleCallBack = (call: CallSession) => {
+    lightHaptic();
+    // Navigate to call session screen with the same chat and call type
+    (navigation as any).navigate('CallDetail', {
+      chatId: call.chatId,
+      groupId: call.groupId,
+      type: call.type,
+    });
+  };
+
   const renderCallItem = (call: CallSession) => {
     if (!user) return null;
     
@@ -230,7 +243,11 @@ export const CallHistoryScreen = () => {
         key={call.callId}
         onPress={() => {
           lightHaptic();
-          // TODO: Navigate to chat or show call details
+          // Navigate to chat with this person/group
+          (navigation as any).navigate('ChatTab', {
+            screen: 'GroupChat',
+            params: { chatId: call.chatId },
+          });
         }}
       >
         <GlassView style={styles.callItem}>
@@ -301,10 +318,7 @@ export const CallHistoryScreen = () => {
               icon={call.type === 'video' ? 'video' : 'phone'}
               size={24}
               iconColor={theme.colors.primary}
-              onPress={() => {
-                lightHaptic();
-                // TODO: Initiate new call
-              }}
+              onPress={() => handleCallBack(call)}
             />
           </View>
         </GlassView>
@@ -467,6 +481,27 @@ export const CallHistoryScreen = () => {
           )}
         </Animated.ScrollView>
       </View>
+
+      {/* Clear History Dialog */}
+      <Portal>
+        <Dialog visible={clearDialogVisible} onDismiss={() => setClearDialogVisible(false)}>
+          <Dialog.Title>Clear Call History</Dialog.Title>
+          <Dialog.Content>
+            <Text>Are you sure you want to clear all call history? This action cannot be undone.</Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setClearDialogVisible(false)}>Cancel</Button>
+            <Button
+              onPress={() => {
+                // TODO: Implement clear history in Firebase
+                setClearDialogVisible(false);
+              }}
+            >
+              Clear
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </LiquidBackground>
   );
 };
