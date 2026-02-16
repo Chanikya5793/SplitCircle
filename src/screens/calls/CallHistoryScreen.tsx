@@ -20,10 +20,8 @@ import {
   Avatar,
   Button,
   Chip,
-  Dialog,
   FAB,
   IconButton,
-  Menu,
   Portal,
   Searchbar,
   SegmentedButtons,
@@ -65,10 +63,15 @@ const formatDuration = (seconds?: number): string => {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
 
+const isMissedCall = (call: CallSession, currentUserId: string): boolean => {
+  const isOutgoing = call.initiatorId === currentUserId;
+  return call.status === 'missed' || (call.status === 'ended' && !call.connectedAt && !isOutgoing);
+};
+
 const getCallStatusIcon = (call: CallSession, currentUserId: string): { icon: string; color: string } => {
   const isOutgoing = call.initiatorId === currentUserId;
   
-  if (call.status === 'missed' || (call.status === 'ended' && !call.connectedAt && !isOutgoing)) {
+  if (isMissedCall(call, currentUserId)) {
     return { icon: 'phone-missed', color: '#E03C31' };
   }
   
@@ -95,36 +98,13 @@ export const CallHistoryScreen = () => {
   const [filter, setFilter] = useState<CallFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [menuVisible, setMenuVisible] = useState(false);
-  const [clearDialogVisible, setClearDialogVisible] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
       headerTitle: '',
       headerTransparent: true,
-      headerRight: () => (
-        <Menu
-          visible={menuVisible}
-          onDismiss={() => setMenuVisible(false)}
-          anchor={
-            <IconButton
-              icon="dots-vertical"
-              onPress={() => setMenuVisible(true)}
-              iconColor={theme.colors.primary}
-            />
-          }
-        >
-          <Menu.Item
-            onPress={() => {
-              setMenuVisible(false);
-              setClearDialogVisible(true);
-            }}
-            title="Clear History"
-            leadingIcon="delete"
-          />
-        </Menu>
-      ),
     });
-  }, [navigation, menuVisible, theme]);
+  }, [navigation, theme]);
 
   // Subscribe to call history
   useEffect(() => {
@@ -158,7 +138,7 @@ export const CallHistoryScreen = () => {
         
         switch (filter) {
           case 'missed':
-            return call.status === 'missed' || (call.status === 'ended' && !call.connectedAt && !isOutgoing);
+            return isMissedCall(call, user.userId);
           case 'incoming':
             return !isOutgoing;
           case 'outgoing':
@@ -439,7 +419,7 @@ export const CallHistoryScreen = () => {
                     variant="headlineSmall"
                     style={{ color: '#E03C31', fontWeight: 'bold' }}
                   >
-                    {calls.filter(c => !c.connectedAt || c.status === 'missed').length}
+                    {calls.filter(c => isMissedCall(c, user.userId)).length}
                   </Text>
                   <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                     Missed
@@ -494,27 +474,6 @@ export const CallHistoryScreen = () => {
           )}
         </Animated.ScrollView>
       </View>
-
-      {/* Clear History Dialog */}
-      <Portal>
-        <Dialog visible={clearDialogVisible} onDismiss={() => setClearDialogVisible(false)}>
-          <Dialog.Title>Clear Call History</Dialog.Title>
-          <Dialog.Content>
-            <Text>Are you sure you want to clear all call history? This action cannot be undone.</Text>
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setClearDialogVisible(false)}>Cancel</Button>
-            <Button
-              onPress={() => {
-                // TODO: Implement clear history in Firebase
-                setClearDialogVisible(false);
-              }}
-            >
-              Clear
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
-      </Portal>
 
       {/* Floating Action Button */}
       <FAB

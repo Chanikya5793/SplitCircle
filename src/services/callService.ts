@@ -291,6 +291,7 @@ export async function getChatCallHistory(
 
 /**
  * Subscribe to call history updates for a user
+ * Note: Filters client-side since Firestore doesn't support querying array of objects efficiently
  */
 export function subscribeToUserCallHistory(
   userId: string,
@@ -299,7 +300,8 @@ export function subscribeToUserCallHistory(
 ): Unsubscribe {
   const q = query(
     callsCollection,
-    orderBy('startedAt', 'desc')
+    orderBy('startedAt', 'desc'),
+    limit(limitCount * 3) // Get more than needed to account for filtering
   );
   
   return onSnapshot(q, (snapshot) => {

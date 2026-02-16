@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -21,6 +22,7 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
   const { threads } = useChat();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
+  const { user } = useAuth();
   const scrollY = useRef(new Animated.Value(0)).current;
 
   // Filter & Sort State
@@ -126,7 +128,10 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
           )}
           scrollEventThrottle={16}
           renderItem={({ item }) => {
-            const firstOtherParticipant = item.participants.find(p => p.userId !== item.participantIds[0]);
+            // Get the other participant (not the current user)
+            const firstOtherParticipant = user 
+              ? item.participants.find(p => p.userId !== user.userId)
+              : item.participants[0];
             return (
               <GlassView style={styles.card}>
                 <List.Item
