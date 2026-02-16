@@ -9,6 +9,7 @@ SplitCircle is an Expo + React Native + TypeScript application that combines Spl
 - **Settlements** – Record payments between members and keep everyone even.
 - **Chat** – Real-time 1:1 and group messaging with Firestore listeners, media uploads, and offline queueing.
 - **Calls** – Secure audio/video calls built on `react-native-webrtc` with signaling over Firestore.
+- **Call History** – Comprehensive call log with filtering, search, statistics, and quick call-back actions.
 - **Notifications** – FCM push token registration and foreground handling using `expo-notifications`.
 - **Offline-first** – Firestore persistent cache, NetInfo-based offline banner, and optimistic UI updates.
 
