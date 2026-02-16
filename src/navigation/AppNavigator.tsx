@@ -10,19 +10,20 @@ import type { CallType, Group, PresenceStatus } from '@/models';
 import { ForgotPasswordScreen } from '@/screens/auth/ForgotPasswordScreen';
 import { RegisterScreen } from '@/screens/auth/RegisterScreen';
 import { SignInScreen } from '@/screens/auth/SignInScreen';
-import { CallLobbyScreen } from '@/screens/calls/CallLobbyScreen';
+import { CallHistoryScreen } from '@/screens/calls/CallHistoryScreen';
+import { CallInfoScreen } from '@/screens/calls/CallInfoScreen';
 import { CallSessionScreen } from '@/screens/calls/CallSessionScreen';
 import { ChatListScreen } from '@/screens/chat/ChatListScreen';
-import { MessageInfoScreen } from '@/screens/chat/MessageInfoScreen';
 import { ChatRoomScreen } from '@/screens/chat/ChatRoomScreen';
+import { MessageInfoScreen } from '@/screens/chat/MessageInfoScreen';
 import { AddExpenseScreen } from '@/screens/expenses/AddExpenseScreen';
 import { ExpenseDetailsScreen } from '@/screens/expenses/ExpenseDetailsScreen';
+import { RecurringBillsScreen } from '@/screens/expenses/RecurringBillsScreen';
 import { SettlementsScreen } from '@/screens/expenses/SettlementsScreen';
 import { GroupDetailsScreen } from '@/screens/groups/GroupDetailsScreen';
 import { GroupInfoScreen } from '@/screens/groups/GroupInfoScreen';
 import { GroupListScreen } from '@/screens/groups/GroupListScreen';
 import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
-import { RecurringBillsScreen } from '@/screens/expenses/RecurringBillsScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -140,9 +141,25 @@ const ChatRoomRoute = ({ route }: any) => {
   return <ChatRoomScreen thread={thread} />;
 };
 
-const CallLobbyRoute = ({ navigation }: any) => (
-  <CallLobbyScreen
+const CallHistoryRoute = ({ navigation }: any) => (
+  <CallHistoryScreen
     onStartCall={(thread, type) =>
+      navigation.navigate(ROUTES.APP.CALL_DETAIL, {
+        chatId: thread.chatId,
+        groupId: thread.groupId,
+        type,
+      })
+    }
+    onOpenCallInfo={(entry) =>
+      navigation.navigate(ROUTES.APP.CALL_INFO, { entry })
+    }
+  />
+);
+
+const CallInfoRoute = ({ route, navigation }: any) => (
+  <CallInfoScreen
+    entry={route.params.entry}
+    onCallBack={(thread, type) =>
       navigation.navigate(ROUTES.APP.CALL_DETAIL, {
         chatId: thread.chatId,
         groupId: thread.groupId,
@@ -283,12 +300,24 @@ const ChatStackNavigator = () => {
   );
 };
 
-const CallStackNavigator = () => (
-  <CallStack.Navigator>
-    <CallStack.Screen name={ROUTES.APP.CALLS} component={CallLobbyRoute} options={{ title: 'Calls' }} />
-    <CallStack.Screen name={ROUTES.APP.CALL_DETAIL} component={CallSessionRoute} options={{ title: 'Live call' }} />
-  </CallStack.Navigator>
-);
+const CallStackNavigator = () => {
+  const { theme } = useTheme();
+  return (
+    <CallStack.Navigator>
+      <CallStack.Screen name={ROUTES.APP.CALLS} component={CallHistoryRoute} options={{ title: 'Calls' }} />
+      <CallStack.Screen
+        name={ROUTES.APP.CALL_INFO}
+        component={CallInfoRoute}
+        options={{
+          title: '',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <CallStack.Screen name={ROUTES.APP.CALL_DETAIL} component={CallSessionRoute} options={{ title: 'Live call' }} />
+    </CallStack.Navigator>
+  );
+};
 
 const AppTabs = () => {
   const { theme } = useTheme();
@@ -338,7 +367,7 @@ const AppTabs = () => {
           tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="phone" color={color} size={size} />,
           tabBarStyle: ((route) => {
             const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CALLS;
-            if (routeName === ROUTES.APP.CALL_DETAIL) {
+            if (routeName === ROUTES.APP.CALL_DETAIL || routeName === ROUTES.APP.CALL_INFO) {
               return { display: 'none' };
             }
             return undefined;
