@@ -57,7 +57,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
 
   const callIdRef = useRef<string | null>(null);
   const callStartedAtRef = useRef<number | null>(null);
-  const otherParticipantRef = useRef<{ userId: string; displayName: string } | null>(null);
+  const otherParticipantRef = useRef<{ userId: string; displayName: string; photoURL?: string } | null>(null);
   const isInitiatorRef = useRef<boolean>(false);
   const hasSessionToCleanupRef = useRef(false);
   const allowUnmountCleanupRef = useRef(false);
@@ -93,7 +93,18 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       isInitiatorRef.current = true;
       callStartedAtRef.current = Date.now();
 
-      const threadParticipantIds = threads.find((thread) => thread.chatId === chatId)?.participantIds ?? [user.userId];
+      const thread = threads.find((t) => t.chatId === chatId);
+      const threadParticipantIds = thread?.participantIds ?? [user.userId];
+
+      // Resolve other participant from thread immediately so call history is never "Unknown"
+      const otherP = thread?.participants.find((p) => p.userId !== user.userId);
+      if (otherP) {
+        otherParticipantRef.current = {
+          userId: otherP.userId,
+          displayName: otherP.displayName,
+          photoURL: otherP.photoURL,
+        };
+      }
 
       // 1. Create Call Session in Realtime DB (Ringing)
       newCallId = await createCallSession(
@@ -153,10 +164,12 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         if (session.status === 'connected') {
           debugLog('useCallManager call connected');
           setStatus('connected');
-          // Track other participant for history
-          const other = session.participants.find(p => p.userId !== user.userId);
-          if (other) {
-            otherParticipantRef.current = { userId: other.userId, displayName: other.displayName };
+          // Only fill in other participant if not already resolved from thread
+          if (!otherParticipantRef.current) {
+            const other = session.participants.find(p => p.userId !== user.userId);
+            if (other) {
+              otherParticipantRef.current = { userId: other.userId, displayName: other.displayName, photoURL: other.photoURL };
+            }
           }
         }
       });
@@ -202,6 +215,17 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       isInitiatorRef.current = false;
       callStartedAtRef.current = Date.now();
 
+      // Resolve other participant from thread immediately as fallback
+      const thread = threads.find((t) => t.chatId === chatId);
+      const threadOther = thread?.participants.find((p) => p.userId !== user.userId);
+      if (threadOther) {
+        otherParticipantRef.current = {
+          userId: threadOther.userId,
+          displayName: threadOther.displayName,
+          photoURL: threadOther.photoURL,
+        };
+      }
+
       const session = await getCallSession(existingCallId);
       if (!session) {
         console.error('Call not found');
@@ -218,10 +242,10 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
 
       setCallType(session.type);
 
-      // Track initiator as other participant for history
+      // Update from session if we got richer info (e.g. photoURL from initiator)
       const initiator = session.participants.find(p => p.userId === session.initiatorId);
       if (initiator) {
-        otherParticipantRef.current = { userId: initiator.userId, displayName: initiator.displayName };
+        otherParticipantRef.current = { userId: initiator.userId, displayName: initiator.displayName, photoURL: initiator.photoURL };
       }
 
       // 1. Fetch LiveKit Token
@@ -275,7 +299,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setError(err instanceof Error ? err.message : 'Failed to join call');
       setStatus('failed');
     }
-  }, [chatId, user]);
+  }, [chatId, threads, user]);
 
   // End the call
   const endCall = useCallback(async (reason: 'manual' | 'session-ended' | 'unmount' = 'manual') => {
@@ -295,13 +319,23 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         const endedAt = Date.now();
         const duration = Math.floor((endedAt - callStartedAtRef.current) / 1000);
 
+        // Last-resort: resolve from thread if ref was somehow never set
+        let participant = otherParticipantRef.current;
+        if (!participant) {
+          const thread = threads.find((t) => t.chatId === chatId);
+          const threadOther = thread?.participants.find((p) => p.userId !== user.userId);
+          if (threadOther) {
+            participant = { userId: threadOther.userId, displayName: threadOther.displayName, photoURL: threadOther.photoURL };
+          }
+        }
+
         const historyEntry: CallHistoryEntry = {
           callId: callIdRef.current,
           chatId,
           groupId,
           type: callType,
           direction: isInitiatorRef.current ? 'outgoing' : 'incoming',
-          otherParticipant: otherParticipantRef.current || { userId: 'unknown', displayName: 'Unknown' },
+          otherParticipant: participant || { userId: 'unknown', displayName: 'Unknown' },
           startedAt: callStartedAtRef.current,
           endedAt,
           duration,
@@ -333,7 +367,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     } finally {
       // Keep `true` while idle; reset when starting/joining a new call.
     }
-  }, [user, chatId, groupId, callType, cleanupSubscriptions]);
+  }, [user, chatId, groupId, threads, callType, cleanupSubscriptions]);
 
   useEffect(() => {
     endCallRef.current = endCall;
