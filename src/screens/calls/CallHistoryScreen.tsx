@@ -15,23 +15,33 @@ import { formatCallDuration, formatCallTime, getCallDateSection } from '@/utils/
 import { lightHaptic, mediumHaptic, warningHaptic } from '@/utils/haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
     ActionSheetIOS,
     Alert,
+    FlatList,
+    Modal,
     Platform,
+    Pressable,
     Animated as RNAnimated,
     StyleSheet,
     TouchableOpacity,
     View,
 } from 'react-native';
-import { Swipeable } from 'react-native-gesture-handler';
-import { Avatar, Text, TouchableRipple } from 'react-native-paper';
+import { Gesture, GestureDetector, GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
+import { Avatar, Text, TextInput, TouchableRipple } from 'react-native-paper';
 import Animated, {
     FadeIn,
     FadeOut,
     Layout,
+    SlideInDown,
+    runOnJS,
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
+    withTiming,
 } from 'react-native-reanimated';
+import { BlurView } from 'expo-blur';
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
 
@@ -58,9 +68,38 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   const [isLoading, setIsLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [filter, setFilter] = useState<CallFilter>('all');
+  const [showNewCallSheet, setShowNewCallSheet] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const scrollY = useRef(new RNAnimated.Value(0)).current;
   const openSwipeableRef = useRef<Swipeable | null>(null);
+  const sheetTranslateY = useSharedValue(0);
+  const sheetContext = useSharedValue({ y: 0 });
+
+  const dismissSheet = useCallback(() => {
+    setShowNewCallSheet(false);
+  }, []);
+
+  const sheetGesture = Gesture.Pan()
+    .onStart(() => {
+      sheetContext.value = { y: sheetTranslateY.value };
+    })
+    .onUpdate((event) => {
+      sheetTranslateY.value = Math.max(0, event.translationY + sheetContext.value.y);
+    })
+    .onEnd((event) => {
+      if (sheetTranslateY.value > 100 || event.velocityY > 500) {
+        sheetTranslateY.value = withTiming(1000, { duration: 200 }, () => {
+          runOnJS(dismissSheet)();
+        });
+      } else {
+        sheetTranslateY.value = withSpring(0, { damping: 50 });
+      }
+    });
+
+  const sheetAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: sheetTranslateY.value }],
+  }));
 
   // Load call history on screen focus
   useFocusEffect(
@@ -82,6 +121,12 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
       headerTransparent: true,
     });
   }, [navigation]);
+
+  useEffect(() => {
+    if (showNewCallSheet) {
+      sheetTranslateY.value = 0;
+    }
+  }, [showNewCallSheet]);
 
   const headerOpacity = scrollY.interpolate({
     inputRange: [0, 40],
@@ -150,6 +195,33 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   const findThread = (entry: CallHistoryEntry): ChatThread | undefined => {
     return threads.find((t) => t.chatId === entry.chatId);
   };
+
+  // Get display name for a thread (other participant's name, or group name)
+  const getThreadDisplayName = (thread: ChatThread): string => {
+    if (thread.groupId) {
+      const group = groups.find((g) => g.groupId === thread.groupId);
+      return group?.name || 'Group';
+    }
+    const other = thread.participants.find((p) => p.userId !== user?.userId);
+    return other?.displayName || 'Unknown';
+  };
+
+  const getThreadPhoto = (thread: ChatThread): string | undefined => {
+    if (thread.groupId) return undefined;
+    const other = thread.participants.find((p) => p.userId !== user?.userId);
+    return other?.photoURL;
+  };
+
+  const getThreadInitials = (thread: ChatThread): string => {
+    return getThreadDisplayName(thread).slice(0, 2).toUpperCase();
+  };
+
+  // Threads filtered by search query for new call sheet
+  const filteredThreads = useMemo(() => {
+    if (!searchQuery.trim()) return threads;
+    const q = searchQuery.toLowerCase();
+    return threads.filter((t) => getThreadDisplayName(t).toLowerCase().includes(q));
+  }, [threads, searchQuery, user, groups]);
 
   const handleCallBack = (entry: CallHistoryEntry) => {
     lightHaptic();
@@ -378,7 +450,10 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   return (
     <LiquidBackground>
       {/* Sticky header on scroll (like existing screens) */}
-      <RNAnimated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+      <RNAnimated.View
+        pointerEvents="none"
+        style={[styles.stickyHeader, { opacity: headerOpacity }]}
+      >
         <GlassView style={styles.stickyHeaderGlass}>
           <Text
             variant="titleMedium"
@@ -404,7 +479,18 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
             <View style={styles.headerContainer}>
               {/* Title row: Edit button + "Calls" + new call icon */}
               <View style={styles.titleRow}>
-                <TouchableOpacity onPress={toggleEdit} style={styles.editButton}>
+                <TouchableOpacity
+                  onPress={toggleEdit}
+                  style={[
+                    styles.editButton,
+                    {
+                      backgroundColor: isDark
+                        ? 'rgba(255,255,255,0.12)'
+                        : 'rgba(0,0,0,0.06)',
+                    },
+                  ]}
+                  activeOpacity={0.7}
+                >
                   <Text
                     style={[
                       styles.editButtonText,
@@ -425,15 +511,22 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                 <TouchableOpacity
                   onPress={() => {
                     lightHaptic();
-                    // Start a new call by navigating conceptually; for now,
-                    // the existing thread list within this screen isn't needed -
-                    // the user can call back from history or navigate to chat tab.
+                    setSearchQuery('');
+                    setShowNewCallSheet(true);
                   }}
-                  style={styles.newCallButton}
+                  style={[
+                    styles.newCallButton,
+                    {
+                      backgroundColor: isDark
+                        ? 'rgba(255,255,255,0.12)'
+                        : 'rgba(0,0,0,0.06)',
+                    },
+                  ]}
+                  activeOpacity={0.7}
                 >
                   <MaterialCommunityIcons
                     name="phone-plus-outline"
-                    size={24}
+                    size={22}
                     color={theme.colors.primary}
                   />
                 </TouchableOpacity>
@@ -564,6 +657,178 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
           }
         />
       </View>
+
+      {/* New Call Bottom Sheet */}
+      <Modal
+        visible={showNewCallSheet}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowNewCallSheet(false)}
+      >
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <View style={styles.sheetOverlay}>
+            <Pressable
+              style={styles.sheetBackdrop}
+              onPress={() => setShowNewCallSheet(false)}
+            />
+
+            <GestureDetector gesture={sheetGesture}>
+              <Animated.View
+                entering={SlideInDown.springify().damping(30).stiffness(350).mass(1)}
+                style={[styles.sheetContainer, sheetAnimatedStyle]}
+              >
+                {Platform.OS === 'ios' && (
+                  <BlurView
+                    intensity={80}
+                    tint={isDark ? 'dark' : 'light'}
+                    style={StyleSheet.absoluteFill}
+                    pointerEvents="none"
+                  />
+                )}
+                <View
+                  style={[
+                    styles.sheetInner,
+                    {
+                      backgroundColor: isDark
+                        ? Platform.OS === 'ios' ? 'rgba(30,30,40,0.35)' : 'rgba(30,30,40,0.92)'
+                        : Platform.OS === 'ios' ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.95)',
+                    },
+                  ]}
+                >
+                  {/* Handle bar */}
+                  <View style={styles.sheetHandle}>
+                    <View
+                      style={[
+                        styles.sheetHandleBar,
+                        {
+                          backgroundColor: isDark
+                            ? 'rgba(255,255,255,0.3)'
+                            : 'rgba(0,0,0,0.2)',
+                        },
+                      ]}
+                    />
+                  </View>
+
+                  {/* Sheet header */}
+                  <View style={styles.sheetHeader}>
+                    <Text style={[styles.sheetTitle, { color: theme.colors.onSurface }]}>
+                      New Call
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setShowNewCallSheet(false)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      <MaterialCommunityIcons
+                        name="close-circle"
+                        size={26}
+                        color={theme.colors.onSurfaceVariant}
+                      />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Search bar */}
+                  <View style={styles.sheetSearchRow}>
+                    <TextInput
+                      placeholder="Search contacts..."
+                      value={searchQuery}
+                      onChangeText={setSearchQuery}
+                      mode="outlined"
+                      dense
+                      left={<TextInput.Icon icon="magnify" />}
+                      style={styles.sheetSearchInput}
+                      outlineStyle={{ borderRadius: 12 }}
+                    />
+                  </View>
+
+                  {/* Thread list */}
+                  <FlatList
+                    data={filteredThreads}
+                    keyExtractor={(item) => item.chatId}
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={styles.sheetListContent}
+                    ListEmptyComponent={
+                      <View style={styles.sheetEmpty}>
+                        <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                          {searchQuery
+                            ? 'No contacts found.'
+                            : 'No conversations yet. Start a chat first.'}
+                        </Text>
+                      </View>
+                    }
+                    renderItem={({ item: thread }) => {
+                      const name = getThreadDisplayName(thread);
+                      const photo = getThreadPhoto(thread);
+                      const initials = getThreadInitials(thread);
+
+                      return (
+                        <View style={styles.sheetItem}>
+                          {photo ? (
+                            <Avatar.Image size={44} source={{ uri: photo }} />
+                          ) : (
+                            <Avatar.Text
+                              size={44}
+                              label={initials}
+                              style={{ backgroundColor: theme.colors.primary }}
+                              color={theme.colors.onPrimary}
+                            />
+                          )}
+                          <View style={styles.sheetItemCenter}>
+                            <Text
+                              style={[styles.sheetItemName, { color: theme.colors.onSurface }]}
+                              numberOfLines={1}
+                            >
+                              {name}
+                            </Text>
+                            {thread.groupId && (
+                              <Text
+                                style={[styles.sheetItemSub, { color: theme.colors.onSurfaceVariant }]}
+                                numberOfLines={1}
+                              >
+                                Group · {thread.participants.length} members
+                              </Text>
+                            )}
+                          </View>
+                          <TouchableOpacity
+                            onPress={() => {
+                              lightHaptic();
+                              setShowNewCallSheet(false);
+                              onStartCall(thread, 'audio');
+                            }}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            style={styles.sheetCallBtn}
+                          >
+                            <MaterialCommunityIcons
+                              name="phone-outline"
+                              size={22}
+                              color={theme.colors.primary}
+                            />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              lightHaptic();
+                              setShowNewCallSheet(false);
+                              onStartCall(thread, 'video');
+                            }}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            style={styles.sheetCallBtn}
+                          >
+                            <MaterialCommunityIcons
+                              name="video-outline"
+                              size={22}
+                              color={theme.colors.primary}
+                            />
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    }}
+                  />
+                </View>
+              </Animated.View>
+            </GestureDetector>
+          </View>
+        </GestureHandlerRootView>
+      </Modal>
     </LiquidBackground>
   );
 };
@@ -585,23 +850,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 16,
+    zIndex: 10,
   },
   headerTitle: {
     fontWeight: 'bold',
   },
   editButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-    minWidth: 50,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: 50,
+    zIndex: 10,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
   },
   editButtonText: {
-    fontSize: 17,
-    fontWeight: '400',
+    fontSize: 15,
+    fontWeight: '600',
   },
   newCallButton: {
-    padding: 6,
-    minWidth: 50,
-    alignItems: 'flex-end',
+    width: 42,
+    height: 42,
+    borderRadius: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
   },
   // -- Segmented Control --
   filterRow: {
@@ -752,5 +1032,83 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: 'center',
     paddingHorizontal: 40,
+  },
+  // -- New Call Sheet --
+  sheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  sheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  sheetContainer: {
+    maxHeight: '75%',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    borderBottomWidth: 0,
+  },
+  sheetInner: {
+    paddingBottom: 40,
+  },
+  sheetHandle: {
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingBottom: 4,
+  },
+  sheetHandleBar: {
+    width: 36,
+    height: 5,
+    borderRadius: 3,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 12,
+  },
+  sheetTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  sheetSearchRow: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  sheetSearchInput: {
+    fontSize: 15,
+  },
+  sheetListContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 40,
+  },
+  sheetItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    gap: 12,
+  },
+  sheetItemCenter: {
+    flex: 1,
+  },
+  sheetItemName: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  sheetItemSub: {
+    fontSize: 13,
+    marginTop: 1,
+  },
+  sheetCallBtn: {
+    padding: 8,
+  },
+  sheetEmpty: {
+    alignItems: 'center',
+    paddingTop: 40,
   },
 });
