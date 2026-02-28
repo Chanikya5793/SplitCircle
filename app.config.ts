@@ -87,7 +87,7 @@ const google: GoogleEnv = {
 
 const googleMapsApiKey = readEnv(['EXPO_PUBLIC_GOOGLE_MAPS_API_KEY'], { optional: true });
 
-const config: ExpoConfig = {
+const config = {
   name: 'SplitCircle',
   slug: 'SplitCircle',
   version: '1.0.0',
@@ -116,9 +116,6 @@ const config: ExpoConfig = {
       NSLocationAlwaysUsageDescription: 'This app uses your location to share live location with your friends.',
       UIBackgroundModes: ['location', 'fetch'],
     },
-    config: {
-      googleMapsApiKey,
-    },
   },
   android: {
     package: 'com.splitcircle.app',
@@ -126,7 +123,6 @@ const config: ExpoConfig = {
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#101010',
     },
-    edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
     permissions: [
       'CAMERA',
@@ -161,6 +157,8 @@ const config: ExpoConfig = {
     'expo-web-browser',
     'expo-sqlite',
     'expo-notifications',
+    'expo-audio',
+    'expo-sharing',
     'expo-video',
     [
       'expo-location',
@@ -184,6 +182,6 @@ const config: ExpoConfig = {
     firebase,
     google,
   },
-};
+} as ExpoConfig;
 
 export default config;

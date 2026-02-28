@@ -1,6 +1,6 @@
 import { useTheme } from '@/context/ThemeContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, type AudioStatus } from 'expo-audio';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect } from 'react';
@@ -50,6 +50,48 @@ interface AttachmentOption {
   color: string;
   backgroundColor: string;
 }
+
+const extractDurationMillis = (status: AudioStatus): number | undefined => {
+  if (!status.isLoaded || !Number.isFinite(status.duration) || status.duration <= 0) {
+    return undefined;
+  }
+  return Math.round(status.duration * 1000);
+};
+
+const readAudioDurationMillis = async (uri: string): Promise<number | undefined> => {
+  const player = createAudioPlayer(uri, { updateInterval: 200 });
+
+  try {
+    const immediateDuration = extractDurationMillis({
+      ...player.currentStatus,
+      duration: player.duration,
+      isLoaded: player.isLoaded,
+    });
+    if (immediateDuration) {
+      return immediateDuration;
+    }
+
+    return await new Promise<number | undefined>((resolve) => {
+      const timeout = setTimeout(() => {
+        player.removeAllListeners('playbackStatusUpdate');
+        resolve(undefined);
+      }, 2500);
+
+      player.addListener('playbackStatusUpdate', (status) => {
+        const duration = extractDurationMillis(status);
+        if (!duration) {
+          return;
+        }
+        clearTimeout(timeout);
+        player.removeAllListeners('playbackStatusUpdate');
+        resolve(duration);
+      });
+    });
+  } finally {
+    player.removeAllListeners('playbackStatusUpdate');
+    player.remove();
+  }
+};
 
 const ATTACHMENT_OPTIONS: AttachmentOption[] = [
   {
@@ -309,12 +351,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
         // Try to get duration
         try {
-          const { sound } = await Audio.Sound.createAsync({ uri: asset.uri });
-          const status = await sound.getStatusAsync();
-          if (status.isLoaded) {
-            duration = status.durationMillis;
-          }
-          await sound.unloadAsync();
+          duration = await readAudioDurationMillis(asset.uri);
         } catch (e) {
           console.warn('Failed to get audio duration:', e);
         }
