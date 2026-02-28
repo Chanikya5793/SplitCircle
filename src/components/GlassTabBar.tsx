@@ -1,10 +1,10 @@
 import { useTheme } from '@/context/ThemeContext';
+import { TabBarSurface } from '@/components/tabbar/TabBarSurface';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useState } from 'react';
-import { Dimensions, LayoutChangeEvent, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Dimensions, LayoutChangeEvent, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Extrapolation,
@@ -203,9 +203,9 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
   }
 
   return (
-    <View style={[styles.container, { bottom: -18 + insets.bottom }]}>
+    <View style={[styles.container, { bottom: (Platform.OS === 'ios' ? -18 : 8) + insets.bottom }]}>
       <GestureDetector gesture={pan}>
-        <BlurView style={styles.glass} intensity={20} tint={isDark ? "dark" : "light"}>
+        <TabBarSurface isDark={isDark}>
           <View style={styles.tabRow}>
             {/* Animated Liquid Indicator */}
             {/* We render the indicator only if we have at least one layout measurement to avoid jumping */}
@@ -270,7 +270,7 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
               );
             })}
           </View>
-        </BlurView>
+        </TabBarSurface>
       </GestureDetector>
     </View>
   );
@@ -283,13 +283,6 @@ const styles = StyleSheet.create({
     right: 20,
     alignItems: 'center',
     zIndex: 1000,
-  },
-  glass: {
-    borderRadius: 30,
-    width: '100%',
-    overflow: 'hidden',
-    height: 70, // Fixed height for consistency
-    justifyContent: 'center',
   },
   tabRow: {
     flexDirection: 'row',
