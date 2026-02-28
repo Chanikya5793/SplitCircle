@@ -394,7 +394,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                         }}
                         showsUserLocation
                         showsMyLocationButton={false}
-                        showsPointsOfInterest={false}
+                        showsPointsOfInterests={false}
                         toolbarEnabled={false}
                         moveOnMarkerPress={false}
                         onRegionChange={handleRegionChangeStart}

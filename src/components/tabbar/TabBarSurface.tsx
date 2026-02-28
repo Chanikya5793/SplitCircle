@@ -1,5 +1,6 @@
 import { BlurView } from 'expo-blur';
-import { ReactNode } from 'react';
+import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
+import { ReactNode, useMemo } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 
 interface TabBarSurfaceProps {
@@ -8,7 +9,34 @@ interface TabBarSurfaceProps {
 }
 
 export const TabBarSurface = ({ children, isDark }: TabBarSurfaceProps) => {
+  const canUseNativeGlass = useMemo(() => {
+    if (Platform.OS !== 'ios') {
+      return false;
+    }
+
+    try {
+      return isGlassEffectAPIAvailable() && isLiquidGlassAvailable();
+    } catch (error) {
+      console.warn('⚠️ Native glass availability check failed, using BlurView fallback', error);
+      return false;
+    }
+  }, []);
+
   if (Platform.OS === 'ios') {
+    if (canUseNativeGlass) {
+      return (
+        <GlassView
+          style={[styles.surfaceBase, styles.iosSurface]}
+          glassEffectStyle="regular"
+          colorScheme={isDark ? 'dark' : 'light'}
+          isInteractive={false}
+        >
+          <View pointerEvents="none" style={styles.iosHighlight} />
+          {children}
+        </GlassView>
+      );
+    }
+
     return (
       <BlurView
         style={[styles.surfaceBase, styles.iosSurface]}
