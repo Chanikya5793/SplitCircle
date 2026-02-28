@@ -13,13 +13,10 @@ import type { Expense, Group, Settlement } from '@/models';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, StyleSheet, View } from 'react-native';
-import {
-  withSequence,
-  withTiming
-} from 'react-native-reanimated';
+import { Alert, Animated, Platform, StyleSheet, View } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { Text, TouchableRipple, Button, IconButton, Icon } from 'react-native-paper';
+import { Text, TouchableRipple, IconButton, Icon } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface GroupDetailsScreenProps {
   group: Group;
@@ -30,9 +27,11 @@ interface GroupDetailsScreenProps {
 
 export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }: GroupDetailsScreenProps) => {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const { deleteExpense, deleteSettlement, loading } = useGroups();
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const compactStateRef = useRef(false);
   const [isCompact, setIsCompact] = useState(false);
   const [showFilterSheet, setShowFilterSheet] = useState(false);
   const [sortField, setSortField] = useState<SortField>('date');
@@ -75,9 +74,34 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
     extrapolate: 'clamp',
   });
 
-  const iconButtonOpacity = scrollY.interpolate({
-    inputRange: [50, 100],
+  const compactThreshold = 60;
+  const compactDockHeight = 56;
+  const tabBarHeight = (Platform.OS === 'ios' ? 50 : 56) + insets.bottom;
+  const compactDockBottom = tabBarHeight + 6;
+  const expandedActionsBottom = compactDockBottom + compactDockHeight + 10;
+  const contentBottomPadding = Platform.OS === 'android' ? expandedActionsBottom + 172 : tabBarHeight + 152;
+
+  const compactDockOpacity = scrollY.interpolate({
+    inputRange: [compactThreshold - 18, compactThreshold + 18],
     outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
+  const compactDockTranslateY = scrollY.interpolate({
+    inputRange: [0, compactThreshold + 30],
+    outputRange: [20, 0],
+    extrapolate: 'clamp',
+  });
+
+  const expandedTranslateY = scrollY.interpolate({
+    inputRange: [0, compactThreshold + 20],
+    outputRange: [0, 16],
+    extrapolate: 'clamp',
+  });
+
+  const expandedScale = scrollY.interpolate({
+    inputRange: [0, compactThreshold + 20],
+    outputRange: [1, 0.98],
     extrapolate: 'clamp',
   });
 
@@ -366,14 +390,21 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
       </Animated.View>
 
       <Animated.ScrollView
-        contentContainerStyle={styles.container}
+        contentContainerStyle={[styles.container, { paddingBottom: contentBottomPadding }]}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
           {
             useNativeDriver: true,
             listener: (event: any) => {
+              if (Platform.OS !== 'android') {
+                return;
+              }
               const y = event.nativeEvent.contentOffset.y;
-              setIsCompact(y > 50);
+              const shouldCompact = y > compactThreshold;
+              if (shouldCompact !== compactStateRef.current) {
+                compactStateRef.current = shouldCompact;
+                setIsCompact(shouldCompact);
+              }
             }
           }
         )}
@@ -542,120 +573,135 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
 
       </Animated.ScrollView>
 
-      <View style={[styles.floatingActions, { height: isCompact ? 56 : 80 }]}>
-        {/* Expanded buttons - compact and appealing */}
-        <Animated.View style={[styles.expandedContainer, { opacity: labelOpacity }]} pointerEvents={isCompact ? 'none' : 'auto'}>
-          <View style={styles.actionGrid}>
-            {/* Primary row */}
-            <TouchableRipple
-              onPress={() => { lightHaptic(); onSettle(group); }}
-              style={styles.compactButton}
-              borderless
-            >
-              <View style={[styles.compactButtonInner, { backgroundColor: '#10b981' }]}>
-                <IconButton icon="handshake" size={20} iconColor="#fff" style={{ margin: 0 }} />
-                <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Settle Up</Text>
-              </View>
-            </TouchableRipple>
-
-            <TouchableRipple
-              onPress={() => { lightHaptic(); onAddExpense(group); }}
-              style={styles.compactButton}
-              borderless
-            >
-              <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.primary }]}>
-                <IconButton icon="plus" size={20} iconColor="#fff" style={{ margin: 0 }} />
-                <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Add Expense</Text>
-              </View>
-            </TouchableRipple>
-          </View>
-
-          {/* Secondary row */}
-          <View style={styles.actionGrid}>
-            <TouchableRipple
-              onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId }); }}
-              style={styles.compactButtonSmall}
-              borderless
-            >
-              <View style={{ flex: 1 }}>
-                <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-                <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
-                  <IconButton icon="chart-pie" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
-                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
+      {Platform.OS === 'android' && (
+        <View style={[styles.floatingActions, { bottom: compactDockBottom }]}>
+          {/* Expanded buttons - compact and appealing */}
+          <Animated.View
+            style={[
+            styles.expandedContainer,
+            {
+              opacity: labelOpacity,
+              bottom: 8,
+              transform: [{ translateY: expandedTranslateY }, { scale: expandedScale }],
+            },
+          ]}
+            pointerEvents={isCompact ? 'none' : 'auto'}
+          >
+            <View style={styles.actionGrid}>
+              <TouchableRipple
+                onPress={() => { lightHaptic(); onSettle(group); }}
+                style={styles.compactButton}
+                borderless
+              >
+                <View style={[styles.compactButtonInner, { backgroundColor: '#10b981' }]}>
+                  <IconButton icon="handshake" size={20} iconColor="#fff" style={{ margin: 0 }} />
+                  <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Settle Up</Text>
                 </View>
-              </View>
-            </TouchableRipple>
+              </TouchableRipple>
 
-            <TouchableRipple
-              onPress={() => { lightHaptic(); onOpenChat(group); }}
-              style={styles.compactButtonSmall}
-              borderless
-            >
-              <View style={{ flex: 1 }}>
-                <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-                <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
-                  <IconButton icon="chat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
-                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
+              <TouchableRipple
+                onPress={() => { lightHaptic(); onAddExpense(group); }}
+                style={styles.compactButton}
+                borderless
+              >
+                <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.primary }]}>
+                  <IconButton icon="plus" size={20} iconColor="#fff" style={{ margin: 0 }} />
+                  <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Add Expense</Text>
                 </View>
-              </View>
-            </TouchableRipple>
+              </TouchableRipple>
+            </View>
 
-            <TouchableRipple
-              onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId }); }}
-              style={styles.compactButtonSmall}
-              borderless
-            >
-              <View style={{ flex: 1 }}>
-                <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-                <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
-                  <IconButton icon="repeat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
-                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
+            <View style={styles.actionGrid}>
+              <TouchableRipple
+                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId }); }}
+                style={styles.compactButtonSmall}
+                borderless
+              >
+                <View style={{ flex: 1 }}>
+                  <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+                  <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
+                    <IconButton icon="chart-pie" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
+                  </View>
                 </View>
-              </View>
-            </TouchableRipple>
-          </View>
+              </TouchableRipple>
 
-        </Animated.View>
+              <TouchableRipple
+                onPress={() => { lightHaptic(); onOpenChat(group); }}
+                style={styles.compactButtonSmall}
+                borderless
+              >
+                <View style={{ flex: 1 }}>
+                  <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+                  <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
+                    <IconButton icon="chat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
+                  </View>
+                </View>
+              </TouchableRipple>
 
-        {/* Compact icon buttons - visible when scrolled */}
-        <Animated.View style={[styles.compactContainer, { opacity: iconButtonOpacity }]} pointerEvents={isCompact ? 'auto' : 'none'}>
-          <IconButton
-            icon="handshake"
-            mode="outlined"
-            onPress={() => onSettle(group)}
-            size={24}
-            style={[styles.iconButton, { borderColor: theme.colors.outline }]}
-          />
-          <IconButton
-            icon="chart-pie"
-            mode="outlined"
-            onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId })}
-            size={24}
-            style={[styles.iconButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
-          />
-          <IconButton
-            icon="chat"
-            mode="outlined"
-            onPress={() => onOpenChat(group)}
-            size={24}
-            style={[styles.iconButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
-          />
-          <IconButton
-            icon="repeat"
-            mode="outlined"
-            onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId })}
-            size={24}
-            style={[styles.iconButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
-          />
-          <IconButton
-            icon="plus"
-            mode="contained"
-            onPress={() => onAddExpense(group)}
-            size={24}
-            style={styles.iconButton}
-          />
-        </Animated.View>
-      </View>
+              <TouchableRipple
+                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId }); }}
+                style={styles.compactButtonSmall}
+                borderless
+              >
+                <View style={{ flex: 1 }}>
+                  <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+                  <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
+                    <IconButton icon="repeat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
+                  </View>
+                </View>
+              </TouchableRipple>
+            </View>
+          </Animated.View>
+
+          <Animated.View
+            style={[
+              styles.compactContainer,
+              {
+                opacity: compactDockOpacity,
+                height: compactDockHeight,
+                transform: [{ translateY: compactDockTranslateY }],
+              },
+            ]}
+            pointerEvents={isCompact ? 'auto' : 'none'}
+          >
+            <View style={[styles.androidDock, { backgroundColor: isDark ? 'rgba(18,22,30,0.96)' : 'rgba(252,252,255,0.98)', borderColor: isDark ? 'rgba(148,163,184,0.24)' : 'rgba(15,23,42,0.14)' }]}>
+              <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                <View style={styles.androidDockButtonInner}>
+                  <Icon source="chart-pie" size={18} color={theme.colors.primary} />
+                  <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
+                </View>
+              </TouchableRipple>
+              <TouchableRipple onPress={() => onOpenChat(group)} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                <View style={styles.androidDockButtonInner}>
+                  <Icon source="chat" size={18} color={theme.colors.primary} />
+                  <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
+                </View>
+              </TouchableRipple>
+              <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                <View style={styles.androidDockButtonInner}>
+                  <Icon source="repeat" size={18} color={theme.colors.primary} />
+                  <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
+                </View>
+              </TouchableRipple>
+              <TouchableRipple onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: '#10b981' }]} borderless>
+                <View style={styles.androidDockButtonInner}>
+                  <Icon source="handshake" size={18} color="#fff" />
+                  <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Settle</Text>
+                </View>
+              </TouchableRipple>
+              <TouchableRipple onPress={() => onAddExpense(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.primary }]} borderless>
+                <View style={styles.androidDockButtonInner}>
+                  <Icon source="plus" size={18} color="#fff" />
+                  <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Add</Text>
+                </View>
+              </TouchableRipple>
+            </View>
+          </Animated.View>
+        </View>
+      )}
 
       <FilterSortSheet
         visible={showFilterSheet}
@@ -715,15 +761,14 @@ const styles = StyleSheet.create({
   },
   floatingActions: {
     position: 'absolute',
-    bottom: 90,
     left: 16,
     right: 16,
+    zIndex: 25,
   },
   expandedContainer: {
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 0,
     gap: 8,
     paddingHorizontal: 4,
   },
@@ -767,12 +812,40 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    gap: 16,
+    justifyContent: 'center',
   },
-  iconButton: {
+  androidDock: {
+    borderRadius: 22,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    gap: 6,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+  },
+  androidDockButton: {
     flex: 1,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  androidUtilityButton: {
+    flex: 0.95,
+  },
+  androidPrimaryPill: {
+    flex: 1.25,
+  },
+  androidDockButtonInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
   },
   stickyHeader: {
     position: 'absolute',
@@ -849,4 +922,3 @@ const styles = StyleSheet.create({
     gap: 2,
   },
 });
-
