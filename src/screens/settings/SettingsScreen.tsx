@@ -1,19 +1,23 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
+import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useRef } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Divider, List, Switch, Text } from 'react-native-paper';
 
 export const SettingsScreen = () => {
   const navigation = useNavigation();
   const { user, signOutUser } = useAuth();
   const { isDark, toggleTheme, theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const bottomPadding = getFloatingTabBarContentPadding(insets.bottom, 20);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -47,7 +51,7 @@ export const SettingsScreen = () => {
       </Animated.View>
 
       <Animated.ScrollView
-        contentContainerStyle={styles.container}
+        contentContainerStyle={[styles.container, { paddingBottom: bottomPadding }]}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
           { useNativeDriver: true }
@@ -89,7 +93,6 @@ const styles = StyleSheet.create({
   container: {
     padding: 16,
     paddingTop: 60,
-    paddingBottom: 100,
   },
   stickyHeader: {
     position: 'absolute',
