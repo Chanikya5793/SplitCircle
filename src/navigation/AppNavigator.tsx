@@ -1,4 +1,3 @@
-import { GlassTabBar } from '@/components/GlassTabBar';
 import { IncomingCallModal } from '@/components/IncomingCallModal';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -26,14 +25,39 @@ import { GroupListScreen } from '@/screens/groups/GroupListScreen';
 import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { DarkTheme, DefaultTheme, getFocusedRouteNameFromRoute, NavigationContainer, useNavigation } from '@react-navigation/native';
-import { useMemo } from 'react';
-import { View } from 'react-native';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import {
+  DarkTheme,
+  DefaultTheme,
+  NavigationContainer,
+  useNavigation,
+} from '@react-navigation/native';
+import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
+import { useEffect, useMemo, useState } from 'react';
+import { Platform, type ImageSourcePropType, View } from 'react-native';
 
-import { AuthStack, CallStack, ChatStack, GroupStack, Tab } from './stacks';
+import { AppStack, AuthStack, NativeTab } from './stacks';
 
 type GroupWithFallback = Group | undefined;
+type TabIconKey = 'groups' | 'chat' | 'calls' | 'settings';
+
+type NativeIconPair = {
+  active?: ImageSourcePropType;
+  inactive?: ImageSourcePropType;
+};
+
+type NativeIconMap = Record<TabIconKey, NativeIconPair>;
+
+const EMPTY_NATIVE_ICON_MAP: NativeIconMap = {
+  groups: {},
+  chat: {},
+  calls: {},
+  settings: {},
+};
+const FALLBACK_NATIVE_TAB_ICON = {
+  type: 'image',
+  source: require('../../assets/icon.png'),
+} as const;
 
 const useGroupById = (groupId: string): GroupWithFallback => {
   const { groups } = useGroups();
@@ -51,7 +75,9 @@ const RegisterRoute = ({ navigation }: any) => (
   <RegisterScreen onSwitchToSignIn={() => navigation.navigate(ROUTES.AUTH.SIGN_IN)} />
 );
 
-const ForgotPasswordRoute = ({ navigation }: any) => <ForgotPasswordScreen onBack={() => navigation.goBack()} />;
+const ForgotPasswordRoute = ({ navigation }: any) => (
+  <ForgotPasswordScreen onBack={() => navigation.goBack()} />
+);
 
 const GroupListRoute = ({ navigation }: any) => (
   <GroupListScreen onOpenGroup={(group) => navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: group.groupId })} />
@@ -112,7 +138,7 @@ const SettlementsRoute = ({ route, navigation }: any) => {
   );
 };
 
-const GroupStatsRoute = ({ route, navigation }: any) => {
+const GroupStatsRoute = ({ route }: any) => {
   const group = useGroupById(route.params.groupId);
   if (!group) {
     return <LoadingScreen />;
@@ -120,9 +146,11 @@ const GroupStatsRoute = ({ route, navigation }: any) => {
   return <GroupStatsScreen group={group} />;
 };
 
-const RecurringBillsRoute = ({ route, navigation }: any) => {
+const RecurringBillsRoute = ({ route }: any) => {
   const group = useGroupById(route.params.groupId);
-  if (!group) return <LoadingScreen />;
+  if (!group) {
+    return <LoadingScreen />;
+  }
   return <RecurringBillsScreen group={group} />;
 };
 
@@ -131,7 +159,7 @@ const ChatListRoute = ({ navigation }: any) => (
 );
 
 const ChatRoomRoute = ({ route }: any) => {
-  const { threads } = useChat(); // Hook must be called first, before any conditional returns
+  const { threads } = useChat();
   const thread = threads.find((item) => item.chatId === route.params.chatId);
 
   if (!thread) {
@@ -180,7 +208,7 @@ const CallSessionRoute = ({ route, navigation }: any) => (
         navigation.goBack();
         return;
       }
-      navigation.navigate(ROUTES.APP.CALLS);
+      navigation.navigate(ROUTES.APP.ROOT, { screen: ROUTES.APP.CALLS_TAB });
     }}
   />
 );
@@ -193,13 +221,164 @@ const AuthStackNavigator = () => (
   </AuthStack.Navigator>
 );
 
-const GroupStackNavigator = () => {
-  const { theme } = useTheme();
+const AppTabs = () => {
+  const { theme, isDark } = useTheme();
+  const [androidIcons, setAndroidIcons] = useState<NativeIconMap>(EMPTY_NATIVE_ICON_MAP);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') {
+      return;
+    }
+
+    let isActive = true;
+    const inactiveColor = isDark ? '#9CA3AF' : '#64748B';
+    const activeColor = theme.colors.primary;
+
+    const loadIcon = async (name: React.ComponentProps<typeof MaterialCommunityIcons>['name'], color: string) => {
+      const source = await MaterialCommunityIcons.getImageSource(name, 24, color);
+      return source ?? undefined;
+    };
+
+    const loadAndroidIcons = async () => {
+      try {
+        const [
+          groupsInactive,
+          groupsActive,
+          chatInactive,
+          chatActive,
+          callsInactive,
+          callsActive,
+          settingsInactive,
+          settingsActive,
+        ] = await Promise.all([
+          loadIcon('account-group-outline', inactiveColor),
+          loadIcon('account-group', activeColor),
+          loadIcon('chat-processing-outline', inactiveColor),
+          loadIcon('chat-processing', activeColor),
+          loadIcon('phone-outline', inactiveColor),
+          loadIcon('phone', activeColor),
+          loadIcon('cog-outline', inactiveColor),
+          loadIcon('cog', activeColor),
+        ]);
+
+        if (!isActive) {
+          return;
+        }
+
+        setAndroidIcons({
+          groups: { inactive: groupsInactive, active: groupsActive ?? groupsInactive },
+          chat: { inactive: chatInactive, active: chatActive ?? chatInactive },
+          calls: { inactive: callsInactive, active: callsActive ?? callsInactive },
+          settings: { inactive: settingsInactive, active: settingsActive ?? settingsInactive },
+        });
+      } catch (error) {
+        console.warn('⚠️ Failed to load native tab icons, falling back to labels.', error);
+      }
+    };
+
+    void loadAndroidIcons();
+    return () => {
+      isActive = false;
+    };
+  }, [isDark, theme.colors.primary]);
+
+  const getTabIcon = (key: TabIconKey, focused: boolean): NativeBottomTabIcon => {
+    if (Platform.OS === 'ios') {
+      const iosIconMap: Record<TabIconKey, { regular: string; filled: string }> = {
+        groups: { regular: 'person.3', filled: 'person.3.fill' },
+        chat: { regular: 'bubble.left.and.bubble.right', filled: 'bubble.left.and.bubble.right.fill' },
+        calls: { regular: 'phone', filled: 'phone.fill' },
+        settings: { regular: 'gearshape', filled: 'gearshape.fill' },
+      };
+
+      const icon = iosIconMap[key];
+      return { type: 'sfSymbol', name: focused ? icon.filled : icon.regular } as NativeBottomTabIcon;
+    }
+
+    const source = focused
+      ? (androidIcons[key].active ?? androidIcons[key].inactive)
+      : (androidIcons[key].inactive ?? androidIcons[key].active);
+
+    if (!source) {
+      return FALLBACK_NATIVE_TAB_ICON as NativeBottomTabIcon;
+    }
+
+    return { type: 'image', source } as NativeBottomTabIcon;
+  };
+
   return (
-    <GroupStack.Navigator>
-      <GroupStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ headerShown: false }} />
-      <GroupStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
-      <GroupStack.Screen
+    <NativeTab.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: theme.colors.primary,
+        tabBarInactiveTintColor: isDark ? '#9CA3AF' : '#64748B',
+        tabBarLabelStyle: {
+          fontWeight: '600',
+          fontSize: 12,
+        },
+        tabBarStyle: Platform.select({
+          android: {
+            backgroundColor: isDark ? '#0D1117' : '#FFFFFF',
+          },
+          default: undefined,
+        }),
+        tabBarActiveIndicatorColor: Platform.select({
+          android: isDark ? 'rgba(88,166,255,0.20)' : 'rgba(31,111,235,0.16)',
+          default: undefined,
+        }),
+        tabBarBlurEffect: Platform.OS === 'ios' ? 'systemDefault' : undefined,
+        tabBarControllerMode: Platform.OS === 'ios' ? 'tabBar' : undefined,
+        tabBarMinimizeBehavior: Platform.OS === 'ios' ? 'onScrollDown' : undefined,
+      }}
+    >
+      <NativeTab.Screen
+        name={ROUTES.APP.GROUPS_TAB}
+        component={GroupListRoute}
+        options={{
+          title: 'Groups',
+          tabBarLabel: 'Groups',
+          tabBarIcon: ({ focused }) => getTabIcon('groups', focused),
+        }}
+      />
+      <NativeTab.Screen
+        name={ROUTES.APP.CHAT_TAB}
+        component={ChatListRoute}
+        options={{
+          title: 'Chat',
+          tabBarLabel: 'Chat',
+          tabBarIcon: ({ focused }) => getTabIcon('chat', focused),
+        }}
+      />
+      <NativeTab.Screen
+        name={ROUTES.APP.CALLS_TAB}
+        component={CallHistoryRoute}
+        options={{
+          title: 'Calls',
+          tabBarLabel: 'Calls',
+          tabBarIcon: ({ focused }) => getTabIcon('calls', focused),
+        }}
+      />
+      <NativeTab.Screen
+        name={ROUTES.APP.SETTINGS}
+        component={SettingsScreen}
+        options={{
+          title: 'Settings',
+          tabBarLabel: 'Settings',
+          tabBarIcon: ({ focused }) => getTabIcon('settings', focused),
+        }}
+      />
+    </NativeTab.Navigator>
+  );
+};
+
+const AppStackNavigator = () => {
+  const { theme } = useTheme();
+
+  return (
+    <AppStack.Navigator>
+      <AppStack.Screen name={ROUTES.APP.ROOT} component={AppTabs} options={{ headerShown: false }} />
+      <AppStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
+      <AppStack.Screen
         name={ROUTES.APP.GROUP_INFO}
         component={GroupInfoScreen}
         options={{
@@ -208,24 +387,7 @@ const GroupStackNavigator = () => {
           headerTintColor: theme.colors.primary,
         }}
       />
-      <GroupStack.Screen
-        name={ROUTES.APP.ADD_EXPENSE}
-        component={AddExpenseRoute}
-        options={{ presentation: 'modal', headerShown: false }}
-      />
-      <GroupStack.Screen
-        name={ROUTES.APP.EXPENSE_DETAILS}
-        component={ExpenseDetailsScreen}
-        options={{ title: 'Expense Details' }}
-      />
-      <GroupStack.Screen
-        name={ROUTES.APP.SETTLEMENTS}
-        component={SettlementsRoute}
-        options={{ presentation: 'modal', headerShown: false }}
-      />
-      <GroupStack.Screen name={ROUTES.APP.GROUP_STATS} component={GroupStatsRoute} options={{ title: 'Group Stats' }} />
-      <GroupStack.Screen name={ROUTES.APP.RECURRING_BILLS} component={RecurringBillsRoute} options={{ title: 'Recurring Bills' }} />
-      <GroupStack.Screen
+      <AppStack.Screen
         name={ROUTES.APP.GROUP_CHAT}
         component={ChatRoomRoute}
         options={{
@@ -234,7 +396,7 @@ const GroupStackNavigator = () => {
           headerTintColor: theme.colors.primary,
         }}
       />
-      <GroupStack.Screen
+      <AppStack.Screen
         name={ROUTES.APP.MESSAGE_INFO}
         component={MessageInfoScreen}
         options={{
@@ -243,69 +405,32 @@ const GroupStackNavigator = () => {
           headerTintColor: theme.colors.primary,
         }}
       />
-    </GroupStack.Navigator>
-  );
-};
-
-const ChatStackNavigator = () => {
-  const { theme } = useTheme();
-  return (
-    <ChatStack.Navigator>
-      <ChatStack.Screen name={ROUTES.APP.CHAT} component={ChatListRoute} options={{ title: 'Chats' }} />
-      <ChatStack.Screen
-        name={ROUTES.APP.GROUP_CHAT}
-        component={ChatRoomRoute}
-        options={{
-          title: '',
-          headerTransparent: true,
-          headerTintColor: theme.colors.primary,
-        }}
-      />
-      <ChatStack.Screen
-        name={ROUTES.APP.MESSAGE_INFO}
-        component={MessageInfoScreen}
-        options={{
-          title: '',
-          headerTransparent: true,
-          headerTintColor: theme.colors.primary,
-        }}
-      />
-      <ChatStack.Screen
-        name={ROUTES.APP.GROUP_INFO}
-        component={GroupInfoScreen}
-        options={{
-          title: '',
-          headerTransparent: true,
-          headerTintColor: theme.colors.primary,
-        }}
-      />
-      <ChatStack.Screen
+      <AppStack.Screen
         name={ROUTES.APP.ADD_EXPENSE}
         component={AddExpenseRoute}
         options={{ presentation: 'modal', headerShown: false }}
       />
-      <ChatStack.Screen
-        name={ROUTES.APP.EXPENSE_DETAILS}
-        component={ExpenseDetailsScreen}
-        options={{ title: 'Expense Details' }}
-      />
-      <ChatStack.Screen
+      <AppStack.Screen
         name={ROUTES.APP.SETTLEMENTS}
         component={SettlementsRoute}
         options={{ presentation: 'modal', headerShown: false }}
       />
-      <ChatStack.Screen name={ROUTES.APP.GROUP_STATS} component={GroupStatsRoute} options={{ title: 'Group Stats' }} />
-      <ChatStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
-    </ChatStack.Navigator>
-  );
-};
-
-const CallStackNavigator = () => {
-  const { theme } = useTheme();
-  return (
-    <CallStack.Navigator>
-      <CallStack.Screen name={ROUTES.APP.CALLS} component={CallHistoryRoute} options={{ title: 'Calls' }} />
-      <CallStack.Screen
+      <AppStack.Screen
+        name={ROUTES.APP.EXPENSE_DETAILS}
+        component={ExpenseDetailsScreen}
+        options={{ title: 'Expense Details' }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.GROUP_STATS}
+        component={GroupStatsRoute}
+        options={{ title: 'Group Stats' }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.RECURRING_BILLS}
+        component={RecurringBillsRoute}
+        options={{ title: 'Recurring Bills' }}
+      />
+      <AppStack.Screen
         name={ROUTES.APP.CALL_INFO}
         component={CallInfoRoute}
         options={{
@@ -314,75 +439,12 @@ const CallStackNavigator = () => {
           headerTintColor: theme.colors.primary,
         }}
       />
-      <CallStack.Screen name={ROUTES.APP.CALL_DETAIL} component={CallSessionRoute} options={{ title: 'Live call' }} />
-    </CallStack.Navigator>
-  );
-};
-
-const AppTabs = () => {
-  const { theme } = useTheme();
-  return (
-    <Tab.Navigator
-      tabBar={(props) => <GlassTabBar {...props} />}
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: theme.colors.primary,
-      }}
-    >
-      <Tab.Screen
-        name={ROUTES.APP.GROUPS_TAB}
-        component={GroupStackNavigator}
-        options={({ route }) => ({
-          title: 'Groups',
-          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="account-group" color={color} size={size} />,
-          tabBarStyle: ((route) => {
-            const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.GROUPS;
-            if (routeName === ROUTES.APP.GROUP_CHAT || routeName === ROUTES.APP.MESSAGE_INFO) {
-              return { display: 'none' };
-            }
-            return undefined;
-          })(route),
-        })}
+      <AppStack.Screen
+        name={ROUTES.APP.CALL_DETAIL}
+        component={CallSessionRoute}
+        options={{ title: 'Live call' }}
       />
-      <Tab.Screen
-        name={ROUTES.APP.CHAT_TAB}
-        component={ChatStackNavigator}
-        options={({ route }) => ({
-          title: 'Chat',
-          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="chat-processing" color={color} size={size} />,
-          tabBarStyle: ((route) => {
-            const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CHAT;
-            if (routeName === ROUTES.APP.GROUP_CHAT || routeName === ROUTES.APP.MESSAGE_INFO) {
-              return { display: 'none' };
-            }
-            return undefined;
-          })(route),
-        })}
-      />
-      <Tab.Screen
-        name={ROUTES.APP.CALLS_TAB}
-        component={CallStackNavigator}
-        options={({ route }) => ({
-          title: 'Calls',
-          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="phone" color={color} size={size} />,
-          tabBarStyle: ((route) => {
-            const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CALLS;
-            if (routeName === ROUTES.APP.CALL_DETAIL || routeName === ROUTES.APP.CALL_INFO) {
-              return { display: 'none' };
-            }
-            return undefined;
-          })(route),
-        })}
-      />
-      <Tab.Screen
-        name={ROUTES.APP.SETTINGS}
-        component={SettingsScreen}
-        options={{
-          title: 'Settings',
-          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="cog" color={color} size={size} />,
-        }}
-      />
-    </Tab.Navigator>
+    </AppStack.Navigator>
   );
 };
 
@@ -394,14 +456,11 @@ const IncomingCallHandler = () => {
   const handleAccept = () => {
     const call = acceptCall();
     if (call) {
-      navigation.navigate(ROUTES.APP.CALLS_TAB, {
-        screen: ROUTES.APP.CALL_DETAIL,
-        params: {
-          chatId: call.chatId,
-          groupId: call.groupId,
-          type: call.type,
-          joinCallId: call.callId,
-        },
+      navigation.navigate(ROUTES.APP.CALL_DETAIL, {
+        chatId: call.chatId,
+        groupId: call.groupId,
+        type: call.type,
+        joinCallId: call.callId,
       });
     }
   };
@@ -425,7 +484,7 @@ export const AppNavigator = () => {
     return <LoadingScreen />;
   }
 
-  const NavigationTheme = {
+  const navigationTheme = {
     ...(isDark ? DarkTheme : DefaultTheme),
     colors: {
       ...(isDark ? DarkTheme.colors : DefaultTheme.colors),
@@ -436,9 +495,9 @@ export const AppNavigator = () => {
   };
 
   return (
-    <NavigationContainer theme={NavigationTheme}>
+    <NavigationContainer theme={navigationTheme}>
       <View style={{ flex: 1 }}>
-        {user ? <AppTabs /> : <AuthStackNavigator />}
+        {user ? <AppStackNavigator /> : <AuthStackNavigator />}
         {user && <IncomingCallHandler />}
       </View>
     </NavigationContainer>
