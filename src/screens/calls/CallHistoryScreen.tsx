@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
@@ -29,6 +30,7 @@ import {
     View,
 } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, Text, TextInput, TouchableRipple } from 'react-native-paper';
 import Animated, {
     FadeIn,
@@ -63,6 +65,8 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   const { threads } = useChat();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+  const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 20);
 
   const [callHistory, setCallHistory] = useState<CallHistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -473,7 +477,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
           stickySectionHeadersEnabled={false}
           contentContainerStyle={[
             styles.listContent,
-            { paddingTop: 60, paddingBottom: 100 },
+            { paddingTop: 60, paddingBottom: listBottomPadding },
           ]}
           ListHeaderComponent={
             <View style={styles.headerContainer}>
