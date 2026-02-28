@@ -1,5 +1,6 @@
 import { BlurView } from 'expo-blur';
 import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
+import { FLOATING_TAB_BAR_HEIGHT } from '@/components/tabbar/tabBarMetrics';
 import { ReactNode, useMemo } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 
@@ -27,8 +28,9 @@ export const TabBarSurface = ({ children, isDark }: TabBarSurfaceProps) => {
       return (
         <GlassView
           style={[styles.surfaceBase, styles.iosSurface]}
-          glassEffectStyle="regular"
+          glassEffectStyle={{ style: 'regular', animate: true, animationDuration: 0.25 }}
           colorScheme={isDark ? 'dark' : 'light'}
+          tintColor={isDark ? 'rgba(10, 14, 24, 0.30)' : 'rgba(255, 255, 255, 0.20)'}
           isInteractive={false}
         >
           <View pointerEvents="none" style={styles.iosHighlight} />
@@ -64,10 +66,10 @@ export const TabBarSurface = ({ children, isDark }: TabBarSurfaceProps) => {
 
 const styles = StyleSheet.create({
   surfaceBase: {
-    borderRadius: 30,
+    borderRadius: FLOATING_TAB_BAR_HEIGHT / 2,
     width: '100%',
     overflow: 'hidden',
-    height: 70,
+    height: FLOATING_TAB_BAR_HEIGHT,
     justifyContent: 'center',
   },
   iosSurface: {
