@@ -1,3 +1,4 @@
+import { GlassView } from '@/components/GlassView';
 import { IncomingCallModal } from '@/components/IncomingCallModal';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -6,6 +7,7 @@ import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { CallType, Group, PresenceStatus } from '@/models';
+import { lightHaptic } from '@/utils/haptics';
 import { ForgotPasswordScreen } from '@/screens/auth/ForgotPasswordScreen';
 import { RegisterScreen } from '@/screens/auth/RegisterScreen';
 import { SignInScreen } from '@/screens/auth/SignInScreen';
@@ -33,8 +35,10 @@ import {
   useNavigation,
 } from '@react-navigation/native';
 import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
-import { useEffect, useMemo, useState } from 'react';
-import { Platform, type ImageSourcePropType, View } from 'react-native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { Platform, StyleSheet, type ImageSourcePropType, View } from 'react-native';
+import { Icon, Text, TouchableRipple } from 'react-native-paper';
 
 import { AppStack, AuthStack, NativeTab } from './stacks';
 
@@ -58,10 +62,129 @@ const FALLBACK_NATIVE_TAB_ICON = {
   type: 'image',
   source: require('../../assets/icon.png'),
 } as const;
+const GroupsStack = createNativeStackNavigator();
+
+const IOS_NATIVE_ACCESSORY_SUPPORTED =
+  Platform.OS === 'ios' && Number.parseInt(String(Platform.Version), 10) >= 26;
 
 const useGroupById = (groupId: string): GroupWithFallback => {
   const { groups } = useGroups();
   return useMemo(() => groups.find((group) => group.groupId === groupId), [groups, groupId]);
+};
+
+type GroupTabAccessoryProps = {
+  groupId: string;
+  placement: 'regular' | 'inline';
+};
+
+const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
+  const navigation = useNavigation<any>();
+  const { groups } = useGroups();
+  const { ensureGroupThread } = useChat();
+  const { theme, isDark } = useTheme();
+
+  const group = useMemo(() => groups.find((item) => item.groupId === groupId), [groups, groupId]);
+
+  if (!group) {
+    return null;
+  }
+
+  const openStats = () => {
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId });
+  };
+
+  const openBills = () => {
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId });
+  };
+
+  const openAddExpense = () => {
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.ADD_EXPENSE, { groupId: group.groupId });
+  };
+
+  const openSettle = () => {
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.SETTLEMENTS, { groupId: group.groupId });
+  };
+
+  const openChat = async () => {
+    lightHaptic();
+    try {
+      const participants = group.members.map((member) => ({
+        userId: member.userId,
+        displayName: member.displayName,
+        photoURL: member.photoURL,
+        status: 'online' as PresenceStatus,
+      }));
+      const chatId = await ensureGroupThread(group.groupId, participants);
+      navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId });
+    } catch (error) {
+      console.error('Unable to open chat', error);
+    }
+  };
+
+  if (placement === 'inline') {
+    return (
+      <View style={styles.groupAccessoryInlineWrap}>
+        <GlassView intensity={40} style={styles.groupAccessoryInlineGlass}>
+          <TouchableRipple onPress={openAddExpense} style={[styles.groupAccessoryInlinePrimary, { backgroundColor: theme.colors.primary }]} borderless>
+            <View style={styles.groupAccessoryInlinePrimaryInner}>
+              <Icon source="plus" size={18} color="#fff" />
+              <Text variant="labelMedium" style={styles.groupAccessoryPrimaryText}>Add Expense</Text>
+            </View>
+          </TouchableRipple>
+          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryInlineQuick, { backgroundColor: '#10b981' }]} borderless>
+            <View style={styles.groupAccessoryInlineQuickInner}>
+              <Icon source="handshake" size={16} color="#fff" />
+            </View>
+          </TouchableRipple>
+        </GlassView>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.groupAccessoryRegularWrap}>
+      <GlassView intensity={34} style={styles.groupAccessoryRegularGlass}>
+        <View style={styles.groupAccessoryRegularRow}>
+          <View style={[styles.groupAccessoryUtilityCluster, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.56)' }]}>
+            <TouchableRipple onPress={openStats} style={styles.groupAccessoryUtilityButton} borderless>
+              <View style={styles.groupAccessoryUtilityButtonInner}>
+                <Icon source="chart-pie" size={17} color={theme.colors.primary} />
+                <Text variant="labelSmall" style={[styles.groupAccessoryUtilityText, { color: theme.colors.onSurface }]}>Stats</Text>
+              </View>
+            </TouchableRipple>
+            <TouchableRipple onPress={openChat} style={styles.groupAccessoryUtilityButton} borderless>
+              <View style={styles.groupAccessoryUtilityButtonInner}>
+                <Icon source="chat" size={17} color={theme.colors.primary} />
+                <Text variant="labelSmall" style={[styles.groupAccessoryUtilityText, { color: theme.colors.onSurface }]}>Chat</Text>
+              </View>
+            </TouchableRipple>
+            <TouchableRipple onPress={openBills} style={styles.groupAccessoryUtilityButton} borderless>
+              <View style={styles.groupAccessoryUtilityButtonInner}>
+                <Icon source="repeat" size={17} color={theme.colors.primary} />
+                <Text variant="labelSmall" style={[styles.groupAccessoryUtilityText, { color: theme.colors.onSurface }]}>Bills</Text>
+              </View>
+            </TouchableRipple>
+          </View>
+          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryPill, { backgroundColor: '#10b981' }]} borderless>
+            <View style={styles.groupAccessoryPillInner}>
+              <Icon source="handshake" size={17} color="#fff" />
+              <Text variant="labelSmall" style={styles.groupAccessoryPrimaryText}>Settle</Text>
+            </View>
+          </TouchableRipple>
+          <TouchableRipple onPress={openAddExpense} style={[styles.groupAccessoryPill, { backgroundColor: theme.colors.primary }]} borderless>
+            <View style={styles.groupAccessoryPillInner}>
+              <Icon source="plus" size={17} color="#fff" />
+              <Text variant="labelSmall" style={styles.groupAccessoryPrimaryText}>Add</Text>
+            </View>
+          </TouchableRipple>
+        </View>
+      </GlassView>
+    </View>
+  );
 };
 
 const SignInRoute = ({ navigation }: any) => (
@@ -86,6 +209,24 @@ const GroupListRoute = ({ navigation }: any) => (
 const GroupDetailsRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
   const { ensureGroupThread } = useChat();
+
+  useLayoutEffect(() => {
+    const parent = navigation.getParent();
+    if (!parent || !group || !IOS_NATIVE_ACCESSORY_SUPPORTED) {
+      return;
+    }
+
+    parent.setOptions({
+      bottomAccessory: ({ placement }: { placement: 'regular' | 'inline' }) => (
+        <GroupTabAccessory groupId={group.groupId} placement={placement} />
+      ),
+    });
+
+    return () => {
+      parent.setOptions({ bottomAccessory: undefined });
+    };
+  }, [navigation, group]);
+
   if (!group) {
     return <LoadingScreen />;
   }
@@ -112,6 +253,13 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
     />
   );
 };
+
+const GroupsStackNavigator = () => (
+  <GroupsStack.Navigator>
+    <GroupsStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ headerShown: false }} />
+    <GroupsStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
+  </GroupsStack.Navigator>
+);
 
 const AddExpenseRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
@@ -328,16 +476,16 @@ const AppTabs = () => {
         }),
         tabBarBlurEffect: Platform.OS === 'ios' ? 'systemDefault' : undefined,
         tabBarControllerMode: Platform.OS === 'ios' ? 'tabBar' : undefined,
-        tabBarMinimizeBehavior: Platform.OS === 'ios' ? 'onScrollDown' : undefined,
+        tabBarMinimizeBehavior: IOS_NATIVE_ACCESSORY_SUPPORTED ? 'onScrollDown' : undefined,
       }}
     >
       <NativeTab.Screen
         name={ROUTES.APP.GROUPS_TAB}
-        component={GroupListRoute}
+        component={GroupsStackNavigator}
         options={{
           title: 'Groups',
           tabBarLabel: 'Groups',
-          tabBarIcon: ({ focused }) => getTabIcon('groups', focused),
+          tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('groups', focused),
         }}
       />
       <NativeTab.Screen
@@ -375,9 +523,8 @@ const AppStackNavigator = () => {
   const { theme } = useTheme();
 
   return (
-    <AppStack.Navigator>
+      <AppStack.Navigator>
       <AppStack.Screen name={ROUTES.APP.ROOT} component={AppTabs} options={{ headerShown: false }} />
-      <AppStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
       <AppStack.Screen
         name={ROUTES.APP.GROUP_INFO}
         component={GroupInfoScreen}
@@ -475,6 +622,99 @@ const IncomingCallHandler = () => {
     />
   );
 };
+
+const styles = StyleSheet.create({
+  groupAccessoryRegularWrap: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 6,
+  },
+  groupAccessoryRegularGlass: {
+    borderRadius: 24,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  groupAccessoryRegularRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  groupAccessoryUtilityCluster: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 18,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    gap: 4,
+  },
+  groupAccessoryUtilityButton: {
+    flex: 1,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  groupAccessoryUtilityButtonInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    gap: 2,
+  },
+  groupAccessoryUtilityText: {
+    fontWeight: '600',
+  },
+  groupAccessoryPill: {
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  groupAccessoryPillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    minWidth: 74,
+  },
+  groupAccessoryPrimaryText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  groupAccessoryInlineWrap: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  groupAccessoryInlineGlass: {
+    borderRadius: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  groupAccessoryInlinePrimary: {
+    flex: 1,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  groupAccessoryInlinePrimaryInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  groupAccessoryInlineQuick: {
+    borderRadius: 17,
+    overflow: 'hidden',
+  },
+  groupAccessoryInlineQuickInner: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
 
 export const AppNavigator = () => {
   const { user, loading } = useAuth();
