@@ -6,7 +6,7 @@ import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { formatRelativeTime } from '@/utils/format';
 import { hasGoogleMapsApiKey } from '@/utils/hasGoogleMapsApiKey';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer, type AudioStatus } from 'expo-audio';
 import { getContentUriAsync, getInfoAsync } from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
@@ -161,57 +161,74 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   const [fullScreenVisible, setFullScreenVisible] = useState(false);
 
   // Audio playback state
-  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const audioPlayerRef = useRef<AudioPlayer | null>(null);
+  const audioStatusListenerRef = useRef<{ remove: () => void } | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  // Unload sound on unmount
+  // Release player resources on unmount
   useEffect(() => {
     return () => {
-      if (sound) {
-        sound.unloadAsync();
-      }
+      audioStatusListenerRef.current?.remove();
+      audioStatusListenerRef.current = null;
+      audioPlayerRef.current?.remove();
+      audioPlayerRef.current = null;
     };
-  }, [sound]);
+  }, []);
 
   const handlePlayPause = async () => {
     if (!mediaUri) return;
 
     try {
-      if (sound) {
-        if (isPlaying) {
-          await sound.pauseAsync();
+      const existingPlayer = audioPlayerRef.current;
+      if (existingPlayer) {
+        if (isPlaying || existingPlayer.playing) {
+          existingPlayer.pause();
           setIsPlaying(false);
         } else {
-          await sound.playAsync();
+          existingPlayer.play();
           setIsPlaying(true);
         }
       } else {
         // Configure audio session for playback
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: true,
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
         });
 
-        const { sound: newSound } = await Audio.Sound.createAsync(
-          { uri: mediaUri },
-          { shouldPlay: true },
-          (status) => {
-            if (status.isLoaded) {
-              setIsPlaying(status.isPlaying);
-              if (status.didJustFinish) {
-                setIsPlaying(false);
-                newSound.setPositionAsync(0);
-              }
-            }
+        const newPlayer = createAudioPlayer(mediaUri, { updateInterval: 250 });
+        audioStatusListenerRef.current?.remove();
+        audioStatusListenerRef.current = newPlayer.addListener('playbackStatusUpdate', (status: AudioStatus) => {
+          if (!status.isLoaded) {
+            return;
           }
-        );
-        setSound(newSound);
+
+          setIsPlaying(status.playing);
+          if (status.didJustFinish) {
+            setIsPlaying(false);
+            newPlayer.seekTo(0).catch((seekError) => {
+              console.warn('Failed to reset audio player position:', seekError);
+            });
+          }
+        });
+        audioPlayerRef.current = newPlayer;
+        newPlayer.play();
         setIsPlaying(true);
       }
     } catch (error) {
       console.error('Error playing audio:', error);
       Alert.alert('Error', 'Could not play audio message.');
     }
+  };
+
+  const resetAudioPlayer = () => {
+    if (!audioPlayerRef.current) {
+      return;
+    }
+    audioStatusListenerRef.current?.remove();
+    audioStatusListenerRef.current = null;
+    audioPlayerRef.current.remove();
+    audioPlayerRef.current = null;
+    setIsPlaying(false);
   };
 
   if (message.type === 'system') {
@@ -327,6 +344,13 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   );
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState(false);
+
+  useEffect(() => {
+    // Replace player when message/media source changes.
+    return () => {
+      resetAudioPlayer();
+    };
+  }, [mediaUri]);
 
   // Check and download media if needed
   useEffect(() => {
@@ -701,7 +725,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
                   zoomEnabled={false}
                   rotateEnabled={false}
                   pitchEnabled={false}
-                  showsPointsOfInterest={false}
+                  showsPointsOfInterests={false}
                   toolbarEnabled={false}
                   loadingEnabled
                   moveOnMarkerPress={false}
