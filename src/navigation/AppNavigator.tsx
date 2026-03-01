@@ -129,15 +129,34 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
     return (
       <View style={styles.groupAccessoryInlineWrap}>
         <GlassView intensity={40} style={styles.groupAccessoryInlineGlass}>
-          <TouchableRipple onPress={openAddExpense} style={[styles.groupAccessoryInlinePrimary, { backgroundColor: theme.colors.primary }]} borderless>
-            <View style={styles.groupAccessoryInlinePrimaryInner}>
-              <Icon source="plus" size={18} color="#fff" />
-              <Text variant="labelMedium" style={styles.groupAccessoryPrimaryText}>Add Expense</Text>
-            </View>
-          </TouchableRipple>
           <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryInlineQuick, { backgroundColor: '#10b981' }]} borderless>
             <View style={styles.groupAccessoryInlineQuickInner}>
               <Icon source="handshake" size={16} color="#fff" />
+            </View>
+          </TouchableRipple>
+
+          <View style={[styles.groupAccessoryInlineUtilityCluster, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.58)' }]}>
+            <TouchableRipple onPress={openStats} style={styles.groupAccessoryInlineUtilityButton} borderless>
+              <View style={styles.groupAccessoryInlineUtilityButtonInner}>
+                <Icon source="chart-pie" size={16} color={theme.colors.primary} />
+              </View>
+            </TouchableRipple>
+            <TouchableRipple onPress={openChat} style={styles.groupAccessoryInlineUtilityButton} borderless>
+              <View style={styles.groupAccessoryInlineUtilityButtonInner}>
+                <Icon source="chat" size={16} color={theme.colors.primary} />
+              </View>
+            </TouchableRipple>
+            <TouchableRipple onPress={openBills} style={styles.groupAccessoryInlineUtilityButton} borderless>
+              <View style={styles.groupAccessoryInlineUtilityButtonInner}>
+                <Icon source="repeat" size={16} color={theme.colors.primary} />
+              </View>
+            </TouchableRipple>
+          </View>
+
+          <TouchableRipple onPress={openAddExpense} style={[styles.groupAccessoryInlinePrimary, { backgroundColor: theme.colors.primary }]} borderless>
+            <View style={styles.groupAccessoryInlinePrimaryInner}>
+              <Icon source="plus" size={18} color="#fff" />
+              <Text variant="labelMedium" style={styles.groupAccessoryPrimaryText}>Add</Text>
             </View>
           </TouchableRipple>
         </GlassView>
@@ -149,6 +168,12 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
     <View style={styles.groupAccessoryRegularWrap}>
       <GlassView intensity={34} style={styles.groupAccessoryRegularGlass}>
         <View style={styles.groupAccessoryRegularRow}>
+          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryPill, { backgroundColor: '#10b981' }]} borderless>
+            <View style={styles.groupAccessoryPillInner}>
+              <Icon source="handshake" size={17} color="#fff" />
+              <Text variant="labelSmall" style={styles.groupAccessoryPrimaryText}>Settle</Text>
+            </View>
+          </TouchableRipple>
           <View style={[styles.groupAccessoryUtilityCluster, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.56)' }]}>
             <TouchableRipple onPress={openStats} style={styles.groupAccessoryUtilityButton} borderless>
               <View style={styles.groupAccessoryUtilityButtonInner}>
@@ -169,12 +194,6 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
               </View>
             </TouchableRipple>
           </View>
-          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryPill, { backgroundColor: '#10b981' }]} borderless>
-            <View style={styles.groupAccessoryPillInner}>
-              <Icon source="handshake" size={17} color="#fff" />
-              <Text variant="labelSmall" style={styles.groupAccessoryPrimaryText}>Settle</Text>
-            </View>
-          </TouchableRipple>
           <TouchableRipple onPress={openAddExpense} style={[styles.groupAccessoryPill, { backgroundColor: theme.colors.primary }]} borderless>
             <View style={styles.groupAccessoryPillInner}>
               <Icon source="plus" size={17} color="#fff" />
@@ -209,23 +228,28 @@ const GroupListRoute = ({ navigation }: any) => (
 const GroupDetailsRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
   const { ensureGroupThread } = useChat();
+  const [showAccessory, setShowAccessory] = useState(false);
 
   useLayoutEffect(() => {
     const parent = navigation.getParent();
-    if (!parent || !group || !IOS_NATIVE_ACCESSORY_SUPPORTED) {
+    if (!parent || !IOS_NATIVE_ACCESSORY_SUPPORTED) {
       return;
     }
 
-    parent.setOptions({
-      bottomAccessory: ({ placement }: { placement: 'regular' | 'inline' }) => (
-        <GroupTabAccessory groupId={group.groupId} placement={placement} />
-      ),
-    });
+    if (group && showAccessory) {
+      parent.setOptions({
+        bottomAccessory: ({ placement }: { placement: 'regular' | 'inline' }) => (
+          <GroupTabAccessory groupId={group.groupId} placement={placement} />
+        ),
+      });
+    } else {
+      parent.setOptions({ bottomAccessory: undefined });
+    }
 
     return () => {
       parent.setOptions({ bottomAccessory: undefined });
     };
-  }, [navigation, group]);
+  }, [navigation, group, showAccessory]);
 
   if (!group) {
     return <LoadingScreen />;
@@ -250,6 +274,7 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
       onAddExpense={() => navigation.navigate(ROUTES.APP.ADD_EXPENSE, { groupId: group.groupId })}
       onSettle={() => navigation.navigate(ROUTES.APP.SETTLEMENTS, { groupId: group.groupId })}
       onOpenChat={handleOpenChat}
+      onCompactModeChange={setShowAccessory}
     />
   );
 };
@@ -673,7 +698,7 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingVertical: 10,
     paddingHorizontal: 10,
-    minWidth: 74,
+    minWidth: 72,
   },
   groupAccessoryPrimaryText: {
     color: '#fff',
@@ -691,8 +716,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 6,
   },
-  groupAccessoryInlinePrimary: {
+  groupAccessoryInlineUtilityCluster: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 16,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    gap: 2,
+  },
+  groupAccessoryInlineUtilityButton: {
+    flex: 1,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  groupAccessoryInlineUtilityButtonInner: {
+    width: 32,
+    height: 32,
+    alignSelf: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  groupAccessoryInlinePrimary: {
+    minWidth: 112,
     borderRadius: 16,
     overflow: 'hidden',
   },
@@ -701,8 +747,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
   },
   groupAccessoryInlineQuick: {
     borderRadius: 17,
