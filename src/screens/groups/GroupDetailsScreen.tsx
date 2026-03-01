@@ -12,7 +12,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Expense, Group, Settlement } from '@/models';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Platform, StyleSheet, View } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Text, TouchableRipple, IconButton, Icon } from 'react-native-paper';
@@ -23,9 +23,10 @@ interface GroupDetailsScreenProps {
   onAddExpense: (group: Group) => void;
   onSettle: (group: Group) => void;
   onOpenChat: (group: Group) => void;
+  onCompactModeChange?: (isCompact: boolean) => void;
 }
 
-export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }: GroupDetailsScreenProps) => {
+export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, onCompactModeChange }: GroupDetailsScreenProps) => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { deleteExpense, deleteSettlement, loading } = useGroups();
@@ -74,12 +75,15 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
     extrapolate: 'clamp',
   });
 
-  const compactThreshold = 60;
+  const compactThreshold = Platform.OS === 'ios' ? 56 : 60;
   const compactDockHeight = 56;
-  const tabBarHeight = (Platform.OS === 'ios' ? 50 : 56) + insets.bottom;
-  const compactDockBottom = tabBarHeight + 6;
+  const tabBarHeight = Platform.OS === 'ios'
+    ? Math.max(78, 50 + insets.bottom)
+    : Math.max(70, 56 + insets.bottom);
+  const compactDockBottom = tabBarHeight + (Platform.OS === 'ios' ? 12 : 16);
   const expandedActionsBottom = compactDockBottom + compactDockHeight + 10;
-  const contentBottomPadding = Platform.OS === 'android' ? expandedActionsBottom + 172 : tabBarHeight + 152;
+  const contentBottomPadding = Platform.OS === 'android' ? expandedActionsBottom + 172 : tabBarHeight + 188;
+  const expandedActionsAnchorBottom = Platform.OS === 'android' ? compactDockHeight + 12 : 0;
 
   const compactDockOpacity = scrollY.interpolate({
     inputRange: [compactThreshold - 18, compactThreshold + 18],
@@ -104,6 +108,16 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
     outputRange: [1, 0.98],
     extrapolate: 'clamp',
   });
+
+  useEffect(() => {
+    onCompactModeChange?.(isCompact);
+  }, [isCompact, onCompactModeChange]);
+
+  useEffect(() => {
+    return () => {
+      onCompactModeChange?.(false);
+    };
+  }, [onCompactModeChange]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -396,9 +410,6 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
           {
             useNativeDriver: true,
             listener: (event: any) => {
-              if (Platform.OS !== 'android') {
-                return;
-              }
               const y = event.nativeEvent.contentOffset.y;
               const shouldCompact = y > compactThreshold;
               if (shouldCompact !== compactStateRef.current) {
@@ -573,18 +584,17 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
 
       </Animated.ScrollView>
 
-      {Platform.OS === 'android' && (
-        <View style={[styles.floatingActions, { bottom: compactDockBottom }]}>
+      <View style={[styles.floatingActions, { bottom: compactDockBottom }]}>
           {/* Expanded buttons - compact and appealing */}
           <Animated.View
             style={[
-            styles.expandedContainer,
-            {
-              opacity: labelOpacity,
-              bottom: 8,
-              transform: [{ translateY: expandedTranslateY }, { scale: expandedScale }],
-            },
-          ]}
+              styles.expandedContainer,
+              {
+                opacity: labelOpacity,
+                bottom: expandedActionsAnchorBottom,
+                transform: [{ translateY: expandedTranslateY }, { scale: expandedScale }],
+              },
+            ]}
             pointerEvents={isCompact ? 'none' : 'auto'}
           >
             <View style={styles.actionGrid}>
@@ -656,52 +666,53 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
             </View>
           </Animated.View>
 
-          <Animated.View
-            style={[
-              styles.compactContainer,
-              {
-                opacity: compactDockOpacity,
-                height: compactDockHeight,
-                transform: [{ translateY: compactDockTranslateY }],
-              },
-            ]}
-            pointerEvents={isCompact ? 'auto' : 'none'}
-          >
-            <View style={[styles.androidDock, { backgroundColor: isDark ? 'rgba(18,22,30,0.96)' : 'rgba(252,252,255,0.98)', borderColor: isDark ? 'rgba(148,163,184,0.24)' : 'rgba(15,23,42,0.14)' }]}>
-              <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
-                <View style={styles.androidDockButtonInner}>
-                  <Icon source="chart-pie" size={18} color={theme.colors.primary} />
-                  <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
-                </View>
-              </TouchableRipple>
-              <TouchableRipple onPress={() => onOpenChat(group)} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
-                <View style={styles.androidDockButtonInner}>
-                  <Icon source="chat" size={18} color={theme.colors.primary} />
-                  <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
-                </View>
-              </TouchableRipple>
-              <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
-                <View style={styles.androidDockButtonInner}>
-                  <Icon source="repeat" size={18} color={theme.colors.primary} />
-                  <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
-                </View>
-              </TouchableRipple>
-              <TouchableRipple onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: '#10b981' }]} borderless>
-                <View style={styles.androidDockButtonInner}>
-                  <Icon source="handshake" size={18} color="#fff" />
-                  <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Settle</Text>
-                </View>
-              </TouchableRipple>
-              <TouchableRipple onPress={() => onAddExpense(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.primary }]} borderless>
-                <View style={styles.androidDockButtonInner}>
-                  <Icon source="plus" size={18} color="#fff" />
-                  <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Add</Text>
-                </View>
-              </TouchableRipple>
-            </View>
-          </Animated.View>
-        </View>
-      )}
+          {Platform.OS === 'android' && (
+            <Animated.View
+              style={[
+                styles.compactContainer,
+                {
+                  opacity: compactDockOpacity,
+                  height: compactDockHeight,
+                  transform: [{ translateY: compactDockTranslateY }],
+                },
+              ]}
+              pointerEvents={isCompact ? 'auto' : 'none'}
+            >
+              <View style={[styles.androidDock, { backgroundColor: isDark ? 'rgba(18,22,30,0.96)' : 'rgba(252,252,255,0.98)', borderColor: isDark ? 'rgba(148,163,184,0.24)' : 'rgba(15,23,42,0.14)' }]}>
+                <TouchableRipple onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: '#10b981' }]} borderless>
+                  <View style={styles.androidDockButtonInner}>
+                    <Icon source="handshake" size={18} color="#fff" />
+                    <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Settle</Text>
+                  </View>
+                </TouchableRipple>
+                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                  <View style={styles.androidDockButtonInner}>
+                    <Icon source="chart-pie" size={18} color={theme.colors.primary} />
+                    <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
+                  </View>
+                </TouchableRipple>
+                <TouchableRipple onPress={() => onOpenChat(group)} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                  <View style={styles.androidDockButtonInner}>
+                    <Icon source="chat" size={18} color={theme.colors.primary} />
+                    <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
+                  </View>
+                </TouchableRipple>
+                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                  <View style={styles.androidDockButtonInner}>
+                    <Icon source="repeat" size={18} color={theme.colors.primary} />
+                    <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
+                  </View>
+                </TouchableRipple>
+                <TouchableRipple onPress={() => onAddExpense(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.primary }]} borderless>
+                  <View style={styles.androidDockButtonInner}>
+                    <Icon source="plus" size={18} color="#fff" />
+                    <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Add</Text>
+                  </View>
+                </TouchableRipple>
+              </View>
+            </Animated.View>
+          )}
+      </View>
 
       <FilterSortSheet
         visible={showFilterSheet}
