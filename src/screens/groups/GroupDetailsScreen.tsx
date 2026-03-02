@@ -33,7 +33,6 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
   const compactStateRef = useRef(false);
-  const compactNotifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isCompact, setIsCompact] = useState(false);
   const [showFilterSheet, setShowFilterSheet] = useState(false);
   const [sortField, setSortField] = useState<SortField>('date');
@@ -76,8 +75,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
     extrapolate: 'clamp',
   });
 
-  const compactEnterThreshold = Platform.OS === 'ios' ? 64 : 60;
-  const compactExitThreshold = Platform.OS === 'ios' ? 30 : 34;
+  const compactEnterThreshold = Platform.OS === 'ios' ? 28 : 60;
+  const compactExitThreshold = Platform.OS === 'ios' ? 12 : 34;
   const compactThreshold = compactEnterThreshold;
   const compactDockHeight = 56;
   const tabBarHeight = Platform.OS === 'ios'
@@ -89,8 +88,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   const expandedActionsAnchorBottom = Platform.OS === 'android' ? 8 : 0;
 
   const iosExpandedOpacity = scrollY.interpolate({
-    inputRange: [0, 12, compactEnterThreshold - 24, compactEnterThreshold - 4],
-    outputRange: [1, 1, 0.12, 0],
+    inputRange: [0, 8, compactEnterThreshold - 10, compactEnterThreshold + 4],
+    outputRange: [1, 0.95, 0.18, 0],
     extrapolate: 'clamp',
   });
   const expandedOpacity = Platform.OS === 'ios' ? iosExpandedOpacity : labelOpacity;
@@ -120,37 +119,11 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   });
 
   useEffect(() => {
-    if (!onCompactModeChange) {
-      return;
-    }
-
-    if (compactNotifyTimerRef.current) {
-      clearTimeout(compactNotifyTimerRef.current);
-      compactNotifyTimerRef.current = null;
-    }
-
-    if (Platform.OS === 'ios') {
-      compactNotifyTimerRef.current = setTimeout(() => {
-        onCompactModeChange(isCompact);
-      }, isCompact ? 35 : 80);
-    } else {
-      onCompactModeChange(isCompact);
-    }
-
-    return () => {
-      if (compactNotifyTimerRef.current) {
-        clearTimeout(compactNotifyTimerRef.current);
-        compactNotifyTimerRef.current = null;
-      }
-    };
+    onCompactModeChange?.(isCompact);
   }, [isCompact, onCompactModeChange]);
 
   useEffect(() => {
     return () => {
-      if (compactNotifyTimerRef.current) {
-        clearTimeout(compactNotifyTimerRef.current);
-        compactNotifyTimerRef.current = null;
-      }
       onCompactModeChange?.(false);
     };
   }, [onCompactModeChange]);
