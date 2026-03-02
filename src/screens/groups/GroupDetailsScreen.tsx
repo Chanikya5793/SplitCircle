@@ -33,6 +33,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
   const compactStateRef = useRef(false);
+  const compactNotifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isCompact, setIsCompact] = useState(false);
   const [showFilterSheet, setShowFilterSheet] = useState(false);
   const [sortField, setSortField] = useState<SortField>('date');
@@ -75,15 +76,24 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
     extrapolate: 'clamp',
   });
 
-  const compactThreshold = Platform.OS === 'ios' ? 56 : 60;
+  const compactEnterThreshold = Platform.OS === 'ios' ? 64 : 60;
+  const compactExitThreshold = Platform.OS === 'ios' ? 30 : 34;
+  const compactThreshold = compactEnterThreshold;
   const compactDockHeight = 56;
   const tabBarHeight = Platform.OS === 'ios'
     ? Math.max(78, 50 + insets.bottom)
     : Math.max(70, 56 + insets.bottom);
-  const compactDockBottom = tabBarHeight + (Platform.OS === 'ios' ? 12 : 16);
+  const compactDockBottom = tabBarHeight + (Platform.OS === 'ios' ? 12 : 14);
   const expandedActionsBottom = compactDockBottom + compactDockHeight + 10;
-  const contentBottomPadding = Platform.OS === 'android' ? expandedActionsBottom + 172 : tabBarHeight + 188;
-  const expandedActionsAnchorBottom = Platform.OS === 'android' ? compactDockHeight + 12 : 0;
+  const contentBottomPadding = Platform.OS === 'android' ? expandedActionsBottom + 190 : tabBarHeight + 188;
+  const expandedActionsAnchorBottom = Platform.OS === 'android' ? 8 : 0;
+
+  const iosExpandedOpacity = scrollY.interpolate({
+    inputRange: [0, 12, compactEnterThreshold - 24, compactEnterThreshold - 4],
+    outputRange: [1, 1, 0.12, 0],
+    extrapolate: 'clamp',
+  });
+  const expandedOpacity = Platform.OS === 'ios' ? iosExpandedOpacity : labelOpacity;
 
   const compactDockOpacity = scrollY.interpolate({
     inputRange: [compactThreshold - 18, compactThreshold + 18],
@@ -99,7 +109,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
   const expandedTranslateY = scrollY.interpolate({
     inputRange: [0, compactThreshold + 20],
-    outputRange: [0, 16],
+    outputRange: [0, 20],
     extrapolate: 'clamp',
   });
 
@@ -110,11 +120,37 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   });
 
   useEffect(() => {
-    onCompactModeChange?.(isCompact);
+    if (!onCompactModeChange) {
+      return;
+    }
+
+    if (compactNotifyTimerRef.current) {
+      clearTimeout(compactNotifyTimerRef.current);
+      compactNotifyTimerRef.current = null;
+    }
+
+    if (Platform.OS === 'ios') {
+      compactNotifyTimerRef.current = setTimeout(() => {
+        onCompactModeChange(isCompact);
+      }, isCompact ? 35 : 80);
+    } else {
+      onCompactModeChange(isCompact);
+    }
+
+    return () => {
+      if (compactNotifyTimerRef.current) {
+        clearTimeout(compactNotifyTimerRef.current);
+        compactNotifyTimerRef.current = null;
+      }
+    };
   }, [isCompact, onCompactModeChange]);
 
   useEffect(() => {
     return () => {
+      if (compactNotifyTimerRef.current) {
+        clearTimeout(compactNotifyTimerRef.current);
+        compactNotifyTimerRef.current = null;
+      }
       onCompactModeChange?.(false);
     };
   }, [onCompactModeChange]);
@@ -411,7 +447,9 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
             useNativeDriver: true,
             listener: (event: any) => {
               const y = event.nativeEvent.contentOffset.y;
-              const shouldCompact = y > compactThreshold;
+              const shouldCompact = compactStateRef.current
+                ? y > compactExitThreshold
+                : y > compactEnterThreshold;
               if (shouldCompact !== compactStateRef.current) {
                 compactStateRef.current = shouldCompact;
                 setIsCompact(shouldCompact);
@@ -584,13 +622,13 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
       </Animated.ScrollView>
 
-      <View style={[styles.floatingActions, { bottom: compactDockBottom }]}>
+      <View style={[styles.floatingActions, Platform.OS === 'android' && styles.floatingActionsAndroid, { bottom: compactDockBottom }]}>
           {/* Expanded buttons - compact and appealing */}
           <Animated.View
             style={[
               styles.expandedContainer,
               {
-                opacity: labelOpacity,
+                opacity: expandedOpacity,
                 bottom: expandedActionsAnchorBottom,
                 transform: [{ translateY: expandedTranslateY }, { scale: expandedScale }],
               },
@@ -776,16 +814,20 @@ const styles = StyleSheet.create({
     right: 16,
     zIndex: 25,
   },
+  floatingActionsAndroid: {
+    left: 14,
+    right: 14,
+  },
   expandedContainer: {
     position: 'absolute',
     left: 0,
     right: 0,
     gap: 8,
-    paddingHorizontal: 4,
+    paddingHorizontal: 6,
   },
   actionGrid: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 12,
   },
   compactButton: {
     flex: 1,
@@ -820,19 +862,20 @@ const styles = StyleSheet.create({
   },
   compactContainer: {
     position: 'absolute',
+    borderRadius: 50,
     left: 0,
     right: 0,
-    bottom: 0,
+    bottom: 15, //modify if needed based on actual tab bar height from bottom padding of scrollview
     justifyContent: 'center',
   },
   androidDock: {
-    borderRadius: 22,
+    borderRadius: 50,
     borderWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    gap: 10,
     elevation: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
@@ -841,7 +884,7 @@ const styles = StyleSheet.create({
   },
   androidDockButton: {
     flex: 1,
-    borderRadius: 14,
+    borderRadius: 50,
     overflow: 'hidden',
   },
   androidUtilityButton: {
@@ -854,9 +897,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 3,
-    paddingVertical: 8,
-    paddingHorizontal: 8,
+    gap: 5,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
   stickyHeader: {
     position: 'absolute',
