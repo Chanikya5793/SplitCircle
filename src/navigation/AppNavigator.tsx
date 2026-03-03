@@ -6,7 +6,6 @@ import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { CallType, Group, PresenceStatus } from '@/models';
-import { lightHaptic } from '@/utils/haptics';
 import { ForgotPasswordScreen } from '@/screens/auth/ForgotPasswordScreen';
 import { RegisterScreen } from '@/screens/auth/RegisterScreen';
 import { SignInScreen } from '@/screens/auth/SignInScreen';
@@ -26,17 +25,18 @@ import { GroupListScreen } from '@/screens/groups/GroupListScreen';
 import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
+import { lightHaptic } from '@/utils/haptics';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
 import {
   DarkTheme,
   DefaultTheme,
   NavigationContainer,
   useNavigation,
 } from '@react-navigation/native';
-import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Platform, StyleSheet, type ImageSourcePropType, View } from 'react-native';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Platform, StyleSheet, View, type ImageSourcePropType } from 'react-native';
 import { Icon, Text, TouchableRipple } from 'react-native-paper';
 
 import { AppStack, AuthStack, NativeTab } from './stacks';
@@ -225,8 +225,10 @@ const GroupListRoute = ({ navigation }: any) => (
 
 const GroupDetailsRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
+  const groupId = group?.groupId;
   const { ensureGroupThread } = useChat();
   const [showAccessory, setShowAccessory] = useState(false);
+  const accessoryVisibleRef = useRef<boolean | null>(null);
 
   useLayoutEffect(() => {
     const parent = navigation.getParent();
@@ -234,10 +236,16 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
       return;
     }
 
-    if (group && showAccessory) {
+    const shouldShowAccessory = Boolean(groupId && showAccessory);
+    if (accessoryVisibleRef.current === shouldShowAccessory) {
+      return;
+    }
+
+    accessoryVisibleRef.current = shouldShowAccessory;
+    if (shouldShowAccessory) {
       parent.setOptions({
         bottomAccessory: ({ placement }: { placement: 'regular' | 'inline' }) => (
-          <GroupTabAccessory groupId={group.groupId} placement={placement} />
+          <GroupTabAccessory groupId={groupId!} placement={placement} />
         ),
       });
     } else {
@@ -246,8 +254,9 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
 
     return () => {
       parent.setOptions({ bottomAccessory: undefined });
+      accessoryVisibleRef.current = null;
     };
-  }, [navigation, group, showAccessory]);
+  }, [navigation, groupId, showAccessory]);
 
   if (!group) {
     return <LoadingScreen />;
