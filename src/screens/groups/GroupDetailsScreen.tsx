@@ -1,21 +1,21 @@
 import { BalanceSummary } from '@/components/BalanceSummary';
 import { DebtsList } from '@/components/DebtsList';
+import { ActivityTypeFilter, DateRange, FilterSortSheet, SortField, SortOrder } from '@/components/FilterSortSheet';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { SettlementCard } from '@/components/SettlementCard';
 import { ExpenseCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableExpenseCard } from '@/components/SwipeableExpenseCard';
-import { SettlementCard } from '@/components/SettlementCard';
-import { FilterSortSheet, SortField, SortOrder, ActivityTypeFilter, DateRange } from '@/components/FilterSortSheet';
 import { ROUTES } from '@/constants';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense, Group, Settlement } from '@/models';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
+import { BlurView } from 'expo-blur';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Platform, StyleSheet, View } from 'react-native';
-import { BlurView } from 'expo-blur';
-import { Text, TouchableRipple, IconButton, Icon } from 'react-native-paper';
+import { Icon, IconButton, Text, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface GroupDetailsScreenProps {
@@ -33,6 +33,16 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
   const compactStateRef = useRef(false);
+  const lastScrollYRef = useRef(0);
+  const scrollDirectionRef = useRef<'up' | 'down' | null>(null);
+  const directionalTravelRef = useRef(0);
+  // Discrete animated value: 0 = expanded, 1 = compact.
+  // Driven by Animated.spring on threshold cross — NOT by scrollY interpolation,
+  // so the bar never sits in a half-visible in-between state.
+  const compactAnim = useRef(new Animated.Value(0)).current;
+  // Stable ref so the scroll handler never captures a stale prop.
+  const onCompactModeChangeRef = useRef(onCompactModeChange);
+  onCompactModeChangeRef.current = onCompactModeChange;
   const [isCompact, setIsCompact] = useState(false);
   const [showFilterSheet, setShowFilterSheet] = useState(false);
   const [sortField, setSortField] = useState<SortField>('date');
@@ -69,15 +79,10 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
     lightHaptic();
   };
 
-  const labelOpacity = scrollY.interpolate({
-    inputRange: [0, 50],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
-
-  const compactEnterThreshold = Platform.OS === 'ios' ? 28 : 60;
-  const compactExitThreshold = Platform.OS === 'ios' ? 12 : 34;
-  const compactThreshold = compactEnterThreshold;
+  const compactEnterThreshold = Platform.OS === 'ios' ? 18 : 56;
+  const compactExitThreshold = Platform.OS === 'ios' ? 2 : 28;
+  const compactOnDownTravel = Platform.OS === 'ios' ? 12 : 22;
+  const expandOnUpTravel = Platform.OS === 'ios' ? 10 : 18;
   const compactDockHeight = 56;
   const tabBarHeight = Platform.OS === 'ios'
     ? Math.max(78, 50 + insets.bottom)
@@ -87,46 +92,48 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   const contentBottomPadding = Platform.OS === 'android' ? expandedActionsBottom + 190 : tabBarHeight + 188;
   const expandedActionsAnchorBottom = Platform.OS === 'android' ? 8 : 0;
 
-  const iosExpandedOpacity = scrollY.interpolate({
-    inputRange: [0, 8, compactEnterThreshold - 10, compactEnterThreshold + 4],
-    outputRange: [1, 0.95, 0.18, 0],
+  // All bar animations are derived from compactAnim (0=expanded, 1=compact).
+  // This means the bar jumps cleanly between states with spring physics
+  // instead of continuously following the raw scroll position.
+  const expandedOpacity = compactAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0],
     extrapolate: 'clamp',
   });
-  const expandedOpacity = Platform.OS === 'ios' ? iosExpandedOpacity : labelOpacity;
 
-  const compactDockOpacity = scrollY.interpolate({
-    inputRange: [compactThreshold - 18, compactThreshold + 18],
+  const expandedTranslateY = compactAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 12],
+    extrapolate: 'clamp',
+  });
+
+  const expandedScale = compactAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0.97],
+    extrapolate: 'clamp',
+  });
+
+  const compactDockOpacity = compactAnim.interpolate({
+    inputRange: [0, 1],
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
 
-  const compactDockTranslateY = scrollY.interpolate({
-    inputRange: [0, compactThreshold + 30],
-    outputRange: [20, 0],
+  const compactDockTranslateY = compactAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [14, 0],
     extrapolate: 'clamp',
   });
 
-  const expandedTranslateY = scrollY.interpolate({
-    inputRange: [0, compactThreshold + 20],
-    outputRange: [0, 20],
-    extrapolate: 'clamp',
-  });
-
-  const expandedScale = scrollY.interpolate({
-    inputRange: [0, compactThreshold + 20],
-    outputRange: [1, 0.98],
-    extrapolate: 'clamp',
-  });
-
-  useEffect(() => {
-    onCompactModeChange?.(isCompact);
-  }, [isCompact, onCompactModeChange]);
-
+  // Only notify parent on unmount to reset the accessory bar.
+  // Compact-mode transitions are reported directly from the scroll handler
+  // via onCompactModeChangeRef to avoid the useEffect render-chain.
   useEffect(() => {
     return () => {
-      onCompactModeChange?.(false);
+      onCompactModeChangeRef.current?.(false);
     };
-  }, [onCompactModeChange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -420,12 +427,86 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
             useNativeDriver: true,
             listener: (event: any) => {
               const y = event.nativeEvent.contentOffset.y;
-              const shouldCompact = compactStateRef.current
-                ? y > compactExitThreshold
-                : y > compactEnterThreshold;
+              const prevY = lastScrollYRef.current;
+              const deltaY = y - prevY;
+              const absoluteDelta = Math.abs(deltaY);
+              lastScrollYRef.current = y;
+
+              if (absoluteDelta < 0.5) {
+                return;
+              }
+
+              const direction: 'up' | 'down' = deltaY > 0 ? 'down' : 'up';
+              if (scrollDirectionRef.current !== direction) {
+                scrollDirectionRef.current = direction;
+                directionalTravelRef.current = 0;
+              }
+              directionalTravelRef.current += absoluteDelta;
+
+              let shouldCompact = compactStateRef.current;
+              if (y <= compactExitThreshold) {
+                shouldCompact = false;
+                directionalTravelRef.current = 0;
+              } else if (
+                !compactStateRef.current &&
+                direction === 'down' &&
+                y > compactEnterThreshold &&
+                directionalTravelRef.current >= compactOnDownTravel
+              ) {
+                shouldCompact = true;
+                directionalTravelRef.current = 0;
+              } else if (
+                compactStateRef.current &&
+                direction === 'up' &&
+                directionalTravelRef.current >= expandOnUpTravel
+              ) {
+                shouldCompact = false;
+                directionalTravelRef.current = 0;
+              }
+
               if (shouldCompact !== compactStateRef.current) {
                 compactStateRef.current = shouldCompact;
-                setIsCompact(shouldCompact);
+
+                if (shouldCompact) {
+                  // ── Collapsing: expanded → compact ──────────────────────────
+                  // 1. Disable expanded bar touches immediately so nothing is
+                  //    tappable while it fades out.
+                  setIsCompact(true);
+                  // 2. Animate the bar out first (fully completes on UI thread).
+                  Animated.spring(compactAnim, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                    damping: 22,
+                    mass: 0.65,
+                    stiffness: 230,
+                  }).start(({ finished }) => {
+                    // 3. Only show the native accessory AFTER the expanded bar
+                    //    is fully gone — no overlap possible.
+                    if (finished) {
+                      onCompactModeChangeRef.current?.(true);
+                    }
+                  });
+                } else {
+                  // ── Expanding: compact → expanded ────────────────────────────
+                  // 1. Tell the native accessory to hide immediately so it starts
+                  //    its own dismiss animation.
+                  onCompactModeChangeRef.current?.(false);
+                  // 2. Re-enable expanded bar touches right away.
+                  setIsCompact(false);
+                  // 3. Delay the fade-in by one animation frame so the native
+                  //    accessory has begun disappearing before the expanded bar
+                  //    becomes visible — eliminating the double-bar overlap.
+                  Animated.sequence([
+                    Animated.delay(60),
+                    Animated.spring(compactAnim, {
+                      toValue: 0,
+                      useNativeDriver: true,
+                      damping: 22,
+                      mass: 0.65,
+                      stiffness: 230,
+                    }),
+                  ]).start();
+                }
               }
             }
           }
