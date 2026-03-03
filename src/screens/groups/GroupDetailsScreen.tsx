@@ -80,9 +80,9 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   };
 
   const compactEnterThreshold = Platform.OS === 'ios' ? 18 : 56;
-  const compactExitThreshold = Platform.OS === 'ios' ? 2 : 28;
+  // Expand only when the user scrolls all the way back to the top.
+  const compactExitThreshold = Platform.OS === 'ios' ? 6 : 20;
   const compactOnDownTravel = Platform.OS === 'ios' ? 12 : 22;
-  const expandOnUpTravel = Platform.OS === 'ios' ? 10 : 18;
   const compactDockHeight = 56;
   const tabBarHeight = Platform.OS === 'ios'
     ? Math.max(78, 50 + insets.bottom)
@@ -445,6 +445,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
               let shouldCompact = compactStateRef.current;
               if (y <= compactExitThreshold) {
+                // Scrolled all the way back to top — restore expanded bar.
                 shouldCompact = false;
                 directionalTravelRef.current = 0;
               } else if (
@@ -455,14 +456,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               ) {
                 shouldCompact = true;
                 directionalTravelRef.current = 0;
-              } else if (
-                compactStateRef.current &&
-                direction === 'up' &&
-                directionalTravelRef.current >= expandOnUpTravel
-              ) {
-                shouldCompact = false;
-                directionalTravelRef.current = 0;
               }
+              // No mid-scroll upward expansion — bar stays compact until top.
 
               if (shouldCompact !== compactStateRef.current) {
                 compactStateRef.current = shouldCompact;
