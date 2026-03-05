@@ -35,8 +35,8 @@ import {
     useNavigation,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Platform, StyleSheet, View, type ImageSourcePropType } from 'react-native';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { Platform, StyleSheet, View, type ImageSourcePropType } from 'react-native';
 import { Icon, Text, TouchableRipple } from 'react-native-paper';
 
 import { AppStack, AuthStack, NativeTab } from './stacks';
@@ -74,32 +74,15 @@ const useGroupById = (groupId: string): GroupWithFallback => {
 type GroupTabAccessoryProps = {
   groupId: string;
   placement: 'regular' | 'inline';
-  // Animated.Value (0=expanded, 1=compact) driven directly by GroupDetailsScreen
-  // on the UI thread — morphs the accessory between its expanded and compact states.
-  compactAnim: Animated.Value;
 };
 
-const GroupTabAccessory = ({ groupId, placement, compactAnim }: GroupTabAccessoryProps) => {
+const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
   const navigation = useNavigation<any>();
   const { groups } = useGroups();
   const { ensureGroupThread } = useChat();
   const { theme } = useTheme();
 
   const group = useMemo(() => groups.find((item) => item.groupId === groupId), [groups, groupId]);
-
-  // Local state controls WHICH layout is rendered (and thus the native bar's height).
-  // Flips at compactAnim=0.5 — exactly when both opacity interpolations are at 0,
-  // so the height snap is invisible. The spring handles the smooth opacity fade.
-  const [isCompact, setIsCompact] = useState(false);
-  useEffect(() => {
-    const id = compactAnim.addListener(({ value }) => {
-      setIsCompact(c => {
-        const next = value > 0.5;
-        return next !== c ? next : c;
-      });
-    });
-    return () => compactAnim.removeListener(id);
-  }, [compactAnim]);
 
   if (!group) {
     return null;
@@ -141,18 +124,9 @@ const GroupTabAccessory = ({ groupId, placement, compactAnim }: GroupTabAccessor
     }
   };
 
-  // Opacity interpolations. The 0.1-wide gap between fade-out [0→0.45] and
-  // fade-in [0.55→1] ensures both layers are invisible when the local state
-  // flips at 0.5, making the height-snap completely invisible.
-  const activeOpacity = isCompact
-    ? compactAnim.interpolate({ inputRange: [0.55, 1], outputRange: [0, 1], extrapolate: 'clamp' })
-    : compactAnim.interpolate({ inputRange: [0, 0.45], outputRange: [1, 0], extrapolate: 'clamp' });
-  const slideY = isCompact
-    ? compactAnim.interpolate({ inputRange: [0, 1], outputRange: [-4, 0], extrapolate: 'clamp' })
-    : compactAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 4], extrapolate: 'clamp' });
-
+  // ── Inline placement: compact icon+label pills next to minimized tab icons ──
+  // System shows this when tab bar is minimized (scrolled down).
   if (placement === 'inline') {
-    // Inline placement stays compact — icon-only strip, no backgrounds needed.
     return (
       <View style={styles.groupAccessoryInlineWrap}>
         <View style={styles.groupAccessoryInlineGlass}>
@@ -188,93 +162,44 @@ const GroupTabAccessory = ({ groupId, placement, compactAnim }: GroupTabAccessor
     );
   }
 
-  // ── Regular placement: two layouts, only one mounted at a time ──────────────────────────
-  // `isCompact` (driven by the compactAnim listener) controls WHICH layout is rendered and
-  // therefore the native bar's height. compactAnim drives the opacity fade on whatever is
-  // currently rendered. The local state flips at value=0.5 — exactly when both opacity
-  // interpolations are 0 — so the height snap is fully hidden by the cross-fade.
+  // ── Regular placement: full expanded layout above the full-size tab bar ─────
+  // System shows this when the tab bar is NOT minimized (at rest / scrolled to top).
+  // Single row with all actions — the native bottomAccessory clips multi-row layouts.
   return (
-    <Animated.View
-      style={[styles.groupAccessoryRegularWrap, { opacity: activeOpacity, transform: [{ translateY: slideY }] }]}
-    >
-      {isCompact ? (
-        // ── Compact: single row of icon+label pills ──────────────────────────
-        <View style={styles.groupAccessoryRegularRow}>
-          <TouchableRipple onPress={openSettle} style={styles.groupAccessoryPill} borderless>
-            <View style={styles.groupAccessoryPillInner}>
-              <Icon source="handshake" size={17} color={theme.colors.primary} />
-              <Text variant="labelSmall" style={[styles.groupAccessoryPrimaryText, { color: theme.colors.onSurface }]}>Settle</Text>
-            </View>
-          </TouchableRipple>
-          <View style={styles.groupAccessoryUtilityCluster}>
-            <TouchableRipple onPress={openStats} style={styles.groupAccessoryUtilityButton} borderless>
-              <View style={styles.groupAccessoryUtilityButtonInner}>
-                <Icon source="chart-pie" size={17} color={theme.colors.primary} />
-                <Text variant="labelSmall" style={[styles.groupAccessoryUtilityText, { color: theme.colors.onSurface }]}>Stats</Text>
-              </View>
-            </TouchableRipple>
-            <TouchableRipple onPress={openChat} style={styles.groupAccessoryUtilityButton} borderless>
-              <View style={styles.groupAccessoryUtilityButtonInner}>
-                <Icon source="chat" size={17} color={theme.colors.primary} />
-                <Text variant="labelSmall" style={[styles.groupAccessoryUtilityText, { color: theme.colors.onSurface }]}>Chat</Text>
-              </View>
-            </TouchableRipple>
-            <TouchableRipple onPress={openBills} style={styles.groupAccessoryUtilityButton} borderless>
-              <View style={styles.groupAccessoryUtilityButtonInner}>
-                <Icon source="repeat" size={17} color={theme.colors.primary} />
-                <Text variant="labelSmall" style={[styles.groupAccessoryUtilityText, { color: theme.colors.onSurface }]}>Bills</Text>
-              </View>
-            </TouchableRipple>
+    <View style={styles.groupAccessoryRegularWrap}>
+      <View style={styles.groupAccessoryRegularRow}>
+        <TouchableRipple onPress={openSettle} style={styles.groupAccessoryRegularButton} borderless>
+          <View style={styles.groupAccessoryRegularButtonInner}>
+            <Icon source="handshake" size={22} color={theme.colors.primary} />
+            <Text style={[styles.groupAccessoryRegularButtonText, { color: theme.colors.onSurface }]}>Settle</Text>
           </View>
-          <TouchableRipple onPress={openAddExpense} style={styles.groupAccessoryPill} borderless>
-            <View style={styles.groupAccessoryPillInner}>
-              <Icon source="plus" size={17} color={theme.colors.primary} />
-              <Text variant="labelSmall" style={[styles.groupAccessoryPrimaryText, { color: theme.colors.onSurface }]}>Add</Text>
-            </View>
-          </TouchableRipple>
-        </View>
-      ) : (
-        // ── Expanded: two rows, no backgrounds — native liquid glass is the surface ──
-        <View style={styles.groupAccessoryExpandedLayout}>
-          {/* Row 1: Primary actions */}
-          <View style={styles.groupAccessoryExpandedPrimaryRow}>
-            <TouchableRipple onPress={openSettle} style={styles.groupAccessoryExpandedPill} borderless>
-              <View style={styles.groupAccessoryExpandedPillInner}>
-                <Icon source="handshake" size={18} color={theme.colors.primary} />
-                <Text style={[styles.groupAccessoryExpandedPillText, { color: theme.colors.onSurface }]}>Settle Up</Text>
-              </View>
-            </TouchableRipple>
-            <TouchableRipple onPress={openAddExpense} style={styles.groupAccessoryExpandedPill} borderless>
-              <View style={styles.groupAccessoryExpandedPillInner}>
-                <Icon source="plus-circle-outline" size={18} color={theme.colors.primary} />
-                <Text style={[styles.groupAccessoryExpandedPillText, { color: theme.colors.onSurface }]}>Add Expense</Text>
-              </View>
-            </TouchableRipple>
+        </TouchableRipple>
+        <TouchableRipple onPress={openStats} style={styles.groupAccessoryRegularButton} borderless>
+          <View style={styles.groupAccessoryRegularButtonInner}>
+            <Icon source="chart-pie" size={22} color={theme.colors.primary} />
+            <Text style={[styles.groupAccessoryRegularButtonText, { color: theme.colors.onSurface }]}>Stats</Text>
           </View>
-          {/* Row 2: Utility actions */}
-          <View style={styles.groupAccessoryExpandedUtilityRow}>
-            <TouchableRipple onPress={openStats} style={styles.groupAccessoryExpandedUtility} borderless>
-              <View style={styles.groupAccessoryExpandedUtilityInner}>
-                <Icon source="chart-pie" size={15} color={theme.colors.primary} />
-                <Text variant="labelSmall" style={[styles.groupAccessoryExpandedUtilityText, { color: theme.colors.onSurface }]}>Stats</Text>
-              </View>
-            </TouchableRipple>
-            <TouchableRipple onPress={openChat} style={styles.groupAccessoryExpandedUtility} borderless>
-              <View style={styles.groupAccessoryExpandedUtilityInner}>
-                <Icon source="chat" size={15} color={theme.colors.primary} />
-                <Text variant="labelSmall" style={[styles.groupAccessoryExpandedUtilityText, { color: theme.colors.onSurface }]}>Chat</Text>
-              </View>
-            </TouchableRipple>
-            <TouchableRipple onPress={openBills} style={styles.groupAccessoryExpandedUtility} borderless>
-              <View style={styles.groupAccessoryExpandedUtilityInner}>
-                <Icon source="repeat" size={15} color={theme.colors.primary} />
-                <Text variant="labelSmall" style={[styles.groupAccessoryExpandedUtilityText, { color: theme.colors.onSurface }]}>Bills</Text>
-              </View>
-            </TouchableRipple>
+        </TouchableRipple>
+        <TouchableRipple onPress={openChat} style={styles.groupAccessoryRegularButton} borderless>
+          <View style={styles.groupAccessoryRegularButtonInner}>
+            <Icon source="chat" size={22} color={theme.colors.primary} />
+            <Text style={[styles.groupAccessoryRegularButtonText, { color: theme.colors.onSurface }]}>Chat</Text>
           </View>
-        </View>
-      )}
-    </Animated.View>
+        </TouchableRipple>
+        <TouchableRipple onPress={openBills} style={styles.groupAccessoryRegularButton} borderless>
+          <View style={styles.groupAccessoryRegularButtonInner}>
+            <Icon source="repeat" size={22} color={theme.colors.primary} />
+            <Text style={[styles.groupAccessoryRegularButtonText, { color: theme.colors.onSurface }]}>Bills</Text>
+          </View>
+        </TouchableRipple>
+        <TouchableRipple onPress={openAddExpense} style={styles.groupAccessoryRegularButton} borderless>
+          <View style={styles.groupAccessoryRegularButtonInner}>
+            <Icon source="plus-circle-outline" size={22} color={theme.colors.primary} />
+            <Text style={[styles.groupAccessoryRegularButtonText, { color: theme.colors.onSurface }]}>Add</Text>
+          </View>
+        </TouchableRipple>
+      </View>
+    </View>
   );
 };
 
@@ -301,28 +226,23 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
   const groupId = group?.groupId;
   const { ensureGroupThread } = useChat();
-  // Shared animated value: 0 = expanded, 1 = compact.
-  // GroupDetailsScreen springs this directly on the UI thread — the native
-  // accessory morphs without any setOptions call or JS state bottleneck.
-  const compactAnim = useRef(new Animated.Value(0)).current;
 
   useLayoutEffect(() => {
     const parent = navigation.getParent();
     if (!parent || !IOS_NATIVE_ACCESSORY_SUPPORTED || !groupId) {
       return;
     }
-    // Mount the accessory once. The compactAnim value morphs its content in place.
+    // Mount the accessory once. The system handles the regular ↔ inline transition
+    // automatically via tabBarMinimizeBehavior: 'onScrollDown'.
     parent.setOptions({
       bottomAccessory: ({ placement }: { placement: 'regular' | 'inline' }) => (
-        <GroupTabAccessory groupId={groupId} placement={placement} compactAnim={compactAnim} />
+        <GroupTabAccessory groupId={groupId} placement={placement} />
       ),
     });
     return () => {
       parent.setOptions({ bottomAccessory: undefined });
     };
-  // Only re-run if groupId changes (navigating to a different group).
-  // compactAnim is a stable ref — never changes.
-  }, [navigation, groupId]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [navigation, groupId]);
 
   if (!group) {
     return <LoadingScreen />;
@@ -347,7 +267,6 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
       onAddExpense={() => navigation.navigate(ROUTES.APP.ADD_EXPENSE, { groupId: group.groupId })}
       onSettle={() => navigation.navigate(ROUTES.APP.SETTLEMENTS, { groupId: group.groupId })}
       onOpenChat={handleOpenChat}
-      compactAnim={compactAnim}
     />
   );
 };
@@ -722,107 +641,32 @@ const IncomingCallHandler = () => {
 };
 
 const styles = StyleSheet.create({
-  // Regular morphing wrapper — height is determined by whichever layout is rendered.
+  // Regular placement: single row with all 5 action buttons — large & tappable.
   groupAccessoryRegularWrap: {
     paddingHorizontal: 8,
-    paddingVertical: 6,
-  },
-  // Expanded layout container (in normal flow, 2 rows)
-  groupAccessoryExpandedLayout: {
-    gap: 6,
-  },
-  groupAccessoryExpandedPrimaryRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  groupAccessoryExpandedPill: {
-    flex: 1,
-    borderRadius: 50,
-    overflow: 'hidden',
-  },
-  groupAccessoryExpandedPillInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  groupAccessoryExpandedPillText: {
-    fontWeight: '700',
-    fontSize: 14,
-    lineHeight: 17,
-  },
-  groupAccessoryExpandedUtilityRow: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  groupAccessoryExpandedUtility: {
-    flex: 1,
-    borderRadius: 50,
-    overflow: 'hidden',
-  },
-  groupAccessoryExpandedUtilityInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 9,
-    paddingHorizontal: 8,
-  },
-  groupAccessoryExpandedUtilityText: {
-    fontWeight: '600',
-    fontSize: 12,
-    lineHeight: 14,
+    paddingVertical: 8,
   },
   groupAccessoryRegularRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-  },
-  groupAccessoryUtilityCluster: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 50,
-    paddingHorizontal: 0,
-    paddingVertical: 0,
-    gap: 4,
-    backgroundColor: 'transparent',
-  },
-  groupAccessoryUtilityButton: {
-    flex: 1,
-    borderRadius: 50,
-    overflow: 'hidden',
-  },
-  groupAccessoryUtilityButtonInner: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 4,
-    gap: 2,
-  },
-  groupAccessoryUtilityText: {
-    fontWeight: '600',
-    fontSize: 11,
-    lineHeight: 13,
-  },
-  groupAccessoryPill: {
-    borderRadius: 50,
-    overflow: 'hidden',
-  },
-  groupAccessoryPillInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
     gap: 6,
-    paddingVertical: 9,
-    paddingHorizontal: 14,
-    minWidth: 80,
   },
-  groupAccessoryPrimaryText: {
+  groupAccessoryRegularButton: {
+    flex: 1,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  groupAccessoryRegularButtonInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+  },
+  groupAccessoryRegularButtonText: {
     fontWeight: '700',
-    fontSize: 13,
-    lineHeight: 16,
+    fontSize: 11,
+    lineHeight: 14,
   },
   groupAccessoryInlineWrap: {
     paddingHorizontal: 8,

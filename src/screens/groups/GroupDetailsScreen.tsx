@@ -12,7 +12,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Expense, Group, Settlement } from '@/models';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Platform, StyleSheet, View } from 'react-native';
 import { Icon, IconButton, Text, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,25 +22,15 @@ interface GroupDetailsScreenProps {
   onAddExpense: (group: Group) => void;
   onSettle: (group: Group) => void;
   onOpenChat: (group: Group) => void;
-  // Animated.Value (0=expanded, 1=compact) owned by the navigator and shared
-  // here so we can morph the native accessory directly from the UI thread.
-  compactAnim?: Animated.Value;
 }
 
-export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, compactAnim: compactAnimProp }: GroupDetailsScreenProps) => {
+export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }: GroupDetailsScreenProps) => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { deleteExpense, deleteSettlement, loading } = useGroups();
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
-  const compactStateRef = useRef(false);
   const lastScrollYRef = useRef(0);
-  const scrollDirectionRef = useRef<'up' | 'down' | null>(null);
-  const directionalTravelRef = useRef(0);
-  // Stable ref to the navigator-owned compactAnim so the scroll handler can
-  // drive it directly without re-creating the Animated.event listener.
-  const compactAnimRef = useRef(compactAnimProp);
-  compactAnimRef.current = compactAnimProp;
   const [showFilterSheet, setShowFilterSheet] = useState(false);
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -76,25 +66,12 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
     lightHaptic();
   };
 
-  const compactEnterThreshold = Platform.OS === 'ios' ? 18 : 56;
-  // Expand only when the user scrolls all the way back to the top.
-  const compactExitThreshold = Platform.OS === 'ios' ? 6 : 20;
-  const compactOnDownTravel = Platform.OS === 'ios' ? 12 : 22;
   const tabBarHeight = Platform.OS === 'ios'
     ? Math.max(78, 50 + insets.bottom)
     : Math.max(70, 56 + insets.bottom);
   // On iOS the native accessory provides the action buttons — just add standard tab bar clearance.
   // On Android keep extra bottom breathing room since there is no native accessory.
   const contentBottomPadding = tabBarHeight + 180;
-
-  // Reset the shared compactAnim to expanded (0) when the screen unmounts so
-  // the next group visit starts in the correct expanded state.
-  useEffect(() => {
-    return () => {
-      compactAnimRef.current?.setValue(0);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -388,50 +365,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
             useNativeDriver: true,
             listener: (event: any) => {
               const y = event.nativeEvent.contentOffset.y;
-              const prevY = lastScrollYRef.current;
-              const deltaY = y - prevY;
-              const absoluteDelta = Math.abs(deltaY);
               lastScrollYRef.current = y;
-
-              if (absoluteDelta < 0.5) {
-                return;
-              }
-
-              const direction: 'up' | 'down' = deltaY > 0 ? 'down' : 'up';
-              if (scrollDirectionRef.current !== direction) {
-                scrollDirectionRef.current = direction;
-                directionalTravelRef.current = 0;
-              }
-              directionalTravelRef.current += absoluteDelta;
-
-              let shouldCompact = compactStateRef.current;
-              if (y <= compactExitThreshold) {
-                // Scrolled all the way back to top — restore expanded bar.
-                shouldCompact = false;
-                directionalTravelRef.current = 0;
-              } else if (
-                !compactStateRef.current &&
-                direction === 'down' &&
-                y > compactEnterThreshold &&
-                directionalTravelRef.current >= compactOnDownTravel
-              ) {
-                shouldCompact = true;
-                directionalTravelRef.current = 0;
-              }
-              // No mid-scroll upward expansion — bar stays compact until top.
-
-              if (shouldCompact !== compactStateRef.current) {
-                compactStateRef.current = shouldCompact;
-                // Single spring drives the entire morph: GroupTabAccessory uses
-                // compactAnim interpolations to cross-fade its expanded / compact layers.
-                Animated.spring(compactAnimRef.current!, {
-                  toValue: shouldCompact ? 1 : 0,
-                  useNativeDriver: true,
-                  damping: 28,
-                  mass: 0.4,
-                  stiffness: 380,
-                }).start();
-              }
             }
           }
         )}
