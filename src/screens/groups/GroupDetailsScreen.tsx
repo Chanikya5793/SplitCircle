@@ -12,7 +12,6 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Expense, Group, Settlement } from '@/models';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { BlurView } from 'expo-blur';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Platform, StyleSheet, View } from 'react-native';
 import { Icon, IconButton, Text, TouchableRipple } from 'react-native-paper';
@@ -23,10 +22,12 @@ interface GroupDetailsScreenProps {
   onAddExpense: (group: Group) => void;
   onSettle: (group: Group) => void;
   onOpenChat: (group: Group) => void;
-  onCompactModeChange?: (isCompact: boolean) => void;
+  // Animated.Value (0=expanded, 1=compact) owned by the navigator and shared
+  // here so we can morph the native accessory directly from the UI thread.
+  compactAnim?: Animated.Value;
 }
 
-export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, onCompactModeChange }: GroupDetailsScreenProps) => {
+export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, compactAnim: compactAnimProp }: GroupDetailsScreenProps) => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { deleteExpense, deleteSettlement, loading } = useGroups();
@@ -36,14 +37,10 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   const lastScrollYRef = useRef(0);
   const scrollDirectionRef = useRef<'up' | 'down' | null>(null);
   const directionalTravelRef = useRef(0);
-  // Discrete animated value: 0 = expanded, 1 = compact.
-  // Driven by Animated.spring on threshold cross — NOT by scrollY interpolation,
-  // so the bar never sits in a half-visible in-between state.
-  const compactAnim = useRef(new Animated.Value(0)).current;
-  // Stable ref so the scroll handler never captures a stale prop.
-  const onCompactModeChangeRef = useRef(onCompactModeChange);
-  onCompactModeChangeRef.current = onCompactModeChange;
-  const [isCompact, setIsCompact] = useState(false);
+  // Stable ref to the navigator-owned compactAnim so the scroll handler can
+  // drive it directly without re-creating the Animated.event listener.
+  const compactAnimRef = useRef(compactAnimProp);
+  compactAnimRef.current = compactAnimProp;
   const [showFilterSheet, setShowFilterSheet] = useState(false);
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -83,54 +80,18 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   // Expand only when the user scrolls all the way back to the top.
   const compactExitThreshold = Platform.OS === 'ios' ? 6 : 20;
   const compactOnDownTravel = Platform.OS === 'ios' ? 12 : 22;
-  const compactDockHeight = 56;
   const tabBarHeight = Platform.OS === 'ios'
     ? Math.max(78, 50 + insets.bottom)
     : Math.max(70, 56 + insets.bottom);
-  const compactDockBottom = tabBarHeight + (Platform.OS === 'ios' ? 12 : 14);
-  const expandedActionsBottom = compactDockBottom + compactDockHeight + 10;
-  const contentBottomPadding = Platform.OS === 'android' ? expandedActionsBottom + 190 : tabBarHeight + 188;
-  const expandedActionsAnchorBottom = Platform.OS === 'android' ? 8 : 0;
+  // On iOS the native accessory provides the action buttons — just add standard tab bar clearance.
+  // On Android keep extra bottom breathing room since there is no native accessory.
+  const contentBottomPadding = tabBarHeight + 180;
 
-  // All bar animations are derived from compactAnim (0=expanded, 1=compact).
-  // This means the bar jumps cleanly between states with spring physics
-  // instead of continuously following the raw scroll position.
-  const expandedOpacity = compactAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
-
-  const expandedTranslateY = compactAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 12],
-    extrapolate: 'clamp',
-  });
-
-  const expandedScale = compactAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 0.97],
-    extrapolate: 'clamp',
-  });
-
-  const compactDockOpacity = compactAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
-
-  const compactDockTranslateY = compactAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [14, 0],
-    extrapolate: 'clamp',
-  });
-
-  // Only notify parent on unmount to reset the accessory bar.
-  // Compact-mode transitions are reported directly from the scroll handler
-  // via onCompactModeChangeRef to avoid the useEffect render-chain.
+  // Reset the shared compactAnim to expanded (0) when the screen unmounts so
+  // the next group visit starts in the correct expanded state.
   useEffect(() => {
     return () => {
-      onCompactModeChangeRef.current?.(false);
+      compactAnimRef.current?.setValue(0);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -461,47 +422,15 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
               if (shouldCompact !== compactStateRef.current) {
                 compactStateRef.current = shouldCompact;
-
-                if (shouldCompact) {
-                  // ── Collapsing: expanded → compact ──────────────────────────
-                  // 1. Disable expanded bar touches immediately so nothing is
-                  //    tappable while it fades out.
-                  setIsCompact(true);
-                  // 2. Animate the bar out first (fully completes on UI thread).
-                  Animated.spring(compactAnim, {
-                    toValue: 1,
-                    useNativeDriver: true,
-                    damping: 22,
-                    mass: 0.65,
-                    stiffness: 230,
-                  }).start(({ finished }) => {
-                    // 3. Only show the native accessory AFTER the expanded bar
-                    //    is fully gone — no overlap possible.
-                    if (finished) {
-                      onCompactModeChangeRef.current?.(true);
-                    }
-                  });
-                } else {
-                  // ── Expanding: compact → expanded ────────────────────────────
-                  // 1. Tell the native accessory to hide immediately so it starts
-                  //    its own dismiss animation.
-                  onCompactModeChangeRef.current?.(false);
-                  // 2. Re-enable expanded bar touches right away.
-                  setIsCompact(false);
-                  // 3. Delay the fade-in by one animation frame so the native
-                  //    accessory has begun disappearing before the expanded bar
-                  //    becomes visible — eliminating the double-bar overlap.
-                  Animated.sequence([
-                    Animated.delay(60),
-                    Animated.spring(compactAnim, {
-                      toValue: 0,
-                      useNativeDriver: true,
-                      damping: 22,
-                      mass: 0.65,
-                      stiffness: 230,
-                    }),
-                  ]).start();
-                }
+                // Single spring drives the entire morph: GroupTabAccessory uses
+                // compactAnim interpolations to cross-fade its expanded / compact layers.
+                Animated.spring(compactAnimRef.current!, {
+                  toValue: shouldCompact ? 1 : 0,
+                  useNativeDriver: true,
+                  damping: 28,
+                  mass: 0.4,
+                  stiffness: 380,
+                }).start();
               }
             }
           }
@@ -671,136 +600,6 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
       </Animated.ScrollView>
 
-      <View style={[styles.floatingActions, Platform.OS === 'android' && styles.floatingActionsAndroid, { bottom: compactDockBottom }]}>
-          {/* Expanded buttons - compact and appealing */}
-          <Animated.View
-            style={[
-              styles.expandedContainer,
-              {
-                opacity: expandedOpacity,
-                bottom: expandedActionsAnchorBottom,
-                transform: [{ translateY: expandedTranslateY }, { scale: expandedScale }],
-              },
-            ]}
-            pointerEvents={isCompact ? 'none' : 'auto'}
-          >
-            <View style={styles.actionGrid}>
-              <TouchableRipple
-                onPress={() => { lightHaptic(); onSettle(group); }}
-                style={styles.compactButton}
-                borderless
-              >
-                <View style={[styles.compactButtonInner, { backgroundColor: '#10b981' }]}>
-                  <IconButton icon="handshake" size={20} iconColor="#fff" style={{ margin: 0 }} />
-                  <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Settle Up</Text>
-                </View>
-              </TouchableRipple>
-
-              <TouchableRipple
-                onPress={() => { lightHaptic(); onAddExpense(group); }}
-                style={styles.compactButton}
-                borderless
-              >
-                <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.primary }]}>
-                  <IconButton icon="plus" size={20} iconColor="#fff" style={{ margin: 0 }} />
-                  <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Add Expense</Text>
-                </View>
-              </TouchableRipple>
-            </View>
-
-            <View style={styles.actionGrid}>
-              <TouchableRipple
-                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId }); }}
-                style={styles.compactButtonSmall}
-                borderless
-              >
-                <View style={{ flex: 1 }}>
-                  <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-                  <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
-                    <IconButton icon="chart-pie" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
-                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
-                  </View>
-                </View>
-              </TouchableRipple>
-
-              <TouchableRipple
-                onPress={() => { lightHaptic(); onOpenChat(group); }}
-                style={styles.compactButtonSmall}
-                borderless
-              >
-                <View style={{ flex: 1 }}>
-                  <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-                  <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
-                    <IconButton icon="chat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
-                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
-                  </View>
-                </View>
-              </TouchableRipple>
-
-              <TouchableRipple
-                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId }); }}
-                style={styles.compactButtonSmall}
-                borderless
-              >
-                <View style={{ flex: 1 }}>
-                  <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-                  <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
-                    <IconButton icon="repeat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
-                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
-                  </View>
-                </View>
-              </TouchableRipple>
-            </View>
-          </Animated.View>
-
-          {Platform.OS === 'android' && (
-            <Animated.View
-              style={[
-                styles.compactContainer,
-                {
-                  opacity: compactDockOpacity,
-                  height: compactDockHeight,
-                  transform: [{ translateY: compactDockTranslateY }],
-                },
-              ]}
-              pointerEvents={isCompact ? 'auto' : 'none'}
-            >
-              <View style={[styles.androidDock, { backgroundColor: isDark ? 'rgba(18,22,30,0.96)' : 'rgba(252,252,255,0.98)', borderColor: isDark ? 'rgba(148,163,184,0.24)' : 'rgba(15,23,42,0.14)' }]}>
-                <TouchableRipple onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: '#10b981' }]} borderless>
-                  <View style={styles.androidDockButtonInner}>
-                    <Icon source="handshake" size={18} color="#fff" />
-                    <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Settle</Text>
-                  </View>
-                </TouchableRipple>
-                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
-                  <View style={styles.androidDockButtonInner}>
-                    <Icon source="chart-pie" size={18} color={theme.colors.primary} />
-                    <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
-                  </View>
-                </TouchableRipple>
-                <TouchableRipple onPress={() => onOpenChat(group)} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
-                  <View style={styles.androidDockButtonInner}>
-                    <Icon source="chat" size={18} color={theme.colors.primary} />
-                    <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
-                  </View>
-                </TouchableRipple>
-                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
-                  <View style={styles.androidDockButtonInner}>
-                    <Icon source="repeat" size={18} color={theme.colors.primary} />
-                    <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
-                  </View>
-                </TouchableRipple>
-                <TouchableRipple onPress={() => onAddExpense(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.primary }]} borderless>
-                  <View style={styles.androidDockButtonInner}>
-                    <Icon source="plus" size={18} color="#fff" />
-                    <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Add</Text>
-                  </View>
-                </TouchableRipple>
-              </View>
-            </Animated.View>
-          )}
-      </View>
-
       <FilterSortSheet
         visible={showFilterSheet}
         onClose={() => setShowFilterSheet(false)}
@@ -856,99 +655,6 @@ const styles = StyleSheet.create({
   },
   empty: {
     // color handled dynamically
-  },
-  floatingActions: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    zIndex: 25,
-  },
-  floatingActionsAndroid: {
-    left: 14,
-    right: 14,
-  },
-  expandedContainer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    gap: 8,
-    paddingHorizontal: 6,
-  },
-  actionGrid: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  compactButton: {
-    flex: 1,
-    borderRadius: 50,
-    overflow: 'hidden',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.12,
-    shadowRadius: 3,
-  },
-  compactButtonInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    gap: 4,
-  },
-  compactButtonSmall: {
-    flex: 1,
-    borderRadius: 50,
-    overflow: 'hidden',
-  },
-  compactButtonSmallInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 6,
-    gap: 2,
-  },
-  compactContainer: {
-    position: 'absolute',
-    borderRadius: 50,
-    left: 0,
-    right: 0,
-    bottom: 15, //modify if needed based on actual tab bar height from bottom padding of scrollview
-    justifyContent: 'center',
-  },
-  androidDock: {
-    borderRadius: 50,
-    borderWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    gap: 10,
-    elevation: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-  },
-  androidDockButton: {
-    flex: 1,
-    borderRadius: 50,
-    overflow: 'hidden',
-  },
-  androidUtilityButton: {
-    flex: 0.95,
-  },
-  androidPrimaryPill: {
-    flex: 1.25,
-  },
-  androidDockButtonInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
   },
   stickyHeader: {
     position: 'absolute',
