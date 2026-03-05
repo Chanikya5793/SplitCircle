@@ -162,40 +162,44 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
     );
   }
 
-  // ── Regular placement: full expanded layout above the full-size tab bar ─────
-  // System shows this when the tab bar is NOT minimized (at rest / scrolled to top).
-  // Single row with all actions — the native bottomAccessory clips multi-row layouts.
+  // ── Regular placement: full layout above the full-size tab bar ──────────────
+  // Two primary pill buttons (Settle Up, Add Expense) bookend three compact
+  // icon-only circle buttons (Stats, Chat, Bills) — clean visual hierarchy.
   return (
     <View style={styles.groupAccessoryRegularWrap}>
       <View style={styles.groupAccessoryRegularRow}>
-        <TouchableRipple onPress={openSettle} style={styles.groupAccessoryRegularButton} borderless>
-          <View style={styles.groupAccessoryRegularButtonInner}>
-            <Icon source="handshake" size={22} color={theme.colors.primary} />
-            <Text style={[styles.groupAccessoryRegularButtonText, { color: theme.colors.onSurface }]}>Settle</Text>
+        {/* Primary: Settle Up */}
+        <TouchableRipple onPress={openSettle} style={styles.groupAccessoryPrimaryPill} borderless>
+          <View style={styles.groupAccessoryPrimaryPillInner}>
+            <Icon source="handshake" size={18} color={theme.colors.primary} />
+            <Text style={[styles.groupAccessoryPrimaryPillText, { color: theme.colors.onSurface }]}>Settle Up</Text>
           </View>
         </TouchableRipple>
-        <TouchableRipple onPress={openStats} style={styles.groupAccessoryRegularButton} borderless>
-          <View style={styles.groupAccessoryRegularButtonInner}>
-            <Icon source="chart-pie" size={22} color={theme.colors.primary} />
-            <Text style={[styles.groupAccessoryRegularButtonText, { color: theme.colors.onSurface }]}>Stats</Text>
-          </View>
-        </TouchableRipple>
-        <TouchableRipple onPress={openChat} style={styles.groupAccessoryRegularButton} borderless>
-          <View style={styles.groupAccessoryRegularButtonInner}>
-            <Icon source="chat" size={22} color={theme.colors.primary} />
-            <Text style={[styles.groupAccessoryRegularButtonText, { color: theme.colors.onSurface }]}>Chat</Text>
-          </View>
-        </TouchableRipple>
-        <TouchableRipple onPress={openBills} style={styles.groupAccessoryRegularButton} borderless>
-          <View style={styles.groupAccessoryRegularButtonInner}>
-            <Icon source="repeat" size={22} color={theme.colors.primary} />
-            <Text style={[styles.groupAccessoryRegularButtonText, { color: theme.colors.onSurface }]}>Bills</Text>
-          </View>
-        </TouchableRipple>
-        <TouchableRipple onPress={openAddExpense} style={styles.groupAccessoryRegularButton} borderless>
-          <View style={styles.groupAccessoryRegularButtonInner}>
-            <Icon source="plus-circle-outline" size={22} color={theme.colors.primary} />
-            <Text style={[styles.groupAccessoryRegularButtonText, { color: theme.colors.onSurface }]}>Add</Text>
+
+        {/* Secondary: Stats · Chat · Bills */}
+        <View style={styles.groupAccessorySecondaryCluster}>
+          <TouchableRipple onPress={openStats} style={styles.groupAccessoryCircle} borderless>
+            <View style={styles.groupAccessoryCircleInner}>
+              <Icon source="chart-pie" size={20} color={theme.colors.primary} />
+            </View>
+          </TouchableRipple>
+          <TouchableRipple onPress={openChat} style={styles.groupAccessoryCircle} borderless>
+            <View style={styles.groupAccessoryCircleInner}>
+              <Icon source="chat" size={20} color={theme.colors.primary} />
+            </View>
+          </TouchableRipple>
+          <TouchableRipple onPress={openBills} style={styles.groupAccessoryCircle} borderless>
+            <View style={styles.groupAccessoryCircleInner}>
+              <Icon source="repeat" size={20} color={theme.colors.primary} />
+            </View>
+          </TouchableRipple>
+        </View>
+
+        {/* Primary: Add Expense */}
+        <TouchableRipple onPress={openAddExpense} style={styles.groupAccessoryPrimaryPill} borderless>
+          <View style={styles.groupAccessoryPrimaryPillInner}>
+            <Icon source="plus-circle-outline" size={18} color={theme.colors.primary} />
+            <Text style={[styles.groupAccessoryPrimaryPillText, { color: theme.colors.onSurface }]}>Add</Text>
           </View>
         </TouchableRipple>
       </View>
@@ -641,32 +645,51 @@ const IncomingCallHandler = () => {
 };
 
 const styles = StyleSheet.create({
-  // Regular placement: single row with all 5 action buttons — large & tappable.
+  // Regular placement: primary pills + secondary icon circles.
   groupAccessoryRegularWrap: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     paddingVertical: 8,
   },
   groupAccessoryRegularRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
-  groupAccessoryRegularButton: {
+  // Primary action pills (Settle Up, Add Expense)
+  groupAccessoryPrimaryPill: {
     flex: 1,
     borderRadius: 50,
     overflow: 'hidden',
   },
-  groupAccessoryRegularButtonInner: {
+  groupAccessoryPrimaryPillInner: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    gap: 6,
     paddingVertical: 12,
-    paddingHorizontal: 4,
+    paddingHorizontal: 14,
   },
-  groupAccessoryRegularButtonText: {
+  groupAccessoryPrimaryPillText: {
     fontWeight: '700',
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 14,
+    lineHeight: 17,
+  },
+  // Secondary icon cluster (Stats, Chat, Bills)
+  groupAccessorySecondaryCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  groupAccessoryCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    overflow: 'hidden',
+  },
+  groupAccessoryCircleInner: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   groupAccessoryInlineWrap: {
     paddingHorizontal: 8,
