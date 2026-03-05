@@ -12,7 +12,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Expense, Group, Settlement } from '@/models';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Platform, StyleSheet, View } from 'react-native';
 import { Icon, IconButton, Text, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,15 +22,21 @@ interface GroupDetailsScreenProps {
   onAddExpense: (group: Group) => void;
   onSettle: (group: Group) => void;
   onOpenChat: (group: Group) => void;
+  compactAnim?: Animated.Value;
 }
 
-export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }: GroupDetailsScreenProps) => {
+export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, compactAnim: compactAnimProp }: GroupDetailsScreenProps) => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { deleteExpense, deleteSettlement, loading } = useGroups();
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const compactStateRef = useRef(false);
   const lastScrollYRef = useRef(0);
+  const scrollDirectionRef = useRef<'up' | 'down' | null>(null);
+  const directionalTravelRef = useRef(0);
+  const compactAnimRef = useRef(compactAnimProp);
+  compactAnimRef.current = compactAnimProp;
   const [showFilterSheet, setShowFilterSheet] = useState(false);
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -69,9 +75,14 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
   const tabBarHeight = Platform.OS === 'ios'
     ? Math.max(78, 50 + insets.bottom)
     : Math.max(70, 56 + insets.bottom);
-  // On iOS the native accessory provides the action buttons — just add standard tab bar clearance.
-  // On Android keep extra bottom breathing room since there is no native accessory.
   const contentBottomPadding = tabBarHeight + 180;
+
+  // Reset compactAnim to expanded when unmounting.
+  useEffect(() => {
+    return () => {
+      compactAnimRef.current?.setValue(0);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -365,7 +376,44 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
             useNativeDriver: true,
             listener: (event: any) => {
               const y = event.nativeEvent.contentOffset.y;
+              const prevY = lastScrollYRef.current;
+              const deltaY = y - prevY;
+              const absDelta = Math.abs(deltaY);
               lastScrollYRef.current = y;
+
+              if (absDelta < 0.5) return;
+
+              const dir: 'up' | 'down' = deltaY > 0 ? 'down' : 'up';
+              if (scrollDirectionRef.current !== dir) {
+                scrollDirectionRef.current = dir;
+                directionalTravelRef.current = 0;
+              }
+              directionalTravelRef.current += absDelta;
+
+              let shouldCompact = compactStateRef.current;
+              if (y <= 6) {
+                shouldCompact = false;
+                directionalTravelRef.current = 0;
+              } else if (
+                !compactStateRef.current &&
+                dir === 'down' &&
+                y > 18 &&
+                directionalTravelRef.current >= 12
+              ) {
+                shouldCompact = true;
+                directionalTravelRef.current = 0;
+              }
+
+              if (shouldCompact !== compactStateRef.current) {
+                compactStateRef.current = shouldCompact;
+                Animated.spring(compactAnimRef.current!, {
+                  toValue: shouldCompact ? 1 : 0,
+                  useNativeDriver: true,
+                  damping: 28,
+                  mass: 0.4,
+                  stiffness: 380,
+                }).start();
+              }
             }
           }
         )}

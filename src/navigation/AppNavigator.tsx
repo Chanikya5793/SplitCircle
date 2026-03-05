@@ -35,8 +35,8 @@ import {
     useNavigation,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Platform, StyleSheet, View, type ImageSourcePropType } from 'react-native';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Platform, StyleSheet, View, type ImageSourcePropType } from 'react-native';
 import { Icon, Text, TouchableRipple } from 'react-native-paper';
 
 import { AppStack, AuthStack, NativeTab } from './stacks';
@@ -74,15 +74,29 @@ const useGroupById = (groupId: string): GroupWithFallback => {
 type GroupTabAccessoryProps = {
   groupId: string;
   placement: 'regular' | 'inline';
+  compactAnim: Animated.Value;
 };
 
-const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
+const GroupTabAccessory = ({ groupId, placement, compactAnim }: GroupTabAccessoryProps) => {
   const navigation = useNavigation<any>();
   const { groups } = useGroups();
   const { ensureGroupThread } = useChat();
   const { theme } = useTheme();
 
   const group = useMemo(() => groups.find((item) => item.groupId === groupId), [groups, groupId]);
+
+  // isCompact flips at 0.5 — exactly when both opacity interpolations are 0,
+  // so the height snap between 2-row and 1-row is invisible.
+  const [isCompact, setIsCompact] = useState(false);
+  useEffect(() => {
+    const id = compactAnim.addListener(({ value }) => {
+      setIsCompact(c => {
+        const next = value > 0.5;
+        return next !== c ? next : c;
+      });
+    });
+    return () => compactAnim.removeListener(id);
+  }, [compactAnim]);
 
   if (!group) {
     return null;
@@ -124,8 +138,7 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
     }
   };
 
-  // ── Inline placement: compact icon+label pills next to minimized tab icons ──
-  // System shows this when tab bar is minimized (scrolled down).
+  // Inline placement — same compact strip for when the system does minimize.
   if (placement === 'inline') {
     return (
       <View style={styles.groupAccessoryInlineWrap}>
@@ -162,48 +175,90 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
     );
   }
 
-  // ── Regular placement: full layout above the full-size tab bar ──────────────
-  // Two primary pill buttons (Settle Up, Add Expense) bookend three compact
-  // icon-only circle buttons (Stats, Chat, Bills) — clean visual hierarchy.
-  return (
-    <View style={styles.groupAccessoryRegularWrap}>
-      <View style={styles.groupAccessoryRegularRow}>
-        {/* Primary: Settle Up */}
-        <TouchableRipple onPress={openSettle} style={styles.groupAccessoryPrimaryPill} borderless>
-          <View style={styles.groupAccessoryPrimaryPillInner}>
-            <Icon source="handshake" size={18} color={theme.colors.primary} />
-            <Text style={[styles.groupAccessoryPrimaryPillText, { color: theme.colors.onSurface }]}>Settle Up</Text>
-          </View>
-        </TouchableRipple>
+  // ── Regular placement: morphs between expanded (2-row) and compact (1-row) ──
+  // compactAnim drives opacity cross-fade; isCompact controls which layout is
+  // mounted (and therefore the native bar's measured height). The state flips at
+  // compactAnim=0.5 when both layers are at opacity 0, hiding the height snap.
+  const activeOpacity = isCompact
+    ? compactAnim.interpolate({ inputRange: [0.55, 1], outputRange: [0, 1], extrapolate: 'clamp' })
+    : compactAnim.interpolate({ inputRange: [0, 0.45], outputRange: [1, 0], extrapolate: 'clamp' });
 
-        {/* Secondary: Stats · Chat · Bills */}
-        <View style={styles.groupAccessorySecondaryCluster}>
-          <TouchableRipple onPress={openStats} style={styles.groupAccessoryCircle} borderless>
-            <View style={styles.groupAccessoryCircleInner}>
-              <Icon source="chart-pie" size={20} color={theme.colors.primary} />
+  return (
+    <Animated.View style={[styles.groupAccessoryRegularWrap, { opacity: activeOpacity }]}>
+      {isCompact ? (
+        // ── Compact: single row, all 5 as icon+label pills ─────────────────
+        <View style={styles.groupAccessoryCompactRow}>
+          <TouchableRipple onPress={openSettle} style={styles.groupAccessoryCompactPill} borderless>
+            <View style={styles.groupAccessoryCompactPillInner}>
+              <Icon source="handshake" size={17} color={theme.colors.primary} />
+              <Text style={[styles.groupAccessoryCompactText, { color: theme.colors.onSurface }]}>Settle</Text>
             </View>
           </TouchableRipple>
-          <TouchableRipple onPress={openChat} style={styles.groupAccessoryCircle} borderless>
-            <View style={styles.groupAccessoryCircleInner}>
-              <Icon source="chat" size={20} color={theme.colors.primary} />
+          <TouchableRipple onPress={openStats} style={styles.groupAccessoryCompactPill} borderless>
+            <View style={styles.groupAccessoryCompactPillInner}>
+              <Icon source="chart-pie" size={17} color={theme.colors.primary} />
+              <Text style={[styles.groupAccessoryCompactText, { color: theme.colors.onSurface }]}>Stats</Text>
             </View>
           </TouchableRipple>
-          <TouchableRipple onPress={openBills} style={styles.groupAccessoryCircle} borderless>
-            <View style={styles.groupAccessoryCircleInner}>
-              <Icon source="repeat" size={20} color={theme.colors.primary} />
+          <TouchableRipple onPress={openChat} style={styles.groupAccessoryCompactPill} borderless>
+            <View style={styles.groupAccessoryCompactPillInner}>
+              <Icon source="chat" size={17} color={theme.colors.primary} />
+              <Text style={[styles.groupAccessoryCompactText, { color: theme.colors.onSurface }]}>Chat</Text>
+            </View>
+          </TouchableRipple>
+          <TouchableRipple onPress={openBills} style={styles.groupAccessoryCompactPill} borderless>
+            <View style={styles.groupAccessoryCompactPillInner}>
+              <Icon source="repeat" size={17} color={theme.colors.primary} />
+              <Text style={[styles.groupAccessoryCompactText, { color: theme.colors.onSurface }]}>Bills</Text>
+            </View>
+          </TouchableRipple>
+          <TouchableRipple onPress={openAddExpense} style={styles.groupAccessoryCompactPill} borderless>
+            <View style={styles.groupAccessoryCompactPillInner}>
+              <Icon source="plus" size={17} color={theme.colors.primary} />
+              <Text style={[styles.groupAccessoryCompactText, { color: theme.colors.onSurface }]}>Add</Text>
             </View>
           </TouchableRipple>
         </View>
-
-        {/* Primary: Add Expense */}
-        <TouchableRipple onPress={openAddExpense} style={styles.groupAccessoryPrimaryPill} borderless>
-          <View style={styles.groupAccessoryPrimaryPillInner}>
-            <Icon source="plus-circle-outline" size={18} color={theme.colors.primary} />
-            <Text style={[styles.groupAccessoryPrimaryPillText, { color: theme.colors.onSurface }]}>Add</Text>
+      ) : (
+        // ── Expanded: 2 rows — big primaries on top, utilities below ───────
+        <>
+          <View style={styles.groupAccessoryPrimaryRow}>
+            <TouchableRipple onPress={openSettle} style={styles.groupAccessoryPrimaryPill} borderless>
+              <View style={styles.groupAccessoryPrimaryPillInner}>
+                <Icon source="handshake" size={20} color={theme.colors.primary} />
+                <Text style={[styles.groupAccessoryPrimaryPillText, { color: theme.colors.onSurface }]}>Settle Up</Text>
+              </View>
+            </TouchableRipple>
+            <TouchableRipple onPress={openAddExpense} style={styles.groupAccessoryPrimaryPill} borderless>
+              <View style={styles.groupAccessoryPrimaryPillInner}>
+                <Icon source="plus-circle-outline" size={20} color={theme.colors.primary} />
+                <Text style={[styles.groupAccessoryPrimaryPillText, { color: theme.colors.onSurface }]}>Add Expense</Text>
+              </View>
+            </TouchableRipple>
           </View>
-        </TouchableRipple>
-      </View>
-    </View>
+          <View style={styles.groupAccessoryUtilityRow}>
+            <TouchableRipple onPress={openStats} style={styles.groupAccessoryUtilityPill} borderless>
+              <View style={styles.groupAccessoryUtilityPillInner}>
+                <Icon source="chart-pie" size={16} color={theme.colors.primary} />
+                <Text style={[styles.groupAccessoryUtilityPillText, { color: theme.colors.onSurface }]}>Stats</Text>
+              </View>
+            </TouchableRipple>
+            <TouchableRipple onPress={openChat} style={styles.groupAccessoryUtilityPill} borderless>
+              <View style={styles.groupAccessoryUtilityPillInner}>
+                <Icon source="chat" size={16} color={theme.colors.primary} />
+                <Text style={[styles.groupAccessoryUtilityPillText, { color: theme.colors.onSurface }]}>Chat</Text>
+              </View>
+            </TouchableRipple>
+            <TouchableRipple onPress={openBills} style={styles.groupAccessoryUtilityPill} borderless>
+              <View style={styles.groupAccessoryUtilityPillInner}>
+                <Icon source="repeat" size={16} color={theme.colors.primary} />
+                <Text style={[styles.groupAccessoryUtilityPillText, { color: theme.colors.onSurface }]}>Bills</Text>
+              </View>
+            </TouchableRipple>
+          </View>
+        </>
+      )}
+    </Animated.View>
   );
 };
 
@@ -230,23 +285,22 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
   const groupId = group?.groupId;
   const { ensureGroupThread } = useChat();
+  const compactAnim = useRef(new Animated.Value(0)).current;
 
   useLayoutEffect(() => {
     const parent = navigation.getParent();
     if (!parent || !IOS_NATIVE_ACCESSORY_SUPPORTED || !groupId) {
       return;
     }
-    // Mount the accessory once. The system handles the regular ↔ inline transition
-    // automatically via tabBarMinimizeBehavior: 'onScrollDown'.
     parent.setOptions({
       bottomAccessory: ({ placement }: { placement: 'regular' | 'inline' }) => (
-        <GroupTabAccessory groupId={groupId} placement={placement} />
+        <GroupTabAccessory groupId={groupId} placement={placement} compactAnim={compactAnim} />
       ),
     });
     return () => {
       parent.setOptions({ bottomAccessory: undefined });
     };
-  }, [navigation, groupId]);
+  }, [navigation, groupId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!group) {
     return <LoadingScreen />;
@@ -271,6 +325,7 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
       onAddExpense={() => navigation.navigate(ROUTES.APP.ADD_EXPENSE, { groupId: group.groupId })}
       onSettle={() => navigation.navigate(ROUTES.APP.SETTLEMENTS, { groupId: group.groupId })}
       onOpenChat={handleOpenChat}
+      compactAnim={compactAnim}
     />
   );
 };
@@ -645,17 +700,17 @@ const IncomingCallHandler = () => {
 };
 
 const styles = StyleSheet.create({
-  // Regular placement: primary pills + secondary icon circles.
+  // Regular placement wrapper — gap between rows for expanded; no gap needed for compact.
   groupAccessoryRegularWrap: {
     paddingHorizontal: 10,
     paddingVertical: 8,
+    gap: 6,
   },
-  groupAccessoryRegularRow: {
+  // ── Expanded: 2 rows ──────────────────────────────────────────────────────
+  groupAccessoryPrimaryRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    gap: 10,
   },
-  // Primary action pills (Settle Up, Add Expense)
   groupAccessoryPrimaryPill: {
     flex: 1,
     borderRadius: 50,
@@ -665,31 +720,60 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    gap: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
   },
   groupAccessoryPrimaryPillText: {
     fontWeight: '700',
-    fontSize: 14,
-    lineHeight: 17,
+    fontSize: 15,
+    lineHeight: 18,
   },
-  // Secondary icon cluster (Stats, Chat, Bills)
-  groupAccessorySecondaryCluster: {
+  groupAccessoryUtilityRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  groupAccessoryUtilityPill: {
+    flex: 1,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  groupAccessoryUtilityPillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+  },
+  groupAccessoryUtilityPillText: {
+    fontWeight: '600',
+    fontSize: 13,
+    lineHeight: 16,
+  },
+  // ── Compact: single row ───────────────────────────────────────────────────
+  groupAccessoryCompactRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  groupAccessoryCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  groupAccessoryCompactPill: {
+    flex: 1,
+    borderRadius: 50,
     overflow: 'hidden',
   },
-  groupAccessoryCircleInner: {
-    flex: 1,
+  groupAccessoryCompactPillInner: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+  },
+  groupAccessoryCompactText: {
+    fontWeight: '700',
+    fontSize: 12,
+    lineHeight: 15,
   },
   groupAccessoryInlineWrap: {
     paddingHorizontal: 8,
