@@ -1,10 +1,14 @@
 import { useTheme } from '@/context/ThemeContext';
+import { TabBarSurface } from '@/components/tabbar/TabBarSurface';
+import {
+  FLOATING_TAB_BAR_HORIZONTAL_INSET,
+  getFloatingTabBarBottomOffset,
+} from '@/components/tabbar/tabBarMetrics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useState } from 'react';
-import { Dimensions, LayoutChangeEvent, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { LayoutChangeEvent, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Extrapolation,
@@ -20,12 +24,12 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
 export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProps) => {
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useTheme();
   const focusedOptions = descriptors[state.routes[state.index].key].options;
+  const isIOS = Platform.OS === 'ios';
+  const tabBarBottomOffset = getFloatingTabBarBottomOffset(insets.bottom);
 
   // Animation values
   const indicatorPosition = useSharedValue(0);
@@ -202,76 +206,91 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
     return null;
   }
 
-  return (
-    <View style={[styles.container, { bottom: -18 + insets.bottom }]}>
-      <GestureDetector gesture={pan}>
-        <BlurView style={styles.glass} intensity={20} tint={isDark ? "dark" : "light"}>
-          <View style={styles.tabRow}>
-            {/* Animated Liquid Indicator */}
-            {/* We render the indicator only if we have at least one layout measurement to avoid jumping */}
-            {layout.length > 0 && (
-              <Animated.View style={[styles.indicator, animatedIndicatorStyle]}>
-                <LinearGradient
-                  colors={[theme.colors.primary, '#8A2BE2']} // Gradient from primary to a purple-ish hue
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={[styles.indicatorBlob, { shadowColor: theme.colors.primary }]}
-                >
-                  <View style={styles.glare} />
-                </LinearGradient>
-              </Animated.View>
+  const tabBarContent = (
+    <TabBarSurface isDark={isDark}>
+      <View style={styles.tabRow}>
+        {/* We render the indicator only if we have at least one layout measurement to avoid jumping */}
+        {layout.length > 0 && (
+          <Animated.View style={[styles.indicator, animatedIndicatorStyle]}>
+            {isIOS ? (
+              <View style={[styles.indicatorBlobIOS, { borderColor: 'rgba(255,255,255,0.35)' }]}>
+                <View style={styles.glare} />
+              </View>
+            ) : (
+              <LinearGradient
+                colors={[theme.colors.primary, '#8A2BE2']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={[styles.indicatorBlob, { shadowColor: theme.colors.primary }]}
+              >
+                <View style={styles.glare} />
+              </LinearGradient>
             )}
+          </Animated.View>
+        )}
 
-            {state.routes.map((route, index) => {
-              const { options } = descriptors[route.key];
-              const isFocused = state.index === index;
+        {state.routes.map((route, index) => {
+          const { options } = descriptors[route.key];
+          const isFocused = state.index === index;
 
-              const onPress = () => {
-                const event = navigation.emit({
-                  type: 'tabPress',
-                  target: route.key,
-                  canPreventDefault: true,
-                });
+          const onPress = () => {
+            const event = navigation.emit({
+              type: 'tabPress',
+              target: route.key,
+              canPreventDefault: true,
+            });
 
-                if (!isFocused && !event.defaultPrevented) {
-                  navigation.navigate(route.name, route.params);
-                }
-              };
+            if (!isFocused && !event.defaultPrevented) {
+              navigation.navigate(route.name, route.params);
+            }
+          };
 
-              const onLongPress = () => {
-                navigation.emit({
-                  type: 'tabLongPress',
-                  target: route.key,
-                });
-              };
+          const onLongPress = () => {
+            navigation.emit({
+              type: 'tabLongPress',
+              target: route.key,
+            });
+          };
 
-              const color = isFocused ? '#fff' : (isDark ? '#aaa' : '#666');
-              const IconComponent = options.tabBarIcon;
+          const color = isFocused
+            ? (isIOS ? theme.colors.primary : '#fff')
+            : (isDark ? '#aaa' : '#666');
+          const IconComponent = options.tabBarIcon;
 
-              return (
-                <TouchableOpacity
-                  key={route.key}
-                  accessibilityRole="button"
-                  accessibilityState={isFocused ? { selected: true } : {}}
-                  accessibilityLabel={options.tabBarAccessibilityLabel}
-                  onPress={onPress}
-                  onLongPress={onLongPress}
-                  style={styles.tab}
-                  onLayout={(e) => handleLayout(e, index)}
-                >
-                  <View style={[styles.iconContainer, isFocused && styles.iconContainerFocused]}>
-                    {IconComponent ? (
-                      IconComponent({ focused: isFocused, color: color, size: 24 })
-                    ) : (
-                      <MaterialCommunityIcons name="circle-outline" size={24} color={color} />
-                    )}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </BlurView>
-      </GestureDetector>
+          return (
+            <TouchableOpacity
+              key={route.key}
+              accessibilityRole="button"
+              accessibilityState={isFocused ? { selected: true } : {}}
+              accessibilityLabel={options.tabBarAccessibilityLabel}
+              onPress={onPress}
+              onLongPress={onLongPress}
+              style={styles.tab}
+              onLayout={(e) => handleLayout(e, index)}
+            >
+              <View style={[styles.iconContainer, isFocused && styles.iconContainerFocused]}>
+                {IconComponent ? (
+                  IconComponent({ focused: isFocused, color: color, size: 24 })
+                ) : (
+                  <MaterialCommunityIcons name="circle-outline" size={24} color={color} />
+                )}
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </TabBarSurface>
+  );
+
+  return (
+    <View style={[styles.container, { bottom: tabBarBottomOffset }]}>
+      {isIOS ? (
+        tabBarContent
+      ) : (
+        <GestureDetector gesture={pan}>
+          {tabBarContent}
+        </GestureDetector>
+      )}
     </View>
   );
 };
@@ -279,17 +298,10 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    left: 20,
-    right: 20,
+    left: FLOATING_TAB_BAR_HORIZONTAL_INSET,
+    right: FLOATING_TAB_BAR_HORIZONTAL_INSET,
     alignItems: 'center',
     zIndex: 1000,
-  },
-  glass: {
-    borderRadius: 30,
-    width: '100%',
-    overflow: 'hidden',
-    height: 70, // Fixed height for consistency
-    justifyContent: 'center',
   },
   tabRow: {
     flexDirection: 'row',
@@ -314,18 +326,29 @@ const styles = StyleSheet.create({
     zIndex: 0, // Behind the icons but visible
   },
   indicatorBlob: {
-    width: 70, // Increased size
-    height: 45, // Increased size
-    borderRadius: 22.5, // Half of height for pill shape
-    // backgroundColor: removed (handled by gradient)
+    width: 70,
+    height: 45,
+    borderRadius: 22.5,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)', // Glass border
+    borderColor: 'rgba(255,255,255,0.3)',
     opacity: 0.9,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 12,
     elevation: 8,
-    overflow: 'hidden', // Ensure gradient respects border radius
+    overflow: 'hidden',
+  },
+  indicatorBlobIOS: {
+    width: 64,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderWidth: 1,
+    shadowColor: '#fff',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    overflow: 'hidden',
   },
   glare: {
     position: 'absolute',
@@ -342,6 +365,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   iconContainerFocused: {
-    // transform: [{ translateY: -5 }], // Optional bounce effect
+    // Optional future bounce effect
   }
 });

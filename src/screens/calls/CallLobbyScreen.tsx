@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
@@ -9,6 +10,7 @@ import { lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
@@ -22,7 +24,9 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
   const { user } = useAuth();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 20);
 
   // Filter & Sort State
   const [filterVisible, setFilterVisible] = useState(false);
@@ -92,7 +96,7 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
         <Animated.FlatList
           data={processedThreads}
           keyExtractor={(item) => item.chatId}
-          contentContainerStyle={[styles.listContent, { paddingTop: 60, paddingBottom: 100 }]}
+          contentContainerStyle={[styles.listContent, { paddingTop: 60, paddingBottom: listBottomPadding }]}
           ListHeaderComponent={
             <View style={styles.headerContainer}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>

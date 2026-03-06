@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { ROUTES } from '@/constants';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -202,11 +203,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
               onPress={() => {
                 lightHaptic();
                 if (thread) {
-                  // Navigate to chat with this user
-                  navigation.navigate(
-                    'ChatTab',
-                    { screen: 'GroupChat', params: { chatId: entry.chatId } }
-                  );
+                  navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId: entry.chatId });
                 }
               }}
             >
