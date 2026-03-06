@@ -1,18 +1,26 @@
 import { useTheme } from '@/context/ThemeContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, type AudioStatus } from 'expo-audio';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect } from 'react';
 import {
-    Alert, Animated,
-    Dimensions,
-    Modal, Platform, Pressable,
-    StyleSheet,
-    TouchableOpacity,
-    View
+  Alert,
+  Dimensions,
+  Modal, Platform, Pressable,
+  StyleSheet,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { Text } from 'react-native-paper';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSpring,
+  runOnJS
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -42,6 +50,48 @@ interface AttachmentOption {
   color: string;
   backgroundColor: string;
 }
+
+const extractDurationMillis = (status: AudioStatus): number | undefined => {
+  if (!status.isLoaded || !Number.isFinite(status.duration) || status.duration <= 0) {
+    return undefined;
+  }
+  return Math.round(status.duration * 1000);
+};
+
+const readAudioDurationMillis = async (uri: string): Promise<number | undefined> => {
+  const player = createAudioPlayer(uri, { updateInterval: 200 });
+
+  try {
+    const immediateDuration = extractDurationMillis({
+      ...player.currentStatus,
+      duration: player.duration,
+      isLoaded: player.isLoaded,
+    });
+    if (immediateDuration) {
+      return immediateDuration;
+    }
+
+    return await new Promise<number | undefined>((resolve) => {
+      const timeout = setTimeout(() => {
+        player.removeAllListeners('playbackStatusUpdate');
+        resolve(undefined);
+      }, 2500);
+
+      player.addListener('playbackStatusUpdate', (status) => {
+        const duration = extractDurationMillis(status);
+        if (!duration) {
+          return;
+        }
+        clearTimeout(timeout);
+        player.removeAllListeners('playbackStatusUpdate');
+        resolve(duration);
+      });
+    });
+  } finally {
+    player.removeAllListeners('playbackStatusUpdate');
+    player.remove();
+  }
+};
 
 const ATTACHMENT_OPTIONS: AttachmentOption[] = [
   {
@@ -90,38 +140,54 @@ const ATTACHMENT_OPTIONS: AttachmentOption[] = [
 
 export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: AttachmentMenuProps) => {
   const { theme, isDark } = useTheme();
-  const slideAnim = useRef(new Animated.Value(300)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Reanimated shared values
+  const slideAnim = useSharedValue(300);
+  const fadeAnim = useSharedValue(0);
+  const context = useSharedValue({ y: 0 });
 
   useEffect(() => {
     if (visible) {
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start();
+      slideAnim.value = withTiming(0, { duration: 300 });
+      fadeAnim.value = withTiming(1, { duration: 200 });
     } else {
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: 300,
-          duration: 250,
-          useNativeDriver: true,
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 0,
-          duration: 150,
-          useNativeDriver: true,
-        }),
-      ]).start();
+      slideAnim.value = withTiming(300, { duration: 250 });
+      fadeAnim.value = withTiming(0, { duration: 150 });
     }
-  }, [visible, slideAnim, fadeAnim]);
+  }, [visible]);
+
+  // Gesture handler with context for smooth dragging
+  const gesture = Gesture.Pan()
+    .onStart(() => {
+      context.value = { y: slideAnim.value };
+    })
+    .onUpdate((event) => {
+      // Allow dragging down (positive translation)
+      // Add minimal resistance for dragging up (negative translation)
+      const resistance = event.translationY < 0 ? 0.2 : 1;
+      const potentialValue = context.value.y + (event.translationY * resistance);
+      slideAnim.value = Math.max(-50, potentialValue); // Cap upward drag
+    })
+    .onEnd((event) => {
+      if (slideAnim.value > 100 || event.velocityY > 500) {
+        // Dragged down enough or flicked down -> Close
+        slideAnim.value = withTiming(300, { duration: 200 }, () => {
+          runOnJS(onClose)();
+        });
+      } else {
+        // Spring back to open state
+        slideAnim.value = withSpring(0, { damping: 50 });
+      }
+    });
+
+  const menuStyle = useAnimatedStyle(() => ({
+    backgroundColor: isDark ? 'rgba(30, 30, 30, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+    transform: [{ translateY: slideAnim.value }],
+  }));
+
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: fadeAnim.value,
+  }));
 
   const requestCameraPermission = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -285,12 +351,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
         // Try to get duration
         try {
-          const { sound } = await Audio.Sound.createAsync({ uri: asset.uri });
-          const status = await sound.getStatusAsync();
-          if (status.isLoaded) {
-            duration = status.durationMillis;
-          }
-          await sound.unloadAsync();
+          duration = await readAudioDurationMillis(asset.uri);
         } catch (e) {
           console.warn('Failed to get audio duration:', e);
         }
@@ -312,10 +373,12 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
   }, [onMediaSelected, onClose]);
 
   const handleLocation = useCallback(() => {
-    // Location sharing would require additional setup
-    console.log('Location sharing coming soon');
+    onMediaSelected({
+      type: 'location',
+      uri: '', // No URI needed for initial selection
+    });
     onClose();
-  }, [onClose]);
+  }, [onMediaSelected, onClose]);
 
   const handleOptionPress = useCallback((option: AttachmentOption) => {
     switch (option.id) {
@@ -372,43 +435,42 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           <Animated.View
             style={[
               styles.backdrop,
-              { opacity: fadeAnim },
+              backdropStyle,
             ]}
           />
         </Pressable>
 
         {/* Menu */}
-        <Animated.View
-          style={[
-            styles.menuContainer,
-            {
-              backgroundColor: isDark ? 'rgba(30, 30, 30, 0.98)' : 'rgba(255, 255, 255, 0.98)',
-              transform: [{ translateY: slideAnim }],
-            },
-          ]}
-        >
-          {/* Handle */}
-          <View style={styles.handleContainer}>
-            <View style={[styles.handle, { backgroundColor: isDark ? '#555' : '#ccc' }]} />
-          </View>
-
-          {/* Options Grid */}
-          <View style={styles.optionsGrid}>
-            {ATTACHMENT_OPTIONS.map((option) => renderOption(option))}
-          </View>
-
-          {/* Cancel Button */}
-          <TouchableOpacity
+        <GestureDetector gesture={gesture}>
+          <Animated.View
             style={[
-              styles.cancelButton,
-              { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' },
+              styles.menuContainer,
+              menuStyle,
             ]}
-            onPress={onClose}
-            activeOpacity={0.7}
           >
-            <Text style={[styles.cancelText, { color: theme.colors.error }]}>Cancel</Text>
-          </TouchableOpacity>
-        </Animated.View>
+            {/* Handle */}
+            <View style={styles.handleContainer}>
+              <View style={[styles.handle, { backgroundColor: isDark ? '#555' : '#ccc' }]} />
+            </View>
+
+            {/* Options Grid */}
+            <View style={styles.optionsGrid}>
+              {ATTACHMENT_OPTIONS.map((option) => renderOption(option))}
+            </View>
+
+            {/* Cancel Button */}
+            <TouchableOpacity
+              style={[
+                styles.cancelButton,
+                { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' },
+              ]}
+              onPress={onClose}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.cancelText, { color: theme.colors.error }]}>Cancel</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </GestureDetector>
       </View>
     </Modal>
   );

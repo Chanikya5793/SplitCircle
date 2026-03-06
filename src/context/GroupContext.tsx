@@ -15,6 +15,7 @@ import {
     setDoc,
     updateDoc,
     where,
+    writeBatch,
 } from 'firebase/firestore';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { v4 as uuid } from 'uuid';
@@ -29,6 +30,8 @@ interface GroupContextValue {
   updateExpense: (groupId: string, expense: Expense, newFileUri?: string | null, newFileName?: string) => Promise<void>;
   deleteExpense: (groupId: string, expenseId: string) => Promise<void>;
   settleUp: (groupId: string, settlement: Omit<Settlement, 'settlementId' | 'createdAt' | 'status'>) => Promise<void>;
+  updateSettlement: (groupId: string, settlement: Settlement) => Promise<void>;
+  deleteSettlement: (groupId: string, settlementId: string) => Promise<void>;
 }
 
 const GroupContext = createContext<GroupContextValue | undefined>(undefined);
@@ -148,32 +151,37 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     if (!user) throw new Error('Missing user');
     const groupsRef = collection(db, 'groups');
     const q = query(groupsRef, where('inviteCode', '==', inviteCode));
-    const snapshot = await new Promise<Group | null>((resolve) => {
-      const unsub = onSnapshot(q, (snap) => {
-        const docData = snap.docs[0]?.data() as Group | undefined;
-        resolve(docData ?? null);
-        unsub();
-      });
-    });
-    if (!snapshot) {
+    const groupSnapshot = await getDocs(q);
+    if (groupSnapshot.empty) {
       throw new Error('Invite code not found');
     }
-    await updateDoc(doc(db, 'groups', snapshot.groupId), {
+
+    const groupDoc = groupSnapshot.docs[0];
+    const groupData = groupDoc.data() as Group;
+    if (groupData.memberIds?.includes(user.userId)) {
+      return;
+    }
+
+    // Update associated chat thread if it exists
+    const chatsRef = collection(db, 'chats');
+    const chatQ = query(chatsRef, where('groupId', '==', groupData.groupId));
+    const chatSnapshot = await getDocs(chatQ);
+    const batch = writeBatch(db);
+
+    batch.update(groupDoc.ref, {
       memberIds: arrayUnion(user.userId),
       members: arrayUnion({
         userId: user.userId,
         displayName: user.displayName,
-        photoURL: user.photoURL,
+        photoURL: user.photoURL ?? null,
         role: 'member',
         balance: 0,
       }),
       updatedAt: serverTimestamp(),
     });
 
-    // Update associated chat thread if it exists
-    const chatsRef = collection(db, 'chats');
-    const chatQ = query(chatsRef, where('groupId', '==', snapshot.groupId));
-    const chatSnapshot = await getDocs(chatQ);
+    let systemMessage: ChatMessage | null = null;
+    let recipients: string[] = [];
 
     if (!chatSnapshot.empty) {
       const chatDoc = chatSnapshot.docs[0];
@@ -183,17 +191,18 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       const newParticipant: ChatParticipant = {
         userId: user.userId,
         displayName: user.displayName,
-        photoURL: user.photoURL,
+        ...(user.photoURL ? { photoURL: user.photoURL } : {}),
         status: 'online',
       };
 
       const msgId = uuid();
       const now = Date.now();
-      const systemMessage: ChatMessage = {
+      systemMessage = {
         id: msgId,
         messageId: msgId,
         chatId,
-        senderId: 'system',
+        // RTDB queue rules require senderId to match auth.uid on create.
+        senderId: user.userId,
         type: 'system',
         content: `${user.displayName} joined the group`,
         status: 'sent',
@@ -204,7 +213,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         readBy: [],
       };
 
-      await updateDoc(doc(db, 'chats', chatId), {
+      batch.update(chatDoc.ref, {
         participantIds: arrayUnion(user.userId),
         participants: arrayUnion(newParticipant),
         lastMessage: { ...systemMessage, createdAt: serverTimestamp() },
@@ -213,9 +222,13 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
 
       // Queue system message for all participants (including the new user)
       const currentParticipantIds = (chatData.participantIds as string[]) || [];
-      const allRecipients = [...new Set([...currentParticipantIds, user.userId])];
+      recipients = [...new Set([...currentParticipantIds, user.userId])];
+    }
 
-      for (const recipientId of allRecipients) {
+    await batch.commit();
+
+    if (systemMessage) {
+      for (const recipientId of recipients) {
         try {
           await queueMessage(recipientId, systemMessage, true); // isGroupChat = true
         } catch (error) {
@@ -401,8 +414,46 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     });
   };
 
+  const updateSettlement = async (groupId: string, updatedSettlement: Settlement) => {
+    try {
+      const group = groups.find((g) => g.groupId === groupId);
+      if (!group) throw new Error('Group not found');
+
+      const updatedSettlements = group.settlements.map((settlement) =>
+        settlement.settlementId === updatedSettlement.settlementId ? updatedSettlement : settlement
+      );
+
+      const docRef = doc(db, 'groups', groupId);
+      await updateDoc(docRef, {
+        settlements: updatedSettlements,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error('Error updating settlement:', error);
+      throw error;
+    }
+  };
+
+  const deleteSettlement = async (groupId: string, settlementId: string) => {
+    try {
+      const group = groups.find((g) => g.groupId === groupId);
+      if (!group) throw new Error('Group not found');
+
+      const updatedSettlements = group.settlements.filter((s) => s.settlementId !== settlementId);
+
+      const docRef = doc(db, 'groups', groupId);
+      await updateDoc(docRef, {
+        settlements: updatedSettlements,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error('Error deleting settlement:', error);
+      throw error;
+    }
+  };
+
   const value = useMemo(
-    () => ({ groups, loading, createGroup, joinGroup, addExpense, updateExpense, deleteExpense, settleUp }),
+    () => ({ groups, loading, createGroup, joinGroup, addExpense, updateExpense, deleteExpense, settleUp, updateSettlement, deleteSettlement }),
     [groups, loading],
   );
 

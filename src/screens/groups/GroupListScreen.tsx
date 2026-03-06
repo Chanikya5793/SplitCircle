@@ -1,15 +1,22 @@
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
-import { GroupCard } from '@/components/GroupCard';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GroupCardSkeleton } from '@/components/SkeletonLoader';
+import { SwipeableGroupCard } from '@/components/SwipeableGroupCard';
+import { GroupFilterSortSheet, GroupSortField, GroupSortOrder } from '@/components/GroupFilterSortSheet';
+import {
+  getFloatingTabBarContentPadding,
+  getFloatingTabBarEnvelopeHeight,
+} from '@/components/tabbar/tabBarMetrics';
 import { CURRENCIES } from '@/constants/currencies';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
+import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Button, Modal, Portal, Text } from 'react-native-paper';
+import { Button, Modal, Portal, Text, IconButton, Chip, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface GroupListScreenProps {
@@ -29,6 +36,12 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const scrollY = useRef(new Animated.Value(0)).current;
 
+  // Filter & Sort State
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [sortField, setSortField] = useState<GroupSortField>('updatedAt');
+  const [sortOrder, setSortOrder] = useState<GroupSortOrder>('desc');
+  const [selectedCurrencies, setSelectedCurrencies] = useState<string[]>([]);
+
   useLayoutEffect(() => {
     navigation.setOptions({
       headerTitle: '',
@@ -41,6 +54,8 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
+  const tabBarEnvelopeHeight = getFloatingTabBarEnvelopeHeight(insets.bottom);
+  const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener(
@@ -63,6 +78,49 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     return CURRENCIES.filter(c => c.code.includes(input) || c.name.toUpperCase().includes(input));
   }, [currencyInput]);
 
+  // Derived state: Available currencies in existing groups
+  const availableCurrencies = useMemo(() => {
+    const currencies = new Set(groups.map(g => g.currency));
+    return Array.from(currencies).sort();
+  }, [groups]);
+
+  // Filter and Sort Logic
+  const processedGroups = useMemo(() => {
+    let result = [...groups];
+
+    // Filter by Currency
+    if (selectedCurrencies.length > 0) {
+      result = result.filter(g => selectedCurrencies.includes(g.currency));
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      let comparison = 0;
+      switch (sortField) {
+        case 'name':
+          comparison = a.name.localeCompare(b.name);
+          break;
+        case 'createdAt':
+          comparison = a.createdAt - b.createdAt;
+          break;
+        case 'updatedAt':
+          // Fallback to createdAt if updatedAt is missing
+          const timeA = a.updatedAt || a.createdAt;
+          const timeB = b.updatedAt || b.createdAt;
+          comparison = timeA - timeB;
+          break;
+        case 'totalSpent':
+          const totalA = a.expenses.reduce((sum, e) => sum + e.amount, 0);
+          const totalB = b.expenses.reduce((sum, e) => sum + e.amount, 0);
+          comparison = totalA - totalB;
+          break;
+      }
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
+    return result;
+  }, [groups, selectedCurrencies, sortField, sortOrder]);
+
   const handleCreate = async () => {
     const selectedCurrency = CURRENCIES.find(c => c.code === currencyInput.toUpperCase());
 
@@ -73,6 +131,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
 
     try {
       await createGroup(name.trim(), selectedCurrency.code);
+      successHaptic();
       setDialog(null);
       setName('');
       setCurrencyInput('USD');
@@ -86,12 +145,38 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const handleJoin = async () => {
     try {
       await joinGroup(inviteCode.trim().toUpperCase());
+      successHaptic();
       setDialog(null);
       setInviteCode('');
     } catch (error) {
       console.error('Failed to join group', error);
       Alert.alert('Error', 'Failed to join group');
     }
+  };
+
+  const handleArchive = (group: Group) => {
+    // TODO: Implement archive functionality in GroupContext
+    Alert.alert(
+      'Archive Group',
+      `Are you sure you want to archive "${group.name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Archive', style: 'destructive', onPress: () => {
+            // Future: archiveGroup(group.groupId);
+            Alert.alert('Coming Soon', 'Group archiving will be available in a future update.');
+          }
+        },
+      ]
+    );
+  };
+
+  const toggleCurrency = (currency: string) => {
+    setSelectedCurrencies(prev =>
+      prev.includes(currency)
+        ? prev.filter(c => c !== currency)
+        : [...prev, currency]
+    );
   };
 
   return (
@@ -103,16 +188,41 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       </Animated.View>
 
       <Animated.FlatList
-        data={groups}
+        data={processedGroups}
         keyExtractor={(item) => item.groupId}
-        renderItem={({ item }) => <GroupCard group={item} onPress={() => onOpenGroup(item)} />}
+        renderItem={({ item, index }) => (
+          <SwipeableGroupCard
+            group={item}
+            onPress={() => onOpenGroup(item)}
+            onArchive={handleArchive}
+            index={index}
+          />
+        )}
         contentContainerStyle={[
-          groups.length === 0 ? styles.emptyContainer : undefined,
-          { paddingTop: 80, paddingBottom: 100 + insets.bottom, paddingHorizontal: 16 }
+          groups.length === 0 && !loading ? styles.emptyContainer : undefined,
+          { paddingTop: 80, paddingBottom: listBottomPadding, paddingHorizontal: 16 }
         ]}
         ListHeaderComponent={
           <View style={styles.headerContainer}>
-            <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Groups</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Groups</Text>
+              <TouchableRipple
+                onPress={() => { lightHaptic(); setFilterVisible(true); }}
+                style={styles.filterButton}
+                borderless
+              >
+                <GlassView intensity={40} style={styles.filterButtonContent}>
+                  <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
+                  {(selectedCurrencies.length > 0) && (
+                    <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary, borderColor: theme.colors.background }]}>
+                      <Text style={{ color: theme.colors.onPrimary, fontSize: 10, fontWeight: 'bold' }}>
+                        {selectedCurrencies.length}
+                      </Text>
+                    </View>
+                  )}
+                </GlassView>
+              </TouchableRipple>
+            </View>
           </View>
         }
         onScroll={Animated.event(
@@ -125,20 +235,28 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         maxToRenderPerBatch={10}
         windowSize={5}
         ListEmptyComponent={
-          !loading ? (
-            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No groups yet. Create one!</Text>
-          ) : null
+          loading ? (
+            <View>
+              <GroupCardSkeleton />
+              <GroupCardSkeleton />
+              <GroupCardSkeleton />
+            </View>
+          ) : (
+            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
+              {groups.length > 0 ? 'No groups match your filters.' : 'No groups yet. Create one!'}
+            </Text>
+          )
         }
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} tintColor={theme.colors.primary} />}
       />
 
-      <View style={[styles.actions, { bottom: 60 + insets.bottom }]}>
-        <Button mode="contained" onPress={() => setDialog('create')}>
+      <View style={[styles.actions, { bottom: tabBarEnvelopeHeight + 12 }]}>
+        <Button mode="contained" onPress={() => { lightHaptic(); setDialog('create'); }}>
           New group
         </Button>
 
         <TouchableOpacity
-          onPress={() => setDialog('join')}
+          onPress={() => { lightHaptic(); setDialog('join'); }}
           activeOpacity={0.8}
           style={{
             borderRadius: 15,
@@ -156,6 +274,18 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       </View>
 
       <Portal>
+        <GroupFilterSortSheet
+          visible={filterVisible}
+          onClose={() => setFilterVisible(false)}
+          sortField={sortField}
+          sortOrder={sortOrder}
+          selectedCurrencies={selectedCurrencies}
+          availableCurrencies={availableCurrencies}
+          onSortFieldChange={setSortField}
+          onSortOrderChange={setSortOrder}
+          onCurrencyToggle={toggleCurrency}
+        />
+
         <Modal
           visible={dialog === 'create'}
           onDismiss={() => setDialog(null)}
@@ -318,6 +448,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 20,
     borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   stickyHeaderTitle: {
     fontWeight: 'bold',
@@ -329,5 +461,27 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontWeight: 'bold',
+  },
+  filterButton: {
+    borderRadius: 50,
+    width: 44,
+    height: 44,
+    overflow: 'hidden',
+  },
+  filterButtonContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

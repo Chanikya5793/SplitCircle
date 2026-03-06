@@ -1,19 +1,38 @@
 // Firebase Realtime Database Message Queue Service
 // WhatsApp-style temporary message storage
 // Messages are cached in Firebase until delivered, then deleted
-// Local storage is the primary message store (SQLite)
+// Local storage is the primary message store (AsyncStorage)
 
-import { get, getDatabase, onValue, ref, remove, set } from 'firebase/database';
-import { ChatMessage } from '../models';
-import { downloadMedia } from './mediaService';
+import {
+  get,
+  getDatabase,
+  onChildAdded,
+  onChildChanged,
+  onValue,
+  ref,
+  remove,
+  set,
+  update,
+  type DataSnapshot,
+} from 'firebase/database';
+import type { ChatMessage, MessageType } from '@/models';
+import { downloadMedia } from '@/services/mediaService';
 
 // Get Realtime Database instance
 const rtdb = getDatabase();
 
 // Type for receipt data structure
-interface ReceiptData {
+export interface ReceiptData {
   delivered?: boolean;
   deliveredAt?: number;
+  read?: boolean;
+  readAt?: number;
+  recipientId: string;
+}
+
+interface PersistedReceiptData {
+  delivered: boolean;
+  deliveredAt: number;
   read?: boolean;
   readAt?: number;
   recipientId: string;
@@ -23,6 +42,106 @@ interface ReceiptData {
 interface GroupReceiptData {
   [recipientId: string]: ReceiptData;
 }
+
+interface QueueMessagePayload {
+  senderId: string;
+  chatId: string;
+  content: string;
+  type: MessageType;
+  timestamp: number;
+  mediaUrl?: string | null;
+  thumbnailUrl?: string | null;
+  isGroupChat?: boolean;
+  mediaMetadata?: ChatMessage['mediaMetadata'];
+  replyTo?: ChatMessage['replyTo'];
+  location?: ChatMessage['location'];
+}
+
+const isReceiptData = (value: unknown): value is ReceiptData => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const data = value as Partial<ReceiptData>;
+  return typeof data.recipientId === 'string';
+};
+
+/**
+ * Normalize receipts to per-recipient map format.
+ * Supports:
+ * - Legacy direct-chat shape: { delivered, deliveredAt, recipientId, ... }
+ * - Current unified shape: { recipientIdA: { ... }, recipientIdB: { ... } }
+ */
+const normalizeReceiptMap = (messageReceipts: unknown): GroupReceiptData => {
+  if (isReceiptData(messageReceipts)) {
+    return { [messageReceipts.recipientId]: messageReceipts };
+  }
+
+  if (!messageReceipts || typeof messageReceipts !== 'object') {
+    return {};
+  }
+
+  const mapped: GroupReceiptData = {};
+  for (const [recipientId, receiptValue] of Object.entries(messageReceipts as Record<string, unknown>)) {
+    if (isReceiptData(receiptValue)) {
+      mapped[recipientId] = receiptValue;
+    }
+  }
+  return mapped;
+};
+
+const normalizeTimestamp = (value: unknown): number => {
+  if (typeof value === 'number') {
+    return value;
+  }
+
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : Date.now();
+};
+
+const parseQueuePayload = (value: unknown): QueueMessagePayload | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const payload = value as Record<string, unknown>;
+  const senderId = typeof payload.senderId === 'string' ? payload.senderId : '';
+  const chatId = typeof payload.chatId === 'string' ? payload.chatId : '';
+  const content = typeof payload.content === 'string' ? payload.content : '';
+  const type = typeof payload.type === 'string' ? payload.type as MessageType : 'text';
+
+  if (!senderId || !chatId || !type) {
+    return null;
+  }
+
+  return {
+    senderId,
+    chatId,
+    content,
+    type,
+    timestamp: normalizeTimestamp(payload.timestamp),
+    mediaUrl: typeof payload.mediaUrl === 'string' ? payload.mediaUrl : null,
+    thumbnailUrl: typeof payload.thumbnailUrl === 'string' ? payload.thumbnailUrl : null,
+    isGroupChat: typeof payload.isGroupChat === 'boolean' ? payload.isGroupChat : false,
+    mediaMetadata: payload.mediaMetadata as ChatMessage['mediaMetadata'] | undefined,
+    replyTo: payload.replyTo as ChatMessage['replyTo'] | undefined,
+    location: payload.location as ChatMessage['location'] | undefined,
+  };
+};
+
+const getReceiptFingerprint = (
+  status: 'delivered' | 'read',
+  allDelivered: string[],
+  allRead: string[]
+): string => {
+  const deliveredSorted = [...allDelivered].sort();
+  const readSorted = [...allRead].sort();
+  return `${status}|d:${deliveredSorted.join(',')}|r:${readSorted.join(',')}`;
+};
 
 /**
  * Send a message to recipient's queue in Realtime Database
@@ -35,8 +154,7 @@ export const queueMessage = async (
 ): Promise<void> => {
   try {
     const messageQueueRef = ref(rtdb, `messageQueue/${recipientId}/${message.id}`);
-    
-    // Build the message data, only including replyTo if it exists
+
     const messageData: Record<string, unknown> = {
       senderId: message.senderId,
       chatId: message.chatId,
@@ -47,8 +165,7 @@ export const queueMessage = async (
       thumbnailUrl: message.thumbnailUrl || null,
       isGroupChat,
     };
-    
-    // Include mediaMetadata if it exists (for documents, audio, video, images)
+
     if (message.mediaMetadata) {
       messageData.mediaMetadata = {
         ...(message.mediaMetadata.fileName && { fileName: message.mediaMetadata.fileName }),
@@ -61,8 +178,7 @@ export const queueMessage = async (
       };
       console.log('📎 Queuing message with mediaMetadata:', message.mediaMetadata.fileName || message.type);
     }
-    
-    // Only add replyTo if it exists and has valid data
+
     if (message.replyTo && message.replyTo.messageId) {
       messageData.replyTo = {
         messageId: message.replyTo.messageId,
@@ -72,9 +188,17 @@ export const queueMessage = async (
       };
       console.log('📎 Queuing message with replyTo:', message.replyTo.messageId);
     }
-    
+
+    if (message.location) {
+      messageData.location = {
+        latitude: message.location.latitude,
+        longitude: message.location.longitude,
+        address: message.location.address,
+      };
+      console.log('📍 Queuing message with location');
+    }
+
     await set(messageQueueRef, messageData);
-    
     console.log('✅ Message queued for:', recipientId);
   } catch (error) {
     console.error('❌ Error queuing message:', error);
@@ -83,114 +207,137 @@ export const queueMessage = async (
 };
 
 /**
- * Listen for incoming messages in current user's queue
- * When a message arrives, save it locally and delete from queue
+ * Register the current user as a permitted receipt reader for a chat.
+ * This is used by RTDB rules to scope receipt reads.
+ */
+export const registerReceiptParticipant = async (chatId: string, userId: string): Promise<void> => {
+  try {
+    await set(ref(rtdb, `receipts/${chatId}/__participants/${userId}`), true);
+  } catch (error) {
+    console.error('❌ Error registering receipt participant:', error);
+    throw error;
+  }
+};
+
+/**
+ * Listen for receipt updates for a single message.
+ * This includes per-recipient delivery/read timestamps from RTDB.
+ */
+export const listenForMessageReceipts = (
+  chatId: string,
+  messageId: string,
+  onReceiptsChanged: (receipts: Record<string, ReceiptData>) => void
+): (() => void) => {
+  const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}`);
+
+  const unsubscribe = onValue(
+    receiptRef,
+    (snapshot) => {
+      const normalized = normalizeReceiptMap(snapshot.val());
+      onReceiptsChanged(normalized);
+    },
+    (error) => {
+      console.error('❌ Error listening for message receipts:', error);
+      onReceiptsChanged({});
+    }
+  );
+
+  return () => {
+    unsubscribe();
+  };
+};
+
+/**
+ * Listen for incoming messages in current user's queue.
+ * Uses child listeners so each queue entry is processed once and avoids full path rescans.
  */
 export const listenForMessages = (
   userId: string,
   onMessageReceived: (message: ChatMessage) => Promise<void>
 ): (() => void) => {
   const queueRef = ref(rtdb, `messageQueue/${userId}`);
-  
-  const unsubscribe = onValue(queueRef, async (snapshot) => {
-    if (snapshot.exists()) {
-      const messages = snapshot.val();
-      
-      // Process each message
-      for (const messageId in messages) {
-        const messageData = messages[messageId];
-        
-        // Properly extract replyTo if it exists and has valid data
-        let replyTo: ChatMessage['replyTo'] | undefined;
-        if (messageData.replyTo && messageData.replyTo.messageId) {
-          replyTo = {
-            messageId: messageData.replyTo.messageId,
-            senderId: messageData.replyTo.senderId,
-            senderName: messageData.replyTo.senderName,
-            content: messageData.replyTo.content,
-          };
-          console.log('📎 Received message with replyTo:', replyTo.messageId);
-        }
-        
-        // Extract mediaMetadata if it exists
-        let mediaMetadata: ChatMessage['mediaMetadata'] | undefined;
-        if (messageData.mediaMetadata) {
-          mediaMetadata = {
-            ...(messageData.mediaMetadata.fileName && { fileName: messageData.mediaMetadata.fileName }),
-            ...(messageData.mediaMetadata.fileSize && { fileSize: messageData.mediaMetadata.fileSize }),
-            ...(messageData.mediaMetadata.mimeType && { mimeType: messageData.mediaMetadata.mimeType }),
-            ...(messageData.mediaMetadata.width && { width: messageData.mediaMetadata.width }),
-            ...(messageData.mediaMetadata.height && { height: messageData.mediaMetadata.height }),
-            ...(messageData.mediaMetadata.duration && { duration: messageData.mediaMetadata.duration }),
-            ...(messageData.mediaMetadata.aspectRatio && { aspectRatio: messageData.mediaMetadata.aspectRatio }),
-          };
-          console.log('📎 Received message with mediaMetadata:', mediaMetadata.fileName || messageData.type);
-        }
-        
-        // Download media if this message has media attached
-        let localMediaPath: string | undefined;
-        let mediaDownloaded = false;
-        const hasMedia = messageData.type !== 'text' && messageData.type !== 'system' && messageData.type !== 'location';
-        const mediaUrl = messageData.mediaUrl as string | undefined;
-        
-        if (hasMedia && mediaUrl) {
-          try {
-            // Determine filename
-            const fileName = mediaMetadata?.fileName || `${messageId}.${messageData.type === 'image' ? 'jpg' : 'dat'}`;
+  const processingMessageIds = new Set<string>();
 
-            // Download media from Firebase Storage URL
-            const result = await downloadMedia(mediaUrl, messageData.chatId, messageId, fileName);
-            if (result && result.localPath) {
-              localMediaPath = result.localPath;
-              mediaDownloaded = true;
-              console.log('📥 Media downloaded and saved:', localMediaPath);
-            }
-          } catch (error) {
-            console.error('❌ Error downloading media:', error);
-            // Continue processing message even if media download fails
-          }
-        }
-        
-        const message: ChatMessage = {
-          id: messageId,
-          messageId: messageId,
-          chatId: messageData.chatId,
-          senderId: messageData.senderId,
-          content: messageData.content,
-          type: messageData.type,
-          timestamp: messageData.timestamp,
-          createdAt: messageData.timestamp,
-          mediaUrl: mediaUrl,
-          // Use local path if download succeeded
-          ...(localMediaPath ? { localMediaPath, mediaDownloaded } : {}),
-          mediaMetadata,
-          replyTo,
-          status: 'delivered',
-          isFromMe: false,
-          deliveredTo: [],
-          readBy: []
-        };
-        
+  const processMessageSnapshot = async (snapshot: DataSnapshot): Promise<void> => {
+    const messageId = snapshot.key;
+    if (!messageId) {
+      return;
+    }
+
+    if (processingMessageIds.has(messageId)) {
+      return;
+    }
+
+    const payload = parseQueuePayload(snapshot.val());
+    if (!payload) {
+      console.warn('⚠️ Invalid queue message payload, skipping:', messageId);
+      return;
+    }
+
+    processingMessageIds.add(messageId);
+
+    try {
+      let localMediaPath: string | undefined;
+      let mediaDownloaded = false;
+      const hasMedia = payload.type !== 'text' && payload.type !== 'system' && payload.type !== 'location';
+
+      if (hasMedia && payload.mediaUrl) {
         try {
-          // Save message locally
-          await onMessageReceived(message);
-          
-          // Send delivery receipt (use isGroupChat flag from message)
-          const isGroupChat = messageData.isGroupChat || false;
-          await sendDeliveryReceipt(messageData.chatId, messageId, userId, isGroupChat);
-          
-          // Delete from queue after successful delivery
-          await remove(ref(rtdb, `messageQueue/${userId}/${messageId}`));
-          
-          console.log('✅ Message delivered and removed from queue:', messageId);
+          const fileName = payload.mediaMetadata?.fileName || `${messageId}.${payload.type === 'image' ? 'jpg' : 'dat'}`;
+          const result = await downloadMedia(payload.mediaUrl, payload.chatId, messageId, fileName);
+          if (result && result.localPath) {
+            localMediaPath = result.localPath;
+            mediaDownloaded = true;
+            console.log('📥 Media downloaded and saved:', localMediaPath);
+          }
         } catch (error) {
-          console.error('❌ Error processing message:', error);
+          console.error('❌ Error downloading media:', error);
         }
       }
+
+      const message: ChatMessage = {
+        id: messageId,
+        messageId,
+        chatId: payload.chatId,
+        senderId: payload.senderId,
+        content: payload.content,
+        type: payload.type,
+        timestamp: payload.timestamp,
+        createdAt: payload.timestamp,
+        mediaUrl: payload.mediaUrl ?? undefined,
+        ...(localMediaPath ? { localMediaPath, mediaDownloaded } : {}),
+        mediaMetadata: payload.mediaMetadata,
+        replyTo: payload.replyTo,
+        location: payload.location,
+        status: 'delivered',
+        isFromMe: false,
+        deliveredTo: [],
+        readBy: [],
+      };
+
+      await onMessageReceived(message);
+      await sendDeliveryReceipt(payload.chatId, messageId, userId, payload.isGroupChat ?? false);
+      await remove(ref(rtdb, `messageQueue/${userId}/${messageId}`));
+      console.log('✅ Message delivered and removed from queue:', messageId);
+    } catch (error) {
+      console.error('❌ Error processing message:', error);
+    } finally {
+      processingMessageIds.delete(messageId);
     }
+  };
+
+  const unsubscribeAdded = onChildAdded(queueRef, (snapshot) => {
+    void processMessageSnapshot(snapshot);
   });
-  
-  return unsubscribe;
+
+  const unsubscribeChanged = onChildChanged(queueRef, (snapshot) => {
+    void processMessageSnapshot(snapshot);
+  });
+
+  return () => {
+    unsubscribeAdded();
+    unsubscribeChanged();
+  };
 };
 
 /**
@@ -201,22 +348,16 @@ export const sendDeliveryReceipt = async (
   chatId: string,
   messageId: string,
   recipientId: string,
-  isGroupChat: boolean = false
+  _isGroupChat: boolean = false
 ): Promise<void> => {
   try {
-    // For group chats, store receipt per user
-    const receiptPath = isGroupChat
-      ? `receipts/${chatId}/${messageId}/${recipientId}`
-      : `receipts/${chatId}/${messageId}`;
-    
-    const receiptRef = ref(rtdb, receiptPath);
-    
-    await set(receiptRef, {
+    const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}/${recipientId}`);
+    await update(receiptRef, {
       delivered: true,
       deliveredAt: Date.now(),
       recipientId,
     });
-    
+
     console.log('✅ Delivery receipt sent for:', messageId);
   } catch (error) {
     console.error('❌ Error sending delivery receipt:', error);
@@ -230,24 +371,24 @@ export const sendReadReceipt = async (
   chatId: string,
   messageId: string,
   recipientId: string,
-  isGroupChat: boolean = false
+  _isGroupChat: boolean = false
 ): Promise<void> => {
+  const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}/${recipientId}`);
+  const now = Date.now();
+
   try {
-    // For group chats, store receipt per user
-    const receiptPath = isGroupChat
-      ? `receipts/${chatId}/${messageId}/${recipientId}`
-      : `receipts/${chatId}/${messageId}`;
-    
-    const receiptRef = ref(rtdb, receiptPath);
-    
-    await set(receiptRef, {
+    const existingSnapshot = await get(receiptRef);
+    const existingValue = existingSnapshot.val() as Partial<ReceiptData> | null;
+    const deliveredAt = typeof existingValue?.deliveredAt === 'number' ? existingValue.deliveredAt : now;
+
+    // Always write a complete receipt object to satisfy strict RTDB validation.
+    await update(receiptRef, {
       delivered: true,
-      deliveredAt: Date.now(),
-      read: true,
-      readAt: Date.now(),
+      deliveredAt,
       recipientId,
+      read: true,
+      readAt: now,
     });
-    
     console.log('✅ Read receipt sent for:', messageId);
   } catch (error) {
     console.error('❌ Error sending read receipt:', error);
@@ -255,7 +396,7 @@ export const sendReadReceipt = async (
 };
 
 /**
- * Send read receipts for multiple messages at once
+ * Send read receipts for multiple messages at once using a single multi-path update.
  */
 export const sendBulkReadReceipts = async (
   chatId: string,
@@ -264,19 +405,43 @@ export const sendBulkReadReceipts = async (
   isGroupChat: boolean = false
 ): Promise<void> => {
   try {
-    const promises = messageIds.map(messageId => 
-      sendReadReceipt(chatId, messageId, recipientId, isGroupChat)
+    if (messageIds.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const updates: Record<string, PersistedReceiptData> = {};
+
+    await Promise.all(
+      messageIds.map(async (messageId) => {
+        const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}/${recipientId}`);
+        const existingSnapshot = await get(receiptRef);
+        const existingValue = existingSnapshot.val() as Partial<ReceiptData> | null;
+        const deliveredAt = typeof existingValue?.deliveredAt === 'number' ? existingValue.deliveredAt : now;
+
+        updates[`receipts/${chatId}/${messageId}/${recipientId}`] = {
+          delivered: true,
+          deliveredAt,
+          recipientId,
+          read: true,
+          readAt: now,
+        };
+      })
     );
-    await Promise.all(promises);
+
+    await update(ref(rtdb), updates);
     console.log(`✅ Bulk read receipts sent for ${messageIds.length} messages`);
   } catch (error) {
     console.error('❌ Error sending bulk read receipts:', error);
+    if (messageIds.length > 0) {
+      await Promise.all(messageIds.map((messageId) => sendReadReceipt(chatId, messageId, recipientId, isGroupChat)));
+    }
   }
 };
 
 /**
- * Listen for delivery and read receipts (enhanced for group chats)
- * For group chats, aggregates per-user receipts
+ * Listen for delivery and read receipts.
+ * Uses child listeners to process only changed message receipts.
  */
 export const listenForReceipts = (
   chatId: string,
@@ -287,92 +452,77 @@ export const listenForReceipts = (
     allDelivered?: string[],
     allRead?: string[]
   ) => void,
-  isGroupChat: boolean = false
+  isGroupChat: boolean = false,
+  onError?: (error: Error) => void,
 ): (() => void) => {
   const receiptsRef = ref(rtdb, `receipts/${chatId}`);
-  
-  const unsubscribe = onValue(receiptsRef, (snapshot) => {
-    if (snapshot.exists()) {
-      const receipts = snapshot.val();
-      
-      for (const messageId in receipts) {
-        const messageReceipts = receipts[messageId];
-        
-        if (isGroupChat) {
-          // Group chat: messageReceipts is an object with recipientId keys
-          const allDelivered: string[] = [];
-          const allRead: string[] = [];
-          
-          for (const recipientId in messageReceipts) {
-            const receipt = messageReceipts[recipientId] as ReceiptData;
-            if (receipt.delivered) allDelivered.push(recipientId);
-            if (receipt.read) allRead.push(recipientId);
-          }
-          
-          // Determine overall status for this message
-          const hasRead = allRead.length > 0;
-          const hasDelivered = allDelivered.length > 0;
-          
-          if (hasRead) {
-            onReceiptReceived(messageId, 'read', undefined, allDelivered, allRead);
-          } else if (hasDelivered) {
-            onReceiptReceived(messageId, 'delivered', undefined, allDelivered, allRead);
-          }
-        } else {
-          // 1:1 chat: messageReceipts is a single receipt object
-          const receipt = messageReceipts as ReceiptData;
-          
-          if (receipt.read) {
-            onReceiptReceived(messageId, 'read', receipt.recipientId);
-          } else if (receipt.delivered) {
-            onReceiptReceived(messageId, 'delivered', receipt.recipientId);
-          }
-        }
-      }
-    }
-  });
-  
-  return unsubscribe;
-};
+  const fingerprints = new Map<string, string>();
 
-/**
- * Get current receipt status for a message (one-time fetch)
- */
-export const getReceiptStatus = async (
-  chatId: string,
-  messageId: string,
-  isGroupChat: boolean = false
-): Promise<{ deliveredTo: string[]; readBy: string[] }> => {
-  try {
-    const receiptRef = ref(rtdb, `receipts/${chatId}/${messageId}`);
-    const snapshot = await get(receiptRef);
-    
-    if (!snapshot.exists()) {
-      return { deliveredTo: [], readBy: [] };
+  const processReceiptSnapshot = (snapshot: DataSnapshot): void => {
+    const messageId = snapshot.key;
+    if (!messageId || messageId === '__participants') {
+      return;
     }
-    
-    const receipts = snapshot.val();
-    
+
+    const receiptMap = normalizeReceiptMap(snapshot.val());
+    const allDelivered = Object.entries(receiptMap)
+      .filter(([, receipt]) => receipt.delivered)
+      .map(([recipientId]) => recipientId)
+      .sort();
+    const allRead = Object.entries(receiptMap)
+      .filter(([, receipt]) => receipt.read)
+      .map(([recipientId]) => recipientId)
+      .sort();
+
+    const status: 'delivered' | 'read' | null = allRead.length > 0
+      ? 'read'
+      : allDelivered.length > 0
+        ? 'delivered'
+        : null;
+
+    if (!status) {
+      fingerprints.delete(messageId);
+      return;
+    }
+
+    const fingerprint = getReceiptFingerprint(status, allDelivered, allRead);
+    if (fingerprints.get(messageId) === fingerprint) {
+      return;
+    }
+
+    fingerprints.set(messageId, fingerprint);
+
     if (isGroupChat) {
-      const deliveredTo: string[] = [];
-      const readBy: string[] = [];
-      
-      for (const recipientId in receipts) {
-        const receipt = receipts[recipientId] as ReceiptData;
-        if (receipt.delivered) deliveredTo.push(recipientId);
-        if (receipt.read) readBy.push(recipientId);
-      }
-      
-      return { deliveredTo, readBy };
-    } else {
-      const receipt = receipts as ReceiptData;
-      return {
-        deliveredTo: receipt.delivered ? [receipt.recipientId] : [],
-        readBy: receipt.read ? [receipt.recipientId] : [],
-      };
+      onReceiptReceived(messageId, status, undefined, allDelivered, allRead);
+      return;
     }
-  } catch (error) {
-    console.error('❌ Error getting receipt status:', error);
-    return { deliveredTo: [], readBy: [] };
-  }
+
+    const recipientId = status === 'read' ? allRead[0] : allDelivered[0];
+    if (recipientId) {
+      onReceiptReceived(messageId, status, recipientId);
+    }
+  };
+
+  const unsubscribeAdded = onChildAdded(
+    receiptsRef,
+    processReceiptSnapshot,
+    (error: Error) => {
+      console.warn('⚠️ Receipt listener (added) cancelled:', error);
+      onError?.(error);
+    }
+  );
+  const unsubscribeChanged = onChildChanged(
+    receiptsRef,
+    processReceiptSnapshot,
+    (error: Error) => {
+      console.warn('⚠️ Receipt listener (changed) cancelled:', error);
+      onError?.(error);
+    }
+  );
+
+  return () => {
+    unsubscribeAdded();
+    unsubscribeChanged();
+    fingerprints.clear();
+  };
 };

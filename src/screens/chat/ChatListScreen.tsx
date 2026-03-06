@@ -1,13 +1,19 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { ChatListSkeleton } from '@/components/SkeletonLoader';
+import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
+import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
+import { lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useLayoutEffect, useMemo, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, RefreshControl, StyleSheet, View } from 'react-native';
-import { Avatar, List, Text } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
+import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
 interface ChatListScreenProps {
   onOpenThread: (thread: ChatThread) => void;
@@ -16,9 +22,17 @@ interface ChatListScreenProps {
 export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const navigation = useNavigation();
   const { threads, loading } = useChat();
+  const { user } = useAuth();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 20);
+
+  // Filter & Sort State
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [sortField, setSortField] = useState<ChatSortField>('updatedAt');
+  const [sortOrder, setSortOrder] = useState<ChatSortOrder>('desc');
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -39,8 +53,9 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
       const group = groups.find(g => g.groupId === thread.groupId);
       return group?.name || 'Group Chat';
     }
-    return thread.participants.find(p => p.userId !== thread.participantIds[0])?.displayName || 'Direct Chat';
-  }, [groups]);
+    const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+    return otherParticipant?.displayName || 'Direct Chat';
+  }, [groups, user?.userId]);
 
   // Helper to get chat initials for avatar
   const getChatInitials = useMemo(() => (thread: ChatThread) => {
@@ -48,9 +63,42 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
       const group = groups.find(g => g.groupId === thread.groupId);
       return (group?.name || 'GC').slice(0, 2).toUpperCase();
     }
-    const otherParticipant = thread.participants.find(p => p.userId !== thread.participantIds[0]);
+    const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
     return (otherParticipant?.displayName || 'SC').slice(0, 2).toUpperCase();
-  }, [groups]);
+  }, [groups, user?.userId]);
+
+  // Sort Logic
+  const processedThreads = useMemo(() => {
+    let result = [...threads];
+
+    result.sort((a, b) => {
+      let comparison = 0;
+      switch (sortField) {
+        case 'name':
+          const nameA = getChatTitle(a);
+          const nameB = getChatTitle(b);
+          comparison = nameA.localeCompare(nameB);
+          break;
+        case 'unread':
+          comparison = a.unreadCount - b.unreadCount;
+          break;
+        case 'updatedAt':
+          // Use updatedAt or lastMessage.timestamp or fall back to 0
+          const timeA = a.updatedAt || (a.lastMessage?.timestamp ? new Date(a.lastMessage.timestamp).getTime() : 0);
+          const timeB = b.updatedAt || (b.lastMessage?.timestamp ? new Date(b.lastMessage.timestamp).getTime() : 0);
+          comparison = timeA - timeB;
+          break;
+      }
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
+    return result;
+  }, [threads, sortField, sortOrder, getChatTitle]);
+
+  const handleOpenThread = (thread: ChatThread) => {
+    lightHaptic();
+    onOpenThread(thread);
+  };
 
   return (
     <LiquidBackground>
@@ -62,7 +110,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
 
       <View style={styles.container}>
         <Animated.FlatList
-          data={threads}
+          data={processedThreads}
           keyExtractor={(item) => item.chatId}
           renderItem={({ item }) => (
             <GlassView style={styles.chatItem}>
@@ -70,14 +118,23 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                 title={getChatTitle(item)}
                 description={item.lastMessage?.content ?? 'No messages yet'}
                 left={() => (
-                  <Avatar.Text
-                    size={48}
-                    label={getChatInitials(item)}
-                    style={{ backgroundColor: theme.colors.primary }}
-                    color={theme.colors.onPrimary}
-                  />
+                  <View>
+                    <Avatar.Text
+                      size={48}
+                      label={getChatInitials(item)}
+                      style={{ backgroundColor: theme.colors.primary }}
+                      color={theme.colors.onPrimary}
+                    />
+                    {item.unreadCount > 0 && (
+                      <View style={[styles.unreadBadge, { backgroundColor: theme.colors.error, borderColor: theme.colors.background }]}>
+                        <Text style={{ color: theme.colors.onError, fontSize: 10, fontWeight: 'bold' }}>
+                          {item.unreadCount > 9 ? '9+' : item.unreadCount}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
                 )}
-                onPress={() => onOpenThread(item)}
+                onPress={() => handleOpenThread(item)}
                 titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
                 descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
                 descriptionNumberOfLines={1}
@@ -85,11 +142,38 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
             </GlassView>
           )}
           refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} />}
-          ListEmptyComponent={<Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No chats yet.</Text>}
-          contentContainerStyle={{ padding: 16, paddingTop: 60, paddingBottom: 100 }}
+          ListEmptyComponent={
+            loading ? (
+              <View>
+                <ChatListSkeleton />
+                <ChatListSkeleton />
+                <ChatListSkeleton />
+              </View>
+            ) : (
+              <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No chats yet.</Text>
+            )
+          }
+          contentContainerStyle={{ padding: 16, paddingTop: 60, paddingBottom: listBottomPadding }}
           ListHeaderComponent={
             <View style={styles.headerContainer}>
-              <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Chats</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Chats</Text>
+
+                <View>
+                  <TouchableRipple
+                    onPress={() => { lightHaptic(); setFilterVisible(true); }}
+                    style={[styles.filterButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}
+                    borderless
+                  >
+                    <View style={styles.filterButtonContent}>
+                      <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
+                    </View>
+                  </TouchableRipple>
+                  {/* Badge can show if non-default sort is active? Or maybe just sorting doesn't need a badge. 
+                      User only had Badge for currency filter count in groups. 
+                      Let's stick to simple button for now unless we add filtering logic later. */}
+                </View>
+              </View>
             </View>
           }
           onScroll={Animated.event(
@@ -99,6 +183,17 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
           scrollEventThrottle={16}
         />
       </View>
+
+      <Portal>
+        <ChatFilterSortSheet
+          visible={filterVisible}
+          onClose={() => setFilterVisible(false)}
+          sortField={sortField}
+          sortOrder={sortOrder}
+          onSortFieldChange={setSortField}
+          onSortOrderChange={setSortOrder}
+        />
+      </Portal>
     </LiquidBackground>
   );
 };
@@ -111,6 +206,17 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderRadius: 16,
     overflow: 'hidden',
+  },
+  unreadBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   empty: {
     textAlign: 'center',
@@ -142,5 +248,16 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontWeight: 'bold',
+  },
+  filterButton: {
+    borderRadius: 50,
+    width: 44,
+    height: 44,
+    overflow: 'hidden',
+  },
+  filterButtonContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

@@ -1,4 +1,4 @@
-import { AttachmentMenu, MediaPreview } from '@/components/Chat';
+import { AttachmentMenu, LocationPicker, MediaPreview } from '@/components/Chat';
 import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
 import type { QualityLevel } from '@/components/Chat/MediaPreview';
 import { GlassView } from '@/components/GlassView';
@@ -6,13 +6,15 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { LoadingOverlay } from '@/components/LoadingOverlay';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
+import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatThread, MessageType } from '@/models';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
+import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
 
@@ -23,6 +25,7 @@ interface ChatRoomScreenProps {
 export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const navigation = useNavigation();
   const { subscribeToMessages, sendMessage, markChatAsRead } = useChat();
+  const { user } = useAuth();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   // Messages for this chat (inverted list - newest first)
@@ -36,8 +39,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Track focus state of the composer input so we can highlight the
   // outer container (`GlassView`) with a border that matches the app color.
   const [composerFocused, setComposerFocused] = useState(false);
-  // Animated value for focus border animation (0 = unfocused, 1 = focused)
-  const focusAnim = useRef(new Animated.Value(0)).current;
   // Reply state
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const inputRef = useRef<any>(null);
@@ -48,6 +49,27 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
   // Media processing state
   const [isProcessingMedia, setIsProcessingMedia] = useState(false);
+  // Location picker state
+  const [locationPickerVisible, setLocationPickerVisible] = useState(false);
+  const markReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const markReadInFlightRef = useRef(false);
+
+  const requestMarkAsRead = useCallback(() => {
+    if (markReadTimerRef.current) {
+      clearTimeout(markReadTimerRef.current);
+    }
+
+    markReadTimerRef.current = setTimeout(() => {
+      if (markReadInFlightRef.current) {
+        return;
+      }
+
+      markReadInFlightRef.current = true;
+      void markChatAsRead(thread.chatId).finally(() => {
+        markReadInFlightRef.current = false;
+      });
+    }, 100);
+  }, [markChatAsRead, thread.chatId]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -67,12 +89,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
 
     // Reduce noisy logging and unnecessary state updates:
-    // - Only update messages state when count or last message id changes.
+    // - Update messages when list composition or delivery/read state changes.
     // - Throttle console logging to once per LOG_INTERVAL, otherwise only log new messages.
     let lastLogAt = 0;
     const LOG_INTERVAL = 30_000; // 30s
     let prevCount = 0;
     let prevLastMessageId: string | null = null;
+    let prevStatusFingerprint = '';
 
     const unsubscribe = subscribeToMessages(thread.chatId, (items) => {
       // Keep the previous count/last id for comparisons
@@ -84,34 +107,44 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
       const countChanged = items.length !== prevCountBefore;
       const lastIdChanged = lastId !== prevLastIdBefore;
+      const statusFingerprint = items
+        .map((item) => {
+          const id = item.messageId || item.id;
+          const deliveredCount = item.deliveredTo?.length ?? 0;
+          const readCount = item.readBy?.length ?? 0;
+          return `${id}:${item.status}:${deliveredCount}:${readCount}`;
+        })
+        .join('|');
+      const statusChanged = statusFingerprint !== prevStatusFingerprint;
 
-      // Only update state if it's a meaningful change to reduce re-renders
-      if (countChanged || lastIdChanged) {
-      setMessages(items);
-      prevCount = items.length;
-      prevLastMessageId = lastId;
+      // Update when list composition or delivery/read status changes.
+      if (countChanged || lastIdChanged || statusChanged) {
+        setMessages(items);
+        prevCount = items.length;
+        prevLastMessageId = lastId;
+        prevStatusFingerprint = statusFingerprint;
       }
 
       // Throttled logging to avoid spamming the console
       const now = Date.now();
       if (now - lastLogAt > LOG_INTERVAL) {
-      console.log(`📨 Received ${items.length} messages in ChatRoomScreen`);
-      lastLogAt = now;
+        console.log(`📨 Received ${items.length} messages in ChatRoomScreen`);
+        lastLogAt = now;
       } else if (countChanged && items.length > prevCountBefore) {
-      // If new messages arrived and we are within the throttle window,
-      // log a concise "new messages" note.
-      console.log(`📨 New message(s) — total: ${items.length}`);
-      lastLogAt = now;
+        // If new messages arrived and we are within the throttle window,
+        // log a concise "new messages" note.
+        console.log(`📨 New message(s) — total: ${items.length}`);
+        lastLogAt = now;
       }
     });
 
     // Mark all messages as read when opening the chat
-    markChatAsRead(thread.chatId);
+    requestMarkAsRead();
 
     // Also mark as read when app comes back to foreground
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
-        markChatAsRead(thread.chatId);
+        requestMarkAsRead();
       }
     });
 
@@ -119,8 +152,11 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       console.log('👋 ChatRoomScreen unmounting');
       unsubscribe();
       subscription.remove();
+      if (markReadTimerRef.current) {
+        clearTimeout(markReadTimerRef.current);
+      }
     };
-  }, [subscribeToMessages, thread.chatId, markChatAsRead]);
+  }, [requestMarkAsRead, subscribeToMessages, thread.chatId]);
 
   useEffect(() => {
     if (messages.length === 0) {
@@ -131,11 +167,31 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     // listRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, [messages.length]);
 
+  // If chat is open and a new incoming message appears, mark it as read immediately.
+  useEffect(() => {
+    if (!user || messages.length === 0) {
+      return;
+    }
+
+    const hasUnreadIncoming = messages.some(
+      (message) =>
+        message.senderId !== user.userId &&
+        (!message.readBy || !message.readBy.includes(user.userId))
+    );
+
+    if (!hasUnreadIncoming) {
+      return;
+    }
+
+    requestMarkAsRead();
+  }, [messages, requestMarkAsRead, user]);
+
   const handleSend = async () => {
     const trimmed = text.trim();
     if (!trimmed) {
       return;
     }
+    lightHaptic();
     setSending(true);
     try {
       // Build replyTo data if replying
@@ -150,6 +206,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         };
       }
       await sendMessage({ chatId: thread.chatId, content: trimmed, groupId: thread.groupId, replyTo: replyData });
+      successHaptic();
       setText('');
       setReplyingTo(null);
     } finally {
@@ -159,30 +216,41 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
   // Handle swipe reply from message bubble
   const handleSwipeReply = (message: ChatMessage) => {
+    lightHaptic();
     setReplyingTo(message);
     inputRef.current?.focus();
+  };
+
+  const handleSwipeInfo = (message: ChatMessage) => {
+    lightHaptic();
+    // @ts-ignore - navigation route typing is intentionally loose in this app
+    navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread });
   };
 
   // Handle media selection from attachment menu
   const handleMediaSelected = (media: SelectedMedia) => {
     // Close attachment menu first
     setAttachmentMenuVisible(false);
-    
+
     // Wait for menu close animation to finish before showing preview
     // This prevents modal conflict issues on iOS/Android
     setTimeout(() => {
-      setSelectedMedia(media);
-      setMediaPreviewVisible(true);
+      if (media.type === 'location') {
+        setLocationPickerVisible(true);
+      } else {
+        setSelectedMedia(media);
+        setMediaPreviewVisible(true);
+      }
     }, 500);
   };
 
   // Handle sending media with optional caption
   const handleSendMedia = async (caption: string, quality: QualityLevel) => {
     if (!selectedMedia) return;
-    
+
     setMediaPreviewVisible(false);
     setIsProcessingMedia(true);
-    
+
     try {
       // Process media based on quality selection
       let processedUri = selectedMedia.uri;
@@ -263,7 +331,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         replyTo: replyData,
         mediaMetadata: Object.keys(mediaMetadata).length > 0 ? mediaMetadata as any : undefined,
       });
-      
+
       setSelectedMedia(null);
       setReplyingTo(null);
     } catch (error) {
@@ -272,6 +340,22 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       alert(error instanceof Error ? error.message : 'Failed to send media');
     } finally {
       setIsProcessingMedia(false);
+    }
+  };
+
+  // Handle sending location
+  const handleSendLocation = async (location: { latitude: number; longitude: number; address?: string }) => {
+    try {
+      await sendMessage({
+        chatId: thread.chatId,
+        content: '📍 Location',
+        type: 'location',
+        groupId: thread.groupId,
+        location: location,
+      });
+    } catch (error) {
+      console.error('Failed to send location:', error);
+      alert('Failed to send location');
     }
   };
 
@@ -310,9 +394,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   }, [thread.type, thread.groupId, groups]);
 
   const placeholder = useMemo(() => (thread.type === 'group' ? 'Type a message...' : 'Message user'), [thread.type]);
+  const directParticipant = useMemo(
+    () => thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0],
+    [thread.participants, user?.userId],
+  );
   const title = thread.type === 'group'
     ? groupName || 'Group Chat'
-    : thread.participants.find(p => p.userId !== thread.participantIds[0])?.displayName || 'Direct Chat';
+    : directParticipant?.displayName || 'Direct Chat';
 
   const handleHeaderPress = () => {
     if (thread.type === 'group' && thread.groupId) {
@@ -334,8 +422,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        // smaller offset so composer hugs the keyboard more closely
-        //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
+      // smaller offset so composer hugs the keyboard more closely
+      //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
       >
         <View style={styles.headerContainer}>
           <TouchableOpacity
@@ -377,6 +465,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 showSenderInfo={thread.type === 'group' ? isFirstInSequence : undefined}
                 senderName={senderName}
                 onSwipeReply={handleSwipeReply}
+                onSwipeInfo={thread.type === 'group' ? handleSwipeInfo : undefined}
                 isGroupChat={thread.type === 'group'}
                 totalRecipients={totalRecipients}
               />
@@ -402,7 +491,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           {/* Reply preview bar */}
           {replyingTo && (
             <View style={styles.replyPreviewContainer}>
-              <View style={[styles.replyPreview, { 
+              <View style={[styles.replyPreview, {
                 borderLeftColor: getSenderColor(replyingTo.senderId)
               }]}>
                 <Text style={[styles.replyPreviewSender, { color: getSenderColor(replyingTo.senderId) }]}>
@@ -426,7 +515,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               </TouchableOpacity>
             </View>
           )}
-          
+
           <View style={styles.inputRow}>
             {/* Attachment button (WhatsApp-style +) */}
             <IconButton
@@ -439,64 +528,56 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               style={styles.attachButton}
               accessibilityLabel="Add attachment"
             />
-            <Animated.View
-            style={{
-              ...styles.composerAnimated,
-              borderWidth: focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 2] }),
-              borderColor: theme.colors.primary,
-              borderRadius: styles.composer.borderRadius,
-            }}
-          >
-            <GlassView style={styles.composer}>
-              <TextInput
-                ref={inputRef}
-                mode="flat"
-                dense
-                placeholder={placeholder}
-                value={text}
-                onChangeText={setText}
-                style={styles.input}
-                contentStyle={styles.inputContent}
-                selectionColor={theme.colors.primary}
-                underlineColor="transparent"
-                activeUnderlineColor="transparent"
-                onFocus={() => {
-                  setComposerFocused(true);
-                  Animated.timing(focusAnim, { toValue: 1, duration: 150, useNativeDriver: false }).start();
-                }}
-                onBlur={() => {
-                  setComposerFocused(false);
-                  Animated.timing(focusAnim, { toValue: 0, duration: 150, useNativeDriver: false }).start();
-                }}
-                multiline
-                numberOfLines={1}
-                maxLength={1000}
-                theme={{
-                  colors: {
-                    background: 'transparent',
-                    onSurfaceVariant: theme.colors.onSurfaceVariant,
-                    text: theme.colors.onSurface,
-                    placeholder: theme.colors.onSurfaceVariant,
-                  }
-                }}
-                returnKeyType="send"
-                onSubmitEditing={handleSend}
-                blurOnSubmit={false}
-                keyboardAppearance={isDark ? 'dark' : 'light'}
-              />
-            </GlassView>
-          </Animated.View>
-          <IconButton
-            icon="send"
-            mode="contained"
-            onPress={handleSend}
-            disabled={!text.trim() || sending}
-            containerColor={!text.trim() || sending ? (isDark ? '#555' : '#ccc') : theme.colors.primary}
-            iconColor={theme.colors.onPrimary}
-            size={28}
-            style={styles.sendButton}
-            accessibilityLabel="Send message"
-          />
+            <View
+              style={[
+                styles.composerAnimated,
+                composerFocused && { borderWidth: 2, borderColor: theme.colors.primary },
+              ]}
+            >
+              <GlassView style={styles.composer}>
+                <TextInput
+                  ref={inputRef}
+                  mode="flat"
+                  dense
+                  placeholder={placeholder}
+                  value={text}
+                  onChangeText={setText}
+                  style={styles.input}
+                  contentStyle={styles.inputContent}
+                  selectionColor={theme.colors.primary}
+                  underlineColor="transparent"
+                  activeUnderlineColor="transparent"
+                  onFocus={() => setComposerFocused(true)}
+                  onBlur={() => setComposerFocused(false)}
+                  multiline
+                  numberOfLines={1}
+                  maxLength={1000}
+                  theme={{
+                    colors: {
+                      background: 'transparent',
+                      onSurfaceVariant: theme.colors.onSurfaceVariant,
+                      text: theme.colors.onSurface,
+                      placeholder: theme.colors.onSurfaceVariant,
+                    }
+                  }}
+                  returnKeyType="send"
+                  onSubmitEditing={handleSend}
+                  blurOnSubmit={false}
+                  keyboardAppearance={isDark ? 'dark' : 'light'}
+                />
+              </GlassView>
+            </View>
+            <IconButton
+              icon="send"
+              mode="contained"
+              onPress={handleSend}
+              disabled={!text.trim() || sending}
+              containerColor={!text.trim() || sending ? (isDark ? '#555' : '#ccc') : theme.colors.primary}
+              iconColor={theme.colors.onPrimary}
+              size={28}
+              style={styles.sendButton}
+              accessibilityLabel="Send message"
+            />
           </View>
         </GlassView>
       </KeyboardAvoidingView>
@@ -519,6 +600,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         onSend={handleSendMedia}
       />
 
+      {/* Location Picker Modal */}
+      <LocationPicker
+        visible={locationPickerVisible}
+        onClose={() => setLocationPickerVisible(false)}
+        onSendLocation={handleSendLocation}
+      />
+
       {/* Processing Overlay */}
       <LoadingOverlay visible={isProcessingMedia} message="Processing media..." />
     </LiquidBackground>
@@ -532,7 +620,6 @@ const styles = StyleSheet.create({
   },
   list: {
     flex: 1,
-    overflow: 'visible',
   },
   listContent: {
     padding: 16,

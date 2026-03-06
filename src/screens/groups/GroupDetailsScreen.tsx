@@ -1,27 +1,92 @@
 import { BalanceSummary } from '@/components/BalanceSummary';
 import { DebtsList } from '@/components/DebtsList';
-import { ExpenseCard } from '@/components/ExpenseCard';
+import { ActivityTypeFilter, DateRange, FilterSortSheet, SortField, SortOrder } from '@/components/FilterSortSheet';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { SettlementCard } from '@/components/SettlementCard';
+import { ExpenseCardSkeleton } from '@/components/SkeletonLoader';
+import { SwipeableExpenseCard } from '@/components/SwipeableExpenseCard';
 import { ROUTES } from '@/constants';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { Group } from '@/models';
+import type { Expense, Group, Settlement } from '@/models';
+import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useLayoutEffect, useMemo, useRef } from 'react';
-import { Animated, StyleSheet, View } from 'react-native';
-import { Button, Text } from 'react-native-paper';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, Platform, StyleSheet, View } from 'react-native';
+import { Icon, IconButton, Text, TouchableRipple } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface GroupDetailsScreenProps {
   group: Group;
   onAddExpense: (group: Group) => void;
   onSettle: (group: Group) => void;
   onOpenChat: (group: Group) => void;
+  compactAnim?: Animated.Value;
 }
 
-export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }: GroupDetailsScreenProps) => {
+export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, compactAnim: compactAnimProp }: GroupDetailsScreenProps) => {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
+  const { deleteExpense, deleteSettlement, loading } = useGroups();
   const { theme, isDark } = useTheme();
+  const supportsNativeBottomAccessory =
+    Platform.OS === 'ios' && Number.parseInt(String(Platform.Version), 10) >= 26;
+  const shouldRenderFallbackAccessory = !supportsNativeBottomAccessory;
   const scrollY = useRef(new Animated.Value(0)).current;
+  const compactStateRef = useRef(false);
+  const lastScrollYRef = useRef(0);
+  const scrollDirectionRef = useRef<'up' | 'down' | null>(null);
+  const directionalTravelRef = useRef(0);
+  const compactAnimRef = useRef(compactAnimProp);
+  compactAnimRef.current = compactAnimProp;
+  const [isLegacyAccessoryCompact, setIsLegacyAccessoryCompact] = useState(false);
+  const [showFilterSheet, setShowFilterSheet] = useState(false);
+  const [sortField, setSortField] = useState<SortField>('date');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [activityType, setActivityType] = useState<ActivityTypeFilter>('all');
+  const [dateRange, setDateRange] = useState<DateRange>('all');
+  const [collapsedYears, setCollapsedYears] = useState<Set<number>>(new Set());
+  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
+
+  const toggleYear = (year: number) => {
+    setCollapsedYears(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(year)) {
+        newSet.delete(year);
+      } else {
+        newSet.add(year);
+      }
+      return newSet;
+    });
+    lightHaptic();
+  };
+
+  const toggleMonth = (monthKey: string) => {
+    setCollapsedMonths(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(monthKey)) {
+        newSet.delete(monthKey);
+      } else {
+        newSet.add(monthKey);
+      }
+      return newSet;
+    });
+    lightHaptic();
+  };
+
+  const tabBarHeight = Platform.OS === 'ios'
+    ? Math.max(78, 50 + insets.bottom)
+    : Math.max(70, 56 + insets.bottom);
+  const contentBottomPadding = tabBarHeight + (shouldRenderFallbackAccessory ? 240 : 180);
+
+  // Reset compactAnim to expanded when unmounting.
+  useEffect(() => {
+    return () => {
+      compactAnimRef.current?.setValue(0);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -37,10 +102,307 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
   );
 
   const headerOpacity = scrollY.interpolate({
-    inputRange: [40, 80],
+    inputRange: [90, 130],
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
+
+  const handleDeleteExpense = (expense: Expense) => {
+    Alert.alert(
+      'Delete Expense',
+      `Are you sure you want to delete "${expense.title}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteExpense(group.groupId, expense.expenseId);
+              errorHaptic();
+            } catch (error) {
+              console.error('Failed to delete expense:', error);
+              Alert.alert('Error', 'Failed to delete expense');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteSettlement = (settlement: Settlement) => {
+    Alert.alert(
+      'Delete Settlement',
+      `Are you sure you want to delete this settlement?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteSettlement(group.groupId, settlement.settlementId);
+              errorHaptic();
+            } catch (error) {
+              console.error('Failed to delete settlement:', error);
+              Alert.alert('Error', 'Failed to delete settlement');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleEditSettlement = (settlement: Settlement) => {
+    // Navigate to settlements screen in edit mode
+    navigation.navigate(ROUTES.APP.SETTLEMENTS, {
+      groupId: group.groupId,
+      settlementId: settlement.settlementId
+    });
+  };
+
+  const openStats = () => {
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId });
+  };
+
+  const openBills = () => {
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId });
+  };
+
+  const openSettle = () => {
+    lightHaptic();
+    onSettle(group);
+  };
+
+  const openAddExpense = () => {
+    lightHaptic();
+    onAddExpense(group);
+  };
+
+  const openChat = () => {
+    lightHaptic();
+    onOpenChat(group);
+  };
+  const settleAccentPillStyle = {
+    backgroundColor: '#0FA56C',
+    borderColor: 'rgba(255,255,255,0.22)',
+  };
+  const addExpenseAccentPillStyle = {
+    backgroundColor: '#2F80ED',
+    borderColor: 'rgba(255,255,255,0.22)',
+  };
+  const fallbackBarChromeStyle = {
+    backgroundColor: isDark ? 'rgba(8,14,24,0.98)' : 'rgba(255,255,255,0.98)',
+    borderColor: isDark ? 'rgba(148,163,184,0.28)' : 'rgba(15,23,42,0.16)',
+  };
+  const fallbackUtilityPillStyle = {
+    backgroundColor: isDark ? 'rgba(30,41,59,0.72)' : 'rgba(241,245,249,0.9)',
+  };
+
+  // Helper functions for sorting
+  const getSortKey = (expense: Expense): number | string => {
+    switch (sortField) {
+      case 'date':
+        return expense.createdAt;
+      case 'amount':
+        return expense.amount;
+      case 'title':
+        return expense.title.toLowerCase();
+      default:
+        return expense.createdAt;
+    }
+  };
+
+  const getSettlementSortKey = (settlement: Settlement): number | string => {
+    switch (sortField) {
+      case 'date':
+        return settlement.createdAt;
+      case 'amount':
+        return settlement.amount;
+      case 'title':
+        return 'settlement'; // Group all settlements together when sorting by title
+      default:
+        return settlement.createdAt;
+    }
+  };
+
+  const handleCategoryToggle = (category: string) => {
+    if (category === 'all') {
+      setSelectedCategories([]);
+    } else {
+      setSelectedCategories(prev =>
+        prev.includes(category)
+          ? prev.filter(c => c !== category)
+          : [...prev, category]
+      );
+    }
+  };
+
+  // Check date range helper
+  const checkDateRange = (dateString: string | number) => {
+    if (dateRange === 'all') return true;
+
+    const timestamp = typeof dateString === 'string' ? new Date(dateString).getTime() : dateString;
+    const date = new Date(timestamp);
+    const now = new Date();
+
+    // Clear time part for accurate date comparison
+    date.setHours(0, 0, 0, 0);
+    now.setHours(0, 0, 0, 0);
+
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+    const startOf3MonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+
+    switch (dateRange) {
+      case 'this-month':
+        return date >= startOfMonth;
+      case 'last-month':
+        return date >= startOfLastMonth && date <= endOfLastMonth;
+      case 'last-3-months':
+        return date >= startOf3MonthsAgo;
+      default:
+        return true;
+    }
+  };
+
+  // Combined activity list (expenses + settlements) with filtering
+  type ActivityItem =
+    | { type: 'expense'; data: Expense; sortKey: number | string }
+    | { type: 'settlement'; data: Settlement; sortKey: number | string };
+
+  const sortedActivities = useMemo(() => {
+    // Filter expenses by category
+    const filteredExpenses = selectedCategories.length === 0
+      ? group.expenses
+      : group.expenses.filter(exp => selectedCategories.includes(exp.category.toLowerCase()));
+
+    // Filter by date range
+    const dateFilteredExpenses = filteredExpenses.filter(exp => checkDateRange(exp.createdAt));
+    const dateFilteredSettlements = group.settlements.filter(set => checkDateRange(set.createdAt));
+
+    // Build activity list based on activity type filter
+    let activities: ActivityItem[] = [];
+    if (activityType === 'all' || activityType === 'expenses') {
+      activities = [
+        ...activities,
+        ...dateFilteredExpenses.map(exp => ({
+          type: 'expense' as const,
+          data: exp,
+          sortKey: getSortKey(exp),
+        })),
+      ];
+    }
+    if (activityType === 'all' || activityType === 'settlements') {
+      activities = [
+        ...activities,
+        ...dateFilteredSettlements.map(set => ({
+          type: 'settlement' as const,
+          data: set,
+          sortKey: getSettlementSortKey(set),
+        })),
+      ];
+    }
+
+    // Sort activities
+    return activities.sort((a, b) => {
+      if (typeof a.sortKey === 'number' && typeof b.sortKey === 'number') {
+        return sortOrder === 'desc' ? b.sortKey - a.sortKey : a.sortKey - b.sortKey;
+      }
+      if (typeof a.sortKey === 'string' && typeof b.sortKey === 'string') {
+        return sortOrder === 'desc' ? b.sortKey.localeCompare(a.sortKey) : a.sortKey.localeCompare(b.sortKey);
+      }
+      return 0;
+    });
+  }, [group.expenses, group.settlements, sortField, sortOrder, selectedCategories, activityType, dateRange]);
+
+  // Group activities by year, then by month
+  type MonthSection = {
+    monthKey: string;
+    monthLabel: string;
+    items: ActivityItem[];
+  };
+
+  type YearSection = {
+    year: number;
+    yearLabel: string;
+    months: MonthSection[];
+    totalItems: number;
+  };
+
+  const yearGroupedActivities = useMemo(() => {
+    const yearMap: Record<number, Record<string, ActivityItem[]>> = {};
+
+    sortedActivities.forEach(activity => {
+      const timestamp = activity.type === 'expense' ? activity.data.createdAt : activity.data.createdAt;
+      const date = new Date(timestamp);
+      const year = date.getFullYear();
+      const monthKey = `${year}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+      if (!yearMap[year]) {
+        yearMap[year] = {};
+      }
+      if (!yearMap[year][monthKey]) {
+        yearMap[year][monthKey] = [];
+      }
+      yearMap[year][monthKey].push(activity);
+    });
+
+    const now = new Date();
+
+    // Convert to array structure
+    const years: YearSection[] = Object.entries(yearMap).map(([yearStr, months]) => {
+      const year = Number(yearStr);
+      const yearLabel = year === now.getFullYear() ? 'This Year' : String(year);
+
+      const monthSections: MonthSection[] = Object.entries(months).map(([monthKey, items]) => {
+        const [yr, mo] = monthKey.split('-').map(Number);
+        const date = new Date(yr, mo - 1);
+
+        let monthLabel: string;
+        if (date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()) {
+          monthLabel = 'This Month';
+        } else if (
+          (date.getMonth() === now.getMonth() - 1 && date.getFullYear() === now.getFullYear()) ||
+          (now.getMonth() === 0 && date.getMonth() === 11 && date.getFullYear() === now.getFullYear() - 1)
+        ) {
+          monthLabel = 'Last Month';
+        } else {
+          monthLabel = date.toLocaleDateString('en-US', { month: 'long' });
+        }
+
+        return { monthKey, monthLabel, items };
+      });
+
+      // Sort months within year
+      monthSections.sort((a, b) => {
+        const comparison = b.monthKey.localeCompare(a.monthKey);
+        return sortOrder === 'desc' ? comparison : -comparison;
+      });
+
+      const totalItems = monthSections.reduce((sum, m) => sum + m.items.length, 0);
+
+      return { year, yearLabel, months: monthSections, totalItems };
+    });
+
+    // Sort years
+    years.sort((a, b) => sortOrder === 'desc' ? b.year - a.year : a.year - b.year);
+
+    return years;
+  }, [sortedActivities, sortOrder]);
+
+  const handleClearFilters = () => {
+    setSelectedCategories([]);
+    setActivityType('all');
+    setDateRange('all');
+    lightHaptic();
+  };
+
+  const activeFilters = selectedCategories.length + (activityType !== 'all' ? 1 : 0) + (dateRange !== 'all' ? 1 : 0);
+
 
   return (
     <LiquidBackground>
@@ -51,14 +413,60 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
       </Animated.View>
 
       <Animated.ScrollView
-        contentContainerStyle={styles.container}
+        contentContainerStyle={[styles.container, { paddingBottom: contentBottomPadding }]}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: true }
+          {
+            useNativeDriver: true,
+            listener: (event: any) => {
+              const y = event.nativeEvent.contentOffset.y;
+              const prevY = lastScrollYRef.current;
+              const deltaY = y - prevY;
+              const absDelta = Math.abs(deltaY);
+              lastScrollYRef.current = y;
+
+              if (absDelta < 0.5) return;
+
+              const dir: 'up' | 'down' = deltaY > 0 ? 'down' : 'up';
+              if (scrollDirectionRef.current !== dir) {
+                scrollDirectionRef.current = dir;
+                directionalTravelRef.current = 0;
+              }
+              directionalTravelRef.current += absDelta;
+
+              let shouldCompact = compactStateRef.current;
+              if (y <= 6) {
+                shouldCompact = false;
+                directionalTravelRef.current = 0;
+              } else if (
+                !compactStateRef.current &&
+                dir === 'down' &&
+                y > 18 &&
+                directionalTravelRef.current >= 12
+              ) {
+                shouldCompact = true;
+                directionalTravelRef.current = 0;
+              }
+
+              if (shouldCompact !== compactStateRef.current) {
+                compactStateRef.current = shouldCompact;
+                setIsLegacyAccessoryCompact(shouldCompact);
+                if (compactAnimRef.current) {
+                  Animated.spring(compactAnimRef.current, {
+                    toValue: shouldCompact ? 1 : 0,
+                    useNativeDriver: true,
+                    damping: 28,
+                    mass: 0.4,
+                    stiffness: 380,
+                  }).start();
+                }
+              }
+            }
+          }
         )}
         scrollEventThrottle={16}
       >
-        <View style={{ height: 70 }} />
+        <View style={{ height: 110 }} />
         <GlassView style={styles.headerCard}>
           <View style={styles.header}>
             <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{group.name}</Text>
@@ -72,78 +480,284 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat }
 
         <DebtsList group={group} />
 
-        <Text variant="titleMedium" style={[styles.section, { color: theme.colors.onSurface }]}>
-          Recent expenses
-        </Text>
-        {group.expenses.length === 0 ? (
+        <View style={styles.sectionHeader}>
+          <Text variant="titleMedium" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '600', paddingHorizontal: 4, flex: 1 }}>
+            Recent activity
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {activeFilters > 0 && (
+              <TouchableRipple
+                onPress={handleClearFilters}
+                style={[styles.filterButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+              >
+                <View style={[styles.filterButtonContent, { paddingHorizontal: 12 }]}>
+                  <IconButton icon="close" size={16} iconColor={theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
+                  <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '600' }}>
+                    Clear
+                  </Text>
+                </View>
+              </TouchableRipple>
+            )}
+            <TouchableRipple
+              onPress={() => setShowFilterSheet(true)}
+              style={[styles.filterButton, { backgroundColor: activeFilters > 0 ? theme.colors.primaryContainer : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)') }]}
+            >
+              <View style={styles.filterButtonContent}>
+                <IconButton icon="filter-variant" size={16} iconColor={activeFilters > 0 ? theme.colors.primary : theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
+                <Text variant="labelMedium" style={{ color: activeFilters > 0 ? theme.colors.primary : theme.colors.onSurfaceVariant, fontWeight: '600' }}>
+                  Filters
+                </Text>
+                {activeFilters > 0 && (
+                  <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary }]}>
+                    <Text variant="labelSmall" style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
+                      {activeFilters}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </TouchableRipple>
+          </View>
+        </View>
+
+        {loading ? (
+          <View>
+            <ExpenseCardSkeleton />
+            <ExpenseCardSkeleton />
+          </View>
+        ) : sortedActivities.length === 0 ? (
           <GlassView style={styles.emptyCard}>
-            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No expenses yet.</Text>
+            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No activity yet.</Text>
           </GlassView>
         ) : (
-          group.expenses.map((expense) => (
-            <ExpenseCard
-              key={expense.expenseId}
-              expense={expense}
-              currency={group.currency}
-              memberMap={memberMap}
-              onPress={() => navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, { groupId: group.groupId, expenseId: expense.expenseId })}
-            />
+          yearGroupedActivities.map((yearSection, yearIndex) => (
+            <View key={yearSection.year}>
+              {/* Collapsed Year Header (only show when year IS collapsed) */}
+              {collapsedYears.has(yearSection.year) && (
+                <TouchableRipple onPress={() => toggleYear(yearSection.year)} style={styles.yearHeaderCompact} borderless>
+                  <View style={styles.collapsibleHeader}>
+                    <Icon source="chevron-right" size={16} color={theme.colors.onSurface} />
+                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: 'bold' }}>
+                      {yearSection.yearLabel}
+                    </Text>
+                    <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
+                      · {yearSection.totalItems} item{yearSection.totalItems !== 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                </TouchableRipple>
+              )}
+
+              {/* Months (hidden if year is collapsed) */}
+              {!collapsedYears.has(yearSection.year) && yearSection.months.map((monthSection, monthIndex) => (
+                <View key={monthSection.monthKey}>
+                  {/* Combined Header Row: Month on LEFT, Year on RIGHT */}
+                  <View style={styles.combinedHeaderRow}>
+                    {/* Month (Left side) */}
+                    <TouchableRipple onPress={() => toggleMonth(monthSection.monthKey)} style={styles.monthHeaderCompact} borderless>
+                      <View style={styles.collapsibleHeader}>
+                        <IconButton
+                          icon={collapsedMonths.has(monthSection.monthKey) ? 'chevron-right' : 'chevron-down'}
+                          size={16}
+                          iconColor={theme.colors.onSurfaceVariant}
+                          style={{ margin: 0 }}
+                        />
+                        <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, fontWeight: '600' }}>
+                          {monthSection.monthLabel}
+                        </Text>
+                        <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
+                          · {monthSection.items.length}
+                        </Text>
+                      </View>
+                    </TouchableRipple>
+
+                    {/* Year (Right side) - only show on first month of each year or if multiple years */}
+                    {(monthIndex === 0 && (yearGroupedActivities.length > 1 || yearSection.yearLabel !== 'This Year')) && (
+                      <TouchableRipple onPress={() => toggleYear(yearSection.year)} style={styles.yearHeaderCompact} borderless>
+                        <View style={styles.collapsibleHeader}>
+                          <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
+                            {yearSection.yearLabel} · {yearSection.totalItems}
+                          </Text>
+                          <IconButton
+                            icon={collapsedYears.has(yearSection.year) ? 'chevron-right' : 'chevron-down'}
+                            size={16}
+                            iconColor={theme.colors.onSurfaceVariant}
+                            style={{ margin: 0 }}
+                          />
+                        </View>
+                      </TouchableRipple>
+                    )}
+                  </View>
+
+                  {/* Items (hidden if month is collapsed) */}
+                  {!collapsedMonths.has(monthSection.monthKey) && monthSection.items.map((activity, index) => {
+                    if (activity.type === 'expense') {
+                      return (
+                        <SwipeableExpenseCard
+                          key={`expense-${activity.data.expenseId}`}
+                          expense={activity.data}
+                          currency={group.currency}
+                          memberMap={memberMap}
+                          index={yearIndex * 100 + monthIndex * 10 + index}
+                          onPress={() => {
+                            lightHaptic();
+                            navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, {
+                              groupId: group.groupId,
+                              expenseId: activity.data.expenseId
+                            });
+                          }}
+                          onDelete={handleDeleteExpense}
+                        />
+                      );
+                    } else {
+                      return (
+                        <SettlementCard
+                          key={`settlement-${activity.data.settlementId}`}
+                          settlement={activity.data}
+                          currency={group.currency}
+                          memberMap={memberMap}
+                          index={yearIndex * 100 + monthIndex * 10 + index}
+                          onPress={() => handleEditSettlement(activity.data)}
+                          onDelete={handleDeleteSettlement}
+                        />
+                      );
+                    }
+                  })}
+                </View>
+              ))}
+            </View>
           ))
         )}
 
-        <View style={styles.actions}>
-          <Button mode="contained" onPress={() => onAddExpense(group)} style={{ flex: 1 }}>
-            Add expense
-          </Button>
-          <Button mode="outlined" onPress={() => onSettle(group)} style={{ flex: 1, borderColor: theme.colors.outline }}>
-            Settle up
-          </Button>
-        </View>
-        <View style={styles.secondaryActions}>
-          <Button
-            mode="outlined"
-            icon="chart-pie"
-            onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId })}
-            style={[styles.secondaryButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
-          >
-            Stats
-          </Button>
-          <Button
-            mode="outlined"
-            icon="chat"
-            onPress={() => onOpenChat(group)}
-            style={[styles.secondaryButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.5)', borderColor: theme.colors.outline }]}
-          >
-            Chat
-          </Button>
-        </View>
       </Animated.ScrollView>
+
+      <FilterSortSheet
+        visible={showFilterSheet}
+        onClose={() => setShowFilterSheet(false)}
+        sortField={sortField}
+        sortOrder={sortOrder}
+        selectedCategories={selectedCategories}
+        activityType={activityType}
+        dateRange={dateRange}
+        onSortFieldChange={setSortField}
+        onSortOrderChange={setSortOrder}
+        onCategoryToggle={handleCategoryToggle}
+        onActivityTypeChange={setActivityType}
+        onDateRangeChange={setDateRange}
+      />
+
+      {shouldRenderFallbackAccessory && (
+        <View pointerEvents="box-none" style={[styles.fallbackAccessoryContainer, { bottom: tabBarHeight + 10 }]}>
+          {isLegacyAccessoryCompact ? (
+            <GlassView style={[styles.fallbackCompactBar, fallbackBarChromeStyle]}>
+              <View style={styles.fallbackCompactRow}>
+                <TouchableRipple onPress={openSettle} style={[styles.fallbackCompactPill, styles.fallbackAccentPill, settleAccentPillStyle]} borderless>
+                  <View style={styles.fallbackCompactPillInner}>
+                    <Icon source="handshake" size={16} color="#FFFFFF" />
+                    <Text style={[styles.fallbackCompactText, styles.fallbackAccentText]}>Settle</Text>
+                  </View>
+                </TouchableRipple>
+                <TouchableRipple onPress={openStats} style={[styles.fallbackCompactPill, fallbackUtilityPillStyle]} borderless>
+                  <View style={styles.fallbackCompactPillInner}>
+                    <Icon source="chart-pie" size={16} color={theme.colors.primary} />
+                    <Text style={[styles.fallbackCompactText, { color: theme.colors.onSurface }]}>Stats</Text>
+                  </View>
+                </TouchableRipple>
+                <TouchableRipple onPress={openChat} style={[styles.fallbackCompactPill, fallbackUtilityPillStyle]} borderless>
+                  <View style={styles.fallbackCompactPillInner}>
+                    <Icon source="chat" size={16} color={theme.colors.primary} />
+                    <Text style={[styles.fallbackCompactText, { color: theme.colors.onSurface }]}>Chat</Text>
+                  </View>
+                </TouchableRipple>
+                <TouchableRipple onPress={openBills} style={[styles.fallbackCompactPill, fallbackUtilityPillStyle]} borderless>
+                  <View style={styles.fallbackCompactPillInner}>
+                    <Icon source="repeat" size={16} color={theme.colors.primary} />
+                    <Text style={[styles.fallbackCompactText, { color: theme.colors.onSurface }]}>Bills</Text>
+                  </View>
+                </TouchableRipple>
+                <TouchableRipple onPress={openAddExpense} style={[styles.fallbackCompactPill, styles.fallbackAccentPill, addExpenseAccentPillStyle]} borderless>
+                  <View style={styles.fallbackCompactPillInner}>
+                    <Icon source="plus" size={16} color="#FFFFFF" />
+                    <Text style={[styles.fallbackCompactText, styles.fallbackAccentText]}>Add</Text>
+                  </View>
+                </TouchableRipple>
+              </View>
+            </GlassView>
+          ) : (
+            <View style={styles.fallbackExpandedStack}>
+              <GlassView style={[styles.fallbackPrimaryBar, fallbackBarChromeStyle]}>
+                <View style={styles.fallbackPrimaryRow}>
+                  <TouchableRipple onPress={openSettle} style={[styles.fallbackPrimaryPill, styles.fallbackAccentPill, settleAccentPillStyle]} borderless>
+                    <View style={styles.fallbackPrimaryPillInner}>
+                      <Icon source="handshake" size={20} color="#FFFFFF" />
+                      <Text style={[styles.fallbackPrimaryText, styles.fallbackAccentText]}>Settle Up</Text>
+                    </View>
+                  </TouchableRipple>
+                  <TouchableRipple onPress={openAddExpense} style={[styles.fallbackPrimaryPill, styles.fallbackAccentPill, addExpenseAccentPillStyle]} borderless>
+                    <View style={styles.fallbackPrimaryPillInner}>
+                      <Icon source="plus-circle-outline" size={20} color="#FFFFFF" />
+                      <Text style={[styles.fallbackPrimaryText, styles.fallbackAccentText]}>Add Expense</Text>
+                    </View>
+                  </TouchableRipple>
+                </View>
+              </GlassView>
+              <GlassView style={[styles.fallbackUtilityBar, fallbackBarChromeStyle]}>
+                <View style={styles.fallbackUtilityRow}>
+                  <TouchableRipple onPress={openStats} style={[styles.fallbackUtilityPill, fallbackUtilityPillStyle]} borderless>
+                    <View style={styles.fallbackUtilityPillInner}>
+                      <Icon source="chart-pie" size={16} color={theme.colors.primary} />
+                      <Text style={[styles.fallbackUtilityText, { color: theme.colors.onSurface }]}>Stats</Text>
+                    </View>
+                  </TouchableRipple>
+                  <TouchableRipple onPress={openChat} style={[styles.fallbackUtilityPill, fallbackUtilityPillStyle]} borderless>
+                    <View style={styles.fallbackUtilityPillInner}>
+                      <Icon source="chat" size={16} color={theme.colors.primary} />
+                      <Text style={[styles.fallbackUtilityText, { color: theme.colors.onSurface }]}>Chat</Text>
+                    </View>
+                  </TouchableRipple>
+                  <TouchableRipple onPress={openBills} style={[styles.fallbackUtilityPill, fallbackUtilityPillStyle]} borderless>
+                    <View style={styles.fallbackUtilityPillInner}>
+                      <Icon source="repeat" size={16} color={theme.colors.primary} />
+                      <Text style={[styles.fallbackUtilityText, { color: theme.colors.onSurface }]}>Bills</Text>
+                    </View>
+                  </TouchableRipple>
+                </View>
+              </GlassView>
+            </View>
+          )}
+        </View>
+      )}
     </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    padding: 16,
+    padding: 8,
     paddingBottom: 180,
-    gap: 16,
+    gap: 8,
   },
   headerCard: {
-    padding: 16,
-    borderRadius: 24,
+    padding: 10,
+    borderRadius: 16,
   },
   header: {
-    marginBottom: 12,
+    marginBottom: 6,
     alignItems: 'center',
   },
   subtitle: {
     marginTop: 4,
   },
   section: {
-    marginTop: 8,
+    marginTop: 4,
     marginBottom: 4,
     marginLeft: 8,
     fontWeight: 'bold',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+    marginBottom: 4,
   },
   emptyCard: {
     padding: 24,
@@ -152,20 +766,6 @@ const styles = StyleSheet.create({
   },
   empty: {
     // color handled dynamically
-  },
-  actions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-    gap: 12,
-  },
-  secondaryActions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 4,
-  },
-  secondaryButton: {
-    flex: 1,
   },
   stickyHeader: {
     position: 'absolute',
@@ -186,5 +786,156 @@ const styles = StyleSheet.create({
   },
   stickyHeaderTitle: {
     fontWeight: 'bold',
+  },
+  filterButton: {
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  filterButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    gap: 4,
+  },
+  filterBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
+  },
+  monthHeader: {
+    paddingHorizontal: 4,
+    paddingTop: 4,
+    paddingBottom: 2,
+    borderRadius: 50,
+  },
+  yearHeader: {
+    paddingHorizontal: 4,
+    paddingTop: 12,
+    paddingBottom: 4,
+    borderRadius: 50,
+  },
+  combinedHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 2,
+    paddingBottom: 2,
+    paddingHorizontal: 4,
+  },
+  monthHeaderCompact: {
+    borderRadius: 50,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  yearHeaderCompact: {
+    borderRadius: 50,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  collapsibleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  fallbackAccessoryContainer: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    zIndex: 120,
+  },
+  fallbackExpandedStack: {
+    gap: 8,
+  },
+  fallbackPrimaryBar: {
+    borderRadius: 30,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  fallbackUtilityBar: {
+    borderRadius: 30,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  fallbackCompactBar: {
+    borderRadius: 30,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  fallbackPrimaryRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  fallbackPrimaryPill: {
+    flex: 1,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  fallbackAccentPill: {
+    borderWidth: 1,
+  },
+  fallbackAccentText: {
+    color: '#FFFFFF',
+  },
+  fallbackPrimaryPillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  fallbackPrimaryText: {
+    fontWeight: '700',
+    fontSize: 15,
+    lineHeight: 18,
+  },
+  fallbackUtilityRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  fallbackUtilityPill: {
+    flex: 1,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  fallbackUtilityPillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+  },
+  fallbackUtilityText: {
+    fontWeight: '600',
+    fontSize: 13,
+    lineHeight: 16,
+  },
+  fallbackCompactRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  fallbackCompactPill: {
+    flex: 1,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  fallbackCompactPillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 11,
+    paddingHorizontal: 10,
+  },
+  fallbackCompactText: {
+    fontWeight: '700',
+    fontSize: 12,
+    lineHeight: 15,
   },
 });

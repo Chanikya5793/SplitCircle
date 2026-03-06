@@ -11,6 +11,21 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Image, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Chip, Dialog, Divider, IconButton, Portal, Text, TextInput } from 'react-native-paper';
 
+// Category to Icon mapping
+const getCategoryIcon = (category: string): string => {
+  const iconMap: Record<string, string> = {
+    'General': 'tag',
+    'Food': 'food',
+    'Transport': 'car',
+    'Utilities': 'flash',
+    'Entertainment': 'movie',
+    'Shopping': 'cart',
+    'Travel': 'airplane',
+    'Health': 'medical-bag',
+  };
+  return iconMap[category] || 'tag';
+};
+
 interface ExpenseDetailsScreenProps {
   route: any;
   navigation: any;
@@ -110,7 +125,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
                 {formatCurrency(expense.amount, group.currency)}
               </Text>
             </View>
-            <Chip icon="tag" style={{ backgroundColor: theme.colors.secondaryContainer }} textStyle={{ color: theme.colors.onSecondaryContainer }}>{expense.category}</Chip>
+            <Chip icon={getCategoryIcon(expense.category)} style={{ backgroundColor: theme.colors.secondaryContainer }} textStyle={{ color: theme.colors.onSecondaryContainer }}>{expense.category}</Chip>
           </View>
 
           <Text style={[styles.meta, { color: theme.colors.onSurfaceVariant }]}>

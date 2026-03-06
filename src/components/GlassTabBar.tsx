@@ -1,38 +1,36 @@
 import { useTheme } from '@/context/ThemeContext';
+import { TabBarSurface } from '@/components/tabbar/TabBarSurface';
+import {
+  FLOATING_TAB_BAR_HORIZONTAL_INSET,
+  getFloatingTabBarBottomOffset,
+} from '@/components/tabbar/tabBarMetrics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useState } from 'react';
-import { Dimensions, LayoutChangeEvent, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { LayoutChangeEvent, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  Extrapolation,
-  interpolate,
-  runOnJS,
-  useAnimatedStyle,
-  useDerivedValue,
-  useSharedValue,
-  withSequence,
-  withSpring,
-  withTiming,
+    Extrapolation,
+    interpolate,
+    runOnJS,
+    useAnimatedReaction,
+    useAnimatedStyle,
+    useDerivedValue,
+    useSharedValue,
+    withSequence,
+    withSpring,
+    withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProps) => {
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useTheme();
   const focusedOptions = descriptors[state.routes[state.index].key].options;
+  const isIOS = Platform.OS === 'ios';
+  const tabBarBottomOffset = getFloatingTabBarBottomOffset(insets.bottom);
 
-  // @ts-ignore - tabBarStyle might not be fully typed in some versions or custom types
-  // CRITICAL: This check must be at the top, before any hooks
-  if (focusedOptions.tabBarStyle?.display === 'none') {
-    return null;
-  }
-
-  // ... (keep existing hooks) ...
   // Animation values
   const indicatorPosition = useSharedValue(0);
   const indicatorWidth = useSharedValue(0);
@@ -49,43 +47,62 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
   // Scale effect shared value
   const activeScale = useSharedValue(1);
 
+  // Movement scale for stretch effect - derived without mutations
+  // Note: prevPosition is updated via useAnimatedReaction AFTER this calculation,
+  // which correctly gives us the delta between consecutive frames
   const movementScale = useDerivedValue(() => {
     const delta = Math.abs(indicatorPosition.value - prevPosition.value);
-    prevPosition.value = indicatorPosition.value;
     // Stronger stretch for "liquid" feel
     // Map delta to a scale factor. 
     return interpolate(delta, [0, 10, 40], [1, 1.2, 1.5], Extrapolation.CLAMP);
   });
 
-  useEffect(() => {
-    // Only animate if we have layout data for the current index
-    if (layout[state.index] && !isDragging.value) {
-      const targetX = layout[state.index].x;
-      const targetWidth = layout[state.index].width;
-
-      // Trigger wobble on arrival
-      wobble.value = withSequence(
-        withTiming(0, { duration: 0 }), // Reset
-        withSpring(1, { damping: 10, stiffness: 200 }) // Initial impact
-      );
-
-      // Trigger scale pulse on arrival/tap
-      activeScale.value = withSequence(
-        withTiming(1.15, { duration: 150 }),
-        withSpring(1, { damping: 12, stiffness: 150 })
-      );
-
-      indicatorPosition.value = withSpring(targetX, {
-        damping: 14,
-        stiffness: 150,
-        mass: 1,
-      });
-      indicatorWidth.value = withSpring(targetWidth, {
-        damping: 15,
-        stiffness: 100,
-      });
+  // Update prevPosition reactively when indicatorPosition changes
+  // Using useAnimatedReaction for side effects instead of useDerivedValue
+  useAnimatedReaction(
+    () => indicatorPosition.value,
+    (currentValue) => {
+      prevPosition.value = currentValue;
     }
-  }, [state.index, layout]);
+  );
+
+  // Track dragging state in React state to avoid reading shared value during render
+  const [isDraggingState, setIsDraggingState] = useState(false);
+
+  // Check if tab bar should be hidden - needs to be after all hooks per rules of hooks
+  // @ts-ignore - tabBarStyle might not be fully typed in some versions or custom types
+  const shouldHideTabBar = focusedOptions.tabBarStyle?.display === 'none';
+
+  useEffect(() => {
+    // Only animate if we have layout data for the current index and tab bar is visible
+    if (shouldHideTabBar || !layout[state.index] || isDraggingState) {
+      return;
+    }
+    const targetX = layout[state.index].x;
+    const targetWidth = layout[state.index].width;
+
+    // Trigger wobble on arrival
+    wobble.value = withSequence(
+      withTiming(0, { duration: 0 }), // Reset
+      withSpring(1, { damping: 10, stiffness: 200 }) // Initial impact
+    );
+
+    // Trigger scale pulse on arrival/tap
+    activeScale.value = withSequence(
+      withTiming(1.15, { duration: 150 }),
+      withSpring(1, { damping: 12, stiffness: 150 })
+    );
+
+    indicatorPosition.value = withSpring(targetX, {
+      damping: 14,
+      stiffness: 150,
+      mass: 1,
+    });
+    indicatorWidth.value = withSpring(targetWidth, {
+      damping: 15,
+      stiffness: 100,
+    });
+  }, [state.index, layout, isDraggingState, shouldHideTabBar]);
 
   const animatedIndicatorStyle = useAnimatedStyle(() => {
     // If we don't have a valid width yet, hide the indicator to prevent it appearing in wrong place
@@ -142,6 +159,7 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
   const pan = Gesture.Pan()
     .onStart(() => {
       isDragging.value = true;
+      runOnJS(setIsDraggingState)(true);
       // Scale up when dragging starts
       activeScale.value = withSpring(1.15, { damping: 12, stiffness: 150 });
     })
@@ -151,6 +169,7 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
     })
     .onFinalize((e) => {
       isDragging.value = false;
+      runOnJS(setIsDraggingState)(false);
       // Scale back down when dragging ends
       activeScale.value = withSpring(1, { damping: 12, stiffness: 150 });
 
@@ -182,76 +201,96 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
       }
     });
 
-  return (
-    <View style={[styles.container, { bottom: -18 + insets.bottom }]}>
-      <GestureDetector gesture={pan}>
-        <BlurView style={styles.glass} intensity={20} tint={isDark ? "dark" : "light"}>
-          <View style={styles.tabRow}>
-            {/* Animated Liquid Indicator */}
-            {/* We render the indicator only if we have at least one layout measurement to avoid jumping */}
-            {layout.length > 0 && (
-              <Animated.View style={[styles.indicator, animatedIndicatorStyle]}>
-                <LinearGradient
-                  colors={[theme.colors.primary, '#8A2BE2']} // Gradient from primary to a purple-ish hue
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={[styles.indicatorBlob, { shadowColor: theme.colors.primary }]}
-                >
-                  <View style={styles.glare} />
-                </LinearGradient>
-              </Animated.View>
+  // Return null if tab bar should be hidden - placed after all hooks to comply with rules of hooks
+  if (shouldHideTabBar) {
+    return null;
+  }
+
+  const tabBarContent = (
+    <TabBarSurface isDark={isDark}>
+      <View style={styles.tabRow}>
+        {/* We render the indicator only if we have at least one layout measurement to avoid jumping */}
+        {layout.length > 0 && (
+          <Animated.View style={[styles.indicator, animatedIndicatorStyle]}>
+            {isIOS ? (
+              <View style={[styles.indicatorBlobIOS, { borderColor: 'rgba(255,255,255,0.35)' }]}>
+                <View style={styles.glare} />
+              </View>
+            ) : (
+              <LinearGradient
+                colors={[theme.colors.primary, '#8A2BE2']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={[styles.indicatorBlob, { shadowColor: theme.colors.primary }]}
+              >
+                <View style={styles.glare} />
+              </LinearGradient>
             )}
+          </Animated.View>
+        )}
 
-            {state.routes.map((route, index) => {
-              const { options } = descriptors[route.key];
-              const isFocused = state.index === index;
+        {state.routes.map((route, index) => {
+          const { options } = descriptors[route.key];
+          const isFocused = state.index === index;
 
-              const onPress = () => {
-                const event = navigation.emit({
-                  type: 'tabPress',
-                  target: route.key,
-                  canPreventDefault: true,
-                });
+          const onPress = () => {
+            const event = navigation.emit({
+              type: 'tabPress',
+              target: route.key,
+              canPreventDefault: true,
+            });
 
-                if (!isFocused && !event.defaultPrevented) {
-                  navigation.navigate(route.name, route.params);
-                }
-              };
+            if (!isFocused && !event.defaultPrevented) {
+              navigation.navigate(route.name, route.params);
+            }
+          };
 
-              const onLongPress = () => {
-                navigation.emit({
-                  type: 'tabLongPress',
-                  target: route.key,
-                });
-              };
+          const onLongPress = () => {
+            navigation.emit({
+              type: 'tabLongPress',
+              target: route.key,
+            });
+          };
 
-              const color = isFocused ? '#fff' : (isDark ? '#aaa' : '#666');
-              const IconComponent = options.tabBarIcon;
+          const color = isFocused
+            ? (isIOS ? theme.colors.primary : '#fff')
+            : (isDark ? '#aaa' : '#666');
+          const IconComponent = options.tabBarIcon;
 
-              return (
-                <TouchableOpacity
-                  key={route.key}
-                  accessibilityRole="button"
-                  accessibilityState={isFocused ? { selected: true } : {}}
-                  accessibilityLabel={options.tabBarAccessibilityLabel}
-                  onPress={onPress}
-                  onLongPress={onLongPress}
-                  style={styles.tab}
-                  onLayout={(e) => handleLayout(e, index)}
-                >
-                  <View style={[styles.iconContainer, isFocused && styles.iconContainerFocused]}>
-                    {IconComponent ? (
-                      IconComponent({ focused: isFocused, color: color, size: 24 })
-                    ) : (
-                      <MaterialCommunityIcons name="circle-outline" size={24} color={color} />
-                    )}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </BlurView>
-      </GestureDetector>
+          return (
+            <TouchableOpacity
+              key={route.key}
+              accessibilityRole="button"
+              accessibilityState={isFocused ? { selected: true } : {}}
+              accessibilityLabel={options.tabBarAccessibilityLabel}
+              onPress={onPress}
+              onLongPress={onLongPress}
+              style={styles.tab}
+              onLayout={(e) => handleLayout(e, index)}
+            >
+              <View style={[styles.iconContainer, isFocused && styles.iconContainerFocused]}>
+                {IconComponent ? (
+                  IconComponent({ focused: isFocused, color: color, size: 24 })
+                ) : (
+                  <MaterialCommunityIcons name="circle-outline" size={24} color={color} />
+                )}
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </TabBarSurface>
+  );
+
+  return (
+    <View style={[styles.container, { bottom: tabBarBottomOffset }]}>
+      {isIOS ? (
+        tabBarContent
+      ) : (
+        <GestureDetector gesture={pan}>
+          {tabBarContent}
+        </GestureDetector>
+      )}
     </View>
   );
 };
@@ -259,17 +298,10 @@ export const GlassTabBar = ({ state, descriptors, navigation }: BottomTabBarProp
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    left: 20,
-    right: 20,
+    left: FLOATING_TAB_BAR_HORIZONTAL_INSET,
+    right: FLOATING_TAB_BAR_HORIZONTAL_INSET,
     alignItems: 'center',
     zIndex: 1000,
-  },
-  glass: {
-    borderRadius: 30,
-    width: '100%',
-    overflow: 'hidden',
-    height: 70, // Fixed height for consistency
-    justifyContent: 'center',
   },
   tabRow: {
     flexDirection: 'row',
@@ -294,18 +326,29 @@ const styles = StyleSheet.create({
     zIndex: 0, // Behind the icons but visible
   },
   indicatorBlob: {
-    width: 70, // Increased size
-    height: 45, // Increased size
-    borderRadius: 22.5, // Half of height for pill shape
-    // backgroundColor: removed (handled by gradient)
+    width: 70,
+    height: 45,
+    borderRadius: 22.5,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)', // Glass border
+    borderColor: 'rgba(255,255,255,0.3)',
     opacity: 0.9,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 12,
     elevation: 8,
-    overflow: 'hidden', // Ensure gradient respects border radius
+    overflow: 'hidden',
+  },
+  indicatorBlobIOS: {
+    width: 64,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderWidth: 1,
+    shadowColor: '#fff',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    overflow: 'hidden',
   },
   glare: {
     position: 'absolute',
@@ -322,6 +365,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   iconContainerFocused: {
-    // transform: [{ translateY: -5 }], // Optional bounce effect
+    // Optional future bounce effect
   }
 });
