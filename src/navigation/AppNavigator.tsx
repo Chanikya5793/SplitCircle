@@ -32,11 +32,12 @@ import {
   DarkTheme,
   DefaultTheme,
   NavigationContainer,
+  useIsFocused,
   useNavigation,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, View, type ImageSourcePropType } from 'react-native';
+import { Platform, StyleSheet, TouchableOpacity, View, type ImageSourcePropType } from 'react-native';
 import { Icon, Text, TouchableRipple } from 'react-native-paper';
 
 import { AppStack, AuthStack, NativeTab } from './stacks';
@@ -128,35 +129,35 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
     return (
       <View style={styles.groupAccessoryInlineWrap}>
         <View style={styles.groupAccessoryInlineGlass}>
-          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryInlineQuick, { backgroundColor: '#10b981' }]} borderless>
+          <TouchableOpacity onPress={openSettle} style={[styles.groupAccessoryInlineQuick, { backgroundColor: '#10b981' }]} activeOpacity={0.85}>
             <View style={styles.groupAccessoryInlineQuickInner}>
               <Icon source="handshake" size={16} color="#fff" />
             </View>
-          </TouchableRipple>
+          </TouchableOpacity>
 
           <View style={styles.groupAccessoryInlineUtilityCluster}>
-            <TouchableRipple onPress={openStats} style={styles.groupAccessoryInlineUtilityButton} borderless>
+            <TouchableOpacity onPress={openStats} style={styles.groupAccessoryInlineUtilityButton} activeOpacity={0.85}>
               <View style={styles.groupAccessoryInlineUtilityButtonInner}>
                 <Icon source="chart-pie" size={16} color={theme.colors.primary} />
               </View>
-            </TouchableRipple>
-            <TouchableRipple onPress={openChat} style={styles.groupAccessoryInlineUtilityButton} borderless>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={openChat} style={styles.groupAccessoryInlineUtilityButton} activeOpacity={0.85}>
               <View style={styles.groupAccessoryInlineUtilityButtonInner}>
                 <Icon source="chat" size={16} color={theme.colors.primary} />
               </View>
-            </TouchableRipple>
-            <TouchableRipple onPress={openBills} style={styles.groupAccessoryInlineUtilityButton} borderless>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={openBills} style={styles.groupAccessoryInlineUtilityButton} activeOpacity={0.85}>
               <View style={styles.groupAccessoryInlineUtilityButtonInner}>
                 <Icon source="repeat" size={16} color={theme.colors.primary} />
               </View>
-            </TouchableRipple>
+            </TouchableOpacity>
           </View>
 
-          <TouchableRipple onPress={openAddExpense} style={[styles.groupAccessoryInlinePrimary, { backgroundColor: theme.colors.primary }]} borderless>
+          <TouchableOpacity onPress={openAddExpense} style={[styles.groupAccessoryInlinePrimary, { backgroundColor: theme.colors.primary }]} activeOpacity={0.85}>
             <View style={styles.groupAccessoryInlinePrimaryInner}>
               <Icon source="plus" size={17} color="#fff" />
             </View>
-          </TouchableRipple>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -226,6 +227,7 @@ const GroupListRoute = ({ navigation }: any) => (
 const GroupDetailsRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
   const groupId = group?.groupId;
+  const isFocused = useIsFocused();
   const { ensureGroupThread } = useChat();
   const [showAccessory, setShowAccessory] = useState(false);
   const accessoryVisibleRef = useRef<boolean | null>(null);
@@ -236,7 +238,7 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
       return;
     }
 
-    const shouldShowAccessory = Boolean(groupId && showAccessory);
+    const shouldShowAccessory = Boolean(groupId && showAccessory && isFocused);
     if (accessoryVisibleRef.current === shouldShowAccessory) {
       return;
     }
@@ -256,7 +258,7 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
       parent.setOptions({ bottomAccessory: undefined });
       accessoryVisibleRef.current = null;
     };
-  }, [navigation, groupId, showAccessory]);
+  }, [navigation, groupId, showAccessory, isFocused]);
 
   if (!group) {
     return <LoadingScreen />;
