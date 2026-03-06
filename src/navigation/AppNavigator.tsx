@@ -77,11 +77,14 @@ type GroupTabAccessoryProps = {
   compactAnim: Animated.Value;
 };
 
+const GROUP_ACCESSORY_COMPACT_HEIGHT = 56;
+const GROUP_ACCESSORY_EXPANDED_HEIGHT = 108;
+
 const GroupTabAccessory = ({ groupId, placement, compactAnim }: GroupTabAccessoryProps) => {
   const navigation = useNavigation<any>();
   const { groups } = useGroups();
   const { ensureGroupThread } = useChat();
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
 
   const group = useMemo(() => groups.find((item) => item.groupId === groupId), [groups, groupId]);
 
@@ -182,81 +185,111 @@ const GroupTabAccessory = ({ groupId, placement, compactAnim }: GroupTabAccessor
   const activeOpacity = isCompact
     ? compactAnim.interpolate({ inputRange: [0.55, 1], outputRange: [0, 1], extrapolate: 'clamp' })
     : compactAnim.interpolate({ inputRange: [0, 0.45], outputRange: [1, 0], extrapolate: 'clamp' });
+  const settleAccentPillStyle = {
+    backgroundColor: '#0FA56C',
+    borderColor: 'rgba(255,255,255,0.22)',
+  };
+  const addExpenseAccentPillStyle = {
+    backgroundColor: '#2F80ED',
+    borderColor: 'rgba(255,255,255,0.22)',
+  };
+  const utilityBarChromeStyle = {
+    borderColor: isDark ? 'rgba(148,163,184,0.28)' : 'rgba(15,23,42,0.16)',
+    backgroundColor: isDark ? 'rgba(11,18,32,0.88)' : 'rgba(255,255,255,0.88)',
+  };
+  const utilityPillStyle = {
+    backgroundColor: isDark ? 'rgba(30,41,59,0.62)' : 'rgba(241,245,249,0.8)',
+  };
+  const compactUtilityPillStyle = {
+    backgroundColor: isDark ? 'rgba(30,41,59,0.74)' : 'rgba(241,245,249,0.86)',
+  };
 
   return (
-    <Animated.View style={[styles.groupAccessoryRegularWrap, { opacity: activeOpacity }]}>
+    <Animated.View
+      style={[
+        styles.groupAccessoryRegularWrap,
+        {
+          opacity: activeOpacity,
+          minHeight: isCompact ? GROUP_ACCESSORY_COMPACT_HEIGHT : GROUP_ACCESSORY_EXPANDED_HEIGHT,
+        },
+      ]}
+    >
       {isCompact ? (
         // ── Compact: single row, all 5 as icon+label pills ─────────────────
         <View style={styles.groupAccessoryCompactRow}>
-          <TouchableRipple onPress={openSettle} style={styles.groupAccessoryCompactPill} borderless>
+          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryCompactPill, styles.groupAccessoryAccentPill, settleAccentPillStyle]} borderless>
             <View style={styles.groupAccessoryCompactPillInner}>
-              <Icon source="handshake" size={17} color={theme.colors.primary} />
-              <Text style={[styles.groupAccessoryCompactText, { color: theme.colors.onSurface }]}>Settle</Text>
+              <Icon source="handshake" size={17} color="#FFFFFF" />
+              <Text style={[styles.groupAccessoryCompactText, styles.groupAccessoryAccentText]}>Settle</Text>
             </View>
           </TouchableRipple>
-          <TouchableRipple onPress={openStats} style={styles.groupAccessoryCompactPill} borderless>
+          <TouchableRipple onPress={openStats} style={[styles.groupAccessoryCompactPill, compactUtilityPillStyle]} borderless>
             <View style={styles.groupAccessoryCompactPillInner}>
               <Icon source="chart-pie" size={17} color={theme.colors.primary} />
               <Text style={[styles.groupAccessoryCompactText, { color: theme.colors.onSurface }]}>Stats</Text>
             </View>
           </TouchableRipple>
-          <TouchableRipple onPress={openChat} style={styles.groupAccessoryCompactPill} borderless>
+          <TouchableRipple onPress={openChat} style={[styles.groupAccessoryCompactPill, compactUtilityPillStyle]} borderless>
             <View style={styles.groupAccessoryCompactPillInner}>
               <Icon source="chat" size={17} color={theme.colors.primary} />
               <Text style={[styles.groupAccessoryCompactText, { color: theme.colors.onSurface }]}>Chat</Text>
             </View>
           </TouchableRipple>
-          <TouchableRipple onPress={openBills} style={styles.groupAccessoryCompactPill} borderless>
+          <TouchableRipple onPress={openBills} style={[styles.groupAccessoryCompactPill, compactUtilityPillStyle]} borderless>
             <View style={styles.groupAccessoryCompactPillInner}>
               <Icon source="repeat" size={17} color={theme.colors.primary} />
               <Text style={[styles.groupAccessoryCompactText, { color: theme.colors.onSurface }]}>Bills</Text>
             </View>
           </TouchableRipple>
-          <TouchableRipple onPress={openAddExpense} style={styles.groupAccessoryCompactPill} borderless>
+          <TouchableRipple onPress={openAddExpense} style={[styles.groupAccessoryCompactPill, styles.groupAccessoryAccentPill, addExpenseAccentPillStyle]} borderless>
             <View style={styles.groupAccessoryCompactPillInner}>
-              <Icon source="plus" size={17} color={theme.colors.primary} />
-              <Text style={[styles.groupAccessoryCompactText, { color: theme.colors.onSurface }]}>Add</Text>
+              <Icon source="plus" size={17} color="#FFFFFF" />
+              <Text style={[styles.groupAccessoryCompactText, styles.groupAccessoryAccentText]}>Add</Text>
             </View>
           </TouchableRipple>
         </View>
       ) : (
         // ── Expanded: 2 rows — big primaries on top, utilities below ───────
-        <>
-          <View style={styles.groupAccessoryPrimaryRow}>
-            <TouchableRipple onPress={openSettle} style={styles.groupAccessoryPrimaryPill} borderless>
-              <View style={styles.groupAccessoryPrimaryPillInner}>
-                <Icon source="handshake" size={20} color={theme.colors.primary} />
-                <Text style={[styles.groupAccessoryPrimaryPillText, { color: theme.colors.onSurface }]}>Settle Up</Text>
-              </View>
-            </TouchableRipple>
-            <TouchableRipple onPress={openAddExpense} style={styles.groupAccessoryPrimaryPill} borderless>
-              <View style={styles.groupAccessoryPrimaryPillInner}>
-                <Icon source="plus-circle-outline" size={20} color={theme.colors.primary} />
-                <Text style={[styles.groupAccessoryPrimaryPillText, { color: theme.colors.onSurface }]}>Add Expense</Text>
-              </View>
-            </TouchableRipple>
+        <View style={styles.groupAccessoryExpandedStack}>
+          <View style={styles.groupAccessoryPrimaryBar}>
+            <View style={styles.groupAccessoryPrimaryRow}>
+              <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryPrimaryPill, styles.groupAccessoryAccentPill, settleAccentPillStyle]} borderless>
+                <View style={styles.groupAccessoryPrimaryPillInner}>
+                  <Icon source="handshake" size={20} color="#FFFFFF" />
+                  <Text style={[styles.groupAccessoryPrimaryPillText, styles.groupAccessoryAccentText]}>Settle Up</Text>
+                </View>
+              </TouchableRipple>
+              <TouchableRipple onPress={openAddExpense} style={[styles.groupAccessoryPrimaryPill, styles.groupAccessoryAccentPill, addExpenseAccentPillStyle]} borderless>
+                <View style={styles.groupAccessoryPrimaryPillInner}>
+                  <Icon source="plus-circle-outline" size={20} color="#FFFFFF" />
+                  <Text style={[styles.groupAccessoryPrimaryPillText, styles.groupAccessoryAccentText]}>Add Expense</Text>
+                </View>
+              </TouchableRipple>
+            </View>
           </View>
-          <View style={styles.groupAccessoryUtilityRow}>
-            <TouchableRipple onPress={openStats} style={styles.groupAccessoryUtilityPill} borderless>
-              <View style={styles.groupAccessoryUtilityPillInner}>
-                <Icon source="chart-pie" size={16} color={theme.colors.primary} />
-                <Text style={[styles.groupAccessoryUtilityPillText, { color: theme.colors.onSurface }]}>Stats</Text>
-              </View>
-            </TouchableRipple>
-            <TouchableRipple onPress={openChat} style={styles.groupAccessoryUtilityPill} borderless>
-              <View style={styles.groupAccessoryUtilityPillInner}>
-                <Icon source="chat" size={16} color={theme.colors.primary} />
-                <Text style={[styles.groupAccessoryUtilityPillText, { color: theme.colors.onSurface }]}>Chat</Text>
-              </View>
-            </TouchableRipple>
-            <TouchableRipple onPress={openBills} style={styles.groupAccessoryUtilityPill} borderless>
-              <View style={styles.groupAccessoryUtilityPillInner}>
-                <Icon source="repeat" size={16} color={theme.colors.primary} />
-                <Text style={[styles.groupAccessoryUtilityPillText, { color: theme.colors.onSurface }]}>Bills</Text>
-              </View>
-            </TouchableRipple>
+          <View style={[styles.groupAccessoryUtilityBar, utilityBarChromeStyle]}>
+            <View style={styles.groupAccessoryUtilityRow}>
+              <TouchableRipple onPress={openStats} style={[styles.groupAccessoryUtilityPill, utilityPillStyle]} borderless>
+                <View style={styles.groupAccessoryUtilityPillInner}>
+                  <Icon source="chart-pie" size={16} color={theme.colors.primary} />
+                  <Text style={[styles.groupAccessoryUtilityPillText, { color: theme.colors.onSurface }]}>Stats</Text>
+                </View>
+              </TouchableRipple>
+              <TouchableRipple onPress={openChat} style={[styles.groupAccessoryUtilityPill, utilityPillStyle]} borderless>
+                <View style={styles.groupAccessoryUtilityPillInner}>
+                  <Icon source="chat" size={16} color={theme.colors.primary} />
+                  <Text style={[styles.groupAccessoryUtilityPillText, { color: theme.colors.onSurface }]}>Chat</Text>
+                </View>
+              </TouchableRipple>
+              <TouchableRipple onPress={openBills} style={[styles.groupAccessoryUtilityPill, utilityPillStyle]} borderless>
+                <View style={styles.groupAccessoryUtilityPillInner}>
+                  <Icon source="repeat" size={16} color={theme.colors.primary} />
+                  <Text style={[styles.groupAccessoryUtilityPillText, { color: theme.colors.onSurface }]}>Bills</Text>
+                </View>
+              </TouchableRipple>
+            </View>
           </View>
-        </>
+        </View>
       )}
     </Animated.View>
   );
@@ -702,9 +735,24 @@ const IncomingCallHandler = () => {
 const styles = StyleSheet.create({
   // Regular placement wrapper — gap between rows for expanded; no gap needed for compact.
   groupAccessoryRegularWrap: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    gap: 8,
+    justifyContent: 'center',
+  },
+  groupAccessoryExpandedStack: {
+    gap: 8,
+  },
+  groupAccessoryPrimaryBar: {
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
+  groupAccessoryUtilityBar: {
     paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 6,
+    paddingVertical: 6,
+    borderRadius: 50,
+    borderWidth: 1,
+    overflow: 'hidden',
   },
   // ── Expanded: 2 rows ──────────────────────────────────────────────────────
   groupAccessoryPrimaryRow: {
@@ -722,7 +770,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
   },
   groupAccessoryPrimaryPillText: {
     fontWeight: '700',
@@ -744,7 +792,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 5,
     paddingVertical: 10,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
   },
   groupAccessoryUtilityPillText: {
     fontWeight: '600',
@@ -755,20 +803,26 @@ const styles = StyleSheet.create({
   groupAccessoryCompactRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
   groupAccessoryCompactPill: {
     flex: 1,
     borderRadius: 50,
     overflow: 'hidden',
   },
+  groupAccessoryAccentPill: {
+    borderWidth: 1,
+  },
+  groupAccessoryAccentText: {
+    color: '#FFFFFF',
+  },
   groupAccessoryCompactPillInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingVertical: 10,
-    paddingHorizontal: 6,
+    paddingVertical: 11,
+    paddingHorizontal: 10,
   },
   groupAccessoryCompactText: {
     fontWeight: '700',

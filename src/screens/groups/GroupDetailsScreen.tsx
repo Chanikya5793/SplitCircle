@@ -30,6 +30,9 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   const insets = useSafeAreaInsets();
   const { deleteExpense, deleteSettlement, loading } = useGroups();
   const { theme, isDark } = useTheme();
+  const supportsNativeBottomAccessory =
+    Platform.OS === 'ios' && Number.parseInt(String(Platform.Version), 10) >= 26;
+  const shouldRenderFallbackAccessory = !supportsNativeBottomAccessory;
   const scrollY = useRef(new Animated.Value(0)).current;
   const compactStateRef = useRef(false);
   const lastScrollYRef = useRef(0);
@@ -37,6 +40,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   const directionalTravelRef = useRef(0);
   const compactAnimRef = useRef(compactAnimProp);
   compactAnimRef.current = compactAnimProp;
+  const [isLegacyAccessoryCompact, setIsLegacyAccessoryCompact] = useState(false);
   const [showFilterSheet, setShowFilterSheet] = useState(false);
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -75,7 +79,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   const tabBarHeight = Platform.OS === 'ios'
     ? Math.max(78, 50 + insets.bottom)
     : Math.max(70, 56 + insets.bottom);
-  const contentBottomPadding = tabBarHeight + 180;
+  const contentBottomPadding = tabBarHeight + (shouldRenderFallbackAccessory ? 240 : 180);
 
   // Reset compactAnim to expanded when unmounting.
   useEffect(() => {
@@ -155,6 +159,46 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
       groupId: group.groupId,
       settlementId: settlement.settlementId
     });
+  };
+
+  const openStats = () => {
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId });
+  };
+
+  const openBills = () => {
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId });
+  };
+
+  const openSettle = () => {
+    lightHaptic();
+    onSettle(group);
+  };
+
+  const openAddExpense = () => {
+    lightHaptic();
+    onAddExpense(group);
+  };
+
+  const openChat = () => {
+    lightHaptic();
+    onOpenChat(group);
+  };
+  const settleAccentPillStyle = {
+    backgroundColor: '#0FA56C',
+    borderColor: 'rgba(255,255,255,0.22)',
+  };
+  const addExpenseAccentPillStyle = {
+    backgroundColor: '#2F80ED',
+    borderColor: 'rgba(255,255,255,0.22)',
+  };
+  const fallbackBarChromeStyle = {
+    backgroundColor: isDark ? 'rgba(8,14,24,0.98)' : 'rgba(255,255,255,0.98)',
+    borderColor: isDark ? 'rgba(148,163,184,0.28)' : 'rgba(15,23,42,0.16)',
+  };
+  const fallbackUtilityPillStyle = {
+    backgroundColor: isDark ? 'rgba(30,41,59,0.72)' : 'rgba(241,245,249,0.9)',
   };
 
   // Helper functions for sorting
@@ -406,13 +450,16 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
               if (shouldCompact !== compactStateRef.current) {
                 compactStateRef.current = shouldCompact;
-                Animated.spring(compactAnimRef.current!, {
-                  toValue: shouldCompact ? 1 : 0,
-                  useNativeDriver: true,
-                  damping: 28,
-                  mass: 0.4,
-                  stiffness: 380,
-                }).start();
+                setIsLegacyAccessoryCompact(shouldCompact);
+                if (compactAnimRef.current) {
+                  Animated.spring(compactAnimRef.current, {
+                    toValue: shouldCompact ? 1 : 0,
+                    useNativeDriver: true,
+                    damping: 28,
+                    mass: 0.4,
+                    stiffness: 380,
+                  }).start();
+                }
               }
             }
           }
@@ -596,6 +643,88 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
         onActivityTypeChange={setActivityType}
         onDateRangeChange={setDateRange}
       />
+
+      {shouldRenderFallbackAccessory && (
+        <View pointerEvents="box-none" style={[styles.fallbackAccessoryContainer, { bottom: tabBarHeight + 10 }]}>
+          {isLegacyAccessoryCompact ? (
+            <GlassView style={[styles.fallbackCompactBar, fallbackBarChromeStyle]}>
+              <View style={styles.fallbackCompactRow}>
+                <TouchableRipple onPress={openSettle} style={[styles.fallbackCompactPill, styles.fallbackAccentPill, settleAccentPillStyle]} borderless>
+                  <View style={styles.fallbackCompactPillInner}>
+                    <Icon source="handshake" size={16} color="#FFFFFF" />
+                    <Text style={[styles.fallbackCompactText, styles.fallbackAccentText]}>Settle</Text>
+                  </View>
+                </TouchableRipple>
+                <TouchableRipple onPress={openStats} style={[styles.fallbackCompactPill, fallbackUtilityPillStyle]} borderless>
+                  <View style={styles.fallbackCompactPillInner}>
+                    <Icon source="chart-pie" size={16} color={theme.colors.primary} />
+                    <Text style={[styles.fallbackCompactText, { color: theme.colors.onSurface }]}>Stats</Text>
+                  </View>
+                </TouchableRipple>
+                <TouchableRipple onPress={openChat} style={[styles.fallbackCompactPill, fallbackUtilityPillStyle]} borderless>
+                  <View style={styles.fallbackCompactPillInner}>
+                    <Icon source="chat" size={16} color={theme.colors.primary} />
+                    <Text style={[styles.fallbackCompactText, { color: theme.colors.onSurface }]}>Chat</Text>
+                  </View>
+                </TouchableRipple>
+                <TouchableRipple onPress={openBills} style={[styles.fallbackCompactPill, fallbackUtilityPillStyle]} borderless>
+                  <View style={styles.fallbackCompactPillInner}>
+                    <Icon source="repeat" size={16} color={theme.colors.primary} />
+                    <Text style={[styles.fallbackCompactText, { color: theme.colors.onSurface }]}>Bills</Text>
+                  </View>
+                </TouchableRipple>
+                <TouchableRipple onPress={openAddExpense} style={[styles.fallbackCompactPill, styles.fallbackAccentPill, addExpenseAccentPillStyle]} borderless>
+                  <View style={styles.fallbackCompactPillInner}>
+                    <Icon source="plus" size={16} color="#FFFFFF" />
+                    <Text style={[styles.fallbackCompactText, styles.fallbackAccentText]}>Add</Text>
+                  </View>
+                </TouchableRipple>
+              </View>
+            </GlassView>
+          ) : (
+            <View style={styles.fallbackExpandedStack}>
+              <GlassView style={[styles.fallbackPrimaryBar, fallbackBarChromeStyle]}>
+                <View style={styles.fallbackPrimaryRow}>
+                  <TouchableRipple onPress={openSettle} style={[styles.fallbackPrimaryPill, styles.fallbackAccentPill, settleAccentPillStyle]} borderless>
+                    <View style={styles.fallbackPrimaryPillInner}>
+                      <Icon source="handshake" size={20} color="#FFFFFF" />
+                      <Text style={[styles.fallbackPrimaryText, styles.fallbackAccentText]}>Settle Up</Text>
+                    </View>
+                  </TouchableRipple>
+                  <TouchableRipple onPress={openAddExpense} style={[styles.fallbackPrimaryPill, styles.fallbackAccentPill, addExpenseAccentPillStyle]} borderless>
+                    <View style={styles.fallbackPrimaryPillInner}>
+                      <Icon source="plus-circle-outline" size={20} color="#FFFFFF" />
+                      <Text style={[styles.fallbackPrimaryText, styles.fallbackAccentText]}>Add Expense</Text>
+                    </View>
+                  </TouchableRipple>
+                </View>
+              </GlassView>
+              <GlassView style={[styles.fallbackUtilityBar, fallbackBarChromeStyle]}>
+                <View style={styles.fallbackUtilityRow}>
+                  <TouchableRipple onPress={openStats} style={[styles.fallbackUtilityPill, fallbackUtilityPillStyle]} borderless>
+                    <View style={styles.fallbackUtilityPillInner}>
+                      <Icon source="chart-pie" size={16} color={theme.colors.primary} />
+                      <Text style={[styles.fallbackUtilityText, { color: theme.colors.onSurface }]}>Stats</Text>
+                    </View>
+                  </TouchableRipple>
+                  <TouchableRipple onPress={openChat} style={[styles.fallbackUtilityPill, fallbackUtilityPillStyle]} borderless>
+                    <View style={styles.fallbackUtilityPillInner}>
+                      <Icon source="chat" size={16} color={theme.colors.primary} />
+                      <Text style={[styles.fallbackUtilityText, { color: theme.colors.onSurface }]}>Chat</Text>
+                    </View>
+                  </TouchableRipple>
+                  <TouchableRipple onPress={openBills} style={[styles.fallbackUtilityPill, fallbackUtilityPillStyle]} borderless>
+                    <View style={styles.fallbackUtilityPillInner}>
+                      <Icon source="repeat" size={16} color={theme.colors.primary} />
+                      <Text style={[styles.fallbackUtilityText, { color: theme.colors.onSurface }]}>Bills</Text>
+                    </View>
+                  </TouchableRipple>
+                </View>
+              </GlassView>
+            </View>
+          )}
+        </View>
+      )}
     </LiquidBackground>
   );
 };
@@ -711,5 +840,102 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
+  },
+  fallbackAccessoryContainer: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    zIndex: 120,
+  },
+  fallbackExpandedStack: {
+    gap: 8,
+  },
+  fallbackPrimaryBar: {
+    borderRadius: 30,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  fallbackUtilityBar: {
+    borderRadius: 30,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  fallbackCompactBar: {
+    borderRadius: 30,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  fallbackPrimaryRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  fallbackPrimaryPill: {
+    flex: 1,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  fallbackAccentPill: {
+    borderWidth: 1,
+  },
+  fallbackAccentText: {
+    color: '#FFFFFF',
+  },
+  fallbackPrimaryPillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  fallbackPrimaryText: {
+    fontWeight: '700',
+    fontSize: 15,
+    lineHeight: 18,
+  },
+  fallbackUtilityRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  fallbackUtilityPill: {
+    flex: 1,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  fallbackUtilityPillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+  },
+  fallbackUtilityText: {
+    fontWeight: '600',
+    fontSize: 13,
+    lineHeight: 16,
+  },
+  fallbackCompactRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  fallbackCompactPill: {
+    flex: 1,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  fallbackCompactPillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 11,
+    paddingHorizontal: 10,
+  },
+  fallbackCompactText: {
+    fontWeight: '700',
+    fontSize: 12,
+    lineHeight: 15,
   },
 });
