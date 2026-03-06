@@ -4,34 +4,40 @@
       "$recipientId": {
         ".read": "auth != null && auth.uid == $recipientId",
         "$messageId": {
-          ".write": "auth != null",
-          ".validate": "newData.hasChildren(['senderId', 'content', 'timestamp', 'type'])",
+          ".write": "auth != null && ((!data.exists() && newData.exists() && newData.child('senderId').isString() && newData.child('senderId').val() == auth.uid) || (auth.uid == $recipientId && !newData.exists()))",
+          ".validate": "newData.exists() ? newData.hasChildren(['senderId', 'chatId', 'content', 'timestamp', 'type', 'isGroupChat']) : true",
           "senderId": {
-            ".validate": "newData.isString()"
-          },
-          "content": {
-            ".validate": "newData.isString()"
-          },
-          "timestamp": {
-            ".validate": "newData.isNumber()"
-          },
-          "type": {
-            ".validate": "newData.isString() && (newData.val() == 'text' || newData.val() == 'image' || newData.val() == 'video' || newData.val() == 'audio' || newData.val() == 'system' || newData.val() == 'call' || newData.val() == 'file' || newData.val() == 'location')"
-          },
-          "location": {
-            ".validate": "newData.val() == null || newData.hasChildren(['latitude', 'longitude'])"
+            ".validate": "!newData.exists() || (newData.isString() && newData.val() == auth.uid)"
           },
           "chatId": {
-            ".validate": "newData.isString()"
+            ".validate": "!newData.exists() || newData.isString()"
           },
-          "mediaUrl": {
-            ".validate": "newData.isString() || newData.val() == null"
+          "content": {
+            ".validate": "!newData.exists() || newData.isString()"
           },
-          "replyTo": {
-            ".validate": "newData.val() == null || newData.hasChildren(['messageId', 'senderId', 'senderName', 'content'])"
+          "timestamp": {
+            ".validate": "!newData.exists() || newData.isNumber()"
+          },
+          "type": {
+            ".validate": "!newData.exists() || (newData.isString() && (newData.val() == 'text' || newData.val() == 'image' || newData.val() == 'video' || newData.val() == 'audio' || newData.val() == 'system' || newData.val() == 'call' || newData.val() == 'file' || newData.val() == 'location'))"
           },
           "isGroupChat": {
-            ".validate": "newData.isBoolean()"
+            ".validate": "!newData.exists() || newData.isBoolean()"
+          },
+          "mediaUrl": {
+            ".validate": "!newData.exists() || newData.isString() || newData.val() == null"
+          },
+          "thumbnailUrl": {
+            ".validate": "!newData.exists() || newData.isString() || newData.val() == null"
+          },
+          "location": {
+            ".validate": "!newData.exists() || newData.val() == null || (newData.hasChildren(['latitude', 'longitude']) && newData.child('latitude').isNumber() && newData.child('longitude').isNumber())"
+          },
+          "replyTo": {
+            ".validate": "!newData.exists() || newData.val() == null || newData.hasChildren(['messageId', 'senderId', 'senderName', 'content'])"
+          },
+          "mediaMetadata": {
+            ".validate": "!newData.exists() || newData.val() == null || (!newData.isString() && !newData.isNumber() && !newData.isBoolean())"
           }
         }
       }
@@ -40,65 +46,101 @@
       "$recipientId": {
         ".read": "auth != null && auth.uid == $recipientId",
         "$messageId": {
-          ".write": "auth != null",
           ".read": "auth != null && auth.uid == $recipientId",
+          ".write": "auth != null && auth.uid == $recipientId",
           "base64Data": {
-            ".validate": "newData.isString()"
+            ".validate": "!newData.exists() || newData.isString()"
           },
           "fileName": {
-            ".validate": "newData.isString()"
+            ".validate": "!newData.exists() || newData.isString()"
           },
           "mimeType": {
-            ".validate": "newData.isString()"
+            ".validate": "!newData.exists() || newData.isString()"
           },
           "fileSize": {
-            ".validate": "newData.isNumber()"
+            ".validate": "!newData.exists() || newData.isNumber()"
           },
           "timestamp": {
-            ".validate": "newData.isNumber()"
+            ".validate": "!newData.exists() || newData.isNumber()"
           }
         }
       }
     },
     "receipts": {
       "$chatId": {
-        ".read": "auth != null",
+        ".read": "auth != null && data.child('__participants').child(auth.uid).val() == true",
+        "__participants": {
+          ".read": "auth != null && data.child(auth.uid).val() == true",
+          "$uid": {
+            ".write": "auth != null && auth.uid == $uid",
+            ".validate": "newData.isBoolean() && newData.val() == true"
+          }
+        },
         "$messageId": {
-          ".read": "auth != null",
-          ".write": "auth != null",
-          "delivered": {
-            ".validate": "newData.isBoolean()"
-          },
-          "deliveredAt": {
-            ".validate": "newData.isNumber()"
-          },
-          "read": {
-            ".validate": "newData.isBoolean()"
-          },
-          "readAt": {
-            ".validate": "newData.isNumber()"
-          },
-          "recipientId": {
-            ".validate": "newData.isString()"
-          },
+          ".read": "auth != null && root.child('receipts').child($chatId).child('__participants').child(auth.uid).val() == true",
           "$recipientId": {
-            ".validate": "newData.hasChildren(['delivered', 'deliveredAt', 'recipientId'])",
+            ".read": "auth != null && root.child('receipts').child($chatId).child('__participants').child(auth.uid).val() == true",
+            ".write": "auth != null && auth.uid == $recipientId",
+            ".validate": "newData.exists() ? (newData.hasChildren(['delivered', 'deliveredAt', 'recipientId']) && newData.child('recipientId').isString() && newData.child('recipientId').val() == $recipientId && newData.child('recipientId').val() == auth.uid && newData.child('delivered').isBoolean() && newData.child('deliveredAt').isNumber() && (!newData.child('read').exists() || newData.child('read').isBoolean()) && (!newData.child('readAt').exists() || newData.child('readAt').isNumber())) : true",
             "delivered": {
-              ".validate": "newData.isBoolean()"
+              ".validate": "!newData.exists() || newData.isBoolean()"
             },
             "deliveredAt": {
-              ".validate": "newData.isNumber()"
+              ".validate": "!newData.exists() || newData.isNumber()"
             },
             "read": {
-              ".validate": "newData.isBoolean()"
+              ".validate": "!newData.exists() || newData.isBoolean()"
             },
             "readAt": {
-              ".validate": "newData.isNumber()"
+              ".validate": "!newData.exists() || newData.isNumber()"
             },
             "recipientId": {
-              ".validate": "newData.isString()"
+              ".validate": "!newData.exists() || (newData.isString() && newData.val() == auth.uid)"
             }
           }
+        }
+      }
+    },
+    "calls": {
+      ".read": "auth != null && query.orderByChild == 'chatId' && query.equalTo != null",
+      ".indexOn": [
+        "chatId",
+        "status",
+        "startedAt"
+      ],
+      "$callId": {
+        ".read": "auth != null && data.child('allowedUserIds').child(auth.uid).val() == true",
+        ".write": "auth != null && ((!data.exists() && newData.exists() && newData.child('initiatorId').val() == auth.uid && newData.child('participantIds').child(auth.uid).val() == true && newData.child('allowedUserIds').child(auth.uid).val() == true) || (data.exists() && newData.exists() && data.child('allowedUserIds').child(auth.uid).val() == true && (data.child('participantIds').child(auth.uid).val() == true || newData.child('participantIds').child(auth.uid).val() == true)) || (data.exists() && !newData.exists() && data.child('participantIds').child(auth.uid).val() == true))",
+        ".validate": "newData.exists() ? newData.hasChildren(['callId', 'chatId', 'initiatorId', 'participants', 'participantIds', 'allowedUserIds', 'type', 'status', 'startedAt']) : true",
+        "callId": {
+          ".validate": "!newData.exists() || (newData.isString() && newData.val() == $callId)"
+        },
+        "chatId": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+        "initiatorId": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+        "participants": {
+          ".validate": "!newData.exists() || (!newData.isString() && !newData.isNumber() && !newData.isBoolean())"
+        },
+        "participantIds": {
+          ".validate": "!newData.exists() || (!newData.isString() && !newData.isNumber() && !newData.isBoolean())"
+        },
+        "allowedUserIds": {
+          ".validate": "!newData.exists() || (!newData.isString() && !newData.isNumber() && !newData.isBoolean())"
+        },
+        "type": {
+          ".validate": "!newData.exists() || (newData.isString() && (newData.val() == 'audio' || newData.val() == 'video'))"
+        },
+        "status": {
+          ".validate": "!newData.exists() || (newData.isString() && (newData.val() == 'idle' || newData.val() == 'ringing' || newData.val() == 'connected' || newData.val() == 'ended' || newData.val() == 'failed'))"
+        },
+        "startedAt": {
+          ".validate": "!newData.exists() || newData.isNumber()"
+        },
+        "groupId": {
+          ".validate": "!newData.exists() || newData.isString() || newData.val() == null"
         }
       }
     }

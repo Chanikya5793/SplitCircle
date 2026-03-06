@@ -1,3 +1,4 @@
+import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
 import { useTheme } from '@/context/ThemeContext';
 import { hasGoogleMapsApiKey } from '@/utils/hasGoogleMapsApiKey';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -14,6 +15,7 @@ const MapView = React.lazy(() => import('react-native-maps').then(mod => ({ defa
 
 // Type for MapView ref
 type MapViewRef = InstanceType<typeof import('react-native-maps').default>;
+type RegionChangeDetails = { isGesture?: boolean };
 
 interface LocationPickerProps {
   visible: boolean;
@@ -38,12 +40,38 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const mapRef = useRef<MapViewRef>(null);
+  const isMountedRef = useRef(true);
+  const isVisibleRef = useRef(visible);
+  const reverseGeocodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const mapsApiKeyAvailable = hasGoogleMapsApiKey();
 
   useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+      if (reverseGeocodeTimerRef.current) {
+        clearTimeout(reverseGeocodeTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    isVisibleRef.current = visible;
+
+    if (!visible) {
+      if (reverseGeocodeTimerRef.current) {
+        clearTimeout(reverseGeocodeTimerRef.current);
+        reverseGeocodeTimerRef.current = null;
+      }
+      setIsDragging(false);
+    }
+  }, [visible]);
+
+  useEffect(() => {
     if (visible) {
-      checkPermissionsAndGetLocation();
+      void checkPermissionsAndGetLocation();
     }
   }, [visible]);
 
@@ -51,6 +79,10 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     setLoading(true);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
+      if (!isMountedRef.current || !isVisibleRef.current) {
+        return;
+      }
+
       if (status !== 'granted') {
         Alert.alert('Permission Denied', 'Permission to access location was denied');
         setPermissionGranted(false);
@@ -62,6 +94,9 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
+      if (!isMountedRef.current || !isVisibleRef.current) {
+        return;
+      }
 
       setCurrentLocation(location);
       setSelectedLocation({
@@ -73,9 +108,13 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
 
     } catch (error) {
       console.error('Error getting location:', error);
-      Alert.alert('Error', 'Could not fetch location');
+      if (isMountedRef.current && isVisibleRef.current) {
+        Alert.alert('Error', 'Could not fetch location');
+      }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current && isVisibleRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -95,11 +134,15 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
           addr.region,
           addr.country
         ].filter(Boolean).join(', ');
-        setAddress(addressString);
+        if (isMountedRef.current && isVisibleRef.current) {
+          setAddress(addressString);
+        }
       }
     } catch (e) {
       console.log('Error reverse geocoding:', e);
-      setAddress(`${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+      if (isMountedRef.current && isVisibleRef.current) {
+        setAddress(`${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+      }
     }
   };
 
@@ -107,13 +150,25 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     setIsDragging(true);
   };
 
-  const handleRegionChangeComplete = async (region: Region) => {
+  const handleRegionChangeComplete = (region: Region, details?: RegionChangeDetails) => {
+    if (Platform.OS === 'android' && details && details.isGesture === false) {
+      setIsDragging(false);
+      return;
+    }
+
     setIsDragging(false);
     setSelectedLocation({
       latitude: region.latitude,
       longitude: region.longitude,
     });
-    await fetchAddress(region.latitude, region.longitude);
+
+    if (reverseGeocodeTimerRef.current) {
+      clearTimeout(reverseGeocodeTimerRef.current);
+    }
+
+    reverseGeocodeTimerRef.current = setTimeout(() => {
+      void fetchAddress(region.latitude, region.longitude);
+    }, Platform.OS === 'android' ? 300 : 120);
   };
 
   const handleSearch = async () => {
@@ -134,7 +189,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
 
         mapRef.current?.animateToRegion(newRegion, 1000);
         setSelectedLocation({ latitude, longitude });
-        // Address will be updated by onRegionChangeComplete
+        void fetchAddress(latitude, longitude);
       } else {
         Alert.alert('Not Found', 'Could not find location');
       }
@@ -155,19 +210,33 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
         address: address || undefined,
       });
       setSending(false);
-      onClose();
+      handleClose();
     }
+  };
+
+  const handleClose = () => {
+    if (reverseGeocodeTimerRef.current) {
+      clearTimeout(reverseGeocodeTimerRef.current);
+      reverseGeocodeTimerRef.current = null;
+    }
+
+    mapRef.current = null;
+    onClose();
   };
 
   const goToCurrentLocation = () => {
     if (currentLocation && mapRef.current) {
+      const latitude = currentLocation.coords.latitude;
+      const longitude = currentLocation.coords.longitude;
       const newRegion = {
-        latitude: currentLocation.coords.latitude,
-        longitude: currentLocation.coords.longitude,
+        latitude,
+        longitude,
         latitudeDelta: LATITUDE_DELTA,
         longitudeDelta: LONGITUDE_DELTA,
       };
       mapRef.current.animateToRegion(newRegion, 1000);
+      setSelectedLocation({ latitude, longitude });
+      void fetchAddress(latitude, longitude);
     }
   };
 
@@ -249,12 +318,12 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     <Modal
       visible={visible}
       animationType="slide"
-      onRequestClose={onClose}
+      onRequestClose={handleClose}
       presentationStyle="pageSheet"
     >
       <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+          <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
             <Ionicons name="close" size={24} color={theme.colors.onSurface} />
           </TouchableOpacity>
           <Text variant="titleMedium" style={{ color: theme.colors.onSurface }}>Share Location</Text>
@@ -300,27 +369,39 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
             <View style={styles.mapContainer}>
               {currentLocation && (
                 mapsApiKeyAvailable ? (
-                  <React.Suspense fallback={
-                    <View style={[styles.map, styles.mapLoading]}>
-                      <ActivityIndicator size="large" color={theme.colors.primary} />
-                      <Text style={{ marginTop: 10, color: theme.colors.onSurface }}>Loading map...</Text>
+                  <MapErrorBoundary fallback={
+                    <View style={[styles.map, styles.mapLoading, { backgroundColor: isDark ? 'rgba(30,30,40,0.95)' : 'rgba(245,245,250,0.95)' }]}>
+                      <Ionicons name="location" size={50} color={theme.colors.primary} />
+                      <Text style={{ marginTop: 12, color: theme.colors.onSurface }}>Map unavailable right now</Text>
                     </View>
                   }>
-                    <MapView
-                      ref={mapRef as any}
-                      style={styles.map}
-                      initialRegion={{
-                        latitude: currentLocation.coords.latitude,
-                        longitude: currentLocation.coords.longitude,
-                        latitudeDelta: LATITUDE_DELTA,
-                        longitudeDelta: LONGITUDE_DELTA,
-                      }}
-                      showsUserLocation
-                      showsMyLocationButton={false}
-                      onRegionChange={handleRegionChangeStart}
-                      onRegionChangeComplete={handleRegionChangeComplete}
-                    />
-                  </React.Suspense>
+                    <React.Suspense fallback={
+                      <View style={[styles.map, styles.mapLoading]}>
+                        <ActivityIndicator size="large" color={theme.colors.primary} />
+                        <Text style={{ marginTop: 10, color: theme.colors.onSurface }}>Loading map...</Text>
+                      </View>
+                    }>
+                      <MapView
+                        ref={(instance) => {
+                          mapRef.current = instance as MapViewRef | null;
+                        }}
+                        style={styles.map}
+                        initialRegion={{
+                          latitude: currentLocation.coords.latitude,
+                          longitude: currentLocation.coords.longitude,
+                          latitudeDelta: LATITUDE_DELTA,
+                          longitudeDelta: LONGITUDE_DELTA,
+                        }}
+                        showsUserLocation
+                        showsMyLocationButton={false}
+                        showsPointsOfInterests={false}
+                        toolbarEnabled={false}
+                        moveOnMarkerPress={false}
+                        onRegionChange={handleRegionChangeStart}
+                        onRegionChangeComplete={handleRegionChangeComplete}
+                      />
+                    </React.Suspense>
+                  </MapErrorBoundary>
                 ) : (
                   // Fallback UI when Maps API key is not configured
                   <View style={[styles.map, styles.mapLoading, { backgroundColor: isDark ? 'rgba(30,30,40,0.95)' : 'rgba(245,245,250,0.95)' }]}>
@@ -343,7 +424,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
               {/* Center Pin - only show when map is available */}
               {mapsApiKeyAvailable && (
                 <View style={styles.centerPinContainer} pointerEvents="none">
-                  <Ionicons name="location" size={40} color={theme.colors.primary} style={{ marginBottom: 40 }} />
+                  <Ionicons name="location" size={40} color={theme.colors.primary} style={styles.centerPinIcon} />
                 </View>
               )}
 
@@ -460,6 +541,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 5,
+  },
+  centerPinIcon: {
+    transform: [{ translateY: -20 }],
   },
   myLocationButton: {
     position: 'absolute',

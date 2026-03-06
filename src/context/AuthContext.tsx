@@ -4,22 +4,34 @@ import * as Google from 'expo-auth-session/providers/google';
 import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
 import {
-    createUserWithEmailAndPassword,
-    GoogleAuthProvider,
-    onAuthStateChanged,
-    sendPasswordResetEmail,
-    signInWithCredential,
-    signInWithEmailAndPassword,
-    signOut,
-    updateProfile,
-    type User as FirebaseUser,
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithCredential,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile,
+  type User as FirebaseUser,
 } from 'firebase/auth';
 import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 WebBrowser.maybeCompleteAuthSession();
 
-console.log('AuthContext module loaded');
+const debugLog = (...args: unknown[]) => {
+  if (__DEV__) {
+    console.log(...args);
+  }
+};
+
+type LegacyManifestExtra = {
+  google?: {
+    webClientId?: string;
+    androidClientId?: string;
+    iosClientId?: string;
+  };
+};
 
 interface AuthContextValue {
   user: UserProfile | null;
@@ -37,7 +49,7 @@ const buildUserProfile = (firebaseUser: FirebaseUser, existing?: UserProfile): U
   userId: firebaseUser.uid,
   email: firebaseUser.email ?? '',
   displayName: firebaseUser.displayName ?? existing?.displayName ?? '',
-  photoURL: firebaseUser.photoURL ?? existing?.photoURL,
+  photoURL: firebaseUser.photoURL ?? existing?.photoURL ?? null,  // Must be null, not undefined for Firestore
   groups: existing?.groups ?? [],
   status: 'online',
   createdAt: existing?.createdAt ?? Date.now(),
@@ -48,25 +60,38 @@ const buildUserProfile = (firebaseUser: FirebaseUser, existing?: UserProfile): U
   },
 });
 
+/**
+ * Remove undefined values from object before sending to Firestore
+ * Firestore doesn't accept undefined as a value
+ */
+const sanitizeForFirestore = <T extends Record<string, any>>(obj: T): T => {
+  const result: Record<string, any> = {};
+  for (const key in obj) {
+    if (obj[key] !== undefined) {
+      result[key] = obj[key];
+    }
+  }
+  return result as T;
+};
+
 export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const googleConfig = Constants.expoConfig?.extra?.google ?? Constants.manifest?.extra?.google ?? {};
+  const legacyExtra = (Constants as unknown as { manifest?: { extra?: LegacyManifestExtra } }).manifest?.extra;
+  const googleConfig = Constants.expoConfig?.extra?.google ?? legacyExtra?.google ?? {};
 
   const [request, response, promptAsync] = Google.useAuthRequest({
-    expoClientId: googleConfig.webClientId ?? process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID ?? '',
+    expoClientId: googleConfig.webClientId
+      ?? process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
+      ?? process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID
+      ?? '',
     androidClientId: googleConfig.androidClientId ?? process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '',
     iosClientId: googleConfig.iosClientId ?? process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? 'mock_ios_client_id',
   });
 
   useEffect(() => {
-    console.log('Google Auth Request initialized:', {
-        request: !!request,
-        expoClientId: googleConfig.webClientId ? 'Set (app.json)' : (process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID ? 'Set (env)' : 'Missing'),
-        androidClientId: googleConfig.androidClientId ? 'Set (app.json)' : (process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ? 'Set (env)' : 'Missing'),
-        iosClientId: googleConfig.iosClientId ? 'Set (app.json)' : (process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ? 'Set (env)' : 'Missing'),
-    });
+    debugLog(`Google auth request ready: ${Boolean(request)}`);
   }, [request]);
 
   useEffect(() => {
@@ -85,7 +110,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       }
 
       const docRef = doc(db, 'users', firebaseUser.uid);
-      
+
       unsubscribeSnapshot = onSnapshot(docRef, async (docSnap) => {
         if (docSnap.exists()) {
           const payload = buildUserProfile(firebaseUser, docSnap.data() as UserProfile);
@@ -97,11 +122,11 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           // But to be safe (and for Google Sign In), we create it if missing.
           const payload = buildUserProfile(firebaseUser);
           try {
-            await setDoc(docRef, {
+            await setDoc(docRef, sanitizeForFirestore({
               ...payload,
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
-            });
+            }));
             // The snapshot listener will fire again after this write.
           } catch (error) {
             console.error('Error creating user profile:', error);
@@ -121,18 +146,17 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
   useEffect(() => {
     const handleGoogleResponse = async () => {
-      console.log('Google Auth Response:', response?.type, JSON.stringify(response, null, 2));
       if (response?.type !== 'success' || !response.authentication?.idToken) {
         if (response?.type === 'error') {
-            console.error('Google Auth Error:', response.error);
+          console.error('Google Auth Error:', response.error);
         }
         return;
       }
       try {
-        console.log('Signing in with Google credential...');
+        debugLog('Signing in with Google credential');
         const credential = GoogleAuthProvider.credential(response.authentication.idToken);
         await signInWithCredential(auth, credential);
-        console.log('Google Sign-In successful');
+        debugLog('Google Sign-In successful');
       } catch (error) {
         console.error('Firebase Google Sign-In failed:', error);
       }

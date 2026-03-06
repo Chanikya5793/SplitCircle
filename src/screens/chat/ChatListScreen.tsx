@@ -1,6 +1,8 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ChatListSkeleton } from '@/components/SkeletonLoader';
+import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
+import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -9,6 +11,7 @@ import { lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, RefreshControl, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
@@ -19,9 +22,12 @@ interface ChatListScreenProps {
 export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const navigation = useNavigation();
   const { threads, loading } = useChat();
+  const { user } = useAuth();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 20);
 
   // Filter & Sort State
   const [filterVisible, setFilterVisible] = useState(false);
@@ -47,8 +53,9 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
       const group = groups.find(g => g.groupId === thread.groupId);
       return group?.name || 'Group Chat';
     }
-    return thread.participants.find(p => p.userId !== thread.participantIds[0])?.displayName || 'Direct Chat';
-  }, [groups]);
+    const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+    return otherParticipant?.displayName || 'Direct Chat';
+  }, [groups, user?.userId]);
 
   // Helper to get chat initials for avatar
   const getChatInitials = useMemo(() => (thread: ChatThread) => {
@@ -56,9 +63,9 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
       const group = groups.find(g => g.groupId === thread.groupId);
       return (group?.name || 'GC').slice(0, 2).toUpperCase();
     }
-    const otherParticipant = thread.participants.find(p => p.userId !== thread.participantIds[0]);
+    const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
     return (otherParticipant?.displayName || 'SC').slice(0, 2).toUpperCase();
-  }, [groups]);
+  }, [groups, user?.userId]);
 
   // Sort Logic
   const processedThreads = useMemo(() => {
@@ -146,7 +153,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
               <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No chats yet.</Text>
             )
           }
-          contentContainerStyle={{ padding: 16, paddingTop: 60, paddingBottom: 100 }}
+          contentContainerStyle={{ padding: 16, paddingTop: 60, paddingBottom: listBottomPadding }}
           ListHeaderComponent={
             <View style={styles.headerContainer}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
