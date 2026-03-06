@@ -6,6 +6,7 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { LoadingOverlay } from '@/components/LoadingOverlay';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
+import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -13,7 +14,7 @@ import type { ChatMessage, ChatThread, MessageType } from '@/models';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
 
@@ -24,6 +25,7 @@ interface ChatRoomScreenProps {
 export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const navigation = useNavigation();
   const { subscribeToMessages, sendMessage, markChatAsRead } = useChat();
+  const { user } = useAuth();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   // Messages for this chat (inverted list - newest first)
@@ -49,6 +51,25 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [isProcessingMedia, setIsProcessingMedia] = useState(false);
   // Location picker state
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
+  const markReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const markReadInFlightRef = useRef(false);
+
+  const requestMarkAsRead = useCallback(() => {
+    if (markReadTimerRef.current) {
+      clearTimeout(markReadTimerRef.current);
+    }
+
+    markReadTimerRef.current = setTimeout(() => {
+      if (markReadInFlightRef.current) {
+        return;
+      }
+
+      markReadInFlightRef.current = true;
+      void markChatAsRead(thread.chatId).finally(() => {
+        markReadInFlightRef.current = false;
+      });
+    }, 100);
+  }, [markChatAsRead, thread.chatId]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -68,12 +89,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
 
     // Reduce noisy logging and unnecessary state updates:
-    // - Only update messages state when count or last message id changes.
+    // - Update messages when list composition or delivery/read state changes.
     // - Throttle console logging to once per LOG_INTERVAL, otherwise only log new messages.
     let lastLogAt = 0;
     const LOG_INTERVAL = 30_000; // 30s
     let prevCount = 0;
     let prevLastMessageId: string | null = null;
+    let prevStatusFingerprint = '';
 
     const unsubscribe = subscribeToMessages(thread.chatId, (items) => {
       // Keep the previous count/last id for comparisons
@@ -85,12 +107,22 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
       const countChanged = items.length !== prevCountBefore;
       const lastIdChanged = lastId !== prevLastIdBefore;
+      const statusFingerprint = items
+        .map((item) => {
+          const id = item.messageId || item.id;
+          const deliveredCount = item.deliveredTo?.length ?? 0;
+          const readCount = item.readBy?.length ?? 0;
+          return `${id}:${item.status}:${deliveredCount}:${readCount}`;
+        })
+        .join('|');
+      const statusChanged = statusFingerprint !== prevStatusFingerprint;
 
-      // Only update state if it's a meaningful change to reduce re-renders
-      if (countChanged || lastIdChanged) {
+      // Update when list composition or delivery/read status changes.
+      if (countChanged || lastIdChanged || statusChanged) {
         setMessages(items);
         prevCount = items.length;
         prevLastMessageId = lastId;
+        prevStatusFingerprint = statusFingerprint;
       }
 
       // Throttled logging to avoid spamming the console
@@ -107,12 +139,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     });
 
     // Mark all messages as read when opening the chat
-    markChatAsRead(thread.chatId);
+    requestMarkAsRead();
 
     // Also mark as read when app comes back to foreground
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
-        markChatAsRead(thread.chatId);
+        requestMarkAsRead();
       }
     });
 
@@ -120,8 +152,11 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       console.log('👋 ChatRoomScreen unmounting');
       unsubscribe();
       subscription.remove();
+      if (markReadTimerRef.current) {
+        clearTimeout(markReadTimerRef.current);
+      }
     };
-  }, [subscribeToMessages, thread.chatId, markChatAsRead]);
+  }, [requestMarkAsRead, subscribeToMessages, thread.chatId]);
 
   useEffect(() => {
     if (messages.length === 0) {
@@ -131,6 +166,25 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     // But only if we are already near the bottom? For now, just scroll.
     // listRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, [messages.length]);
+
+  // If chat is open and a new incoming message appears, mark it as read immediately.
+  useEffect(() => {
+    if (!user || messages.length === 0) {
+      return;
+    }
+
+    const hasUnreadIncoming = messages.some(
+      (message) =>
+        message.senderId !== user.userId &&
+        (!message.readBy || !message.readBy.includes(user.userId))
+    );
+
+    if (!hasUnreadIncoming) {
+      return;
+    }
+
+    requestMarkAsRead();
+  }, [messages, requestMarkAsRead, user]);
 
   const handleSend = async () => {
     const trimmed = text.trim();
@@ -165,6 +219,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     lightHaptic();
     setReplyingTo(message);
     inputRef.current?.focus();
+  };
+
+  const handleSwipeInfo = (message: ChatMessage) => {
+    lightHaptic();
+    // @ts-ignore - navigation route typing is intentionally loose in this app
+    navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread });
   };
 
   // Handle media selection from attachment menu
@@ -334,9 +394,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   }, [thread.type, thread.groupId, groups]);
 
   const placeholder = useMemo(() => (thread.type === 'group' ? 'Type a message...' : 'Message user'), [thread.type]);
+  const directParticipant = useMemo(
+    () => thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0],
+    [thread.participants, user?.userId],
+  );
   const title = thread.type === 'group'
     ? groupName || 'Group Chat'
-    : thread.participants.find(p => p.userId !== thread.participantIds[0])?.displayName || 'Direct Chat';
+    : directParticipant?.displayName || 'Direct Chat';
 
   const handleHeaderPress = () => {
     if (thread.type === 'group' && thread.groupId) {
@@ -401,6 +465,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 showSenderInfo={thread.type === 'group' ? isFirstInSequence : undefined}
                 senderName={senderName}
                 onSwipeReply={handleSwipeReply}
+                onSwipeInfo={thread.type === 'group' ? handleSwipeInfo : undefined}
                 isGroupChat={thread.type === 'group'}
                 totalRecipients={totalRecipients}
               />

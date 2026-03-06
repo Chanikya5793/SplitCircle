@@ -1,40 +1,24 @@
 import { useAuth } from '@/context/AuthContext';
+import { useChat } from '@/context/ChatContext';
 import type { CallStatus, CallType } from '@/models';
 import {
-    addIceCandidate,
-    createCallSession,
-    getCallSession,
-    ICE_SERVERS,
-    joinCall,
-    leaveCall,
-    setCallAnswer,
-    subscribeToActiveCall,
-    subscribeToCallSession,
-    subscribeToIceCandidates
+  createCallSession,
+  getCallSession,
+  joinCall,
+  leaveCall,
+  subscribeToActiveCall,
+  subscribeToCallSession
 } from '@/services/callService';
-import Constants from 'expo-constants';
+import { LiveKitService } from '@/services/LiveKitService';
+import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
+import { AudioSession } from '@livekit/react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-// Check if we're in Expo Go (no native modules available)
-const isExpoGo = Constants.appOwnership === 'expo';
-
-// Conditionally import WebRTC - only available in development builds
-let mediaDevices: any;
-let RTCIceCandidate: any;
-let RTCPeerConnection: any;
-let RTCSessionDescription: any;
-
-if (!isExpoGo) {
-  try {
-    const webrtc = require('react-native-webrtc');
-    mediaDevices = webrtc.mediaDevices;
-    RTCIceCandidate = webrtc.RTCIceCandidate;
-    RTCPeerConnection = webrtc.RTCPeerConnection;
-    RTCSessionDescription = webrtc.RTCSessionDescription;
-  } catch (e) {
-    console.warn('WebRTC module not available:', e);
+const debugLog = (...args: unknown[]) => {
+  if (__DEV__) {
+    console.log(...args);
   }
-}
+};
 
 interface UseCallManagerArgs {
   chatId?: string;
@@ -43,12 +27,13 @@ interface UseCallManagerArgs {
 
 interface UseCallManagerReturn {
   status: CallStatus;
-  localStream: any;
-  remoteStream: any;
   callId: string | null;
   error: string | null;
   isMuted: boolean;
   isCameraOff: boolean;
+  serverUrl: string | null;
+  token: string | null;
+  callType: CallType;
   startCall: (callType?: CallType) => Promise<void>;
   joinExistingCall: (callId: string) => Promise<void>;
   endCall: () => Promise<void>;
@@ -58,465 +43,375 @@ interface UseCallManagerReturn {
 
 export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCallManagerReturn => {
   const { user } = useAuth();
-  const peerConnection = useRef<any>(null);
-  const [localStream, setLocalStream] = useState<any>(null);
-  // Using ref to prevent stale closures in cleanup callbacks
-  const localStreamRef = useRef<any>(null);
-  const [remoteStream, setRemoteStream] = useState<any>(null);
+  const { threads } = useChat();
   const [status, setStatus] = useState<CallStatus>('idle');
   const [callId, setCallId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [callType, setCallType] = useState<CallType>('video');
-  
-  const unsubscribes = useRef<Array<() => void>>([]);
-  const isInitiator = useRef(false);
-  const answerProcessed = useRef(false);
-  const pendingIceCandidates = useRef<RTCIceCandidateInit[]>([]);
+
+  // LiveKit connection details
+  const [token, setToken] = useState<string | null>(null);
+  const [serverUrl, setServerUrl] = useState<string | null>(null);
+
   const callIdRef = useRef<string | null>(null);
-  // Queue for ICE candidates generated before callId is available
-  const pendingLocalIceCandidates = useRef<RTCIceCandidateInit[]>([]);
+  const callStartedAtRef = useRef<number | null>(null);
+  const otherParticipantRef = useRef<{ userId: string; displayName: string; photoURL?: string } | null>(null);
+  const isInitiatorRef = useRef<boolean>(false);
+  const hasSessionToCleanupRef = useRef(false);
+  const allowUnmountCleanupRef = useRef(false);
+  const sessionVersionRef = useRef(0);
+  const isEndingRef = useRef(false);
+  const endCallRef = useRef<(reason?: 'manual' | 'session-ended' | 'unmount') => Promise<void>>(async () => undefined);
+  const unsubscribes = useRef<Array<() => void>>([]);
 
   // Cleanup subscriptions
   const cleanupSubscriptions = useCallback(() => {
+    debugLog('useCallManager cleanup subscriptions');
     unsubscribes.current.forEach((unsub) => unsub());
     unsubscribes.current = [];
   }, []);
 
-  // Helper to update local stream (both state and ref)
-  const updateLocalStream = useCallback((stream: any) => {
-    localStreamRef.current = stream;
-    setLocalStream(stream);
-  }, []);
-
-  // Get local media stream
-  const getLocalStream = useCallback(async (type: CallType): Promise<any> => {
-    if (isExpoGo || !mediaDevices) {
-      // Mock stream for Expo Go
-      return null;
-    }
-    const constraints = {
-      audio: true,
-      video: type === 'video' ? { facingMode: 'user', width: 640, height: 480 } : false,
-    };
-    
-    const stream = await mediaDevices.getUserMedia(constraints);
-    return stream;
-  }, []);
-
-  // Create and configure peer connection
-  const createPeerConnection = useCallback((): any => {
-    if (isExpoGo || !RTCPeerConnection) {
-      // Return null for Expo Go
-      return null;
-    }
-    
-    const config = {
-      iceServers: ICE_SERVERS,
-      iceCandidatePoolSize: 10,
-    };
-    
-    const pc = new RTCPeerConnection(config);
-    
-    // Handle ICE candidates
-    pc.onicecandidate = (event: any) => {
-      if (event.candidate) {
-        if (callIdRef.current) {
-          addIceCandidate(callIdRef.current, event.candidate.toJSON(), isInitiator.current).catch(console.error);
-        } else {
-          // Store ICE candidates that are generated before we have a callId
-          pendingLocalIceCandidates.current.push(event.candidate.toJSON());
-        }
-      }
-    };
-    
-    // Handle connection state changes
-    pc.onconnectionstatechange = () => {
-      console.log('Connection state:', pc.connectionState);
-      switch (pc.connectionState) {
-        case 'connected':
-          setStatus('connected');
-          break;
-        case 'disconnected':
-        case 'failed':
-          setStatus('failed');
-          setError('Connection lost');
-          break;
-        case 'closed':
-          setStatus('ended');
-          break;
-      }
-    };
-    
-    // Handle ICE connection state
-    pc.oniceconnectionstatechange = () => {
-      console.log('ICE connection state:', pc.iceConnectionState);
-      if (pc.iceConnectionState === 'failed') {
-        setError('ICE connection failed');
-        setStatus('failed');
-      }
-    };
-    
-    // Handle remote stream
-    pc.ontrack = (event: any) => {
-      console.log('Remote track received:', event.track.kind);
-      if (event.streams && event.streams[0]) {
-        setRemoteStream(event.streams[0]);
-      }
-    };
-    
-    return pc;
-  }, [callId]);
-
   // Start a new call (as initiator)
   const startCall = useCallback(async (type: CallType = 'video') => {
     if (!chatId || !user) {
+      console.error('Cannot start call: missing chat or user');
       setError('Missing chat ID or user');
       return;
     }
-    
-    // Mock implementation for Expo Go
-    if (isExpoGo || !RTCPeerConnection) {
-      console.warn('WebRTC is not available in Expo Go. Using mock implementation.');
-      setError(null);
-      setStatus('ringing');
-      setCallType(type);
-      // Simulate connection after a delay
-      setTimeout(() => setStatus('connected'), 2000);
-      return;
-    }
-    
+
+    const sessionVersion = ++sessionVersionRef.current;
+
     try {
+      let newCallId: string | null = null;
+      cleanupSubscriptions();
+      isEndingRef.current = false;
       setError(null);
-      setStatus('ringing');
+      setStatus('ringing'); // UI shows "Calling..."
       setCallType(type);
-      isInitiator.current = true;
-      
-      // Get local media
-      const stream = await getLocalStream(type);
-      updateLocalStream(stream);
-      
-      // Create peer connection
-      const pc = createPeerConnection();
-      if (!pc) {
-        setError('Failed to create peer connection');
-        setStatus('failed');
-        return;
+      isInitiatorRef.current = true;
+      callStartedAtRef.current = Date.now();
+
+      const thread = threads.find((t) => t.chatId === chatId);
+      const threadParticipantIds = thread?.participantIds ?? [user.userId];
+
+      // Resolve other participant from thread immediately so call history is never "Unknown"
+      const otherP = thread?.participants.find((p) => p.userId !== user.userId);
+      if (otherP) {
+        otherParticipantRef.current = {
+          userId: otherP.userId,
+          displayName: otherP.displayName,
+          photoURL: otherP.photoURL,
+        };
       }
-      peerConnection.current = pc;
-      
-      // Add local tracks to peer connection
-      if (stream) {
-        stream.getTracks().forEach((track: any) => {
-          pc.addTrack(track, stream);
-        });
-      }
-      
-      // Create offer
-      const offer = await pc.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: type === 'video',
-      });
-      await pc.setLocalDescription(offer);
-      
-      // Create call session in Firestore
-      const newCallId = await createCallSession(
+
+      // 1. Create Call Session in Realtime DB (Ringing)
+      newCallId = await createCallSession(
         {
           chatId,
           groupId,
           userId: user.userId,
           displayName: user.displayName || 'Unknown',
           photoURL: user.photoURL || undefined,
+          participantIds: threadParticipantIds,
         },
-        type,
-        offer
+        type
       );
+
+      if (sessionVersionRef.current !== sessionVersion) {
+        return;
+      }
+
       setCallId(newCallId);
       callIdRef.current = newCallId;
-      
-      // Send any pending ICE candidates that were generated before we had the callId
-      for (const candidate of pendingLocalIceCandidates.current) {
-        await addIceCandidate(newCallId, candidate, isInitiator.current).catch(console.error);
+
+      // 2. Fetch LiveKit Token
+      const { token: roomToken, url } = await LiveKitService.getToken(
+        newCallId,
+        chatId,
+        user.displayName || 'User'
+      );
+
+      if (sessionVersionRef.current !== sessionVersion || callIdRef.current !== newCallId) {
+        return;
       }
-      pendingLocalIceCandidates.current = [];
-      
-      // Subscribe to call session updates
-      const unsubSession = subscribeToCallSession(newCallId, async (session) => {
-        if (!session) {
-          setStatus('ended');
+
+      setToken(roomToken);
+      setServerUrl(url);
+
+      // 3. Start Audio Session
+      await AudioSession.startAudioSession();
+
+      // 4. Subscribe to Call Session to see if answered or ended
+      const unsubSession = subscribeToCallSession(newCallId, (session) => {
+        // Ignore stale callbacks from an older call lifecycle.
+        if (sessionVersionRef.current !== sessionVersion || callIdRef.current !== newCallId) {
           return;
         }
-        
-        // Handle answer from remote peer
-        // Check signalingState and use flag to prevent duplicate processing
-        if (session.answer && !answerProcessed.current && pc.signalingState === 'have-local-offer' && RTCSessionDescription) {
-          answerProcessed.current = true;
-          try {
-            const answerDesc = new RTCSessionDescription(session.answer);
-            await pc.setRemoteDescription(answerDesc);
-            
-            // Process any pending ICE candidates that arrived before the answer
-            for (const candidate of pendingIceCandidates.current) {
-              try {
-                await pc.addIceCandidate(new RTCIceCandidate(candidate));
-              } catch (icErr) {
-                console.warn('Error adding pending ICE candidate:', icErr);
-              }
-            }
-            pendingIceCandidates.current = [];
-          } catch (descErr) {
-            console.error('Error setting remote description:', descErr);
-            answerProcessed.current = false; // Reset on error to allow retry
-          }
+
+        if (!session) {
+          debugLog('useCallManager call session removed; ending call');
+          void endCallRef.current('session-ended');
+          return;
         }
-        
+
         if (session.status === 'ended') {
-          // Clean up local resources when remote ends the call
-          if (localStreamRef.current && localStreamRef.current.getTracks) {
-            localStreamRef.current.getTracks().forEach((track: any) => track.stop());
-            updateLocalStream(null);
+          void endCallRef.current('session-ended');
+          return;
+        }
+
+        if (session.status === 'connected') {
+          debugLog('useCallManager call connected');
+          setStatus('connected');
+          // Only fill in other participant if not already resolved from thread
+          if (!otherParticipantRef.current) {
+            const other = session.participants.find(p => p.userId !== user.userId);
+            if (other) {
+              otherParticipantRef.current = { userId: other.userId, displayName: other.displayName, photoURL: other.photoURL };
+            }
           }
-          if (peerConnection.current) {
-            peerConnection.current.close();
-            peerConnection.current = null;
-          }
-          cleanupSubscriptions();
-          setRemoteStream(null);
-          setStatus('ended');
-          setCallId(null);
-          callIdRef.current = null;
-          isInitiator.current = false;
-          answerProcessed.current = false;
-          pendingIceCandidates.current = [];
-          pendingLocalIceCandidates.current = [];
         }
       });
       unsubscribes.current.push(unsubSession);
-      
-      // Subscribe to ICE candidates from answerer
-      const unsubCandidates = subscribeToIceCandidates(newCallId, true, async (candidate) => {
-        try {
-          // Only add ICE candidates after remote description is set
-          if (pc.remoteDescription && pc.signalingState === 'stable') {
-            await pc.addIceCandidate(new RTCIceCandidate(candidate));
-          } else {
-            // Queue candidates that arrive before remote description
-            pendingIceCandidates.current.push(candidate);
-          }
-        } catch (err) {
-          console.warn('Error adding ICE candidate:', err);
-        }
-      });
-      unsubscribes.current.push(unsubCandidates);
-      
+
     } catch (err) {
-      console.error('Error starting call:', err);
+      if (sessionVersionRef.current !== sessionVersion) {
+        return;
+      }
+
+      console.error('Error starting call', err);
+      if (callIdRef.current && user) {
+        try {
+          await leaveCall(callIdRef.current, user.userId);
+        } catch (cleanupError) {
+          console.warn('Failed to cleanup failed outbound call setup', cleanupError);
+        }
+      }
+      callIdRef.current = null;
+      setCallId(null);
       setError(err instanceof Error ? err.message : 'Failed to start call');
       setStatus('failed');
     }
-  }, [chatId, groupId, user, getLocalStream, createPeerConnection, updateLocalStream, cleanupSubscriptions]);
+  }, [chatId, groupId, threads, user]);
 
   // Join an existing call (as answerer)
   const joinExistingCall = useCallback(async (existingCallId: string) => {
-    if (!user) {
-      setError('User not authenticated');
+    if (!user || !chatId) {
+      console.error('Cannot join call: missing user or chat ID');
+      setError('Missing authenticated user or chat ID');
       return;
     }
-    
-    // Mock implementation for Expo Go
-    if (isExpoGo || !RTCPeerConnection) {
-      console.warn('WebRTC is not available in Expo Go. Using mock implementation.');
-      setError(null);
-      setStatus('ringing');
-      setCallId(existingCallId);
-      // Simulate connection after a delay
-      setTimeout(() => setStatus('connected'), 1500);
-      return;
-    }
-    
+
+    const sessionVersion = ++sessionVersionRef.current;
+
     try {
+      cleanupSubscriptions();
+      isEndingRef.current = false;
       setError(null);
       setStatus('ringing');
-      isInitiator.current = false;
       setCallId(existingCallId);
       callIdRef.current = existingCallId;
-      
-      // Get call session
+      isInitiatorRef.current = false;
+      callStartedAtRef.current = Date.now();
+
+      // Resolve other participant from thread immediately as fallback
+      const thread = threads.find((t) => t.chatId === chatId);
+      const threadOther = thread?.participants.find((p) => p.userId !== user.userId);
+      if (threadOther) {
+        otherParticipantRef.current = {
+          userId: threadOther.userId,
+          displayName: threadOther.displayName,
+          photoURL: threadOther.photoURL,
+        };
+      }
+
       const session = await getCallSession(existingCallId);
       if (!session) {
+        console.error('Call not found');
         setError('Call not found');
-        setStatus('failed');
-        return;
-      }
-      
-      if (session.status === 'ended') {
-        setError('Call has ended');
         setStatus('ended');
         return;
       }
-      
-      setCallType(session.type);
-      
-      // Get local media
-      const stream = await getLocalStream(session.type);
-      updateLocalStream(stream);
-      
-      // Create peer connection
-      const pc = createPeerConnection();
-      if (!pc) {
-        setError('Failed to create peer connection');
-        setStatus('failed');
+      if (session.status === 'ended') {
+        console.error('Call already ended');
+        setError('Call already ended');
+        setStatus('ended');
         return;
       }
-      peerConnection.current = pc;
-      
-      // Add local tracks
-      if (stream) {
-        stream.getTracks().forEach((track: any) => {
-          pc.addTrack(track, stream);
-        });
+
+      setCallType(session.type);
+
+      // Update from session if we got richer info (e.g. photoURL from initiator)
+      const initiator = session.participants.find(p => p.userId === session.initiatorId);
+      if (initiator) {
+        otherParticipantRef.current = { userId: initiator.userId, displayName: initiator.displayName, photoURL: initiator.photoURL };
       }
-      
-      // Set remote description from offer
-      if (session.offer && RTCSessionDescription) {
-        const offerDesc = new RTCSessionDescription(session.offer);
-        await pc.setRemoteDescription(offerDesc);
+
+      // 1. Fetch LiveKit Token
+      const { token: roomToken, url } = await LiveKitService.getToken(
+        existingCallId,
+        chatId,
+        user.displayName || 'User'
+      );
+
+      if (sessionVersionRef.current !== sessionVersion || callIdRef.current !== existingCallId) {
+        return;
       }
-      
-      // Create and set answer
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      
-      // Save answer to Firestore
-      await setCallAnswer(existingCallId, answer);
-      
-      // Join the call
+
+      setToken(roomToken);
+      setServerUrl(url);
+
+      // 2. Start Audio Session
+      await AudioSession.startAudioSession();
+
+      // 3. Update Realtime DB (Join) - This also updates status to 'connected'
       await joinCall(existingCallId, {
         userId: user.userId,
         displayName: user.displayName || 'Unknown',
-        photoURL: user.photoURL || undefined,
         muted: false,
         cameraEnabled: session.type === 'video',
       });
-      
-      // Subscribe to call session updates
+      debugLog('useCallManager joined call');
+      setStatus('connected'); // Immediately set to connected since we just joined
+
+      // 4. Subscribe to session for further updates
       const unsubSession = subscribeToCallSession(existingCallId, (updatedSession) => {
-        if (!updatedSession || updatedSession.status === 'ended') {
-          // Clean up local resources when remote ends the call
-          if (localStreamRef.current && localStreamRef.current.getTracks) {
-            localStreamRef.current.getTracks().forEach((track: any) => track.stop());
-            updateLocalStream(null);
-          }
-          if (peerConnection.current) {
-            peerConnection.current.close();
-            peerConnection.current = null;
-          }
-          cleanupSubscriptions();
-          setRemoteStream(null);
-          setStatus('ended');
-          setCallId(null);
-          callIdRef.current = null;
-          isInitiator.current = false;
-          answerProcessed.current = false;
-          pendingIceCandidates.current = [];
-          pendingLocalIceCandidates.current = [];
+        // Ignore stale callbacks from an older call lifecycle.
+        if (sessionVersionRef.current !== sessionVersion || callIdRef.current !== existingCallId) {
+          return;
+        }
+
+        if (!updatedSession) {
+          debugLog('useCallManager joined call session removed; ending call');
+          void endCallRef.current('session-ended');
+          return;
+        }
+
+        if (updatedSession.status === 'ended') {
+          void endCallRef.current('session-ended');
         }
       });
       unsubscribes.current.push(unsubSession);
-      
-      // Subscribe to ICE candidates from offerer
-      const unsubCandidates = subscribeToIceCandidates(existingCallId, false, async (candidate) => {
-        try {
-          if (pc.remoteDescription && RTCIceCandidate) {
-            await pc.addIceCandidate(new RTCIceCandidate(candidate));
-          }
-        } catch (err) {
-          console.warn('Error adding ICE candidate:', err);
-        }
-      });
-      unsubscribes.current.push(unsubCandidates);
-      
+
     } catch (err) {
-      console.error('Error joining call:', err);
+      console.error('Error joining call', err);
       setError(err instanceof Error ? err.message : 'Failed to join call');
       setStatus('failed');
     }
-  }, [user, getLocalStream, createPeerConnection, updateLocalStream, cleanupSubscriptions]);
+  }, [chatId, threads, user]);
 
   // End the call
-  const endCall = useCallback(async () => {
+  const endCall = useCallback(async (reason: 'manual' | 'session-ended' | 'unmount' = 'manual') => {
+    if (isEndingRef.current) {
+      return;
+    }
+
+    isEndingRef.current = true;
+    sessionVersionRef.current += 1;
+    debugLog('useCallManager ending call', reason);
+
     try {
-      // Stop local stream tracks
-      if (localStreamRef.current && localStreamRef.current.getTracks) {
-        localStreamRef.current.getTracks().forEach((track: any) => track.stop());
-        updateLocalStream(null);
-      }
-      
-      // Close peer connection
-      if (peerConnection.current) {
-        peerConnection.current.close();
-        peerConnection.current = null;
-      }
-      
-      // Cleanup subscriptions
       cleanupSubscriptions();
-      
-      // Update Firestore
-      if (callId && user) {
-        await leaveCall(callId, user.userId);
+
+      // Save call history locally before deleting from Realtime DB
+      if (callIdRef.current && user && callStartedAtRef.current && chatId) {
+        const endedAt = Date.now();
+        const duration = Math.floor((endedAt - callStartedAtRef.current) / 1000);
+
+        // Last-resort: resolve from thread if ref was somehow never set
+        let participant = otherParticipantRef.current;
+        if (!participant) {
+          const thread = threads.find((t) => t.chatId === chatId);
+          const threadOther = thread?.participants.find((p) => p.userId !== user.userId);
+          if (threadOther) {
+            participant = { userId: threadOther.userId, displayName: threadOther.displayName, photoURL: threadOther.photoURL };
+          }
+        }
+
+        const historyEntry: CallHistoryEntry = {
+          callId: callIdRef.current,
+          chatId,
+          groupId,
+          type: callType,
+          direction: isInitiatorRef.current ? 'outgoing' : 'incoming',
+          otherParticipant: participant || { userId: 'unknown', displayName: 'Unknown' },
+          startedAt: callStartedAtRef.current,
+          endedAt,
+          duration,
+          status: duration > 0 ? 'completed' : 'missed',
+        };
+
+        await saveCallToHistory(historyEntry);
       }
-      
-      setRemoteStream(null);
+
+      // Remove this participant from signaling.
+      if (callIdRef.current && user) {
+        await leaveCall(callIdRef.current, user.userId);
+      }
+
+      setToken(null);
+      setServerUrl(null);
       setStatus('ended');
       setCallId(null);
       callIdRef.current = null;
-      isInitiator.current = false;
-      answerProcessed.current = false;
-      pendingIceCandidates.current = [];
-      pendingLocalIceCandidates.current = [];
-      
+      callStartedAtRef.current = null;
+      otherParticipantRef.current = null;
+      hasSessionToCleanupRef.current = false;
+
+      await AudioSession.stopAudioSession();
+      debugLog('useCallManager call ended');
+
     } catch (err) {
-      console.error('Error ending call:', err);
+      console.error('Error ending call', err);
+    } finally {
+      // Keep `true` while idle; reset when starting/joining a new call.
     }
-  }, [callId, user, updateLocalStream, cleanupSubscriptions]);
+  }, [user, chatId, groupId, threads, callType, cleanupSubscriptions]);
 
-  // Toggle mute
+  useEffect(() => {
+    endCallRef.current = endCall;
+  }, [endCall]);
+
+  useEffect(() => {
+    hasSessionToCleanupRef.current = Boolean(callIdRef.current || callId || token || serverUrl);
+  }, [callId, serverUrl, token, status]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // React StrictMode does a mount->cleanup->mount simulation in dev. Avoid treating
+      // that first cleanup pass as a real unmount that should terminate the call.
+      allowUnmountCleanupRef.current = true;
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Local state toggles (actual media toggle happens in the UI via LiveKitRoom)
   const toggleMute = useCallback(() => {
-    if (localStream && localStream.getAudioTracks) {
-      localStream.getAudioTracks().forEach((track: any) => {
-        track.enabled = !track.enabled;
-      });
-      setIsMuted((prev) => !prev);
-    } else {
-      // Mock toggle for Expo Go
-      setIsMuted((prev) => !prev);
-    }
-  }, [localStream]);
+    setIsMuted((prev) => !prev);
+  }, []);
 
-  // Toggle camera
   const toggleCamera = useCallback(() => {
-    if (localStream && localStream.getVideoTracks && callType === 'video') {
-      localStream.getVideoTracks().forEach((track: any) => {
-        track.enabled = !track.enabled;
-      });
-      setIsCameraOff((prev) => !prev);
-    } else if (callType === 'video') {
-      // Mock toggle for Expo Go
-      setIsCameraOff((prev) => !prev);
-    }
-  }, [localStream, callType]);
+    setIsCameraOff((prev) => !prev);
+  }, []);
 
-  // Cleanup on unmount
+  // Cleanup on unmount:
+  // - If there is no active call session yet, only clean listeners.
+  // - If call state exists, end the call once.
   useEffect(() => {
     return () => {
-      cleanupSubscriptions();
-      if (localStreamRef.current && localStreamRef.current.getTracks) {
-        localStreamRef.current.getTracks().forEach((track: any) => track.stop());
+      if (!allowUnmountCleanupRef.current) {
+        cleanupSubscriptions();
+        return;
       }
-      if (peerConnection.current) {
-        peerConnection.current.close();
+
+      if (!hasSessionToCleanupRef.current) {
+        cleanupSubscriptions();
+        return;
       }
+
+      void endCallRef.current('unmount');
     };
   }, [cleanupSubscriptions]);
 
@@ -525,25 +420,26 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     if (!chatId || status !== 'idle') {
       return;
     }
-    
+
     const unsubscribe = subscribeToActiveCall(chatId, (session) => {
       if (session && session.initiatorId !== user?.userId && session.status === 'ringing') {
-        // There's an incoming call - the UI should handle this
-        console.log('Incoming call detected:', session.callId);
+        debugLog('useCallManager incoming call detected');
+        // You might want to trigger a ringtone here
       }
     });
-    
+
     return () => unsubscribe();
   }, [chatId, user?.userId, status]);
 
   return {
     status,
-    localStream,
-    remoteStream,
     callId,
     error,
     isMuted,
     isCameraOff,
+    serverUrl,
+    token,
+    callType,
     startCall,
     joinExistingCall,
     endCall,
