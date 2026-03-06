@@ -4,6 +4,10 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { GroupCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableGroupCard } from '@/components/SwipeableGroupCard';
 import { GroupFilterSortSheet, GroupSortField, GroupSortOrder } from '@/components/GroupFilterSortSheet';
+import {
+  getFloatingTabBarContentPadding,
+  getFloatingTabBarEnvelopeHeight,
+} from '@/components/tabbar/tabBarMetrics';
 import { CURRENCIES } from '@/constants/currencies';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -50,6 +54,8 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
+  const tabBarEnvelopeHeight = getFloatingTabBarEnvelopeHeight(insets.bottom);
+  const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener(
@@ -194,7 +200,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         )}
         contentContainerStyle={[
           groups.length === 0 && !loading ? styles.emptyContainer : undefined,
-          { paddingTop: 80, paddingBottom: 100 + insets.bottom, paddingHorizontal: 16 }
+          { paddingTop: 80, paddingBottom: listBottomPadding, paddingHorizontal: 16 }
         ]}
         ListHeaderComponent={
           <View style={styles.headerContainer}>
@@ -244,7 +250,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} tintColor={theme.colors.primary} />}
       />
 
-      <View style={[styles.actions, { bottom: 60 + insets.bottom }]}>
+      <View style={[styles.actions, { bottom: tabBarEnvelopeHeight + 12 }]}>
         <Button mode="contained" onPress={() => { lightHaptic(); setDialog('create'); }}>
           New group
         </Button>

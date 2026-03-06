@@ -1,46 +1,146 @@
+import { initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { getDatabase } from "firebase-admin/database";
+import { getFirestore } from "firebase-admin/firestore";
+import * as logger from "firebase-functions/logger";
+import { defineSecret } from "firebase-functions/params";
 import { onRequest } from "firebase-functions/v2/https";
 import { AccessToken } from "livekit-server-sdk";
 
-// Credentials provided by user
-// In a production environment, these should be set as environment variables using:
-// firebase functions:config:set livekit.url="..." livekit.key="..." livekit.secret="..."
-const LIVEKIT_URL = "wss://splitcircle-384jelrz.livekit.cloud";
-const LIVEKIT_API_KEY = "APIbcH83GPmyiZJ";
-const LIVEKIT_API_SECRET = "tLefQOporSrezRfJtOsiFK6LqFPkypGAhuGxBlkXfQpA";
+initializeApp();
 
-export const generateLiveKitToken = onRequest({ cors: true }, async (req, res) => {
-    // Gen 2 handles CORS automatically with { cors: true } above!
+const LIVEKIT_URL = defineSecret("LIVEKIT_URL");
+const LIVEKIT_API_KEY = defineSecret("LIVEKIT_API_KEY");
+const LIVEKIT_API_SECRET = defineSecret("LIVEKIT_API_SECRET");
 
+type MaybeCall = {
+    chatId?: string;
+    status?: string;
+    allowedUserIds?: Record<string, boolean>;
+};
+
+const getStringValue = (input: unknown): string => {
+    return typeof input === "string" ? input.trim() : "";
+};
+
+const getBearerToken = (authorizationHeader: string | undefined): string | null => {
+    if (!authorizationHeader) return null;
+    const [scheme, token] = authorizationHeader.trim().split(" ");
+    if (scheme !== "Bearer" || !token) return null;
+    return token;
+};
+
+const getAuthenticatedUid = async (authorizationHeader: string | undefined): Promise<string | null> => {
+    const bearerToken = getBearerToken(authorizationHeader);
+    if (!bearerToken) return null;
     try {
-        const roomName = req.query.roomName as string || req.body.roomName;
-        const participantName = req.query.name as string || req.body.name;
-        const identity = req.query.identity as string || req.body.identity;
+        const decoded = await getAuth().verifyIdToken(bearerToken);
+        return decoded.uid ?? null;
+    } catch {
+        return null;
+    }
+};
 
-        if (!roomName || !identity) {
-            res.status(400).json({ error: "Missing required parameters: roomName, identity" });
+export const generateLiveKitToken = onRequest(
+    {
+        cors: true,
+        secrets: [LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET],
+    },
+    async (req, res) => {
+        if (req.method === "OPTIONS") {
+            res.status(204).send("");
             return;
         }
 
-        const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
-            identity: identity,
-            name: participantName || identity,
-        });
+        if (req.method !== "POST") {
+            res.status(405).json({ error: "Method not allowed. Use POST." });
+            return;
+        }
 
-        at.addGrant({
-            roomJoin: true,
-            room: roomName,
-            canPublish: true,
-            canSubscribe: true,
-        });
+        try {
+            const uid = await getAuthenticatedUid(req.get("Authorization") ?? undefined);
+            if (!uid) {
+                res.status(401).json({ error: "Unauthorized. Missing or invalid Firebase ID token." });
+                return;
+            }
 
-        const token = await at.toJwt();
+            const requestBody = (typeof req.body === "object" && req.body !== null)
+                ? req.body as Record<string, unknown>
+                : {};
 
-        res.json({
-            token,
-            url: LIVEKIT_URL,
-        });
-    } catch (error) {
-        console.error("Error generating token:", error);
-        res.status(500).json({ error: "Internal server error" });
+            const roomName = getStringValue(requestBody.roomName ?? req.query.roomName);
+            const chatId = getStringValue(requestBody.chatId ?? req.query.chatId);
+            const participantName = getStringValue(requestBody.name ?? req.query.name) || uid;
+
+            if (!roomName || !chatId) {
+                res.status(400).json({ error: "Missing required parameters: roomName, chatId" });
+                return;
+            }
+
+            const chatDoc = await getFirestore().collection("chats").doc(chatId).get();
+            if (!chatDoc.exists) {
+                res.status(404).json({ error: "Chat not found." });
+                return;
+            }
+
+            const participantIds = Array.isArray(chatDoc.data()?.participantIds)
+                ? chatDoc.data()!.participantIds as string[]
+                : [];
+
+            if (!participantIds.includes(uid)) {
+                res.status(403).json({ error: "Forbidden. User is not a participant in this chat." });
+                return;
+            }
+
+            const callSnapshot = await getDatabase().ref(`calls/${roomName}`).get();
+            if (!callSnapshot.exists()) {
+                res.status(404).json({ error: "Call session not found or expired." });
+                return;
+            }
+
+            const callData = callSnapshot.val() as MaybeCall;
+            if (callData.chatId !== chatId) {
+                res.status(403).json({ error: "Forbidden. Call does not belong to this chat." });
+                return;
+            }
+
+            if (callData.status !== "ringing" && callData.status !== "connected") {
+                res.status(409).json({ error: "Call is not active." });
+                return;
+            }
+
+            if (callData.allowedUserIds && callData.allowedUserIds[uid] !== true) {
+                res.status(403).json({ error: "Forbidden. User is not allowed to join this call." });
+                return;
+            }
+
+            const livekitUrl = LIVEKIT_URL.value();
+            const livekitApiKey = LIVEKIT_API_KEY.value();
+            const livekitApiSecret = LIVEKIT_API_SECRET.value();
+
+            if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
+                logger.error("LiveKit function misconfigured: missing runtime secrets.");
+                res.status(500).json({ error: "Server misconfiguration." });
+                return;
+            }
+
+            const accessToken = new AccessToken(livekitApiKey, livekitApiSecret, {
+                identity: uid,
+                name: participantName,
+            });
+
+            accessToken.addGrant({
+                roomJoin: true,
+                room: roomName,
+                canPublish: true,
+                canSubscribe: true,
+            });
+
+            const token = await accessToken.toJwt();
+            res.status(200).json({ token, url: livekitUrl });
+        } catch (error) {
+            logger.error("Error generating LiveKit token", error);
+            res.status(500).json({ error: "Internal server error" });
+        }
     }
-});
+);

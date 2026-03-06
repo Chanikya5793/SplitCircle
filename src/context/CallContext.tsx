@@ -4,6 +4,12 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { useAuth } from './AuthContext';
 import { useChat } from './ChatContext';
 
+const debugLog = (...args: unknown[]) => {
+  if (__DEV__) {
+    console.log(...args);
+  }
+};
+
 interface IncomingCall {
   callId: string;
   chatId: string;
@@ -33,7 +39,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
 
-    console.log(`📲 CallContext: Setting up call listeners for ${threads.length} threads`);
+    debugLog(`CallContext: watching ${threads.length} thread(s) for calls`);
     const unsubscribes: Array<() => void> = [];
 
     // Subscribe to active calls for each thread
@@ -50,18 +56,13 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
           const MAX_CALL_AGE_MS = 60000; // 60 seconds
 
           if (callAge > MAX_CALL_AGE_MS) {
-            console.log(`📲 Ignoring stale call ${session.callId} (age: ${Math.round(callAge / 1000)}s)`);
+            debugLog('CallContext: ignoring stale incoming call');
             return;
           }
 
           // Found an incoming call not initiated by current user
           const initiator = session.participants.find((p) => p.userId === session.initiatorId);
-          console.log(`📲 INCOMING CALL DETECTED!`);
-          console.log(`   - callId: ${session.callId}`);
-          console.log(`   - chatId: ${session.chatId}`);
-          console.log(`   - from: ${initiator?.displayName || 'Unknown'}`);
-          console.log(`   - type: ${session.type}`);
-          console.log(`   - age: ${Math.round(callAge / 1000)}s`);
+          debugLog('CallContext: incoming call detected');
 
           setIncomingCall({
             callId: session.callId,
@@ -88,7 +89,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     });
 
     return () => {
-      console.log(`📲 CallContext: Cleaning up call listeners`);
+      debugLog('CallContext: cleanup listeners');
       unsubscribes.forEach((unsub) => unsub());
     };
   }, [user, threads]);
@@ -100,7 +101,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
 
-    console.log(`📲 Declining incoming call: ${incomingCall.callId}`);
+    debugLog('CallContext: declining incoming call');
 
     // Save as missed call in local history
     const historyEntry: CallHistoryEntry = {
@@ -121,7 +122,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
     try {
       await saveCallToHistory(historyEntry);
-      console.log(`📲 Saved declined call to history`);
+      debugLog('CallContext: saved declined call to history');
     } catch (error) {
       console.warn('Error saving declined call to history:', error);
     }
@@ -138,9 +139,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
   const acceptCall = useCallback(() => {
     const call = incomingCall;
-    if (call) {
-      console.log(`📲 ACCEPTING CALL: ${call.callId}`);
-    }
+    if (call) debugLog('CallContext: accepting incoming call');
     setIncomingCall(null);
     return call;
   }, [incomingCall]);

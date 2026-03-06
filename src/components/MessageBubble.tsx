@@ -1,3 +1,4 @@
+import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, MessageStatus, MessageType } from '@/models';
@@ -5,7 +6,7 @@ import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { formatRelativeTime } from '@/utils/format';
 import { hasGoogleMapsApiKey } from '@/utils/hasGoogleMapsApiKey';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer, type AudioStatus } from 'expo-audio';
 import { getContentUriAsync, getInfoAsync } from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
@@ -14,32 +15,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View, ViewStyle } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
-
-// Error boundary for lazy-loaded components
-class MapErrorBoundary extends React.Component<
-  { children: React.ReactNode; fallback: React.ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: { children: React.ReactNode; fallback: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('MapView loading error:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return this.props.fallback;
-    }
-    return this.props.children;
-  }
-}
 
 // Lazy load MapView to prevent crashes in production builds
 const MapView = React.lazy(() => import('react-native-maps').then(mod => ({ default: mod.default })));
@@ -50,6 +25,7 @@ interface MessageBubbleProps {
   showSenderInfo?: boolean;
   senderName?: string;
   onSwipeReply?: (message: ChatMessage) => void;
+  onSwipeInfo?: (message: ChatMessage) => void;
   isGroupChat?: boolean;
   totalRecipients?: number;
 }
@@ -113,44 +89,38 @@ const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
 };
 
 // WhatsApp-style message status indicator component
-const MessageStatusIndicator = ({ status, isGroupChat, totalRecipients, deliveredCount, readCount }: {
+const MessageStatusIndicator = ({ status, isGroupChat: _isGroupChat, totalRecipients: _totalRecipients, deliveredCount, readCount }: {
   status: MessageStatus;
   isGroupChat?: boolean;
   totalRecipients?: number;
   deliveredCount?: number;
   readCount?: number;
 }) => {
-  // For group chats, we check if all recipients have delivered/read
-  const allDelivered = isGroupChat && totalRecipients ? (deliveredCount || 0) >= totalRecipients : status === 'delivered' || status === 'read';
-  const allRead = isGroupChat && totalRecipients ? (readCount || 0) >= totalRecipients : status === 'read';
+  const delivered = deliveredCount ?? 0;
+  const read = readCount ?? 0;
 
-  const getIconConfig = () => {
-    switch (status) {
-      case 'sending':
-        return { name: 'time-outline' as const, color: 'rgba(255,255,255,0.6)', size: 14 };
-      case 'failed':
-        return { name: 'alert-circle-outline' as const, color: '#FF6B6B', size: 14 };
-      case 'sent':
-        return { name: 'checkmark' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
-      case 'delivered':
-        // In group chat, use grey if not all delivered
-        if (isGroupChat && !allDelivered) {
-          return { name: 'checkmark' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
-        }
-        return { name: 'checkmark-done' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
-      case 'read':
-        // In group chat, show blue only if all have read
-        if (isGroupChat && !allRead) {
-          return { name: 'checkmark-done' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
-        }
-        return { name: 'checkmark-done' as const, color: '#53BDEB', size: 14 }; // WhatsApp blue
-      default:
-        return { name: 'checkmark' as const, color: 'rgba(255,255,255,0.7)', size: 14 };
-    }
-  };
+  if (status === 'sending') {
+    return <Ionicons name="time-outline" size={14} color="rgba(255,255,255,0.6)" style={styles.statusIconSingle} />;
+  }
 
-  const { name, color, size } = getIconConfig();
-  return <Ionicons name={name} size={size} color={color} style={{ marginLeft: 4 }} />;
+  if (status === 'failed') {
+    return <Ionicons name="alert-circle-outline" size={14} color="#FF6B6B" style={styles.statusIconSingle} />;
+  }
+
+  const hasAnyRead = read > 0 || status === 'read';
+  const hasAnyDelivered = hasAnyRead || delivered > 0 || status === 'delivered';
+
+  if (!hasAnyDelivered) {
+    return <Ionicons name="checkmark" size={14} color="rgba(255,255,255,0.7)" style={styles.statusIconSingle} />;
+  }
+
+  const tickColor = hasAnyRead ? '#35C6FF' : 'rgba(255,255,255,0.7)';
+  return (
+    <View style={styles.statusDoubleTick}>
+      <Ionicons name="checkmark" size={13} color={tickColor} style={styles.statusTickBack} />
+      <Ionicons name="checkmark" size={13} color={tickColor} style={styles.statusTickFront} />
+    </View>
+  );
 };
 
 // Video player component using expo-video
@@ -183,7 +153,7 @@ const VideoPlayerComponent = ({ uri, style, showControls = true, showOverlay = f
   );
 };
 
-export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, isGroupChat, totalRecipients }: MessageBubbleProps) => {
+export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, isGroupChat, totalRecipients }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
@@ -191,57 +161,74 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   const [fullScreenVisible, setFullScreenVisible] = useState(false);
 
   // Audio playback state
-  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const audioPlayerRef = useRef<AudioPlayer | null>(null);
+  const audioStatusListenerRef = useRef<{ remove: () => void } | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  // Unload sound on unmount
+  // Release player resources on unmount
   useEffect(() => {
     return () => {
-      if (sound) {
-        sound.unloadAsync();
-      }
+      audioStatusListenerRef.current?.remove();
+      audioStatusListenerRef.current = null;
+      audioPlayerRef.current?.remove();
+      audioPlayerRef.current = null;
     };
-  }, [sound]);
+  }, []);
 
   const handlePlayPause = async () => {
     if (!mediaUri) return;
 
     try {
-      if (sound) {
-        if (isPlaying) {
-          await sound.pauseAsync();
+      const existingPlayer = audioPlayerRef.current;
+      if (existingPlayer) {
+        if (isPlaying || existingPlayer.playing) {
+          existingPlayer.pause();
           setIsPlaying(false);
         } else {
-          await sound.playAsync();
+          existingPlayer.play();
           setIsPlaying(true);
         }
       } else {
         // Configure audio session for playback
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: true,
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
         });
 
-        const { sound: newSound } = await Audio.Sound.createAsync(
-          { uri: mediaUri },
-          { shouldPlay: true },
-          (status) => {
-            if (status.isLoaded) {
-              setIsPlaying(status.isPlaying);
-              if (status.didJustFinish) {
-                setIsPlaying(false);
-                newSound.setPositionAsync(0);
-              }
-            }
+        const newPlayer = createAudioPlayer(mediaUri, { updateInterval: 250 });
+        audioStatusListenerRef.current?.remove();
+        audioStatusListenerRef.current = newPlayer.addListener('playbackStatusUpdate', (status: AudioStatus) => {
+          if (!status.isLoaded) {
+            return;
           }
-        );
-        setSound(newSound);
+
+          setIsPlaying(status.playing);
+          if (status.didJustFinish) {
+            setIsPlaying(false);
+            newPlayer.seekTo(0).catch((seekError) => {
+              console.warn('Failed to reset audio player position:', seekError);
+            });
+          }
+        });
+        audioPlayerRef.current = newPlayer;
+        newPlayer.play();
         setIsPlaying(true);
       }
     } catch (error) {
       console.error('Error playing audio:', error);
       Alert.alert('Error', 'Could not play audio message.');
     }
+  };
+
+  const resetAudioPlayer = () => {
+    if (!audioPlayerRef.current) {
+      return;
+    }
+    audioStatusListenerRef.current?.remove();
+    audioStatusListenerRef.current = null;
+    audioPlayerRef.current.remove();
+    audioPlayerRef.current = null;
+    setIsPlaying(false);
   };
 
   if (message.type === 'system') {
@@ -278,7 +265,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
 
   const imageDimensions = getImageDimensions();
 
-  const renderLeftActions = (progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
+  const renderLeftActions = (_progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
     const scale = dragX.interpolate({
       inputRange: [0, 50],
       outputRange: [0, 1],
@@ -294,11 +281,29 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     );
   };
 
-  const onSwipeableOpen = () => {
-    if (onSwipeReply) {
+  const renderRightActions = (_progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
+    const scale = dragX.interpolate({
+      inputRange: [-50, 0],
+      outputRange: [1, 0],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <View style={styles.infoActionContainer}>
+        <Animated.View style={{ transform: [{ scale }] }}>
+          <Ionicons name="information-circle-outline" size={22} color={theme.colors.primary} />
+        </Animated.View>
+      </View>
+    );
+  };
+
+  const onSwipeableOpen = (direction: 'left' | 'right') => {
+    if (direction === 'left' && onSwipeReply) {
       onSwipeReply(message);
-      swipeableRef.current?.close();
+    } else if (direction === 'right' && isGroupChat && onSwipeInfo) {
+      onSwipeInfo(message);
     }
+    swipeableRef.current?.close();
   };
 
   // Reply preview component
@@ -339,6 +344,13 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   );
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState(false);
+
+  useEffect(() => {
+    // Replace player when message/media source changes.
+    return () => {
+      resetAudioPlayer();
+    };
+  }, [mediaUri]);
 
   // Check and download media if needed
   useEffect(() => {
@@ -673,6 +685,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   // Location message
   const renderLocationContent = () => {
     if (!message.location) return null;
+    const { latitude, longitude } = message.location;
 
     // Static fallback when Maps API key is not configured
     const renderStaticLocationFallback = () => (
@@ -693,9 +706,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       >
         <View style={styles.locationPreview}>
           {mapsAvailable ? (
-            <MapErrorBoundary
-              fallback={renderStaticLocationFallback()}
-            >
+            <MapErrorBoundary fallback={renderStaticLocationFallback()}>
               <React.Suspense fallback={
                 <View style={[StyleSheet.absoluteFillObject, styles.mapFallback]}>
                   <Ionicons name="location" size={32} color={theme.colors.primary} />
@@ -705,8 +716,8 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
                 <MapView
                   style={StyleSheet.absoluteFillObject}
                   initialRegion={{
-                    latitude: message.location.latitude,
-                    longitude: message.location.longitude,
+                    latitude,
+                    longitude,
                     latitudeDelta: 0.01,
                     longitudeDelta: 0.01,
                   }}
@@ -714,13 +725,18 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
                   zoomEnabled={false}
                   rotateEnabled={false}
                   pitchEnabled={false}
+                  showsPointsOfInterests={false}
+                  toolbarEnabled={false}
+                  loadingEnabled
+                  moveOnMarkerPress={false}
                   liteMode={Platform.OS === 'android'}
                 >
                   <Marker
                     coordinate={{
-                      latitude: message.location.latitude,
-                      longitude: message.location.longitude,
+                      latitude,
+                      longitude,
                     }}
+                    tracksViewChanges={false}
                   />
                 </MapView>
               </React.Suspense>
@@ -808,9 +824,11 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         <Swipeable
           ref={swipeableRef}
           renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
+          renderRightActions={isGroupChat && onSwipeInfo ? renderRightActions : undefined}
           onSwipeableOpen={onSwipeableOpen}
           friction={2}
           overshootLeft={false}
+          overshootRight={false}
         >
           <View style={[styles.container, styles.mine, { backgroundColor: theme.colors.primary }]}>
             {renderReplyContent()}
@@ -844,6 +862,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         onSwipeableOpen={onSwipeableOpen}
         friction={2}
         overshootLeft={false}
+        overshootRight={false}
       >
         <View style={styles.otherRow}>
           {showSenderInfo !== undefined && (
@@ -935,6 +954,21 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     marginTop: 4,
   },
+  statusIconSingle: {
+    marginLeft: 4,
+  },
+  statusDoubleTick: {
+    marginLeft: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: 18,
+  },
+  statusTickBack: {
+    marginRight: -6,
+  },
+  statusTickFront: {
+    marginLeft: 0,
+  },
   image: {
     marginTop: 8,
     width: 160,
@@ -942,6 +976,11 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   replyActionContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 50,
+  },
+  infoActionContainer: {
     justifyContent: 'center',
     alignItems: 'center',
     width: 50,

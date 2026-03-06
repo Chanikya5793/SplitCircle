@@ -69,7 +69,13 @@ export const GroupInfoScreen = () => {
 
     const handleViewSplits = () => {
         // @ts-ignore
-        navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: group.groupId });
+        navigation.navigate(ROUTES.APP.ROOT, {
+            screen: ROUTES.APP.GROUPS_TAB,
+            params: {
+                screen: ROUTES.APP.GROUP_DETAILS,
+                params: { groupId: group.groupId },
+            },
+        });
     };
 
     // Animated header opacity
