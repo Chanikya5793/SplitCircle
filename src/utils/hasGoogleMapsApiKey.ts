@@ -7,13 +7,19 @@ import { Platform } from 'react-native';
  */
 export const hasGoogleMapsApiKey = (): boolean => {
     if (Platform.OS === 'android') {
-        const apiKey = Constants.expoConfig?.android?.config?.googleMaps?.apiKey;
-        return typeof apiKey === 'string' && apiKey.length > 0;
+        const apiKey = getGoogleMapsApiKey();
+        if (typeof apiKey === 'string' && apiKey.length > 0) {
+            return true;
+        }
+
+        // In standalone/dev-client Android builds, Maps key is often injected
+        // into AndroidManifest at build time and not visible in expoConfig.
+        return Constants.appOwnership !== 'expo';
     }
 
     if (Platform.OS === 'ios') {
-        const apiKey = Constants.expoConfig?.ios?.config?.googleMapsApiKey;
-        return typeof apiKey === 'string' && apiKey.length > 0;
+        // iOS uses native Apple Maps (MapKit), which does not require a Google Maps API key.
+        return true;
     }
 
     // Web or other platforms - assume Maps is available (uses browser's Maps)
@@ -26,11 +32,31 @@ export const hasGoogleMapsApiKey = (): boolean => {
  */
 export const getGoogleMapsApiKey = (): string | undefined => {
     if (Platform.OS === 'android') {
-        return Constants.expoConfig?.android?.config?.googleMaps?.apiKey;
+        const configKey = Constants.expoConfig?.android?.config?.googleMaps?.apiKey;
+        if (typeof configKey === 'string' && configKey.length > 0) {
+            return configKey;
+        }
+
+        const envKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+        if (typeof envKey === 'string' && envKey.length > 0) {
+            return envKey;
+        }
+
+        return undefined;
     }
 
     if (Platform.OS === 'ios') {
-        return Constants.expoConfig?.ios?.config?.googleMapsApiKey;
+        const configKey = Constants.expoConfig?.ios?.config?.googleMapsApiKey;
+        if (typeof configKey === 'string' && configKey.length > 0) {
+            return configKey;
+        }
+
+        const envKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+        if (typeof envKey === 'string' && envKey.length > 0) {
+            return envKey;
+        }
+
+        return undefined;
     }
 
     return undefined;

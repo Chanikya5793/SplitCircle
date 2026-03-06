@@ -3,24 +3,283 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useTheme } from '@/context/ThemeContext';
 import { useCallManager } from '@/hooks/useCallManager';
-import type { CallType } from '@/models';
-import Constants from 'expo-constants';
-import { useEffect } from 'react';
+import type { CallStatus, CallType } from '@/models';
+import {
+  LiveKitRoom,
+  isTrackReference,
+  useConnectionState,
+  useParticipants,
+  useTracks,
+  VideoTrack,
+} from '@livekit/react-native';
+import { ConnectionState, Track } from 'livekit-client';
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Text } from 'react-native-paper';
 
-// Check if we're in Expo Go
-const isExpoGo = Constants.appOwnership === 'expo';
-
-// Conditionally import RTCView
-let RTCView: any = null;
-if (!isExpoGo) {
-  try {
-    RTCView = require('react-native-webrtc').RTCView;
-  } catch (e) {
-    console.warn('RTCView not available');
+const debugLog = (...args: unknown[]) => {
+  if (__DEV__) {
+    console.log(...args);
   }
+};
+
+type CallTheme = {
+  colors: {
+    primary: string;
+    onSurface: string;
+    onSurfaceVariant: string;
+  };
+};
+
+const formatDuration = (seconds: number) => {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+};
+
+interface VideoRoomContentProps {
+  theme: CallTheme;
+  isCameraOff: boolean;
 }
+
+const VideoRoomContent = ({ theme, isCameraOff }: VideoRoomContentProps) => {
+  const connectionState = useConnectionState();
+  const participants = useParticipants();
+  const tracks = useTracks([Track.Source.Camera]);
+
+  const prevConnectionState = useRef<ConnectionState | null>(null);
+  const prevParticipantCount = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (prevConnectionState.current !== connectionState) {
+      debugLog(`LiveKit connection state: ${connectionState}`);
+      prevConnectionState.current = connectionState;
+    }
+  }, [connectionState]);
+
+  useEffect(() => {
+    if (prevParticipantCount.current !== participants.length) {
+      debugLog(`LiveKit participant count: ${participants.length}`);
+      prevParticipantCount.current = participants.length;
+    }
+  }, [participants]);
+
+  const remoteTrack = tracks.find((track) => !track.participant.isLocal);
+  const localTrack = tracks.find((track) => track.participant.isLocal);
+
+  const connectionText = (() => {
+    switch (connectionState) {
+      case ConnectionState.Connecting:
+        return 'Connecting to call...';
+      case ConnectionState.Reconnecting:
+        return 'Reconnecting...';
+      case ConnectionState.Disconnected:
+        return 'Disconnected';
+      default:
+        return null;
+    }
+  })();
+
+  return (
+    <View style={styles.videoGrid}>
+      {connectionText && (
+        <View style={styles.connectionOverlay}>
+          <GlassView style={styles.connectionBadge}>
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <Text style={[styles.connectionText, { color: theme.colors.onSurface }]}>
+              {connectionText}
+            </Text>
+          </GlassView>
+        </View>
+      )}
+
+      <GlassView style={styles.video}>
+        {remoteTrack && isTrackReference(remoteTrack) ? (
+          <VideoTrack trackRef={remoteTrack} style={styles.rtcView} objectFit="cover" />
+        ) : (
+          <View style={styles.videoPlaceholder}>
+            <View style={styles.avatarPlaceholder}>
+              <Text style={styles.avatarText}>👤</Text>
+            </View>
+            <Text style={[styles.placeholderText, { color: theme.colors.onSurfaceVariant }]}>
+              {connectionState === ConnectionState.Connected
+                ? participants.length > 1
+                  ? 'Waiting for video...'
+                  : 'Waiting for participant...'
+                : 'Connecting...'}
+            </Text>
+          </View>
+        )}
+      </GlassView>
+
+      <View style={styles.localVideoContainer}>
+        <GlassView style={styles.localVideo}>
+          {localTrack && !isCameraOff && isTrackReference(localTrack) ? (
+            <VideoTrack
+              trackRef={localTrack}
+              style={styles.rtcView}
+              objectFit="cover"
+              zOrder={1}
+            />
+          ) : (
+            <View style={styles.videoPlaceholder}>
+              <Text style={styles.localAvatarText}>{isCameraOff ? '📷' : '👤'}</Text>
+            </View>
+          )}
+        </GlassView>
+        {isCameraOff && (
+          <View style={styles.cameraOffBadge}>
+            <Text style={styles.cameraOffText}>Camera off</Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+};
+
+interface AudioRoomContentProps {
+  theme: CallTheme;
+  status: CallStatus;
+  callDuration: number;
+}
+
+const AudioRoomContent = ({ theme, status, callDuration }: AudioRoomContentProps) => {
+  const connectionState = useConnectionState();
+  const participants = useParticipants();
+
+  const prevConnectionState = useRef<ConnectionState | null>(null);
+  const prevParticipantCount = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (prevConnectionState.current !== connectionState || prevParticipantCount.current !== participants.length) {
+      if (prevConnectionState.current !== connectionState) {
+        debugLog(`Audio call connection: ${connectionState}`);
+        prevConnectionState.current = connectionState;
+      }
+      if (prevParticipantCount.current !== participants.length) {
+        debugLog(`Audio call participant count: ${participants.length}`);
+        prevParticipantCount.current = participants.length;
+      }
+    }
+  }, [connectionState, participants]);
+
+  const remoteParticipant = participants.find((participant) => !participant.isLocal);
+
+  return (
+    <View style={styles.audioCallContainer}>
+      <GlassView style={styles.audioCallCard}>
+        <View style={styles.audioAvatar}>
+          <Text style={styles.audioAvatarText}>🎧</Text>
+        </View>
+        <Text variant="headlineMedium" style={[styles.audioTitle, { color: theme.colors.onSurface }]}> 
+          Audio Call
+        </Text>
+        <Text style={[styles.audioSubtitle, { color: theme.colors.onSurfaceVariant }]}> 
+          {remoteParticipant ? remoteParticipant.name || 'Connected' : 'Waiting for participant...'}
+        </Text>
+        {status === 'connected' && (
+          <Text style={[styles.audioDuration, { color: theme.colors.primary }]}>
+            {formatDuration(callDuration)}
+          </Text>
+        )}
+      </GlassView>
+    </View>
+  );
+};
+
+interface CallPresenceWatcherProps {
+  status: CallStatus;
+  callDuration: number;
+  endCall: () => Promise<void>;
+  onHangUp: () => void;
+  isLocalHangupRef: MutableRefObject<boolean>;
+  hasAutoClosedRef: MutableRefObject<boolean>;
+}
+
+const CallPresenceWatcher = ({
+  status,
+  callDuration,
+  endCall,
+  onHangUp,
+  isLocalHangupRef,
+  hasAutoClosedRef,
+}: CallPresenceWatcherProps) => {
+  const connectionState = useConnectionState();
+  const participants = useParticipants();
+
+  const hadRemoteParticipantRef = useRef(false);
+  const remoteCountRef = useRef(0);
+  const prevRemoteCountRef = useRef<number | null>(null);
+  const remoteLeftTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    const remoteCount = participants.filter((participant) => !participant.isLocal).length;
+    remoteCountRef.current = remoteCount;
+    if (prevRemoteCountRef.current !== remoteCount) {
+      debugLog(`CallPresenceWatcher remote participant count: ${remoteCount}`);
+      prevRemoteCountRef.current = remoteCount;
+    }
+
+    if (remoteCount > 0) {
+      hadRemoteParticipantRef.current = true;
+      if (remoteLeftTimerRef.current) {
+        clearTimeout(remoteLeftTimerRef.current);
+        remoteLeftTimerRef.current = null;
+      }
+      return;
+    }
+
+    const connectedNoRemote =
+      connectionState === ConnectionState.Connected &&
+      status === 'connected' &&
+      !isLocalHangupRef.current &&
+      !hasAutoClosedRef.current;
+
+    if (!connectedNoRemote) {
+      if (remoteLeftTimerRef.current) {
+        clearTimeout(remoteLeftTimerRef.current);
+        remoteLeftTimerRef.current = null;
+      }
+      return;
+    }
+
+    // In case the hook remounted mid-call or remote never appeared in participants due timing,
+    // still fail-safe end a "connected but alone" call after some connected duration.
+    const shouldArmFallback = hadRemoteParticipantRef.current || callDuration >= 10;
+
+    if (!shouldArmFallback || remoteLeftTimerRef.current) {
+      return;
+    }
+
+    debugLog('CallPresenceWatcher arming remote-left fallback timer');
+    remoteLeftTimerRef.current = setTimeout(() => {
+      remoteLeftTimerRef.current = null;
+
+      if (isLocalHangupRef.current || hasAutoClosedRef.current) {
+        return;
+      }
+
+      if (remoteCountRef.current > 0) {
+        return;
+      }
+
+      hasAutoClosedRef.current = true;
+      debugLog('CallSessionScreen detected remote participant left; ending call');
+      void endCall();
+      onHangUp();
+    }, 3000);
+  }, [callDuration, connectionState, endCall, hasAutoClosedRef, isLocalHangupRef, onHangUp, participants, status]);
+
+  useEffect(() => {
+    return () => {
+      if (remoteLeftTimerRef.current) {
+        clearTimeout(remoteLeftTimerRef.current);
+      }
+    };
+  }, []);
+
+  return null;
+};
 
 interface CallSessionScreenProps {
   chatId: string;
@@ -33,11 +292,12 @@ interface CallSessionScreenProps {
 export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp }: CallSessionScreenProps) => {
   const {
     status,
-    localStream,
-    remoteStream,
+    serverUrl,
+    token,
     error,
     isMuted,
     isCameraOff,
+    callType,
     startCall,
     joinExistingCall,
     endCall,
@@ -45,31 +305,92 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
     toggleCamera,
   } = useCallManager({ chatId, groupId });
   const { theme } = useTheme();
+  const [callDuration, setCallDuration] = useState(0);
 
-  useEffect(() => {
-    if (joinCallId) {
-      joinExistingCall(joinCallId);
-    } else {
-      startCall(type);
-    }
-    return () => {
-      endCall();
-    };
+  const hasInitializedRef = useRef(false);
+  const isLocalHangupRef = useRef(false);
+  const hasAutoClosedRef = useRef(false);
+
+  const liveKitOptions = useMemo(
+    () => ({
+      adaptiveStream: true,
+      dynacast: true,
+    }),
+    []
+  );
+
+  const handleRoomConnected = useCallback(() => {
+    debugLog('LiveKitRoom connected');
   }, []);
 
-  const handleHangUp = () => {
-    endCall();
-    onHangUp();
-  };
+  const handleRoomDisconnected = useCallback(() => {
+    debugLog('LiveKitRoom disconnected');
+  }, []);
 
-  const getStatusText = () => {
+  const handleRoomError = useCallback((roomError: unknown) => {
+    console.error('🎥 LiveKitRoom error:', roomError);
+  }, []);
+
+  useEffect(() => {
+    if (hasInitializedRef.current) {
+      return;
+    }
+    hasInitializedRef.current = true;
+
+    debugLog('CallSessionScreen mounted');
+    if (joinCallId) {
+      debugLog('CallSessionScreen joining existing call');
+      void joinExistingCall(joinCallId);
+    } else {
+      debugLog('CallSessionScreen starting new call');
+      void startCall(type);
+    }
+  }, [joinCallId, joinExistingCall, startCall, type]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (status === 'connected') {
+      interval = setInterval(() => {
+        setCallDuration((prev) => prev + 1);
+      }, 1000);
+    }
+
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [status]);
+
+  const handleHangUp = useCallback(() => {
+    debugLog('CallSessionScreen hang up');
+    isLocalHangupRef.current = true;
+    void endCall();
+    onHangUp();
+  }, [endCall, onHangUp]);
+
+  useEffect(() => {
+    if (status !== 'ended') {
+      return;
+    }
+
+    if (isLocalHangupRef.current || hasAutoClosedRef.current) {
+      return;
+    }
+
+    hasAutoClosedRef.current = true;
+    debugLog('CallSessionScreen auto close after remote/session end');
+    onHangUp();
+  }, [onHangUp, status]);
+
+  const statusText = useMemo(() => {
     switch (status) {
       case 'idle':
         return 'Initializing...';
       case 'ringing':
         return 'Calling...';
       case 'connected':
-        return 'Connected';
+        return formatDuration(callDuration);
       case 'ended':
         return 'Call ended';
       case 'failed':
@@ -77,81 +398,65 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
       default:
         return status;
     }
-  };
-
-  // Render video view - handles both WebRTC and mock scenarios
-  const renderVideoView = (stream: any, mirror: boolean) => {
-    if (RTCView && stream && stream.toURL) {
-      return (
-        <RTCView
-          streamURL={stream.toURL()}
-          style={styles.rtcView}
-          objectFit="cover"
-          mirror={mirror}
-        />
-      );
-    }
-    return null;
-  };
+  }, [callDuration, error, status]);
 
   return (
     <LiquidBackground>
       <View style={styles.container}>
         <GlassView style={styles.statusContainer}>
-          <Text style={[styles.status, { color: theme.colors.onSurfaceVariant }]}>
-            {getStatusText()}
-          </Text>
-          {isExpoGo && (
-            <Text style={{ color: theme.colors.error, fontSize: 12, marginTop: 4 }}>
-              (Mock mode - WebRTC requires dev build)
+          <View style={styles.statusContent}>
+            <Text style={[styles.statusTitle, { color: theme.colors.onSurface }]}> 
+              {callType === 'video' ? '📹 Video Call' : '📞 Audio Call'}
             </Text>
-          )}
-          {(status === 'idle' || status === 'ringing') && (
-            <ActivityIndicator style={styles.loader} color={theme.colors.primary} />
-          )}
-        </GlassView>
-
-        {type === 'video' ? (
-          <View style={styles.videoGrid}>
-            {/* Remote Video */}
-            <GlassView style={styles.video}>
-              {remoteStream && RTCView ? (
-                renderVideoView(remoteStream, false)
-              ) : (
-                <View style={styles.videoPlaceholder}>
-                  <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                    {status === 'connected' ? 'Waiting for video...' : 'Remote Video'}
-                  </Text>
-                </View>
+            <View style={styles.statusRow}>
+              <Text style={[styles.statusText, { color: theme.colors.onSurfaceVariant }]}>
+                {statusText}
+              </Text>
+              {(status === 'idle' || status === 'ringing') && (
+                <ActivityIndicator size="small" color={theme.colors.primary} style={styles.loader} />
               )}
-            </GlassView>
-            
-            {/* Local Video (Picture-in-Picture style) */}
-            <View style={styles.localVideoContainer}>
-              <GlassView style={styles.localVideo}>
-                {localStream && !isCameraOff && RTCView ? (
-                  renderVideoView(localStream, true)
-                ) : (
-                  <View style={styles.videoPlaceholder}>
-                    <Text style={{ color: theme.colors.onSurfaceVariant, fontSize: 12 }}>
-                      {isCameraOff ? 'Camera off' : 'You'}
-                    </Text>
-                  </View>
-                )}
-              </GlassView>
             </View>
           </View>
+        </GlassView>
+
+        {token && serverUrl ? (
+          <View style={styles.roomContainer}>
+            <LiveKitRoom
+              serverUrl={serverUrl}
+              token={token}
+              connect={true}
+              options={liveKitOptions}
+              video={callType === 'video' && !isCameraOff}
+              audio={!isMuted}
+              onConnected={handleRoomConnected}
+              onDisconnected={handleRoomDisconnected}
+              onError={handleRoomError}
+            >
+              <CallPresenceWatcher
+                status={status}
+                callDuration={callDuration}
+                endCall={endCall}
+                onHangUp={onHangUp}
+                isLocalHangupRef={isLocalHangupRef}
+                hasAutoClosedRef={hasAutoClosedRef}
+              />
+              {callType === 'video' ? (
+                <VideoRoomContent theme={theme as CallTheme} isCameraOff={isCameraOff} />
+              ) : (
+                <AudioRoomContent
+                  theme={theme as CallTheme}
+                  status={status}
+                  callDuration={callDuration}
+                />
+              )}
+            </LiveKitRoom>
+          </View>
         ) : (
-          // Audio call UI
-          <View style={styles.audioCallContainer}>
-            <GlassView style={styles.audioCallCard}>
-              <Text variant="headlineMedium" style={{ color: theme.colors.onSurface }}>
-                Audio Call
-              </Text>
-              <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 8 }}>
-                {getStatusText()}
-              </Text>
-            </GlassView>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={theme.colors.primary} />
+            <Text style={[styles.loadingText, { color: theme.colors.onSurfaceVariant }]}> 
+              Setting up call...
+            </Text>
           </View>
         )}
 
@@ -159,7 +464,7 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
           micEnabled={!isMuted}
           cameraEnabled={!isCameraOff}
           onToggleMic={toggleMute}
-          onToggleCamera={type === 'video' ? toggleCamera : undefined}
+          onToggleCamera={callType === 'video' ? toggleCamera : undefined}
           onHangUp={handleHangUp}
         />
       </View>
@@ -176,47 +481,124 @@ const styles = StyleSheet.create({
   statusContainer: {
     padding: 16,
     borderRadius: 16,
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 12,
+    zIndex: 10,
   },
-  status: {
-    textAlign: 'center',
+  statusContent: {
+    alignItems: 'center',
+  },
+  statusTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statusText: {
+    fontSize: 14,
   },
   loader: {
-    marginLeft: 8,
+    marginLeft: 4,
+  },
+  roomContainer: {
+    flex: 1,
+    marginVertical: 16,
   },
   videoGrid: {
     flex: 1,
-    marginVertical: 16,
     position: 'relative',
   },
   video: {
     flex: 1,
-    borderRadius: 16,
+    borderRadius: 20,
     overflow: 'hidden',
   },
   localVideoContainer: {
     position: 'absolute',
     bottom: 16,
     right: 16,
-    width: 120,
-    height: 160,
+    width: 100,
+    height: 140,
   },
   localVideo: {
     flex: 1,
-    borderRadius: 12,
+    borderRadius: 16,
     overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   rtcView: {
     flex: 1,
-    backgroundColor: '#000',
+    width: '100%',
+    height: '100%',
   },
   videoPlaceholder: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  avatarPlaceholder: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  avatarText: {
+    fontSize: 48,
+  },
+  localAvatarText: {
+    fontSize: 24,
+  },
+  placeholderText: {
+    fontSize: 14,
+  },
+  cameraOffBadge: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 8,
+    padding: 4,
+  },
+  cameraOffText: {
+    color: '#fff',
+    fontSize: 10,
+    textAlign: 'center',
+  },
+  connectionOverlay: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    right: 16,
+    zIndex: 20,
+  },
+  connectionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    borderRadius: 12,
+    gap: 8,
+  },
+  connectionText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 16,
+  },
+  loadingText: {
+    fontSize: 16,
   },
   audioCallContainer: {
     flex: 1,
@@ -224,8 +606,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   audioCallCard: {
-    padding: 32,
-    borderRadius: 24,
+    padding: 40,
+    borderRadius: 32,
     alignItems: 'center',
+    minWidth: 280,
+  },
+  audioAvatar: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  audioAvatarText: {
+    fontSize: 56,
+  },
+  audioTitle: {
+    marginBottom: 8,
+  },
+  audioSubtitle: {
+    fontSize: 16,
+    marginBottom: 16,
+  },
+  audioDuration: {
+    fontSize: 24,
+    fontWeight: '600',
   },
 });

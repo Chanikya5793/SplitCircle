@@ -1,4 +1,3 @@
-import { GlassTabBar } from '@/components/GlassTabBar';
 import { IncomingCallModal } from '@/components/IncomingCallModal';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -10,32 +9,199 @@ import type { CallType, Group, PresenceStatus } from '@/models';
 import { ForgotPasswordScreen } from '@/screens/auth/ForgotPasswordScreen';
 import { RegisterScreen } from '@/screens/auth/RegisterScreen';
 import { SignInScreen } from '@/screens/auth/SignInScreen';
-import { CallLobbyScreen } from '@/screens/calls/CallLobbyScreen';
+import { CallHistoryScreen } from '@/screens/calls/CallHistoryScreen';
+import { CallInfoScreen } from '@/screens/calls/CallInfoScreen';
 import { CallSessionScreen } from '@/screens/calls/CallSessionScreen';
 import { ChatListScreen } from '@/screens/chat/ChatListScreen';
 import { ChatRoomScreen } from '@/screens/chat/ChatRoomScreen';
+import { MessageInfoScreen } from '@/screens/chat/MessageInfoScreen';
 import { AddExpenseScreen } from '@/screens/expenses/AddExpenseScreen';
 import { ExpenseDetailsScreen } from '@/screens/expenses/ExpenseDetailsScreen';
+import { RecurringBillsScreen } from '@/screens/expenses/RecurringBillsScreen';
 import { SettlementsScreen } from '@/screens/expenses/SettlementsScreen';
 import { GroupDetailsScreen } from '@/screens/groups/GroupDetailsScreen';
 import { GroupInfoScreen } from '@/screens/groups/GroupInfoScreen';
 import { GroupListScreen } from '@/screens/groups/GroupListScreen';
 import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
-import { RecurringBillsScreen } from '@/screens/expenses/RecurringBillsScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { DarkTheme, DefaultTheme, getFocusedRouteNameFromRoute, NavigationContainer, useNavigation } from '@react-navigation/native';
-import { useMemo } from 'react';
-import { View } from 'react-native';
+import { lightHaptic } from '@/utils/haptics';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
+import {
+  DarkTheme,
+  DefaultTheme,
+  NavigationContainer,
+  useNavigation,
+} from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Platform, StyleSheet, View, type ImageSourcePropType } from 'react-native';
+import { Icon, Text, TouchableRipple } from 'react-native-paper';
 
-import { AuthStack, CallStack, ChatStack, GroupStack, Tab } from './stacks';
+import { AppStack, AuthStack, NativeTab } from './stacks';
 
 type GroupWithFallback = Group | undefined;
+type TabIconKey = 'groups' | 'chat' | 'calls' | 'settings';
+
+type NativeIconPair = {
+  active?: ImageSourcePropType;
+  inactive?: ImageSourcePropType;
+};
+
+type NativeIconMap = Record<TabIconKey, NativeIconPair>;
+
+const EMPTY_NATIVE_ICON_MAP: NativeIconMap = {
+  groups: {},
+  chat: {},
+  calls: {},
+  settings: {},
+};
+const FALLBACK_NATIVE_TAB_ICON = {
+  type: 'image',
+  source: require('../../assets/icon.png'),
+} as const;
+const GroupsStack = createNativeStackNavigator();
+
+const IOS_NATIVE_ACCESSORY_SUPPORTED =
+  Platform.OS === 'ios' && Number.parseInt(String(Platform.Version), 10) >= 26;
 
 const useGroupById = (groupId: string): GroupWithFallback => {
   const { groups } = useGroups();
   return useMemo(() => groups.find((group) => group.groupId === groupId), [groups, groupId]);
+};
+
+type GroupTabAccessoryProps = {
+  groupId: string;
+  placement: 'regular' | 'inline';
+};
+
+const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
+  const navigation = useNavigation<any>();
+  const { groups } = useGroups();
+  const { ensureGroupThread } = useChat();
+  const { theme } = useTheme();
+
+  const group = useMemo(() => groups.find((item) => item.groupId === groupId), [groups, groupId]);
+
+  if (!group) {
+    return null;
+  }
+
+  const openStats = () => {
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId });
+  };
+
+  const openBills = () => {
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId });
+  };
+
+  const openAddExpense = () => {
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.ADD_EXPENSE, { groupId: group.groupId });
+  };
+
+  const openSettle = () => {
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.SETTLEMENTS, { groupId: group.groupId });
+  };
+
+  const openChat = async () => {
+    lightHaptic();
+    try {
+      const participants = group.members.map((member) => ({
+        userId: member.userId,
+        displayName: member.displayName,
+        photoURL: member.photoURL,
+        status: 'online' as PresenceStatus,
+      }));
+      const chatId = await ensureGroupThread(group.groupId, participants);
+      navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId });
+    } catch (error) {
+      console.error('Unable to open chat', error);
+    }
+  };
+
+  if (placement === 'inline') {
+    return (
+      <View style={styles.groupAccessoryInlineWrap}>
+        <View style={styles.groupAccessoryInlineGlass}>
+          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryInlineQuick, { backgroundColor: '#10b981' }]} borderless>
+            <View style={styles.groupAccessoryInlineQuickInner}>
+              <Icon source="handshake" size={16} color="#fff" />
+            </View>
+          </TouchableRipple>
+
+          <View style={styles.groupAccessoryInlineUtilityCluster}>
+            <TouchableRipple onPress={openStats} style={styles.groupAccessoryInlineUtilityButton} borderless>
+              <View style={styles.groupAccessoryInlineUtilityButtonInner}>
+                <Icon source="chart-pie" size={16} color={theme.colors.primary} />
+              </View>
+            </TouchableRipple>
+            <TouchableRipple onPress={openChat} style={styles.groupAccessoryInlineUtilityButton} borderless>
+              <View style={styles.groupAccessoryInlineUtilityButtonInner}>
+                <Icon source="chat" size={16} color={theme.colors.primary} />
+              </View>
+            </TouchableRipple>
+            <TouchableRipple onPress={openBills} style={styles.groupAccessoryInlineUtilityButton} borderless>
+              <View style={styles.groupAccessoryInlineUtilityButtonInner}>
+                <Icon source="repeat" size={16} color={theme.colors.primary} />
+              </View>
+            </TouchableRipple>
+          </View>
+
+          <TouchableRipple onPress={openAddExpense} style={[styles.groupAccessoryInlinePrimary, { backgroundColor: theme.colors.primary }]} borderless>
+            <View style={styles.groupAccessoryInlinePrimaryInner}>
+              <Icon source="plus" size={17} color="#fff" />
+            </View>
+          </TouchableRipple>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.groupAccessoryRegularWrap}>
+      <View style={styles.groupAccessoryRegularGlass}>
+        <View style={styles.groupAccessoryRegularRow}>
+          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryPill, { backgroundColor: '#10b981' }]} borderless>
+            <View style={styles.groupAccessoryPillInner}>
+              <Icon source="handshake" size={17} color="#fff" />
+              <Text variant="labelSmall" style={styles.groupAccessoryPrimaryText}>Settle</Text>
+            </View>
+          </TouchableRipple>
+          <View style={styles.groupAccessoryUtilityCluster}>
+            <TouchableRipple onPress={openStats} style={styles.groupAccessoryUtilityButton} borderless>
+              <View style={styles.groupAccessoryUtilityButtonInner}>
+                <Icon source="chart-pie" size={17} color={theme.colors.primary} />
+                <Text variant="labelSmall" style={[styles.groupAccessoryUtilityText, { color: theme.colors.onSurface }]}>Stats</Text>
+              </View>
+            </TouchableRipple>
+            <TouchableRipple onPress={openChat} style={styles.groupAccessoryUtilityButton} borderless>
+              <View style={styles.groupAccessoryUtilityButtonInner}>
+                <Icon source="chat" size={17} color={theme.colors.primary} />
+                <Text variant="labelSmall" style={[styles.groupAccessoryUtilityText, { color: theme.colors.onSurface }]}>Chat</Text>
+              </View>
+            </TouchableRipple>
+            <TouchableRipple onPress={openBills} style={styles.groupAccessoryUtilityButton} borderless>
+              <View style={styles.groupAccessoryUtilityButtonInner}>
+                <Icon source="repeat" size={17} color={theme.colors.primary} />
+                <Text variant="labelSmall" style={[styles.groupAccessoryUtilityText, { color: theme.colors.onSurface }]}>Bills</Text>
+              </View>
+            </TouchableRipple>
+          </View>
+          <TouchableRipple onPress={openAddExpense} style={[styles.groupAccessoryPill, { backgroundColor: theme.colors.primary }]} borderless>
+            <View style={styles.groupAccessoryPillInner}>
+              <Icon source="plus" size={17} color="#fff" />
+              <Text variant="labelSmall" style={styles.groupAccessoryPrimaryText}>Add</Text>
+            </View>
+          </TouchableRipple>
+        </View>
+      </View>
+    </View>
+  );
 };
 
 const SignInRoute = ({ navigation }: any) => (
@@ -49,7 +215,9 @@ const RegisterRoute = ({ navigation }: any) => (
   <RegisterScreen onSwitchToSignIn={() => navigation.navigate(ROUTES.AUTH.SIGN_IN)} />
 );
 
-const ForgotPasswordRoute = ({ navigation }: any) => <ForgotPasswordScreen onBack={() => navigation.goBack()} />;
+const ForgotPasswordRoute = ({ navigation }: any) => (
+  <ForgotPasswordScreen onBack={() => navigation.goBack()} />
+);
 
 const GroupListRoute = ({ navigation }: any) => (
   <GroupListScreen onOpenGroup={(group) => navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: group.groupId })} />
@@ -57,7 +225,39 @@ const GroupListRoute = ({ navigation }: any) => (
 
 const GroupDetailsRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
+  const groupId = group?.groupId;
   const { ensureGroupThread } = useChat();
+  const [showAccessory, setShowAccessory] = useState(false);
+  const accessoryVisibleRef = useRef<boolean | null>(null);
+
+  useLayoutEffect(() => {
+    const parent = navigation.getParent();
+    if (!parent || !IOS_NATIVE_ACCESSORY_SUPPORTED) {
+      return;
+    }
+
+    const shouldShowAccessory = Boolean(groupId && showAccessory);
+    if (accessoryVisibleRef.current === shouldShowAccessory) {
+      return;
+    }
+
+    accessoryVisibleRef.current = shouldShowAccessory;
+    if (shouldShowAccessory) {
+      parent.setOptions({
+        bottomAccessory: ({ placement }: { placement: 'regular' | 'inline' }) => (
+          <GroupTabAccessory groupId={groupId!} placement={placement} />
+        ),
+      });
+    } else {
+      parent.setOptions({ bottomAccessory: undefined });
+    }
+
+    return () => {
+      parent.setOptions({ bottomAccessory: undefined });
+      accessoryVisibleRef.current = null;
+    };
+  }, [navigation, groupId, showAccessory]);
+
   if (!group) {
     return <LoadingScreen />;
   }
@@ -81,9 +281,17 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
       onAddExpense={() => navigation.navigate(ROUTES.APP.ADD_EXPENSE, { groupId: group.groupId })}
       onSettle={() => navigation.navigate(ROUTES.APP.SETTLEMENTS, { groupId: group.groupId })}
       onOpenChat={handleOpenChat}
+      onCompactModeChange={setShowAccessory}
     />
   );
 };
+
+const GroupsStackNavigator = () => (
+  <GroupsStack.Navigator>
+    <GroupsStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ headerShown: false }} />
+    <GroupsStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
+  </GroupsStack.Navigator>
+);
 
 const AddExpenseRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
@@ -110,7 +318,7 @@ const SettlementsRoute = ({ route, navigation }: any) => {
   );
 };
 
-const GroupStatsRoute = ({ route, navigation }: any) => {
+const GroupStatsRoute = ({ route }: any) => {
   const group = useGroupById(route.params.groupId);
   if (!group) {
     return <LoadingScreen />;
@@ -118,9 +326,11 @@ const GroupStatsRoute = ({ route, navigation }: any) => {
   return <GroupStatsScreen group={group} />;
 };
 
-const RecurringBillsRoute = ({ route, navigation }: any) => {
+const RecurringBillsRoute = ({ route }: any) => {
   const group = useGroupById(route.params.groupId);
-  if (!group) return <LoadingScreen />;
+  if (!group) {
+    return <LoadingScreen />;
+  }
   return <RecurringBillsScreen group={group} />;
 };
 
@@ -129,7 +339,7 @@ const ChatListRoute = ({ navigation }: any) => (
 );
 
 const ChatRoomRoute = ({ route }: any) => {
-  const { threads } = useChat(); // Hook must be called first, before any conditional returns
+  const { threads } = useChat();
   const thread = threads.find((item) => item.chatId === route.params.chatId);
 
   if (!thread) {
@@ -139,9 +349,25 @@ const ChatRoomRoute = ({ route }: any) => {
   return <ChatRoomScreen thread={thread} />;
 };
 
-const CallLobbyRoute = ({ navigation }: any) => (
-  <CallLobbyScreen
+const CallHistoryRoute = ({ navigation }: any) => (
+  <CallHistoryScreen
     onStartCall={(thread, type) =>
+      navigation.navigate(ROUTES.APP.CALL_DETAIL, {
+        chatId: thread.chatId,
+        groupId: thread.groupId,
+        type,
+      })
+    }
+    onOpenCallInfo={(entry) =>
+      navigation.navigate(ROUTES.APP.CALL_INFO, { entry })
+    }
+  />
+);
+
+const CallInfoRoute = ({ route, navigation }: any) => (
+  <CallInfoScreen
+    entry={route.params.entry}
+    onCallBack={(thread, type) =>
       navigation.navigate(ROUTES.APP.CALL_DETAIL, {
         chatId: thread.chatId,
         groupId: thread.groupId,
@@ -157,7 +383,13 @@ const CallSessionRoute = ({ route, navigation }: any) => (
     groupId={route.params.groupId}
     type={route.params.type as CallType}
     joinCallId={route.params.joinCallId}
-    onHangUp={() => navigation.goBack()}
+    onHangUp={() => {
+      if (typeof navigation.canGoBack === 'function' && navigation.canGoBack()) {
+        navigation.goBack();
+        return;
+      }
+      navigation.navigate(ROUTES.APP.ROOT, { screen: ROUTES.APP.CALLS_TAB });
+    }}
   />
 );
 
@@ -169,166 +401,229 @@ const AuthStackNavigator = () => (
   </AuthStack.Navigator>
 );
 
-const GroupStackNavigator = () => {
-  const { theme } = useTheme();
-  return (
-    <GroupStack.Navigator>
-      <GroupStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ headerShown: false }} />
-      <GroupStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
-      <GroupStack.Screen
-        name={ROUTES.APP.GROUP_INFO}
-        component={GroupInfoScreen}
-        options={{
-          title: '',
-          headerTransparent: true,
-          headerTintColor: theme.colors.primary,
-        }}
-      />
-      <GroupStack.Screen
-        name={ROUTES.APP.ADD_EXPENSE}
-        component={AddExpenseRoute}
-        options={{ presentation: 'modal', headerShown: false }}
-      />
-      <GroupStack.Screen
-        name={ROUTES.APP.EXPENSE_DETAILS}
-        component={ExpenseDetailsScreen}
-        options={{ title: 'Expense Details' }}
-      />
-      <GroupStack.Screen
-        name={ROUTES.APP.SETTLEMENTS}
-        component={SettlementsRoute}
-        options={{ presentation: 'modal', headerShown: false }}
-      />
-      <GroupStack.Screen name={ROUTES.APP.GROUP_STATS} component={GroupStatsRoute} options={{ title: 'Group Stats' }} />
-      <GroupStack.Screen name={ROUTES.APP.RECURRING_BILLS} component={RecurringBillsRoute} options={{ title: 'Recurring Bills' }} />
-      <GroupStack.Screen
-        name={ROUTES.APP.GROUP_CHAT}
-        component={ChatRoomRoute}
-        options={{
-          title: '',
-          headerTransparent: true,
-          headerTintColor: theme.colors.primary,
-        }}
-      />
-    </GroupStack.Navigator>
-  );
-};
-
-const ChatStackNavigator = () => {
-  const { theme } = useTheme();
-  return (
-    <ChatStack.Navigator>
-      <ChatStack.Screen name={ROUTES.APP.CHAT} component={ChatListRoute} options={{ title: 'Chats' }} />
-      <ChatStack.Screen
-        name={ROUTES.APP.GROUP_CHAT}
-        component={ChatRoomRoute}
-        options={{
-          title: '',
-          headerTransparent: true,
-          headerTintColor: theme.colors.primary,
-        }}
-      />
-      <ChatStack.Screen
-        name={ROUTES.APP.GROUP_INFO}
-        component={GroupInfoScreen}
-        options={{
-          title: '',
-          headerTransparent: true,
-          headerTintColor: theme.colors.primary,
-        }}
-      />
-      <ChatStack.Screen
-        name={ROUTES.APP.ADD_EXPENSE}
-        component={AddExpenseRoute}
-        options={{ presentation: 'modal', headerShown: false }}
-      />
-      <ChatStack.Screen
-        name={ROUTES.APP.EXPENSE_DETAILS}
-        component={ExpenseDetailsScreen}
-        options={{ title: 'Expense Details' }}
-      />
-      <ChatStack.Screen
-        name={ROUTES.APP.SETTLEMENTS}
-        component={SettlementsRoute}
-        options={{ presentation: 'modal', headerShown: false }}
-      />
-      <ChatStack.Screen name={ROUTES.APP.GROUP_STATS} component={GroupStatsRoute} options={{ title: 'Group Stats' }} />
-      <ChatStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
-    </ChatStack.Navigator>
-  );
-};
-
-const CallStackNavigator = () => (
-  <CallStack.Navigator>
-    <CallStack.Screen name={ROUTES.APP.CALLS} component={CallLobbyRoute} options={{ title: 'Calls' }} />
-    <CallStack.Screen name={ROUTES.APP.CALL_DETAIL} component={CallSessionRoute} options={{ title: 'Live call' }} />
-  </CallStack.Navigator>
-);
-
 const AppTabs = () => {
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
+  const [androidIcons, setAndroidIcons] = useState<NativeIconMap>(EMPTY_NATIVE_ICON_MAP);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') {
+      return;
+    }
+
+    let isActive = true;
+    const inactiveColor = isDark ? '#9CA3AF' : '#64748B';
+    const activeColor = theme.colors.primary;
+
+    const loadIcon = async (name: React.ComponentProps<typeof MaterialCommunityIcons>['name'], color: string) => {
+      const source = await MaterialCommunityIcons.getImageSource(name, 24, color);
+      return source ?? undefined;
+    };
+
+    const loadAndroidIcons = async () => {
+      try {
+        const [
+          groupsInactive,
+          groupsActive,
+          chatInactive,
+          chatActive,
+          callsInactive,
+          callsActive,
+          settingsInactive,
+          settingsActive,
+        ] = await Promise.all([
+          loadIcon('account-group-outline', inactiveColor),
+          loadIcon('account-group', activeColor),
+          loadIcon('chat-processing-outline', inactiveColor),
+          loadIcon('chat-processing', activeColor),
+          loadIcon('phone-outline', inactiveColor),
+          loadIcon('phone', activeColor),
+          loadIcon('cog-outline', inactiveColor),
+          loadIcon('cog', activeColor),
+        ]);
+
+        if (!isActive) {
+          return;
+        }
+
+        setAndroidIcons({
+          groups: { inactive: groupsInactive, active: groupsActive ?? groupsInactive },
+          chat: { inactive: chatInactive, active: chatActive ?? chatInactive },
+          calls: { inactive: callsInactive, active: callsActive ?? callsInactive },
+          settings: { inactive: settingsInactive, active: settingsActive ?? settingsInactive },
+        });
+      } catch (error) {
+        console.warn('⚠️ Failed to load native tab icons, falling back to labels.', error);
+      }
+    };
+
+    void loadAndroidIcons();
+    return () => {
+      isActive = false;
+    };
+  }, [isDark, theme.colors.primary]);
+
+  const getTabIcon = (key: TabIconKey, focused: boolean): NativeBottomTabIcon => {
+    if (Platform.OS === 'ios') {
+      const iosIconMap: Record<TabIconKey, { regular: string; filled: string }> = {
+        groups: { regular: 'person.3', filled: 'person.3.fill' },
+        chat: { regular: 'bubble.left.and.bubble.right', filled: 'bubble.left.and.bubble.right.fill' },
+        calls: { regular: 'phone', filled: 'phone.fill' },
+        settings: { regular: 'gearshape', filled: 'gearshape.fill' },
+      };
+
+      const icon = iosIconMap[key];
+      return { type: 'sfSymbol', name: focused ? icon.filled : icon.regular } as NativeBottomTabIcon;
+    }
+
+    const source = focused
+      ? (androidIcons[key].active ?? androidIcons[key].inactive)
+      : (androidIcons[key].inactive ?? androidIcons[key].active);
+
+    if (!source) {
+      return FALLBACK_NATIVE_TAB_ICON as NativeBottomTabIcon;
+    }
+
+    return { type: 'image', source } as NativeBottomTabIcon;
+  };
+
   return (
-    <Tab.Navigator
-      tabBar={(props) => <GlassTabBar {...props} />}
+    <NativeTab.Navigator
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: theme.colors.primary,
+        tabBarInactiveTintColor: isDark ? '#9CA3AF' : '#64748B',
+        tabBarLabelStyle: {
+          fontWeight: '600',
+          fontSize: 12,
+        },
+        tabBarStyle: Platform.select({
+          android: {
+            backgroundColor: isDark ? '#0D1117' : '#FFFFFF',
+          },
+          default: undefined,
+        }),
+        tabBarActiveIndicatorColor: Platform.select({
+          android: isDark ? 'rgba(88,166,255,0.20)' : 'rgba(31,111,235,0.16)',
+          default: undefined,
+        }),
+        tabBarBlurEffect: Platform.OS === 'ios' ? 'systemDefault' : undefined,
+        tabBarControllerMode: Platform.OS === 'ios' ? 'tabBar' : undefined,
+        tabBarMinimizeBehavior: IOS_NATIVE_ACCESSORY_SUPPORTED ? 'onScrollDown' : undefined,
       }}
     >
-      <Tab.Screen
+      <NativeTab.Screen
         name={ROUTES.APP.GROUPS_TAB}
-        component={GroupStackNavigator}
-        options={({ route }) => ({
+        component={GroupsStackNavigator}
+        options={{
           title: 'Groups',
-          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="account-group" color={color} size={size} />,
-          tabBarStyle: ((route) => {
-            const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.GROUPS;
-            if (routeName === ROUTES.APP.GROUP_CHAT) {
-              return { display: 'none' };
-            }
-            return undefined;
-          })(route),
-        })}
+          tabBarLabel: 'Groups',
+          tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('groups', focused),
+        }}
       />
-      <Tab.Screen
+      <NativeTab.Screen
         name={ROUTES.APP.CHAT_TAB}
-        component={ChatStackNavigator}
-        options={({ route }) => ({
+        component={ChatListRoute}
+        options={{
           title: 'Chat',
-          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="chat-processing" color={color} size={size} />,
-          tabBarStyle: ((route) => {
-            const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CHAT;
-            if (routeName === ROUTES.APP.GROUP_CHAT) {
-              return { display: 'none' };
-            }
-            return undefined;
-          })(route),
-        })}
+          tabBarLabel: 'Chat',
+          tabBarIcon: ({ focused }) => getTabIcon('chat', focused),
+        }}
       />
-      <Tab.Screen
+      <NativeTab.Screen
         name={ROUTES.APP.CALLS_TAB}
-        component={CallStackNavigator}
-        options={({ route }) => ({
+        component={CallHistoryRoute}
+        options={{
           title: 'Calls',
-          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="phone" color={color} size={size} />,
-          tabBarStyle: ((route) => {
-            const routeName = getFocusedRouteNameFromRoute(route) ?? ROUTES.APP.CALLS;
-            if (routeName === ROUTES.APP.CALL_DETAIL) {
-              return { display: 'none' };
-            }
-            return undefined;
-          })(route),
-        })}
+          tabBarLabel: 'Calls',
+          tabBarIcon: ({ focused }) => getTabIcon('calls', focused),
+        }}
       />
-      <Tab.Screen
+      <NativeTab.Screen
         name={ROUTES.APP.SETTINGS}
         component={SettingsScreen}
         options={{
           title: 'Settings',
-          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="cog" color={color} size={size} />,
+          tabBarLabel: 'Settings',
+          tabBarIcon: ({ focused }) => getTabIcon('settings', focused),
         }}
       />
-    </Tab.Navigator>
+    </NativeTab.Navigator>
+  );
+};
+
+const AppStackNavigator = () => {
+  const { theme } = useTheme();
+
+  return (
+      <AppStack.Navigator>
+      <AppStack.Screen name={ROUTES.APP.ROOT} component={AppTabs} options={{ headerShown: false }} />
+      <AppStack.Screen
+        name={ROUTES.APP.GROUP_INFO}
+        component={GroupInfoScreen}
+        options={{
+          title: '',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.GROUP_CHAT}
+        component={ChatRoomRoute}
+        options={{
+          title: '',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.MESSAGE_INFO}
+        component={MessageInfoScreen}
+        options={{
+          title: '',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.ADD_EXPENSE}
+        component={AddExpenseRoute}
+        options={{ presentation: 'modal', headerShown: false }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.SETTLEMENTS}
+        component={SettlementsRoute}
+        options={{ presentation: 'modal', headerShown: false }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.EXPENSE_DETAILS}
+        component={ExpenseDetailsScreen}
+        options={{ title: 'Expense Details' }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.GROUP_STATS}
+        component={GroupStatsRoute}
+        options={{ title: 'Group Stats' }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.RECURRING_BILLS}
+        component={RecurringBillsRoute}
+        options={{ title: 'Recurring Bills' }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.CALL_INFO}
+        component={CallInfoRoute}
+        options={{
+          title: '',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.CALL_DETAIL}
+        component={CallSessionRoute}
+        options={{ title: 'Live call' }}
+      />
+    </AppStack.Navigator>
   );
 };
 
@@ -340,14 +635,11 @@ const IncomingCallHandler = () => {
   const handleAccept = () => {
     const call = acceptCall();
     if (call) {
-      navigation.navigate(ROUTES.APP.CALLS_TAB, {
-        screen: ROUTES.APP.CALL_DETAIL,
-        params: {
-          chatId: call.chatId,
-          groupId: call.groupId,
-          type: call.type,
-          joinCallId: call.callId,
-        },
+      navigation.navigate(ROUTES.APP.CALL_DETAIL, {
+        chatId: call.chatId,
+        groupId: call.groupId,
+        type: call.type,
+        joinCallId: call.callId,
       });
     }
   };
@@ -363,6 +655,127 @@ const IncomingCallHandler = () => {
   );
 };
 
+const styles = StyleSheet.create({
+  groupAccessoryRegularWrap: {
+    paddingHorizontal: 8,
+    paddingTop: 4,
+    paddingBottom: 4,
+  },
+  groupAccessoryRegularGlass: {
+    borderRadius: 50,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    backgroundColor: 'transparent',
+  },
+  groupAccessoryRegularRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  groupAccessoryUtilityCluster: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 50,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    gap: 4,
+    backgroundColor: 'transparent',
+  },
+  groupAccessoryUtilityButton: {
+    flex: 1,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  groupAccessoryUtilityButtonInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
+    gap: 2,
+  },
+  groupAccessoryUtilityText: {
+    fontWeight: '600',
+    fontSize: 11,
+    lineHeight: 13,
+  },
+  groupAccessoryPill: {
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  groupAccessoryPillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    minWidth: 90,
+  },
+  groupAccessoryPrimaryText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13,
+    lineHeight: 16,
+  },
+  groupAccessoryInlineWrap: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  groupAccessoryInlineGlass: {
+    borderRadius: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: 'transparent',
+  },
+  groupAccessoryInlineUtilityCluster: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 50,
+    paddingHorizontal: 5,
+    paddingVertical: 4,
+    gap: 3,
+    backgroundColor: 'transparent',
+  },
+  groupAccessoryInlineUtilityButton: {
+    flex: 1,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  groupAccessoryInlineUtilityButtonInner: {
+    width: 34,
+    height: 34,
+    alignSelf: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  groupAccessoryInlinePrimary: {
+    minWidth: 52,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  groupAccessoryInlinePrimaryInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  groupAccessoryInlineQuick: {
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
+  groupAccessoryInlineQuickInner: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
+
 export const AppNavigator = () => {
   const { user, loading } = useAuth();
   const { isDark } = useTheme();
@@ -371,7 +784,7 @@ export const AppNavigator = () => {
     return <LoadingScreen />;
   }
 
-  const NavigationTheme = {
+  const navigationTheme = {
     ...(isDark ? DarkTheme : DefaultTheme),
     colors: {
       ...(isDark ? DarkTheme.colors : DefaultTheme.colors),
@@ -382,9 +795,9 @@ export const AppNavigator = () => {
   };
 
   return (
-    <NavigationContainer theme={NavigationTheme}>
+    <NavigationContainer theme={navigationTheme}>
       <View style={{ flex: 1 }}>
-        {user ? <AppTabs /> : <AuthStackNavigator />}
+        {user ? <AppStackNavigator /> : <AuthStackNavigator />}
         {user && <IncomingCallHandler />}
       </View>
     </NavigationContainer>
