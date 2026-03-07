@@ -417,11 +417,11 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
 
   // Watch for incoming calls
   useEffect(() => {
-    if (!chatId || status !== 'idle') {
+    if (!chatId || !user?.userId || status !== 'idle') {
       return;
     }
 
-    const unsubscribe = subscribeToActiveCall(chatId, (session) => {
+    const unsubscribe = subscribeToActiveCall(chatId, user.userId, (session) => {
       if (session && session.initiatorId !== user?.userId && session.status === 'ringing') {
         debugLog('useCallManager incoming call detected');
         // You might want to trigger a ringtone here
