@@ -27,12 +27,12 @@ This file tracks audit findings and remediation progress.
 
 ## Medium
 
-- [ ] M1: Move OCR provider key usage off client and proxy OCR via trusted backend.
-- [ ] M2: Reduce over-privileged app permissions to minimum required set.
+- [x] M1: Move OCR provider key usage off client and proxy OCR via trusted backend.
+- [x] M2: Reduce over-privileged app permissions to minimum required set.
 - [x] M3: Fix direct-chat identity resolution logic (do not infer "other user" from `participantIds[0]`).
-- [ ] M4: Replace mock push permissions/token flow with real notifications integration.
+- [x] M4: Replace mock push permissions/token flow with real notifications integration.
 - [x] M5: Ensure Firebase deploy config includes Firestore/RTDB rules deployment.
-- [ ] M6: Resolve reported dependency vulnerabilities in root and functions packages.
+- [x] M6: Resolve reported dependency vulnerabilities in root and functions packages.
 
 ## Notes
 
@@ -44,6 +44,14 @@ This file tracks audit findings and remediation progress.
     - `src/context/ChatContext.tsx`: outgoing messages no longer initialize `readBy` with sender ID (prevents premature read ticks).
     - `src/screens/chat/ChatRoomScreen.tsx`: message list updates now react to receipt/status changes, not only count/last-message changes.
   - Validation rerun: root `npx tsc --noEmit` and `npm --prefix functions run build` both pass.
+- Re-verified on 2026-03-07:
+  - Client-side OCR now requires `EXPO_PUBLIC_OCR_PROXY_ENDPOINT` and Firebase-authenticated backend calls; `EXPO_PUBLIC_GOOGLE_VISION_API_KEY` usage removed.
+  - Push notification registration no longer uses mocked permissions/tokens; Expo notifications flow is active.
+  - App config no longer embeds checked-in fallback env values; required config now fails fast when unset.
+  - Android/iOS location/background permission footprint reduced to current feature requirements.
+  - Dependency audits rerun clean:
+    - root: `npm audit --omit=dev` -> 0 vulnerabilities
+    - functions: `npm --prefix functions audit --omit=dev` -> 0 vulnerabilities
 - Key management policy:
   - Public client config (`EXPO_PUBLIC_*`) is sourced from `.env`/EAS env and documented in `.env.example`.
   - Server secrets (e.g., LiveKit API secret) must live in Firebase Functions Secret Manager, not in app source/env committed to git.
