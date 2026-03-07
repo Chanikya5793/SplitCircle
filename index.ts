@@ -9,8 +9,6 @@ if (!__DEV__) {
 	const noOp = () => undefined;
 	console.log = noOp;
 	console.info = noOp;
-	console.warn = noOp;
-	console.error = noOp;
 	console.debug = noOp;
 }
 

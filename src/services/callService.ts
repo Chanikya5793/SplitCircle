@@ -11,6 +11,7 @@ import {
   equalTo,
   get,
   getDatabase,
+  limitToLast,
   onValue,
   orderByChild,
   query,
@@ -25,6 +26,7 @@ import type { CallParticipant, CallSession, CallType } from '@/models';
 // Get Realtime Database instance
 const rtdb = getDatabase();
 const MAX_ACTIVE_CALL_AGE_MS = 5 * 60 * 1000;
+const ACTIVE_CALL_QUERY_LIMIT = 50;
 let hasLoggedActiveCallPermissionWarning = false;
 let hasLoggedCallSessionPermissionWarning = false;
 
@@ -205,7 +207,8 @@ export function subscribeToActiveCall(
   const callsQuery = query(
     ref(rtdb, 'calls'),
     orderByChild(`allowedUserIds/${userId}`),
-    equalTo(true)
+    equalTo(true),
+    limitToLast(ACTIVE_CALL_QUERY_LIMIT)
   );
   const unsubscribe = onValue(callsQuery, (snapshot) => {
     if (!snapshot.exists()) {
