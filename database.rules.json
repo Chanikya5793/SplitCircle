@@ -102,7 +102,7 @@
       }
     },
     "calls": {
-      ".read": "auth != null && query.orderByChild == 'chatId' && query.equalTo != null",
+      ".read": "auth != null && query.orderByChild == ('allowedUserIds/' + auth.uid) && query.equalTo == true",
       ".indexOn": [
         "chatId",
         "status",

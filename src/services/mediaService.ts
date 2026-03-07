@@ -26,6 +26,73 @@ export const MEDIA_DIRECTORY = `${documentDirectory}chat_media/`;
 
 // Maximum file size for upload (50MB)
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
+const TRUSTED_MEDIA_HOSTS = ['firebasestorage.googleapis.com', 'storage.googleapis.com'];
+
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'video/mp4',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/webm',
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/wav',
+  'audio/ogg',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'application/zip',
+  'application/x-rar-compressed',
+]);
+
+const sanitizePathSegment = (value: string, fallback: string): string => {
+  const sanitized = value.trim().replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+  return sanitized.length > 0 ? sanitized : fallback;
+};
+
+const sanitizeFileName = (value: string): string => {
+  const sanitized = value.trim().replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
+  return sanitized.length > 0 ? sanitized : `file_${Date.now()}`;
+};
+
+const isAllowedUploadUri = (value: string): boolean => {
+  const lower = value.toLowerCase();
+  return lower.startsWith('file:')
+    || lower.startsWith('content:')
+    || lower.startsWith('ph:')
+    || lower.startsWith('assets-library:');
+};
+
+const ensureAllowedMimeType = (value: string): string => {
+  const normalized = value.trim().toLowerCase();
+  if (!ALLOWED_MIME_TYPES.has(normalized)) {
+    throw new Error(`Unsupported media type: ${value}`);
+  }
+  return normalized;
+};
+
+const isTrustedMediaUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:') {
+      return false;
+    }
+    return TRUSTED_MEDIA_HOSTS.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
+  } catch {
+    return false;
+  }
+};
 
 export interface MediaUploadResult {
   downloadUrl: string;
@@ -57,9 +124,10 @@ export const initMediaDirectory = async (): Promise<void> => {
  * Get the local path for a media file
  */
 export const getLocalMediaPath = (chatId: string, messageId: string, fileName: string): string => {
-  // Sanitize filename to remove special characters
-  const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-  return `${MEDIA_DIRECTORY}${chatId}/${messageId}_${sanitizedFileName}`;
+  const safeChatId = sanitizePathSegment(chatId, 'chat');
+  const safeMessageId = sanitizePathSegment(messageId, 'message');
+  const sanitizedFileName = sanitizeFileName(fileName);
+  return `${MEDIA_DIRECTORY}${safeChatId}/${safeMessageId}_${sanitizedFileName}`;
 };
 
 /**
@@ -84,8 +152,13 @@ export const copyToLocalStorage = async (
   fileName: string
 ): Promise<string> => {
   try {
+    if (!isAllowedUploadUri(sourceUri)) {
+      throw new Error('Unsupported media source URI.');
+    }
+
+    const safeChatId = sanitizePathSegment(chatId, 'chat');
     // Ensure chat directory exists
-    const chatDir = `${MEDIA_DIRECTORY}${chatId}/`;
+    const chatDir = `${MEDIA_DIRECTORY}${safeChatId}/`;
     const chatDirInfo = await getInfoAsync(chatDir);
     if (!chatDirInfo.exists) {
       await makeDirectoryAsync(chatDir, { intermediates: true });
@@ -126,10 +199,20 @@ export const uploadMedia = async (
   onProgress?: (progress: number) => void
 ): Promise<MediaUploadResult> => {
   try {
-    console.log('📤 Starting media upload:', { uri, chatId, messageId, fileName, mimeType });
+    const safeMimeType = ensureAllowedMimeType(mimeType);
+    const safeFileName = sanitizeFileName(fileName);
+    const safeChatId = sanitizePathSegment(chatId, 'chat');
+    const safeMessageId = sanitizePathSegment(messageId, 'message');
+
+    console.log('📤 Starting media upload:', {
+      chatId: safeChatId,
+      messageId: safeMessageId,
+      fileName: safeFileName,
+      mimeType: safeMimeType,
+    });
     
     // First, copy to local storage for sender (if not already there)
-    const localPath = await copyToLocalStorage(uri, chatId, messageId, fileName);
+    const localPath = await copyToLocalStorage(uri, safeChatId, safeMessageId, safeFileName);
     
     // Use the local copy for upload (handles ph:// and content:// URIs)
     const fileUri = localPath;
@@ -141,7 +224,7 @@ export const uploadMedia = async (
     }
     
     // Create storage reference and get upload URL
-    const storagePath = `chat_media/${chatId}/${messageId}/${fileName}`;
+    const storagePath = `chat_media/${safeChatId}/${safeMessageId}/${safeFileName}`;
     const fileRef = storageRef(storage, storagePath);
     
     // Get the upload URL for direct upload
@@ -166,7 +249,7 @@ export const uploadMedia = async (
       uploadType: FileSystemUploadType.BINARY_CONTENT,
       headers: {
         'Authorization': `Firebase ${token}`,
-        'Content-Type': mimeType,
+        'Content-Type': safeMimeType,
       },
     });
     
@@ -204,7 +287,12 @@ export const downloadMedia = async (
   fileName: string
 ): Promise<MediaDownloadResult> => {
   try {
-    const localPath = getLocalMediaPath(chatId, messageId, fileName);
+    if (!isTrustedMediaUrl(downloadUrl)) {
+      throw new Error('Blocked media download from untrusted URL.');
+    }
+
+    const safeChatId = sanitizePathSegment(chatId, 'chat');
+    const localPath = getLocalMediaPath(safeChatId, messageId, fileName);
     
     // Check if already downloaded
     const exists = await mediaExistsLocally(localPath);
@@ -214,7 +302,7 @@ export const downloadMedia = async (
     }
     
     // Ensure chat directory exists
-    const chatDir = `${MEDIA_DIRECTORY}${chatId}/`;
+    const chatDir = `${MEDIA_DIRECTORY}${safeChatId}/`;
     const chatDirInfo = await getInfoAsync(chatDir);
     if (!chatDirInfo.exists) {
       await makeDirectoryAsync(chatDir, { intermediates: true });
@@ -287,9 +375,10 @@ export const deleteLocalMedia = async (localPath: string): Promise<void> => {
  */
 export const clearChatMedia = async (chatId: string): Promise<void> => {
   try {
-    const chatDir = `${MEDIA_DIRECTORY}${chatId}/`;
+    const safeChatId = sanitizePathSegment(chatId, 'chat');
+    const chatDir = `${MEDIA_DIRECTORY}${safeChatId}/`;
     await deleteAsync(chatDir, { idempotent: true });
-    console.log('✅ Chat media cleared:', chatId);
+    console.log('✅ Chat media cleared:', safeChatId);
   } catch (error) {
     console.error('❌ Error clearing chat media:', error);
   }
@@ -339,7 +428,7 @@ export const generateMediaFileName = (
   originalFileName?: string
 ): string => {
   if (originalFileName) {
-    return originalFileName;
+    return sanitizeFileName(originalFileName);
   }
   
   const timestamp = Date.now();
