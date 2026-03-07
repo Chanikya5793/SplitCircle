@@ -49,6 +49,21 @@ const LIVEKIT_API_SECRET = (0, params_1.defineSecret)("LIVEKIT_API_SECRET");
 const getStringValue = (input) => {
     return typeof input === "string" ? input.trim() : "";
 };
+const sanitizeParticipantName = (rawName, fallback) => {
+    const cleaned = rawName.replace(/[\u0000-\u001F\u007F]/g, "").trim();
+    if (!cleaned)
+        return fallback;
+    return cleaned.slice(0, 64);
+};
+const isSafeIdentifier = (value) => {
+    return /^[A-Za-z0-9_-]{1,128}$/.test(value);
+};
+const toSafeError = (error) => {
+    if (error instanceof Error) {
+        return { name: error.name, message: error.message };
+    }
+    return { message: "Unknown error" };
+};
 const getBearerToken = (authorizationHeader) => {
     if (!authorizationHeader)
         return null;
@@ -75,6 +90,7 @@ exports.generateLiveKitToken = (0, https_1.onRequest)({
     secrets: [LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET],
 }, async (req, res) => {
     var _a, _b, _c, _d, _e;
+    res.set("Cache-Control", "no-store");
     if (req.method === "OPTIONS") {
         res.status(204).send("");
         return;
@@ -94,9 +110,13 @@ exports.generateLiveKitToken = (0, https_1.onRequest)({
             : {};
         const roomName = getStringValue((_b = requestBody.roomName) !== null && _b !== void 0 ? _b : req.query.roomName);
         const chatId = getStringValue((_c = requestBody.chatId) !== null && _c !== void 0 ? _c : req.query.chatId);
-        const participantName = getStringValue((_d = requestBody.name) !== null && _d !== void 0 ? _d : req.query.name) || uid;
+        const participantName = sanitizeParticipantName(getStringValue((_d = requestBody.name) !== null && _d !== void 0 ? _d : req.query.name), uid);
         if (!roomName || !chatId) {
             res.status(400).json({ error: "Missing required parameters: roomName, chatId" });
+            return;
+        }
+        if (!isSafeIdentifier(roomName) || !isSafeIdentifier(chatId)) {
+            res.status(400).json({ error: "Invalid roomName or chatId format." });
             return;
         }
         const chatDoc = await (0, firestore_1.getFirestore)().collection("chats").doc(chatId).get();
@@ -151,7 +171,7 @@ exports.generateLiveKitToken = (0, https_1.onRequest)({
         res.status(200).json({ token, url: livekitUrl });
     }
     catch (error) {
-        logger.error("Error generating LiveKit token", error);
+        logger.error("Error generating LiveKit token", toSafeError(error));
         res.status(500).json({ error: "Internal server error" });
     }
 });

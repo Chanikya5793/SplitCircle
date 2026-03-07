@@ -198,10 +198,15 @@ export function subscribeToCallSession(
  */
 export function subscribeToActiveCall(
   chatId: string,
+  userId: string,
   callback: (session: CallSession | null) => void
 ): Unsubscribe {
-  // Query by chatId instead of scanning the full /calls tree.
-  const callsQuery = query(ref(rtdb, 'calls'), orderByChild('chatId'), equalTo(chatId));
+  // Query only calls where this user is explicitly allowed.
+  const callsQuery = query(
+    ref(rtdb, 'calls'),
+    orderByChild(`allowedUserIds/${userId}`),
+    equalTo(true)
+  );
   const unsubscribe = onValue(callsQuery, (snapshot) => {
     if (!snapshot.exists()) {
       callback(null);
@@ -215,7 +220,8 @@ export function subscribeToActiveCall(
       .filter((call) => {
         const isActiveStatus = call.status === 'ringing' || call.status === 'connected';
         const isNotStale = now - call.startedAt < MAX_ACTIVE_CALL_AGE_MS;
-        return call.chatId === chatId && isActiveStatus && isNotStale;
+        const isAllowedForUser = call.allowedUserIds?.[userId] === true;
+        return call.chatId === chatId && isAllowedForUser && isActiveStatus && isNotStale;
       })
       .sort((a, b) => b.startedAt - a.startedAt);
 
@@ -234,7 +240,7 @@ export function subscribeToActiveCall(
     if (isPermissionDenied) {
       if (!hasLoggedActiveCallPermissionWarning) {
         hasLoggedActiveCallPermissionWarning = true;
-        console.warn('Call listener permission denied for /calls query. Verify deployed RTDB rules include /calls read access for chatId query.');
+        console.warn('Call listener permission denied for /calls query. Verify deployed RTDB rules allow user-scoped allowedUserIds queries.');
       }
       callback(null);
       return;

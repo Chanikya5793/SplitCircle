@@ -33,7 +33,6 @@ function AppContent() {
 }
 
 export default function App() {
-  console.log('Rendering App component');
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
