@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-// import * as Notifications from 'expo-notifications';
 import { useAuth } from '@/context/AuthContext';
 import { db } from '@/firebase';
 import { registerForPushNotificationsAsync } from '@/utils/notifications';
@@ -13,26 +12,26 @@ export const useNotifications = () => {
       return () => undefined;
     }
 
-    // let notificationSub: Notifications.Subscription | undefined;
+    let isMounted = true;
 
     const syncToken = async () => {
-      const token = await registerForPushNotificationsAsync();
-      if (token) {
-        await updateDoc(doc(db, 'users', user.userId), {
-          pushToken: token,
-          'preferences.pushEnabled': true,
-        });
+      try {
+        const token = await registerForPushNotificationsAsync();
+        if (token && isMounted) {
+          await updateDoc(doc(db, 'users', user.userId), {
+            pushToken: token,
+            'preferences.pushEnabled': true,
+          });
+        }
+      } catch (error) {
+        console.error('Failed to register push notifications', error);
       }
     };
 
-    syncToken();
-
-    // notificationSub = Notifications.addNotificationResponseReceivedListener((response) => {
-    //   console.log('Open notification payload', response.notification.request.content.data);
-    // });
+    void syncToken();
 
     return () => {
-      // notificationSub?.remove();
+      isMounted = false;
     };
   }, [user?.userId]);
 };

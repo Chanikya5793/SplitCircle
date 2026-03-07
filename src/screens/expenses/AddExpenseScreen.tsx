@@ -21,6 +21,7 @@ interface AddExpenseScreenProps {
 }
 
 const CATEGORIES = ['General', 'Food', 'Transport', 'Utilities', 'Entertainment', 'Shopping', 'Travel', 'Health'];
+const MAX_RECEIPT_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
 // Category to Icon mapping
 const getCategoryIcon = (cat: string): string => {
@@ -196,6 +197,8 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
           `Found: ${total ? `$${total.toFixed(2)}` : 'No total'}${extractedTitle ? `, ${extractedTitle}` : ''}`,
           [{ text: 'OK' }]
         );
+      } else if (ocrResult.error) {
+        Alert.alert('OCR unavailable', ocrResult.error);
       }
     } catch (error) {
       console.error('OCR processing error:', error);
@@ -228,12 +231,17 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     setShowReceiptMenu(false);
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: '*/*',
+        type: ['image/*', 'application/pdf'],
         copyToCacheDirectory: true,
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
+        if (typeof asset.size === 'number' && asset.size > MAX_RECEIPT_FILE_SIZE_BYTES) {
+          Alert.alert('File too large', 'Please select a receipt smaller than 20MB.');
+          return;
+        }
+
         setReceiptUri(asset.uri);
         setReceiptType(asset.mimeType?.includes('image') ? 'image' : 'document');
         setReceiptName(asset.name);

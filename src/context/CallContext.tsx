@@ -44,7 +44,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
     // Subscribe to active calls for each thread
     threads.forEach((thread) => {
-      const unsub = subscribeToActiveCall(thread.chatId, (session) => {
+      const unsub = subscribeToActiveCall(thread.chatId, user.userId, (session) => {
         if (
           session &&
           session.initiatorId !== user.userId &&
