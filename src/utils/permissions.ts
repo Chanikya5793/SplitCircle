@@ -1,6 +1,6 @@
 import { Camera } from 'expo-camera';
 import * as Location from 'expo-location';
-// import * as Notifications from 'expo-notifications';
+import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 export const requestCameraAndAudioPermissions = async (): Promise<boolean> => {
@@ -14,15 +14,12 @@ export const requestPushPermissions = async (): Promise<boolean> => {
     return false;
   }
 
-  console.log('Mocking push permissions for Expo Go');
-  return true;
-
-//   const { status } = await Notifications.getPermissionsAsync();
-//   if (status === 'granted') {
-//     return true;
-//   }
-//   const { status: requestedStatus } = await Notifications.requestPermissionsAsync();
-//   return requestedStatus === 'granted';
+  const { status } = await Notifications.getPermissionsAsync();
+  if (status === 'granted') {
+    return true;
+  }
+  const { status: requestedStatus } = await Notifications.requestPermissionsAsync();
+  return requestedStatus === 'granted';
 };
 
 /**

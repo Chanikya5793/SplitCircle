@@ -1,11 +1,11 @@
 /**
  * OCR Service for Receipt Data Extraction
- * 
- * This service uses Google Cloud Vision API to extract text from receipt images
- * and parse relevant data (total, date, items).
- * 
- * Note: Requires a Google Cloud Vision API key configured in environment variables.
+ *
+ * This service calls a trusted backend OCR endpoint and never embeds
+ * provider secrets in the mobile client bundle.
  */
+
+import { getAuth } from 'firebase/auth';
 
 export interface OCRResult {
     success: boolean;
@@ -23,7 +23,7 @@ export interface OCRResult {
 const TOTAL_PATTERNS = [
     /(?:total|grand total|amount due|balance due|subtotal)[\s:]*\$?(\d+\.?\d*)/i,
     /\$(\d+\.\d{2})\s*(?:total|due|paid)/i,
-    /(?:^|\s)\$(\d+\.\d{2})(?:\s|$)/gm, // Standalone dollar amounts
+    /(?:^|\s)\$(\d+\.\d{2})(?:\s|$)/gm,
 ];
 
 const DATE_PATTERNS = [
@@ -32,60 +32,117 @@ const DATE_PATTERNS = [
     /(\d{4}[\/\-]\d{2}[\/\-]\d{2})/,
 ];
 
+const OCR_PROXY_ENDPOINT = process.env.EXPO_PUBLIC_OCR_PROXY_ENDPOINT?.trim() ?? '';
+
+const isLocalDevelopmentHost = (hostname: string): boolean => {
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+};
+
+const getValidatedOcrEndpoint = (): URL | null => {
+    if (!OCR_PROXY_ENDPOINT) {
+        return null;
+    }
+
+    let endpoint: URL;
+    try {
+        endpoint = new URL(OCR_PROXY_ENDPOINT);
+    } catch {
+        throw new Error('OCR endpoint URL is invalid.');
+    }
+
+    const isSecure = endpoint.protocol === 'https:';
+    const allowLocalDev = __DEV__ && endpoint.protocol === 'http:' && isLocalDevelopmentHost(endpoint.hostname);
+    if (!isSecure && !allowLocalDev) {
+        throw new Error('OCR endpoint must use HTTPS in non-development environments.');
+    }
+
+    return endpoint;
+};
+
+const extractTextFromOcrPayload = (payload: unknown): string => {
+    if (!payload || typeof payload !== 'object') {
+        return '';
+    }
+
+    const data = payload as Record<string, unknown>;
+
+    if (typeof data.extractedText === 'string') {
+        return data.extractedText;
+    }
+
+    if (typeof data.text === 'string') {
+        return data.text;
+    }
+
+    const responses = data.responses;
+    if (Array.isArray(responses)) {
+        const first = responses[0] as { fullTextAnnotation?: { text?: unknown } } | undefined;
+        if (typeof first?.fullTextAnnotation?.text === 'string') {
+            return first.fullTextAnnotation.text;
+        }
+    }
+
+    return '';
+};
+
 /**
- * Extract receipt data from an image using Google Cloud Vision API
- * 
+ * Extract receipt data from an image using a trusted backend OCR endpoint.
+ *
  * @param imageUri - Local URI of the image to process
  * @returns OCRResult with extracted and parsed data
  */
 export const extractReceiptData = async (imageUri: string): Promise<OCRResult> => {
     try {
-        // Get the API key from environment
-        const apiKey = process.env.EXPO_PUBLIC_GOOGLE_VISION_API_KEY;
-
-        if (!apiKey) {
-            console.warn('Google Vision API key not configured. OCR disabled.');
+        const endpoint = getValidatedOcrEndpoint();
+        if (!endpoint) {
             return {
                 success: false,
-                error: 'OCR service not configured. Please add EXPO_PUBLIC_GOOGLE_VISION_API_KEY to your environment.',
+                error: 'OCR service is not configured for this build.',
             };
         }
 
-        // Convert image to base64
+        const currentUser = getAuth().currentUser;
+        if (!currentUser) {
+            return {
+                success: false,
+                error: 'You must be signed in to use receipt scanning.',
+            };
+        }
+
+        const idToken = await currentUser.getIdToken();
+
+        // Convert image to base64 for backend OCR processing.
         const response = await fetch(imageUri);
         const blob = await response.blob();
         const base64 = await blobToBase64(blob);
 
-        // Call Google Cloud Vision API
-        const visionResponse = await fetch(
-            `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    requests: [
-                        {
-                            image: { content: base64 },
-                            features: [{ type: 'TEXT_DETECTION' }],
-                        },
-                    ],
-                }),
-            }
-        );
+        const ocrResponse = await fetch(endpoint.toString(), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'Authorization': `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({
+                imageBase64: base64,
+                mimeType: blob.type || 'application/octet-stream',
+            }),
+        });
 
-        const data = await visionResponse.json();
+        const payload = await ocrResponse.json().catch(() => null);
+        if (!ocrResponse.ok) {
+            const backendError =
+                typeof (payload as { error?: unknown } | null)?.error === 'string'
+                    ? String((payload as { error: string }).error)
+                    : 'OCR request failed.';
 
-        if (data.error) {
             return {
                 success: false,
-                error: data.error.message || 'Vision API error',
+                error: backendError,
             };
         }
 
-        const extractedText = data.responses?.[0]?.fullTextAnnotation?.text || '';
-
+        const extractedText = extractTextFromOcrPayload(payload);
         if (!extractedText) {
             return {
                 success: false,
@@ -93,9 +150,7 @@ export const extractReceiptData = async (imageUri: string): Promise<OCRResult> =
             };
         }
 
-        // Parse the extracted text
         const parsedData = parseReceiptText(extractedText);
-
         return {
             success: true,
             extractedText,
@@ -133,8 +188,8 @@ const parseReceiptText = (text: string): OCRResult['parsedData'] => {
         const allAmounts = text.match(/\$(\d+\.\d{2})/g);
         if (allAmounts && allAmounts.length > 0) {
             const amounts = allAmounts
-                .map(a => parseFloat(a.replace('$', '')))
-                .filter(a => !isNaN(a) && a > 0);
+                .map((value) => parseFloat(value.replace('$', '')))
+                .filter((value) => !isNaN(value) && value > 0);
             if (amounts.length > 0) {
                 result.total = Math.max(...amounts);
             }
@@ -150,10 +205,9 @@ const parseReceiptText = (text: string): OCRResult['parsedData'] => {
         }
     }
 
-    // Extract title (use first line or merchant name if found)
-    const lines = text.split('\n').filter(line => line.trim().length > 0);
+    // Extract title (use first non-empty line as merchant hint)
+    const lines = text.split('\n').filter((line) => line.trim().length > 0);
     if (lines.length > 0) {
-        // Use first non-empty line as potential title/merchant
         result.title = lines[0].trim().slice(0, 50);
     }
 
@@ -167,9 +221,8 @@ const blobToBase64 = (blob: Blob): Promise<string> => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => {
-            const base64data = reader.result as string;
-            // Remove the data URL prefix (e.g., "data:image/jpeg;base64,")
-            const base64 = base64data.split(',')[1];
+            const base64Data = reader.result as string;
+            const base64 = base64Data.split(',')[1];
             resolve(base64);
         };
         reader.onerror = reject;
@@ -184,17 +237,17 @@ export const inferCategoryFromText = (text: string): string => {
     const lowerText = text.toLowerCase();
 
     const categoryKeywords: Record<string, string[]> = {
-        'Food': ['restaurant', 'cafe', 'coffee', 'pizza', 'burger', 'sushi', 'taco', 'food', 'dining', 'kitchen'],
-        'Transport': ['uber', 'lyft', 'taxi', 'gas', 'fuel', 'parking', 'transit'],
-        'Shopping': ['amazon', 'walmart', 'target', 'store', 'shop', 'mall', 'retail'],
-        'Entertainment': ['movie', 'cinema', 'theatre', 'concert', 'spotify', 'netflix', 'game'],
-        'Utilities': ['electric', 'water', 'gas', 'internet', 'phone', 'bill'],
-        'Health': ['pharmacy', 'medical', 'doctor', 'hospital', 'clinic', 'cvs', 'walgreens'],
-        'Travel': ['hotel', 'flight', 'airline', 'airbnb', 'booking', 'expedia'],
+        Food: ['restaurant', 'cafe', 'coffee', 'pizza', 'burger', 'sushi', 'taco', 'food', 'dining', 'kitchen'],
+        Transport: ['uber', 'lyft', 'taxi', 'gas', 'fuel', 'parking', 'transit'],
+        Shopping: ['amazon', 'walmart', 'target', 'store', 'shop', 'mall', 'retail'],
+        Entertainment: ['movie', 'cinema', 'theatre', 'concert', 'spotify', 'netflix', 'game'],
+        Utilities: ['electric', 'water', 'gas', 'internet', 'phone', 'bill'],
+        Health: ['pharmacy', 'medical', 'doctor', 'hospital', 'clinic', 'cvs', 'walgreens'],
+        Travel: ['hotel', 'flight', 'airline', 'airbnb', 'booking', 'expedia'],
     };
 
     for (const [category, keywords] of Object.entries(categoryKeywords)) {
-        if (keywords.some(keyword => lowerText.includes(keyword))) {
+        if (keywords.some((keyword) => lowerText.includes(keyword))) {
             return category;
         }
     }

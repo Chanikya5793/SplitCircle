@@ -94,7 +94,8 @@
     },
     "@firebase/auth-compat": {
       "@react-native-async-storage/async-storage": "$@react-native-async-storage/async-storage"
-    }
+    },
+    "minimatch": "^3.1.4"
   },
   "expo": {
     "doctor": {

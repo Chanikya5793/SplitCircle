@@ -19,8 +19,30 @@ type MaybeCall = {
     allowedUserIds?: Record<string, boolean>;
 };
 
+type SafeErrorPayload = {
+    message?: string;
+    name?: string;
+};
+
 const getStringValue = (input: unknown): string => {
     return typeof input === "string" ? input.trim() : "";
+};
+
+const sanitizeParticipantName = (rawName: string, fallback: string): string => {
+    const cleaned = rawName.replace(/[\u0000-\u001F\u007F]/g, "").trim();
+    if (!cleaned) return fallback;
+    return cleaned.slice(0, 64);
+};
+
+const isSafeIdentifier = (value: string): boolean => {
+    return /^[A-Za-z0-9_-]{1,128}$/.test(value);
+};
+
+const toSafeError = (error: unknown): SafeErrorPayload => {
+    if (error instanceof Error) {
+        return { name: error.name, message: error.message };
+    }
+    return { message: "Unknown error" };
 };
 
 const getBearerToken = (authorizationHeader: string | undefined): string | null => {
@@ -47,6 +69,8 @@ export const generateLiveKitToken = onRequest(
         secrets: [LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET],
     },
     async (req, res) => {
+        res.set("Cache-Control", "no-store");
+
         if (req.method === "OPTIONS") {
             res.status(204).send("");
             return;
@@ -70,10 +94,18 @@ export const generateLiveKitToken = onRequest(
 
             const roomName = getStringValue(requestBody.roomName ?? req.query.roomName);
             const chatId = getStringValue(requestBody.chatId ?? req.query.chatId);
-            const participantName = getStringValue(requestBody.name ?? req.query.name) || uid;
+            const participantName = sanitizeParticipantName(
+                getStringValue(requestBody.name ?? req.query.name),
+                uid
+            );
 
             if (!roomName || !chatId) {
                 res.status(400).json({ error: "Missing required parameters: roomName, chatId" });
+                return;
+            }
+
+            if (!isSafeIdentifier(roomName) || !isSafeIdentifier(chatId)) {
+                res.status(400).json({ error: "Invalid roomName or chatId format." });
                 return;
             }
 
@@ -139,7 +171,7 @@ export const generateLiveKitToken = onRequest(
             const token = await accessToken.toJwt();
             res.status(200).json({ token, url: livekitUrl });
         } catch (error) {
-            logger.error("Error generating LiveKit token", error);
+            logger.error("Error generating LiveKit token", toSafeError(error));
             res.status(500).json({ error: "Internal server error" });
         }
     }

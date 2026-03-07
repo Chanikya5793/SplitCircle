@@ -87,7 +87,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       ?? process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID
       ?? '',
     androidClientId: googleConfig.androidClientId ?? process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '',
-    iosClientId: googleConfig.iosClientId ?? process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? 'mock_ios_client_id',
+    iosClientId: googleConfig.iosClientId ?? process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '',
   });
 
   useEffect(() => {
