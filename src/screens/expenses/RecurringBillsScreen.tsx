@@ -37,7 +37,7 @@ const FREQUENCY_PRESETS: { key: FrequencyPreset; label: string }[] = [
 const presetToFrequencyAndInterval = (preset: FrequencyPreset): { frequency: BillFrequency; interval: number; weekdays?: number[] } => {
     switch (preset) {
         case 'daily': return { frequency: 'daily', interval: 1 };
-        case 'weekdays': return { frequency: 'daily', interval: 1, weekdays: [1, 2, 3, 4, 5] };
+        case 'weekdays': return { frequency: 'weekly', interval: 1, weekdays: [1, 2, 3, 4, 5] };
         case 'weekly': return { frequency: 'weekly', interval: 1 };
         case 'biweekly': return { frequency: 'weekly', interval: 2 };
         case 'monthly': return { frequency: 'monthly', interval: 1 };
@@ -283,7 +283,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     recurrenceRule,
                     startAt,
                     isActive: true,
-                    nextDueAt: now, // generate immediately for newly created bills
+                    nextDueAt: now, // generate immediately for newly created bills // should be updated to correct "nextDueAt" in sync step if required
                     frequency: frequency as any,
                     dayOfWeek: selectedWeekdays[0],
                     dayOfMonth: parseDayList(dayOfMonthInput, new Date().getDate())[0],
