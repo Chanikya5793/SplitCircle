@@ -11,6 +11,11 @@ export interface ReceiptMetadata {
   size?: number;
 }
 
+export interface RecurringExpenseMetadata {
+  billId: string;
+  occurrenceAt: number;
+}
+
 export interface Expense {
   expenseId: string;
   groupId: string;
@@ -23,6 +28,7 @@ export interface Expense {
   settled: boolean;
   notes?: string;
   receipt?: ReceiptMetadata;
+  recurring?: RecurringExpenseMetadata;
   createdAt: number;
   updatedAt: number;
 }
