@@ -10,6 +10,7 @@ import { ROUTES } from '@/constants';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense, Group, Settlement } from '@/models';
+import { syncRecurringBillsForGroupWithFallback } from '@/services/recurringBillService';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { BlurView } from 'expo-blur';
@@ -142,6 +143,12 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
       headerTintColor: theme.colors.primary,
     });
   }, [navigation, theme.colors.primary]);
+
+  useEffect(() => {
+    syncRecurringBillsForGroupWithFallback(group.groupId).catch((error) => {
+      console.warn('Recurring bill sync on group open failed:', error);
+    });
+  }, [group.groupId]);
 
   const memberMap = useMemo(
     () => Object.fromEntries(group.members.map((m) => [m.userId, m.displayName])),
