@@ -33,19 +33,17 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.generateLiveKitToken = void 0;
+exports.generateLiveKitToken = exports.triggerRecurringBillsForGroup = exports.runRecurringBillsScheduler = void 0;
 const app_1 = require("firebase-admin/app");
 const auth_1 = require("firebase-admin/auth");
 const database_1 = require("firebase-admin/database");
 const firestore_1 = require("firebase-admin/firestore");
 const logger = __importStar(require("firebase-functions/logger"));
-const params_1 = require("firebase-functions/params");
 const https_1 = require("firebase-functions/v2/https");
+const scheduler_1 = require("firebase-functions/v2/scheduler");
 const livekit_server_sdk_1 = require("livekit-server-sdk");
+const recurringBills_1 = require("./recurringBills");
 (0, app_1.initializeApp)();
-const LIVEKIT_URL = (0, params_1.defineSecret)("LIVEKIT_URL");
-const LIVEKIT_API_KEY = (0, params_1.defineSecret)("LIVEKIT_API_KEY");
-const LIVEKIT_API_SECRET = (0, params_1.defineSecret)("LIVEKIT_API_SECRET");
 const getStringValue = (input) => {
     return typeof input === "string" ? input.trim() : "";
 };
@@ -85,11 +83,56 @@ const getAuthenticatedUid = async (authorizationHeader) => {
         return null;
     }
 };
+exports.runRecurringBillsScheduler = (0, scheduler_1.onSchedule)("every 15 minutes", async () => {
+    try {
+        const result = await (0, recurringBills_1.processAllDueRecurringBills)();
+        logger.info("Recurring bills scheduler completed", result);
+    }
+    catch (error) {
+        logger.error("Recurring bills scheduler failed", toSafeError(error));
+        throw error;
+    }
+});
+exports.triggerRecurringBillsForGroup = (0, https_1.onCall)(async (request) => {
+    var _a, _b, _c;
+    const uid = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid;
+    if (!uid) {
+        throw new https_1.HttpsError("unauthenticated", "Authentication required.");
+    }
+    const groupId = getStringValue((_b = request.data) === null || _b === void 0 ? void 0 : _b.groupId);
+    if (!groupId) {
+        throw new https_1.HttpsError("invalid-argument", "Missing required field: groupId");
+    }
+    const groupDoc = await (0, firestore_1.getFirestore)().collection("groups").doc(groupId).get();
+    if (!groupDoc.exists) {
+        throw new https_1.HttpsError("not-found", "Group not found.");
+    }
+    const memberIds = Array.isArray((_c = groupDoc.data()) === null || _c === void 0 ? void 0 : _c.memberIds)
+        ? groupDoc.data().memberIds
+        : [];
+    if (!memberIds.includes(uid)) {
+        throw new https_1.HttpsError("permission-denied", "User is not a member of this group.");
+    }
+    try {
+        const result = await (0, recurringBills_1.processGroupDueRecurringBills)(groupId);
+        logger.info("Recurring bills sync completed for group", Object.assign({ groupId,
+            uid }, result));
+        return {
+            generatedCount: result.generatedExpenses,
+            processedBills: result.processedBills,
+            scannedBills: result.scannedBills,
+        };
+    }
+    catch (error) {
+        logger.error("Recurring bills sync failed for group", Object.assign({ groupId,
+            uid }, toSafeError(error)));
+        throw new https_1.HttpsError("internal", "Failed to sync recurring bills.");
+    }
+});
 exports.generateLiveKitToken = (0, https_1.onRequest)({
     cors: true,
-    secrets: [LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET],
 }, async (req, res) => {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     res.set("Cache-Control", "no-store");
     if (req.method === "OPTIONS") {
         res.status(204).send("");
@@ -149,9 +192,9 @@ exports.generateLiveKitToken = (0, https_1.onRequest)({
             res.status(403).json({ error: "Forbidden. User is not allowed to join this call." });
             return;
         }
-        const livekitUrl = LIVEKIT_URL.value();
-        const livekitApiKey = LIVEKIT_API_KEY.value();
-        const livekitApiSecret = LIVEKIT_API_SECRET.value();
+        const livekitUrl = (_f = process.env.LIVEKIT_URL) !== null && _f !== void 0 ? _f : "";
+        const livekitApiKey = (_g = process.env.LIVEKIT_API_KEY) !== null && _g !== void 0 ? _g : "";
+        const livekitApiSecret = (_h = process.env.LIVEKIT_API_SECRET) !== null && _h !== void 0 ? _h : "";
         if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
             logger.error("LiveKit function misconfigured: missing runtime secrets.");
             res.status(500).json({ error: "Server misconfiguration." });

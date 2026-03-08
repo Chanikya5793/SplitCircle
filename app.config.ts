@@ -71,7 +71,7 @@ const config = {
   scheme: 'splitcircle',
   splash: {
     image: './assets/splash-icon.png',
-    resizeMode: 'contain',
+    resizeMode: 'cover',
     backgroundColor: '#101010',
   },
   notification: {
@@ -118,6 +118,15 @@ const config = {
     favicon: './assets/favicon.png',
   },
   plugins: [
+    [
+      'expo-splash-screen',
+      {
+        image: './assets/splash-icon.png',
+        resizeMode: 'cover',
+        imageWidth: 393,
+        backgroundColor: '#101010',
+      },
+    ],
     'expo-font',
     'expo-secure-store',
     'expo-web-browser',

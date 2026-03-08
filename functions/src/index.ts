@@ -3,15 +3,14 @@ import { getAuth } from "firebase-admin/auth";
 import { getDatabase } from "firebase-admin/database";
 import { getFirestore } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
-import { defineSecret } from "firebase-functions/params";
-import { onRequest } from "firebase-functions/v2/https";
+import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import { AccessToken } from "livekit-server-sdk";
+import { processAllDueRecurringBills, processGroupDueRecurringBills } from "./recurringBills";
 
 initializeApp();
 
-const LIVEKIT_URL = defineSecret("LIVEKIT_URL");
-const LIVEKIT_API_KEY = defineSecret("LIVEKIT_API_KEY");
-const LIVEKIT_API_SECRET = defineSecret("LIVEKIT_API_SECRET");
+
 
 type MaybeCall = {
     chatId?: string;
@@ -63,10 +62,70 @@ const getAuthenticatedUid = async (authorizationHeader: string | undefined): Pro
     }
 };
 
+export const runRecurringBillsScheduler = onSchedule(
+    "every 15 minutes",
+    async () => {
+        try {
+            const result = await processAllDueRecurringBills();
+            logger.info("Recurring bills scheduler completed", result);
+        } catch (error) {
+            logger.error("Recurring bills scheduler failed", toSafeError(error));
+            throw error;
+        }
+    }
+);
+
+export const triggerRecurringBillsForGroup = onCall(
+    async (request) => {
+        const uid = request.auth?.uid;
+        if (!uid) {
+            throw new HttpsError("unauthenticated", "Authentication required.");
+        }
+
+        const groupId = getStringValue(request.data?.groupId);
+        if (!groupId) {
+            throw new HttpsError("invalid-argument", "Missing required field: groupId");
+        }
+
+        const groupDoc = await getFirestore().collection("groups").doc(groupId).get();
+        if (!groupDoc.exists) {
+            throw new HttpsError("not-found", "Group not found.");
+        }
+
+        const memberIds = Array.isArray(groupDoc.data()?.memberIds)
+            ? groupDoc.data()!.memberIds as string[]
+            : [];
+
+        if (!memberIds.includes(uid)) {
+            throw new HttpsError("permission-denied", "User is not a member of this group.");
+        }
+
+        try {
+            const result = await processGroupDueRecurringBills(groupId);
+            logger.info("Recurring bills sync completed for group", {
+                groupId,
+                uid,
+                ...result,
+            });
+            return {
+                generatedCount: result.generatedExpenses,
+                processedBills: result.processedBills,
+                scannedBills: result.scannedBills,
+            };
+        } catch (error) {
+            logger.error("Recurring bills sync failed for group", {
+                groupId,
+                uid,
+                ...toSafeError(error),
+            });
+            throw new HttpsError("internal", "Failed to sync recurring bills.");
+        }
+    }
+);
+
 export const generateLiveKitToken = onRequest(
     {
         cors: true,
-        secrets: [LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET],
     },
     async (req, res) => {
         res.set("Cache-Control", "no-store");
@@ -146,9 +205,9 @@ export const generateLiveKitToken = onRequest(
                 return;
             }
 
-            const livekitUrl = LIVEKIT_URL.value();
-            const livekitApiKey = LIVEKIT_API_KEY.value();
-            const livekitApiSecret = LIVEKIT_API_SECRET.value();
+            const livekitUrl = process.env.LIVEKIT_URL ?? "";
+            const livekitApiKey = process.env.LIVEKIT_API_KEY ?? "";
+            const livekitApiSecret = process.env.LIVEKIT_API_SECRET ?? "";
 
             if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
                 logger.error("LiveKit function misconfigured: missing runtime secrets.");
