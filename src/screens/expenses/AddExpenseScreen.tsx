@@ -6,13 +6,13 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group, ParticipantShare, SplitType } from '@/models';
 import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
-import { selectionHaptic, successHaptic, mediumHaptic } from '@/utils/haptics';
+import { mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
-import { ActivityIndicator, Button, Chip, Dialog, HelperText, Menu, PaperProvider, Portal, SegmentedButtons, Text, TextInput, TouchableRipple } from 'react-native-paper';
+import { Button, Chip, Dialog, HelperText, Menu, PaperProvider, Portal, SegmentedButtons, Text, TextInput, TouchableRipple } from 'react-native-paper';
 
 interface AddExpenseScreenProps {
   group: Group;
@@ -94,7 +94,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       }
     }
   }, [expenseId, group.expenses]);
-
+  const isRecurringExpense = expenseId ? group.expenses.find((e) => e.expenseId === expenseId)?.recurring : undefined;
 
   const memberDisplayNames = useMemo(
     () => Object.fromEntries(group.members.map((member) => [member.userId, member.displayName])),
@@ -301,6 +301,14 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
           <GlassView style={styles.card}>
             <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>{expenseId ? 'Edit expense' : 'Add expense'}</Text>
 
+            {isRecurringExpense && (
+              <View style={[styles.recurringNote, { backgroundColor: isDark ? 'rgba(100,180,255,0.12)' : 'rgba(33,150,243,0.08)' }]}>
+                <Text style={{ color: theme.colors.onSurfaceVariant, fontSize: 13 }}>
+                  Editing this occurrence only. Future recurrences will use the original bill settings.
+                </Text>
+              </View>
+            )}
+
             <FloatingLabelInput
               label="Title"
               value={title}
@@ -480,6 +488,12 @@ const styles = StyleSheet.create({
   title: {
     textAlign: 'center',
     marginBottom: 12,
+  },
+  recurringNote: {
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 8,
   },
   field: {
     marginBottom: 8,
