@@ -218,15 +218,29 @@ export const getNextDueAt = (
 
 export const getRecurrenceSummary = (rule: RecurrenceRule): string => {
     const normalizedRule = normalizeRecurrenceRule(rule, Date.now());
-    const intervalText = normalizedRule.interval === 1 ? 'Every' : `Every ${normalizedRule.interval}`;
 
     if (normalizedRule.frequency === 'daily') {
-        return normalizedRule.interval === 1 ? 'Every day' : `Every ${normalizedRule.interval} days`;
+        if (normalizedRule.interval === 1) return 'Every day';
+        if (normalizedRule.interval === 2) return 'Every other day';
+        return `Every ${normalizedRule.interval} days`;
     }
 
     if (normalizedRule.frequency === 'weekly') {
-        const weekdays = (normalizedRule.weekdays ?? []).map((day) => WEEKDAY_LABELS[day]).join(', ');
-        return `${intervalText} week${normalizedRule.interval === 1 ? '' : 's'} on ${weekdays}`;
+        const weekdays = normalizedRule.weekdays ?? [];
+        const weekdayNames = weekdays.map((day) => WEEKDAY_LABELS[day]).join(', ');
+
+        // Friendly labels for well-known patterns
+        if (normalizedRule.interval === 1 && weekdays.length === 5 && [1, 2, 3, 4, 5].every((d) => weekdays.includes(d))) {
+            return 'Weekdays (Mon–Fri)';
+        }
+        if (normalizedRule.interval === 1 && weekdays.length === 2 && weekdays.includes(0) && weekdays.includes(6)) {
+            return 'Weekends (Sat–Sun)';
+        }
+
+        if (normalizedRule.interval === 1) return `Every week on ${weekdayNames}`;
+        if (normalizedRule.interval === 2) return `Every 2 weeks on ${weekdayNames}`;
+        if (normalizedRule.interval === 3) return `Every 3 weeks on ${weekdayNames}`;
+        return `Every ${normalizedRule.interval} weeks on ${weekdayNames}`;
     }
 
     const months = normalizedRule.monthsOfYear ?? [];
@@ -234,12 +248,46 @@ export const getRecurrenceSummary = (rule: RecurrenceRule): string => {
         ? ` in ${months.map((month) => MONTH_LABELS[month - 1]).join(', ')}`
         : '';
 
-    if (normalizedRule.monthlyPattern === 'weekdaysOfMonth') {
-        const weeks = (normalizedRule.weeksOfMonth ?? []).join(', ');
-        const weekdays = (normalizedRule.weekdays ?? []).map((day) => WEEKDAY_LABELS[day]).join(', ');
-        return `${intervalText} ${normalizedRule.frequency === 'yearly' ? 'year' : 'month'}${normalizedRule.interval === 1 ? '' : 's'} on week ${weeks} (${weekdays})${monthsText}`;
+    if (normalizedRule.frequency === 'monthly') {
+        const intervalLabel =
+            normalizedRule.interval === 1 ? 'Monthly'
+            : normalizedRule.interval === 2 ? 'Every 2 months'
+            : normalizedRule.interval === 3 ? 'Quarterly'
+            : normalizedRule.interval === 4 ? 'Every 4 months'
+            : normalizedRule.interval === 6 ? 'Every 6 months'
+            : `Every ${normalizedRule.interval} months`;
+
+        if (normalizedRule.monthlyPattern === 'weekdaysOfMonth') {
+            const weeks = (normalizedRule.weeksOfMonth ?? []).map((w) => `week ${w}`).join(', ');
+            const weekdays = (normalizedRule.weekdays ?? []).map((day) => WEEKDAY_LABELS[day]).join(', ');
+            return `${intervalLabel} on ${weeks} (${weekdays})${monthsText}`;
+        }
+
+        const days = normalizedRule.daysOfMonth ?? [];
+        if (days.length === 2 && days.includes(1) && days.includes(15)) {
+            return `Twice a month (1st & 15th)${monthsText}`;
+        }
+        const dayNames = days.map((d) => ordinal(d)).join(', ');
+        return `${intervalLabel} on the ${dayNames}${monthsText}`;
     }
 
-    const days = (normalizedRule.daysOfMonth ?? []).join(', ');
-    return `${intervalText} ${normalizedRule.frequency === 'yearly' ? 'year' : 'month'}${normalizedRule.interval === 1 ? '' : 's'} on day ${days}${monthsText}`;
+    // yearly
+    const yearLabel = normalizedRule.interval === 1 ? 'Yearly'
+        : normalizedRule.interval === 2 ? 'Every 2 years'
+        : `Every ${normalizedRule.interval} years`;
+
+    if (normalizedRule.monthlyPattern === 'weekdaysOfMonth') {
+        const weeks = (normalizedRule.weeksOfMonth ?? []).map((w) => `week ${w}`).join(', ');
+        const weekdays = (normalizedRule.weekdays ?? []).map((day) => WEEKDAY_LABELS[day]).join(', ');
+        return `${yearLabel} on ${weeks} (${weekdays})${monthsText}`;
+    }
+
+    const days = (normalizedRule.daysOfMonth ?? []).map((d) => ordinal(d)).join(', ');
+    return `${yearLabel} on the ${days}${monthsText}`;
+};
+
+const ordinal = (n: number): string => {
+    const s = ['th', 'st', 'nd', 'rd'];
+    const v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
 };

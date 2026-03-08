@@ -20,45 +20,81 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, IconButton, Modal, Portal, Switch, Text } from 'react-native-paper';
 
-type FrequencyPreset = 'daily' | 'weekdays' | 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'semi-annually' | 'yearly' | 'custom';
+type FrequencyPreset =
+    | 'daily' | 'every-other-day' | 'weekdays' | 'weekends'
+    | 'weekly' | 'biweekly' | 'every-3-weeks'
+    | 'twice-a-month' | 'monthly' | 'every-2-months' | 'quarterly' | 'every-4-months' | 'semi-annually'
+    | 'yearly' | 'every-2-years'
+    | 'custom';
 
 const FREQUENCY_PRESETS: { key: FrequencyPreset; label: string }[] = [
     { key: 'daily', label: 'Daily' },
+    { key: 'every-other-day', label: 'Every Other Day' },
     { key: 'weekdays', label: 'Weekdays' },
+    { key: 'weekends', label: 'Weekends' },
     { key: 'weekly', label: 'Weekly' },
     { key: 'biweekly', label: 'Every 2 Weeks' },
+    { key: 'every-3-weeks', label: 'Every 3 Weeks' },
+    { key: 'twice-a-month', label: 'Twice a Month' },
     { key: 'monthly', label: 'Monthly' },
+    { key: 'every-2-months', label: 'Every 2 Months' },
     { key: 'quarterly', label: 'Quarterly' },
+    { key: 'every-4-months', label: 'Every 4 Months' },
     { key: 'semi-annually', label: 'Every 6 Months' },
     { key: 'yearly', label: 'Yearly' },
+    { key: 'every-2-years', label: 'Every 2 Years' },
     { key: 'custom', label: 'Custom' },
 ];
 
-const presetToFrequencyAndInterval = (preset: FrequencyPreset): { frequency: BillFrequency; interval: number; weekdays?: number[] } => {
+interface PresetConfig {
+    frequency: BillFrequency;
+    interval: number;
+    weekdays?: number[];
+    monthlyPattern?: MonthlyPattern;
+    daysOfMonth?: string;
+}
+
+const presetToConfig = (preset: FrequencyPreset): PresetConfig => {
     switch (preset) {
-        case 'daily': return { frequency: 'daily', interval: 1 };
-        case 'weekdays': return { frequency: 'weekly', interval: 1, weekdays: [1, 2, 3, 4, 5] };
-        case 'weekly': return { frequency: 'weekly', interval: 1 };
-        case 'biweekly': return { frequency: 'weekly', interval: 2 };
-        case 'monthly': return { frequency: 'monthly', interval: 1 };
-        case 'quarterly': return { frequency: 'monthly', interval: 3 };
-        case 'semi-annually': return { frequency: 'monthly', interval: 6 };
-        case 'yearly': return { frequency: 'yearly', interval: 1 };
-        case 'custom': return { frequency: 'monthly', interval: 1 };
+        case 'daily':           return { frequency: 'daily', interval: 1 };
+        case 'every-other-day': return { frequency: 'daily', interval: 2 };
+        case 'weekdays':        return { frequency: 'weekly', interval: 1, weekdays: [1, 2, 3, 4, 5] };
+        case 'weekends':        return { frequency: 'weekly', interval: 1, weekdays: [0, 6] };
+        case 'weekly':          return { frequency: 'weekly', interval: 1 };
+        case 'biweekly':        return { frequency: 'weekly', interval: 2 };
+        case 'every-3-weeks':   return { frequency: 'weekly', interval: 3 };
+        case 'twice-a-month':   return { frequency: 'monthly', interval: 1, monthlyPattern: 'dayOfMonth', daysOfMonth: '1,15' };
+        case 'monthly':         return { frequency: 'monthly', interval: 1 };
+        case 'every-2-months':  return { frequency: 'monthly', interval: 2 };
+        case 'quarterly':       return { frequency: 'monthly', interval: 3 };
+        case 'every-4-months':  return { frequency: 'monthly', interval: 4 };
+        case 'semi-annually':   return { frequency: 'monthly', interval: 6 };
+        case 'yearly':          return { frequency: 'yearly', interval: 1 };
+        case 'every-2-years':   return { frequency: 'yearly', interval: 2 };
+        case 'custom':          return { frequency: 'monthly', interval: 1 };
     }
 };
 
-const inferPreset = (freq: BillFrequency, interval: number, weekdays?: number[]): FrequencyPreset => {
+const inferPreset = (freq: BillFrequency, interval: number, weekdays?: number[], daysOfMonth?: number[]): FrequencyPreset => {
     if (freq === 'daily' && interval === 1) return 'daily';
+    if (freq === 'daily' && interval === 2) return 'every-other-day';
     if (freq === 'weekly' && interval === 1) {
         if (weekdays && weekdays.length === 5 && [1, 2, 3, 4, 5].every((d) => weekdays.includes(d))) return 'weekdays';
+        if (weekdays && weekdays.length === 2 && weekdays.includes(0) && weekdays.includes(6)) return 'weekends';
         return 'weekly';
     }
     if (freq === 'weekly' && interval === 2) return 'biweekly';
-    if (freq === 'monthly' && interval === 1) return 'monthly';
+    if (freq === 'weekly' && interval === 3) return 'every-3-weeks';
+    if (freq === 'monthly' && interval === 1) {
+        if (daysOfMonth && daysOfMonth.length === 2 && daysOfMonth.includes(1) && daysOfMonth.includes(15)) return 'twice-a-month';
+        return 'monthly';
+    }
+    if (freq === 'monthly' && interval === 2) return 'every-2-months';
     if (freq === 'monthly' && interval === 3) return 'quarterly';
+    if (freq === 'monthly' && interval === 4) return 'every-4-months';
     if (freq === 'monthly' && interval === 6) return 'semi-annually';
     if (freq === 'yearly' && interval === 1) return 'yearly';
+    if (freq === 'yearly' && interval === 2) return 'every-2-years';
     return 'custom';
 };
 
@@ -176,12 +212,13 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
         };
 
         if (frequency === 'daily') {
-            // For weekdays preset, use weekly with Mon-Fri
-            if (selectedPreset === 'weekdays') {
+            // For weekdays/weekends presets, use weekly with specific days
+            if (selectedPreset === 'weekdays' || selectedPreset === 'weekends') {
+                const config = presetToConfig(selectedPreset);
                 return normalizeRecurrenceRule({
                     frequency: 'weekly',
                     interval: 1,
-                    weekdays: [1, 2, 3, 4, 5],
+                    weekdays: config.weekdays,
                     timezoneOffsetMinutes: baseRule.timezoneOffsetMinutes,
                 }, startAt);
             }
@@ -314,7 +351,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
         setSelectedParticipantIds(bill.participants.map((participant) => participant.userId));
         setFrequency(normalizedRule.frequency);
         setIntervalInput(String(normalizedRule.interval ?? 1));
-        setSelectedPreset(inferPreset(normalizedRule.frequency, normalizedRule.interval ?? 1, normalizedRule.weekdays));
+        setSelectedPreset(inferPreset(normalizedRule.frequency, normalizedRule.interval ?? 1, normalizedRule.weekdays, normalizedRule.daysOfMonth));
         setMonthlyPattern(normalizedRule.monthlyPattern ?? 'dayOfMonth');
         setDayOfMonthInput((normalizedRule.daysOfMonth ?? [new Date(bill.startAt).getDate()]).join(','));
         setSelectedWeekdays(normalizedRule.weekdays?.length ? normalizedRule.weekdays : [new Date(bill.startAt).getDay()]);
@@ -460,11 +497,17 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                         onPress={() => {
                                             setSelectedPreset(key);
                                             if (key !== 'custom') {
-                                                const mapped = presetToFrequencyAndInterval(key);
-                                                setFrequency(mapped.frequency);
-                                                setIntervalInput(String(mapped.interval));
-                                                if (key === 'weekdays') {
-                                                    setSelectedWeekdays([1, 2, 3, 4, 5]);
+                                                const config = presetToConfig(key);
+                                                setFrequency(config.frequency);
+                                                setIntervalInput(String(config.interval));
+                                                if (config.weekdays) {
+                                                    setSelectedWeekdays(config.weekdays);
+                                                }
+                                                if (config.monthlyPattern) {
+                                                    setMonthlyPattern(config.monthlyPattern);
+                                                }
+                                                if (config.daysOfMonth) {
+                                                    setDayOfMonthInput(config.daysOfMonth);
                                                 }
                                             }
                                         }}
@@ -508,7 +551,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                 </>
                             )}
 
-                            {(frequency === 'monthly' || frequency === 'yearly') && selectedPreset !== 'daily' && selectedPreset !== 'weekdays' && (
+                            {(frequency === 'monthly' || frequency === 'yearly') && selectedPreset !== 'daily' && selectedPreset !== 'weekdays' && selectedPreset !== 'weekends' && selectedPreset !== 'twice-a-month' && (
                                 <>
                                     <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Monthly Pattern</Text>
                                     <View style={styles.wrapRow}>
@@ -536,7 +579,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                 />
                             )}
 
-                            {(frequency === 'weekly' || (monthlyPattern === 'weekdaysOfMonth' && (frequency === 'monthly' || frequency === 'yearly'))) && selectedPreset !== 'daily' && selectedPreset !== 'weekdays' && (
+                            {(frequency === 'weekly' || (monthlyPattern === 'weekdaysOfMonth' && (frequency === 'monthly' || frequency === 'yearly'))) && selectedPreset !== 'daily' && selectedPreset !== 'weekdays' && selectedPreset !== 'weekends' && (
                                 <>
                                     <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Weekdays</Text>
                                     <View style={styles.wrapRow}>
