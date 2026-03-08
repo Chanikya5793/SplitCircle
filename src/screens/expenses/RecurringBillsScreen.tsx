@@ -1,111 +1,354 @@
+import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import { useGroups } from '@/context/GroupContext';
 import { Group } from '@/models';
-import { RecurringBill } from '@/models/recurringBill';
+import { BillFrequency, MonthlyPattern, RecurrenceRule, RecurringBill } from '@/models/recurringBill';
 import {
     createRecurringBill,
     deleteRecurringBill,
     getRecurringBillsForGroup,
-    toggleRecurringBillStatus
+    syncRecurringBillsForGroupWithFallback,
+    toggleRecurringBillStatus,
+    updateRecurringBill,
 } from '@/services/recurringBillService';
 import { formatCurrency } from '@/utils/currency';
-import { lightHaptic, successHaptic, errorHaptic } from '@/utils/haptics';
-import React, { useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, View, TouchableOpacity } from 'react-native';
-import { Button, IconButton, Text, Switch, Modal, Portal } from 'react-native-paper';
-import { FloatingLabelInput } from '@/components/FloatingLabelInput';
+import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
+import { findNextOccurrenceAt, getRecurrenceSummary, normalizeRecurrenceRule } from '@/utils/recurrence';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Button, IconButton, Modal, Portal, Switch, Text } from 'react-native-paper';
+
+type FrequencyPreset = 'daily' | 'weekdays' | 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'semi-annually' | 'yearly' | 'custom';
+
+const FREQUENCY_PRESETS: { key: FrequencyPreset; label: string }[] = [
+    { key: 'daily', label: 'Daily' },
+    { key: 'weekdays', label: 'Weekdays' },
+    { key: 'weekly', label: 'Weekly' },
+    { key: 'biweekly', label: 'Every 2 Weeks' },
+    { key: 'monthly', label: 'Monthly' },
+    { key: 'quarterly', label: 'Quarterly' },
+    { key: 'semi-annually', label: 'Every 6 Months' },
+    { key: 'yearly', label: 'Yearly' },
+    { key: 'custom', label: 'Custom' },
+];
+
+const presetToFrequencyAndInterval = (preset: FrequencyPreset): { frequency: BillFrequency; interval: number; weekdays?: number[] } => {
+    switch (preset) {
+        case 'daily': return { frequency: 'daily', interval: 1 };
+        case 'weekdays': return { frequency: 'daily', interval: 1, weekdays: [1, 2, 3, 4, 5] };
+        case 'weekly': return { frequency: 'weekly', interval: 1 };
+        case 'biweekly': return { frequency: 'weekly', interval: 2 };
+        case 'monthly': return { frequency: 'monthly', interval: 1 };
+        case 'quarterly': return { frequency: 'monthly', interval: 3 };
+        case 'semi-annually': return { frequency: 'monthly', interval: 6 };
+        case 'yearly': return { frequency: 'yearly', interval: 1 };
+        case 'custom': return { frequency: 'monthly', interval: 1 };
+    }
+};
+
+const inferPreset = (freq: BillFrequency, interval: number, weekdays?: number[]): FrequencyPreset => {
+    if (freq === 'daily' && interval === 1) return 'daily';
+    if (freq === 'weekly' && interval === 1) {
+        if (weekdays && weekdays.length === 5 && [1, 2, 3, 4, 5].every((d) => weekdays.includes(d))) return 'weekdays';
+        return 'weekly';
+    }
+    if (freq === 'weekly' && interval === 2) return 'biweekly';
+    if (freq === 'monthly' && interval === 1) return 'monthly';
+    if (freq === 'monthly' && interval === 3) return 'quarterly';
+    if (freq === 'monthly' && interval === 6) return 'semi-annually';
+    if (freq === 'yearly' && interval === 1) return 'yearly';
+    return 'custom';
+};
 
 interface RecurringBillsScreenProps {
     group: Group;
 }
 
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+const ALL_MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+const parseDayList = (input: string, fallback: number): number[] => {
+    const values = input
+        .split(',')
+        .map((item) => Number.parseInt(item.trim(), 10))
+        .filter((value) => Number.isFinite(value) && value >= 1 && value <= 31);
+    const deduplicated = Array.from(new Set(values));
+    return deduplicated.length ? deduplicated : [fallback];
+};
+
+const toggleInList = (list: number[], value: number): number[] => {
+    if (list.includes(value)) {
+        return list.filter((item) => item !== value);
+    }
+    return [...list, value].sort((a, b) => a - b);
+};
+
 export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
-    const { theme, isDark } = useTheme();
+    const { theme } = useTheme();
+    const { user } = useAuth();
     const [bills, setBills] = useState<RecurringBill[]>([]);
     const [loading, setLoading] = useState(true);
     const [modalVisible, setModalVisible] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [editingBillId, setEditingBillId] = useState<string | null>(null);
+    const [editingStartAt, setEditingStartAt] = useState<number | null>(null);
 
-    // Form State
+    // Form state
     const [title, setTitle] = useState('');
     const [amount, setAmount] = useState('');
-    const [frequency, setFrequency] = useState<'weekly' | 'biweekly' | 'monthly'>('monthly');
-    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [category, setCategory] = useState('Utilities');
+    const [paidBy, setPaidBy] = useState<string>('');
+    const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>([]);
+
+    const [frequency, setFrequency] = useState<BillFrequency>('monthly');
+    const [intervalInput, setIntervalInput] = useState('1');
+    const [selectedPreset, setSelectedPreset] = useState<FrequencyPreset>('monthly');
+    const [monthlyPattern, setMonthlyPattern] = useState<MonthlyPattern>('dayOfMonth');
+    const [dayOfMonthInput, setDayOfMonthInput] = useState(String(new Date().getDate()));
+    const [selectedWeekdays, setSelectedWeekdays] = useState<number[]>([new Date().getDay()]);
+    const [selectedWeeksOfMonth, setSelectedWeeksOfMonth] = useState<number[]>([
+        Math.floor((new Date().getDate() - 1) / 7) + 1,
+    ]);
+    const [selectedMonthsOfYear, setSelectedMonthsOfYear] = useState<number[]>(ALL_MONTHS);
+
+    const memberMap = useMemo(
+        () => Object.fromEntries(group.members.map((member) => [member.userId, member.displayName])),
+        [group.members],
+    );
+
+    useEffect(() => {
+        const initialPayer = group.members.find((member) => member.userId === user?.userId)?.userId
+            ?? group.members[0]?.userId
+            ?? '';
+        if (!paidBy) setPaidBy(initialPayer);
+        if (selectedParticipantIds.length === 0) {
+            setSelectedParticipantIds(group.members.map((member) => member.userId));
+        }
+    }, [group.members, paidBy, selectedParticipantIds.length, user?.userId]);
 
     useEffect(() => {
         loadBills();
     }, [group.groupId]);
 
+    const resetForm = () => {
+        setEditingBillId(null);
+        setEditingStartAt(null);
+        setTitle('');
+        setAmount('');
+        setCategory('Utilities');
+        setFrequency('monthly');
+        setIntervalInput('1');
+        setSelectedPreset('monthly');
+        setMonthlyPattern('dayOfMonth');
+        setDayOfMonthInput(String(new Date().getDate()));
+        setSelectedWeekdays([new Date().getDay()]);
+        setSelectedWeeksOfMonth([Math.floor((new Date().getDate() - 1) / 7) + 1]);
+        setSelectedMonthsOfYear(ALL_MONTHS);
+        setSelectedParticipantIds(group.members.map((member) => member.userId));
+        const currentUserInGroup = group.members.find((member) => member.userId === user?.userId)?.userId;
+        setPaidBy(currentUserInGroup ?? group.members[0]?.userId ?? '');
+    };
+
     const loadBills = async () => {
         try {
             setLoading(true);
+            await syncRecurringBillsForGroupWithFallback(group.groupId);
             const data = await getRecurringBillsForGroup(group.groupId);
             setBills(data);
         } catch (error) {
-            console.error('Error loading bills:', error);
+            console.error('Error loading recurring bills:', error);
             Alert.alert('Error', 'Failed to load recurring bills');
         } finally {
             setLoading(false);
         }
     };
 
+    const buildRecurrenceRule = (startAt: number): RecurrenceRule => {
+        const interval = Math.max(1, Number.parseInt(intervalInput, 10) || 1);
+
+        const baseRule: Partial<RecurrenceRule> = {
+            frequency,
+            interval,
+            timezoneOffsetMinutes: -new Date().getTimezoneOffset(),
+        };
+
+        if (frequency === 'daily') {
+            // For weekdays preset, use weekly with Mon-Fri
+            if (selectedPreset === 'weekdays') {
+                return normalizeRecurrenceRule({
+                    frequency: 'weekly',
+                    interval: 1,
+                    weekdays: [1, 2, 3, 4, 5],
+                    timezoneOffsetMinutes: baseRule.timezoneOffsetMinutes,
+                }, startAt);
+            }
+            return normalizeRecurrenceRule(baseRule, startAt);
+        }
+
+        if (frequency === 'weekly') {
+            baseRule.weekdays = selectedWeekdays.length ? selectedWeekdays : [new Date().getDay()];
+            return normalizeRecurrenceRule(baseRule, startAt);
+        }
+
+        baseRule.monthlyPattern = monthlyPattern;
+
+        if (monthlyPattern === 'dayOfMonth') {
+            baseRule.daysOfMonth = parseDayList(dayOfMonthInput, new Date().getDate());
+        } else {
+            baseRule.weekdays = selectedWeekdays.length ? selectedWeekdays : [new Date().getDay()];
+            baseRule.weeksOfMonth = selectedWeeksOfMonth.length
+                ? selectedWeeksOfMonth
+                : [Math.floor((new Date().getDate() - 1) / 7) + 1];
+        }
+
+        if (frequency === 'yearly') {
+            baseRule.monthsOfYear = selectedMonthsOfYear.length
+                ? selectedMonthsOfYear
+                : [new Date().getMonth() + 1];
+        } else if (selectedMonthsOfYear.length !== ALL_MONTHS.length) {
+            baseRule.monthsOfYear = selectedMonthsOfYear;
+        }
+
+        return normalizeRecurrenceRule(baseRule, startAt);
+    };
+
+    const buildParticipantShares = (billAmount: number) => {
+        const members = group.members.filter((member) => selectedParticipantIds.includes(member.userId));
+        if (!members.length) return [];
+
+        const baseShare = Math.floor((billAmount / members.length) * 100) / 100;
+        const shares = members.map((member) => ({ userId: member.userId, share: baseShare }));
+        const distributed = shares.reduce((sum, participant) => sum + participant.share, 0);
+        const remainder = Math.round((billAmount - distributed) * 100) / 100;
+
+        if (remainder !== 0) {
+            shares[shares.length - 1].share = Math.round((shares[shares.length - 1].share + remainder) * 100) / 100;
+        }
+
+        return shares;
+    };
+
     const handleCreate = async () => {
-        if (!title || !amount) {
-            Alert.alert('Missing Fields', 'Please fill in all fields');
+        if (!title.trim() || !amount.trim() || !paidBy) {
+            Alert.alert('Missing Fields', 'Please fill in title, amount, and paid-by.');
+            return;
+        }
+
+        const billAmount = Number.parseFloat(amount);
+        if (!Number.isFinite(billAmount) || billAmount <= 0) {
+            Alert.alert('Invalid Amount', 'Please enter a valid amount.');
+            return;
+        }
+
+        if (!selectedParticipantIds.length) {
+            Alert.alert('Participants Required', 'Select at least one participant.');
             return;
         }
 
         try {
             setIsSubmitting(true);
-            const currentUser = group.members[0]; // Simplified for now, should be actual auth user
+            const now = Date.now();
+            const startAt = editingStartAt ?? now;
+            const recurrenceRule = buildRecurrenceRule(startAt);
+            const participants = buildParticipantShares(billAmount);
+            const nextDueAt = findNextOccurrenceAt(recurrenceRule, startAt, now - 1) ?? startAt;
 
-            await createRecurringBill({
-                groupId: group.groupId,
-                title,
-                amount: parseFloat(amount),
-                category: 'Utilities', // Default for now
-                paidBy: currentUser.userId,
-                participants: group.members.map(m => ({
-                    userId: m.userId,
-                    share: parseFloat(amount) / group.members.length
-                })),
-                frequency,
-                dayOfWeek: new Date().getDay(),
-                isActive: true,
-                nextDueAt: Date.now(), // Due immediately upon creation
-            });
+            if (editingBillId) {
+                const existingBill = bills.find((bill) => bill.billId === editingBillId);
+                await updateRecurringBill(editingBillId, {
+                    title: title.trim(),
+                    amount: billAmount,
+                    category: category.trim() || 'Other',
+                    paidBy,
+                    participants,
+                    recurrenceRule,
+                    startAt,
+                    nextDueAt,
+                    frequency: frequency as any,
+                    dayOfWeek: selectedWeekdays[0],
+                    dayOfMonth: parseDayList(dayOfMonthInput, new Date().getDate())[0],
+                    isActive: existingBill?.isActive,
+                });
+            } else {
+                await createRecurringBill({
+                    groupId: group.groupId,
+                    title: title.trim(),
+                    amount: billAmount,
+                    category: category.trim() || 'Other',
+                    paidBy,
+                    participants,
+                    recurrenceRule,
+                    startAt,
+                    isActive: true,
+                    nextDueAt: now, // generate immediately for newly created bills
+                    frequency: frequency as any,
+                    dayOfWeek: selectedWeekdays[0],
+                    dayOfMonth: parseDayList(dayOfMonthInput, new Date().getDate())[0],
+                });
+            }
 
+            await syncRecurringBillsForGroupWithFallback(group.groupId);
+            await loadBills();
             successHaptic();
             setModalVisible(false);
-            setTitle('');
-            setAmount('');
-            loadBills();
+            resetForm();
         } catch (error) {
-            console.error('Error creating bill:', error);
-            Alert.alert('Error', 'Failed to create recurring bill');
+            console.error('Error saving recurring bill:', error);
+            Alert.alert('Error', 'Failed to save recurring bill');
         } finally {
             setIsSubmitting(false);
         }
+    };
+
+    const handleEdit = (bill: RecurringBill) => {
+        const normalizedRule = normalizeRecurrenceRule(bill.recurrenceRule, bill.startAt);
+        setEditingBillId(bill.billId);
+        setEditingStartAt(bill.startAt);
+        setTitle(bill.title);
+        setAmount(String(bill.amount));
+        setCategory(bill.category);
+        setPaidBy(bill.paidBy);
+        setSelectedParticipantIds(bill.participants.map((participant) => participant.userId));
+        setFrequency(normalizedRule.frequency);
+        setIntervalInput(String(normalizedRule.interval ?? 1));
+        setSelectedPreset(inferPreset(normalizedRule.frequency, normalizedRule.interval ?? 1, normalizedRule.weekdays));
+        setMonthlyPattern(normalizedRule.monthlyPattern ?? 'dayOfMonth');
+        setDayOfMonthInput((normalizedRule.daysOfMonth ?? [new Date(bill.startAt).getDate()]).join(','));
+        setSelectedWeekdays(normalizedRule.weekdays?.length ? normalizedRule.weekdays : [new Date(bill.startAt).getDay()]);
+        setSelectedWeeksOfMonth(
+            normalizedRule.weeksOfMonth?.length
+                ? normalizedRule.weeksOfMonth
+                : [Math.floor((new Date(bill.startAt).getDate() - 1) / 7) + 1],
+        );
+        setSelectedMonthsOfYear(
+            normalizedRule.monthsOfYear?.length
+                ? normalizedRule.monthsOfYear
+                : ALL_MONTHS,
+        );
+        setModalVisible(true);
     };
 
     const handleToggle = async (bill: RecurringBill) => {
         try {
             lightHaptic();
             await toggleRecurringBillStatus(bill.billId, !bill.isActive);
-            // Optimistic update
-            setBills(prev => prev.map(b =>
-                b.billId === bill.billId ? { ...b, isActive: !b.isActive } : b
-            ));
+            setBills((prev) => prev.map((entry) => (
+                entry.billId === bill.billId
+                    ? { ...entry, isActive: !entry.isActive }
+                    : entry
+            )));
         } catch (error) {
             console.error('Error toggling bill:', error);
             Alert.alert('Error', 'Failed to update bill status');
-            loadBills(); // Revert on failure
+            await loadBills();
         }
     };
 
     const handleDelete = (bill: RecurringBill) => {
-        Alert.alert('Delete Bill', 'Are you sure?', [
+        Alert.alert('Delete Bill', 'Are you sure you want to delete this recurring bill?', [
             { text: 'Cancel', style: 'cancel' },
             {
                 text: 'Delete',
@@ -114,13 +357,19 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     try {
                         await deleteRecurringBill(bill.billId);
                         errorHaptic();
-                        setBills(prev => prev.filter(b => b.billId !== bill.billId));
+                        setBills((prev) => prev.filter((entry) => entry.billId !== bill.billId));
                     } catch (error) {
                         console.error('Error deleting bill:', error);
+                        Alert.alert('Error', 'Failed to delete recurring bill');
                     }
-                }
-            }
+                },
+            },
         ]);
+    };
+
+    const openCreateModal = () => {
+        resetForm();
+        setModalVisible(true);
     };
 
     return (
@@ -131,7 +380,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                         Recurring Bills
                     </Text>
                     <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                        Automate your regular group expenses
+                        Automate and schedule shared expenses with advanced rules.
                     </Text>
                 </GlassView>
 
@@ -142,7 +391,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                         </Text>
                     </GlassView>
                 ) : (
-                    bills.map(bill => (
+                    bills.map((bill) => (
                         <GlassView key={bill.billId} style={styles.billCard}>
                             <View style={styles.billRow}>
                                 <View style={{ flex: 1 }}>
@@ -150,13 +399,24 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                         {bill.title}
                                     </Text>
                                     <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                                        {formatCurrency(bill.amount, group.currency)} • {bill.frequency}
+                                        {formatCurrency(bill.amount, group.currency)} • {getRecurrenceSummary(bill.recurrenceRule)}
+                                    </Text>
+                                    <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
+                                        Paid by {memberMap[bill.paidBy] ?? 'Unknown'} • {bill.participants.length} participant{bill.participants.length === 1 ? '' : 's'}
+                                    </Text>
+                                    <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                                        Next run: {new Date(bill.nextDueAt).toLocaleString()}
                                     </Text>
                                 </View>
                                 <Switch
                                     value={bill.isActive}
                                     onValueChange={() => handleToggle(bill)}
                                     color={theme.colors.primary}
+                                />
+                                <IconButton
+                                    icon="pencil-outline"
+                                    iconColor={theme.colors.primary}
+                                    onPress={() => handleEdit(bill)}
                                 />
                                 <IconButton
                                     icon="delete-outline"
@@ -168,53 +428,238 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     ))
                 )}
 
-                <Button
-                    mode="contained"
-                    onPress={() => setModalVisible(true)}
-                    style={{ marginTop: 20 }}
-                    icon="plus"
-                >
+                <Button mode="contained" onPress={openCreateModal} style={{ marginTop: 20 }} icon="plus">
                     Add Recurring Bill
                 </Button>
             </ScrollView>
 
             <Portal>
-                <Modal visible={modalVisible} onDismiss={() => setModalVisible(false)} contentContainerStyle={styles.modal}>
-                    <GlassView style={{ padding: 24, borderRadius: 24 }}>
-                        <Text variant="headlineSmall" style={{ marginBottom: 20, color: theme.colors.onSurface }}>
-                            New Recurring Bill
-                        </Text>
+                <Modal
+                    visible={modalVisible}
+                    onDismiss={() => {
+                        setModalVisible(false);
+                        resetForm();
+                    }}
+                    contentContainerStyle={styles.modal}
+                >
+                    <GlassView style={styles.modalCard}>
+                        <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false}>
+                            <Text variant="headlineSmall" style={{ marginBottom: 16, color: theme.colors.onSurface }}>
+                                {editingBillId ? 'Edit Recurring Bill' : 'New Recurring Bill'}
+                            </Text>
 
-                        <FloatingLabelInput label="Title" value={title} onChangeText={setTitle} />
-                        <FloatingLabelInput label="Amount" value={amount} onChangeText={setAmount} keyboardType="numeric" />
+                            <FloatingLabelInput label="Title" value={title} onChangeText={setTitle} />
+                            <FloatingLabelInput label="Amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
+                            <FloatingLabelInput label="Category" value={category} onChangeText={setCategory} />
 
-                        <View style={{ flexDirection: 'row', gap: 10, marginVertical: 10 }}>
-                            {(['weekly', 'biweekly', 'monthly'] as const).map(f => (
-                                <TouchableOpacity
-                                    key={f}
-                                    onPress={() => setFrequency(f)}
-                                    style={[
-                                        styles.chip,
-                                        frequency === f && { backgroundColor: theme.colors.primary }
-                                    ]}
-                                >
-                                    <Text style={{
-                                        color: frequency === f ? theme.colors.onPrimary : theme.colors.onSurface
-                                    }}>
-                                        {f.charAt(0).toUpperCase() + f.slice(1)}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
+                            <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Repeat</Text>
+                            <View style={styles.wrapRow}>
+                                {FREQUENCY_PRESETS.map(({ key, label }) => (
+                                    <TouchableOpacity
+                                        key={key}
+                                        onPress={() => {
+                                            setSelectedPreset(key);
+                                            if (key !== 'custom') {
+                                                const mapped = presetToFrequencyAndInterval(key);
+                                                setFrequency(mapped.frequency);
+                                                setIntervalInput(String(mapped.interval));
+                                                if (key === 'weekdays') {
+                                                    setSelectedWeekdays([1, 2, 3, 4, 5]);
+                                                }
+                                            }
+                                        }}
+                                        style={[styles.chip, selectedPreset === key && { backgroundColor: theme.colors.primary }]}
+                                    >
+                                        <Text style={{ color: selectedPreset === key ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                                            {label}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
 
-                        <Button
-                            mode="contained"
-                            onPress={handleCreate}
-                            loading={isSubmitting}
-                            style={{ marginTop: 10 }}
-                        >
-                            Create Bill
-                        </Button>
+                            {selectedPreset === 'custom' && (
+                                <>
+                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Repeat Every</Text>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                        <FloatingLabelInput
+                                            label="N"
+                                            value={intervalInput}
+                                            onChangeText={setIntervalInput}
+                                            keyboardType="number-pad"
+                                            containerStyle={{ flex: 1 }}
+                                        />
+                                        <View style={[styles.wrapRow, { flex: 3 }]}>
+                                            {(['daily', 'weekly', 'monthly', 'yearly'] as const).map((value) => (
+                                                <TouchableOpacity
+                                                    key={value}
+                                                    onPress={() => setFrequency(value)}
+                                                    style={[styles.chip, frequency === value && { backgroundColor: theme.colors.primary }]}
+                                                >
+                                                    <Text style={{ color: frequency === value ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                                                        {value === 'daily' ? (intervalInput === '1' ? 'Day' : 'Days')
+                                                            : value === 'weekly' ? (intervalInput === '1' ? 'Week' : 'Weeks')
+                                                            : value === 'monthly' ? (intervalInput === '1' ? 'Month' : 'Months')
+                                                            : (intervalInput === '1' ? 'Year' : 'Years')}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </View>
+                                    </View>
+                                </>
+                            )}
+
+                            {(frequency === 'monthly' || frequency === 'yearly') && selectedPreset !== 'daily' && selectedPreset !== 'weekdays' && (
+                                <>
+                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Monthly Pattern</Text>
+                                    <View style={styles.wrapRow}>
+                                        {(['dayOfMonth', 'weekdaysOfMonth'] as const).map((value) => (
+                                            <TouchableOpacity
+                                                key={value}
+                                                onPress={() => setMonthlyPattern(value)}
+                                                style={[styles.chip, monthlyPattern === value && { backgroundColor: theme.colors.primary }]}
+                                            >
+                                                <Text style={{ color: monthlyPattern === value ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                                                    {value === 'dayOfMonth' ? 'By Day Number' : 'By Week + Weekday'}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+                                </>
+                            )}
+
+                            {monthlyPattern === 'dayOfMonth' && (frequency === 'monthly' || frequency === 'yearly') && (
+                                <FloatingLabelInput
+                                    label="Days of month (e.g. 1,15,28)"
+                                    value={dayOfMonthInput}
+                                    onChangeText={setDayOfMonthInput}
+                                    keyboardType="numbers-and-punctuation"
+                                />
+                            )}
+
+                            {(frequency === 'weekly' || (monthlyPattern === 'weekdaysOfMonth' && (frequency === 'monthly' || frequency === 'yearly'))) && selectedPreset !== 'daily' && selectedPreset !== 'weekdays' && (
+                                <>
+                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Weekdays</Text>
+                                    <View style={styles.wrapRow}>
+                                        {WEEKDAY_LABELS.map((label, day) => (
+                                            <TouchableOpacity
+                                                key={label}
+                                                onPress={() => setSelectedWeekdays((prev) => toggleInList(prev, day))}
+                                                style={[
+                                                    styles.chip,
+                                                    selectedWeekdays.includes(day) && { backgroundColor: theme.colors.primary },
+                                                ]}
+                                            >
+                                                <Text style={{ color: selectedWeekdays.includes(day) ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                                                    {label}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+                                </>
+                            )}
+
+                            {monthlyPattern === 'weekdaysOfMonth' && (frequency === 'monthly' || frequency === 'yearly') && (
+                                <>
+                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Weeks in Month</Text>
+                                    <View style={styles.wrapRow}>
+                                        {[1, 2, 3, 4, 5].map((week) => (
+                                            <TouchableOpacity
+                                                key={week}
+                                                onPress={() => setSelectedWeeksOfMonth((prev) => toggleInList(prev, week))}
+                                                style={[
+                                                    styles.chip,
+                                                    selectedWeeksOfMonth.includes(week) && { backgroundColor: theme.colors.primary },
+                                                ]}
+                                            >
+                                                <Text style={{ color: selectedWeeksOfMonth.includes(week) ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                                                    Week {week}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+                                </>
+                            )}
+
+                            {(frequency === 'monthly' || frequency === 'yearly') && (
+                                <>
+                                    <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Months in Year</Text>
+                                    <View style={styles.wrapRow}>
+                                        {MONTH_LABELS.map((label, index) => {
+                                            const month = index + 1;
+                                            const selected = selectedMonthsOfYear.includes(month);
+                                            return (
+                                                <TouchableOpacity
+                                                    key={label}
+                                                    onPress={() => setSelectedMonthsOfYear((prev) => toggleInList(prev, month))}
+                                                    style={[styles.chip, selected && { backgroundColor: theme.colors.primary }]}
+                                                >
+                                                    <Text style={{ color: selected ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                                                        {label}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </View>
+                                </>
+                            )}
+
+                            <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Paid By</Text>
+                            <View style={styles.wrapRow}>
+                                {group.members.map((member) => (
+                                    <TouchableOpacity
+                                        key={member.userId}
+                                        onPress={() => setPaidBy(member.userId)}
+                                        style={[styles.chip, paidBy === member.userId && { backgroundColor: theme.colors.primary }]}
+                                    >
+                                        <Text style={{ color: paidBy === member.userId ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                                            {member.displayName}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+
+                            <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Participants</Text>
+                            <View style={styles.wrapRow}>
+                                {group.members.map((member) => {
+                                    const selected = selectedParticipantIds.includes(member.userId);
+                                    return (
+                                        <TouchableOpacity
+                                            key={member.userId}
+                                            onPress={() => setSelectedParticipantIds((prev) => (
+                                                prev.includes(member.userId)
+                                                    ? prev.filter((id) => id !== member.userId)
+                                                    : [...prev, member.userId]
+                                            ))}
+                                            style={[styles.chip, selected && { backgroundColor: theme.colors.primary }]}
+                                        >
+                                            <Text style={{ color: selected ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                                                {member.displayName}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+
+                            <Button
+                                mode="contained"
+                                onPress={handleCreate}
+                                loading={isSubmitting}
+                                style={{ marginTop: 14 }}
+                            >
+                                {editingBillId ? 'Save Changes' : 'Create Bill'}
+                            </Button>
+
+                            <Button
+                                mode="text"
+                                onPress={() => {
+                                    setModalVisible(false);
+                                    resetForm();
+                                }}
+                                style={{ marginTop: 8 }}
+                            >
+                                Cancel
+                            </Button>
+                        </ScrollView>
                     </GlassView>
                 </Modal>
             </Portal>
@@ -248,12 +693,31 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     modal: {
+        margin: 14,
+        maxHeight: '90%',
+    },
+    modalCard: {
+        borderRadius: 24,
+        overflow: 'hidden',
+    },
+    modalContent: {
         padding: 20,
+        paddingBottom: 24,
+    },
+    sectionLabel: {
+        marginTop: 12,
+        marginBottom: 8,
+        fontWeight: '600',
+    },
+    wrapRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
     },
     chip: {
-        paddingHorizontal: 16,
+        paddingHorizontal: 14,
         paddingVertical: 8,
-        borderRadius: 20,
-        backgroundColor: 'rgba(0,0,0,0.05)',
+        borderRadius: 18,
+        backgroundColor: 'rgba(0,0,0,0.08)',
     },
 });
