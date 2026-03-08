@@ -4,27 +4,21 @@ import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatParticipant, ChatThread, MessageType } from '@/models';
 import {
-  listenForMessageReceipts,
-  registerReceiptParticipant,
-  type ReceiptData,
+    listenForMessageReceipts,
+    registerReceiptParticipant,
+    type ReceiptData,
 } from '@/services/messageQueueService';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  Animated,
-  LayoutAnimation,
-  Platform,
-  StyleSheet,
-  UIManager,
-  View,
+    Animated,
+    LayoutAnimation,
+    StyleSheet,
+    View,
 } from 'react-native';
 import { Avatar, Divider, Text } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 interface MessageInfoRouteParams {
   message: ChatMessage;

@@ -132,6 +132,15 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             Added by {payerName} on {new Date(expense.createdAt).toLocaleDateString()}
           </Text>
 
+          {expense.recurring && (
+            <View style={[styles.recurringBanner, { backgroundColor: isDark ? 'rgba(100,180,255,0.12)' : 'rgba(33,150,243,0.08)' }]}>
+              <IconButton icon="autorenew" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+              <Text style={{ color: theme.colors.onSurfaceVariant, flex: 1, fontSize: 13 }}>
+                This is a recurring expense. Editing it only changes this occurrence — future recurrences are unaffected.
+              </Text>
+            </View>
+          )}
+
           {expense.receipt?.url && (
             <View style={styles.section}>
               <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>Receipt</Text>
@@ -298,6 +307,15 @@ const styles = StyleSheet.create({
   },
   meta: {
     marginBottom: 16,
+  },
+  recurringBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    marginBottom: 16,
+    gap: 4,
   },
   divider: {
     marginVertical: 16,
