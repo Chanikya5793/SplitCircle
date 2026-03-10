@@ -1,7 +1,7 @@
 import { darkTheme, lightTheme } from '@/constants/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useColorScheme } from 'react-native';
+import { Platform, Settings, useColorScheme } from 'react-native';
 import { SharedValue, useSharedValue, withTiming } from 'react-native-reanimated';
 
 type ThemeContextType = {
@@ -35,6 +35,11 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
 
     useEffect(() => {
         themeProgress.value = withTiming(isDark ? 1 : 0, { duration: 500 });
+        // Sync to NSUserDefaults so AppDelegate can apply window.overrideUserInterfaceStyle,
+        // which makes the native UITabBarController respect the in-app dark/light toggle.
+        if (Platform.OS === 'ios') {
+            Settings.set({ RNThemeIsDark: isDark ? 1 : 0 });
+        }
     }, [isDark]);
 
     const loadTheme = async () => {
