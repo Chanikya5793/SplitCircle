@@ -5,7 +5,7 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useLayoutEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, Button, Divider, List, Text, TextInput } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,6 +24,12 @@ export const GroupInfoScreen = () => {
     const group = useMemo(() => {
         return groups.find(g => g.groupId === groupId);
     }, [groups, groupId]);
+
+    useLayoutEffect(() => {
+        if (group) {
+            (navigation as any).setOptions({ headerBackTitle: group.name });
+        }
+    }, [navigation, group?.name]);
 
     if (!group) {
         return (
