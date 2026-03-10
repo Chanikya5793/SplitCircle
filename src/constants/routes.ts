@@ -24,6 +24,7 @@ export const ROUTES = {
     EXPENSE_DETAILS: 'ExpenseDetails',
     RECURRING_BILLS: 'RecurringBills',
     GROUP_STATS: 'GroupStats',
+    BILL_SPLIT: 'BillSplit',
     SETTINGS: 'Settings',
     PROFILE: 'Profile',
   },
