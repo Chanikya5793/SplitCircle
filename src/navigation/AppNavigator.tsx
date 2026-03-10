@@ -300,7 +300,24 @@ const AddExpenseRoute = ({ route, navigation }: any) => {
   if (!group) {
     return <LoadingScreen />;
   }
-  return <AddExpenseScreen group={group} expenseId={route.params.expenseId} onClose={() => navigation.goBack()} />;
+
+  const handleClose = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+
+    // Fallback when AddExpense is opened as an entry route without history.
+    navigation.navigate(ROUTES.APP.ROOT, {
+      screen: ROUTES.APP.GROUPS_TAB,
+      params: {
+        screen: ROUTES.APP.GROUP_DETAILS,
+        params: { groupId: group.groupId },
+      },
+    });
+  };
+
+  return <AddExpenseScreen group={group} expenseId={route.params.expenseId} onClose={handleClose} />;
 };
 
 const SettlementsRoute = ({ route, navigation }: any) => {
@@ -308,10 +325,26 @@ const SettlementsRoute = ({ route, navigation }: any) => {
   if (!group) {
     return <LoadingScreen />;
   }
+
+  const handleClose = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+
+    navigation.navigate(ROUTES.APP.ROOT, {
+      screen: ROUTES.APP.GROUPS_TAB,
+      params: {
+        screen: ROUTES.APP.GROUP_DETAILS,
+        params: { groupId: group.groupId },
+      },
+    });
+  };
+
   return (
     <SettlementsScreen
       group={group}
-      onClose={() => navigation.goBack()}
+      onClose={handleClose}
       settlementId={route.params.settlementId}
       initialFromUserId={route.params.initialFromUserId}
       initialToUserId={route.params.initialToUserId}
