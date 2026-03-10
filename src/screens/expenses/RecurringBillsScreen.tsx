@@ -52,9 +52,22 @@ interface PresetConfig {
     weekdays?: number[];
     monthlyPattern?: MonthlyPattern;
     daysOfMonth?: string;
+    defaultMonthsOfYear?: number[];
 }
 
+const PRESET_DESCRIPTIONS: Partial<Record<FrequencyPreset, string>> = {
+    'every-2-months': 'Runs once every 2 months from the bill start date (same day pattern).',
+    quarterly: 'Runs every 3 months. Great for quarterly subscriptions, taxes, or maintenance.',
+    'every-4-months': 'Runs once every 4 months from the bill start date.',
+    'semi-annually': 'Runs every 6 months (twice per year).',
+    yearly: 'Runs once every year on the selected month/day pattern.',
+    'every-2-years': 'Runs once every 2 years on the selected month/day pattern.',
+    custom: 'Build your own cadence: choose interval, unit, pattern, weekdays, and months.',
+};
+
 const presetToConfig = (preset: FrequencyPreset): PresetConfig => {
+    const currentMonth = new Date().getMonth() + 1;
+
     switch (preset) {
         case 'daily':           return { frequency: 'daily', interval: 1 };
         case 'every-other-day': return { frequency: 'daily', interval: 2 };
@@ -69,8 +82,8 @@ const presetToConfig = (preset: FrequencyPreset): PresetConfig => {
         case 'quarterly':       return { frequency: 'monthly', interval: 3 };
         case 'every-4-months':  return { frequency: 'monthly', interval: 4 };
         case 'semi-annually':   return { frequency: 'monthly', interval: 6 };
-        case 'yearly':          return { frequency: 'yearly', interval: 1 };
-        case 'every-2-years':   return { frequency: 'yearly', interval: 2 };
+        case 'yearly':          return { frequency: 'yearly', interval: 1, defaultMonthsOfYear: [currentMonth] };
+        case 'every-2-years':   return { frequency: 'yearly', interval: 2, defaultMonthsOfYear: [currentMonth] };
         case 'custom':          return { frequency: 'monthly', interval: 1 };
     }
 };
@@ -96,6 +109,10 @@ const inferPreset = (freq: BillFrequency, interval: number, weekdays?: number[],
     if (freq === 'yearly' && interval === 1) return 'yearly';
     if (freq === 'yearly' && interval === 2) return 'every-2-years';
     return 'custom';
+};
+
+const getPresetDescription = (preset: FrequencyPreset): string | null => {
+    return PRESET_DESCRIPTIONS[preset] ?? null;
 };
 
 interface RecurringBillsScreenProps {
@@ -149,6 +166,17 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
         Math.floor((new Date().getDate() - 1) / 7) + 1,
     ]);
     const [selectedMonthsOfYear, setSelectedMonthsOfYear] = useState<number[]>(ALL_MONTHS);
+
+    const isCustomPreset = selectedPreset === 'custom';
+    const isWeeklyPreset = frequency === 'weekly';
+    const isMonthlyOrYearlyPreset = frequency === 'monthly' || frequency === 'yearly';
+    const isFixedWeekPreset = selectedPreset === 'weekdays' || selectedPreset === 'weekends';
+    const isTwiceAMonthPreset = selectedPreset === 'twice-a-month';
+    const canEditWeeklyDays = isWeeklyPreset && (isCustomPreset || !isFixedWeekPreset);
+    const canEditMonthlyPattern = isMonthlyOrYearlyPreset && (isCustomPreset || !isTwiceAMonthPreset);
+    const canEditDayOfMonth = isMonthlyOrYearlyPreset && monthlyPattern === 'dayOfMonth' && (isCustomPreset || !isTwiceAMonthPreset);
+    const canEditWeeksOfMonth = isMonthlyOrYearlyPreset && monthlyPattern === 'weekdaysOfMonth' && (isCustomPreset || !isTwiceAMonthPreset);
+    const canEditMonthsOfYear = frequency === 'yearly' && isCustomPreset;
 
     const memberMap = useMemo(
         () => Object.fromEntries(group.members.map((member) => [member.userId, member.displayName])),
@@ -509,6 +537,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                                 if (config.daysOfMonth) {
                                                     setDayOfMonthInput(config.daysOfMonth);
                                                 }
+                                                setSelectedMonthsOfYear(config.defaultMonthsOfYear ?? ALL_MONTHS);
                                             }
                                         }}
                                         style={[styles.chip, selectedPreset === key && { backgroundColor: theme.colors.primary }]}
@@ -520,12 +549,24 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                 ))}
                             </View>
 
+                            {getPresetDescription(selectedPreset) && (
+                                <Text style={[styles.helperText, { color: theme.colors.onSurfaceVariant }]}>
+                                    {getPresetDescription(selectedPreset)}
+                                </Text>
+                            )}
+
+                            {!isCustomPreset && (
+                                <Text style={[styles.helperText, { color: theme.colors.onSurfaceVariant }]}>
+                                    Quick preset mode: only relevant options are shown. Switch to Custom for full control.
+                                </Text>
+                            )}
+
                             {selectedPreset === 'custom' && (
                                 <>
                                     <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Repeat Every</Text>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                                         <FloatingLabelInput
-                                            label="N"
+                                            label="Interval (N)"
                                             value={intervalInput}
                                             onChangeText={setIntervalInput}
                                             keyboardType="number-pad"
@@ -548,10 +589,13 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                             ))}
                                         </View>
                                     </View>
+                                    <Text style={[styles.helperText, { color: theme.colors.onSurfaceVariant }]}>
+                                        Example: N=2 + Months means every 2 months. N=1 + Years means yearly.
+                                    </Text>
                                 </>
                             )}
 
-                            {(frequency === 'monthly' || frequency === 'yearly') && selectedPreset !== 'daily' && selectedPreset !== 'weekdays' && selectedPreset !== 'weekends' && selectedPreset !== 'twice-a-month' && (
+                            {canEditMonthlyPattern && (
                                 <>
                                     <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Monthly Pattern</Text>
                                     <View style={styles.wrapRow}>
@@ -570,7 +614,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                 </>
                             )}
 
-                            {monthlyPattern === 'dayOfMonth' && (frequency === 'monthly' || frequency === 'yearly') && (
+                            {canEditDayOfMonth && (
                                 <FloatingLabelInput
                                     label="Days of month (e.g. 1,15,28)"
                                     value={dayOfMonthInput}
@@ -579,7 +623,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                 />
                             )}
 
-                            {(frequency === 'weekly' || (monthlyPattern === 'weekdaysOfMonth' && (frequency === 'monthly' || frequency === 'yearly'))) && selectedPreset !== 'daily' && selectedPreset !== 'weekdays' && selectedPreset !== 'weekends' && (
+                            {(canEditWeeklyDays || (canEditWeeksOfMonth && monthlyPattern === 'weekdaysOfMonth')) && (
                                 <>
                                     <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Weekdays</Text>
                                     <View style={styles.wrapRow}>
@@ -601,7 +645,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                 </>
                             )}
 
-                            {monthlyPattern === 'weekdaysOfMonth' && (frequency === 'monthly' || frequency === 'yearly') && (
+                            {canEditWeeksOfMonth && (
                                 <>
                                     <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Weeks in Month</Text>
                                     <View style={styles.wrapRow}>
@@ -623,9 +667,12 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                 </>
                             )}
 
-                            {(frequency === 'monthly' || frequency === 'yearly') && (
+                            {canEditMonthsOfYear && (
                                 <>
                                     <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Months in Year</Text>
+                                    <Text style={[styles.helperText, { color: theme.colors.onSurfaceVariant }]}>
+                                        Optional filter. Keep all months selected for default behavior.
+                                    </Text>
                                     <View style={styles.wrapRow}>
                                         {MONTH_LABELS.map((label, index) => {
                                             const month = index + 1;
@@ -751,6 +798,11 @@ const styles = StyleSheet.create({
         marginTop: 12,
         marginBottom: 8,
         fontWeight: '600',
+    },
+    helperText: {
+        marginTop: 6,
+        marginBottom: 4,
+        lineHeight: 18,
     },
     wrapRow: {
         flexDirection: 'row',
