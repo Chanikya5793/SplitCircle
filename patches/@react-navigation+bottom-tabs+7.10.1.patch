@@ -1,0 +1,40 @@
+diff --git a/node_modules/@react-navigation/bottom-tabs/lib/module/unstable/NativeBottomTabView.native.js b/node_modules/@react-navigation/bottom-tabs/lib/module/unstable/NativeBottomTabView.native.js
+index b2f2972..f34c249 100644
+--- a/node_modules/@react-navigation/bottom-tabs/lib/module/unstable/NativeBottomTabView.native.js
++++ b/node_modules/@react-navigation/bottom-tabs/lib/module/unstable/NativeBottomTabView.native.js
+@@ -85,6 +85,7 @@ export function NativeBottomTabView({
+   const bottomAccessory = currentOptions.bottomAccessory;
+   return /*#__PURE__*/_jsx(SafeAreaProviderCompat, {
+     children: /*#__PURE__*/_jsx(Tabs.Host, {
++      nativeContainerStyle: { backgroundColor: currentOptions.tabBarStyle?.backgroundColor ?? colors.card },
+       bottomAccessory: bottomAccessory ? environment => bottomAccessory({
+         placement: environment
+       }) : undefined,
+@@ -167,6 +168,7 @@ export function NativeBottomTabView({
+           focused: true
+         })) : undefined;
+         return /*#__PURE__*/_jsx(Tabs.Screen, {
++          style: { backgroundColor: currentOptions.tabBarStyle?.backgroundColor ?? colors.card },
+           onWillDisappear: () => onTransitionStart({
+             closing: true,
+             route
+diff --git a/node_modules/@react-navigation/bottom-tabs/src/unstable/NativeBottomTabView.native.tsx b/node_modules/@react-navigation/bottom-tabs/src/unstable/NativeBottomTabView.native.tsx
+index 9518985..9ac1193 100644
+--- a/node_modules/@react-navigation/bottom-tabs/src/unstable/NativeBottomTabView.native.tsx
++++ b/node_modules/@react-navigation/bottom-tabs/src/unstable/NativeBottomTabView.native.tsx
+@@ -145,6 +145,7 @@ export function NativeBottomTabView({ state, navigation, descriptors }: Props) {
+   return (
+     <SafeAreaProviderCompat>
+       <Tabs.Host
++        nativeContainerStyle={{ backgroundColor: currentOptions.tabBarStyle?.backgroundColor ?? colors.card }}
+         bottomAccessory={
+           bottomAccessory
+             ? (environment) => bottomAccessory({ placement: environment })
+@@ -258,6 +259,7 @@ export function NativeBottomTabView({ state, navigation, descriptors }: Props) {
+ 
+           return (
+             <Tabs.Screen
++              style={{ backgroundColor: colors.card }}
+               onWillDisappear={() =>
+                 onTransitionStart({ closing: true, route })
+               }

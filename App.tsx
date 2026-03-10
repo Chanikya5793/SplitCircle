@@ -32,14 +32,23 @@ function AppContent() {
   );
 }
 
-export default function App() {
+function AppRoot() {
+  const { isDark } = useTheme();
+  const appBackground = isDark ? '#121212' : '#FDFBFB';
+
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <ThemeProvider>
-          <AppContent />
-        </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: appBackground }}>
+      <SafeAreaProvider style={{ flex: 1, backgroundColor: appBackground }}>
+        <AppContent />
       </SafeAreaProvider>
     </GestureHandlerRootView>
+  );
+}
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AppRoot />
+    </ThemeProvider>
   );
 }

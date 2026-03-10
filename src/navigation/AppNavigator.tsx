@@ -288,12 +288,21 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
   );
 };
 
-const GroupsStackNavigator = () => (
-  <GroupsStack.Navigator>
-    <GroupsStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ headerShown: false }} />
-    <GroupsStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
-  </GroupsStack.Navigator>
-);
+const GroupsStackNavigator = () => {
+  const { isDark } = useTheme();
+  const screenBackground = isDark ? '#121212' : '#FDFBFB';
+
+  return (
+    <GroupsStack.Navigator
+      screenOptions={{
+        contentStyle: { backgroundColor: screenBackground },
+      }}
+    >
+      <GroupsStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ headerShown: false }} />
+      <GroupsStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
+    </GroupsStack.Navigator>
+  );
+};
 
 const AddExpenseRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
@@ -428,13 +437,23 @@ const CallSessionRoute = ({ route, navigation }: any) => (
   />
 );
 
-const AuthStackNavigator = () => (
-  <AuthStack.Navigator screenOptions={{ headerShown: false }}>
-    <AuthStack.Screen name={ROUTES.AUTH.SIGN_IN} component={SignInRoute} />
-    <AuthStack.Screen name={ROUTES.AUTH.REGISTER} component={RegisterRoute} />
-    <AuthStack.Screen name={ROUTES.AUTH.FORGOT_PASSWORD} component={ForgotPasswordRoute} />
-  </AuthStack.Navigator>
-);
+const AuthStackNavigator = () => {
+  const { isDark } = useTheme();
+  const screenBackground = isDark ? '#121212' : '#FDFBFB';
+
+  return (
+    <AuthStack.Navigator
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: screenBackground },
+      }}
+    >
+      <AuthStack.Screen name={ROUTES.AUTH.SIGN_IN} component={SignInRoute} />
+      <AuthStack.Screen name={ROUTES.AUTH.REGISTER} component={RegisterRoute} />
+      <AuthStack.Screen name={ROUTES.AUTH.FORGOT_PASSWORD} component={ForgotPasswordRoute} />
+    </AuthStack.Navigator>
+  );
+};
 
 const AppTabs = () => {
   const { theme, isDark } = useTheme();
@@ -525,6 +544,7 @@ const AppTabs = () => {
     <NativeTab.Navigator
       screenOptions={{
         headerShown: false,
+        lazy: Platform.OS === 'ios' ? false : true,
         tabBarActiveTintColor: theme.colors.primary,
         tabBarInactiveTintColor: isDark ? '#9CA3AF' : '#64748B',
         tabBarLabelStyle: {
@@ -532,6 +552,9 @@ const AppTabs = () => {
           fontSize: 12,
         },
         tabBarStyle: Platform.select({
+          ios: {
+            backgroundColor: isDark ? '#121212' : '#FDFBFB',
+          },
           android: {
             backgroundColor: isDark ? '#0D1117' : '#FFFFFF',
           },
@@ -541,7 +564,7 @@ const AppTabs = () => {
           android: isDark ? 'rgba(88,166,255,0.20)' : 'rgba(31,111,235,0.16)',
           default: undefined,
         }),
-        tabBarBlurEffect: Platform.OS === 'ios' ? 'systemDefault' : undefined,
+        tabBarBlurEffect: Platform.OS === 'ios' ? (isDark ? 'systemMaterialDark' : 'systemMaterialLight') : undefined,
         tabBarControllerMode: Platform.OS === 'ios' ? 'tabBar' : undefined,
         tabBarMinimizeBehavior: IOS_NATIVE_ACCESSORY_SUPPORTED ? 'onScrollDown' : undefined,
       }}
@@ -587,10 +610,15 @@ const AppTabs = () => {
 };
 
 const AppStackNavigator = () => {
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
+  const screenBackground = isDark ? '#121212' : '#FDFBFB';
 
   return (
-      <AppStack.Navigator>
+      <AppStack.Navigator
+        screenOptions={{
+          contentStyle: { backgroundColor: screenBackground },
+        }}
+      >
       <AppStack.Screen name={ROUTES.APP.ROOT} component={AppTabs} options={{ headerShown: false }} />
       <AppStack.Screen
         name={ROUTES.APP.GROUP_INFO}
@@ -691,6 +719,9 @@ const IncomingCallHandler = () => {
 };
 
 const styles = StyleSheet.create({
+  navigatorRoot: {
+    flex: 1,
+  },
   groupAccessoryRegularWrap: {
     paddingHorizontal: 8,
     paddingTop: 4,
@@ -819,19 +850,21 @@ export const AppNavigator = () => {
     return <LoadingScreen />;
   }
 
+  const navigationBackground = isDark ? '#121212' : '#FDFBFB';
+
   const navigationTheme = {
     ...(isDark ? DarkTheme : DefaultTheme),
     colors: {
       ...(isDark ? DarkTheme.colors : DefaultTheme.colors),
-      background: 'transparent',
-      card: 'transparent',
+      background: navigationBackground,
+      card: navigationBackground,
       border: 'transparent',
     },
   };
 
   return (
     <NavigationContainer theme={navigationTheme}>
-      <View style={{ flex: 1 }}>
+      <View style={[styles.navigatorRoot, { backgroundColor: navigationBackground }]}>
         {user ? <AppStackNavigator /> : <AuthStackNavigator />}
         {user && <IncomingCallHandler />}
       </View>
