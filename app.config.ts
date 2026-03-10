@@ -66,7 +66,7 @@ const config = {
   owner: 'chanikya6163',
   orientation: 'portrait',
   icon: './assets/icon.png',
-  userInterfaceStyle: 'light',
+  userInterfaceStyle: 'automatic',
   newArchEnabled: true,
   scheme: 'splitcircle',
   splash: {
@@ -81,6 +81,7 @@ const config = {
   ios: {
     supportsTablet: true,
     bundleIdentifier: 'com.splitcircle.app',
+    backgroundColor: '#121212',
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
