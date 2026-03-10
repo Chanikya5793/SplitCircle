@@ -251,10 +251,10 @@ export const getRecurrenceSummary = (rule: RecurrenceRule): string => {
     if (normalizedRule.frequency === 'monthly') {
         const intervalLabel =
             normalizedRule.interval === 1 ? 'Monthly'
-            : normalizedRule.interval === 2 ? 'Every 2 months'
-            : normalizedRule.interval === 3 ? 'Quarterly'
+            : normalizedRule.interval === 2 ? 'Every 2 months (bi-monthly)'
+            : normalizedRule.interval === 3 ? 'Quarterly (every 3 months)'
             : normalizedRule.interval === 4 ? 'Every 4 months'
-            : normalizedRule.interval === 6 ? 'Every 6 months'
+            : normalizedRule.interval === 6 ? 'Every 6 months (semi-annual)'
             : `Every ${normalizedRule.interval} months`;
 
         if (normalizedRule.monthlyPattern === 'weekdaysOfMonth') {
@@ -272,8 +272,8 @@ export const getRecurrenceSummary = (rule: RecurrenceRule): string => {
     }
 
     // yearly
-    const yearLabel = normalizedRule.interval === 1 ? 'Yearly'
-        : normalizedRule.interval === 2 ? 'Every 2 years'
+    const yearLabel = normalizedRule.interval === 1 ? 'Yearly (every 1 year)'
+        : normalizedRule.interval === 2 ? 'Every 2 years (biannual cycle)'
         : `Every ${normalizedRule.interval} years`;
 
     if (normalizedRule.monthlyPattern === 'weekdaysOfMonth') {
