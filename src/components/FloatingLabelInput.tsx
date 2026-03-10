@@ -55,6 +55,7 @@ export const FloatingLabelInput = ({ label, value, style, containerStyle, onFocu
         outlineColor={isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)'}
         theme={{ colors: { background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.5)' } }}
         textColor={theme.colors.onSurface}
+        keyboardAppearance={isDark ? 'dark' : 'light'}
       />
     </View>
   );

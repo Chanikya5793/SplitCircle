@@ -20,6 +20,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, IconButton, Modal, Portal, Switch, Text } from 'react-native-paper';
 
+const BILL_CATEGORIES = ['Utilities', 'Rent', 'Subscriptions', 'Food', 'Transport', 'Health', 'Entertainment', 'Shopping', 'Travel', 'General', 'Other'];
+
+
 type FrequencyPreset =
     | 'daily' | 'every-other-day' | 'weekdays' | 'weekends'
     | 'weekly' | 'biweekly' | 'every-3-weeks'
@@ -515,7 +518,21 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
 
                             <FloatingLabelInput label="Title" value={title} onChangeText={setTitle} />
                             <FloatingLabelInput label="Amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
-                            <FloatingLabelInput label="Category" value={category} onChangeText={setCategory} />
+
+                            <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Category</Text>
+                            <View style={styles.wrapRow}>
+                                {BILL_CATEGORIES.map((cat) => (
+                                    <TouchableOpacity
+                                        key={cat}
+                                        onPress={() => setCategory(cat)}
+                                        style={[styles.chip, category === cat && { backgroundColor: theme.colors.primary }]}
+                                    >
+                                        <Text style={{ color: category === cat ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                                            {cat}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
 
                             <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Repeat</Text>
                             <View style={styles.wrapRow}>
