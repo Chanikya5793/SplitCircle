@@ -29,11 +29,11 @@ import { lightHaptic } from '@/utils/haptics';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
 import {
-  DarkTheme,
-  DefaultTheme,
-  NavigationContainer,
-  useIsFocused,
-  useNavigation,
+    DarkTheme,
+    DefaultTheme,
+    NavigationContainer,
+    useIsFocused,
+    useNavigation,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
