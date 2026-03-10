@@ -1,6 +1,7 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatParticipant, ChatThread, MessageType } from '@/models';
 import {
@@ -103,10 +104,20 @@ export const MessageInfoScreen = () => {
   const route = useRoute();
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
+  const { groups } = useGroups();
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
   const { message, thread } = route.params as MessageInfoRouteParams;
   const [receiptMap, setReceiptMap] = useState<Record<string, ReceiptData>>({});
+
+  const backTitle = useMemo(() => {
+    if (thread.type === 'group' && thread.groupId) {
+      const grp = groups.find((g) => g.groupId === thread.groupId);
+      return grp?.name || 'Chat';
+    }
+    const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+    return other?.displayName || 'Chat';
+  }, [thread, groups, user?.userId]);
 
   const headerOpacity = scrollY.interpolate({
     inputRange: [0, 60],
@@ -123,10 +134,11 @@ export const MessageInfoScreen = () => {
   useLayoutEffect(() => {
     navigation.setOptions({
       title: '',
+      headerBackTitle: backTitle,
       headerTransparent: true,
       headerTintColor: theme.colors.primary,
     });
-  }, [navigation, theme.colors.primary]);
+  }, [navigation, theme.colors.primary, backTitle]);
 
   useEffect(() => {
     let disposed = false;

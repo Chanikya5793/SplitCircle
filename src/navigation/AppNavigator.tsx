@@ -233,6 +233,12 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
   const accessoryVisibleRef = useRef<boolean | null>(null);
 
   useLayoutEffect(() => {
+    if (group) {
+      navigation.setOptions({ title: group.name });
+    }
+  }, [navigation, group?.name]);
+
+  useLayoutEffect(() => {
     const parent = navigation.getParent();
     if (!parent || !IOS_NATIVE_ACCESSORY_SUPPORTED) {
       return;
@@ -362,16 +368,30 @@ const SettlementsRoute = ({ route, navigation }: any) => {
   );
 };
 
-const GroupStatsRoute = ({ route }: any) => {
+const GroupStatsRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
+
+  useLayoutEffect(() => {
+    if (group) {
+      navigation.setOptions({ headerBackTitle: group.name });
+    }
+  }, [navigation, group?.name]);
+
   if (!group) {
     return <LoadingScreen />;
   }
   return <GroupStatsScreen group={group} />;
 };
 
-const RecurringBillsRoute = ({ route }: any) => {
+const RecurringBillsRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
+
+  useLayoutEffect(() => {
+    if (group) {
+      navigation.setOptions({ headerBackTitle: group.name });
+    }
+  }, [navigation, group?.name]);
+
   if (!group) {
     return <LoadingScreen />;
   }
@@ -382,9 +402,27 @@ const ChatListRoute = ({ navigation }: any) => (
   <ChatListScreen onOpenThread={(thread) => navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId: thread.chatId })} />
 );
 
-const ChatRoomRoute = ({ route }: any) => {
+const ChatRoomRoute = ({ route, navigation }: any) => {
   const { threads } = useChat();
+  const { groups } = useGroups();
+  const { user } = useAuth();
   const thread = threads.find((item) => item.chatId === route.params.chatId);
+
+  const chatTitle = useMemo(() => {
+    if (!thread) return '';
+    if (thread.type === 'group' && thread.groupId) {
+      const grp = groups.find((g) => g.groupId === thread.groupId);
+      return grp?.name || 'Group Chat';
+    }
+    const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+    return other?.displayName || 'Chat';
+  }, [thread, groups, user?.userId]);
+
+  useLayoutEffect(() => {
+    if (chatTitle) {
+      navigation.setOptions({ headerBackTitle: chatTitle });
+    }
+  }, [navigation, chatTitle]);
 
   if (!thread) {
     return <LoadingScreen />;
@@ -619,7 +657,7 @@ const AppStackNavigator = () => {
           contentStyle: { backgroundColor: screenBackground },
         }}
       >
-      <AppStack.Screen name={ROUTES.APP.ROOT} component={AppTabs} options={{ headerShown: false }} />
+      <AppStack.Screen name={ROUTES.APP.ROOT} component={AppTabs} options={{ headerShown: false, title: 'Home' }} />
       <AppStack.Screen
         name={ROUTES.APP.GROUP_INFO}
         component={GroupInfoScreen}
@@ -643,6 +681,7 @@ const AppStackNavigator = () => {
         component={MessageInfoScreen}
         options={{
           title: '',
+          headerBackTitle: 'Chat',
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
@@ -665,18 +704,19 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.GROUP_STATS}
         component={GroupStatsRoute}
-        options={{ title: 'Group Stats' }}
+        options={{ title: 'Group Stats', headerBackTitle: 'Group' }}
       />
       <AppStack.Screen
         name={ROUTES.APP.RECURRING_BILLS}
         component={RecurringBillsRoute}
-        options={{ title: 'Recurring Bills' }}
+        options={{ title: 'Recurring Bills', headerBackTitle: 'Group' }}
       />
       <AppStack.Screen
         name={ROUTES.APP.CALL_INFO}
         component={CallInfoRoute}
         options={{
           title: '',
+          headerBackTitle: 'Calls',
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
@@ -684,7 +724,7 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.CALL_DETAIL}
         component={CallSessionRoute}
-        options={{ title: 'Live call' }}
+        options={{ title: 'Live call', headerBackTitle: 'Calls' }}
       />
     </AppStack.Navigator>
   );
