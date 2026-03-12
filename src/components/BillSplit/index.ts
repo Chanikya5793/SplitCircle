@@ -9,4 +9,6 @@ export { SplitFooter } from './SplitFooter';
 export * from './splitMath';
 export { SplitMethodTabs } from './SplitMethodTabs';
 export * from './types';
+export { default as WeightedRouletteWheel, generatePercentageOptions } from './WeightedRouletteWheel';
+export type { WeightedRouletteWheelRef } from './WeightedRouletteWheel';
 
