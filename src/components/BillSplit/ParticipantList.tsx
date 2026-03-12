@@ -1,6 +1,6 @@
 import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
-import { formatCurrency } from '@/utils/currency';
+import { formatCurrency, getCurrencySymbol } from '@/utils/currency';
 import { selectionHaptic } from '@/utils/haptics';
 import React, { useCallback } from 'react';
 import { StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
@@ -53,7 +53,7 @@ export const ParticipantRow = React.memo(({
       case 'exact':
         return (
           <View style={styles.inputRow}>
-            <Text style={[styles.prefix, { color: palette.muted }]}>$</Text>
+            <Text style={[styles.prefix, { color: palette.muted }]}>{getCurrencySymbol(currency)}</Text>
             <TextInput
               style={[styles.input, { color: theme.colors.onSurface, borderColor: palette.border }]}
               value={p.exactAmount > 0 ? p.exactAmount.toString() : ''}
@@ -105,7 +105,7 @@ export const ParticipantRow = React.memo(({
       case 'adjustment':
         return (
           <View style={styles.inputRow}>
-            <Text style={[styles.prefix, { color: palette.muted }]}>±$</Text>
+            <Text style={[styles.prefix, { color: palette.muted }]}>{`±${getCurrencySymbol(currency)}`}</Text>
             <TextInput
               style={[styles.input, { color: theme.colors.onSurface, borderColor: palette.border }]}
               value={p.adjustment !== 0 ? p.adjustment.toString() : ''}
