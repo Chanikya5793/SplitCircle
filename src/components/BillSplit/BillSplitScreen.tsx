@@ -3,7 +3,7 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import { heavyHaptic, mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Icon, PaperProvider, Text } from 'react-native-paper';
 import Animated, { FadeIn, FadeInDown, FadeOut, Layout, SlideInDown, SlideOutDown } from 'react-native-reanimated';
@@ -105,7 +105,6 @@ export const BillSplitScreen = ({
   }, []);
 
   const handleToggle = useCallback((id: string) => {
-    selectionHaptic();
     setParticipants((prev) => prev.map((p) => (p.id === id ? { ...p, included: !p.included } : p)));
   }, []);
 
@@ -177,7 +176,7 @@ export const BillSplitScreen = ({
       setSpinTargetIndex(winnerIdx >= 0 ? winnerIdx : 0);
     } else {
       // Weighted – no wheel, quick delay
-      setTimeout(() => {
+      weightedTimerRef.current = setTimeout(() => {
         setParticipants(result.participants);
         setLoserId(result.loserId);
         setIsSpinning(false);
@@ -185,6 +184,14 @@ export const BillSplitScreen = ({
       }, 1500);
     }
   }, [gamifiedMode, totalAmount, participants]);
+
+  // Timer ref for weighted roulette – cleared on unmount to prevent state updates on dead component
+  const weightedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (weightedTimerRef.current) clearTimeout(weightedTimerRef.current);
+    };
+  }, []);
 
   // Ref to hold computed result while wheel spins
   const spinResultRef = useRef<{ participants: Participant[]; loserId: string } | null>(null);

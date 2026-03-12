@@ -141,27 +141,55 @@ export function computeItemized(
   const subtotalCents = items.reduce((s, it) => s + toCents(it.price), 0);
   if (subtotalCents === 0) return participants.map((p) => ({ ...p, computedAmount: 0 }));
 
-  // each participant's raw subtotal share
+  // each participant's raw subtotal share (only for included participants)
+  const included = participants.filter((p) => p.included);
   const participantSubtotals: Record<string, number> = {};
-  for (const p of participants) participantSubtotals[p.id] = 0;
+  for (const p of included) participantSubtotals[p.id] = 0;
 
   for (const item of items) {
-    if (item.assignedTo.length === 0) continue;
-    const perPersonCents = distributeEvenly(toCents(item.price), item.assignedTo.length);
-    item.assignedTo.forEach((uid, i) => {
-      if (participantSubtotals[uid] !== undefined) {
-        participantSubtotals[uid] += perPersonCents[i];
-      }
+    // only assign to included participants
+    const validAssignees = item.assignedTo.filter((uid) => participantSubtotals[uid] !== undefined);
+    if (validAssignees.length === 0) continue;
+    const perPersonCents = distributeEvenly(toCents(item.price), validAssignees.length);
+    validAssignees.forEach((uid, i) => {
+      participantSubtotals[uid] += perPersonCents[i];
     });
   }
 
-  // prorate tax & tip by subtotal ratio
+  // prorate tax & tip by subtotal ratio using fractional-remainder to avoid drift
   const extrasCents = toCents(taxAmount) + toCents(tipAmount);
-  return participants.map((p) => {
-    const mySub = participantSubtotals[p.id] || 0;
-    const myExtra = subtotalCents > 0 ? Math.round((mySub / subtotalCents) * extrasCents) : 0;
-    return { ...p, computedAmount: fromCents(mySub + myExtra) };
+
+  if (extrasCents === 0 || subtotalCents === 0) {
+    return participants.map((p) => ({
+      ...p,
+      computedAmount: p.included ? fromCents(participantSubtotals[p.id] || 0) : 0,
+    }));
+  }
+
+  // Use largest-remainder method to distribute extras without drift
+  const rawExtras = included.map((p) => ((participantSubtotals[p.id] || 0) / subtotalCents) * extrasCents);
+  const flooredExtras = rawExtras.map((c) => Math.floor(c));
+  let allocatedExtras = flooredExtras.reduce((a, b) => a + b, 0);
+  let remainderExtras = extrasCents - allocatedExtras;
+
+  const fractions = rawExtras
+    .map((c, i) => ({ i, frac: c - Math.floor(c) }))
+    .sort((a, b) => b.frac - a.frac);
+  for (const { i } of fractions) {
+    if (remainderExtras <= 0) break;
+    flooredExtras[i] += 1;
+    remainderExtras -= 1;
+  }
+
+  const includedResults: Record<string, number> = {};
+  included.forEach((p, idx) => {
+    includedResults[p.id] = (participantSubtotals[p.id] || 0) + flooredExtras[idx];
   });
+
+  return participants.map((p) => ({
+    ...p,
+    computedAmount: p.included ? fromCents(includedResults[p.id] || 0) : 0,
+  }));
 }
 
 // ─── INCOME-PROPORTIONAL ────────────────────────────────────────────────────
@@ -407,7 +435,7 @@ export function validateSplit(total: number, participants: Participant[]): Valid
 
   const diff = fromCents(diffCents);
   if (diff > 0) {
-    return { isValid: false, message: `Over by $${Math.abs(diff).toFixed(2)}`, difference: diff };
+    return { isValid: false, message: `Over by ${Math.abs(diff).toFixed(2)}`, difference: diff };
   }
-  return { isValid: false, message: `Under by $${Math.abs(diff).toFixed(2)}`, difference: diff };
+  return { isValid: false, message: `Under by ${Math.abs(diff).toFixed(2)}`, difference: diff };
 }
