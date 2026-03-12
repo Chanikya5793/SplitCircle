@@ -54,7 +54,7 @@ export const MOCK_PARTICIPANTS: Participant[] = [
     historicalPaid: 320, computedAmount: 0,
   },
   {
-    id: 'u2', name: 'Chetan', avatarUrl: undefined, included: true,
+    id: 'u2', name: 'Chandler', avatarUrl: undefined, included: true,
     exactAmount: 0, percentage: 0, shares: 1, adjustment: 0,
     incomeWeight: 55000, daysStayed: 5, partsConsumed: 0, rouletteWeight: 25,
     historicalPaid: 180, computedAmount: 0,

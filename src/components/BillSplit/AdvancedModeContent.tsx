@@ -3,10 +3,12 @@ import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
 import { lightHaptic, mediumHaptic } from '@/utils/haptics';
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Button, Icon, IconButton, Text } from 'react-native-paper';
 import Animated, { FadeInDown, ZoomIn, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import type { RouletteWheelRef } from './RouletteWheel';
+import RouletteWheel from './RouletteWheel';
 import type { AdvancedSplitMethod, GamifiedMode, ItemCategory, Participant, ReceiptItem } from './types';
 
 const AVATAR_COLORS = ['#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626', '#7C3AED'];
@@ -365,36 +367,51 @@ interface GamifiedProps {
   participants: Participant[];
   onWeightChange: (id: string, weight: string) => void;
   loserId: string | null;
+  /** Called to request a spin – parent should compute the winner, then call onSpinReady */
   onSpin: () => void;
+  /** Index of the winner segment – set by parent after computing, triggers the wheel animation */
+  spinTargetIndex: number | null;
+  onSpinComplete: (winnerId: string) => void;
   isSpinning: boolean;
   currency: string;
   totalAmount: number;
 }
 
 const GamifiedMode_ = React.memo(({
-  mode, onModeChange, participants, onWeightChange, loserId, onSpin, isSpinning, currency, totalAmount,
+  mode, onModeChange, participants, onWeightChange, loserId, onSpin,
+  spinTargetIndex, onSpinComplete, isSpinning, currency, totalAmount,
 }: GamifiedProps) => {
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
   const included = participants.filter((p) => p.included);
   const loserName = included.find((p) => p.id === loserId)?.name;
 
-  // Spinning animation
+  // Wheel ref for roulette / weighted modes
+  const wheelRef = useRef<RouletteWheelRef>(null);
+
+  // When parent sets spinTargetIndex, trigger the wheel animation
+  useEffect(() => {
+    if (spinTargetIndex !== null && mode === 'roulette') {
+      wheelRef.current?.spin(spinTargetIndex);
+    }
+  }, [spinTargetIndex, mode]);
+
+  // Scrooge fallback spinner animation (no wheel needed)
   const spinRotation = useSharedValue(0);
   useEffect(() => {
-    if (isSpinning) {
+    if (isSpinning && mode === 'scrooge') {
       spinRotation.value = 0;
       spinRotation.value = withRepeat(
         withTiming(360, { duration: 400 }),
         -1,
         false,
       );
-    } else {
+    } else if (mode === 'scrooge') {
       spinRotation.value = withTiming(0, { duration: 300 });
     }
-  }, [isSpinning, spinRotation]);
+  }, [isSpinning, mode, spinRotation]);
 
-  const spinStyle = useAnimatedStyle(() => ({
+  const scroogeSpinStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${spinRotation.value}deg` }],
   }));
 
@@ -403,6 +420,8 @@ const GamifiedMode_ = React.memo(({
     { key: 'weightedRoulette', label: 'Weighted', icon: 'scale-balance' },
     { key: 'scrooge', label: 'Scrooge', icon: 'currency-usd-off' },
   ];
+
+  const showWheel = mode === 'roulette';
 
   return (
     <View style={styles.section}>
@@ -433,7 +452,7 @@ const GamifiedMode_ = React.memo(({
 
       {mode === 'roulette' && (
         <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-          One random person pays 100%. Press "Spin" to find out who!
+          One random person pays 100%. Spin the wheel to find out who!
         </Text>
       )}
 
@@ -485,20 +504,43 @@ const GamifiedMode_ = React.memo(({
         </View>
       )}
 
+      {/* ── The Roulette Wheel ──────────────────────────────────────────── */}
+      {showWheel && (
+        <RouletteWheel
+          ref={wheelRef}
+          participants={participants}
+          onSpinComplete={onSpinComplete}
+          disabled={isSpinning}
+        />
+      )}
+
+      {/* Spin Button */}
       <View style={styles.spinContainer}>
         <TouchableOpacity
-          style={[styles.spinButton, { backgroundColor: theme.colors.primary }]}
+          style={[
+            styles.spinButton,
+            {
+              backgroundColor: isSpinning ? `${theme.colors.primary}80` : theme.colors.primary,
+            },
+          ]}
           onPress={onSpin}
           disabled={isSpinning}
           activeOpacity={0.8}
         >
-          <Animated.View style={spinStyle}>
-            <Icon source="dice-multiple" size={24} color="#FFF" />
-          </Animated.View>
-          <Text style={styles.spinText}>{isSpinning ? 'Spinning...' : 'Spin!'}</Text>
+          {mode === 'scrooge' ? (
+            <Animated.View style={scroogeSpinStyle}>
+              <Icon source="dice-multiple" size={24} color="#FFF" />
+            </Animated.View>
+          ) : (
+            <Icon source={isSpinning ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
+          )}
+          <Text style={styles.spinText}>
+            {isSpinning ? 'Spinning…' : showWheel ? 'Spin the wheel!' : 'Spin!'}
+          </Text>
         </TouchableOpacity>
       </View>
 
+      {/* ── Winner Reveal ──────────────────────────────────────────────── */}
       {loserId && !isSpinning && (
         <Animated.View entering={ZoomIn.springify()}>
           <GlassView style={styles.resultCard} intensity={25}>
@@ -689,6 +731,8 @@ interface AdvancedModeContentProps {
   onRouletteWeightChange: (id: string, weight: string) => void;
   loserId: string | null;
   onSpin: () => void;
+  spinTargetIndex: number | null;
+  onSpinComplete: (winnerId: string) => void;
   isSpinning: boolean;
   // Item Type
   itemCategories: ItemCategory[];
@@ -745,6 +789,8 @@ export const AdvancedModeContent = React.memo((props: AdvancedModeContentProps) 
           onWeightChange={props.onRouletteWeightChange}
           loserId={props.loserId}
           onSpin={props.onSpin}
+          spinTargetIndex={props.spinTargetIndex}
+          onSpinComplete={props.onSpinComplete}
           isSpinning={props.isSpinning}
           currency={props.currency}
           totalAmount={props.totalAmount}
