@@ -4,8 +4,8 @@ import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import { heavyHaptic, mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Icon, Menu, PaperProvider, Text } from 'react-native-paper';
+import { Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Icon, PaperProvider, Text } from 'react-native-paper';
 import Animated, { FadeIn, FadeInDown, FadeOut, Layout, SlideInDown, SlideOutDown } from 'react-native-reanimated';
 
 import { AdvancedModeContent } from './AdvancedModeContent';
@@ -233,12 +233,15 @@ export const BillSplitScreen = ({
   }, []);
 
   // ── Smart Suggestions ─────────────────────────────────────────────────────
-  const suggestions: SmartSuggestion[] = useMemo(() => [
-    { id: 'last_split', label: 'Use last split: 60/40', icon: 'history' },
-    { id: 'drinks_john', label: 'Assign drinks to Chetan', icon: 'glass-cocktail' },
-    { id: 'by_income', label: 'Split by income', icon: 'cash-multiple' },
-    { id: 'roulette', label: 'Credit Card Roulette', icon: 'poker-chip' },
-  ], []);
+  const suggestions: SmartSuggestion[] = useMemo(() => {
+    const secondPerson = participants.length >= 2 ? participants[1].name : 'someone';
+    return [
+      { id: 'last_split', label: 'Use last split: 60/40', icon: 'history' },
+      { id: 'drinks_person', label: `Assign drinks to ${secondPerson}`, icon: 'glass-cocktail' },
+      { id: 'by_income', label: 'Split by income', icon: 'cash-multiple' },
+      { id: 'roulette', label: 'Credit Card Roulette', icon: 'poker-chip' },
+    ];
+  }, [participants]);
 
   const handleSuggestion = useCallback((id: string) => {
     mediumHaptic();
@@ -254,7 +257,7 @@ export const BillSplitScreen = ({
           })));
         }
         break;
-      case 'drinks_john':
+      case 'drinks_person':
         setActiveAdvancedMethod('itemType');
         setShowAdvanced(true);
         setItemCategories([{
@@ -407,35 +410,48 @@ export const BillSplitScreen = ({
           >
             {/* Payer Section */}
             <Animated.View entering={FadeInDown.delay(60).springify()}>
-              <GlassView style={styles.payerCard} intensity={20}>
-                <View style={styles.payerContent}>
-                  <View style={styles.payerLeft}>
-                    <Icon source="account-cash" size={20} color={theme.colors.primary} />
-                    <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>
-                      Paid by{' '}
-                      <Text style={{ fontWeight: '700', color: theme.colors.primary }}>{payerName}</Text>
-                    </Text>
+              <Pressable
+                onPress={() => { selectionHaptic(); setShowPayerMenu((v) => !v); }}
+                style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
+              >
+                <GlassView style={styles.payerCard} intensity={20}>
+                  <View style={styles.payerContent}>
+                    <View style={styles.payerLeft}>
+                      <Icon source="account-cash" size={20} color={theme.colors.primary} />
+                      <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>
+                        Paid by{' '}
+                        <Text style={{ fontWeight: '700', color: theme.colors.primary }}>{payerName}</Text>
+                      </Text>
+                    </View>
+                    <View style={styles.changeIndicator}>
+                      <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>Change</Text>
+                      <Icon source={showPayerMenu ? 'chevron-up' : 'chevron-down'} size={16} color={theme.colors.primary} />
+                    </View>
                   </View>
-                  <Menu
-                    visible={showPayerMenu}
-                    onDismiss={() => setShowPayerMenu(false)}
-                    anchor={
-                      <TouchableOpacity onPress={() => setShowPayerMenu(true)}>
-                        <Text variant="labelMedium" style={{ color: theme.colors.primary }}>Change</Text>
-                      </TouchableOpacity>
-                    }
-                  >
+                </GlassView>
+              </Pressable>
+              {showPayerMenu && (
+                <Animated.View entering={FadeInDown.duration(150)} style={styles.payerDropdown}>
+                  <GlassView style={styles.payerDropdownInner} intensity={40}>
                     {participants.map((p) => (
-                      <Menu.Item
+                      <Pressable
                         key={p.id}
-                        title={p.name}
-                        onPress={() => { setPaidBy(p.id); setShowPayerMenu(false); }}
-                        leadingIcon={p.id === paidBy ? 'check' : undefined}
-                      />
+                        onPress={() => { selectionHaptic(); setPaidBy(p.id); setShowPayerMenu(false); }}
+                        style={({ pressed }) => [
+                          styles.payerDropdownItem,
+                          p.id === paidBy && { backgroundColor: `${theme.colors.primary}15` },
+                          pressed && { opacity: 0.6 },
+                        ]}
+                      >
+                        <View style={styles.payerDropdownItemLeft}>
+                          <Icon source={p.id === paidBy ? 'check-circle' : 'account'} size={20} color={p.id === paidBy ? theme.colors.primary : theme.colors.onSurfaceVariant} />
+                          <Text variant="bodyMedium" style={{ color: p.id === paidBy ? theme.colors.primary : theme.colors.onSurface, fontWeight: p.id === paidBy ? '700' : '400' }}>{p.name}</Text>
+                        </View>
+                      </Pressable>
                     ))}
-                  </Menu>
-                </View>
-              </GlassView>
+                  </GlassView>
+                </Animated.View>
+              )}
             </Animated.View>
 
             {/* Smart Suggestions */}
@@ -610,6 +626,31 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   payerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  changeIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  payerDropdown: {
+    marginHorizontal: spacing.md,
+    marginTop: 4,
+  },
+  payerDropdownInner: {
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  payerDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+  },
+  payerDropdownItemLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,

@@ -2,13 +2,13 @@ import { useTheme } from '@/context/ThemeContext';
 import React, { useEffect, useMemo } from 'react';
 import { Dimensions, StyleSheet, View, ViewStyle } from 'react-native';
 import Animated, {
-  Easing,
-  interpolateColor,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSequence,
-  withTiming
+    Easing,
+    interpolateColor,
+    useAnimatedStyle,
+    useSharedValue,
+    withRepeat,
+    withSequence,
+    withTiming
 } from 'react-native-reanimated';
 
 const { width, height } = Dimensions.get('window');
@@ -100,6 +100,7 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY }
 
   return (
     <Animated.View
+      pointerEvents="none"
       style={[
         styles.blob,
         {
