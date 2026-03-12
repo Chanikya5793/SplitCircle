@@ -2,14 +2,16 @@ import { GlassView } from '@/components/GlassView';
 import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
-import { lightHaptic, mediumHaptic } from '@/utils/haptics';
-import React, { useCallback, useEffect, useRef } from 'react';
+import { heavyHaptic, lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Button, Icon, IconButton, Text } from 'react-native-paper';
-import Animated, { FadeInDown, ZoomIn, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, ZoomIn, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import type { RouletteWheelRef } from './RouletteWheel';
 import RouletteWheel from './RouletteWheel';
 import type { AdvancedSplitMethod, GamifiedMode, ItemCategory, Participant, ReceiptItem } from './types';
+import type { WeightedRouletteWheelRef } from './WeightedRouletteWheel';
+import WeightedRouletteWheel, { generatePercentageOptions } from './WeightedRouletteWheel';
 
 const AVATAR_COLORS = ['#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626', '#7C3AED'];
 
@@ -375,11 +377,12 @@ interface GamifiedProps {
   isSpinning: boolean;
   currency: string;
   totalAmount: number;
+  onWeightedComplete?: (assignments: { userId: string; percentage: number }[]) => void;
 }
 
 const GamifiedMode_ = React.memo(({
   mode, onModeChange, participants, onWeightChange, loserId, onSpin,
-  spinTargetIndex, onSpinComplete, isSpinning, currency, totalAmount,
+  spinTargetIndex, onSpinComplete, isSpinning, currency, totalAmount, onWeightedComplete,
 }: GamifiedProps) => {
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
@@ -423,6 +426,104 @@ const GamifiedMode_ = React.memo(({
 
   const showWheel = mode === 'roulette';
 
+  // ── Weighted Roulette State ─────────────────────────────────────────
+  const weightedWheelRef = useRef<WeightedRouletteWheelRef>(null);
+  const [wAssignments, setWAssignments] = useState<{ userId: string; name: string; percentage: number }[]>([]);
+  const [wPhase, setWPhase] = useState<'idle' | 'spinning-user' | 'user-selected' | 'spinning-pct' | 'complete'>('idle');
+  const [wPercentOptions, setWPercentOptions] = useState<number[]>(() => generatePercentageOptions(100));
+  const [wSelectedUser, setWSelectedUser] = useState<string | null>(null);
+
+  const wAllocated = useMemo(() => wAssignments.reduce((s, a) => s + a.percentage, 0), [wAssignments]);
+  const wRemainingPct = 100 - wAllocated;
+  const wRemainingParticipants = useMemo(
+    () => included.filter((p) => !wAssignments.some((a) => a.userId === p.id)),
+    [included, wAssignments],
+  );
+  const wBusy = wPhase === 'spinning-user' || wPhase === 'user-selected' || wPhase === 'spinning-pct';
+
+  // Reset weighted state when switching modes
+  useEffect(() => {
+    if (mode !== 'weightedRoulette') return;
+    setWAssignments([]);
+    setWPhase('idle');
+    setWSelectedUser(null);
+    setWPercentOptions(generatePercentageOptions(100));
+  }, [mode]);
+
+  // Store references for async callbacks
+  const wSelectedUserRef = useRef<string | null>(null);
+  const wPctTargetIdxRef = useRef<number>(0);
+
+  const finalizeWeighted = useCallback(
+    (assignments: { userId: string; name: string; percentage: number }[]) => {
+      setWAssignments(assignments);
+      setWPhase('complete');
+      successHaptic();
+      onWeightedComplete?.(assignments.map((a) => ({ userId: a.userId, percentage: a.percentage })));
+    },
+    [onWeightedComplete],
+  );
+
+  const handleWeightedSpin = useCallback(() => {
+    if (wRemainingParticipants.length === 0 || wRemainingPct <= 0 || wPhase !== 'idle') return;
+    heavyHaptic();
+    setWPhase('spinning-user');
+
+    const idx = Math.floor(Math.random() * wRemainingParticipants.length);
+    wSelectedUserRef.current = wRemainingParticipants[idx].id;
+    setWSelectedUser(wRemainingParticipants[idx].id);
+
+    // Pre-pick the percentage target so inner spin can fire right after outer completes
+    const pctOptions = generatePercentageOptions(wRemainingPct);
+    setWPercentOptions(pctOptions);
+    wPctTargetIdxRef.current = Math.floor(Math.random() * pctOptions.length);
+
+    weightedWheelRef.current?.spinOuter(idx);
+  }, [wRemainingParticipants, wRemainingPct, wPhase]);
+
+  const handleWeightedOuterComplete = useCallback((_userId: string) => {
+    setWPhase('user-selected');
+    // Quick pause then spin the inner ring
+    setTimeout(() => {
+      setWPhase('spinning-pct');
+      weightedWheelRef.current?.spinInner(wPctTargetIdxRef.current);
+    }, 700);
+  }, []);
+
+  const handleWeightedInnerComplete = useCallback(
+    (percentage: number) => {
+      const userId = wSelectedUserRef.current!;
+      const userName = included.find((p) => p.id === userId)?.name ?? '';
+
+      const newAssignment = { userId, name: userName, percentage };
+      const allAssignments = [...wAssignments, newAssignment];
+
+      const newRemainingPct = 100 - allAssignments.reduce((s, a) => s + a.percentage, 0);
+      const newRemainingUsers = included.filter((p) => !allAssignments.some((a) => a.userId === p.id));
+
+      if (newRemainingPct <= 0 || newRemainingUsers.length === 0) {
+        finalizeWeighted(allAssignments);
+      } else if (newRemainingUsers.length === 1) {
+        // Auto-assign remaining to last person
+        const last = { userId: newRemainingUsers[0].id, name: newRemainingUsers[0].name, percentage: newRemainingPct };
+        finalizeWeighted([...allAssignments, last]);
+      } else {
+        setWAssignments(allAssignments);
+        setWSelectedUser(null);
+        setWPhase('idle');
+        setWPercentOptions(generatePercentageOptions(newRemainingPct));
+      }
+    },
+    [wAssignments, included, finalizeWeighted],
+  );
+
+  const handleWeightedReset = useCallback(() => {
+    setWAssignments([]);
+    setWPhase('idle');
+    setWSelectedUser(null);
+    setWPercentOptions(generatePercentageOptions(100));
+  }, []);
+
   return (
     <View style={styles.section}>
       <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
@@ -459,29 +560,93 @@ const GamifiedMode_ = React.memo(({
       {mode === 'weightedRoulette' && (
         <View>
           <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-            Set probability weights for each person, then spin.
+            Dual-ring roulette! Outer ring picks a person, inner ring picks their share. Spin until 100% is split.
           </Text>
-          {included.map((p, index) => {
-            const totalWeight = included.reduce((s, pp) => s + pp.rouletteWeight, 0);
-            const pct = totalWeight > 0 ? ((p.rouletteWeight / totalWeight) * 100).toFixed(0) : '0';
-            return (
-              <View key={p.id} style={styles.incomeRow}>
-                <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[index % AVATAR_COLORS.length] }]}>
-                  <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
+
+          {/* Progress bar */}
+          <View style={styles.wProgressContainer}>
+            <View style={styles.wProgressBar}>
+              <View style={[styles.wProgressFill, { width: `${wAllocated}%`, backgroundColor: theme.colors.primary }]} />
+            </View>
+            <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+              {wAllocated}% / 100%
+            </Text>
+          </View>
+
+          {/* The dual-ring wheel */}
+          <WeightedRouletteWheel
+            ref={weightedWheelRef}
+            participants={wRemainingParticipants.map((p) => ({ ...p }))}
+            percentages={wPercentOptions}
+            onOuterSpinComplete={handleWeightedOuterComplete}
+            onInnerSpinComplete={handleWeightedInnerComplete}
+            disabled={wBusy}
+            highlightedUserId={wSelectedUser}
+          />
+
+          {/* Status message */}
+          {wPhase === 'spinning-user' && (
+            <Animated.View entering={FadeIn.duration(200)}>
+              <Text variant="bodySmall" style={{ color: '#F59E0B', textAlign: 'center', fontWeight: '700', marginTop: 4 }}>
+                🎯 Selecting who's next…
+              </Text>
+            </Animated.View>
+          )}
+          {(wPhase === 'user-selected' || wPhase === 'spinning-pct') && (
+            <Animated.View entering={FadeIn.duration(200)}>
+              <Text variant="bodySmall" style={{ color: '#14B8A6', textAlign: 'center', fontWeight: '700', marginTop: 4 }}>
+                📊 Selecting their share…
+              </Text>
+            </Animated.View>
+          )}
+
+          {/* Assignment list */}
+          {wAssignments.length > 0 && (
+            <View style={styles.wAssignmentList}>
+              {wAssignments.map((a, i) => (
+                <Animated.View key={a.userId} entering={FadeInDown.delay(i * 60).springify()}>
+                  <View style={[styles.wAssignmentRow, { borderColor: palette.border }]}>
+                    <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[i % AVATAR_COLORS.length] }]}>
+                      <Text style={styles.miniInitials}>{getInitials(a.name)}</Text>
+                    </View>
+                    <Text style={[styles.incomeName, { color: theme.colors.onSurface }]}>{a.name}</Text>
+                    <Text variant="titleSmall" style={{ color: theme.colors.primary, fontWeight: '800' }}>
+                      {a.percentage}%
+                    </Text>
+                    <Text variant="bodySmall" style={{ color: palette.muted }}>
+                      {formatCurrency(totalAmount * a.percentage / 100, currency)}
+                    </Text>
+                  </View>
+                </Animated.View>
+              ))}
+            </View>
+          )}
+
+          {/* Completion / reset */}
+          {wPhase === 'complete' && (
+            <Animated.View entering={ZoomIn.springify()}>
+              <GlassView style={styles.resultCard} intensity={25}>
+                <View style={styles.resultContent}>
+                  <Text style={styles.resultEmoji}>✅</Text>
+                  <Text variant="titleMedium" style={[styles.resultName, { color: theme.colors.onSurface }]}>
+                    All shares assigned!
+                  </Text>
+                  <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center' }}>
+                    {included.filter((p) => !wAssignments.some((a) => a.userId === p.id)).length > 0
+                      ? `${included.filter((p) => !wAssignments.some((a) => a.userId === p.id)).length} people pay nothing 🎉`
+                      : 'Everyone has a share!'}
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.wResetBtn, { borderColor: theme.colors.primary }]}
+                    onPress={handleWeightedReset}
+                  >
+                    <Icon source="refresh" size={16} color={theme.colors.primary} />
+                    <Text style={{ color: theme.colors.primary, fontSize: 13, fontWeight: '700' }}>Spin Again</Text>
+                  </TouchableOpacity>
                 </View>
-                <Text style={[styles.incomeName, { color: theme.colors.onSurface }]}>{p.name}</Text>
-                <TextInput
-                  style={[styles.weightInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
-                  value={p.rouletteWeight > 0 ? p.rouletteWeight.toString() : ''}
-                  onChangeText={(v) => onWeightChange(p.id, v)}
-                  keyboardType="numeric"
-                  placeholder="0"
-                  placeholderTextColor={palette.muted}
-                />
-                <Text variant="bodySmall" style={{ color: palette.muted, minWidth: 36 }}>{pct}%</Text>
-              </View>
-            );
-          })}
+              </GlassView>
+            </Animated.View>
+          )}
         </View>
       )}
 
@@ -515,33 +680,57 @@ const GamifiedMode_ = React.memo(({
       )}
 
       {/* Spin Button */}
-      <View style={styles.spinContainer}>
-        <TouchableOpacity
-          style={[
-            styles.spinButton,
-            {
-              backgroundColor: isSpinning ? `${theme.colors.primary}80` : theme.colors.primary,
-            },
-          ]}
-          onPress={onSpin}
-          disabled={isSpinning}
-          activeOpacity={0.8}
-        >
-          {mode === 'scrooge' ? (
-            <Animated.View style={scroogeSpinStyle}>
-              <Icon source="dice-multiple" size={24} color="#FFF" />
-            </Animated.View>
-          ) : (
-            <Icon source={isSpinning ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
-          )}
-          <Text style={styles.spinText}>
-            {isSpinning ? 'Spinning…' : showWheel ? 'Spin the wheel!' : 'Spin!'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {mode !== 'weightedRoulette' && (
+        <View style={styles.spinContainer}>
+          <TouchableOpacity
+            style={[
+              styles.spinButton,
+              {
+                backgroundColor: isSpinning ? `${theme.colors.primary}80` : theme.colors.primary,
+              },
+            ]}
+            onPress={onSpin}
+            disabled={isSpinning}
+            activeOpacity={0.8}
+          >
+            {mode === 'scrooge' ? (
+              <Animated.View style={scroogeSpinStyle}>
+                <Icon source="dice-multiple" size={24} color="#FFF" />
+              </Animated.View>
+            ) : (
+              <Icon source={isSpinning ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
+            )}
+            <Text style={styles.spinText}>
+              {isSpinning ? 'Spinning…' : showWheel ? 'Spin the wheel!' : 'Spin!'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
-      {/* ── Winner Reveal ──────────────────────────────────────────────── */}
-      {loserId && !isSpinning && (
+      {/* Weighted Spin Button */}
+      {mode === 'weightedRoulette' && wPhase !== 'complete' && (
+        <View style={styles.spinContainer}>
+          <TouchableOpacity
+            style={[
+              styles.spinButton,
+              {
+                backgroundColor: wBusy ? `${theme.colors.primary}80` : theme.colors.primary,
+              },
+            ]}
+            onPress={handleWeightedSpin}
+            disabled={wBusy}
+            activeOpacity={0.8}
+          >
+            <Icon source={wBusy ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
+            <Text style={styles.spinText}>
+              {wBusy ? 'Spinning…' : `Spin! (${wRemainingPct}% left)`}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* ── Winner Reveal (roulette / scrooge) ─────────────────────────── */}
+      {loserId && !isSpinning && mode !== 'weightedRoulette' && (
         <Animated.View entering={ZoomIn.springify()}>
           <GlassView style={styles.resultCard} intensity={25}>
             <View style={styles.resultContent}>
@@ -734,6 +923,7 @@ interface AdvancedModeContentProps {
   spinTargetIndex: number | null;
   onSpinComplete: (winnerId: string) => void;
   isSpinning: boolean;
+  onWeightedComplete?: (assignments: { userId: string; percentage: number }[]) => void;
   // Item Type
   itemCategories: ItemCategory[];
   onItemCategoriesChange: (cats: ItemCategory[]) => void;
@@ -794,6 +984,7 @@ export const AdvancedModeContent = React.memo((props: AdvancedModeContentProps) 
           isSpinning={props.isSpinning}
           currency={props.currency}
           totalAmount={props.totalAmount}
+          onWeightedComplete={props.onWeightedComplete}
         />
       );
     case 'itemType':
@@ -1090,5 +1281,44 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 6,
+  },
+  // Weighted Roulette
+  wProgressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 4,
+  },
+  wProgressBar: {
+    flex: 1,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(128,128,128,0.15)',
+    overflow: 'hidden',
+  },
+  wProgressFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  wAssignmentList: {
+    marginTop: 12,
+    gap: 6,
+  },
+  wAssignmentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  wResetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginTop: 12,
   },
 });

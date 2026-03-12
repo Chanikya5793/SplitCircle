@@ -203,6 +203,23 @@ export const BillSplitScreen = ({
     successHaptic();
   }, []);
 
+  // ── Weighted Roulette Complete ────────────────────────────────────────────
+  const handleWeightedComplete = useCallback((assignments: { userId: string; percentage: number }[]) => {
+    setParticipants((prev) =>
+      prev.map((p) => {
+        const a = assignments.find((x) => x.userId === p.id);
+        const pct = a ? a.percentage : 0;
+        return {
+          ...p,
+          percentage: pct,
+          computedAmount: Math.round((totalAmount * pct / 100) * 100) / 100,
+        };
+      }),
+    );
+    setLoserId(null);
+    setIsSpinning(false);
+  }, [totalAmount]);
+
   // ── Smart Suggestions ─────────────────────────────────────────────────────
   const suggestions: SmartSuggestion[] = useMemo(() => [
     { id: 'last_split', label: 'Use last split: 60/40', icon: 'history' },
@@ -488,6 +505,7 @@ export const BillSplitScreen = ({
                   spinTargetIndex={spinTargetIndex}
                   onSpinComplete={handleWheelSpinComplete}
                   isSpinning={isSpinning}
+                  onWeightedComplete={handleWeightedComplete}
                   itemCategories={itemCategories}
                   onItemCategoriesChange={setItemCategories}
                 />
