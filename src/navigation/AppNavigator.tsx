@@ -1,3 +1,4 @@
+import { BillSplitScreen } from '@/components/BillSplit';
 import { IncomingCallModal } from '@/components/IncomingCallModal';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -705,6 +706,11 @@ const AppStackNavigator = () => {
         name={ROUTES.APP.GROUP_STATS}
         component={GroupStatsRoute}
         options={{ title: 'Group Stats', headerBackTitle: 'Group' }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.BILL_SPLIT}
+        component={BillSplitScreen}
+        options={{ presentation: 'modal', headerShown: false }}
       />
       <AppStack.Screen
         name={ROUTES.APP.RECURRING_BILLS}

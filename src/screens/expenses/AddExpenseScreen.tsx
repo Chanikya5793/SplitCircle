@@ -1,3 +1,5 @@
+import { BillSplitScreen } from '@/components/BillSplit';
+import type { Participant, SplitMethod } from '@/components/BillSplit/types';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
@@ -6,13 +8,14 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group, ParticipantShare, SplitType } from '@/models';
 import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
+import { formatCurrency } from '@/utils/currency';
 import { mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
-import { Button, Chip, Dialog, HelperText, Menu, PaperProvider, Portal, SegmentedButtons, Text, TextInput, TouchableRipple } from 'react-native-paper';
+import { Alert, Image, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Button, Chip, Dialog, Icon, Menu, PaperProvider, Portal, Text, TextInput, TouchableRipple } from 'react-native-paper';
 
 interface AddExpenseScreenProps {
   group: Group;
@@ -58,6 +61,8 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   const [showReceiptMenu, setShowReceiptMenu] = useState(false);
   const [isProcessingOCR, setIsProcessingOCR] = useState(false);
+  const [showBillSplit, setShowBillSplit] = useState(false);
+  const [splitMethodLabel, setSplitMethodLabel] = useState<string>('Equal');
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -147,6 +152,70 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
 
   const handleCustomShareChange = (userId: string, value: string) => {
     setCustomShares((prev) => ({ ...prev, [userId]: value }));
+  };
+
+  // ── BillSplit Integration ───────────────────────────────────────────────
+  const historicalPaidMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const m of group.members) map[m.userId] = 0;
+    for (const exp of group.expenses) {
+      if (exp.paidBy && map[exp.paidBy] !== undefined) {
+        map[exp.paidBy] += exp.amount;
+      }
+    }
+    return map;
+  }, [group.members, group.expenses]);
+
+  const billSplitParticipants = useMemo<Participant[]>(() => {
+    return group.members.map((m) => ({
+      id: m.userId,
+      name: m.displayName,
+      avatarUrl: m.photoURL,
+      included: selectedMembers.includes(m.userId),
+      exactAmount: Number(customShares[m.userId] || '0'),
+      percentage: 0,
+      shares: 1,
+      adjustment: 0,
+      incomeWeight: 50000,
+      daysStayed: 1,
+      partsConsumed: 0,
+      rouletteWeight: 25,
+      historicalPaid: historicalPaidMap[m.userId] ?? 0,
+      computedAmount: 0,
+    }));
+  }, [group.members, selectedMembers, customShares, historicalPaidMap]);
+
+  const SPLIT_METHOD_LABELS: Record<string, string> = {
+    equal: 'Equal', exact: 'Exact amounts', percentage: 'Percentages',
+    shares: 'Shares', adjustment: 'Adjustments', itemized: 'Itemized receipt',
+    income: 'By income', consumption: 'Consumption', timeBased: 'Time-based',
+    gamified: 'Fun mode', itemType: 'By category',
+  };
+
+  const handleBillSplitDone = (result: {
+    paidBy: string;
+    method: SplitMethod;
+    participants: { userId: string; share: number }[];
+  }) => {
+    successHaptic();
+    setPaidBy(result.paidBy);
+    setSelectedMembers(result.participants.map((p) => p.userId));
+
+    // Map advanced methods → 'custom' splitType for storage
+    if (result.method === 'equal') {
+      setSplitType('equal');
+      setCustomShares({});
+    } else {
+      setSplitType('custom');
+      const shares: Record<string, string> = {};
+      result.participants.forEach((p) => {
+        shares[p.userId] = p.share.toString();
+      });
+      setCustomShares(shares);
+    }
+
+    setSplitMethodLabel(SPLIT_METHOD_LABELS[result.method] || 'Custom');
+    setShowBillSplit(false);
   };
 
   const handlePickImage = async () => {
@@ -380,58 +449,46 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
             </View>
 
 
-            <SegmentedButtons
-              value={splitType}
-              onValueChange={(value) => setSplitType(value as SplitType)}
-              buttons={[
-                { label: 'Equal', value: 'equal' },
-                { label: 'Custom', value: 'custom' },
-              ]}
-              style={styles.field}
-            />
-
-
-            <Text variant="titleMedium" style={[styles.section, { color: theme.colors.onSurface }]}>
-              Split with
-            </Text>
-            <View style={styles.members}>
-              {group.members.map((member) => (
-                <Chip
-                  key={member.userId}
-                  selected={selectedMembers.includes(member.userId)}
-                  onPress={() => handleToggleMember(member.userId)}
-                  showSelectedOverlay
-                  style={{ backgroundColor: selectedMembers.includes(member.userId) ? theme.colors.secondaryContainer : undefined }}
-                  textStyle={{ color: selectedMembers.includes(member.userId) ? theme.colors.onSecondaryContainer : theme.colors.onSurface }}
-                >
-                  {member.displayName}
-                </Chip>
-              ))}
-            </View>
-
-            {splitType === 'custom' && (
-              <View style={styles.customSplitContainer}>
-                <Text variant="bodyMedium" style={{ marginBottom: 8, color: theme.colors.onSurface }}>
-                  Remaining: ${(Number(amount) - customTotal).toFixed(2)}
-                </Text>
-                {selectedMembers.map((userId) => (
-                  <FloatingLabelInput
-                    key={userId}
-                    label={`Share for ${memberDisplayNames[userId] ?? 'Member'}`}
-                    value={customShares[userId] ?? ''}
-                    onChangeText={(value) => handleCustomShareChange(userId, value)}
-                    keyboardType="decimal-pad"
-                    style={styles.field}
-                    error={!matchesAmount}
-                  />
-                ))}
-                {!matchesAmount && (
-                  <HelperText type="error" visible={!matchesAmount}>
-                    Total must match the expense amount
-                  </HelperText>
-                )}
+            {/* Split Options Button */}
+            <TouchableOpacity
+              onPress={() => { mediumHaptic(); setShowBillSplit(true); }}
+              activeOpacity={0.7}
+              style={[styles.splitOptionsBtn, { borderColor: theme.colors.outline }]}
+            >
+              <View style={styles.splitOptionsBtnContent}>
+                <Icon source="tune-variant" size={20} color={theme.colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                    Split options
+                  </Text>
+                  <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                    {splitMethodLabel} · {selectedMembers.length} {selectedMembers.length === 1 ? 'person' : 'people'}
+                  </Text>
+                </View>
+                <Icon source="chevron-right" size={20} color={theme.colors.onSurfaceVariant} />
               </View>
-            )}
+            </TouchableOpacity>
+
+            {/* Split Summary Preview */}
+            <View style={styles.splitPreview}>
+              <View style={styles.members}>
+                {group.members.filter((m) => selectedMembers.includes(m.userId)).map((member) => {
+                  const share = customShares[member.userId];
+                  return (
+                    <Chip
+                      key={member.userId}
+                      selected
+                      onPress={() => handleToggleMember(member.userId)}
+                      showSelectedOverlay
+                      style={{ backgroundColor: theme.colors.secondaryContainer }}
+                      textStyle={{ color: theme.colors.onSecondaryContainer }}
+                    >
+                      {member.displayName}{share ? ` · ${formatCurrency(Number(share))}` : ''}
+                    </Chip>
+                  );
+                })}
+              </View>
+            </View>
 
             <View style={styles.actions}>
               <Button mode="outlined" onPress={onClose} style={{ borderColor: theme.colors.outline }}>
@@ -444,6 +501,23 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
           </GlassView>
         </ScrollView>
       </LiquidBackground>
+
+      {/* BillSplit Modal */}
+      <Modal
+        visible={showBillSplit}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowBillSplit(false)}
+      >
+        <BillSplitScreen
+          totalAmount={Number(amount) || 0}
+          currency={group.currency || 'USD'}
+          initialParticipants={billSplitParticipants}
+          initialPayer={paidBy}
+          onDone={handleBillSplitDone}
+          onCancel={() => setShowBillSplit(false)}
+        />
+      </Modal>
 
       <Portal>
         <Dialog visible={showPayerDialog} onDismiss={() => setShowPayerDialog(false)} style={{ backgroundColor: theme.colors.surface }}>
@@ -522,6 +596,21 @@ const styles = StyleSheet.create({
     marginTop: 24,
     flexDirection: 'row',
     justifyContent: 'space-between',
+  },
+  splitOptionsBtn: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  splitOptionsBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  splitPreview: {
+    marginBottom: 8,
   },
   payerRow: {
     paddingVertical: 12,
