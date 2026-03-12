@@ -6,9 +6,10 @@ import { heavyHaptic, lightHaptic, mediumHaptic, successHaptic } from '@/utils/h
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Button, Icon, IconButton, Text } from 'react-native-paper';
-import Animated, { FadeIn, FadeInDown, ZoomIn, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, ZoomIn } from 'react-native-reanimated';
 import type { RouletteWheelRef } from './RouletteWheel';
 import RouletteWheel from './RouletteWheel';
+import { computeKarma } from './splitMath';
 import type { AdvancedSplitMethod, GamifiedMode, ItemCategory, Participant, ReceiptItem } from './types';
 import type { WeightedRouletteWheelRef } from './WeightedRouletteWheel';
 import WeightedRouletteWheel, { generatePercentageOptions } from './WeightedRouletteWheel';
@@ -369,20 +370,19 @@ interface GamifiedProps {
   participants: Participant[];
   onWeightChange: (id: string, weight: string) => void;
   loserId: string | null;
-  /** Called to request a spin – parent should compute the winner, then call onSpinReady */
   onSpin: () => void;
-  /** Index of the winner segment – set by parent after computing, triggers the wheel animation */
   spinTargetIndex: number | null;
   onSpinComplete: (winnerId: string) => void;
   isSpinning: boolean;
   currency: string;
   totalAmount: number;
   onWeightedComplete?: (assignments: { userId: string; percentage: number }[]) => void;
+  onKarmaComplete?: (results: { userId: string; amount: number }[]) => void;
 }
 
 const GamifiedMode_ = React.memo(({
   mode, onModeChange, participants, onWeightChange, loserId, onSpin,
-  spinTargetIndex, onSpinComplete, isSpinning, currency, totalAmount, onWeightedComplete,
+  spinTargetIndex, onSpinComplete, isSpinning, currency, totalAmount, onWeightedComplete, onKarmaComplete,
 }: GamifiedProps) => {
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
@@ -399,32 +399,73 @@ const GamifiedMode_ = React.memo(({
     }
   }, [spinTargetIndex, mode]);
 
-  // Scrooge fallback spinner animation (no wheel needed)
-  const spinRotation = useSharedValue(0);
-  useEffect(() => {
-    if (isSpinning && mode === 'scrooge') {
-      spinRotation.value = 0;
-      spinRotation.value = withRepeat(
-        withTiming(360, { duration: 400 }),
-        -1,
-        false,
-      );
-    } else if (mode === 'scrooge') {
-      spinRotation.value = withTiming(0, { duration: 300 });
-    }
-  }, [isSpinning, mode, spinRotation]);
-
-  const scroogeSpinStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${spinRotation.value}deg` }],
-  }));
-
   const MODES: { key: GamifiedMode; label: string; icon: string }[] = [
     { key: 'roulette', label: 'Roulette', icon: 'poker-chip' },
     { key: 'weightedRoulette', label: 'Weighted', icon: 'scale-balance' },
-    { key: 'scrooge', label: 'Scrooge', icon: 'currency-usd-off' },
+    { key: 'scrooge', label: 'Karma', icon: 'scale-balance' },
   ];
 
   const showWheel = mode === 'roulette';
+
+  // ── Karma State ─────────────────────────────────────────────────────
+  const KARMA_PRESETS = [
+    { key: 0.25, label: 'Gentle', emoji: '🌱' },
+    { key: 0.5, label: 'Moderate', emoji: '⚖️' },
+    { key: 0.75, label: 'Strong', emoji: '💪' },
+    { key: 1.0, label: 'Full', emoji: '🔥' },
+  ];
+  const [karmaIntensity, setKarmaIntensity] = useState(0.5);
+  const [karmaApplied, setKarmaApplied] = useState(false);
+
+  const karmaComputed = useMemo(() => {
+    if (mode !== 'scrooge') return [];
+    return computeKarma(totalAmount, participants, karmaIntensity);
+  }, [mode, totalAmount, participants, karmaIntensity]);
+
+  const karmaData = useMemo(() => {
+    if (mode !== 'scrooge' || included.length === 0) return [];
+    const avgPaid = included.reduce((s, p) => s + p.historicalPaid, 0) / included.length;
+    const maxDev = Math.max(...included.map((p) => Math.abs(p.historicalPaid - avgPaid)), 1);
+    const equalShare = totalAmount / included.length;
+
+    return included.map((p) => {
+      const computed = karmaComputed.find((c) => c.id === p.id);
+      const deviation = p.historicalPaid - avgPaid;
+      const computedAmt = computed?.computedAmount ?? equalShare;
+      return {
+        id: p.id,
+        name: p.name,
+        historicalPaid: p.historicalPaid,
+        deviation,
+        isOverpayer: deviation > 0,
+        barWidth: Math.min(100, (Math.abs(deviation) / maxDev) * 100),
+        computedAmount: computedAmt,
+        karmaAdjustment: computedAmt - equalShare,
+      };
+    });
+  }, [mode, included, karmaComputed, totalAmount]);
+
+  useEffect(() => {
+    if (mode === 'scrooge') {
+      setKarmaApplied(false);
+      setKarmaIntensity(0.5);
+    }
+  }, [mode]);
+
+  const handleApplyKarma = useCallback(() => {
+    successHaptic();
+    setKarmaApplied(true);
+    const results = karmaComputed
+      .filter((p) => p.included)
+      .map((p) => ({ userId: p.id, amount: p.computedAmount }));
+    onKarmaComplete?.(results);
+  }, [karmaComputed, onKarmaComplete]);
+
+  const handleResetKarma = useCallback(() => {
+    mediumHaptic();
+    setKarmaApplied(false);
+    setKarmaIntensity(0.5);
+  }, []);
 
   // ── Weighted Roulette State ─────────────────────────────────────────
   const weightedWheelRef = useRef<WeightedRouletteWheelRef>(null);
@@ -653,19 +694,125 @@ const GamifiedMode_ = React.memo(({
       {mode === 'scrooge' && (
         <View>
           <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-            The person who has paid the least historically foots this bill. 💸
+            Balance past payments — those who've paid less chip in more this time. ⚖️
           </Text>
-          {included.map((p, index) => (
-            <View key={p.id} style={styles.incomeRow}>
-              <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[index % AVATAR_COLORS.length] }]}>
-                <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
-              </View>
-              <Text style={[styles.incomeName, { color: theme.colors.onSurface }]}>{p.name}</Text>
-              <Text variant="bodySmall" style={{ color: palette.muted }}>
-                Paid: {formatCurrency(p.historicalPaid, currency)}
-              </Text>
+
+          {/* Intensity Presets */}
+          <View style={styles.karmaPresetsRow}>
+            {KARMA_PRESETS.map((preset) => (
+              <TouchableOpacity
+                key={preset.key}
+                style={[
+                  styles.karmaPresetChip,
+                  {
+                    backgroundColor: karmaIntensity === preset.key ? `${theme.colors.primary}20` : 'transparent',
+                    borderColor: karmaIntensity === preset.key ? theme.colors.primary : palette.border,
+                  },
+                ]}
+                onPress={() => { lightHaptic(); setKarmaIntensity(preset.key); setKarmaApplied(false); }}
+              >
+                <Text style={{ fontSize: 14 }}>{preset.emoji}</Text>
+                <Text
+                  style={{
+                    color: karmaIntensity === preset.key ? theme.colors.primary : palette.muted,
+                    fontSize: 11,
+                    fontWeight: '700',
+                  }}
+                >
+                  {preset.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Karma Breakdown */}
+          {karmaData.map((item, index) => {
+            const equalShare = totalAmount / Math.max(included.length, 1);
+            return (
+              <Animated.View key={item.id} entering={FadeInDown.delay(index * 60).springify()}>
+                <View style={[styles.karmaRow, { borderBottomColor: palette.border }]}>
+                  <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[index % AVATAR_COLORS.length] }]}>
+                    <Text style={styles.miniInitials}>{getInitials(item.name)}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.incomeName, { color: theme.colors.onSurface }]}>{item.name}</Text>
+                    <View style={styles.karmaBarContainer}>
+                      <View
+                        style={[
+                          styles.karmaBar,
+                          {
+                            width: `${Math.max(8, item.barWidth)}%`,
+                            backgroundColor: item.isOverpayer ? '#10B981' : '#F59E0B',
+                          },
+                        ]}
+                      />
+                    </View>
+                    <Text variant="labelSmall" style={{ color: palette.muted, marginTop: 2 }}>
+                      {item.isOverpayer ? 'Overpaid' : 'Underpaid'} by {formatCurrency(Math.abs(item.deviation), currency)}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end', minWidth: 70 }}>
+                    <Text variant="titleSmall" style={{ color: theme.colors.primary, fontWeight: '800' }}>
+                      {formatCurrency(item.computedAmount, currency)}
+                    </Text>
+                    {Math.abs(item.karmaAdjustment) >= 0.01 && (
+                      <Text
+                        variant="labelSmall"
+                        style={{
+                          color: item.karmaAdjustment < 0 ? '#10B981' : '#F59E0B',
+                          fontWeight: '600',
+                        }}
+                      >
+                        {item.karmaAdjustment > 0 ? '+' : ''}{formatCurrency(item.karmaAdjustment, currency)} vs equal
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              </Animated.View>
+            );
+          })}
+
+          {/* Equal split reference */}
+          {included.length > 0 && (
+            <Text variant="labelSmall" style={{ color: palette.muted, textAlign: 'center', marginTop: 8 }}>
+              Equal split would be {formatCurrency(totalAmount / included.length, currency)}/person
+            </Text>
+          )}
+
+          {/* Apply / Reset */}
+          {!karmaApplied ? (
+            <View style={styles.spinContainer}>
+              <TouchableOpacity
+                style={[styles.spinButton, { backgroundColor: theme.colors.primary }]}
+                onPress={handleApplyKarma}
+                activeOpacity={0.8}
+              >
+                <Icon source="check-circle" size={24} color="#FFF" />
+                <Text style={styles.spinText}>Apply Karma Split</Text>
+              </TouchableOpacity>
             </View>
-          ))}
+          ) : (
+            <Animated.View entering={ZoomIn.springify()}>
+              <GlassView style={styles.resultCard} intensity={25}>
+                <View style={styles.resultContent}>
+                  <Text style={styles.resultEmoji}>⚖️</Text>
+                  <Text variant="titleMedium" style={[styles.resultName, { color: theme.colors.onSurface }]}>
+                    Karma split applied!
+                  </Text>
+                  <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center' }}>
+                    Balanced based on past payments
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.wResetBtn, { borderColor: theme.colors.primary }]}
+                    onPress={handleResetKarma}
+                  >
+                    <Icon source="refresh" size={16} color={theme.colors.primary} />
+                    <Text style={{ color: theme.colors.primary, fontSize: 13, fontWeight: '700' }}>Adjust &amp; Reapply</Text>
+                  </TouchableOpacity>
+                </View>
+              </GlassView>
+            </Animated.View>
+          )}
         </View>
       )}
 
@@ -680,7 +827,7 @@ const GamifiedMode_ = React.memo(({
       )}
 
       {/* Spin Button */}
-      {mode !== 'weightedRoulette' && (
+      {mode === 'roulette' && (
         <View style={styles.spinContainer}>
           <TouchableOpacity
             style={[
@@ -693,15 +840,9 @@ const GamifiedMode_ = React.memo(({
             disabled={isSpinning}
             activeOpacity={0.8}
           >
-            {mode === 'scrooge' ? (
-              <Animated.View style={scroogeSpinStyle}>
-                <Icon source="dice-multiple" size={24} color="#FFF" />
-              </Animated.View>
-            ) : (
-              <Icon source={isSpinning ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
-            )}
+            <Icon source={isSpinning ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
             <Text style={styles.spinText}>
-              {isSpinning ? 'Spinning…' : showWheel ? 'Spin the wheel!' : 'Spin!'}
+              {isSpinning ? 'Spinning…' : 'Spin the wheel!'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -729,8 +870,8 @@ const GamifiedMode_ = React.memo(({
         </View>
       )}
 
-      {/* ── Winner Reveal (roulette / scrooge) ─────────────────────────── */}
-      {loserId && !isSpinning && mode !== 'weightedRoulette' && (
+      {/* ── Winner Reveal (roulette only) ──────────────────────────────── */}
+      {loserId && !isSpinning && mode === 'roulette' && (
         <Animated.View entering={ZoomIn.springify()}>
           <GlassView style={styles.resultCard} intensity={25}>
             <View style={styles.resultContent}>
@@ -924,6 +1065,7 @@ interface AdvancedModeContentProps {
   onSpinComplete: (winnerId: string) => void;
   isSpinning: boolean;
   onWeightedComplete?: (assignments: { userId: string; percentage: number }[]) => void;
+  onKarmaComplete?: (results: { userId: string; amount: number }[]) => void;
   // Item Type
   itemCategories: ItemCategory[];
   onItemCategoriesChange: (cats: ItemCategory[]) => void;
@@ -985,6 +1127,7 @@ export const AdvancedModeContent = React.memo((props: AdvancedModeContentProps) 
           currency={props.currency}
           totalAmount={props.totalAmount}
           onWeightedComplete={props.onWeightedComplete}
+          onKarmaComplete={props.onKarmaComplete}
         />
       );
     case 'itemType':
@@ -1320,5 +1463,38 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     marginTop: 12,
+  },
+  // Karma
+  karmaPresetsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14,
+  },
+  karmaPresetChip: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 10,
+  },
+  karmaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  karmaBarContainer: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(128,128,128,0.12)',
+    marginTop: 4,
+    overflow: 'hidden',
+  },
+  karmaBar: {
+    height: '100%',
+    borderRadius: 3,
   },
 });

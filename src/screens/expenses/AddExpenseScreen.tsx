@@ -155,6 +155,17 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   };
 
   // ── BillSplit Integration ───────────────────────────────────────────────
+  const historicalPaidMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const m of group.members) map[m.userId] = 0;
+    for (const exp of group.expenses) {
+      if (exp.paidBy && map[exp.paidBy] !== undefined) {
+        map[exp.paidBy] += exp.amount;
+      }
+    }
+    return map;
+  }, [group.members, group.expenses]);
+
   const billSplitParticipants = useMemo<Participant[]>(() => {
     return group.members.map((m) => ({
       id: m.userId,
@@ -169,10 +180,10 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       daysStayed: 1,
       partsConsumed: 0,
       rouletteWeight: 25,
-      historicalPaid: 0,
+      historicalPaid: historicalPaidMap[m.userId] ?? 0,
       computedAmount: 0,
     }));
-  }, [group.members, selectedMembers, customShares]);
+  }, [group.members, selectedMembers, customShares, historicalPaidMap]);
 
   const SPLIT_METHOD_LABELS: Record<string, string> = {
     equal: 'Equal', exact: 'Exact amounts', percentage: 'Percentages',
