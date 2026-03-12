@@ -1,5 +1,16 @@
 import type { ItemCategory, Participant, ReceiptItem, ValidationResult } from './types';
 
+/** Crypto-quality random float in [0, 1) */
+function cryptoRandom(): number {
+  const arr = new Uint32Array(1);
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(arr);
+  } else {
+    arr[0] = (Math.random() * 0xffffffff) >>> 0;
+  }
+  return arr[0] / 0x100000000;
+}
+
 /** Convert dollars to integer cents to avoid floating-point drift. */
 export function toCents(amount: number): number {
   return Math.round(amount * 100);
@@ -244,7 +255,7 @@ export function computeRoulette(total: number, participants: Participant[]): { p
   const included = participants.filter((p) => p.included);
   if (included.length === 0) return { participants: participants.map((p) => ({ ...p, computedAmount: 0 })), loserId: '' };
 
-  const loserIdx = Math.floor(Math.random() * included.length);
+  const loserIdx = Math.floor(cryptoRandom() * included.length);
   const loserId = included[loserIdx].id;
   return {
     participants: participants.map((p) => ({
@@ -265,7 +276,7 @@ export function computeWeightedRoulette(
     return { participants: participants.map((p) => ({ ...p, computedAmount: 0 })), loserId: '' };
   }
 
-  const rand = Math.random() * totalWeight;
+  const rand = cryptoRandom() * totalWeight;
   let cumulative = 0;
   let loserId = included[0].id;
   for (const p of included) {
