@@ -3,7 +3,7 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import { heavyHaptic, mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Icon, Menu, PaperProvider, Text } from 'react-native-paper';
 import Animated, { FadeIn, FadeInDown, FadeOut, Layout, SlideInDown, SlideOutDown } from 'react-native-reanimated';
@@ -95,6 +95,7 @@ export const BillSplitScreen = ({
   const [gamifiedMode, setGamifiedMode] = useState<GamifiedMode>('roulette');
   const [loserId, setLoserId] = useState<string | null>(null);
   const [isSpinning, setIsSpinning] = useState(false);
+  const [spinTargetIndex, setSpinTargetIndex] = useState<number | null>(null);
 
   // ── Item Type State ───────────────────────────────────────────────────────
   const [itemCategories, setItemCategories] = useState<ItemCategory[]>([]);
@@ -155,22 +156,52 @@ export const BillSplitScreen = ({
   const handleSpin = useCallback(() => {
     heavyHaptic();
     setLoserId(null);
+    setSpinTargetIndex(null);
     setIsSpinning(true);
-    setTimeout(() => {
-      let result: { participants: Participant[]; loserId: string };
-      if (gamifiedMode === 'roulette') {
-        result = computeRoulette(totalAmount, participants);
-      } else if (gamifiedMode === 'weightedRoulette') {
-        result = computeWeightedRoulette(totalAmount, participants);
-      } else {
-        result = computeScrooge(totalAmount, participants);
-      }
-      setParticipants(result.participants);
-      setLoserId(result.loserId);
-      setIsSpinning(false);
-      successHaptic();
-    }, 1500);
+
+    // Compute the winner immediately
+    let result: { participants: Participant[]; loserId: string };
+    if (gamifiedMode === 'roulette') {
+      result = computeRoulette(totalAmount, participants);
+    } else if (gamifiedMode === 'weightedRoulette') {
+      result = computeWeightedRoulette(totalAmount, participants);
+    } else {
+      result = computeScrooge(totalAmount, participants);
+    }
+
+    // Only roulette mode uses the animated wheel
+    if (gamifiedMode === 'roulette') {
+      const included = participants.filter((p) => p.included);
+      const winnerIdx = included.findIndex((p) => p.id === result.loserId);
+      spinResultRef.current = result;
+      setSpinTargetIndex(winnerIdx >= 0 ? winnerIdx : 0);
+    } else {
+      // Weighted / Scrooge – no wheel, quick delay
+      setTimeout(() => {
+        setParticipants(result.participants);
+        setLoserId(result.loserId);
+        setIsSpinning(false);
+        successHaptic();
+      }, 1500);
+    }
   }, [gamifiedMode, totalAmount, participants]);
+
+  // Ref to hold computed result while wheel spins
+  const spinResultRef = useRef<{ participants: Participant[]; loserId: string } | null>(null);
+
+  const handleWheelSpinComplete = useCallback((winnerId: string) => {
+    const stashed = spinResultRef.current;
+    if (stashed) {
+      setParticipants(stashed.participants);
+      setLoserId(stashed.loserId);
+      spinResultRef.current = null;
+    } else {
+      setLoserId(winnerId);
+    }
+    setIsSpinning(false);
+    setSpinTargetIndex(null);
+    successHaptic();
+  }, []);
 
   // ── Smart Suggestions ─────────────────────────────────────────────────────
   const suggestions: SmartSuggestion[] = useMemo(() => [
@@ -454,6 +485,8 @@ export const BillSplitScreen = ({
                   onRouletteWeightChange={handleRouletteWeightChange}
                   loserId={loserId}
                   onSpin={handleSpin}
+                  spinTargetIndex={spinTargetIndex}
+                  onSpinComplete={handleWheelSpinComplete}
                   isSpinning={isSpinning}
                   itemCategories={itemCategories}
                   onItemCategoriesChange={setItemCategories}
