@@ -313,6 +313,47 @@ export function computeScrooge(total: number, participants: Participant[]): { pa
   };
 }
 
+// ─── KARMA SPLIT (fair rebalancing based on payment history) ────────────────
+export function computeKarma(
+  total: number,
+  participants: Participant[],
+  intensity: number, // 0..1 where 0 = equal, 1 = full karma correction
+): Participant[] {
+  const included = participants.filter((p) => p.included);
+  if (included.length === 0) return participants.map((p) => ({ ...p, computedAmount: 0 }));
+
+  const totalCents = toCents(total);
+  const equalShareCents = totalCents / included.length;
+  const avgPaid = included.reduce((s, p) => s + p.historicalPaid, 0) / included.length;
+  const maxDev = Math.max(...included.map((p) => Math.abs(p.historicalPaid - avgPaid)), 1);
+
+  // Overpayers (positive deviation) get a lower share; underpayers get a higher share
+  const rawShares = included.map((p) => {
+    const normalizedDev = (p.historicalPaid - avgPaid) / maxDev; // -1..1
+    const multiplier = 1 - normalizedDev * intensity * 0.8; // cap correction at 80%
+    return Math.max(0, equalShareCents * multiplier);
+  });
+
+  // Normalize to total
+  const rawSum = rawShares.reduce((a, b) => a + b, 0);
+  const normalizedCents = rawShares.map((s) =>
+    rawSum > 0 ? Math.round((s / rawSum) * totalCents) : Math.round(equalShareCents),
+  );
+
+  // Fix rounding remainder
+  const computedSum = normalizedCents.reduce((a, b) => a + b, 0);
+  const diff = totalCents - computedSum;
+  if (diff !== 0 && normalizedCents.length > 0) {
+    normalizedCents[0] += diff;
+  }
+
+  let idx = 0;
+  return participants.map((p) => ({
+    ...p,
+    computedAmount: p.included ? fromCents(normalizedCents[idx++]) : 0,
+  }));
+}
+
 // ─── ITEM-TYPE SPLIT ────────────────────────────────────────────────────────
 export function computeItemType(
   total: number,

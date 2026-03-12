@@ -24,11 +24,10 @@ import {
     computeItemized,
     computePercentage,
     computeRoulette,
-    computeScrooge,
     computeShares,
     computeTimeBased,
     computeWeightedRoulette,
-    validateSplit,
+    validateSplit
 } from './splitMath';
 import type {
     AdvancedSplitMethod,
@@ -159,14 +158,15 @@ export const BillSplitScreen = ({
     setSpinTargetIndex(null);
     setIsSpinning(true);
 
+    // Karma mode doesn't use spin – it's handled internally
+    if (gamifiedMode === 'scrooge') return;
+
     // Compute the winner immediately
     let result: { participants: Participant[]; loserId: string };
     if (gamifiedMode === 'roulette') {
       result = computeRoulette(totalAmount, participants);
-    } else if (gamifiedMode === 'weightedRoulette') {
-      result = computeWeightedRoulette(totalAmount, participants);
     } else {
-      result = computeScrooge(totalAmount, participants);
+      result = computeWeightedRoulette(totalAmount, participants);
     }
 
     // Only roulette mode uses the animated wheel
@@ -176,7 +176,7 @@ export const BillSplitScreen = ({
       spinResultRef.current = result;
       setSpinTargetIndex(winnerIdx >= 0 ? winnerIdx : 0);
     } else {
-      // Weighted / Scrooge – no wheel, quick delay
+      // Weighted – no wheel, quick delay
       setTimeout(() => {
         setParticipants(result.participants);
         setLoserId(result.loserId);
@@ -219,6 +219,18 @@ export const BillSplitScreen = ({
     setLoserId(null);
     setIsSpinning(false);
   }, [totalAmount]);
+
+  // ── Karma Complete ────────────────────────────────────────────────────────
+  const handleKarmaComplete = useCallback((results: { userId: string; amount: number }[]) => {
+    setParticipants((prev) =>
+      prev.map((p) => {
+        const r = results.find((x) => x.userId === p.id);
+        return { ...p, computedAmount: r ? r.amount : 0 };
+      }),
+    );
+    setLoserId(null);
+    setIsSpinning(false);
+  }, []);
 
   // ── Smart Suggestions ─────────────────────────────────────────────────────
   const suggestions: SmartSuggestion[] = useMemo(() => [
@@ -303,14 +315,14 @@ export const BillSplitScreen = ({
 
   // ── Validation ────────────────────────────────────────────────────────────
   const validation: ValidationResult = useMemo(() => {
-    if (currentMethod === 'gamified' && !loserId) {
+    if (currentMethod === 'gamified' && gamifiedMode !== 'scrooge' && !loserId) {
       return { isValid: false, message: 'Spin to decide!', difference: 0 };
     }
     const effectiveTotal = currentMethod === 'itemized'
       ? receiptItems.reduce((s, it) => s + it.price, 0) + taxAmount + tipAmount
       : totalAmount;
     return validateSplit(effectiveTotal, displayParticipants);
-  }, [displayParticipants, totalAmount, currentMethod, loserId, receiptItems, taxAmount, tipAmount]);
+  }, [displayParticipants, totalAmount, currentMethod, gamifiedMode, loserId, receiptItems, taxAmount, tipAmount]);
 
   const included = displayParticipants.filter((p) => p.included);
   const perPerson = included.length > 0
@@ -506,6 +518,7 @@ export const BillSplitScreen = ({
                   onSpinComplete={handleWheelSpinComplete}
                   isSpinning={isSpinning}
                   onWeightedComplete={handleWeightedComplete}
+                  onKarmaComplete={handleKarmaComplete}
                   itemCategories={itemCategories}
                   onItemCategoriesChange={setItemCategories}
                 />
