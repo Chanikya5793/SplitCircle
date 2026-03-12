@@ -204,6 +204,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     // Map advanced methods → 'custom' splitType for storage
     if (result.method === 'equal') {
       setSplitType('equal');
+      setCustomShares({});
     } else {
       setSplitType('custom');
       const shares: Record<string, string> = {};
