@@ -3,12 +3,21 @@ import { getAuth } from "firebase-admin/auth";
 import { getDatabase } from "firebase-admin/database";
 import { getFirestore } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
+import { defineSecret } from "firebase-functions/params";
 import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { AccessToken } from "livekit-server-sdk";
 import { processAllDueRecurringBills, processGroupDueRecurringBills } from "./recurringBills";
 
 initializeApp();
+
+const livekitUrlSecret = defineSecret("LIVEKIT_URL");
+const livekitApiKeySecret = defineSecret("LIVEKIT_API_KEY");
+const livekitApiSecretSecret = defineSecret("LIVEKIT_API_SECRET");
+
+type SecretLike = {
+    value: () => string;
+};
 
 
 
@@ -42,6 +51,16 @@ const toSafeError = (error: unknown): SafeErrorPayload => {
         return { name: error.name, message: error.message };
     }
     return { message: "Unknown error" };
+};
+
+const getSecretOrEnv = (secret: SecretLike, envName: string): string => {
+    try {
+        const secretValue = secret.value().trim();
+        if (secretValue.length > 0) return secretValue;
+    } catch {
+        // Fall back to env vars in local emulator/dev contexts.
+    }
+    return process.env[envName]?.trim() ?? "";
 };
 
 const getBearerToken = (authorizationHeader: string | undefined): string | null => {
@@ -126,6 +145,7 @@ export const triggerRecurringBillsForGroup = onCall(
 export const generateLiveKitToken = onRequest(
     {
         cors: true,
+        secrets: [livekitUrlSecret, livekitApiKeySecret, livekitApiSecretSecret],
     },
     async (req, res) => {
         res.set("Cache-Control", "no-store");
@@ -205,9 +225,9 @@ export const generateLiveKitToken = onRequest(
                 return;
             }
 
-            const livekitUrl = process.env.LIVEKIT_URL ?? "";
-            const livekitApiKey = process.env.LIVEKIT_API_KEY ?? "";
-            const livekitApiSecret = process.env.LIVEKIT_API_SECRET ?? "";
+            const livekitUrl = getSecretOrEnv(livekitUrlSecret, "LIVEKIT_URL");
+            const livekitApiKey = getSecretOrEnv(livekitApiKeySecret, "LIVEKIT_API_KEY");
+            const livekitApiSecret = getSecretOrEnv(livekitApiSecretSecret, "LIVEKIT_API_SECRET");
 
             if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
                 logger.error("LiveKit function misconfigured: missing runtime secrets.");

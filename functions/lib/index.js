@@ -39,11 +39,15 @@ const auth_1 = require("firebase-admin/auth");
 const database_1 = require("firebase-admin/database");
 const firestore_1 = require("firebase-admin/firestore");
 const logger = __importStar(require("firebase-functions/logger"));
+const params_1 = require("firebase-functions/params");
 const https_1 = require("firebase-functions/v2/https");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const livekit_server_sdk_1 = require("livekit-server-sdk");
 const recurringBills_1 = require("./recurringBills");
 (0, app_1.initializeApp)();
+const livekitUrlSecret = (0, params_1.defineSecret)("LIVEKIT_URL");
+const livekitApiKeySecret = (0, params_1.defineSecret)("LIVEKIT_API_KEY");
+const livekitApiSecretSecret = (0, params_1.defineSecret)("LIVEKIT_API_SECRET");
 const getStringValue = (input) => {
     return typeof input === "string" ? input.trim() : "";
 };
@@ -61,6 +65,18 @@ const toSafeError = (error) => {
         return { name: error.name, message: error.message };
     }
     return { message: "Unknown error" };
+};
+const getSecretOrEnv = (secret, envName) => {
+    var _a, _b;
+    try {
+        const secretValue = secret.value().trim();
+        if (secretValue.length > 0)
+            return secretValue;
+    }
+    catch (_c) {
+        // Fall back to env vars in local emulator/dev contexts.
+    }
+    return (_b = (_a = process.env[envName]) === null || _a === void 0 ? void 0 : _a.trim()) !== null && _b !== void 0 ? _b : "";
 };
 const getBearerToken = (authorizationHeader) => {
     if (!authorizationHeader)
@@ -131,8 +147,9 @@ exports.triggerRecurringBillsForGroup = (0, https_1.onCall)(async (request) => {
 });
 exports.generateLiveKitToken = (0, https_1.onRequest)({
     cors: true,
+    secrets: [livekitUrlSecret, livekitApiKeySecret, livekitApiSecretSecret],
 }, async (req, res) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e;
     res.set("Cache-Control", "no-store");
     if (req.method === "OPTIONS") {
         res.status(204).send("");
@@ -192,9 +209,9 @@ exports.generateLiveKitToken = (0, https_1.onRequest)({
             res.status(403).json({ error: "Forbidden. User is not allowed to join this call." });
             return;
         }
-        const livekitUrl = (_f = process.env.LIVEKIT_URL) !== null && _f !== void 0 ? _f : "";
-        const livekitApiKey = (_g = process.env.LIVEKIT_API_KEY) !== null && _g !== void 0 ? _g : "";
-        const livekitApiSecret = (_h = process.env.LIVEKIT_API_SECRET) !== null && _h !== void 0 ? _h : "";
+        const livekitUrl = getSecretOrEnv(livekitUrlSecret, "LIVEKIT_URL");
+        const livekitApiKey = getSecretOrEnv(livekitApiKeySecret, "LIVEKIT_API_KEY");
+        const livekitApiSecret = getSecretOrEnv(livekitApiSecretSecret, "LIVEKIT_API_SECRET");
         if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
             logger.error("LiveKit function misconfigured: missing runtime secrets.");
             res.status(500).json({ error: "Server misconfiguration." });
