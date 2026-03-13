@@ -641,6 +641,28 @@ const GamifiedMode_ = React.memo(({
             </Animated.View>
           )}
 
+          {/* Spin Button - placed right after wheel to stay visible */}
+          {wPhase !== 'complete' && (
+            <View style={styles.spinContainerInline}>
+              <TouchableOpacity
+                style={[
+                  styles.spinButton,
+                  {
+                    backgroundColor: wBusy ? `${theme.colors.primary}80` : theme.colors.primary,
+                  },
+                ]}
+                onPress={handleWeightedSpin}
+                disabled={wBusy}
+                activeOpacity={0.8}
+              >
+                <Icon source={wBusy ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
+                <Text style={styles.spinText}>
+                  {wBusy ? 'Spinning…' : `Spin! (${wRemainingPct}% left)`}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Assignment list */}
           {wAssignments.length > 0 && (
             <View style={styles.wAssignmentList}>
@@ -673,9 +695,11 @@ const GamifiedMode_ = React.memo(({
                     All shares assigned!
                   </Text>
                   <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center' }}>
-                    {included.filter((p) => !wAssignments.some((a) => a.userId === p.id)).length > 0
-                      ? `${included.filter((p) => !wAssignments.some((a) => a.userId === p.id)).length} people pay nothing 🎉`
-                      : 'Everyone has a share!'}
+                    {(() => {
+                      const count = included.filter((p) => !wAssignments.some((a) => a.userId === p.id)).length;
+                      if (count === 0) return 'Everyone has a share!';
+                      return count === 1 ? '1 person pays nothing 🎉' : `${count} people pay nothing 🎉`;
+                    })()}
                   </Text>
                   <TouchableOpacity
                     style={[styles.wResetBtn, { borderColor: theme.colors.primary }]}
@@ -843,28 +867,6 @@ const GamifiedMode_ = React.memo(({
             <Icon source={isSpinning ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
             <Text style={styles.spinText}>
               {isSpinning ? 'Spinning…' : 'Spin the wheel!'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Weighted Spin Button */}
-      {mode === 'weightedRoulette' && wPhase !== 'complete' && (
-        <View style={styles.spinContainer}>
-          <TouchableOpacity
-            style={[
-              styles.spinButton,
-              {
-                backgroundColor: wBusy ? `${theme.colors.primary}80` : theme.colors.primary,
-              },
-            ]}
-            onPress={handleWeightedSpin}
-            disabled={wBusy}
-            activeOpacity={0.8}
-          >
-            <Icon source={wBusy ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
-            <Text style={styles.spinText}>
-              {wBusy ? 'Spinning…' : `Spin! (${wRemainingPct}% left)`}
             </Text>
           </TouchableOpacity>
         </View>
@@ -1345,7 +1347,12 @@ const styles = StyleSheet.create({
   spinContainer: {
     alignItems: 'center',
     marginTop: 16,
-    marginBottom: 8,
+    marginBottom: 100,
+  },
+  spinContainerInline: {
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 16,
   },
   spinButton: {
     flexDirection: 'row',

@@ -86,6 +86,8 @@ export const ParticipantRow = React.memo(({
               onPress={() => {
                 selectionHaptic();
                 onSharesChange(p.id, Math.max(0, p.shares - 1).toString());
+                
+
               }}
             >
               <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>−</Text>
