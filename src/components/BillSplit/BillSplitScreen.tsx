@@ -325,7 +325,7 @@ export const BillSplitScreen = ({
 
   // ── Validation ────────────────────────────────────────────────────────────
   const validation: ValidationResult = useMemo(() => {
-    if (currentMethod === 'gamified' && gamifiedMode !== 'scrooge' && !loserId) {
+    if (currentMethod === 'gamified' && gamifiedMode === 'roulette' && !loserId) {
       return { isValid: false, message: 'Spin to decide!', difference: 0 };
     }
     const effectiveTotal = currentMethod === 'itemized'
@@ -335,6 +335,13 @@ export const BillSplitScreen = ({
   }, [displayParticipants, totalAmount, currentMethod, gamifiedMode, loserId, receiptItems, taxAmount, tipAmount]);
 
   const included = displayParticipants.filter((p) => p.included);
+
+  const canDone = useMemo(() => {
+    if (isSpinning) return false;
+    if (currentMethod !== 'gamified') return validation.isValid;
+    if (gamifiedMode === 'roulette') return Boolean(loserId);
+    return validation.isValid;
+  }, [isSpinning, currentMethod, validation.isValid, gamifiedMode, loserId]);
 
   // ── Method Selection ──────────────────────────────────────────────────────
   const handleBasicMethodSelect = useCallback((method: BasicSplitMethod) => {
@@ -361,7 +368,7 @@ export const BillSplitScreen = ({
 
   // ── Done Handler ──────────────────────────────────────────────────────────
   const handleDone = useCallback(() => {
-    if (!validation.isValid && currentMethod !== 'gamified') {
+    if (!canDone) {
       return;
     }
     successHaptic();
@@ -372,7 +379,7 @@ export const BillSplitScreen = ({
         .filter((p) => p.included)
         .map((p) => ({ userId: p.id, share: p.computedAmount })),
     });
-  }, [validation, currentMethod, paidBy, displayParticipants, onDone]);
+  }, [canDone, paidBy, currentMethod, displayParticipants, onDone]);
 
   const payerName = participants.find((p) => p.id === paidBy)?.name ?? 'Unknown';
 
@@ -392,12 +399,12 @@ export const BillSplitScreen = ({
             <TouchableOpacity
               onPress={handleDone}
               activeOpacity={0.7}
-              disabled={!validation.isValid && currentMethod !== 'gamified'}
+              disabled={!canDone}
             >
               <Text
                 variant="labelLarge"
                 style={{
-                  color: validation.isValid || currentMethod === 'gamified' ? theme.colors.primary : palette.muted,
+                  color: canDone ? theme.colors.primary : palette.muted,
                   fontWeight: '700',
                 }}
               >
@@ -596,6 +603,7 @@ export const BillSplitScreen = ({
               isSpinning={isSpinning}
               payerName={payerName}
               onManagePayer={() => setShowPayerMenu(true)}
+              onSpin={handleSpin}
               onDone={handleDone}
             />
           </View>

@@ -2,7 +2,6 @@ import { GlassView } from '@/components/GlassView';
 import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency, getCurrencySymbol } from '@/utils/currency';
-import { successHaptic } from '@/utils/haptics';
 import React, { useEffect, useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Icon, Text } from 'react-native-paper';
@@ -28,6 +27,7 @@ interface SplitFooterProps {
   isSpinning?: boolean;
   payerName?: string;
   onManagePayer?: () => void;
+  onSpin?: () => void;
   onDone?: () => void;
 }
 
@@ -43,16 +43,24 @@ export const SplitFooter = React.memo(({
   isSpinning,
   payerName,
   onManagePayer,
+  onSpin,
   onDone,
 }: SplitFooterProps) => {
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
   const included = participants.filter((p) => p.included);
 
-  // Pulse animation when valid (CTA)
+  const canSpinFromFooter = currentMethod === 'gamified' && gamifiedMode === 'roulette' && !loserId && !isSpinning;
+  const canApply = useMemo(() => {
+    if (isSpinning) return false;
+    if (canSpinFromFooter) return true;
+    return validation.isValid;
+  }, [isSpinning, canSpinFromFooter, validation.isValid]);
+
+  // Pulse animation when primary CTA is actionable
   const pulseScale = useSharedValue(1);
   useEffect(() => {
-    if (validation.isValid) {
+    if (canApply) {
       pulseScale.value = withRepeat(
         withSequence(
           withTiming(1.02, { duration: 800 }),
@@ -64,7 +72,7 @@ export const SplitFooter = React.memo(({
     } else {
       pulseScale.value = withTiming(1, { duration: 200 });
     }
-  }, [validation.isValid, pulseScale]);
+  }, [canApply, pulseScale]);
 
   const pulseStyle = useAnimatedStyle(() => ({
     transform: [{ scale: pulseScale.value }],
@@ -86,17 +94,12 @@ export const SplitFooter = React.memo(({
     itemType: 'Item Type',
   };
 
-  const needsSpin = currentMethod === 'gamified' && gamifiedMode !== 'scrooge' && !loserId;
-  const canApply = useMemo(() => {
-    if (isSpinning) return false;
-    if (needsSpin) return false;
-    return validation.isValid;
-  }, [isSpinning, needsSpin, validation.isValid]);
+  const needsSpin = currentMethod === 'gamified' && gamifiedMode === 'roulette' && !loserId;
 
   const ctaLabel = isSpinning
     ? 'Spinning...'
-    : needsSpin
-      ? 'Spin First'
+    : canSpinFromFooter
+      ? 'Spin'
       : validation.isValid
         ? 'Done'
         : 'Fix Split';
@@ -253,17 +256,28 @@ export const SplitFooter = React.memo(({
     return renderAdvancedContent();
   };
 
-  const helperText = needsSpin
+  const helperText = canSpinFromFooter
     ? 'Spin to lock the result'
+    : currentMethod === 'gamified' && gamifiedMode === 'weightedRoulette' && !validation.isValid
+      ? 'Use the wheel button to complete all assignments'
     : validation.isValid
       ? `${includedCount} of ${participants.length} included`
       : validation.message;
 
-  const helperColor = needsSpin
+  const helperColor = canSpinFromFooter
     ? theme.colors.primary
     : validation.isValid
       ? colors.success
       : colors.danger;
+
+  const handlePrimaryAction = () => {
+    if (!canApply) return;
+    if (canSpinFromFooter) {
+      onSpin?.();
+      return;
+    }
+    onDone?.();
+  };
 
   return (
     <Animated.View entering={FadeInUp.springify()} style={pulseStyle}>
@@ -292,7 +306,7 @@ export const SplitFooter = React.memo(({
 
           <View style={styles.actionColumn}>
             <Pressable
-              onPress={canApply ? () => { successHaptic(); onDone?.(); } : undefined}
+              onPress={canApply ? handlePrimaryAction : undefined}
               style={({ pressed }) => [
                 styles.doneBadge,
                 {
@@ -301,7 +315,7 @@ export const SplitFooter = React.memo(({
                 },
               ]}
             >
-              <Icon source={canApply ? 'check' : needsSpin ? 'rotate-right' : 'alert-circle-outline'} size={15} color="#FFF" />
+              <Icon source={canSpinFromFooter ? 'rotate-right' : canApply ? 'check' : 'alert-circle-outline'} size={15} color="#FFF" />
               <Text style={styles.doneText}>{ctaLabel}</Text>
             </Pressable>
 
