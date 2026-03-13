@@ -15,30 +15,30 @@ import { SmartSuggestionsBar } from './SmartSuggestionsBar';
 import { SplitFooter } from './SplitFooter';
 import { SplitMethodTabs } from './SplitMethodTabs';
 import {
-    computeAdjustment,
-    computeConsumption,
-    computeEqual,
-    computeExact,
-    computeIncome,
-    computeItemType,
-    computeItemized,
-    computePercentage,
-    computeRoulette,
-    computeShares,
-    computeTimeBased,
-    computeWeightedRoulette,
-    validateSplit
+  computeAdjustment,
+  computeConsumption,
+  computeEqual,
+  computeExact,
+  computeIncome,
+  computeItemType,
+  computeItemized,
+  computePercentage,
+  computeRoulette,
+  computeShares,
+  computeTimeBased,
+  computeWeightedRoulette,
+  validateSplit
 } from './splitMath';
 import type {
-    AdvancedSplitMethod,
-    BasicSplitMethod,
-    GamifiedMode,
-    ItemCategory,
-    Participant,
-    ReceiptItem,
-    SmartSuggestion,
-    SplitMethod,
-    ValidationResult,
+  AdvancedSplitMethod,
+  BasicSplitMethod,
+  GamifiedMode,
+  ItemCategory,
+  Participant,
+  ReceiptItem,
+  SmartSuggestion,
+  SplitMethod,
+  ValidationResult,
 } from './types';
 import { MOCK_PARTICIPANTS, MOCK_TOTAL } from './types';
 
