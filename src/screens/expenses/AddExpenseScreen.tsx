@@ -451,7 +451,17 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
 
             {/* Split Options Button */}
             <TouchableOpacity
-              onPress={() => { mediumHaptic(); setShowBillSplit(true); }}
+              onPress={() => {
+                if (!title.trim() || !amount.trim() || Number(amount) <= 0) {
+                  Alert.alert(
+                    'Missing details',
+                    'Please enter an expense title and amount before configuring split options.',
+                  );
+                  return;
+                }
+                mediumHaptic();
+                setShowBillSplit(true);
+              }}
               activeOpacity={0.7}
               style={[styles.splitOptionsBtn, { borderColor: theme.colors.outline }]}
             >

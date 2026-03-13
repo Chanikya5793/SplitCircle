@@ -335,9 +335,6 @@ export const BillSplitScreen = ({
   }, [displayParticipants, totalAmount, currentMethod, gamifiedMode, loserId, receiptItems, taxAmount, tipAmount]);
 
   const included = displayParticipants.filter((p) => p.included);
-  const perPerson = included.length > 0
-    ? included.reduce((s, p) => s + p.computedAmount, 0) / included.length
-    : 0;
 
   // ── Method Selection ──────────────────────────────────────────────────────
   const handleBasicMethodSelect = useCallback((method: BasicSplitMethod) => {
@@ -473,6 +470,37 @@ export const BillSplitScreen = ({
               </Animated.View>
             )}
 
+            {/* Advanced Options Accordion - moved up for easier access */}
+            {!activeAdvancedMethod && (
+              <View style={styles.advancedToggleSection}>
+                <TouchableOpacity
+                  onPress={handleToggleAdvanced}
+                  activeOpacity={0.7}
+                  style={styles.advancedToggle}
+                >
+                  <View style={styles.advancedToggleLeft}>
+                    <Icon
+                      source={showAdvanced ? 'chevron-up' : 'chevron-down'}
+                      size={20}
+                      color={theme.colors.primary}
+                    />
+                    <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                      {showAdvanced ? 'Hide Advanced Splits' : 'Advanced Splits'}
+                    </Text>
+                  </View>
+                  <View style={[styles.advancedBadge, { backgroundColor: `${theme.colors.primary}15` }]}>
+                    <Text style={{ color: theme.colors.primary, fontSize: 11, fontWeight: '700' }}>6 modes</Text>
+                  </View>
+                </TouchableOpacity>
+
+                {showAdvanced && (
+                  <Animated.View entering={FadeInDown.springify()} exiting={FadeOut.duration(150)}>
+                    <AdvancedModePicker onSelect={handleAdvancedMethodSelect} />
+                  </Animated.View>
+                )}
+              </View>
+            )}
+
             {/* Back to advanced picker when in an advanced mode */}
             {activeAdvancedMethod && (
               <Animated.View entering={FadeIn.duration(200)}>
@@ -548,49 +576,27 @@ export const BillSplitScreen = ({
               </Animated.View>
             )}
 
-            {/* Advanced Options Accordion */}
-            {!activeAdvancedMethod && (
-              <View style={styles.advancedToggleSection}>
-                <TouchableOpacity
-                  onPress={handleToggleAdvanced}
-                  activeOpacity={0.7}
-                  style={styles.advancedToggle}
-                >
-                  <View style={styles.advancedToggleLeft}>
-                    <Icon
-                      source={showAdvanced ? 'chevron-up' : 'chevron-down'}
-                      size={20}
-                      color={theme.colors.primary}
-                    />
-                    <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                      {showAdvanced ? 'Hide Advanced Splits' : 'Advanced Splits'}
-                    </Text>
-                  </View>
-                  <View style={[styles.advancedBadge, { backgroundColor: `${theme.colors.primary}15` }]}>
-                    <Text style={{ color: theme.colors.primary, fontSize: 11, fontWeight: '700' }}>6 modes</Text>
-                  </View>
-                </TouchableOpacity>
-
-                {showAdvanced && (
-                  <Animated.View entering={FadeInDown.springify()} exiting={FadeOut.duration(150)}>
-                    <AdvancedModePicker onSelect={handleAdvancedMethodSelect} />
-                  </Animated.View>
-                )}
-              </View>
-            )}
-
             {/* Bottom spacer for footer */}
-            <View style={{ height: 100 }} />
+            <View style={{ height: 170 }} />
           </ScrollView>
 
           {/* Sticky Footer */}
           <View style={styles.footerWrapper}>
             <SplitFooter
-              totalAmount={totalAmount}
+              totalAmount={currentMethod === 'itemized'
+                ? receiptItems.reduce((s, it) => s + it.price, 0) + taxAmount + tipAmount
+                : totalAmount}
               currency={currency}
               includedCount={included.length}
-              perPersonAmount={perPerson}
+              participants={displayParticipants}
+              currentMethod={currentMethod}
               validation={validation}
+              gamifiedMode={gamifiedMode}
+              loserId={loserId}
+              isSpinning={isSpinning}
+              payerName={payerName}
+              onManagePayer={() => setShowPayerMenu(true)}
+              onDone={handleDone}
             />
           </View>
         </View>

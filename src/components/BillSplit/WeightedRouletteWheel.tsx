@@ -380,14 +380,9 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
 
         {/* Ring legend */}
         <View style={s.ringLabels}>
-          <View style={s.legendItem}>
-            <View style={[s.legendDot, { backgroundColor: '#6366F1' }]} />
-            <Text style={[s.ringLabel, { color: theme.colors.onSurfaceVariant }]}>Outer: People</Text>
-          </View>
-          <View style={s.legendItem}>
-            <View style={[s.legendDot, { backgroundColor: '#4ECDC4' }]} />
-            <Text style={[s.ringLabel, { color: theme.colors.onSurfaceVariant }]}>Inner: Percentage</Text>
-          </View>
+          <Text style={[s.ringLabel, { color: theme.colors.onSurfaceVariant }]}>Outer: People</Text>
+          <Text style={[s.ringLabel, { color: theme.colors.onSurfaceVariant }]}>·</Text>
+          <Text style={[s.ringLabel, { color: theme.colors.onSurfaceVariant }]}>Inner: Percentage</Text>
         </View>
       </View>
     );
