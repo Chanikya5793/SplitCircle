@@ -7,13 +7,13 @@ import { BlurView } from 'expo-blur';
 import { GlassView as NativeGlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Slider from '@react-native-community/slider';
-import { Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { PanResponder, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, UIManager, View } from 'react-native';
 import { Button, Icon, IconButton, Text } from 'react-native-paper';
 import Animated, { FadeIn, FadeInDown, ZoomIn } from 'react-native-reanimated';
 import type { RouletteWheelRef } from './RouletteWheel';
 import RouletteWheel from './RouletteWheel';
-import { computeKarma } from './splitMath';
-import type { AdvancedSplitMethod, GamifiedMode, ItemCategory, Participant, ReceiptItem } from './types';
+import { computeKarma, listDatesBetween } from './splitMath';
+import type { AdvancedSplitMethod, GamifiedMode, ItemCategory, Participant, ReceiptItem, TimeSplitVariant } from './types';
 import type { WeightedRouletteWheelRef } from './WeightedRouletteWheel';
 import WeightedRouletteWheel, { generatePercentageOptions } from './WeightedRouletteWheel';
 
@@ -22,6 +22,247 @@ const AVATAR_COLORS = ['#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626', '#
 function getInitials(name: string): string {
   return name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 }
+
+function getDateChipLabel(value: string): string {
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, (month ?? 1) - 1, day ?? 1);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function parseCalendarDate(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const monthIndex = Number(monthText) - 1;
+  const day = Number(dayText);
+  const date = new Date(year, monthIndex, day);
+
+  if (
+    Number.isNaN(date.getTime())
+    || date.getFullYear() !== year
+    || date.getMonth() !== monthIndex
+    || date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function toCalendarIso(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function addCalendarMonths(date: Date, amount: number): Date {
+  return new Date(date.getFullYear(), date.getMonth() + amount, 1);
+}
+
+function getCalendarMonthStart(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function getCalendarMonthLabel(date: Date): string {
+  return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
+function getCalendarMonthKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+function buildCalendarMonthCells(monthDate: Date): Array<string | null> {
+  const start = getCalendarMonthStart(monthDate);
+  const firstWeekday = start.getDay();
+  const daysInMonth = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
+  const cells: Array<string | null> = [];
+
+  for (let i = 0; i < firstWeekday; i += 1) {
+    cells.push(null);
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    cells.push(toCalendarIso(new Date(start.getFullYear(), start.getMonth(), day)));
+  }
+
+  while (cells.length % 7 !== 0) {
+    cells.push(null);
+  }
+
+  return cells;
+}
+
+function isWeekendCalendarDate(value: string): boolean {
+  const date = parseCalendarDate(value);
+  if (!date) return false;
+  const day = date.getDay();
+  return day === 0 || day === 6;
+}
+
+function splitDatesByType(dates: string[]): {
+  longWeekends: string[];
+  weekdays: string[];
+  weekdaysNoFriday: string[];
+  weekends: string[];
+} {
+  const longWeekends: string[] = [];
+  const weekdays: string[] = [];
+  const weekdaysNoFriday: string[] = [];
+  const weekends: string[] = [];
+
+  dates.forEach((value) => {
+    const date = parseCalendarDate(value);
+    if (!date) return;
+    const day = date.getDay();
+
+    if (day === 5 || day === 6 || day === 0) {
+      longWeekends.push(value);
+    }
+
+    if (day === 0 || day === 6) {
+      weekends.push(value);
+    }
+
+    if (day >= 1 && day <= 5) {
+      weekdays.push(value);
+    }
+
+    if (day >= 1 && day <= 4) {
+      weekdaysNoFriday.push(value);
+    }
+  });
+
+  return {
+    longWeekends,
+    weekdays,
+    weekdaysNoFriday,
+    weekends,
+  };
+}
+
+function addScopedDates(selectedDates: Set<string>, datesToAdd: string[]): string[] {
+  return Array.from(new Set([...Array.from(selectedDates), ...datesToAdd])).sort();
+}
+
+function removeScopedDates(selectedDates: Set<string>, datesToRemove: string[]): string[] {
+  const removalSet = new Set(datesToRemove);
+  return Array.from(selectedDates).filter((value) => !removalSet.has(value));
+}
+
+const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+interface CalendarMonthGridProps {
+  accentColor: string;
+  enabledDates?: Set<string>;
+  monthDate: Date;
+  onPressDate: (value: string) => void;
+  rangeEnd?: string;
+  rangeStart?: string;
+  selectedDates?: Set<string>;
+}
+
+const CalendarMonthGrid = React.memo(({
+  accentColor,
+  enabledDates,
+  monthDate,
+  onPressDate,
+  rangeEnd,
+  rangeStart,
+  selectedDates,
+}: CalendarMonthGridProps) => {
+  const { isDark, theme } = useTheme();
+  const palette = isDark ? darkColors : colors;
+  const monthCells = useMemo(() => buildCalendarMonthCells(monthDate), [monthDate]);
+  const normalizedRangeStart = rangeStart && rangeEnd ? (rangeStart <= rangeEnd ? rangeStart : rangeEnd) : rangeStart;
+  const normalizedRangeEnd = rangeStart && rangeEnd ? (rangeStart <= rangeEnd ? rangeEnd : rangeStart) : rangeEnd;
+
+  return (
+    <GlassView style={styles.calendarMonthCard} intensity={10}>
+      <View style={styles.calendarMonthHeader}>
+        <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+          {getCalendarMonthLabel(monthDate)}
+        </Text>
+      </View>
+
+      <View style={styles.calendarWeekHeader}>
+        {WEEKDAY_LABELS.map((label, index) => (
+          <Text key={`${label}-${index}`} style={[styles.calendarWeekLabel, { color: palette.muted }]}>
+            {label}
+          </Text>
+        ))}
+      </View>
+
+      <View style={styles.calendarGrid}>
+        {monthCells.map((value, index) => {
+          if (!value) {
+            return <View key={`empty-${index}`} style={styles.calendarEmptyCell} />;
+          }
+
+          const dayNumber = Number(value.slice(-2));
+          const isEnabled = !enabledDates || enabledDates.has(value);
+          const isSelected = selectedDates?.has(value) ?? false;
+          const isRangeStart = Boolean(rangeStart && value === rangeStart);
+          const isRangeEnd = Boolean(rangeEnd && value === rangeEnd);
+          const isPendingStart = Boolean(rangeStart && !rangeEnd && value === rangeStart);
+          const isInRange = Boolean(
+            normalizedRangeStart
+            && normalizedRangeEnd
+            && value >= normalizedRangeStart
+            && value <= normalizedRangeEnd,
+          );
+          const showSolidSelection = isSelected || isRangeStart || isRangeEnd || isPendingStart;
+
+          return (
+            <TouchableOpacity
+              key={value}
+              disabled={!isEnabled}
+              style={styles.calendarCellWrap}
+              onPress={() => onPressDate(value)}
+            >
+              <View
+                style={[
+                  styles.calendarDayCell,
+                  {
+                    backgroundColor: showSolidSelection
+                      ? accentColor
+                      : isInRange
+                        ? `${accentColor}16`
+                        : 'transparent',
+                    borderColor: showSolidSelection
+                      ? accentColor
+                      : isInRange
+                        ? `${accentColor}44`
+                        : palette.border,
+                    opacity: isEnabled ? 1 : 0.3,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.calendarDayText,
+                    {
+                      color: showSolidSelection ? '#FFFFFF' : theme.colors.onSurface,
+                    },
+                  ]}
+                >
+                  {dayNumber}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </GlassView>
+  );
+});
+
+CalendarMonthGrid.displayName = 'CalendarMonthGrid';
 
 interface TimeSliderSurfaceProps {
   children: React.ReactNode;
@@ -72,6 +313,100 @@ const TimeSliderSurface = ({ children, isDark }: TimeSliderSurfaceProps) => {
     <View style={[styles.timeSliderSurface, isDark ? styles.timeSliderSurfaceDark : styles.timeSliderSurfaceLight]}>
       {children}
     </View>
+  );
+};
+
+interface TimeValueSliderProps {
+  accentColor: string;
+  isDark: boolean;
+  maximumValue: number;
+  minimumValue: number;
+  onSlidingComplete?: () => void;
+  onValueChange: (value: number) => void;
+  value: number;
+}
+
+const TimeValueSlider = ({
+  accentColor,
+  isDark,
+  maximumValue,
+  minimumValue,
+  onSlidingComplete,
+  onValueChange,
+  value,
+}: TimeValueSliderProps) => {
+  const [trackWidth, setTrackWidth] = useState(0);
+  const hasNativeSlider = useMemo(() => {
+    if (Platform.OS !== 'ios') {
+      return false;
+    }
+
+    try {
+      return Boolean(UIManager.getViewManagerConfig?.('RNCSlider'));
+    } catch (error) {
+      console.warn('Native slider availability check failed, using JS fallback', error);
+      return false;
+    }
+  }, []);
+  const clampedValue = Math.min(maximumValue, Math.max(minimumValue, value));
+  const range = Math.max(1, maximumValue - minimumValue);
+  const ratio = (clampedValue - minimumValue) / range;
+
+  const updateFromPosition = useCallback((positionX: number) => {
+    if (trackWidth <= 0) return;
+    const boundedX = Math.min(trackWidth, Math.max(0, positionX));
+    const nextValue = Math.round(minimumValue + (boundedX / trackWidth) * range);
+    onValueChange(nextValue);
+  }, [minimumValue, onValueChange, range, trackWidth]);
+
+  const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dx) >= Math.abs(gestureState.dy),
+    onStartShouldSetPanResponder: () => true,
+    onPanResponderGrant: (event) => updateFromPosition(event.nativeEvent.locationX),
+    onPanResponderMove: (event) => updateFromPosition(event.nativeEvent.locationX),
+    onPanResponderRelease: () => onSlidingComplete?.(),
+    onPanResponderTerminate: () => onSlidingComplete?.(),
+  }), [onSlidingComplete, updateFromPosition]);
+
+  return (
+    <TimeSliderSurface isDark={isDark}>
+      <View style={styles.timeSliderInner}>
+        {hasNativeSlider ? (
+          <Slider
+            value={clampedValue}
+            minimumValue={minimumValue}
+            maximumValue={maximumValue}
+            step={1}
+            onValueChange={(nextValue) => onValueChange(Math.round(nextValue))}
+            onSlidingComplete={() => onSlidingComplete?.()}
+            minimumTrackTintColor={accentColor}
+            maximumTrackTintColor={isDark ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.12)'}
+            thumbTintColor={Platform.OS === 'android' ? accentColor : undefined}
+            tapToSeek
+          />
+        ) : (
+          <View
+            style={styles.timeSliderFallbackTrack}
+            onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
+            {...panResponder.panHandlers}
+          >
+            <View style={styles.timeSliderFallbackTrackBase} />
+            <View style={[styles.timeSliderFallbackFill, { width: `${ratio * 100}%`, backgroundColor: accentColor }]} />
+            <View
+              style={[
+                styles.timeSliderFallbackThumb,
+                {
+                  borderColor: accentColor,
+                  left: `${ratio * 100}%`,
+                },
+              ]}
+            >
+              <View style={[styles.timeSliderFallbackThumbInner, { backgroundColor: accentColor }]} />
+            </View>
+          </View>
+        )}
+      </View>
+    </TimeSliderSurface>
   );
 };
 
@@ -362,9 +697,15 @@ interface TimeBasedProps {
   onDaysChange: (id: string, days: string) => void;
   onDateRangeChange: (id: string, checkIn: string, checkOut: string) => void;
   onSetAllDays: (days: number) => void;
+  onStayDatesChange: (id: string, dates: string[]) => void;
   currency: string;
   totalAmount: number;
+  timeSplitVariant: TimeSplitVariant;
+  onTimeSplitVariantChange: (variant: TimeSplitVariant) => void;
   timePeriodDays: number;
+  timePeriodStartDate: string;
+  timePeriodEndDate: string;
+  onTimePeriodRangeChange: (startDate: string, endDate: string) => void;
 }
 
 type TimeInputMode = 'days' | 'dates';
@@ -380,17 +721,63 @@ const TimeBasedMode = React.memo(({
   onDaysChange,
   onDateRangeChange,
   onSetAllDays,
+  onStayDatesChange,
   currency,
   totalAmount,
+  timeSplitVariant,
+  onTimeSplitVariantChange,
   timePeriodDays,
+  timePeriodStartDate,
+  timePeriodEndDate,
+  onTimePeriodRangeChange,
 }: TimeBasedProps) => {
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
   const [inputMode, setInputMode] = useState<TimeInputMode>('days');
   const [periodInputValue, setPeriodInputValue] = useState(timePeriodDays.toString());
+  const [periodCalendarMonth, setPeriodCalendarMonth] = useState(() => (
+    parseCalendarDate(timePeriodStartDate) ?? getCalendarMonthStart(new Date())
+  ));
+  const [participantCalendarMonth, setParticipantCalendarMonth] = useState(() => (
+    parseCalendarDate(timePeriodStartDate) ?? getCalendarMonthStart(new Date())
+  ));
+  const [expandedParticipantId, setExpandedParticipantId] = useState<string | null>(null);
 
   const included = participants.filter((participant) => participant.included);
   const periodDays = Math.max(1, timePeriodDays);
+  const isStandardMode = timeSplitVariant === 'standard';
+  const periodDateOptions = useMemo(
+    () => listDatesBetween(timePeriodStartDate, timePeriodEndDate),
+    [timePeriodEndDate, timePeriodStartDate],
+  );
+  const periodDateSet = useMemo(() => new Set(periodDateOptions), [periodDateOptions]);
+  const participantCalendarMonthKey = useMemo(
+    () => getCalendarMonthKey(participantCalendarMonth),
+    [participantCalendarMonth],
+  );
+  const participantVisibleMonthDates = useMemo(
+    () => periodDateOptions.filter((dateValue) => dateValue.startsWith(participantCalendarMonthKey)),
+    [participantCalendarMonthKey, periodDateOptions],
+  );
+  const periodDateGroups = useMemo(
+    () => splitDatesByType(periodDateOptions),
+    [periodDateOptions],
+  );
+  const participantVisibleMonthDateGroups = useMemo(
+    () => splitDatesByType(participantVisibleMonthDates),
+    [participantVisibleMonthDates],
+  );
+  const periodStartMonth = useMemo(() => {
+    const parsed = parseCalendarDate(timePeriodStartDate);
+    return parsed ? getCalendarMonthStart(parsed) : null;
+  }, [timePeriodStartDate]);
+  const periodEndMonth = useMemo(() => {
+    const parsed = parseCalendarDate(timePeriodEndDate);
+    return parsed ? getCalendarMonthStart(parsed) : null;
+  }, [timePeriodEndDate]);
+  const baseMemberDailyCost = included.length > 0 ? totalAmount / periodDays / included.length : 0;
+  const totalMissingDays = included.reduce((sum, participant) => sum + Math.max(0, periodDays - participant.daysStayed), 0);
+  const redistributedPool = totalMissingDays * baseMemberDailyCost;
   const totalPersonDays = included.reduce((sum, participant) => sum + participant.daysStayed, 0);
   const averageStay = included.length > 0 ? totalPersonDays / included.length : 0;
   const householdDailyCost = totalAmount / periodDays;
@@ -402,6 +789,43 @@ const TimeBasedMode = React.memo(({
   useEffect(() => {
     setPeriodInputValue(timePeriodDays.toString());
   }, [timePeriodDays]);
+
+  useEffect(() => {
+    if (timePeriodStartDate) {
+      const nextMonth = parseCalendarDate(timePeriodStartDate);
+      if (nextMonth) {
+        setPeriodCalendarMonth(getCalendarMonthStart(nextMonth));
+        setParticipantCalendarMonth((current) => {
+          const currentMonth = getCalendarMonthStart(current);
+          const nextMonthStart = getCalendarMonthStart(nextMonth);
+          if (
+            periodEndMonth
+            && currentMonth.getTime() >= nextMonthStart.getTime()
+            && currentMonth.getTime() <= periodEndMonth.getTime()
+          ) {
+            return currentMonth;
+          }
+          return nextMonthStart;
+        });
+      }
+    }
+  }, [periodEndMonth, timePeriodStartDate]);
+
+  useEffect(() => {
+    setParticipantCalendarMonth((current) => {
+      const currentMonth = getCalendarMonthStart(current);
+
+      if (periodStartMonth && currentMonth.getTime() < periodStartMonth.getTime()) {
+        return periodStartMonth;
+      }
+
+      if (periodEndMonth && currentMonth.getTime() > periodEndMonth.getTime()) {
+        return periodEndMonth;
+      }
+
+      return currentMonth;
+    });
+  }, [periodEndMonth, periodStartMonth]);
 
   const applyPeriodDays = useCallback((value: string | number) => {
     const parsedValue = typeof value === 'number' ? value : parseInt(value, 10);
@@ -416,6 +840,27 @@ const TimeBasedMode = React.memo(({
     setInputMode('days');
   }, [onSetAllDays, periodDays]);
 
+  const handlePeriodCalendarDayPress = useCallback((value: string) => {
+    lightHaptic();
+
+    if (!timePeriodStartDate || (timePeriodStartDate && timePeriodEndDate)) {
+      onTimePeriodRangeChange(value, '');
+      return;
+    }
+
+    if (value === timePeriodStartDate) {
+      onTimePeriodRangeChange(value, value);
+      return;
+    }
+
+    if (value < timePeriodStartDate) {
+      onTimePeriodRangeChange(value, timePeriodStartDate);
+      return;
+    }
+
+    onTimePeriodRangeChange(timePeriodStartDate, value);
+  }, [onTimePeriodRangeChange, timePeriodEndDate, timePeriodStartDate]);
+
   return (
     <View style={styles.section}>
       <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
@@ -424,6 +869,35 @@ const TimeBasedMode = React.memo(({
       <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
         Set the full billing period once, then adjust each person's stayed days.
       </Text>
+
+      <View style={styles.timeVariantRow}>
+        {([
+          { key: 'dynamic' as TimeSplitVariant, label: 'Dynamic', description: 'Prorates by entered stayed days.' },
+          { key: 'standard' as TimeSplitVariant, label: 'Standard', description: 'Keeps every bill day allocated, then redistributes missed days.' },
+        ]).map((option) => (
+          <TouchableOpacity
+            key={option.key}
+            style={[
+              styles.timeVariantChip,
+              {
+                backgroundColor: timeSplitVariant === option.key ? `${theme.colors.primary}20` : 'transparent',
+                borderColor: timeSplitVariant === option.key ? theme.colors.primary : palette.border,
+              },
+            ]}
+            onPress={() => {
+              mediumHaptic();
+              onTimeSplitVariantChange(option.key);
+            }}
+          >
+            <Text style={{ color: timeSplitVariant === option.key ? theme.colors.primary : theme.colors.onSurface, fontSize: 14, fontWeight: '800' }}>
+              {option.label}
+            </Text>
+            <Text style={{ color: palette.muted, fontSize: 11, lineHeight: 16, textAlign: 'center' }}>
+              {option.description}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <View style={styles.timeInputModeRow}>
         {([
@@ -509,6 +983,82 @@ const TimeBasedMode = React.memo(({
           </Text>
         </View>
 
+        {inputMode === 'dates' && (
+          <View style={styles.timeRangeSection}>
+            <View style={styles.timeRangeSummaryRow}>
+              <View style={styles.timeRangeSummaryText}>
+                <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                  Billing period calendar
+                </Text>
+                <Text variant="bodySmall" style={{ color: palette.muted }}>
+                  Tap a start date, then tap an end date to set the full period.
+                </Text>
+              </View>
+              {(timePeriodStartDate || timePeriodEndDate) && (
+                <TouchableOpacity
+                  style={[styles.timeMiniActionChip, { borderColor: palette.border }]}
+                  onPress={() => {
+                    mediumHaptic();
+                    onTimePeriodRangeChange('', '');
+                  }}
+                >
+                  <Icon source="close" size={14} color={palette.muted} />
+                  <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '700' }}>
+                    Clear
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <View style={styles.timeRangeSelectedRow}>
+              <View style={[styles.timeRangeSelectedChip, { borderColor: palette.border }]}>
+                <Text style={{ color: palette.muted, fontSize: 11, fontWeight: '700' }}>Start</Text>
+                <Text style={{ color: theme.colors.onSurface, fontSize: 13, fontWeight: '700' }}>
+                  {timePeriodStartDate ? getDateChipLabel(timePeriodStartDate) : 'Pick a day'}
+                </Text>
+              </View>
+              <View style={[styles.timeRangeSelectedChip, { borderColor: palette.border }]}>
+                <Text style={{ color: palette.muted, fontSize: 11, fontWeight: '700' }}>End</Text>
+                <Text style={{ color: theme.colors.onSurface, fontSize: 13, fontWeight: '700' }}>
+                  {timePeriodEndDate ? getDateChipLabel(timePeriodEndDate) : 'Pick a day'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.calendarNavRow}>
+              <TouchableOpacity
+                style={[styles.calendarNavButton, { borderColor: palette.border }]}
+                onPress={() => setPeriodCalendarMonth((prev) => addCalendarMonths(prev, -1))}
+              >
+                <Icon source="chevron-left" size={18} color={theme.colors.onSurface} />
+              </TouchableOpacity>
+              <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                {getCalendarMonthLabel(periodCalendarMonth)}
+              </Text>
+              <TouchableOpacity
+                style={[styles.calendarNavButton, { borderColor: palette.border }]}
+                onPress={() => setPeriodCalendarMonth((prev) => addCalendarMonths(prev, 1))}
+              >
+                <Icon source="chevron-right" size={18} color={theme.colors.onSurface} />
+              </TouchableOpacity>
+            </View>
+
+            <CalendarMonthGrid
+              accentColor={theme.colors.primary}
+              monthDate={periodCalendarMonth}
+              onPressDate={handlePeriodCalendarDayPress}
+              rangeEnd={timePeriodEndDate || undefined}
+              rangeStart={timePeriodStartDate || undefined}
+            />
+
+            <Text variant="labelSmall" style={{ color: palette.muted }}>
+              {timePeriodStartDate && !timePeriodEndDate
+                ? 'Now choose the last day in the billing period.'
+                : 'The selected range becomes the total number of bill days.'}
+            </Text>
+          </View>
+        )}
+
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <View style={styles.timePresetRow}>
             {DURATION_PRESETS.map((preset) => (
@@ -543,12 +1093,16 @@ const TimeBasedMode = React.memo(({
           <View style={styles.timeSummaryHeader}>
             <View style={styles.timeSummaryHeaderText}>
               <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-                {allSame ? 'Everyone is on the full stay right now' : `${included.length} people with custom stays`}
+                {isStandardMode
+                  ? (allSame ? 'Standard mode is splitting the full period evenly' : 'Standard mode redistributes missed-day share')
+                  : (allSame ? 'Everyone is on the full stay right now' : `${included.length} people with custom stays`)}
               </Text>
               <Text variant="bodySmall" style={{ color: palette.muted }}>
-                {inputMode === 'dates'
-                  ? 'Dates are counted inclusively and capped to this billing period.'
-                  : 'Move the slider or type a value to update the split instantly.'}
+                {isStandardMode
+                  ? 'Each missed day hands that member\'s base daily share back to the rest of the group.'
+                  : (inputMode === 'dates'
+                    ? 'Dates are counted inclusively and capped to this billing period.'
+                    : 'Move the slider or type a value to update the split instantly.')}
               </Text>
             </View>
             <View style={[styles.timeSummaryBadge, { backgroundColor: `${theme.colors.primary}16` }]}>
@@ -570,19 +1124,29 @@ const TimeBasedMode = React.memo(({
               </Text>
             </View>
             <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
-              <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>Occupied days</Text>
-              <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>{totalPersonDays}d</Text>
+              <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>
+                {isStandardMode ? 'Base/member/day' : 'Occupied days'}
+              </Text>
+              <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>
+                {isStandardMode ? formatCurrency(baseMemberDailyCost, currency) : `${totalPersonDays}d`}
+              </Text>
             </View>
             <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
-              <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>Occupied/day</Text>
+              <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>
+                {isStandardMode ? 'Redistributed pool' : 'Occupied/day'}
+              </Text>
               <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>
-                {totalPersonDays > 0 ? formatCurrency(occupiedDayCost, currency) : '-'}
+                {isStandardMode
+                  ? formatCurrency(redistributedPool, currency)
+                  : (totalPersonDays > 0 ? formatCurrency(occupiedDayCost, currency) : '-')}
               </Text>
             </View>
           </View>
 
           <Text variant="bodySmall" style={{ color: palette.muted, paddingHorizontal: 14, paddingBottom: 14 }}>
-            Average stay: {included.length > 0 ? averageStay.toFixed(1) : '0.0'} day{averageStay === 1 ? '' : 's'}
+            {isStandardMode
+              ? `Missing days across the group: ${totalMissingDays} day${totalMissingDays === 1 ? '' : 's'}`
+              : `Average stay: ${included.length > 0 ? averageStay.toFixed(1) : '0.0'} day${averageStay === 1 ? '' : 's'}`}
           </Text>
         </GlassView>
       </Animated.View>
@@ -601,10 +1165,70 @@ const TimeBasedMode = React.memo(({
       )}
 
       {included.map((participant, index) => {
-        const pct = totalPersonDays > 0 ? ((participant.daysStayed / totalPersonDays) * 100) : 0;
+        const splitPct = totalAmount > 0 ? (participant.computedAmount / totalAmount) * 100 : 0;
         const periodPct = (participant.daysStayed / periodDays) * 100;
         const costPerStayedDay = participant.daysStayed > 0 ? participant.computedAmount / participant.daysStayed : 0;
+        const missingDays = Math.max(0, periodDays - participant.daysStayed);
+        const redistributedAmount = participant.computedAmount - (participant.daysStayed * baseMemberDailyCost);
         const avatarColor = AVATAR_COLORS[index % AVATAR_COLORS.length];
+        const selectedDateSet = new Set(
+          participant.selectedStayDates ?? (periodDateOptions.length === participant.daysStayed ? periodDateOptions : []),
+        );
+        const hasManualDaysWithoutDates = selectedDateSet.size === 0 && participant.daysStayed > 0;
+        const isExpanded = expandedParticipantId === participant.id;
+        const canGoToPreviousParticipantMonth = !periodStartMonth
+          || participantCalendarMonth.getTime() > periodStartMonth.getTime();
+        const canGoToNextParticipantMonth = !periodEndMonth
+          || participantCalendarMonth.getTime() < periodEndMonth.getTime();
+        const visibleMonthDates = isExpanded ? participantVisibleMonthDates : [];
+        const selectedVisibleMonthCount = visibleMonthDates.filter((dateValue) => selectedDateSet.has(dateValue)).length;
+        const isVisibleMonthFullySelected = visibleMonthDates.length > 0
+          && selectedVisibleMonthCount === visibleMonthDates.length;
+        const monthToggleLabel = isVisibleMonthFullySelected ? 'Clear month' : 'Select month';
+        const selectedAllWeekdayCount = periodDateGroups.weekdays.filter((dateValue) => selectedDateSet.has(dateValue)).length;
+        const selectedAllWeekdayNoFridayCount = periodDateGroups.weekdaysNoFriday
+          .filter((dateValue) => selectedDateSet.has(dateValue)).length;
+        const selectedAllWeekendCount = periodDateGroups.weekends.filter((dateValue) => selectedDateSet.has(dateValue)).length;
+        const selectedAllLongWeekendCount = periodDateGroups.longWeekends
+          .filter((dateValue) => selectedDateSet.has(dateValue)).length;
+        const areAllWeekdaysSelected = periodDateGroups.weekdays.length > 0
+          && selectedAllWeekdayCount === periodDateGroups.weekdays.length;
+        const areAllWeekdaysNoFridaySelected = periodDateGroups.weekdaysNoFriday.length > 0
+          && selectedAllWeekdayNoFridayCount === periodDateGroups.weekdaysNoFriday.length;
+        const areAllWeekendsSelected = periodDateGroups.weekends.length > 0
+          && selectedAllWeekendCount === periodDateGroups.weekends.length;
+        const areAllLongWeekendsSelected = periodDateGroups.longWeekends.length > 0
+          && selectedAllLongWeekendCount === periodDateGroups.longWeekends.length;
+        const allWeekdayToggleLabel = areAllWeekdaysSelected ? 'Remove all weekdays' : 'Add all weekdays';
+        const allWeekdayNoFridayToggleLabel = areAllWeekdaysNoFridaySelected
+          ? 'Remove all Mon-Thu'
+          : 'Add all Mon-Thu';
+        const allWeekendToggleLabel = areAllWeekendsSelected ? 'Remove all weekends' : 'Add all weekends';
+        const allLongWeekendToggleLabel = areAllLongWeekendsSelected
+          ? 'Remove all long weekends'
+          : 'Add all long weekends';
+        const selectedVisibleWeekdayCount = participantVisibleMonthDateGroups.weekdays.filter((dateValue) => selectedDateSet.has(dateValue)).length;
+        const selectedVisibleWeekdayNoFridayCount = participantVisibleMonthDateGroups.weekdaysNoFriday
+          .filter((dateValue) => selectedDateSet.has(dateValue)).length;
+        const selectedVisibleWeekendCount = participantVisibleMonthDateGroups.weekends.filter((dateValue) => selectedDateSet.has(dateValue)).length;
+        const selectedVisibleLongWeekendCount = participantVisibleMonthDateGroups.longWeekends
+          .filter((dateValue) => selectedDateSet.has(dateValue)).length;
+        const areVisibleWeekdaysSelected = participantVisibleMonthDateGroups.weekdays.length > 0
+          && selectedVisibleWeekdayCount === participantVisibleMonthDateGroups.weekdays.length;
+        const areVisibleWeekdaysNoFridaySelected = participantVisibleMonthDateGroups.weekdaysNoFriday.length > 0
+          && selectedVisibleWeekdayNoFridayCount === participantVisibleMonthDateGroups.weekdaysNoFriday.length;
+        const areVisibleWeekendsSelected = participantVisibleMonthDateGroups.weekends.length > 0
+          && selectedVisibleWeekendCount === participantVisibleMonthDateGroups.weekends.length;
+        const areVisibleLongWeekendsSelected = participantVisibleMonthDateGroups.longWeekends.length > 0
+          && selectedVisibleLongWeekendCount === participantVisibleMonthDateGroups.longWeekends.length;
+        const visibleWeekdayToggleLabel = areVisibleWeekdaysSelected ? 'Remove weekdays' : 'Add weekdays';
+        const visibleWeekdayNoFridayToggleLabel = areVisibleWeekdaysNoFridaySelected
+          ? 'Remove Mon-Thu'
+          : 'Add Mon-Thu';
+        const visibleWeekendToggleLabel = areVisibleWeekendsSelected ? 'Remove weekends' : 'Add weekends';
+        const visibleLongWeekendToggleLabel = areVisibleLongWeekendsSelected
+          ? 'Remove long weekends'
+          : 'Add long weekends';
 
         return (
           <Animated.View key={participant.id} entering={FadeInDown.delay(index * 50).springify()}>
@@ -632,18 +1256,22 @@ const TimeBasedMode = React.memo(({
                 <View style={styles.timeMetaRow}>
                   <View style={[styles.timeMetaChip, { borderColor: palette.border }]}>
                     <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '600' }}>
-                      {pct.toFixed(0)}% of split
+                      {splitPct.toFixed(0)}% of split
                     </Text>
                   </View>
                   <View style={[styles.timeMetaChip, { borderColor: palette.border }]}>
                     <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '600' }}>
-                      {periodPct.toFixed(0)}% of period
+                      {isStandardMode
+                        ? `${missingDays} missed day${missingDays === 1 ? '' : 's'}`
+                        : `${periodPct.toFixed(0)}% of period`}
                     </Text>
                   </View>
-                  {participant.daysStayed > 0 && (
+                  {(participant.daysStayed > 0 || isStandardMode) && (
                     <View style={[styles.timeMetaChip, { borderColor: palette.border }]}>
                       <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '600' }}>
-                        {formatCurrency(costPerStayedDay, currency)}/day
+                        {isStandardMode
+                          ? `${redistributedAmount >= 0 ? '+' : ''}${formatCurrency(redistributedAmount, currency)} backfill`
+                          : `${formatCurrency(costPerStayedDay, currency)}/day`}
                       </Text>
                     </View>
                   )}
@@ -690,22 +1318,15 @@ const TimeBasedMode = React.memo(({
                       )}
                     </View>
 
-                    <TimeSliderSurface isDark={isDark}>
-                      <View style={styles.timeSliderInner}>
-                        <Slider
-                          value={participant.daysStayed}
-                          minimumValue={0}
-                          maximumValue={periodDays}
-                          step={1}
-                          onValueChange={(value) => onDaysChange(participant.id, Math.round(value).toString())}
-                          onSlidingComplete={() => lightHaptic()}
-                          minimumTrackTintColor={avatarColor}
-                          maximumTrackTintColor={isDark ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.12)'}
-                          thumbTintColor={Platform.OS === 'android' ? avatarColor : undefined}
-                          tapToSeek
-                        />
-                      </View>
-                    </TimeSliderSurface>
+                    <TimeValueSlider
+                      accentColor={avatarColor}
+                      isDark={isDark}
+                      maximumValue={periodDays}
+                      minimumValue={0}
+                      onValueChange={(nextValue) => onDaysChange(participant.id, nextValue.toString())}
+                      onSlidingComplete={() => lightHaptic()}
+                      value={participant.daysStayed}
+                    />
 
                     <View style={styles.timeSliderLabels}>
                       <Text variant="labelSmall" style={{ color: palette.muted }}>0d</Text>
@@ -718,34 +1339,393 @@ const TimeBasedMode = React.memo(({
 
                 {inputMode === 'dates' && (
                   <View style={styles.timeDateContainer}>
-                    <View style={styles.timeDateFieldGroup}>
-                      <View style={styles.timeDateField}>
-                        <Text style={[styles.timeDateLabel, { color: palette.muted }]}>Start</Text>
-                        <TextInput
-                          style={[styles.timeDateInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
-                          value={participant.checkInDate ?? ''}
-                          onChangeText={(value) => onDateRangeChange(participant.id, value, participant.checkOutDate ?? '')}
-                          placeholder="YYYY-MM-DD"
-                          placeholderTextColor={palette.muted}
-                          maxLength={10}
-                        />
+                    {periodDateOptions.length > 0 ? (
+                      <>
+                        <View style={styles.timeParticipantDateHeader}>
+                          <View style={styles.timeParticipantDateSummary}>
+                            <Text variant="labelSmall" style={{ color: palette.muted }}>
+                              {selectedDateSet.size > 0
+                                ? `${selectedDateSet.size} selected day${selectedDateSet.size === 1 ? '' : 's'}`
+                                : hasManualDaysWithoutDates
+                                  ? `${participant.daysStayed} day${participant.daysStayed === 1 ? '' : 's'} set manually`
+                                  : 'No selected days yet'}
+                            </Text>
+                            <Text variant="bodySmall" style={{ color: palette.muted }}>
+                              {hasManualDaysWithoutDates
+                                ? 'Tap exact days below to replace the manual count with real dates.'
+                                : 'Tap exact days from the billing range below.'}
+                            </Text>
+                          </View>
+                          <View style={styles.timeParticipantDateActions}>
+                            <TouchableOpacity
+                              style={[styles.timeMiniActionChip, { borderColor: palette.border }]}
+                              onPress={() => {
+                                lightHaptic();
+                                if (!isExpanded) {
+                                  const anchorDate = participant.selectedStayDates?.[0]
+                                    ?? timePeriodStartDate
+                                    ?? timePeriodEndDate;
+                                  const anchorMonth = anchorDate ? parseCalendarDate(anchorDate) : null;
+                                  if (anchorMonth) {
+                                    setParticipantCalendarMonth(getCalendarMonthStart(anchorMonth));
+                                  }
+                                }
+                                setExpandedParticipantId(isExpanded ? null : participant.id);
+                              }}
+                            >
+                              <Icon
+                                source={isExpanded ? 'calendar-collapse-horizontal' : 'calendar-month'}
+                                size={14}
+                                color={theme.colors.primary}
+                              />
+                              <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
+                                {isExpanded ? 'Hide' : 'Calendar'}
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[styles.timeMiniActionChip, { borderColor: palette.border }]}
+                              onPress={() => {
+                                mediumHaptic();
+                                onStayDatesChange(participant.id, periodDateOptions);
+                              }}
+                            >
+                              <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '700' }}>All days</Text>
+                            </TouchableOpacity>
+                            {periodDateGroups.weekdays.length > 0 && (
+                              <TouchableOpacity
+                                style={[
+                                  styles.timeMiniActionChip,
+                                  {
+                                    borderColor: areAllWeekdaysSelected ? palette.border : avatarColor,
+                                    backgroundColor: areAllWeekdaysSelected ? 'transparent' : `${avatarColor}12`,
+                                  },
+                                ]}
+                                onPress={() => {
+                                  const nextDates = areAllWeekdaysSelected
+                                    ? removeScopedDates(selectedDateSet, periodDateGroups.weekdays)
+                                    : addScopedDates(selectedDateSet, periodDateGroups.weekdays);
+                                  mediumHaptic();
+                                  onStayDatesChange(participant.id, nextDates);
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    color: areAllWeekdaysSelected ? palette.muted : avatarColor,
+                                    fontSize: 12,
+                                    fontWeight: '700',
+                                  }}
+                                >
+                                  {allWeekdayToggleLabel}
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                            {periodDateGroups.weekdaysNoFriday.length > 0 && (
+                              <TouchableOpacity
+                                style={[
+                                  styles.timeMiniActionChip,
+                                  {
+                                    borderColor: areAllWeekdaysNoFridaySelected ? palette.border : avatarColor,
+                                    backgroundColor: areAllWeekdaysNoFridaySelected ? 'transparent' : `${avatarColor}12`,
+                                  },
+                                ]}
+                                onPress={() => {
+                                  const nextDates = areAllWeekdaysNoFridaySelected
+                                    ? removeScopedDates(selectedDateSet, periodDateGroups.weekdaysNoFriday)
+                                    : addScopedDates(selectedDateSet, periodDateGroups.weekdaysNoFriday);
+                                  mediumHaptic();
+                                  onStayDatesChange(participant.id, nextDates);
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    color: areAllWeekdaysNoFridaySelected ? palette.muted : avatarColor,
+                                    fontSize: 12,
+                                    fontWeight: '700',
+                                  }}
+                                >
+                                  {allWeekdayNoFridayToggleLabel}
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                            {periodDateGroups.weekends.length > 0 && (
+                              <TouchableOpacity
+                                style={[
+                                  styles.timeMiniActionChip,
+                                  {
+                                    borderColor: areAllWeekendsSelected ? palette.border : avatarColor,
+                                    backgroundColor: areAllWeekendsSelected ? 'transparent' : `${avatarColor}12`,
+                                  },
+                                ]}
+                                onPress={() => {
+                                  const nextDates = areAllWeekendsSelected
+                                    ? removeScopedDates(selectedDateSet, periodDateGroups.weekends)
+                                    : addScopedDates(selectedDateSet, periodDateGroups.weekends);
+                                  mediumHaptic();
+                                  onStayDatesChange(participant.id, nextDates);
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    color: areAllWeekendsSelected ? palette.muted : avatarColor,
+                                    fontSize: 12,
+                                    fontWeight: '700',
+                                  }}
+                                >
+                                  {allWeekendToggleLabel}
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                            {periodDateGroups.longWeekends.length > 0 && (
+                              <TouchableOpacity
+                                style={[
+                                  styles.timeMiniActionChip,
+                                  {
+                                    borderColor: areAllLongWeekendsSelected ? palette.border : avatarColor,
+                                    backgroundColor: areAllLongWeekendsSelected ? 'transparent' : `${avatarColor}12`,
+                                  },
+                                ]}
+                                onPress={() => {
+                                  const nextDates = areAllLongWeekendsSelected
+                                    ? removeScopedDates(selectedDateSet, periodDateGroups.longWeekends)
+                                    : addScopedDates(selectedDateSet, periodDateGroups.longWeekends);
+                                  mediumHaptic();
+                                  onStayDatesChange(participant.id, nextDates);
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    color: areAllLongWeekendsSelected ? palette.muted : avatarColor,
+                                    fontSize: 12,
+                                    fontWeight: '700',
+                                  }}
+                                >
+                                  {allLongWeekendToggleLabel}
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                            <TouchableOpacity
+                              style={[styles.timeMiniActionChip, { borderColor: palette.border }]}
+                              onPress={() => {
+                                mediumHaptic();
+                                onStayDatesChange(participant.id, []);
+                              }}
+                            >
+                              <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '700' }}>Clear</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+
+                        {isExpanded && (
+                          <View style={styles.timeParticipantCalendarStack}>
+                            <View style={styles.calendarNavRow}>
+                              <TouchableOpacity
+                                disabled={!canGoToPreviousParticipantMonth}
+                                style={[
+                                  styles.calendarNavButton,
+                                  {
+                                    borderColor: palette.border,
+                                    opacity: canGoToPreviousParticipantMonth ? 1 : 0.35,
+                                  },
+                                ]}
+                                onPress={() => {
+                                  if (!canGoToPreviousParticipantMonth) return;
+                                  setParticipantCalendarMonth((current) => addCalendarMonths(current, -1));
+                                }}
+                              >
+                                <Icon source="chevron-left" size={18} color={theme.colors.onSurface} />
+                              </TouchableOpacity>
+                              <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                                {getCalendarMonthLabel(participantCalendarMonth)}
+                              </Text>
+                              <TouchableOpacity
+                                disabled={!canGoToNextParticipantMonth}
+                                style={[
+                                  styles.calendarNavButton,
+                                  {
+                                    borderColor: palette.border,
+                                    opacity: canGoToNextParticipantMonth ? 1 : 0.35,
+                                  },
+                                ]}
+                                onPress={() => {
+                                  if (!canGoToNextParticipantMonth) return;
+                                  setParticipantCalendarMonth((current) => addCalendarMonths(current, 1));
+                                }}
+                              >
+                                <Icon source="chevron-right" size={18} color={theme.colors.onSurface} />
+                              </TouchableOpacity>
+                            </View>
+
+                            {visibleMonthDates.length > 0 && (
+                              <View style={styles.timeParticipantMonthActionRow}>
+                                <Text variant="bodySmall" style={{ color: palette.muted }}>
+                                  {selectedVisibleMonthCount}/{visibleMonthDates.length} selected this month
+                                </Text>
+                                <View style={styles.timeParticipantMonthActionButtons}>
+                                  <TouchableOpacity
+                                    style={[
+                                      styles.timeMiniActionChip,
+                                      {
+                                        borderColor: isVisibleMonthFullySelected ? palette.border : avatarColor,
+                                        backgroundColor: isVisibleMonthFullySelected ? 'transparent' : `${avatarColor}12`,
+                                      },
+                                    ]}
+                                    onPress={() => {
+                                      const nextDates = isVisibleMonthFullySelected
+                                        ? removeScopedDates(selectedDateSet, visibleMonthDates)
+                                        : addScopedDates(selectedDateSet, visibleMonthDates);
+                                      mediumHaptic();
+                                      onStayDatesChange(participant.id, nextDates);
+                                    }}
+                                  >
+                                    <Text
+                                      style={{
+                                        color: isVisibleMonthFullySelected ? palette.muted : avatarColor,
+                                        fontSize: 12,
+                                        fontWeight: '700',
+                                      }}
+                                    >
+                                      {monthToggleLabel}
+                                    </Text>
+                                  </TouchableOpacity>
+                                  {participantVisibleMonthDateGroups.weekdays.length > 0 && (
+                                    <TouchableOpacity
+                                      style={[
+                                        styles.timeMiniActionChip,
+                                        {
+                                          borderColor: areVisibleWeekdaysSelected ? palette.border : avatarColor,
+                                          backgroundColor: areVisibleWeekdaysSelected ? 'transparent' : `${avatarColor}12`,
+                                        },
+                                      ]}
+                                      onPress={() => {
+                                        const nextDates = areVisibleWeekdaysSelected
+                                          ? removeScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekdays)
+                                          : addScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekdays);
+                                        mediumHaptic();
+                                        onStayDatesChange(participant.id, nextDates);
+                                      }}
+                                    >
+                                      <Text
+                                        style={{
+                                          color: areVisibleWeekdaysSelected ? palette.muted : avatarColor,
+                                          fontSize: 12,
+                                          fontWeight: '700',
+                                        }}
+                                      >
+                                        {visibleWeekdayToggleLabel}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  )}
+                                  {participantVisibleMonthDateGroups.weekdaysNoFriday.length > 0 && (
+                                    <TouchableOpacity
+                                      style={[
+                                        styles.timeMiniActionChip,
+                                        {
+                                          borderColor: areVisibleWeekdaysNoFridaySelected ? palette.border : avatarColor,
+                                          backgroundColor: areVisibleWeekdaysNoFridaySelected ? 'transparent' : `${avatarColor}12`,
+                                        },
+                                      ]}
+                                      onPress={() => {
+                                        const nextDates = areVisibleWeekdaysNoFridaySelected
+                                          ? removeScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekdaysNoFriday)
+                                          : addScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekdaysNoFriday);
+                                        mediumHaptic();
+                                        onStayDatesChange(participant.id, nextDates);
+                                      }}
+                                    >
+                                      <Text
+                                        style={{
+                                          color: areVisibleWeekdaysNoFridaySelected ? palette.muted : avatarColor,
+                                          fontSize: 12,
+                                          fontWeight: '700',
+                                        }}
+                                      >
+                                        {visibleWeekdayNoFridayToggleLabel}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  )}
+                                  {participantVisibleMonthDateGroups.weekends.length > 0 && (
+                                    <TouchableOpacity
+                                      style={[
+                                        styles.timeMiniActionChip,
+                                        {
+                                          borderColor: areVisibleWeekendsSelected ? palette.border : avatarColor,
+                                          backgroundColor: areVisibleWeekendsSelected ? 'transparent' : `${avatarColor}12`,
+                                        },
+                                      ]}
+                                      onPress={() => {
+                                        const nextDates = areVisibleWeekendsSelected
+                                          ? removeScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekends)
+                                          : addScopedDates(selectedDateSet, participantVisibleMonthDateGroups.weekends);
+                                        mediumHaptic();
+                                        onStayDatesChange(participant.id, nextDates);
+                                      }}
+                                    >
+                                      <Text
+                                        style={{
+                                          color: areVisibleWeekendsSelected ? palette.muted : avatarColor,
+                                          fontSize: 12,
+                                          fontWeight: '700',
+                                        }}
+                                      >
+                                        {visibleWeekendToggleLabel}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  )}
+                                  {participantVisibleMonthDateGroups.longWeekends.length > 0 && (
+                                    <TouchableOpacity
+                                      style={[
+                                        styles.timeMiniActionChip,
+                                        {
+                                          borderColor: areVisibleLongWeekendsSelected ? palette.border : avatarColor,
+                                          backgroundColor: areVisibleLongWeekendsSelected ? 'transparent' : `${avatarColor}12`,
+                                        },
+                                      ]}
+                                      onPress={() => {
+                                        const nextDates = areVisibleLongWeekendsSelected
+                                          ? removeScopedDates(selectedDateSet, participantVisibleMonthDateGroups.longWeekends)
+                                          : addScopedDates(selectedDateSet, participantVisibleMonthDateGroups.longWeekends);
+                                        mediumHaptic();
+                                        onStayDatesChange(participant.id, nextDates);
+                                      }}
+                                    >
+                                      <Text
+                                        style={{
+                                          color: areVisibleLongWeekendsSelected ? palette.muted : avatarColor,
+                                          fontSize: 12,
+                                          fontWeight: '700',
+                                        }}
+                                      >
+                                        {visibleLongWeekendToggleLabel}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  )}
+                                </View>
+                              </View>
+                            )}
+
+                            <CalendarMonthGrid
+                              accentColor={avatarColor}
+                              enabledDates={periodDateSet}
+                              monthDate={participantCalendarMonth}
+                              onPressDate={(dateValue) => {
+                                const nextDates = selectedDateSet.has(dateValue)
+                                  ? Array.from(selectedDateSet).filter((value) => value !== dateValue)
+                                  : [...Array.from(selectedDateSet), dateValue].sort();
+                                lightHaptic();
+                                onStayDatesChange(participant.id, nextDates);
+                              }}
+                              selectedDates={selectedDateSet}
+                            />
+                          </View>
+                        )}
+                      </>
+                    ) : (
+                      <View style={[styles.timeDateHintBox, { borderColor: palette.border }]}>
+                        <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center' }}>
+                          Choose the total billing period on the calendar above first, then each member can pick their stayed days from it.
+                        </Text>
                       </View>
-                      <Icon source="arrow-right" size={14} color={palette.muted} />
-                      <View style={styles.timeDateField}>
-                        <Text style={[styles.timeDateLabel, { color: palette.muted }]}>End</Text>
-                        <TextInput
-                          style={[styles.timeDateInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
-                          value={participant.checkOutDate ?? ''}
-                          onChangeText={(value) => onDateRangeChange(participant.id, participant.checkInDate ?? '', value)}
-                          placeholder="YYYY-MM-DD"
-                          placeholderTextColor={palette.muted}
-                          maxLength={10}
-                        />
-                      </View>
-                    </View>
-                    <Text variant="labelSmall" style={{ color: palette.muted }}>
-                      Inclusive dates. Long ranges are capped at {periodDays} day{periodDays === 1 ? '' : 's'}.
-                    </Text>
+                    )}
                   </View>
                 )}
               </View>
@@ -1461,7 +2441,13 @@ interface AdvancedModeContentProps {
   onDaysChange: (id: string, days: string) => void;
   onDateRangeChange: (id: string, checkIn: string, checkOut: string) => void;
   onSetAllDays: (days: number) => void;
+  onStayDatesChange: (id: string, dates: string[]) => void;
+  timeSplitVariant: TimeSplitVariant;
+  onTimeSplitVariantChange: (variant: TimeSplitVariant) => void;
   timePeriodDays: number;
+  timePeriodStartDate: string;
+  timePeriodEndDate: string;
+  onTimePeriodRangeChange: (startDate: string, endDate: string) => void;
   // Gamified
   gamifiedMode: GamifiedMode;
   onGamifiedModeChange: (mode: GamifiedMode) => void;
@@ -1518,9 +2504,15 @@ export const AdvancedModeContent = React.memo((props: AdvancedModeContentProps) 
           onDaysChange={props.onDaysChange}
           onDateRangeChange={props.onDateRangeChange}
           onSetAllDays={props.onSetAllDays}
+          onStayDatesChange={props.onStayDatesChange}
           currency={props.currency}
           totalAmount={props.totalAmount}
+          timeSplitVariant={props.timeSplitVariant}
+          onTimeSplitVariantChange={props.onTimeSplitVariantChange}
           timePeriodDays={props.timePeriodDays}
+          timePeriodStartDate={props.timePeriodStartDate}
+          timePeriodEndDate={props.timePeriodEndDate}
+          onTimePeriodRangeChange={props.onTimePeriodRangeChange}
         />
       );
     case 'gamified':
@@ -1729,6 +2721,20 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   // Time-Based (enhanced)
+  timeVariantRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  timeVariantChip: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
   timeInputModeRow: {
     flexDirection: 'row',
     gap: 8,
@@ -1790,6 +2796,105 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 14,
     paddingVertical: 14,
+  },
+  timeRangeSection: {
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+  },
+  timeRangeSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  timeRangeSummaryText: {
+    flex: 1,
+    gap: 2,
+  },
+  timeMiniActionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  timeRangeSelectedRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  timeRangeSelectedChip: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  calendarNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  calendarNavButton: {
+    width: 36,
+    height: 36,
+    borderWidth: 1,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarMonthCard: {
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  calendarMonthHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  calendarWeekHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  calendarWeekLabel: {
+    width: '14.2857%',
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  calendarEmptyCell: {
+    width: '14.2857%',
+    height: 48,
+  },
+  calendarCellWrap: {
+    width: '14.2857%',
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarDayCell: {
+    width: 40,
+    height: 40,
+    borderWidth: 1,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarDayText: {
+    fontSize: 14,
+    fontWeight: '700',
   },
   timePeriodStepBtn: {
     width: 36,
@@ -1939,6 +3044,39 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
+  timeSliderFallbackTrack: {
+    height: 34,
+    justifyContent: 'center',
+    marginHorizontal: 2,
+  },
+  timeSliderFallbackTrackBase: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(148, 163, 184, 0.22)',
+  },
+  timeSliderFallbackFill: {
+    position: 'absolute',
+    left: 0,
+    height: 8,
+    borderRadius: 999,
+  },
+  timeSliderFallbackThumb: {
+    position: 'absolute',
+    top: 4,
+    marginLeft: -12,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(10, 14, 24, 0.88)',
+  },
+  timeSliderFallbackThumbInner: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
   timeSliderLabels: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1967,6 +3105,39 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 13,
+  },
+  timeDateHintBox: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  timeParticipantDateHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  timeParticipantDateSummary: {
+    flex: 1,
+    gap: 2,
+  },
+  timeParticipantDateActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  timeParticipantCalendarStack: {
+    gap: 10,
+  },
+  timeParticipantMonthActionRow: {
+    gap: 8,
+  },
+  timeParticipantMonthActionButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
   },
   // Gamified
   gameModeRow: {

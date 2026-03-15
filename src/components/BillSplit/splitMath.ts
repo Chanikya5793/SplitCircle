@@ -274,6 +274,13 @@ function parseDateOnly(value: string): Date | null {
   return date;
 }
 
+function formatDateOnly(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function daysBetweenDates(checkIn: string, checkOut: string): number {
   const d1 = parseDateOnly(checkIn);
   const d2 = parseDateOnly(checkOut);
@@ -281,6 +288,20 @@ export function daysBetweenDates(checkIn: string, checkOut: string): number {
   const diffMs = d2.getTime() - d1.getTime();
   const ONE_DAY_MS = 1000 * 60 * 60 * 24;
   return Math.max(0, Math.floor(diffMs / ONE_DAY_MS) + 1);
+}
+
+export function listDatesBetween(checkIn: string, checkOut: string): string[] {
+  const start = parseDateOnly(checkIn);
+  const end = parseDateOnly(checkOut);
+  if (!start || !end || end.getTime() < start.getTime()) return [];
+
+  const dates: string[] = [];
+  const current = new Date(start);
+  while (current.getTime() <= end.getTime()) {
+    dates.push(formatDateOnly(current));
+    current.setDate(current.getDate() + 1);
+  }
+  return dates;
 }
 
 // ─── TIME-BASED / PRORATED ──────────────────────────────────────────────────
@@ -308,6 +329,57 @@ export function computeTimeBased(total: number, participants: Participant[]): Pa
   return participants.map((p) => ({
     ...p,
     computedAmount: p.included ? fromCents(flooredCents[idx++]) : 0,
+  }));
+}
+
+export function computeStandardTimeBased(total: number, periodDays: number, participants: Participant[]): Participant[] {
+  const included = participants.filter((participant) => participant.included);
+  const participantCount = included.length;
+  const normalizedPeriodDays = Math.max(1, Math.round(periodDays));
+
+  if (participantCount === 0) {
+    return participants.map((participant) => ({ ...participant, computedAmount: 0 }));
+  }
+
+  if (participantCount === 1) {
+    const onlyParticipantId = included[0].id;
+    return participants.map((participant) => ({
+      ...participant,
+      computedAmount: participant.id === onlyParticipantId ? roundCents(total) : 0,
+    }));
+  }
+
+  const basePerPersonPerDay = total / normalizedPeriodDays / participantCount;
+  const totalMissingDays = included.reduce((sum, participant) => (
+    sum + Math.max(0, normalizedPeriodDays - Math.min(normalizedPeriodDays, Math.max(0, participant.daysStayed)))
+  ), 0);
+
+  const totalCents = toCents(total);
+  const rawCents = included.map((participant) => {
+    const normalizedStayedDays = Math.min(normalizedPeriodDays, Math.max(0, participant.daysStayed));
+    const ownDaysCost = normalizedStayedDays * basePerPersonPerDay;
+    const participantMissingDays = Math.max(0, normalizedPeriodDays - normalizedStayedDays);
+    const redistributedCost = (totalMissingDays - participantMissingDays) * basePerPersonPerDay / (participantCount - 1);
+    return (ownDaysCost + redistributedCost) * 100;
+  });
+  const flooredCents = rawCents.map((value) => Math.floor(value));
+  const allocated = flooredCents.reduce((sum, value) => sum + value, 0);
+  let remainder = totalCents - allocated;
+
+  const fractions = rawCents
+    .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+    .sort((a, b) => b.fraction - a.fraction);
+
+  for (const { index } of fractions) {
+    if (remainder <= 0) break;
+    flooredCents[index] += 1;
+    remainder -= 1;
+  }
+
+  let includedIndex = 0;
+  return participants.map((participant) => ({
+    ...participant,
+    computedAmount: participant.included ? fromCents(flooredCents[includedIndex++]) : 0,
   }));
 }
 
