@@ -3,8 +3,11 @@ import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
 import { heavyHaptic, lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
+import { BlurView } from 'expo-blur';
+import { GlassView as NativeGlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import Slider from '@react-native-community/slider';
+import { Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Button, Icon, IconButton, Text } from 'react-native-paper';
 import Animated, { FadeIn, FadeInDown, ZoomIn } from 'react-native-reanimated';
 import type { RouletteWheelRef } from './RouletteWheel';
@@ -19,6 +22,58 @@ const AVATAR_COLORS = ['#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626', '#
 function getInitials(name: string): string {
   return name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 }
+
+interface TimeSliderSurfaceProps {
+  children: React.ReactNode;
+  isDark: boolean;
+}
+
+const TimeSliderSurface = ({ children, isDark }: TimeSliderSurfaceProps) => {
+  const canUseNativeGlass = useMemo(() => {
+    if (Platform.OS !== 'ios') {
+      return false;
+    }
+
+    try {
+      return isGlassEffectAPIAvailable() && isLiquidGlassAvailable();
+    } catch (error) {
+      console.warn('Time slider glass availability check failed, using fallback surface', error);
+      return false;
+    }
+  }, []);
+
+  if (Platform.OS === 'ios') {
+    if (canUseNativeGlass) {
+      return (
+        <NativeGlassView
+          style={[styles.timeSliderSurface, styles.timeSliderSurfaceIOS]}
+          glassEffectStyle={{ style: 'regular', animate: true, animationDuration: 0.25 }}
+          colorScheme={isDark ? 'dark' : 'light'}
+          tintColor={isDark ? 'rgba(12, 18, 32, 0.28)' : 'rgba(255, 255, 255, 0.20)'}
+          isInteractive
+        >
+          {children}
+        </NativeGlassView>
+      );
+    }
+
+    return (
+      <BlurView
+        style={[styles.timeSliderSurface, styles.timeSliderSurfaceIOS]}
+        intensity={30}
+        tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
+      >
+        {children}
+      </BlurView>
+    );
+  }
+
+  return (
+    <View style={[styles.timeSliderSurface, isDark ? styles.timeSliderSurfaceDark : styles.timeSliderSurfaceLight]}>
+      {children}
+    </View>
+  );
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // A. ITEMIZED RECEIPT SPLIT
@@ -305,13 +360,61 @@ const ConsumptionMode = React.memo(({ totalParts, onTotalPartsChange, participan
 interface TimeBasedProps {
   participants: Participant[];
   onDaysChange: (id: string, days: string) => void;
+  onDateRangeChange: (id: string, checkIn: string, checkOut: string) => void;
+  onSetAllDays: (days: number) => void;
   currency: string;
+  totalAmount: number;
+  timePeriodDays: number;
 }
 
-const TimeBasedMode = React.memo(({ participants, onDaysChange, currency }: TimeBasedProps) => {
+type TimeInputMode = 'days' | 'dates';
+
+const DURATION_PRESETS = [
+  { label: '1 week', days: 7 },
+  { label: '2 weeks', days: 14 },
+  { label: '1 month', days: 30 },
+];
+
+const TimeBasedMode = React.memo(({
+  participants,
+  onDaysChange,
+  onDateRangeChange,
+  onSetAllDays,
+  currency,
+  totalAmount,
+  timePeriodDays,
+}: TimeBasedProps) => {
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
-  const totalDays = participants.filter((p) => p.included).reduce((s, p) => s + p.daysStayed, 0);
+  const [inputMode, setInputMode] = useState<TimeInputMode>('days');
+  const [periodInputValue, setPeriodInputValue] = useState(timePeriodDays.toString());
+
+  const included = participants.filter((participant) => participant.included);
+  const periodDays = Math.max(1, timePeriodDays);
+  const totalPersonDays = included.reduce((sum, participant) => sum + participant.daysStayed, 0);
+  const averageStay = included.length > 0 ? totalPersonDays / included.length : 0;
+  const householdDailyCost = totalAmount / periodDays;
+  const occupiedDayCost = totalPersonDays > 0 ? totalAmount / totalPersonDays : 0;
+  const allZero = included.every((participant) => participant.daysStayed === 0);
+  const allSame = !allZero && included.every((participant) => participant.daysStayed === included[0].daysStayed);
+  const filledCount = included.filter((participant) => participant.daysStayed === periodDays).length;
+
+  useEffect(() => {
+    setPeriodInputValue(timePeriodDays.toString());
+  }, [timePeriodDays]);
+
+  const applyPeriodDays = useCallback((value: string | number) => {
+    const parsedValue = typeof value === 'number' ? value : parseInt(value, 10);
+    if (Number.isNaN(parsedValue)) {
+      setPeriodInputValue(periodDays.toString());
+      return;
+    }
+
+    const normalized = Math.max(1, Math.round(parsedValue));
+    setPeriodInputValue(normalized.toString());
+    onSetAllDays(normalized);
+    setInputMode('days');
+  }, [onSetAllDays, periodDays]);
 
   return (
     <View style={styles.section}>
@@ -319,44 +422,343 @@ const TimeBasedMode = React.memo(({ participants, onDaysChange, currency }: Time
         Time-Based Split
       </Text>
       <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-        Enter number of days each person stayed. Great for rent, Airbnb, or utilities.
-      </Text>
-      <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-        Total: {totalDays} day{totalDays !== 1 ? 's' : ''}
+        Set the full billing period once, then adjust each person's stayed days.
       </Text>
 
-      {participants.filter((p) => p.included).map((p, index) => {
-        const pct = totalDays > 0 ? ((p.daysStayed / totalDays) * 100).toFixed(1) : '0';
-        return (
-          <Animated.View key={p.id} entering={FadeInDown.delay(index * 40).springify()}>
-            <View style={styles.incomeRow}>
-              <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[index % AVATAR_COLORS.length] }]}>
-                <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
-              </View>
-              <Text style={[styles.incomeName, { color: theme.colors.onSurface }]}>{p.name}</Text>
-              <View style={styles.shareControls}>
-                <TouchableOpacity
-                  style={[styles.shareBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
-                  onPress={() => { lightHaptic(); onDaysChange(p.id, Math.max(0, p.daysStayed - 1).toString()); }}
+      <View style={styles.timeInputModeRow}>
+        {([
+          { key: 'days' as TimeInputMode, label: 'By Days', icon: 'counter' },
+          { key: 'dates' as TimeInputMode, label: 'By Dates', icon: 'calendar-range' },
+        ]).map((option) => (
+          <TouchableOpacity
+            key={option.key}
+            style={[
+              styles.timeInputModeChip,
+              {
+                backgroundColor: inputMode === option.key ? `${theme.colors.primary}20` : 'transparent',
+                borderColor: inputMode === option.key ? theme.colors.primary : palette.border,
+              },
+            ]}
+            onPress={() => {
+              lightHaptic();
+              setInputMode(option.key);
+            }}
+          >
+            <Icon source={option.icon} size={16} color={inputMode === option.key ? theme.colors.primary : palette.muted} />
+            <Text
+              style={{
+                color: inputMode === option.key ? theme.colors.primary : palette.muted,
+                fontSize: 13,
+                fontWeight: '700',
+              }}
+            >
+              {option.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <GlassView style={styles.timePeriodCard} intensity={14}>
+        <View style={styles.timePeriodHeader}>
+          <View style={styles.timePeriodHeaderText}>
+            <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+              Total days in this period
+            </Text>
+            <Text variant="bodySmall" style={{ color: palette.muted }}>
+              Changing this fills every included person and sets the slider range.
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.timeFillAllBtn, { borderColor: theme.colors.primary }]}
+            onPress={() => {
+              applyPeriodDays(periodInputValue);
+            }}
+          >
+            <Icon source="account-sync" size={14} color={theme.colors.primary} />
+            <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
+              Fill all
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.timePeriodControlsRow}>
+          <TouchableOpacity
+            style={[styles.shareBtn, styles.timePeriodStepBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+            onPress={() => applyPeriodDays(periodDays - 1)}
+          >
+            <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>-</Text>
+          </TouchableOpacity>
+          <TextInput
+            style={[styles.timePeriodInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
+            value={periodInputValue}
+            onChangeText={setPeriodInputValue}
+            onBlur={() => applyPeriodDays(periodInputValue)}
+            onSubmitEditing={() => applyPeriodDays(periodInputValue)}
+            keyboardType="number-pad"
+            placeholder="30"
+            placeholderTextColor={palette.muted}
+          />
+          <TouchableOpacity
+            style={[styles.shareBtn, styles.timePeriodStepBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+            onPress={() => applyPeriodDays(periodDays + 1)}
+          >
+            <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
+          </TouchableOpacity>
+          <Text variant="bodySmall" style={{ color: palette.muted }}>
+            day{periodDays !== 1 ? 's' : ''}
+          </Text>
+        </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View style={styles.timePresetRow}>
+            {DURATION_PRESETS.map((preset) => (
+              <TouchableOpacity
+                key={preset.label}
+                style={[
+                  styles.timePresetChip,
+                  {
+                    borderColor: preset.days === periodDays ? theme.colors.primary : palette.border,
+                    backgroundColor: preset.days === periodDays ? `${theme.colors.primary}18` : 'transparent',
+                  },
+                ]}
+                onPress={() => applyPeriodDays(preset.days)}
+              >
+                <Text
+                  style={{
+                    color: preset.days === periodDays ? theme.colors.primary : palette.muted,
+                    fontSize: 12,
+                    fontWeight: '600',
+                  }}
                 >
-                  <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>−</Text>
-                </TouchableOpacity>
-                <Text style={[styles.shareValue, { color: theme.colors.onSurface }]}>{p.daysStayed}</Text>
-                <TouchableOpacity
-                  style={[styles.shareBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
-                  onPress={() => { lightHaptic(); onDaysChange(p.id, (p.daysStayed + 1).toString()); }}
-                >
-                  <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
-                </TouchableOpacity>
-              </View>
-              <Text variant="bodySmall" style={{ color: palette.muted }}>{pct}%</Text>
-              <Text variant="bodySmall" style={{ color: theme.colors.primary, fontWeight: '600', minWidth: 60, textAlign: 'right' }}>
-                {formatCurrency(p.computedAmount, currency)}
+                  {preset.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </ScrollView>
+      </GlassView>
+
+      <Animated.View entering={FadeInDown.springify()}>
+        <GlassView style={styles.timeSummaryCard} intensity={15}>
+          <View style={styles.timeSummaryHeader}>
+            <View style={styles.timeSummaryHeaderText}>
+              <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                {allSame ? 'Everyone is on the full stay right now' : `${included.length} people with custom stays`}
+              </Text>
+              <Text variant="bodySmall" style={{ color: palette.muted }}>
+                {inputMode === 'dates'
+                  ? 'Dates are counted inclusively and capped to this billing period.'
+                  : 'Move the slider or type a value to update the split instantly.'}
               </Text>
             </View>
+            <View style={[styles.timeSummaryBadge, { backgroundColor: `${theme.colors.primary}16` }]}>
+              <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '800' }}>
+                {filledCount}/{included.length} full stay
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.timeMetricGrid}>
+            <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
+              <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>Period</Text>
+              <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>{periodDays}d</Text>
+            </View>
+            <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
+              <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>House/day</Text>
+              <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>
+                {formatCurrency(householdDailyCost, currency)}
+              </Text>
+            </View>
+            <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
+              <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>Occupied days</Text>
+              <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>{totalPersonDays}d</Text>
+            </View>
+            <View style={[styles.timeMetricCard, { borderColor: palette.border }]}>
+              <Text style={[styles.timeMetricLabel, { color: palette.muted }]}>Occupied/day</Text>
+              <Text style={[styles.timeMetricValue, { color: theme.colors.onSurface }]}>
+                {totalPersonDays > 0 ? formatCurrency(occupiedDayCost, currency) : '-'}
+              </Text>
+            </View>
+          </View>
+
+          <Text variant="bodySmall" style={{ color: palette.muted, paddingHorizontal: 14, paddingBottom: 14 }}>
+            Average stay: {included.length > 0 ? averageStay.toFixed(1) : '0.0'} day{averageStay === 1 ? '' : 's'}
+          </Text>
+        </GlassView>
+      </Animated.View>
+
+      {allZero && (
+        <Animated.View entering={FadeIn.duration(300)}>
+          <GlassView style={styles.timeEmptyCard} intensity={10}>
+            <View style={styles.timeEmptyContent}>
+              <Icon source="calendar-clock" size={32} color={palette.muted} />
+              <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center', paddingHorizontal: 16 }}>
+                Everyone starts at the full period. Reduce the people who stayed fewer days.
+              </Text>
+            </View>
+          </GlassView>
+        </Animated.View>
+      )}
+
+      {included.map((participant, index) => {
+        const pct = totalPersonDays > 0 ? ((participant.daysStayed / totalPersonDays) * 100) : 0;
+        const periodPct = (participant.daysStayed / periodDays) * 100;
+        const costPerStayedDay = participant.daysStayed > 0 ? participant.computedAmount / participant.daysStayed : 0;
+        const avatarColor = AVATAR_COLORS[index % AVATAR_COLORS.length];
+
+        return (
+          <Animated.View key={participant.id} entering={FadeInDown.delay(index * 50).springify()}>
+            <GlassView style={styles.timeParticipantCard} intensity={12}>
+              <View style={styles.timeCardInner}>
+                <View style={styles.timeRowTop}>
+                  <View style={styles.timeRowNameGroup}>
+                    <View style={[styles.miniAvatar, { backgroundColor: avatarColor }]}>
+                      <Text style={styles.miniInitials}>{getInitials(participant.name)}</Text>
+                    </View>
+                    <View style={styles.timeParticipantTitleBlock}>
+                      <Text style={{ color: theme.colors.onSurface, fontWeight: '700', fontSize: 15 }} numberOfLines={1}>
+                        {participant.name}
+                      </Text>
+                      <Text variant="bodySmall" style={{ color: palette.muted }}>
+                        {participant.daysStayed}/{periodDays} day{participant.daysStayed === 1 ? '' : 's'} in period
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={{ color: theme.colors.primary, fontWeight: '800', fontSize: 18 }}>
+                    {formatCurrency(participant.computedAmount, currency)}
+                  </Text>
+                </View>
+
+                <View style={styles.timeMetaRow}>
+                  <View style={[styles.timeMetaChip, { borderColor: palette.border }]}>
+                    <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '600' }}>
+                      {pct.toFixed(0)}% of split
+                    </Text>
+                  </View>
+                  <View style={[styles.timeMetaChip, { borderColor: palette.border }]}>
+                    <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '600' }}>
+                      {periodPct.toFixed(0)}% of period
+                    </Text>
+                  </View>
+                  {participant.daysStayed > 0 && (
+                    <View style={[styles.timeMetaChip, { borderColor: palette.border }]}>
+                      <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '600' }}>
+                        {formatCurrency(costPerStayedDay, currency)}/day
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {inputMode === 'days' && (
+                  <>
+                    <View style={styles.timeDaysInputRow}>
+                      <TouchableOpacity
+                        style={[styles.shareBtn, styles.timePeriodStepBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+                        onPress={() => {
+                          lightHaptic();
+                          onDaysChange(participant.id, Math.max(0, participant.daysStayed - 1).toString());
+                        }}
+                      >
+                        <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>-</Text>
+                      </TouchableOpacity>
+                      <TextInput
+                        style={[styles.timeDaysInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
+                        value={participant.daysStayed.toString()}
+                        onChangeText={(value) => onDaysChange(participant.id, value)}
+                        keyboardType="number-pad"
+                        placeholder="0"
+                        placeholderTextColor={palette.muted}
+                      />
+                      <TouchableOpacity
+                        style={[styles.shareBtn, styles.timePeriodStepBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+                        onPress={() => {
+                          lightHaptic();
+                          onDaysChange(participant.id, Math.min(periodDays, participant.daysStayed + 1).toString());
+                        }}
+                      >
+                        <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
+                      </TouchableOpacity>
+                      <Text variant="bodySmall" style={{ color: palette.muted, marginLeft: 4 }}>
+                        day{participant.daysStayed !== 1 ? 's' : ''}
+                      </Text>
+                      {participant.daysStayed === periodDays && (
+                        <View style={[styles.timeInlinePill, { backgroundColor: `${theme.colors.primary}16` }]}>
+                          <Text style={{ color: theme.colors.primary, fontSize: 11, fontWeight: '800' }}>
+                            Full stay
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    <TimeSliderSurface isDark={isDark}>
+                      <View style={styles.timeSliderInner}>
+                        <Slider
+                          value={participant.daysStayed}
+                          minimumValue={0}
+                          maximumValue={periodDays}
+                          step={1}
+                          onValueChange={(value) => onDaysChange(participant.id, Math.round(value).toString())}
+                          onSlidingComplete={() => lightHaptic()}
+                          minimumTrackTintColor={avatarColor}
+                          maximumTrackTintColor={isDark ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.12)'}
+                          thumbTintColor={Platform.OS === 'android' ? avatarColor : undefined}
+                          tapToSeek
+                        />
+                      </View>
+                    </TimeSliderSurface>
+
+                    <View style={styles.timeSliderLabels}>
+                      <Text variant="labelSmall" style={{ color: palette.muted }}>0d</Text>
+                      <Text variant="labelSmall" style={{ color: palette.muted }}>
+                        {periodDays}d max
+                      </Text>
+                    </View>
+                  </>
+                )}
+
+                {inputMode === 'dates' && (
+                  <View style={styles.timeDateContainer}>
+                    <View style={styles.timeDateFieldGroup}>
+                      <View style={styles.timeDateField}>
+                        <Text style={[styles.timeDateLabel, { color: palette.muted }]}>Start</Text>
+                        <TextInput
+                          style={[styles.timeDateInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
+                          value={participant.checkInDate ?? ''}
+                          onChangeText={(value) => onDateRangeChange(participant.id, value, participant.checkOutDate ?? '')}
+                          placeholder="YYYY-MM-DD"
+                          placeholderTextColor={palette.muted}
+                          maxLength={10}
+                        />
+                      </View>
+                      <Icon source="arrow-right" size={14} color={palette.muted} />
+                      <View style={styles.timeDateField}>
+                        <Text style={[styles.timeDateLabel, { color: palette.muted }]}>End</Text>
+                        <TextInput
+                          style={[styles.timeDateInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
+                          value={participant.checkOutDate ?? ''}
+                          onChangeText={(value) => onDateRangeChange(participant.id, participant.checkInDate ?? '', value)}
+                          placeholder="YYYY-MM-DD"
+                          placeholderTextColor={palette.muted}
+                          maxLength={10}
+                        />
+                      </View>
+                    </View>
+                    <Text variant="labelSmall" style={{ color: palette.muted }}>
+                      Inclusive dates. Long ranges are capped at {periodDays} day{periodDays === 1 ? '' : 's'}.
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </GlassView>
           </Animated.View>
         );
       })}
+
+      {!allZero && included.length > 0 && (
+        <Text variant="labelSmall" style={{ color: palette.muted, textAlign: 'center', marginTop: 4 }}>
+          Equal split baseline: {formatCurrency(totalAmount / included.length, currency)}/person
+        </Text>
+      )}
     </View>
   );
 });
@@ -1057,6 +1459,9 @@ interface AdvancedModeContentProps {
   onPartsConsumedChange: (id: string, parts: string) => void;
   // Time
   onDaysChange: (id: string, days: string) => void;
+  onDateRangeChange: (id: string, checkIn: string, checkOut: string) => void;
+  onSetAllDays: (days: number) => void;
+  timePeriodDays: number;
   // Gamified
   gamifiedMode: GamifiedMode;
   onGamifiedModeChange: (mode: GamifiedMode) => void;
@@ -1111,7 +1516,11 @@ export const AdvancedModeContent = React.memo((props: AdvancedModeContentProps) 
         <TimeBasedMode
           participants={props.participants}
           onDaysChange={props.onDaysChange}
+          onDateRangeChange={props.onDateRangeChange}
+          onSetAllDays={props.onSetAllDays}
           currency={props.currency}
+          totalAmount={props.totalAmount}
+          timePeriodDays={props.timePeriodDays}
         />
       );
     case 'gamified':
@@ -1318,6 +1727,246 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     minWidth: 20,
     textAlign: 'center',
+  },
+  // Time-Based (enhanced)
+  timeInputModeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  timeInputModeChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 10,
+  },
+  timePresetRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+  },
+  timePresetChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  timePeriodCard: {
+    borderRadius: 18,
+    marginBottom: 10,
+  },
+  timePeriodHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+  },
+  timePeriodHeaderText: {
+    flex: 1,
+    gap: 2,
+  },
+  timeFillAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  timePeriodControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  timePeriodStepBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+  },
+  timePeriodInput: {
+    width: 76,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  timeSummaryCard: {
+    borderRadius: 18,
+    marginBottom: 8,
+  },
+  timeSummaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+  },
+  timeSummaryHeaderText: {
+    flex: 1,
+    gap: 2,
+  },
+  timeSummaryBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  timeMetricGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  timeMetricCard: {
+    width: '48%',
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  timeMetricLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  timeMetricValue: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  timeEmptyCard: {
+    borderRadius: 14,
+    marginBottom: 4,
+  },
+  timeEmptyContent: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    gap: 10,
+  },
+  timeParticipantCard: {
+    borderRadius: 14,
+    marginBottom: 8,
+  },
+  timeCardInner: {
+    padding: 12,
+    gap: 10,
+  },
+  timeRowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  timeRowNameGroup: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  timeParticipantTitleBlock: {
+    flex: 1,
+    gap: 1,
+  },
+  timeMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  timeMetaChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  timeDaysInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  timeDaysInput: {
+    width: 64,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  timeInlinePill: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  timeSliderSurface: {
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  timeSliderSurfaceIOS: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
+  timeSliderSurfaceDark: {
+    backgroundColor: 'rgba(20, 24, 34, 0.90)',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.18)',
+  },
+  timeSliderSurfaceLight: {
+    backgroundColor: 'rgba(248, 250, 252, 0.95)',
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.08)',
+  },
+  timeSliderInner: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  timeSliderLabels: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 2,
+  },
+  timeDateContainer: {
+    gap: 8,
+  },
+  timeDateFieldGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  timeDateField: {
+    flex: 1,
+  },
+  timeDateLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  timeDateInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
   },
   // Gamified
   gameModeRow: {

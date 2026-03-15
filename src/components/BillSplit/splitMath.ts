@@ -250,6 +250,39 @@ export function computeConsumption(total: number, totalParts: number, participan
   }));
 }
 
+// ─── TIME-BASED HELPERS ─────────────────────────────────────────────────────
+function parseDateOnly(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const monthIndex = Number(monthText) - 1;
+  const day = Number(dayText);
+  const date = new Date(year, monthIndex, day);
+
+  if (
+    Number.isNaN(date.getTime())
+    || date.getFullYear() !== year
+    || date.getMonth() !== monthIndex
+    || date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+export function daysBetweenDates(checkIn: string, checkOut: string): number {
+  const d1 = parseDateOnly(checkIn);
+  const d2 = parseDateOnly(checkOut);
+  if (!d1 || !d2) return 0;
+  const diffMs = d2.getTime() - d1.getTime();
+  const ONE_DAY_MS = 1000 * 60 * 60 * 24;
+  return Math.max(0, Math.floor(diffMs / ONE_DAY_MS) + 1);
+}
+
 // ─── TIME-BASED / PRORATED ──────────────────────────────────────────────────
 export function computeTimeBased(total: number, participants: Participant[]): Participant[] {
   const included = participants.filter((p) => p.included);

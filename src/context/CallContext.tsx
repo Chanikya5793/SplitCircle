@@ -1,4 +1,4 @@
-import { declineCall, subscribeToActiveCall } from '@/services/callService';
+import { declineCall, subscribeToIncomingCallForUser } from '@/services/callService';
 import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useAuth } from './AuthContext';
@@ -40,57 +40,49 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     }
 
     debugLog(`CallContext: watching ${threads.length} thread(s) for calls`);
-    const unsubscribes: Array<() => void> = [];
+    const chatIds = threads.map((thread) => thread.chatId);
+    const unsubscribe = subscribeToIncomingCallForUser(user.userId, chatIds, (session) => {
+      if (
+        session &&
+        session.initiatorId !== user.userId &&
+        session.status === 'ringing' &&
+        !session.participants.some((p) => p.userId === user.userId)
+      ) {
+        // Check if call is recent (within last 60 seconds to avoid stale calls)
+        const callAge = Date.now() - session.startedAt;
+        const MAX_CALL_AGE_MS = 60000; // 60 seconds
 
-    // Subscribe to active calls for each thread
-    threads.forEach((thread) => {
-      const unsub = subscribeToActiveCall(thread.chatId, user.userId, (session) => {
-        if (
-          session &&
-          session.initiatorId !== user.userId &&
-          session.status === 'ringing' &&
-          !session.participants.some((p) => p.userId === user.userId)
-        ) {
-          // Check if call is recent (within last 60 seconds to avoid stale calls)
-          const callAge = Date.now() - session.startedAt;
-          const MAX_CALL_AGE_MS = 60000; // 60 seconds
-
-          if (callAge > MAX_CALL_AGE_MS) {
-            debugLog('CallContext: ignoring stale incoming call');
-            return;
-          }
-
-          // Found an incoming call not initiated by current user
-          const initiator = session.participants.find((p) => p.userId === session.initiatorId);
-          debugLog('CallContext: incoming call detected');
-
-          setIncomingCall({
-            callId: session.callId,
-            chatId: session.chatId,
-            groupId: session.groupId,
-            initiatorId: session.initiatorId,
-            initiatorName: initiator?.displayName || 'Unknown',
-            type: session.type,
-            startedAt: session.startedAt,
-          });
-        } else if (!session || session.status === 'ended') {
-          // Call ended or not found
-          setIncomingCall((prev) =>
-            prev?.chatId === thread.chatId ? null : prev
-          );
-        } else if (session && session.status === 'connected') {
-          // Call was answered, clear the incoming call if it's ours
-          setIncomingCall((prev) =>
-            prev?.callId === session.callId ? null : prev
-          );
+        if (callAge > MAX_CALL_AGE_MS) {
+          debugLog('CallContext: ignoring stale incoming call');
+          return;
         }
-      });
-      unsubscribes.push(unsub);
+
+        // Found an incoming call not initiated by current user
+        const initiator = session.participants.find((p) => p.userId === session.initiatorId);
+        debugLog('CallContext: incoming call detected');
+
+        setIncomingCall({
+          callId: session.callId,
+          chatId: session.chatId,
+          groupId: session.groupId,
+          initiatorId: session.initiatorId,
+          initiatorName: initiator?.displayName || 'Unknown',
+          type: session.type,
+          startedAt: session.startedAt,
+        });
+      } else if (!session || session.status === 'ended') {
+        setIncomingCall(null);
+      } else if (session.status === 'connected') {
+        // Call was answered, clear the incoming call if it's ours
+        setIncomingCall((prev) =>
+          prev?.callId === session.callId ? null : prev
+        );
+      }
     });
 
     return () => {
       debugLog('CallContext: cleanup listeners');
-      unsubscribes.forEach((unsub) => unsub());
+      unsubscribe();
     };
   }, [user, threads]);
 
