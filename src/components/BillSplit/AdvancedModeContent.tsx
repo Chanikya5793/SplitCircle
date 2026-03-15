@@ -96,13 +96,6 @@ function buildCalendarMonthCells(monthDate: Date): Array<string | null> {
   return cells;
 }
 
-function isWeekendCalendarDate(value: string): boolean {
-  const date = parseCalendarDate(value);
-  if (!date) return false;
-  const day = date.getDay();
-  return day === 0 || day === 6;
-}
-
 function splitDatesByType(dates: string[]): {
   longWeekends: string[];
   weekdays: string[];
@@ -665,7 +658,6 @@ const ConsumptionMode = React.memo(({ totalParts, onTotalPartsChange, participan
 interface TimeBasedProps {
   participants: Participant[];
   onDaysChange: (id: string, days: string) => void;
-  onDateRangeChange: (id: string, checkIn: string, checkOut: string) => void;
   onSetAllDays: (days: number) => void;
   onStayDatesChange: (id: string, dates: string[]) => void;
   currency: string;
@@ -689,7 +681,6 @@ const DURATION_PRESETS = [
 const TimeBasedMode = React.memo(({
   participants,
   onDaysChange,
-  onDateRangeChange,
   onSetAllDays,
   onStayDatesChange,
   currency,
@@ -807,7 +798,6 @@ const TimeBasedMode = React.memo(({
     const normalized = Math.max(1, Math.round(parsedValue));
     setPeriodInputValue(normalized.toString());
     onSetAllDays(normalized);
-    setInputMode('days');
   }, [onSetAllDays, periodDays]);
 
   const handlePeriodCalendarDayPress = useCallback((value: string) => {
@@ -906,10 +896,12 @@ const TimeBasedMode = React.memo(({
         <View style={styles.timePeriodHeader}>
           <View style={styles.timePeriodHeaderText}>
             <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-              Total days in this period
+              {inputMode === 'dates' ? 'Billing period' : 'Total days in this period'}
             </Text>
             <Text variant="bodySmall" style={{ color: palette.muted }}>
-              Changing this fills every included person and sets the slider range.
+              {inputMode === 'dates'
+                ? 'Pick a start and end date on the calendar below.'
+                : 'Set the period length, then adjust each person\'s stay.'}
             </Text>
           </View>
           <TouchableOpacity
@@ -920,48 +912,107 @@ const TimeBasedMode = React.memo(({
           >
             <Icon source="account-sync" size={14} color={theme.colors.primary} />
             <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
-              Fill all
+              Set all to {periodDays}d
             </Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.timePeriodControlsRow}>
-          <TouchableOpacity
-            style={[styles.shareBtn, styles.timePeriodStepBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
-            onPress={() => applyPeriodDays(periodDays - 1)}
-          >
-            <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>-</Text>
-          </TouchableOpacity>
-          <TextInput
-            style={[styles.timePeriodInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
-            value={periodInputValue}
-            onChangeText={setPeriodInputValue}
-            onBlur={() => applyPeriodDays(periodInputValue)}
-            onSubmitEditing={() => applyPeriodDays(periodInputValue)}
-            keyboardType="number-pad"
-            placeholder="30"
-            placeholderTextColor={palette.muted}
-          />
-          <TouchableOpacity
-            style={[styles.shareBtn, styles.timePeriodStepBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
-            onPress={() => applyPeriodDays(periodDays + 1)}
-          >
-            <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
-          </TouchableOpacity>
-          <Text variant="bodySmall" style={{ color: palette.muted }}>
-            day{periodDays !== 1 ? 's' : ''}
-          </Text>
-        </View>
+        {inputMode === 'days' && (
+          <>
+            <View style={styles.timePeriodControlsRow}>
+              <TouchableOpacity
+                style={[styles.shareBtn, styles.timePeriodStepBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+                onPress={() => applyPeriodDays(periodDays - 1)}
+              >
+                <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>-</Text>
+              </TouchableOpacity>
+              <TextInput
+                style={[styles.timePeriodInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
+                value={periodInputValue}
+                onChangeText={setPeriodInputValue}
+                onBlur={() => applyPeriodDays(periodInputValue)}
+                onSubmitEditing={() => applyPeriodDays(periodInputValue)}
+                keyboardType="number-pad"
+                placeholder="30"
+                placeholderTextColor={palette.muted}
+              />
+              <TouchableOpacity
+                style={[styles.shareBtn, styles.timePeriodStepBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+                onPress={() => applyPeriodDays(periodDays + 1)}
+              >
+                <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
+              </TouchableOpacity>
+              <Text variant="bodySmall" style={{ color: palette.muted }}>
+                day{periodDays !== 1 ? 's' : ''}
+              </Text>
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={styles.timePresetRow}>
+                {DURATION_PRESETS.map((preset) => (
+                  <TouchableOpacity
+                    key={preset.label}
+                    style={[
+                      styles.timePresetChip,
+                      {
+                        borderColor: preset.days === periodDays ? theme.colors.primary : palette.border,
+                        backgroundColor: preset.days === periodDays ? `${theme.colors.primary}18` : 'transparent',
+                      },
+                    ]}
+                    onPress={() => applyPeriodDays(preset.days)}
+                  >
+                    <Text
+                      style={{
+                        color: preset.days === periodDays ? theme.colors.primary : palette.muted,
+                        fontSize: 12,
+                        fontWeight: '600',
+                      }}
+                    >
+                      {preset.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          </>
+        )}
 
         {inputMode === 'dates' && (
           <View style={styles.timeRangeSection}>
-            <View style={styles.timeRangeSummaryRow}>
-              <View style={styles.timeRangeSummaryText}>
-                <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-                  Billing period calendar
+            <View style={styles.timeRangeSelectedRow}>
+              <View style={[
+                styles.timeRangeSelectedChip,
+                {
+                  borderColor: timePeriodStartDate
+                    ? theme.colors.primary
+                    : (!timePeriodStartDate && !timePeriodEndDate ? `${theme.colors.primary}80` : palette.border),
+                  backgroundColor: timePeriodStartDate ? `${theme.colors.primary}12` : 'transparent',
+                },
+              ]}>
+                <Text style={{ color: timePeriodStartDate ? theme.colors.primary : palette.muted, fontSize: 11, fontWeight: '700' }}>
+                  Start
                 </Text>
-                <Text variant="bodySmall" style={{ color: palette.muted }}>
-                  Tap a start date, then tap an end date to set the full period.
+                <Text style={{ color: timePeriodStartDate ? theme.colors.onSurface : palette.muted, fontSize: 14, fontWeight: '700' }}>
+                  {timePeriodStartDate ? getDateChipLabel(timePeriodStartDate) : 'Tap a date'}
+                </Text>
+              </View>
+              <Icon source="arrow-right" size={16} color={palette.muted} />
+              <View style={[
+                styles.timeRangeSelectedChip,
+                {
+                  borderColor: timePeriodEndDate
+                    ? theme.colors.primary
+                    : (timePeriodStartDate && !timePeriodEndDate ? `${theme.colors.primary}80` : palette.border),
+                  backgroundColor: timePeriodEndDate ? `${theme.colors.primary}12` : 'transparent',
+                },
+              ]}>
+                <Text style={{ color: timePeriodEndDate ? theme.colors.primary : palette.muted, fontSize: 11, fontWeight: '700' }}>
+                  End
+                </Text>
+                <Text style={{ color: timePeriodEndDate ? theme.colors.onSurface : palette.muted, fontSize: 14, fontWeight: '700' }}>
+                  {timePeriodEndDate
+                    ? getDateChipLabel(timePeriodEndDate)
+                    : (timePeriodStartDate ? 'Now tap end' : 'Tap a date')}
                 </Text>
               </View>
               {(timePeriodStartDate || timePeriodEndDate) && (
@@ -973,27 +1024,17 @@ const TimeBasedMode = React.memo(({
                   }}
                 >
                   <Icon source="close" size={14} color={palette.muted} />
-                  <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '700' }}>
-                    Clear
-                  </Text>
                 </TouchableOpacity>
               )}
             </View>
 
-            <View style={styles.timeRangeSelectedRow}>
-              <View style={[styles.timeRangeSelectedChip, { borderColor: palette.border }]}>
-                <Text style={{ color: palette.muted, fontSize: 11, fontWeight: '700' }}>Start</Text>
-                <Text style={{ color: theme.colors.onSurface, fontSize: 13, fontWeight: '700' }}>
-                  {timePeriodStartDate ? getDateChipLabel(timePeriodStartDate) : 'Pick a day'}
+            {timePeriodStartDate && timePeriodEndDate && (
+              <View style={[styles.timeRangeDaysBadge, { backgroundColor: `${theme.colors.primary}14` }]}>
+                <Text style={{ color: theme.colors.primary, fontSize: 13, fontWeight: '700' }}>
+                  {periodDays} day{periodDays !== 1 ? 's' : ''} selected
                 </Text>
               </View>
-              <View style={[styles.timeRangeSelectedChip, { borderColor: palette.border }]}>
-                <Text style={{ color: palette.muted, fontSize: 11, fontWeight: '700' }}>End</Text>
-                <Text style={{ color: theme.colors.onSurface, fontSize: 13, fontWeight: '700' }}>
-                  {timePeriodEndDate ? getDateChipLabel(timePeriodEndDate) : 'Pick a day'}
-                </Text>
-              </View>
-            </View>
+            )}
 
             <View style={styles.calendarNavRow}>
               <TouchableOpacity
@@ -1021,41 +1062,19 @@ const TimeBasedMode = React.memo(({
               rangeStart={timePeriodStartDate || undefined}
             />
 
-            <Text variant="labelSmall" style={{ color: palette.muted }}>
-              {timePeriodStartDate && !timePeriodEndDate
-                ? 'Now choose the last day in the billing period.'
-                : 'The selected range becomes the total number of bill days.'}
-            </Text>
+            {!timePeriodStartDate && !timePeriodEndDate && (
+              <Text variant="labelSmall" style={{ color: palette.muted, textAlign: 'center' }}>
+                Tap any date to start selecting the billing period.
+              </Text>
+            )}
+            {timePeriodStartDate && !timePeriodEndDate && (
+              <Text variant="labelSmall" style={{ color: theme.colors.primary, textAlign: 'center', fontWeight: '600' }}>
+                Now tap the last day of the billing period.
+              </Text>
+            )}
           </View>
         )}
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.timePresetRow}>
-            {DURATION_PRESETS.map((preset) => (
-              <TouchableOpacity
-                key={preset.label}
-                style={[
-                  styles.timePresetChip,
-                  {
-                    borderColor: preset.days === periodDays ? theme.colors.primary : palette.border,
-                    backgroundColor: preset.days === periodDays ? `${theme.colors.primary}18` : 'transparent',
-                  },
-                ]}
-                onPress={() => applyPeriodDays(preset.days)}
-              >
-                <Text
-                  style={{
-                    color: preset.days === periodDays ? theme.colors.primary : palette.muted,
-                    fontSize: 12,
-                    fontWeight: '600',
-                  }}
-                >
-                  {preset.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </ScrollView>
       </GlassView>
 
       <Animated.View entering={FadeInDown.springify()}>
@@ -1127,7 +1146,7 @@ const TimeBasedMode = React.memo(({
             <View style={styles.timeEmptyContent}>
               <Icon source="calendar-clock" size={32} color={palette.muted} />
               <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center', paddingHorizontal: 16 }}>
-                Everyone starts at the full period. Reduce the people who stayed fewer days.
+                No one has any days set yet. Use the {inputMode === 'dates' ? 'calendar' : 'slider'} below to set how long each person stayed.
               </Text>
             </View>
           </GlassView>
@@ -1155,6 +1174,8 @@ const TimeBasedMode = React.memo(({
         const isVisibleMonthFullySelected = visibleMonthDates.length > 0
           && selectedVisibleMonthCount === visibleMonthDates.length;
         const monthToggleLabel = isVisibleMonthFullySelected ? 'Clear month' : 'Select month';
+
+        // Global-scope toggle state (all period dates)
         const selectedAllWeekdayCount = periodDateGroups.weekdays.filter((dateValue) => selectedDateSet.has(dateValue)).length;
         const selectedAllWeekdayNoFridayCount = periodDateGroups.weekdaysNoFriday
           .filter((dateValue) => selectedDateSet.has(dateValue)).length;
@@ -1170,13 +1191,11 @@ const TimeBasedMode = React.memo(({
         const areAllLongWeekendsSelected = periodDateGroups.longWeekends.length > 0
           && selectedAllLongWeekendCount === periodDateGroups.longWeekends.length;
         const allWeekdayToggleLabel = areAllWeekdaysSelected ? 'Remove all weekdays' : 'Add all weekdays';
-        const allWeekdayNoFridayToggleLabel = areAllWeekdaysNoFridaySelected
-          ? 'Remove all Mon-Thu'
-          : 'Add all Mon-Thu';
+        const allWeekdayNoFridayToggleLabel = areAllWeekdaysNoFridaySelected ? 'Remove all Mon–Thu' : 'Add all Mon–Thu';
         const allWeekendToggleLabel = areAllWeekendsSelected ? 'Remove all weekends' : 'Add all weekends';
-        const allLongWeekendToggleLabel = areAllLongWeekendsSelected
-          ? 'Remove all long weekends'
-          : 'Add all long weekends';
+        const allLongWeekendToggleLabel = areAllLongWeekendsSelected ? 'Remove all long wkends' : 'Add all long wkends';
+
+        // Per-visible-month toggle state
         const selectedVisibleWeekdayCount = participantVisibleMonthDateGroups.weekdays.filter((dateValue) => selectedDateSet.has(dateValue)).length;
         const selectedVisibleWeekdayNoFridayCount = participantVisibleMonthDateGroups.weekdaysNoFriday
           .filter((dateValue) => selectedDateSet.has(dateValue)).length;
@@ -1192,13 +1211,9 @@ const TimeBasedMode = React.memo(({
         const areVisibleLongWeekendsSelected = participantVisibleMonthDateGroups.longWeekends.length > 0
           && selectedVisibleLongWeekendCount === participantVisibleMonthDateGroups.longWeekends.length;
         const visibleWeekdayToggleLabel = areVisibleWeekdaysSelected ? 'Remove weekdays' : 'Add weekdays';
-        const visibleWeekdayNoFridayToggleLabel = areVisibleWeekdaysNoFridaySelected
-          ? 'Remove Mon-Thu'
-          : 'Add Mon-Thu';
+        const visibleWeekdayNoFridayToggleLabel = areVisibleWeekdaysNoFridaySelected ? 'Remove Mon–Thu' : 'Add Mon–Thu';
         const visibleWeekendToggleLabel = areVisibleWeekendsSelected ? 'Remove weekends' : 'Add weekends';
-        const visibleLongWeekendToggleLabel = areVisibleLongWeekendsSelected
-          ? 'Remove long weekends'
-          : 'Add long weekends';
+        const visibleLongWeekendToggleLabel = areVisibleLongWeekendsSelected ? 'Remove long wkends' : 'Add long wkends';
 
         return (
           <Animated.View key={participant.id} entering={FadeInDown.delay(index * 50).springify()}>
@@ -1353,21 +1368,24 @@ const TimeBasedMode = React.memo(({
                               </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                              style={[styles.timeMiniActionChip, { borderColor: palette.border }]}
+                              style={[styles.timeMiniActionChip, {
+                                borderColor: selectedDateSet.size === periodDateOptions.length ? avatarColor : palette.border,
+                                backgroundColor: selectedDateSet.size === periodDateOptions.length ? `${avatarColor}12` : 'transparent',
+                              }]}
                               onPress={() => {
                                 mediumHaptic();
                                 onStayDatesChange(participant.id, periodDateOptions);
                               }}
                             >
-                              <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '700' }}>All days</Text>
+                              <Text style={{ color: selectedDateSet.size === periodDateOptions.length ? avatarColor : palette.muted, fontSize: 12, fontWeight: '700' }}>All days</Text>
                             </TouchableOpacity>
                             {periodDateGroups.weekdays.length > 0 && (
                               <TouchableOpacity
                                 style={[
                                   styles.timeMiniActionChip,
                                   {
-                                    borderColor: areAllWeekdaysSelected ? palette.border : avatarColor,
-                                    backgroundColor: areAllWeekdaysSelected ? 'transparent' : `${avatarColor}12`,
+                                    borderColor: areAllWeekdaysSelected ? avatarColor : palette.border,
+                                    backgroundColor: areAllWeekdaysSelected ? `${avatarColor}12` : 'transparent',
                                   },
                                 ]}
                                 onPress={() => {
@@ -1380,7 +1398,7 @@ const TimeBasedMode = React.memo(({
                               >
                                 <Text
                                   style={{
-                                    color: areAllWeekdaysSelected ? palette.muted : avatarColor,
+                                    color: areAllWeekdaysSelected ? avatarColor : palette.muted,
                                     fontSize: 12,
                                     fontWeight: '700',
                                   }}
@@ -1394,8 +1412,8 @@ const TimeBasedMode = React.memo(({
                                 style={[
                                   styles.timeMiniActionChip,
                                   {
-                                    borderColor: areAllWeekdaysNoFridaySelected ? palette.border : avatarColor,
-                                    backgroundColor: areAllWeekdaysNoFridaySelected ? 'transparent' : `${avatarColor}12`,
+                                    borderColor: areAllWeekdaysNoFridaySelected ? avatarColor : palette.border,
+                                    backgroundColor: areAllWeekdaysNoFridaySelected ? `${avatarColor}12` : 'transparent',
                                   },
                                 ]}
                                 onPress={() => {
@@ -1408,7 +1426,7 @@ const TimeBasedMode = React.memo(({
                               >
                                 <Text
                                   style={{
-                                    color: areAllWeekdaysNoFridaySelected ? palette.muted : avatarColor,
+                                    color: areAllWeekdaysNoFridaySelected ? avatarColor : palette.muted,
                                     fontSize: 12,
                                     fontWeight: '700',
                                   }}
@@ -1422,8 +1440,8 @@ const TimeBasedMode = React.memo(({
                                 style={[
                                   styles.timeMiniActionChip,
                                   {
-                                    borderColor: areAllWeekendsSelected ? palette.border : avatarColor,
-                                    backgroundColor: areAllWeekendsSelected ? 'transparent' : `${avatarColor}12`,
+                                    borderColor: areAllWeekendsSelected ? avatarColor : palette.border,
+                                    backgroundColor: areAllWeekendsSelected ? `${avatarColor}12` : 'transparent',
                                   },
                                 ]}
                                 onPress={() => {
@@ -1436,7 +1454,7 @@ const TimeBasedMode = React.memo(({
                               >
                                 <Text
                                   style={{
-                                    color: areAllWeekendsSelected ? palette.muted : avatarColor,
+                                    color: areAllWeekendsSelected ? avatarColor : palette.muted,
                                     fontSize: 12,
                                     fontWeight: '700',
                                   }}
@@ -1450,8 +1468,8 @@ const TimeBasedMode = React.memo(({
                                 style={[
                                   styles.timeMiniActionChip,
                                   {
-                                    borderColor: areAllLongWeekendsSelected ? palette.border : avatarColor,
-                                    backgroundColor: areAllLongWeekendsSelected ? 'transparent' : `${avatarColor}12`,
+                                    borderColor: areAllLongWeekendsSelected ? avatarColor : palette.border,
+                                    backgroundColor: areAllLongWeekendsSelected ? `${avatarColor}12` : 'transparent',
                                   },
                                 ]}
                                 onPress={() => {
@@ -1464,7 +1482,7 @@ const TimeBasedMode = React.memo(({
                               >
                                 <Text
                                   style={{
-                                    color: areAllLongWeekendsSelected ? palette.muted : avatarColor,
+                                    color: areAllLongWeekendsSelected ? avatarColor : palette.muted,
                                     fontSize: 12,
                                     fontWeight: '700',
                                   }}
@@ -1528,15 +1546,15 @@ const TimeBasedMode = React.memo(({
                             {visibleMonthDates.length > 0 && (
                               <View style={styles.timeParticipantMonthActionRow}>
                                 <Text variant="bodySmall" style={{ color: palette.muted }}>
-                                  {selectedVisibleMonthCount}/{visibleMonthDates.length} selected this month
+                                  {selectedVisibleMonthCount}/{visibleMonthDates.length} this month
                                 </Text>
                                 <View style={styles.timeParticipantMonthActionButtons}>
                                   <TouchableOpacity
                                     style={[
                                       styles.timeMiniActionChip,
                                       {
-                                        borderColor: isVisibleMonthFullySelected ? palette.border : avatarColor,
-                                        backgroundColor: isVisibleMonthFullySelected ? 'transparent' : `${avatarColor}12`,
+                                        borderColor: isVisibleMonthFullySelected ? avatarColor : palette.border,
+                                        backgroundColor: isVisibleMonthFullySelected ? `${avatarColor}12` : 'transparent',
                                       },
                                     ]}
                                     onPress={() => {
@@ -1549,7 +1567,7 @@ const TimeBasedMode = React.memo(({
                                   >
                                     <Text
                                       style={{
-                                        color: isVisibleMonthFullySelected ? palette.muted : avatarColor,
+                                        color: isVisibleMonthFullySelected ? avatarColor : palette.muted,
                                         fontSize: 12,
                                         fontWeight: '700',
                                       }}
@@ -1562,8 +1580,8 @@ const TimeBasedMode = React.memo(({
                                       style={[
                                         styles.timeMiniActionChip,
                                         {
-                                          borderColor: areVisibleWeekdaysSelected ? palette.border : avatarColor,
-                                          backgroundColor: areVisibleWeekdaysSelected ? 'transparent' : `${avatarColor}12`,
+                                          borderColor: areVisibleWeekdaysSelected ? avatarColor : palette.border,
+                                          backgroundColor: areVisibleWeekdaysSelected ? `${avatarColor}12` : 'transparent',
                                         },
                                       ]}
                                       onPress={() => {
@@ -1576,7 +1594,7 @@ const TimeBasedMode = React.memo(({
                                     >
                                       <Text
                                         style={{
-                                          color: areVisibleWeekdaysSelected ? palette.muted : avatarColor,
+                                          color: areVisibleWeekdaysSelected ? avatarColor : palette.muted,
                                           fontSize: 12,
                                           fontWeight: '700',
                                         }}
@@ -1590,8 +1608,8 @@ const TimeBasedMode = React.memo(({
                                       style={[
                                         styles.timeMiniActionChip,
                                         {
-                                          borderColor: areVisibleWeekdaysNoFridaySelected ? palette.border : avatarColor,
-                                          backgroundColor: areVisibleWeekdaysNoFridaySelected ? 'transparent' : `${avatarColor}12`,
+                                          borderColor: areVisibleWeekdaysNoFridaySelected ? avatarColor : palette.border,
+                                          backgroundColor: areVisibleWeekdaysNoFridaySelected ? `${avatarColor}12` : 'transparent',
                                         },
                                       ]}
                                       onPress={() => {
@@ -1604,7 +1622,7 @@ const TimeBasedMode = React.memo(({
                                     >
                                       <Text
                                         style={{
-                                          color: areVisibleWeekdaysNoFridaySelected ? palette.muted : avatarColor,
+                                          color: areVisibleWeekdaysNoFridaySelected ? avatarColor : palette.muted,
                                           fontSize: 12,
                                           fontWeight: '700',
                                         }}
@@ -1618,8 +1636,8 @@ const TimeBasedMode = React.memo(({
                                       style={[
                                         styles.timeMiniActionChip,
                                         {
-                                          borderColor: areVisibleWeekendsSelected ? palette.border : avatarColor,
-                                          backgroundColor: areVisibleWeekendsSelected ? 'transparent' : `${avatarColor}12`,
+                                          borderColor: areVisibleWeekendsSelected ? avatarColor : palette.border,
+                                          backgroundColor: areVisibleWeekendsSelected ? `${avatarColor}12` : 'transparent',
                                         },
                                       ]}
                                       onPress={() => {
@@ -1632,7 +1650,7 @@ const TimeBasedMode = React.memo(({
                                     >
                                       <Text
                                         style={{
-                                          color: areVisibleWeekendsSelected ? palette.muted : avatarColor,
+                                          color: areVisibleWeekendsSelected ? avatarColor : palette.muted,
                                           fontSize: 12,
                                           fontWeight: '700',
                                         }}
@@ -1646,8 +1664,8 @@ const TimeBasedMode = React.memo(({
                                       style={[
                                         styles.timeMiniActionChip,
                                         {
-                                          borderColor: areVisibleLongWeekendsSelected ? palette.border : avatarColor,
-                                          backgroundColor: areVisibleLongWeekendsSelected ? 'transparent' : `${avatarColor}12`,
+                                          borderColor: areVisibleLongWeekendsSelected ? avatarColor : palette.border,
+                                          backgroundColor: areVisibleLongWeekendsSelected ? `${avatarColor}12` : 'transparent',
                                         },
                                       ]}
                                       onPress={() => {
@@ -1660,7 +1678,7 @@ const TimeBasedMode = React.memo(({
                                     >
                                       <Text
                                         style={{
-                                          color: areVisibleLongWeekendsSelected ? palette.muted : avatarColor,
+                                          color: areVisibleLongWeekendsSelected ? avatarColor : palette.muted,
                                           fontSize: 12,
                                           fontWeight: '700',
                                         }}
@@ -2409,7 +2427,6 @@ interface AdvancedModeContentProps {
   onPartsConsumedChange: (id: string, parts: string) => void;
   // Time
   onDaysChange: (id: string, days: string) => void;
-  onDateRangeChange: (id: string, checkIn: string, checkOut: string) => void;
   onSetAllDays: (days: number) => void;
   onStayDatesChange: (id: string, dates: string[]) => void;
   timeSplitVariant: TimeSplitVariant;
@@ -2472,7 +2489,6 @@ export const AdvancedModeContent = React.memo((props: AdvancedModeContentProps) 
         <TimeBasedMode
           participants={props.participants}
           onDaysChange={props.onDaysChange}
-          onDateRangeChange={props.onDateRangeChange}
           onSetAllDays={props.onSetAllDays}
           onStayDatesChange={props.onStayDatesChange}
           currency={props.currency}
@@ -2778,9 +2794,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
   },
-  timeRangeSummaryText: {
-    flex: 1,
-    gap: 2,
+  timeRangeDaysBadge: {
+    alignSelf: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
   timeMiniActionChip: {
     flexDirection: 'row',
@@ -3036,26 +3054,6 @@ const styles = StyleSheet.create({
   },
   timeDateContainer: {
     gap: 8,
-  },
-  timeDateFieldGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  timeDateField: {
-    flex: 1,
-  },
-  timeDateLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  timeDateInput: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 13,
   },
   timeDateHintBox: {
     borderWidth: 1,

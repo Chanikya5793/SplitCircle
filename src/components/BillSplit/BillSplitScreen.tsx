@@ -28,7 +28,6 @@ import {
     computeStandardTimeBased,
     computeTimeBased,
     computeWeightedRoulette,
-    daysBetweenDates,
     listDatesBetween,
     validateSplit
 } from './splitMath';
@@ -215,17 +214,6 @@ export const BillSplitScreen = ({
       checkInDate: undefined,
       checkOutDate: undefined,
       selectedStayDates: undefined,
-    });
-  }, [timePeriodDays, updateParticipant]);
-
-  const handleDateRangeChange = useCallback((id: string, checkIn: string, checkOut: string) => {
-    const selectedStayDates = listDatesBetween(checkIn, checkOut).slice(0, timePeriodDays);
-    const days = clampParticipantDays(daysBetweenDates(checkIn, checkOut), timePeriodDays);
-    updateParticipant(id, {
-      daysStayed: days,
-      checkInDate: checkIn,
-      checkOutDate: checkOut,
-      selectedStayDates,
     });
   }, [timePeriodDays, updateParticipant]);
 
@@ -724,7 +712,6 @@ export const BillSplitScreen = ({
                   onTotalPartsChange={setTotalParts}
                   onPartsConsumedChange={handlePartsConsumedChange}
                   onDaysChange={handleDaysChange}
-                  onDateRangeChange={handleDateRangeChange}
                   onSetAllDays={handleSetAllDays}
                   onStayDatesChange={handleStayDatesChange}
                   timeSplitVariant={timeSplitVariant}
