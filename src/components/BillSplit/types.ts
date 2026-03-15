@@ -2,6 +2,7 @@ export type BasicSplitMethod = 'equal' | 'exact' | 'percentage' | 'shares' | 'ad
 export type AdvancedSplitMethod = 'itemized' | 'income' | 'consumption' | 'timeBased' | 'gamified' | 'itemType';
 export type SplitMethod = BasicSplitMethod | AdvancedSplitMethod;
 export type GamifiedMode = 'roulette' | 'weightedRoulette' | 'scrooge';
+export type TimeSplitVariant = 'dynamic' | 'standard';
 
 export interface Participant {
   id: string;
@@ -16,6 +17,7 @@ export interface Participant {
   daysStayed: number;
   checkInDate?: string;
   checkOutDate?: string;
+  selectedStayDates?: string[];
   partsConsumed: number;
   rouletteWeight: number;
   historicalPaid: number;
