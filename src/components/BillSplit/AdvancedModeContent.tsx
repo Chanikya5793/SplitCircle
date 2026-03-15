@@ -3,13 +3,11 @@ import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
 import { heavyHaptic, lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
-import { BlurView } from 'expo-blur';
-import { GlassView as NativeGlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Slider from '@react-native-community/slider';
-import { PanResponder, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, UIManager, View } from 'react-native';
+import { LayoutChangeEvent, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Button, Icon, IconButton, Text } from 'react-native-paper';
-import Animated, { FadeIn, FadeInDown, ZoomIn } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, ZoomIn, runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import type { RouletteWheelRef } from './RouletteWheel';
 import RouletteWheel from './RouletteWheel';
 import { computeKarma, listDatesBetween } from './splitMath';
@@ -264,58 +262,6 @@ const CalendarMonthGrid = React.memo(({
 
 CalendarMonthGrid.displayName = 'CalendarMonthGrid';
 
-interface TimeSliderSurfaceProps {
-  children: React.ReactNode;
-  isDark: boolean;
-}
-
-const TimeSliderSurface = ({ children, isDark }: TimeSliderSurfaceProps) => {
-  const canUseNativeGlass = useMemo(() => {
-    if (Platform.OS !== 'ios') {
-      return false;
-    }
-
-    try {
-      return isGlassEffectAPIAvailable() && isLiquidGlassAvailable();
-    } catch (error) {
-      console.warn('Time slider glass availability check failed, using fallback surface', error);
-      return false;
-    }
-  }, []);
-
-  if (Platform.OS === 'ios') {
-    if (canUseNativeGlass) {
-      return (
-        <NativeGlassView
-          style={[styles.timeSliderSurface, styles.timeSliderSurfaceIOS]}
-          glassEffectStyle={{ style: 'regular', animate: true, animationDuration: 0.25 }}
-          colorScheme={isDark ? 'dark' : 'light'}
-          tintColor={isDark ? 'rgba(12, 18, 32, 0.28)' : 'rgba(255, 255, 255, 0.20)'}
-          isInteractive
-        >
-          {children}
-        </NativeGlassView>
-      );
-    }
-
-    return (
-      <BlurView
-        style={[styles.timeSliderSurface, styles.timeSliderSurfaceIOS]}
-        intensity={30}
-        tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
-      >
-        {children}
-      </BlurView>
-    );
-  }
-
-  return (
-    <View style={[styles.timeSliderSurface, isDark ? styles.timeSliderSurfaceDark : styles.timeSliderSurfaceLight]}>
-      {children}
-    </View>
-  );
-};
-
 interface TimeValueSliderProps {
   accentColor: string;
   isDark: boolean;
@@ -326,6 +272,9 @@ interface TimeValueSliderProps {
   value: number;
 }
 
+const THUMB_SIZE = 24;
+const TRACK_HEIGHT = 6;
+
 const TimeValueSlider = ({
   accentColor,
   isDark,
@@ -335,78 +284,99 @@ const TimeValueSlider = ({
   onValueChange,
   value,
 }: TimeValueSliderProps) => {
-  const [trackWidth, setTrackWidth] = useState(0);
-  const hasNativeSlider = useMemo(() => {
-    if (Platform.OS !== 'ios') {
-      return false;
-    }
-
-    try {
-      return Boolean(UIManager.getViewManagerConfig?.('RNCSlider'));
-    } catch (error) {
-      console.warn('Native slider availability check failed, using JS fallback', error);
-      return false;
-    }
-  }, []);
-  const clampedValue = Math.min(maximumValue, Math.max(minimumValue, value));
   const range = Math.max(1, maximumValue - minimumValue);
-  const ratio = (clampedValue - minimumValue) / range;
+  const clampedValue = Math.min(maximumValue, Math.max(minimumValue, value));
+  const fraction = (clampedValue - minimumValue) / range;
 
-  const updateFromPosition = useCallback((positionX: number) => {
-    if (trackWidth <= 0) return;
-    const boundedX = Math.min(trackWidth, Math.max(0, positionX));
-    const nextValue = Math.round(minimumValue + (boundedX / trackWidth) * range);
-    onValueChange(nextValue);
-  }, [minimumValue, onValueChange, range, trackWidth]);
+  const trackWidth = useSharedValue(0);
+  const thumbX = useSharedValue(0);
+  const startX = useSharedValue(0);
+  const isDragging = useSharedValue(false);
+  const lastSteppedValue = useSharedValue(clampedValue);
 
-  const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dx) >= Math.abs(gestureState.dy),
-    onStartShouldSetPanResponder: () => true,
-    onPanResponderGrant: (event) => updateFromPosition(event.nativeEvent.locationX),
-    onPanResponderMove: (event) => updateFromPosition(event.nativeEvent.locationX),
-    onPanResponderRelease: () => onSlidingComplete?.(),
-    onPanResponderTerminate: () => onSlidingComplete?.(),
-  }), [onSlidingComplete, updateFromPosition]);
+  const onLayout = useCallback((event: LayoutChangeEvent) => {
+    const w = event.nativeEvent.layout.width;
+    trackWidth.value = w;
+    thumbX.value = fraction * w;
+  }, [fraction, thumbX, trackWidth]);
+
+  // Sync external value changes when not dragging
+  useEffect(() => {
+    if (!isDragging.value && trackWidth.value > 0) {
+      thumbX.value = fraction * trackWidth.value;
+      lastSteppedValue.value = clampedValue;
+    }
+  }, [clampedValue, fraction, isDragging, lastSteppedValue, thumbX, trackWidth]);
+
+  const emitValue = useCallback((x: number, withHaptic: boolean) => {
+    const w = trackWidth.value;
+    if (w <= 0) return;
+    const ratio = Math.max(0, Math.min(1, x / w));
+    const stepped = Math.round(ratio * range + minimumValue);
+    if (withHaptic && stepped !== lastSteppedValue.value) {
+      lightHaptic();
+    }
+    lastSteppedValue.value = stepped;
+    onValueChange(stepped);
+  }, [lastSteppedValue, minimumValue, onValueChange, range, trackWidth]);
+
+  const emitComplete = useCallback(() => {
+    onSlidingComplete?.();
+  }, [onSlidingComplete]);
+
+  const panGesture = Gesture.Pan()
+    .hitSlop({ top: 16, bottom: 16, left: 8, right: 8 })
+    .onStart(() => {
+      isDragging.value = true;
+      startX.value = thumbX.value;
+    })
+    .onUpdate((event) => {
+      const newX = Math.max(0, Math.min(trackWidth.value, startX.value + event.translationX));
+      thumbX.value = newX;
+      runOnJS(emitValue)(newX, true);
+    })
+    .onEnd(() => {
+      isDragging.value = false;
+      runOnJS(emitComplete)();
+    })
+    .onFinalize(() => {
+      isDragging.value = false;
+    });
+
+  const tapGesture = Gesture.Tap()
+    .onEnd((event) => {
+      const tapX = Math.max(0, Math.min(trackWidth.value, event.x));
+      thumbX.value = tapX;
+      runOnJS(emitValue)(tapX, true);
+      runOnJS(emitComplete)();
+    });
+
+  const gesture = Gesture.Exclusive(panGesture, tapGesture);
+
+  const trackColor = isDark ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.12)';
+
+  const fillStyle = useAnimatedStyle(() => ({
+    width: thumbX.value,
+    backgroundColor: accentColor,
+  }));
+
+  const thumbStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: thumbX.value - THUMB_SIZE / 2 }],
+  }));
 
   return (
-    <TimeSliderSurface isDark={isDark}>
-      <View style={styles.timeSliderInner}>
-        {hasNativeSlider ? (
-          <Slider
-            value={clampedValue}
-            minimumValue={minimumValue}
-            maximumValue={maximumValue}
-            step={1}
-            onValueChange={(nextValue) => onValueChange(Math.round(nextValue))}
-            onSlidingComplete={() => onSlidingComplete?.()}
-            minimumTrackTintColor={accentColor}
-            maximumTrackTintColor={isDark ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.12)'}
-            thumbTintColor={Platform.OS === 'android' ? accentColor : undefined}
-            tapToSeek
-          />
-        ) : (
-          <View
-            style={styles.timeSliderFallbackTrack}
-            onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
-            {...panResponder.panHandlers}
-          >
-            <View style={styles.timeSliderFallbackTrackBase} />
-            <View style={[styles.timeSliderFallbackFill, { width: `${ratio * 100}%`, backgroundColor: accentColor }]} />
-            <View
-              style={[
-                styles.timeSliderFallbackThumb,
-                {
-                  borderColor: accentColor,
-                  left: `${ratio * 100}%`,
-                },
-              ]}
-            >
-              <View style={[styles.timeSliderFallbackThumbInner, { backgroundColor: accentColor }]} />
-            </View>
+    <View style={styles.timeSliderInner}>
+      <GestureDetector gesture={gesture}>
+        <View style={styles.timeSliderTouchArea} onLayout={onLayout}>
+          <View style={[styles.timeSliderTrack, { backgroundColor: trackColor }]}>
+            <Animated.View style={[styles.timeSliderFill, fillStyle]} />
           </View>
-        )}
-      </View>
-    </TimeSliderSurface>
+          <Animated.View style={[styles.timeSliderThumb, { backgroundColor: accentColor }, thumbStyle]}>
+            <View style={[styles.timeSliderThumbInner, { backgroundColor: isDark ? '#1e1e1e' : '#fff' }]} />
+          </Animated.View>
+        </View>
+      </GestureDetector>
+    </View>
   );
 };
 
@@ -3022,60 +2992,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
-  timeSliderSurface: {
-    borderRadius: 18,
+  timeSliderInner: {
+    paddingHorizontal: 4,
+    paddingVertical: 10,
+  },
+  timeSliderTouchArea: {
+    height: 40,
+    justifyContent: 'center',
+  },
+  timeSliderTrack: {
+    height: TRACK_HEIGHT,
+    borderRadius: TRACK_HEIGHT / 2,
     overflow: 'hidden',
   },
-  timeSliderSurfaceIOS: {
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
+  timeSliderFill: {
+    height: '100%',
+    borderRadius: TRACK_HEIGHT / 2,
   },
-  timeSliderSurfaceDark: {
-    backgroundColor: 'rgba(20, 24, 34, 0.90)',
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.18)',
-  },
-  timeSliderSurfaceLight: {
-    backgroundColor: 'rgba(248, 250, 252, 0.95)',
-    borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.08)',
-  },
-  timeSliderInner: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  timeSliderFallbackTrack: {
-    height: 34,
+  timeSliderThumb: {
+    position: 'absolute',
+    width: THUMB_SIZE,
+    height: THUMB_SIZE,
+    borderRadius: THUMB_SIZE / 2,
+    top: (40 - THUMB_SIZE) / 2,
     justifyContent: 'center',
-    marginHorizontal: 2,
-  },
-  timeSliderFallbackTrackBase: {
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: 'rgba(148, 163, 184, 0.22)',
-  },
-  timeSliderFallbackFill: {
-    position: 'absolute',
-    left: 0,
-    height: 8,
-    borderRadius: 999,
-  },
-  timeSliderFallbackThumb: {
-    position: 'absolute',
-    top: 4,
-    marginLeft: -12,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(10, 14, 24, 0.88)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 4,
   },
-  timeSliderFallbackThumbInner: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+  timeSliderThumbInner: {
+    width: THUMB_SIZE - 6,
+    height: THUMB_SIZE - 6,
+    borderRadius: (THUMB_SIZE - 6) / 2,
   },
   timeSliderLabels: {
     flexDirection: 'row',
