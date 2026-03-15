@@ -170,6 +170,7 @@ const CalendarMonthGrid = React.memo(({
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
   const monthCells = useMemo(() => buildCalendarMonthCells(monthDate), [monthDate]);
+  const todayIso = useMemo(() => toCalendarIso(new Date()), []);
   const normalizedRangeStart = rangeStart && rangeEnd ? (rangeStart <= rangeEnd ? rangeStart : rangeEnd) : rangeStart;
   const normalizedRangeEnd = rangeStart && rangeEnd ? (rangeStart <= rangeEnd ? rangeEnd : rangeStart) : rangeEnd;
 
@@ -182,11 +183,20 @@ const CalendarMonthGrid = React.memo(({
       </View>
 
       <View style={styles.calendarWeekHeader}>
-        {WEEKDAY_LABELS.map((label, index) => (
-          <Text key={`${label}-${index}`} style={[styles.calendarWeekLabel, { color: palette.muted }]}>
-            {label}
-          </Text>
-        ))}
+        {WEEKDAY_LABELS.map((label, index) => {
+          const isWeekendHeader = index === 0 || index === 6;
+          return (
+            <Text
+              key={`${label}-${index}`}
+              style={[
+                styles.calendarWeekLabel,
+                { color: isWeekendHeader ? `${accentColor}88` : palette.muted },
+              ]}
+            >
+              {label}
+            </Text>
+          );
+        })}
       </View>
 
       <View style={styles.calendarGrid}>
@@ -196,6 +206,10 @@ const CalendarMonthGrid = React.memo(({
           }
 
           const dayNumber = Number(value.slice(-2));
+          const parsedDate = parseCalendarDate(value);
+          const dayOfWeek = parsedDate?.getDay() ?? 1;
+          const isWeekendCell = dayOfWeek === 0 || dayOfWeek === 6;
+          const isToday = value === todayIso;
           const isEnabled = !enabledDates || enabledDates.has(value);
           const isSelected = selectedDates?.has(value) ?? false;
           const isRangeStart = Boolean(rangeStart && value === rangeStart);
@@ -224,7 +238,9 @@ const CalendarMonthGrid = React.memo(({
                       ? accentColor
                       : isInRange
                         ? `${accentColor}16`
-                        : 'transparent',
+                        : isWeekendCell
+                          ? (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)')
+                          : 'transparent',
                     borderColor: showSolidSelection
                       ? accentColor
                       : isInRange
@@ -244,6 +260,9 @@ const CalendarMonthGrid = React.memo(({
                 >
                   {dayNumber}
                 </Text>
+                {isToday && (
+                  <View style={[styles.calendarTodayDot, { backgroundColor: showSolidSelection ? '#FFFFFF' : accentColor }]} />
+                )}
               </View>
             </TouchableOpacity>
           );
@@ -1148,6 +1167,20 @@ const TimeBasedMode = React.memo(({
               <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center', paddingHorizontal: 16 }}>
                 No one has any days set yet. Use the {inputMode === 'dates' ? 'calendar' : 'slider'} below to set how long each person stayed.
               </Text>
+              {inputMode === 'days' && (
+                <TouchableOpacity
+                  style={[styles.timeFillAllBtn, { borderColor: theme.colors.primary }]}
+                  onPress={() => {
+                    successHaptic();
+                    onSetAllDays(periodDays);
+                  }}
+                >
+                  <Icon source="account-check" size={14} color={theme.colors.primary} />
+                  <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
+                    Everyone stayed the full {periodDays} days
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </GlassView>
         </Animated.View>
@@ -1217,7 +1250,17 @@ const TimeBasedMode = React.memo(({
 
         return (
           <Animated.View key={participant.id} entering={FadeInDown.delay(index * 50).springify()}>
-            <GlassView style={styles.timeParticipantCard} intensity={12}>
+            <GlassView style={[
+              styles.timeParticipantCard,
+              {
+                borderLeftWidth: 3,
+                borderLeftColor: participant.daysStayed === 0
+                  ? palette.border
+                  : participant.daysStayed === periodDays
+                    ? avatarColor
+                    : `${avatarColor}88`,
+              },
+            ]} intensity={12}>
               <View style={styles.timeCardInner}>
                 <View style={styles.timeRowTop}>
                   <View style={styles.timeRowNameGroup}>
@@ -1235,6 +1278,27 @@ const TimeBasedMode = React.memo(({
                   </View>
                   <Text style={{ color: theme.colors.primary, fontWeight: '800', fontSize: 18 }}>
                     {formatCurrency(participant.computedAmount, currency)}
+                  </Text>
+                </View>
+
+                <View style={styles.timeProgressBarWrap}>
+                  <View style={[styles.timeProgressBarTrack, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}>
+                    <View
+                      style={[
+                        styles.timeProgressBarFill,
+                        {
+                          width: `${Math.min(100, periodPct)}%`,
+                          backgroundColor: participant.daysStayed === periodDays
+                            ? avatarColor
+                            : participant.daysStayed === 0
+                              ? 'transparent'
+                              : `${avatarColor}99`,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={{ color: palette.muted, fontSize: 11, fontWeight: '700', minWidth: 32, textAlign: 'right' }}>
+                    {periodPct.toFixed(0)}%
                   </Text>
                 </View>
 
@@ -1366,6 +1430,13 @@ const TimeBasedMode = React.memo(({
                               <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
                                 {isExpanded ? 'Hide' : 'Calendar'}
                               </Text>
+                              {!isExpanded && selectedDateSet.size > 0 && (
+                                <View style={[styles.calendarBadge, { backgroundColor: avatarColor }]}>
+                                  <Text style={{ color: '#FFF', fontSize: 9, fontWeight: '800' }}>
+                                    {selectedDateSet.size}
+                                  </Text>
+                                </View>
+                              )}
                             </TouchableOpacity>
                             <TouchableOpacity
                               style={[styles.timeMiniActionChip, {
@@ -2884,6 +2955,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  calendarTodayDot: {
+    position: 'absolute',
+    bottom: 4,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+  },
   timePeriodStepBtn: {
     width: 36,
     height: 36,
@@ -2982,6 +3060,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  timeProgressBarWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  timeProgressBarTrack: {
+    flex: 1,
+    height: 5,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  timeProgressBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  calendarBadge: {
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
   },
   timeMetaChip: {
     borderWidth: 1,
