@@ -143,6 +143,15 @@
           ".validate": "!newData.exists() || newData.isString() || newData.val() == null"
         }
       }
+    },
+    "userActiveCalls": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        "$callId": {
+          ".write": "auth != null && (((!newData.exists()) && (root.child('userActiveCalls').child(auth.uid).child($callId).exists() || root.child('calls').child($callId).child('initiatorId').val() == auth.uid || root.child('calls').child($callId).child('allowedUserIds').child(auth.uid).val() == true || root.child('calls').child($callId).child('participantIds').child(auth.uid).val() == true)) || (newData.exists() && (root.child('calls').child($callId).child('initiatorId').val() == auth.uid || root.child('calls').child($callId).child('allowedUserIds').child(auth.uid).val() == true || root.child('calls').child($callId).child('participantIds').child(auth.uid).val() == true)))",
+          ".validate": "newData.exists() ? newData.hasChildren(['callId', 'chatId', 'initiatorId', 'type', 'status', 'startedAt']) && newData.child('callId').isString() && newData.child('callId').val() == $callId && newData.child('chatId').isString() && newData.child('initiatorId').isString() && newData.child('type').isString() && (newData.child('type').val() == 'audio' || newData.child('type').val() == 'video') && newData.child('status').isString() && (newData.child('status').val() == 'idle' || newData.child('status').val() == 'ringing' || newData.child('status').val() == 'connected' || newData.child('status').val() == 'ended' || newData.child('status').val() == 'failed') && newData.child('startedAt').isNumber() && (!newData.child('groupId').exists() || newData.child('groupId').isString() || newData.child('groupId').val() == null) : true"
+        }
+      }
     }
   }
 }

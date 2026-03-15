@@ -6,10 +6,10 @@
   },
   "main": "index.ts",
   "scripts": {
-    "start": "expo start",
-    "android": "expo run:android",
-    "ios": "expo run:ios",
-    "web": "expo start --web",
+    "start": "EXPO_UNSTABLE_BONJOUR=0 expo start",
+    "android": "EXPO_UNSTABLE_BONJOUR=0 expo run:android",
+    "ios": "EXPO_UNSTABLE_BONJOUR=0 expo run:ios",
+    "web": "EXPO_UNSTABLE_BONJOUR=0 expo start --web",
     "postinstall": "patch-package"
   },
   "dependencies": {
@@ -21,6 +21,7 @@
     "@livekit/react-native-webrtc": "^137.0.2",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/netinfo": "11.5.2",
+    "@react-native-community/slider": "^5.1.2",
     "@react-navigation/bottom-tabs": "^7.8.5",
     "@react-navigation/drawer": "^7.7.3",
     "@react-navigation/material-top-tabs": "^7.4.3",

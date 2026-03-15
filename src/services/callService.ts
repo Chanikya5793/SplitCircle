@@ -26,9 +26,11 @@ import type { CallParticipant, CallSession, CallType } from '@/models';
 // Get Realtime Database instance
 const rtdb = getDatabase();
 const MAX_ACTIVE_CALL_AGE_MS = 5 * 60 * 1000;
-const ACTIVE_CALL_QUERY_LIMIT = 50;
+const LEGACY_ACTIVE_CALL_QUERY_LIMIT = 50;
+const USER_ACTIVE_CALLS_PATH = 'userActiveCalls';
 let hasLoggedActiveCallPermissionWarning = false;
 let hasLoggedCallSessionPermissionWarning = false;
+let hasLoggedActiveCallIndexWriteWarning = false;
 
 const debugLog = (...args: unknown[]) => {
   if (__DEV__) {
@@ -38,6 +40,16 @@ const debugLog = (...args: unknown[]) => {
 
 type RawCallSession = Omit<CallSession, 'participants'> & {
   participants?: Record<string, CallParticipant> | CallParticipant[];
+};
+
+type ActiveCallIndexEntry = {
+  callId: string;
+  chatId: string;
+  groupId?: string;
+  initiatorId: string;
+  type: CallType;
+  status: CallSession['status'];
+  startedAt: number;
 };
 
 // ICE servers configuration for STUN/TURN (kept for reference if needed)
@@ -85,6 +97,248 @@ function toCallSession(data: RawCallSession): CallSession {
   };
 }
 
+function getAllowedUserIds(session: Pick<CallSession, 'allowedUserIds'> | Pick<RawCallSession, 'allowedUserIds'>): string[] {
+  return Object.entries(session.allowedUserIds ?? {})
+    .filter(([, isAllowed]) => isAllowed === true)
+    .map(([userId]) => userId);
+}
+
+function toActiveCallIndexEntry(session: Pick<CallSession, 'callId' | 'chatId' | 'groupId' | 'initiatorId' | 'type' | 'status' | 'startedAt'>): ActiveCallIndexEntry {
+  return {
+    callId: session.callId,
+    chatId: session.chatId,
+    initiatorId: session.initiatorId,
+    type: session.type,
+    status: session.status,
+    startedAt: session.startedAt,
+    ...(session.groupId ? { groupId: session.groupId } : {}),
+  };
+}
+
+function isActiveStatus(status: CallSession['status']): boolean {
+  return status === 'ringing' || status === 'connected';
+}
+
+function isValidActiveCallForUser(
+  session: CallSession,
+  userId: string,
+  chatId?: string,
+): boolean {
+  const isAllowedForUser = session.allowedUserIds?.[userId] === true;
+  const isMatchingChat = chatId ? session.chatId === chatId : true;
+  const isNotStale = Date.now() - session.startedAt < MAX_ACTIVE_CALL_AGE_MS;
+  return isMatchingChat && isAllowedForUser && isActiveStatus(session.status) && isNotStale;
+}
+
+function isPermissionDeniedError(error: unknown): boolean {
+  const code = (error as { code?: string } | undefined)?.code?.toLowerCase() ?? '';
+  const message = String(error ?? '').toLowerCase();
+  return code.includes('permission_denied') || message.includes('permission_denied');
+}
+
+async function syncUserActiveCallIndex(
+  session: Pick<CallSession, 'callId' | 'chatId' | 'groupId' | 'initiatorId' | 'type' | 'status' | 'startedAt' | 'allowedUserIds'>,
+  previousUserIds: string[] = [],
+): Promise<void> {
+  const nextUserIds = getAllowedUserIds(session);
+  const previousUserIdSet = new Set(previousUserIds);
+  const nextUserIdSet = new Set(nextUserIds);
+  const entry = toActiveCallIndexEntry(session);
+  const updates: Record<string, ActiveCallIndexEntry | null> = {};
+
+  for (const userId of previousUserIdSet) {
+    if (!nextUserIdSet.has(userId)) {
+      updates[`${USER_ACTIVE_CALLS_PATH}/${userId}/${session.callId}`] = null;
+    }
+  }
+
+  for (const userId of nextUserIdSet) {
+    updates[`${USER_ACTIVE_CALLS_PATH}/${userId}/${session.callId}`] = entry;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return;
+  }
+
+  try {
+    await Promise.all(Object.entries(updates).map(async ([path, value]) => {
+      const targetRef = ref(rtdb, path);
+      if (value === null) {
+        await remove(targetRef);
+        return;
+      }
+      await set(targetRef, value);
+    }));
+  } catch (error) {
+    if (isPermissionDeniedError(error)) {
+      if (!hasLoggedActiveCallIndexWriteWarning) {
+        hasLoggedActiveCallIndexWriteWarning = true;
+        console.warn('Call index write skipped for /userActiveCalls. Falling back to legacy /calls listeners until RTDB rules are deployed.');
+      }
+      return;
+    }
+
+    console.warn('callService.syncUserActiveCallIndex failed', error);
+  }
+}
+
+async function removeUserActiveCallIndex(callId: string, userIds: string[]): Promise<void> {
+  if (userIds.length === 0) {
+    return;
+  }
+
+  const updates: Record<string, null> = {};
+  for (const userId of new Set(userIds)) {
+    updates[`${USER_ACTIVE_CALLS_PATH}/${userId}/${callId}`] = null;
+  }
+
+  try {
+    await Promise.all(Object.keys(updates).map(async (path) => {
+      await remove(ref(rtdb, path));
+    }));
+  } catch (error) {
+    if (isPermissionDeniedError(error)) {
+      if (!hasLoggedActiveCallIndexWriteWarning) {
+        hasLoggedActiveCallIndexWriteWarning = true;
+        console.warn('Call index write skipped for /userActiveCalls. Falling back to legacy /calls listeners until RTDB rules are deployed.');
+      }
+      return;
+    }
+
+    console.warn('callService.removeUserActiveCallIndex failed', error);
+  }
+}
+
+async function resolveNewestMatchingCall(
+  userId: string,
+  entries: Record<string, ActiveCallIndexEntry>,
+  matchesChat: (chatId: string) => boolean,
+): Promise<CallSession | null> {
+  const now = Date.now();
+  const candidateEntries = Object.values(entries)
+    .filter((entry) => matchesChat(entry.chatId) && isActiveStatus(entry.status) && now - entry.startedAt < MAX_ACTIVE_CALL_AGE_MS)
+    .sort((a, b) => b.startedAt - a.startedAt);
+
+  for (const entry of candidateEntries) {
+    const session = await getCallSession(entry.callId);
+    if (session && isValidActiveCallForUser(session, userId, entry.chatId)) {
+      return session;
+    }
+  }
+
+  return null;
+}
+
+function subscribeToIndexedActiveCall(
+  userId: string,
+  matchesChat: (chatId: string) => boolean,
+  callback: (session: CallSession | null) => void,
+  onPermissionDenied?: () => void,
+): Unsubscribe {
+  const userActiveCallsRef = ref(rtdb, `${USER_ACTIVE_CALLS_PATH}/${userId}`);
+  let version = 0;
+
+  return onValue(userActiveCallsRef, (snapshot) => {
+    const currentVersion = ++version;
+
+    if (!snapshot.exists()) {
+      callback(null);
+      return;
+    }
+
+    const entries = snapshot.val() as Record<string, ActiveCallIndexEntry>;
+    void resolveNewestMatchingCall(userId, entries, matchesChat)
+      .then((session) => {
+        if (currentVersion !== version) {
+          return;
+        }
+        callback(session);
+      })
+      .catch((error) => {
+        if (currentVersion !== version) {
+          return;
+        }
+        console.error('callService active-call index resolution failed', error);
+        callback(null);
+      });
+  }, (error) => {
+    if (isPermissionDeniedError(error)) {
+      if (!hasLoggedActiveCallPermissionWarning) {
+        hasLoggedActiveCallPermissionWarning = true;
+        console.warn('Call listener permission denied for /userActiveCalls. Falling back to legacy /calls listener.');
+      }
+      callback(null);
+      onPermissionDenied?.();
+      return;
+    }
+
+    console.error('callService.subscribeToActiveCall failed', error);
+  });
+}
+
+function subscribeToLegacyActiveCall(
+  userId: string,
+  matchesChat: (chatId: string) => boolean,
+  callback: (session: CallSession | null) => void
+): Unsubscribe {
+  const callsQuery = query(
+    ref(rtdb, 'calls'),
+    orderByChild(`allowedUserIds/${userId}`),
+    equalTo(true),
+    limitToLast(LEGACY_ACTIVE_CALL_QUERY_LIMIT)
+  );
+
+  return onValue(callsQuery, (snapshot) => {
+    if (!snapshot.exists()) {
+      callback(null);
+      return;
+    }
+
+    const calls = snapshot.val() as Record<string, RawCallSession>;
+    const now = Date.now();
+    const newestCall = Object.values(calls)
+      .map((rawCall) => toCallSession(rawCall))
+      .filter((session) => matchesChat(session.chatId) && isValidActiveCallForUser(session, userId))
+      .filter((session) => now - session.startedAt < MAX_ACTIVE_CALL_AGE_MS)
+      .sort((a, b) => b.startedAt - a.startedAt)[0] ?? null;
+
+    callback(newestCall);
+  }, (error) => {
+    if (isPermissionDeniedError(error)) {
+      if (!hasLoggedActiveCallPermissionWarning) {
+        hasLoggedActiveCallPermissionWarning = true;
+        console.warn('Call listener permission denied for legacy /calls query. Verify deployed RTDB rules allow allowedUserIds reads.');
+      }
+      callback(null);
+      return;
+    }
+
+    console.error('callService.subscribeToLegacyActiveCall failed', error);
+  });
+}
+
+function subscribeToActiveCallWithFallback(
+  userId: string,
+  matchesChat: (chatId: string) => boolean,
+  callback: (session: CallSession | null) => void
+): Unsubscribe {
+  let activeUnsubscribe: Unsubscribe = () => undefined;
+  let hasSwitchedToLegacy = false;
+
+  const switchToLegacy = () => {
+    if (hasSwitchedToLegacy) {
+      return;
+    }
+
+    hasSwitchedToLegacy = true;
+    activeUnsubscribe();
+    activeUnsubscribe = subscribeToLegacyActiveCall(userId, matchesChat, callback);
+  };
+
+  activeUnsubscribe = subscribeToIndexedActiveCall(userId, matchesChat, callback, switchToLegacy);
+  return () => activeUnsubscribe();
+}
+
 /**
  * Create call signaling in Realtime Database
  * This is ephemeral - will be deleted when call ends
@@ -126,6 +380,7 @@ export async function createCallSession(
 
   const callRef = ref(rtdb, `calls/${callId}`);
   await set(callRef, callData);
+  await syncUserActiveCallIndex(callData);
 
   debugLog('callService.createCallSession created');
   return callId;
@@ -155,8 +410,12 @@ export async function getCallSession(callId: string): Promise<CallSession | null
  * Update call session status
  */
 export async function updateCallStatus(callId: string, status: CallSession['status']): Promise<void> {
+  const session = await getCallSession(callId);
   const callRef = ref(rtdb, `calls/${callId}/status`);
   await set(callRef, status);
+  if (session) {
+    await syncUserActiveCallIndex({ ...session, status });
+  }
   debugLog('callService.updateCallStatus applied');
 }
 
@@ -203,56 +462,16 @@ export function subscribeToActiveCall(
   userId: string,
   callback: (session: CallSession | null) => void
 ): Unsubscribe {
-  // Query only calls where this user is explicitly allowed.
-  const callsQuery = query(
-    ref(rtdb, 'calls'),
-    orderByChild(`allowedUserIds/${userId}`),
-    equalTo(true),
-    limitToLast(ACTIVE_CALL_QUERY_LIMIT)
-  );
-  const unsubscribe = onValue(callsQuery, (snapshot) => {
-    if (!snapshot.exists()) {
-      callback(null);
-      return;
-    }
+  return subscribeToActiveCallWithFallback(userId, (candidateChatId) => candidateChatId === chatId, callback);
+}
 
-    const calls = snapshot.val() as Record<string, RawCallSession>;
-    const now = Date.now();
-    const validCalls = Object.values(calls)
-      .map((rawCall) => toCallSession(rawCall))
-      .filter((call) => {
-        const isActiveStatus = call.status === 'ringing' || call.status === 'connected';
-        const isNotStale = now - call.startedAt < MAX_ACTIVE_CALL_AGE_MS;
-        const isAllowedForUser = call.allowedUserIds?.[userId] === true;
-        return call.chatId === chatId && isAllowedForUser && isActiveStatus && isNotStale;
-      })
-      .sort((a, b) => b.startedAt - a.startedAt);
-
-    const newestCall = validCalls[0] ?? null;
-    if (!newestCall) {
-      callback(null);
-      return;
-    }
-
-    callback(newestCall);
-  }, (error) => {
-    const code = (error as { code?: string } | undefined)?.code?.toLowerCase() ?? '';
-    const message = String(error ?? '').toLowerCase();
-    const isPermissionDenied = code.includes('permission_denied') || message.includes('permission_denied');
-
-    if (isPermissionDenied) {
-      if (!hasLoggedActiveCallPermissionWarning) {
-        hasLoggedActiveCallPermissionWarning = true;
-        console.warn('Call listener permission denied for /calls query. Verify deployed RTDB rules allow user-scoped allowedUserIds queries.');
-      }
-      callback(null);
-      return;
-    }
-
-    console.error('callService.subscribeToActiveCall failed', error);
-  });
-
-  return unsubscribe;
+export function subscribeToIncomingCallForUser(
+  userId: string,
+  chatIds: string[],
+  callback: (session: CallSession | null) => void
+): Unsubscribe {
+  const chatIdSet = new Set(chatIds);
+  return subscribeToActiveCallWithFallback(userId, (candidateChatId) => chatIdSet.has(candidateChatId), callback);
 }
 
 /**
@@ -271,6 +490,10 @@ export async function joinCall(
   };
 
   const callRef = ref(rtdb, `calls/${callId}`);
+  const previousSnapshot = await get(callRef);
+  const previousSession = previousSnapshot.exists()
+    ? (previousSnapshot.val() as RawCallSession)
+    : null;
   const result = await runTransaction(callRef, (currentValue) => {
     if (!currentValue) {
       return currentValue;
@@ -305,6 +528,10 @@ export async function joinCall(
     throw new Error('Call not found');
   }
 
+  await syncUserActiveCallIndex(
+    result.snapshot.val() as RawCallSession,
+    previousSession ? getAllowedUserIds(previousSession) : [],
+  );
   debugLog('callService.joinCall applied');
 }
 
@@ -321,7 +548,8 @@ export async function leaveCall(callId: string, userId: string): Promise<void> {
       return;
     }
 
-    await runTransaction(callRef, (currentValue) => {
+    const previousSession = snapshot.val() as RawCallSession;
+    const result = await runTransaction(callRef, (currentValue) => {
       if (!currentValue) {
         return currentValue;
       }
@@ -335,17 +563,23 @@ export async function leaveCall(callId: string, userId: string): Promise<void> {
       }
 
       const remainingParticipants = session.participants.filter((participant) => participant.userId !== userId);
-
-      // End signaling if the room can no longer host an active conversation.
-      if (remainingParticipants.length <= 1) {
-        return null;
-      }
-
       const participantIds = { ...(session.participantIds ?? {}) };
       delete participantIds[userId];
 
       const allowedUserIds = { ...(session.allowedUserIds ?? {}) };
       delete allowedUserIds[userId];
+
+      // End signaling if the room can no longer host an active conversation.
+      if (remainingParticipants.length <= 1) {
+        return {
+          ...(currentValue as Record<string, unknown>),
+          participants: toParticipantsObject(remainingParticipants),
+          participantIds,
+          allowedUserIds,
+          status: 'ended',
+          endedAt: Date.now(),
+        };
+      }
 
       return {
         ...(currentValue as Record<string, unknown>),
@@ -355,6 +589,19 @@ export async function leaveCall(callId: string, userId: string): Promise<void> {
         status: 'connected',
       };
     });
+
+    if (!result.snapshot.exists()) {
+      return;
+    }
+
+    const nextSession = result.snapshot.val() as RawCallSession;
+    if (nextSession.status === 'ended') {
+      await removeUserActiveCallIndex(callId, getAllowedUserIds(previousSession));
+      await remove(callRef);
+    } else {
+      await syncUserActiveCallIndex(nextSession, getAllowedUserIds(previousSession));
+    }
+
     debugLog('callService.leaveCall applied');
   } catch (error) {
     const code = (error as { code?: string } | undefined)?.code?.toLowerCase() ?? '';
@@ -376,6 +623,10 @@ export async function leaveCall(callId: string, userId: string): Promise<void> {
 export async function cleanupCall(callId: string): Promise<void> {
   try {
     const callRef = ref(rtdb, `calls/${callId}`);
+    const snapshot = await get(callRef);
+    if (snapshot.exists()) {
+      await removeUserActiveCallIndex(callId, getAllowedUserIds(snapshot.val() as RawCallSession));
+    }
     await remove(callRef);
     debugLog('callService.cleanupCall applied');
   } catch (error) {
@@ -389,8 +640,13 @@ export async function cleanupCall(callId: string): Promise<void> {
  */
 export async function declineCall(callId: string): Promise<void> {
   try {
+    const session = await getCallSession(callId);
+
     // First update status to 'ended' so caller knows it was declined
     await updateCallStatus(callId, 'ended');
+    if (session) {
+      await removeUserActiveCallIndex(callId, getAllowedUserIds(session));
+    }
 
     // Delete after a short delay to ensure caller receives the update
     setTimeout(async () => {

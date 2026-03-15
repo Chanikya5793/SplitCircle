@@ -15,30 +15,31 @@ import { SmartSuggestionsBar } from './SmartSuggestionsBar';
 import { SplitFooter } from './SplitFooter';
 import { SplitMethodTabs } from './SplitMethodTabs';
 import {
-  computeAdjustment,
-  computeConsumption,
-  computeEqual,
-  computeExact,
-  computeIncome,
-  computeItemType,
-  computeItemized,
-  computePercentage,
-  computeRoulette,
-  computeShares,
-  computeTimeBased,
-  computeWeightedRoulette,
-  validateSplit
+    computeAdjustment,
+    computeConsumption,
+    computeEqual,
+    computeExact,
+    computeIncome,
+    computeItemType,
+    computeItemized,
+    computePercentage,
+    computeRoulette,
+    computeShares,
+    computeTimeBased,
+    computeWeightedRoulette,
+    daysBetweenDates,
+    validateSplit
 } from './splitMath';
 import type {
-  AdvancedSplitMethod,
-  BasicSplitMethod,
-  GamifiedMode,
-  ItemCategory,
-  Participant,
-  ReceiptItem,
-  SmartSuggestion,
-  SplitMethod,
-  ValidationResult,
+    AdvancedSplitMethod,
+    BasicSplitMethod,
+    GamifiedMode,
+    ItemCategory,
+    Participant,
+    ReceiptItem,
+    SmartSuggestion,
+    SplitMethod,
+    ValidationResult,
 } from './types';
 import { MOCK_PARTICIPANTS, MOCK_TOTAL } from './types';
 
@@ -51,6 +52,17 @@ interface BillSplitScreenProps {
   onCancel?: () => void;
 }
 
+function inferInitialTimePeriodDays(participants: Participant[]): number {
+  const included = participants.filter((participant) => participant.included);
+  const maxDays = included.reduce((max, participant) => Math.max(max, participant.daysStayed), 0);
+  return maxDays > 1 ? maxDays : 30;
+}
+
+function clampParticipantDays(value: number, periodDays: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(Math.max(0, Math.round(value)), Math.max(1, periodDays));
+}
+
 export const BillSplitScreen = ({
   totalAmount = MOCK_TOTAL,
   currency = 'USD',
@@ -61,11 +73,13 @@ export const BillSplitScreen = ({
 }: BillSplitScreenProps) => {
   const { theme, isDark } = useTheme();
   const palette = isDark ? darkColors : colors;
+  const seedParticipants = initialParticipants ?? MOCK_PARTICIPANTS;
 
   // ── Core State ────────────────────────────────────────────────────────────
   const [participants, setParticipants] = useState<Participant[]>(
-    initialParticipants ?? MOCK_PARTICIPANTS,
+    seedParticipants,
   );
+  const [timePeriodDays, setTimePeriodDays] = useState(() => inferInitialTimePeriodDays(seedParticipants));
   const [paidBy, setPaidBy] = useState(initialPayer ?? participants[0]?.id ?? '');
   const [showPayerMenu, setShowPayerMenu] = useState(false);
 
@@ -105,16 +119,28 @@ export const BillSplitScreen = ({
   }, []);
 
   const handleToggle = useCallback((id: string) => {
-    setParticipants((prev) => prev.map((p) => (p.id === id ? { ...p, included: !p.included } : p)));
-  }, []);
+    setParticipants((prev) => prev.map((p) => {
+      if (p.id !== id) return p;
+      const included = !p.included;
+      return {
+        ...p,
+        included,
+        daysStayed: included && p.daysStayed === 0 ? timePeriodDays : p.daysStayed,
+      };
+    }));
+  }, [timePeriodDays]);
 
   const handleSelectAll = useCallback(() => {
     selectionHaptic();
     setParticipants((prev) => {
       const allSelected = prev.every((p) => p.included);
-      return prev.map((p) => ({ ...p, included: !allSelected }));
+      return prev.map((p) => ({
+        ...p,
+        included: !allSelected,
+        daysStayed: !allSelected && p.daysStayed === 0 ? timePeriodDays : p.daysStayed,
+      }));
     });
-  }, []);
+  }, [timePeriodDays]);
 
   const allSelected = participants.every((p) => p.included);
 
@@ -143,8 +169,24 @@ export const BillSplitScreen = ({
   }, [updateParticipant]);
 
   const handleDaysChange = useCallback((id: string, value: string) => {
-    updateParticipant(id, { daysStayed: parseInt(value, 10) || 0 });
-  }, [updateParticipant]);
+    const parsedValue = parseInt(value, 10);
+    const daysStayed = clampParticipantDays(Number.isNaN(parsedValue) ? 0 : parsedValue, timePeriodDays);
+    updateParticipant(id, { daysStayed, checkInDate: undefined, checkOutDate: undefined });
+  }, [timePeriodDays, updateParticipant]);
+
+  const handleDateRangeChange = useCallback((id: string, checkIn: string, checkOut: string) => {
+    const days = clampParticipantDays(daysBetweenDates(checkIn, checkOut), timePeriodDays);
+    updateParticipant(id, { daysStayed: days, checkInDate: checkIn, checkOutDate: checkOut });
+  }, [timePeriodDays, updateParticipant]);
+
+  const handleSetAllDays = useCallback((days: number) => {
+    const normalizedDays = Math.max(1, Math.round(days) || 1);
+    mediumHaptic();
+    setTimePeriodDays(normalizedDays);
+    setParticipants((prev) => prev.map((p) =>
+      p.included ? { ...p, daysStayed: normalizedDays, checkInDate: undefined, checkOutDate: undefined } : p,
+    ));
+  }, []);
 
   const handleRouletteWeightChange = useCallback((id: string, value: string) => {
     updateParticipant(id, { rouletteWeight: parseInt(value, 10) || 0 });
@@ -286,6 +328,37 @@ export const BillSplitScreen = ({
     }
   }, [participants]);
 
+  const timeBasedAutofillDoneRef = useRef(false);
+
+  useEffect(() => {
+    if (currentMethod !== 'timeBased' || timeBasedAutofillDoneRef.current || timePeriodDays <= 0) {
+      return;
+    }
+
+    const includedParticipants = participants.filter((participant) => participant.included);
+    if (includedParticipants.length === 0) {
+      return;
+    }
+
+    const shouldAutofill = includedParticipants.every((participant) =>
+      !participant.checkInDate
+      && !participant.checkOutDate
+      && (participant.daysStayed === 0 || participant.daysStayed === 1),
+    );
+
+    if (!shouldAutofill) {
+      timeBasedAutofillDoneRef.current = true;
+      return;
+    }
+
+    setParticipants((prev) => prev.map((participant) => (
+      participant.included
+        ? { ...participant, daysStayed: timePeriodDays }
+        : participant
+    )));
+    timeBasedAutofillDoneRef.current = true;
+  }, [currentMethod, participants, timePeriodDays]);
+
   // ── Compute Splits ────────────────────────────────────────────────────────
   const computedParticipants = useMemo<Participant[]>(() => {
     switch (currentMethod) {
@@ -418,6 +491,7 @@ export const BillSplitScreen = ({
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets
           >
             {/* Payer Section */}
             <Animated.View entering={FadeInDown.delay(60).springify()}>
@@ -567,6 +641,9 @@ export const BillSplitScreen = ({
                   onTotalPartsChange={setTotalParts}
                   onPartsConsumedChange={handlePartsConsumedChange}
                   onDaysChange={handleDaysChange}
+                  onDateRangeChange={handleDateRangeChange}
+                  onSetAllDays={handleSetAllDays}
+                  timePeriodDays={timePeriodDays}
                   gamifiedMode={gamifiedMode}
                   onGamifiedModeChange={setGamifiedMode}
                   onRouletteWeightChange={handleRouletteWeightChange}
