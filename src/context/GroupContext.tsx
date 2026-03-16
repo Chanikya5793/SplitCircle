@@ -51,6 +51,26 @@ const normalizeTimestamp = (value: unknown): number => {
   return Date.now();
 };
 
+const stripUndefinedDeep = <T,>(value: T): T => {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => stripUndefinedDeep(entry))
+      .filter((entry) => entry !== undefined) as T;
+  }
+
+  if (value && typeof value === 'object') {
+    const sanitizedEntries = Object.entries(value as Record<string, unknown>)
+      .flatMap(([key, entry]) => {
+        const sanitizedEntry = stripUndefinedDeep(entry);
+        return sanitizedEntry === undefined ? [] : [[key, sanitizedEntry] as const];
+      });
+
+    return Object.fromEntries(sanitizedEntries) as T;
+  }
+
+  return value;
+};
+
 const adaptGroup = (data: Group): Group => {
   const expenses = (data.expenses ?? []).map((expense) => ({
     ...expense,
@@ -266,16 +286,16 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       // Use the participants calculated by the UI, which handles rounding correctly
       const splitShares: ParticipantShare[] = expense.participants;
 
-      const newExpense: any = {
+      const newExpense = stripUndefinedDeep({
         ...expense,
         expenseId,
         participants: splitShares,
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      };
+      });
 
       if (receipt) {
-        newExpense.receipt = receipt;
+        newExpense.receipt = stripUndefinedDeep(receipt);
       }
 
       await updateDoc(docRef, {
@@ -331,10 +351,10 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         }
       }
 
-      const finalExpense: any = { ...updatedExpense, updatedAt: Date.now() };
+      const finalExpense = stripUndefinedDeep({ ...updatedExpense, updatedAt: Date.now() });
 
       if (receipt) {
-        finalExpense.receipt = receipt;
+        finalExpense.receipt = stripUndefinedDeep(receipt);
       } else {
         // If receipt is undefined/null, ensure it's removed if it existed
         delete finalExpense.receipt;

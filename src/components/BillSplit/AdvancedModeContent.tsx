@@ -1817,17 +1817,25 @@ interface GamifiedProps {
   isSpinning: boolean;
   currency: string;
   totalAmount: number;
+  initialWeightedAssignments?: { userId: string; percentage: number }[];
   onWeightedComplete?: (assignments: { userId: string; percentage: number }[]) => void;
+  initialKarmaIntensity?: number;
+  initialKarmaApplied?: boolean;
+  onKarmaIntensityChange?: (value: number) => void;
   onKarmaComplete?: (results: { userId: string; amount: number }[]) => void;
 }
 
 const GamifiedMode_ = React.memo(({
   mode, onModeChange, participants, onWeightChange, loserId, onSpin,
-  spinTargetIndex, onSpinComplete, isSpinning, currency, totalAmount, onWeightedComplete, onKarmaComplete,
+  spinTargetIndex, onSpinComplete, isSpinning, currency, totalAmount, initialWeightedAssignments,
+  onWeightedComplete, initialKarmaIntensity, initialKarmaApplied, onKarmaIntensityChange, onKarmaComplete,
 }: GamifiedProps) => {
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
-  const included = participants.filter((p) => p.included);
+  const included = useMemo(
+    () => participants.filter((participant) => participant.included),
+    [participants],
+  );
   const loserName = included.find((p) => p.id === loserId)?.name;
 
   // Wheel ref for roulette / weighted modes
@@ -1855,8 +1863,8 @@ const GamifiedMode_ = React.memo(({
     { key: 0.75, label: 'Strong', emoji: '💪' },
     { key: 1.0, label: 'Full', emoji: '🔥' },
   ];
-  const [karmaIntensity, setKarmaIntensity] = useState(0.5);
-  const [karmaApplied, setKarmaApplied] = useState(false);
+  const [karmaIntensity, setKarmaIntensity] = useState(initialKarmaIntensity ?? 0.5);
+  const [karmaApplied, setKarmaApplied] = useState(initialKarmaApplied ?? false);
 
   const karmaComputed = useMemo(() => {
     if (mode !== 'scrooge') return [];
@@ -1888,10 +1896,10 @@ const GamifiedMode_ = React.memo(({
 
   useEffect(() => {
     if (mode === 'scrooge') {
-      setKarmaApplied(false);
-      setKarmaIntensity(0.5);
+      setKarmaApplied(initialKarmaApplied ?? false);
+      setKarmaIntensity(initialKarmaIntensity ?? 0.5);
     }
-  }, [mode]);
+  }, [initialKarmaApplied, initialKarmaIntensity, mode]);
 
   const handleApplyKarma = useCallback(() => {
     successHaptic();
@@ -1905,15 +1913,40 @@ const GamifiedMode_ = React.memo(({
   const handleResetKarma = useCallback(() => {
     mediumHaptic();
     setKarmaApplied(false);
-    setKarmaIntensity(0.5);
-  }, []);
+    setKarmaIntensity(initialKarmaIntensity ?? 0.5);
+    onKarmaIntensityChange?.(initialKarmaIntensity ?? 0.5);
+  }, [initialKarmaIntensity, onKarmaIntensityChange]);
 
   // ── Weighted Roulette State ─────────────────────────────────────────
   const weightedWheelRef = useRef<WeightedRouletteWheelRef>(null);
-  const [wAssignments, setWAssignments] = useState<{ userId: string; name: string; percentage: number }[]>([]);
-  const [wPhase, setWPhase] = useState<'idle' | 'spinning-user' | 'user-selected' | 'spinning-pct' | 'complete'>('idle');
-  const [wPercentOptions, setWPercentOptions] = useState<number[]>(() => generatePercentageOptions(100));
+  const [wAssignments, setWAssignments] = useState<{ userId: string; name: string; percentage: number }[]>(() => (
+    (initialWeightedAssignments ?? []).map((assignment) => ({
+      userId: assignment.userId,
+      name: included.find((participant) => participant.id === assignment.userId)?.name ?? '',
+      percentage: assignment.percentage,
+    }))
+  ));
+  const [wPhase, setWPhase] = useState<'idle' | 'spinning-user' | 'user-selected' | 'spinning-pct' | 'complete'>(
+    initialWeightedAssignments?.length ? 'complete' : 'idle',
+  );
+  const [wPercentOptions, setWPercentOptions] = useState<number[]>(() => {
+    const allocated = (initialWeightedAssignments ?? []).reduce((sum, assignment) => sum + assignment.percentage, 0);
+    return generatePercentageOptions(Math.max(0, 100 - allocated));
+  });
   const [wSelectedUser, setWSelectedUser] = useState<string | null>(null);
+  const seededWeightedAssignments = useMemo(
+    () => (initialWeightedAssignments ?? []).map((assignment) => ({
+      userId: assignment.userId,
+      name: included.find((participant) => participant.id === assignment.userId)?.name ?? '',
+      percentage: assignment.percentage,
+    })),
+    [included, initialWeightedAssignments],
+  );
+  const seededWeightedKey = useMemo(
+    () => seededWeightedAssignments.map((assignment) => `${assignment.userId}:${assignment.percentage}`).join('|'),
+    [seededWeightedAssignments],
+  );
+  const lastWeightedSeedRef = useRef<string | null>(null);
 
   const wAllocated = useMemo(() => wAssignments.reduce((s, a) => s + a.percentage, 0), [wAssignments]);
   const wRemainingPct = 100 - wAllocated;
@@ -1925,12 +1958,23 @@ const GamifiedMode_ = React.memo(({
 
   // Reset weighted state when switching modes
   useEffect(() => {
-    if (mode !== 'weightedRoulette') return;
-    setWAssignments([]);
-    setWPhase('idle');
+    if (mode !== 'weightedRoulette') {
+      lastWeightedSeedRef.current = null;
+      return;
+    }
+
+    if (lastWeightedSeedRef.current === seededWeightedKey) {
+      return;
+    }
+
+    lastWeightedSeedRef.current = seededWeightedKey;
+    setWAssignments(seededWeightedAssignments);
+    setWPhase(seededWeightedAssignments.length ? 'complete' : 'idle');
     setWSelectedUser(null);
-    setWPercentOptions(generatePercentageOptions(100));
-  }, [mode]);
+    setWPercentOptions(generatePercentageOptions(
+      Math.max(0, 100 - seededWeightedAssignments.reduce((sum, assignment) => sum + assignment.percentage, 0)),
+    ));
+  }, [mode, seededWeightedAssignments, seededWeightedKey]);
 
   // Store references for async callbacks
   const wSelectedUserRef = useRef<string | null>(null);
@@ -2004,7 +2048,8 @@ const GamifiedMode_ = React.memo(({
     setWPhase('idle');
     setWSelectedUser(null);
     setWPercentOptions(generatePercentageOptions(100));
-  }, []);
+    onWeightedComplete?.([]);
+  }, [onWeightedComplete]);
 
   return (
     <View style={styles.section}>
@@ -2174,7 +2219,12 @@ const GamifiedMode_ = React.memo(({
                     borderColor: karmaIntensity === preset.key ? theme.colors.primary : palette.border,
                   },
                 ]}
-                onPress={() => { lightHaptic(); setKarmaIntensity(preset.key); setKarmaApplied(false); }}
+                onPress={() => {
+                  lightHaptic();
+                  setKarmaIntensity(preset.key);
+                  setKarmaApplied(false);
+                  onKarmaIntensityChange?.(preset.key);
+                }}
               >
                 <Text style={{ fontSize: 14 }}>{preset.emoji}</Text>
                 <Text
@@ -2515,7 +2565,11 @@ interface AdvancedModeContentProps {
   spinTargetIndex: number | null;
   onSpinComplete: (winnerId: string) => void;
   isSpinning: boolean;
+  initialWeightedAssignments?: { userId: string; percentage: number }[];
   onWeightedComplete?: (assignments: { userId: string; percentage: number }[]) => void;
+  initialKarmaIntensity?: number;
+  initialKarmaApplied?: boolean;
+  onKarmaIntensityChange?: (value: number) => void;
   onKarmaComplete?: (results: { userId: string; amount: number }[]) => void;
   // Item Type
   itemCategories: ItemCategory[];
@@ -2586,7 +2640,11 @@ export const AdvancedModeContent = React.memo((props: AdvancedModeContentProps) 
           isSpinning={props.isSpinning}
           currency={props.currency}
           totalAmount={props.totalAmount}
+          initialWeightedAssignments={props.initialWeightedAssignments}
           onWeightedComplete={props.onWeightedComplete}
+          initialKarmaIntensity={props.initialKarmaIntensity}
+          initialKarmaApplied={props.initialKarmaApplied}
+          onKarmaIntensityChange={props.onKarmaIntensityChange}
           onKarmaComplete={props.onKarmaComplete}
         />
       );

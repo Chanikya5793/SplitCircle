@@ -2,6 +2,7 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
+import type { ExpenseSplitMetadata } from '@/models';
 import { heavyHaptic, mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -50,7 +51,14 @@ interface BillSplitScreenProps {
   currency?: string;
   initialParticipants?: Participant[];
   initialPayer?: string;
-  onDone?: (result: { paidBy: string; method: SplitMethod; participants: { userId: string; share: number }[] }) => void;
+  initialSplitMetadata?: ExpenseSplitMetadata;
+  onDone?: (result: {
+    paidBy: string;
+    method: SplitMethod;
+    participants: { userId: string; share: number }[];
+    splitMetadata: ExpenseSplitMetadata;
+    resolvedTotalAmount: number;
+  }) => void;
   onCancel?: () => void;
 }
 
@@ -65,58 +73,80 @@ function clampParticipantDays(value: number, periodDays: number): number {
   return Math.min(Math.max(0, Math.round(value)), Math.max(1, periodDays));
 }
 
+function isBasicMethod(method?: ExpenseSplitMetadata['method']): method is BasicSplitMethod {
+  return method === 'equal' || method === 'exact' || method === 'percentage' || method === 'shares' || method === 'adjustment';
+}
+
+function isAdvancedMethod(method?: ExpenseSplitMetadata['method']): method is AdvancedSplitMethod {
+  return method === 'itemized' || method === 'income' || method === 'consumption' || method === 'timeBased' || method === 'gamified' || method === 'itemType';
+}
+
 export const BillSplitScreen = ({
   totalAmount = MOCK_TOTAL,
   currency = 'USD',
   initialParticipants,
   initialPayer,
+  initialSplitMetadata,
   onDone,
   onCancel,
 }: BillSplitScreenProps) => {
   const { theme, isDark } = useTheme();
   const palette = isDark ? darkColors : colors;
   const seedParticipants = initialParticipants ?? MOCK_PARTICIPANTS;
+  const initialMethod = initialSplitMetadata?.method;
 
   // ── Core State ────────────────────────────────────────────────────────────
   const [participants, setParticipants] = useState<Participant[]>(
     seedParticipants,
   );
-  const [timePeriodDays, setTimePeriodDays] = useState(() => inferInitialTimePeriodDays(seedParticipants));
-  const [timeSplitVariant, setTimeSplitVariant] = useState<TimeSplitVariant>('dynamic');
-  const [timePeriodStartDate, setTimePeriodStartDate] = useState('');
-  const [timePeriodEndDate, setTimePeriodEndDate] = useState('');
+  const [timePeriodDays, setTimePeriodDays] = useState(() => initialSplitMetadata?.timePeriodDays ?? inferInitialTimePeriodDays(seedParticipants));
+  const [timeSplitVariant, setTimeSplitVariant] = useState<TimeSplitVariant>(initialSplitMetadata?.timeSplitVariant ?? 'dynamic');
+  const [timePeriodStartDate, setTimePeriodStartDate] = useState(initialSplitMetadata?.timePeriodStartDate ?? '');
+  const [timePeriodEndDate, setTimePeriodEndDate] = useState(initialSplitMetadata?.timePeriodEndDate ?? '');
   const [paidBy, setPaidBy] = useState(initialPayer ?? participants[0]?.id ?? '');
   const [showPayerMenu, setShowPayerMenu] = useState(false);
 
   // ── Method State ──────────────────────────────────────────────────────────
-  const [activeBasicMethod, setActiveBasicMethod] = useState<BasicSplitMethod>('equal');
-  const [activeAdvancedMethod, setActiveAdvancedMethod] = useState<AdvancedSplitMethod | null>(null);
+  const [activeBasicMethod, setActiveBasicMethod] = useState<BasicSplitMethod>(
+    isBasicMethod(initialMethod) ? initialMethod : 'equal',
+  );
+  const [activeAdvancedMethod, setActiveAdvancedMethod] = useState<AdvancedSplitMethod | null>(
+    isAdvancedMethod(initialMethod) ? initialMethod : null,
+  );
   const currentMethod: SplitMethod = activeAdvancedMethod ?? activeBasicMethod;
 
   // ── Advanced Section Toggle ───────────────────────────────────────────────
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(Boolean(isAdvancedMethod(initialMethod)));
 
   // ── Itemized Receipt State ────────────────────────────────────────────────
-  const [receiptItems, setReceiptItems] = useState<ReceiptItem[]>([
-    { id: 'item_1', name: 'Pasta', price: 24.0, assignedTo: ['u1', 'u3'] },
-    { id: 'item_2', name: 'Steak', price: 42.0, assignedTo: ['u2'] },
-    { id: 'item_3', name: 'Salad', price: 16.0, assignedTo: ['u1', 'u3', 'u4'] },
-    { id: 'item_4', name: 'Cocktails', price: 36.0, assignedTo: ['u1', 'u2'] },
-  ]);
-  const [taxAmount, setTaxAmount] = useState(12.5);
-  const [tipAmount, setTipAmount] = useState(19.5);
+  const [receiptItems, setReceiptItems] = useState<ReceiptItem[]>(
+    initialSplitMetadata?.receiptItems?.length
+      ? initialSplitMetadata.receiptItems
+      : [
+        { id: 'item_1', name: 'Pasta', price: 24.0, assignedTo: ['u1', 'u3'] },
+        { id: 'item_2', name: 'Steak', price: 42.0, assignedTo: ['u2'] },
+        { id: 'item_3', name: 'Salad', price: 16.0, assignedTo: ['u1', 'u3', 'u4'] },
+        { id: 'item_4', name: 'Cocktails', price: 36.0, assignedTo: ['u1', 'u2'] },
+      ],
+  );
+  const [taxAmount, setTaxAmount] = useState(initialSplitMetadata?.taxAmount ?? 12.5);
+  const [tipAmount, setTipAmount] = useState(initialSplitMetadata?.tipAmount ?? 19.5);
 
   // ── Consumption State ─────────────────────────────────────────────────────
-  const [totalParts, setTotalParts] = useState(8);
+  const [totalParts, setTotalParts] = useState(initialSplitMetadata?.totalParts ?? 8);
 
   // ── Gamified State ────────────────────────────────────────────────────────
-  const [gamifiedMode, setGamifiedMode] = useState<GamifiedMode>('roulette');
-  const [loserId, setLoserId] = useState<string | null>(null);
+  const [gamifiedMode, setGamifiedMode] = useState<GamifiedMode>(initialSplitMetadata?.gamifiedMode ?? 'roulette');
+  const [loserId, setLoserId] = useState<string | null>(initialSplitMetadata?.rouletteLoserId ?? null);
   const [isSpinning, setIsSpinning] = useState(false);
   const [spinTargetIndex, setSpinTargetIndex] = useState<number | null>(null);
+  const [weightedAssignments, setWeightedAssignments] = useState<{ userId: string; percentage: number }[]>(
+    initialSplitMetadata?.weightedAssignments ?? [],
+  );
+  const [karmaIntensity, setKarmaIntensity] = useState(initialSplitMetadata?.karmaIntensity ?? 0.5);
 
   // ── Item Type State ───────────────────────────────────────────────────────
-  const [itemCategories, setItemCategories] = useState<ItemCategory[]>([]);
+  const [itemCategories, setItemCategories] = useState<ItemCategory[]>(initialSplitMetadata?.itemCategories ?? []);
 
   // ── Participant Updaters ──────────────────────────────────────────────────
   const updateParticipant = useCallback((id: string, update: Partial<Participant>) => {
@@ -324,6 +354,7 @@ export const BillSplitScreen = ({
 
   // ── Weighted Roulette Complete ────────────────────────────────────────────
   const handleWeightedComplete = useCallback((assignments: { userId: string; percentage: number }[]) => {
+    setWeightedAssignments(assignments);
     setParticipants((prev) =>
       prev.map((p) => {
         const a = assignments.find((x) => x.userId === p.id);
@@ -349,6 +380,26 @@ export const BillSplitScreen = ({
     );
     setLoserId(null);
     setIsSpinning(false);
+  }, []);
+
+  const handleGamifiedModeChange = useCallback((mode: GamifiedMode) => {
+    setGamifiedMode(mode);
+    setLoserId(null);
+    setSpinTargetIndex(null);
+    setIsSpinning(false);
+    setParticipants((prev) => prev.map((participant) => ({
+      ...participant,
+      percentage: 0,
+      computedAmount: 0,
+    })));
+
+    if (mode !== 'weightedRoulette') {
+      setWeightedAssignments([]);
+    }
+
+    if (mode !== 'scrooge') {
+      setKarmaIntensity(0.5);
+    }
   }, []);
 
   // ── Smart Suggestions ─────────────────────────────────────────────────────
@@ -467,16 +518,20 @@ export const BillSplitScreen = ({
     return computedParticipants;
   }, [currentMethod, computedParticipants, participants]);
 
+  const effectiveTotalAmount = useMemo(
+    () => (currentMethod === 'itemized'
+      ? receiptItems.reduce((sum, item) => sum + item.price, 0) + taxAmount + tipAmount
+      : totalAmount),
+    [currentMethod, receiptItems, taxAmount, tipAmount, totalAmount],
+  );
+
   // ── Validation ────────────────────────────────────────────────────────────
   const validation: ValidationResult = useMemo(() => {
     if (currentMethod === 'gamified' && gamifiedMode === 'roulette' && !loserId) {
       return { isValid: false, message: 'Spin to decide!', difference: 0 };
     }
-    const effectiveTotal = currentMethod === 'itemized'
-      ? receiptItems.reduce((s, it) => s + it.price, 0) + taxAmount + tipAmount
-      : totalAmount;
-    return validateSplit(effectiveTotal, displayParticipants);
-  }, [displayParticipants, totalAmount, currentMethod, gamifiedMode, loserId, receiptItems, taxAmount, tipAmount]);
+    return validateSplit(effectiveTotalAmount, displayParticipants);
+  }, [displayParticipants, effectiveTotalAmount, currentMethod, gamifiedMode, loserId]);
 
   const included = displayParticipants.filter((p) => p.included);
 
@@ -515,6 +570,52 @@ export const BillSplitScreen = ({
     if (!canDone) {
       return;
     }
+
+    const splitMetadata: ExpenseSplitMetadata = {
+      version: 1,
+      method: currentMethod,
+      participantConfig: displayParticipants.map((participant) => ({
+        userId: participant.id,
+        included: participant.included,
+        exactAmount: participant.exactAmount,
+        percentage: participant.percentage,
+        shares: participant.shares,
+        adjustment: participant.adjustment,
+        incomeWeight: participant.incomeWeight,
+        historicalPaid: participant.historicalPaid,
+        daysStayed: participant.daysStayed,
+        checkInDate: participant.checkInDate,
+        checkOutDate: participant.checkOutDate,
+        selectedStayDates: participant.selectedStayDates,
+        partsConsumed: participant.partsConsumed,
+        rouletteWeight: participant.rouletteWeight,
+        computedAmount: participant.computedAmount,
+      })),
+      ...(currentMethod === 'itemized' ? {
+        receiptItems,
+        taxAmount,
+        tipAmount,
+      } : {}),
+      ...(currentMethod === 'consumption' ? {
+        totalParts,
+      } : {}),
+      ...(currentMethod === 'timeBased' ? {
+        timeSplitVariant,
+        timePeriodDays,
+        timePeriodStartDate,
+        timePeriodEndDate,
+      } : {}),
+      ...(currentMethod === 'gamified' ? {
+        gamifiedMode,
+        rouletteLoserId: gamifiedMode === 'roulette' ? loserId ?? undefined : undefined,
+        weightedAssignments: gamifiedMode === 'weightedRoulette' ? weightedAssignments : undefined,
+        karmaIntensity: gamifiedMode === 'scrooge' ? karmaIntensity : undefined,
+      } : {}),
+      ...(currentMethod === 'itemType' ? {
+        itemCategories,
+      } : {}),
+    };
+
     successHaptic();
     onDone?.({
       paidBy,
@@ -522,8 +623,30 @@ export const BillSplitScreen = ({
       participants: displayParticipants
         .filter((p) => p.included)
         .map((p) => ({ userId: p.id, share: p.computedAmount })),
+      splitMetadata,
+      resolvedTotalAmount: effectiveTotalAmount,
     });
-  }, [canDone, paidBy, currentMethod, displayParticipants, onDone]);
+  }, [
+    canDone,
+    currentMethod,
+    displayParticipants,
+    effectiveTotalAmount,
+    gamifiedMode,
+    itemCategories,
+    karmaIntensity,
+    loserId,
+    onDone,
+    paidBy,
+    receiptItems,
+    taxAmount,
+    timePeriodDays,
+    timePeriodEndDate,
+    timePeriodStartDate,
+    timeSplitVariant,
+    tipAmount,
+    totalParts,
+    weightedAssignments,
+  ]);
 
   const payerName = participants.find((p) => p.id === paidBy)?.name ?? 'Unknown';
 
@@ -721,14 +844,18 @@ export const BillSplitScreen = ({
                   timePeriodEndDate={timePeriodEndDate}
                   onTimePeriodRangeChange={handleTimePeriodRangeChange}
                   gamifiedMode={gamifiedMode}
-                  onGamifiedModeChange={setGamifiedMode}
+                  onGamifiedModeChange={handleGamifiedModeChange}
                   onRouletteWeightChange={handleRouletteWeightChange}
                   loserId={loserId}
                   onSpin={handleSpin}
                   spinTargetIndex={spinTargetIndex}
                   onSpinComplete={handleWheelSpinComplete}
                   isSpinning={isSpinning}
+                  initialWeightedAssignments={weightedAssignments}
                   onWeightedComplete={handleWeightedComplete}
+                  initialKarmaIntensity={karmaIntensity}
+                  initialKarmaApplied={Boolean(initialSplitMetadata && initialSplitMetadata.gamifiedMode === 'scrooge')}
+                  onKarmaIntensityChange={setKarmaIntensity}
                   onKarmaComplete={handleKarmaComplete}
                   itemCategories={itemCategories}
                   onItemCategoriesChange={setItemCategories}
@@ -743,9 +870,7 @@ export const BillSplitScreen = ({
           {/* Sticky Footer */}
           <View style={styles.footerWrapper}>
             <SplitFooter
-              totalAmount={currentMethod === 'itemized'
-                ? receiptItems.reduce((s, it) => s + it.price, 0) + taxAmount + tipAmount
-                : totalAmount}
+              totalAmount={effectiveTotalAmount}
               currency={currency}
               includedCount={included.length}
               participants={displayParticipants}

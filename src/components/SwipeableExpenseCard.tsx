@@ -2,6 +2,7 @@ import { GlassView } from '@/components/GlassView';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
 import { formatCurrency } from '@/utils/currency';
+import { getExpenseSplitLabel } from '@/utils/expenseSplit';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
@@ -46,6 +47,7 @@ export const SwipeableExpenseCard = ({
   const swipeableRef = useRef<Swipeable>(null);
   const payerName = memberMap[expense.paidBy] || 'Unknown';
   const isSettlement = expense.category === 'Settlement';
+  const splitLabel = getExpenseSplitLabel(expense);
 
   const handlePress = () => {
     lightHaptic();
@@ -113,7 +115,9 @@ export const SwipeableExpenseCard = ({
                   <View style={{ flex: 1 }}>
                     <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{expense.title}</Text>
                     <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
-                      {expense.category} · Paid by {payerName}
+                      {isSettlement
+                        ? `${expense.category} · Paid by ${payerName}`
+                        : `${expense.category} · ${splitLabel} · Paid by ${payerName}`}
                     </Text>
                     <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                       {new Date(expense.createdAt).toLocaleDateString()}
