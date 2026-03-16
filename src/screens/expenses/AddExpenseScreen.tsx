@@ -6,10 +6,16 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { Group, ParticipantShare, SplitType } from '@/models';
+import type { ExpenseSplitMetadata, Group, ParticipantShare, SplitType } from '@/models';
 import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
 import { formatCurrency } from '@/utils/currency';
-import { mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
+import {
+  computeSharesFromExpenseSplit,
+  computeParticipantsFromSplitMetadata,
+  getExpenseSplitLabel,
+  inferExpenseSplitMetadata,
+} from '@/utils/expenseSplit';
+import { mediumHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -53,6 +59,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   const [splitType, setSplitType] = useState<SplitType>('equal');
   const [selectedMembers, setSelectedMembers] = useState<string[]>(group.members.map((member) => member.userId));
   const [customShares, setCustomShares] = useState<Record<string, string>>({});
+  const [splitMetadata, setSplitMetadata] = useState<ExpenseSplitMetadata | undefined>();
   const [receiptUri, setReceiptUri] = useState<string | null>(null);
   const [receiptType, setReceiptType] = useState<'image' | 'document' | null>(null);
   const [receiptName, setReceiptName] = useState<string | null>(null);
@@ -80,6 +87,8 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
         setPaidBy(expense.paidBy);
         setSplitType(expense.splitType);
         setSelectedMembers(expense.participants.map((p) => p.userId));
+        setSplitMetadata(inferExpenseSplitMetadata(expense));
+        setSplitMethodLabel(getExpenseSplitLabel(expense));
 
         if (expense.receipt?.url) {
           setReceiptUri(expense.receipt.url);
@@ -87,6 +96,10 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
           const isPdf = expense.receipt.fileName?.toLowerCase().endsWith('.pdf');
           setReceiptType(isPdf ? 'document' : 'image');
           setReceiptName(expense.receipt.fileName || 'Receipt');
+        } else {
+          setReceiptUri(null);
+          setReceiptType(null);
+          setReceiptName(null);
         }
 
         if (expense.splitType === 'custom') {
@@ -95,7 +108,12 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
             shares[p.userId] = p.share.toString();
           });
           setCustomShares(shares);
+        } else {
+          setCustomShares({});
         }
+      } else {
+        setSplitMetadata(undefined);
+        setSplitMethodLabel('Equal');
       }
     }
   }, [expenseId, group.expenses]);
@@ -105,54 +123,6 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     () => Object.fromEntries(group.members.map((member) => [member.userId, member.displayName])),
     [group.members],
   );
-
-  const participantShares = useMemo<ParticipantShare[]>(() => {
-    const numericAmount = Number(amount) || 0;
-    if (!numericAmount || selectedMembers.length === 0) {
-      return [];
-    }
-    if (splitType === 'custom') {
-      return selectedMembers.map((userId) => ({ userId, share: Number(customShares[userId] || '0') }));
-    }
-    const share = Number((numericAmount / selectedMembers.length).toFixed(2));
-    // Adjust for rounding errors on the last person
-    const totalCalculated = share * selectedMembers.length;
-    const diff = numericAmount - totalCalculated;
-
-    return selectedMembers.map((userId, index) => ({
-      userId,
-      share: index === selectedMembers.length - 1 ? Number((share + diff).toFixed(2)) : share
-    }));
-  }, [amount, customShares, selectedMembers, splitType]);
-
-  const customTotal = participantShares.reduce((sum, entry) => sum + entry.share, 0);
-  const matchesAmount = Math.abs(customTotal - (Number(amount) || 0)) < 0.01;
-
-  const formValid = Boolean(
-    title &&
-    amount &&
-    participantShares.length &&
-    (splitType !== 'custom' || (participantShares.every((entry) => entry.share >= 0) && matchesAmount))
-  );
-
-  const handleToggleMember = (userId: string) => {
-    selectionHaptic();
-    setSelectedMembers((prev) => {
-      if (prev.includes(userId)) {
-        setCustomShares((shares) => {
-          const next = { ...shares };
-          delete next[userId];
-          return next;
-        });
-        return prev.filter((id) => id !== userId);
-      }
-      return [...prev, userId];
-    });
-  };
-
-  const handleCustomShareChange = (userId: string, value: string) => {
-    setCustomShares((prev) => ({ ...prev, [userId]: value }));
-  };
 
   // ── BillSplit Integration ───────────────────────────────────────────────
   const historicalPaidMap = useMemo(() => {
@@ -167,39 +137,79 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   }, [group.members, group.expenses]);
 
   const billSplitParticipants = useMemo<Participant[]>(() => {
-    return group.members.map((m) => ({
-      id: m.userId,
-      name: m.displayName,
-      avatarUrl: m.photoURL,
-      included: selectedMembers.includes(m.userId),
-      exactAmount: Number(customShares[m.userId] || '0'),
-      percentage: 0,
-      shares: 1,
-      adjustment: 0,
-      incomeWeight: 50000,
-      daysStayed: 1,
-      partsConsumed: 0,
-      rouletteWeight: 25,
-      historicalPaid: historicalPaidMap[m.userId] ?? 0,
-      computedAmount: 0,
-    }));
-  }, [group.members, selectedMembers, customShares, historicalPaidMap]);
+    const configMap = new Map((splitMetadata?.participantConfig ?? []).map((participant) => [participant.userId, participant]));
+    const baseParticipants = group.members.map((m) => {
+      const config = configMap.get(m.userId);
 
-  const SPLIT_METHOD_LABELS: Record<string, string> = {
-    equal: 'Equal', exact: 'Exact amounts', percentage: 'Percentages',
-    shares: 'Shares', adjustment: 'Adjustments', itemized: 'Itemized receipt',
-    income: 'By income', consumption: 'Consumption', timeBased: 'Time-based',
-    gamified: 'Fun mode', itemType: 'By category',
-  };
+      return {
+        id: m.userId,
+        name: m.displayName,
+        avatarUrl: m.photoURL,
+        included: config?.included ?? selectedMembers.includes(m.userId),
+        exactAmount: config?.exactAmount ?? Number(customShares[m.userId] || '0'),
+        percentage: config?.percentage ?? 0,
+        shares: config?.shares ?? 1,
+        adjustment: config?.adjustment ?? 0,
+        incomeWeight: config?.incomeWeight ?? 50000,
+        daysStayed: config?.daysStayed ?? 1,
+        checkInDate: config?.checkInDate,
+        checkOutDate: config?.checkOutDate,
+        selectedStayDates: config?.selectedStayDates,
+        partsConsumed: config?.partsConsumed ?? 0,
+        rouletteWeight: config?.rouletteWeight ?? 25,
+        historicalPaid: config?.historicalPaid ?? historicalPaidMap[m.userId] ?? 0,
+        computedAmount: config?.computedAmount ?? Number(customShares[m.userId] || '0'),
+      };
+    });
+
+    return computeParticipantsFromSplitMetadata(Number(amount) || 0, baseParticipants, splitMetadata);
+  }, [amount, customShares, group.members, historicalPaidMap, selectedMembers, splitMetadata]);
+
+  const participantShares = useMemo<ParticipantShare[]>(() => {
+    const numericAmount = Number(amount) || 0;
+    if (!numericAmount || selectedMembers.length === 0) {
+      return [];
+    }
+
+    if (splitMetadata) {
+      return computeSharesFromExpenseSplit(numericAmount, billSplitParticipants, splitMetadata);
+    }
+
+    if (splitType === 'custom') {
+      return selectedMembers.map((userId) => ({ userId, share: Number(customShares[userId] || '0') }));
+    }
+
+    const share = Number((numericAmount / selectedMembers.length).toFixed(2));
+    const totalCalculated = share * selectedMembers.length;
+    const diff = numericAmount - totalCalculated;
+
+    return selectedMembers.map((userId, index) => ({
+      userId,
+      share: index === selectedMembers.length - 1 ? Number((share + diff).toFixed(2)) : share,
+    }));
+  }, [amount, billSplitParticipants, customShares, selectedMembers, splitMetadata, splitType]);
+
+  const customTotal = participantShares.reduce((sum, entry) => sum + entry.share, 0);
+  const matchesAmount = Math.abs(customTotal - (Number(amount) || 0)) < 0.01;
+
+  const formValid = Boolean(
+    title &&
+    amount &&
+    participantShares.length &&
+    (splitType !== 'custom' || (participantShares.every((entry) => entry.share >= 0) && matchesAmount))
+  );
 
   const handleBillSplitDone = (result: {
     paidBy: string;
     method: SplitMethod;
     participants: { userId: string; share: number }[];
+    splitMetadata: ExpenseSplitMetadata;
+    resolvedTotalAmount: number;
   }) => {
     successHaptic();
     setPaidBy(result.paidBy);
     setSelectedMembers(result.participants.map((p) => p.userId));
+    setSplitMetadata(result.splitMetadata);
 
     // Map advanced methods → 'custom' splitType for storage
     if (result.method === 'equal') {
@@ -214,7 +224,11 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       setCustomShares(shares);
     }
 
-    setSplitMethodLabel(SPLIT_METHOD_LABELS[result.method] || 'Custom');
+    if (Math.abs(result.resolvedTotalAmount - (Number(amount) || 0)) > 0.009) {
+      setAmount(result.resolvedTotalAmount.toFixed(2));
+    }
+
+    setSplitMethodLabel(getExpenseSplitLabel({ splitType: result.method === 'equal' ? 'equal' : 'custom', splitMetadata: result.splitMetadata }));
     setShowBillSplit(false);
   };
 
@@ -322,6 +336,39 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
 
   const handleSubmit = async () => {
     try {
+      const shareMap = Object.fromEntries(participantShares.map((participant) => [participant.userId, participant.share]));
+      const finalSplitMetadata: ExpenseSplitMetadata = splitMetadata
+        ? {
+          ...splitMetadata,
+          participantConfig: billSplitParticipants.map((participant) => ({
+            userId: participant.id,
+            included: participant.included,
+            exactAmount: participant.exactAmount,
+            percentage: participant.percentage,
+            shares: participant.shares,
+            adjustment: participant.adjustment,
+            incomeWeight: participant.incomeWeight,
+            historicalPaid: participant.historicalPaid,
+            daysStayed: participant.daysStayed,
+            checkInDate: participant.checkInDate,
+            checkOutDate: participant.checkOutDate,
+            selectedStayDates: participant.selectedStayDates,
+            partsConsumed: participant.partsConsumed,
+            rouletteWeight: participant.rouletteWeight,
+            computedAmount: shareMap[participant.id] ?? participant.computedAmount,
+          })),
+        }
+        : {
+          version: 1,
+          method: splitType === 'equal' ? 'equal' : 'exact',
+          participantConfig: group.members.map((member) => ({
+            userId: member.userId,
+            included: selectedMembers.includes(member.userId),
+            exactAmount: shareMap[member.userId] ?? 0,
+            computedAmount: shareMap[member.userId] ?? 0,
+          })),
+        };
+
       const expenseData = {
         groupId: group.groupId,
         title,
@@ -330,6 +377,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
         paidBy,
         splitType,
         participants: participantShares,
+        splitMetadata: finalSplitMetadata,
         settled: false,
         notes: '',
       };
@@ -483,21 +531,21 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
             <View style={styles.splitPreview}>
               <View style={styles.members}>
                 {group.members.filter((m) => selectedMembers.includes(m.userId)).map((member) => {
-                  const share = customShares[member.userId];
+                  const share = participantShares.find((participant) => participant.userId === member.userId)?.share;
                   return (
                     <Chip
                       key={member.userId}
-                      selected
-                      onPress={() => handleToggleMember(member.userId)}
-                      showSelectedOverlay
                       style={{ backgroundColor: theme.colors.secondaryContainer }}
                       textStyle={{ color: theme.colors.onSecondaryContainer }}
                     >
-                      {member.displayName}{share ? ` · ${formatCurrency(Number(share))}` : ''}
+                      {member.displayName}{typeof share === 'number' ? ` · ${formatCurrency(share, group.currency)}` : ''}
                     </Chip>
                   );
                 })}
               </View>
+              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                Reopen split options any time to adjust the mode, included people, or split inputs.
+              </Text>
             </View>
 
             <View style={styles.actions}>
@@ -519,14 +567,17 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
         presentationStyle="pageSheet"
         onRequestClose={() => setShowBillSplit(false)}
       >
-        <BillSplitScreen
-          totalAmount={Number(amount) || 0}
-          currency={group.currency || 'USD'}
-          initialParticipants={billSplitParticipants}
-          initialPayer={paidBy}
-          onDone={handleBillSplitDone}
-          onCancel={() => setShowBillSplit(false)}
-        />
+        {showBillSplit && (
+          <BillSplitScreen
+            totalAmount={Number(amount) || 0}
+            currency={group.currency || 'USD'}
+            initialParticipants={billSplitParticipants}
+            initialPayer={paidBy}
+            initialSplitMetadata={splitMetadata}
+            onDone={handleBillSplitDone}
+            onCancel={() => setShowBillSplit(false)}
+          />
+        )}
       </Modal>
 
       <Portal>
