@@ -1,9 +1,11 @@
 /**
- * VisionKit Receipt Scanner Service
+ * VisionKit Receipt Scanner Service — v2
  *
  * TypeScript wrapper around the native iOS VisionKit module.
- * Provides on-device document scanning + OCR for receipt data extraction.
- * Falls back gracefully on non-iOS platforms.
+ * Features:
+ * - On-device document scanning + OCR
+ * - Confidence scores per item
+ * - Graceful platform fallback
  */
 
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
@@ -14,6 +16,7 @@ export interface VisionKitScannedItem {
   name: string;
   price: number;
   quantity: number;
+  confidence: number; // 0.0 – 1.0
 }
 
 export interface VisionKitScanResult {
@@ -51,8 +54,7 @@ const VisionKitEventEmitter = VisionKitNative
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Check if VisionKit document scanning is available on the current device.
- * Returns false on Android and older iOS devices.
+ * Check if VisionKit document scanning is available.
  */
 export const isVisionKitAvailable = async (): Promise<boolean> => {
   if (Platform.OS !== 'ios' || !VisionKitNative) {
@@ -70,33 +72,32 @@ export const isVisionKitAvailable = async (): Promise<boolean> => {
 };
 
 /**
- * Launch the native iOS document scanner and perform on-device OCR.
- *
- * @param onProgress - Optional callback for scan progress updates
- * @returns Parsed receipt data with items, totals, and scanned image URI.
- *          Returns null if VisionKit is not available (Android, old iOS).
+ * Launch native document scanner and perform on-device OCR.
+ * Returns parsed receipt data with items, totals, confidence scores, and image URI.
  */
 export const scanReceiptWithVisionKit = async (
   onProgress?: (event: ScanProgressEvent) => void,
 ): Promise<VisionKitScanResult | null> => {
-  if (Platform.OS !== 'ios' || !VisionKitNative) {
-    return null;
-  }
+  if (Platform.OS !== 'ios' || !VisionKitNative) return null;
 
   let subscription: { remove: () => void } | null = null;
 
   try {
-    // Subscribe to progress events
     if (onProgress && VisionKitEventEmitter) {
-      subscription = VisionKitEventEmitter.addListener(
-        'onScanProgress',
-        onProgress,
-      );
+      subscription = VisionKitEventEmitter.addListener('onScanProgress', onProgress);
     }
 
     const result = await VisionKitNative.scanDocument();
 
-    // Normalize nulls from native side
+    console.log('[VisionKit] Raw native result:', JSON.stringify({
+      itemCount: result.items?.length,
+      total: result.total,
+      tax: result.tax,
+      subtotal: result.subtotal,
+      merchantName: result.merchantName,
+      date: result.date,
+    }));
+
     return {
       cancelled: result.cancelled === true,
       imageUri: result.imageUri || undefined,
@@ -106,6 +107,7 @@ export const scanReceiptWithVisionKit = async (
             name: typeof item.name === 'string' ? item.name : '',
             price: typeof item.price === 'number' ? item.price : 0,
             quantity: typeof item.quantity === 'number' ? item.quantity : 1,
+            confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
           }))
         : [],
       subtotal: typeof result.subtotal === 'number' ? result.subtotal : null,
