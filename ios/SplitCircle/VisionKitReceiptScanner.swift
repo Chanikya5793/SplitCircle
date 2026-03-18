@@ -135,7 +135,7 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
 
       NSLog("[VisionKitReceiptScanner] Raw OCR found \(allObservations.count) text observations")
       for (i, obs) in allObservations.enumerated() {
-        NSLog("[VisionKitReceiptScanner] Observation \(i): \"\(obs.0)\" y=\(obs.1.origin.y) h=\(obs.1.size.height)")
+        NSLog("[VisionKitReceiptScanner] Obs \(i): \"\(obs.0)\" x=\(String(format: "%.3f", obs.1.origin.x)) y=\(String(format: "%.3f", obs.1.origin.y)) w=\(String(format: "%.3f", obs.1.size.width)) h=\(String(format: "%.3f", obs.1.size.height))")
       }
 
       DispatchQueue.main.async { [weak self] in
@@ -186,7 +186,7 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
     }
   }
 
-  // MARK: - Receipt Parsing
+  // MARK: - Data Structures
 
   private struct ReceiptItem {
     let name: String
@@ -204,390 +204,521 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
     var date: String?
   }
 
-  /// Main parsing entry point — takes raw OCR observations and returns structured receipt data.
+  /// An individual text observation with its position info
+  private struct TextBlock {
+    let text: String
+    let rect: CGRect // normalized: origin at bottom-left, x goes right, y goes up
+    var centerY: CGFloat { rect.origin.y + rect.size.height / 2 }
+    var centerX: CGFloat { rect.origin.x + rect.size.width / 2 }
+    var rightEdge: CGFloat { rect.origin.x + rect.size.width }
+  }
+
+  /// A grouped receipt line containing multiple text blocks on the same horizontal line
+  private struct ReceiptLine {
+    let blocks: [TextBlock]
+    let fullText: String
+    let avgY: CGFloat
+
+    /// The leftmost text (item name region)
+    var leftText: String {
+      let sorted = blocks.sorted { $0.rect.origin.x < $1.rect.origin.x }
+      // Take blocks from the left until we hit a price-like block
+      var parts: [String] = []
+      for block in sorted {
+        let t = block.text.trimmingCharacters(in: .whitespaces)
+        // Stop if this block is purely a price (e.g. "12.44", "3.78 R", "$5.99")
+        if isPriceBlock(t) { break }
+        parts.append(t)
+      }
+      return parts.joined(separator: " ")
+    }
+
+    /// The rightmost price value on this line
+    var rightPrice: Double? {
+      let sorted = blocks.sorted { $0.rect.origin.x < $1.rect.origin.x }
+      // Scan from right to find the first price
+      for block in sorted.reversed() {
+        if let price = extractPriceFromBlock(block.text) {
+          return price
+        }
+      }
+      return nil
+    }
+  }
+
+  // MARK: - Main Parsing
+
   private func parseReceiptFromObservations(_ observations: [(String, CGRect)]) -> ParsedReceipt {
     var receipt = ParsedReceipt()
 
-    // Sort observations top-to-bottom (Vision uses bottom-left origin, so higher Y = higher on image)
-    let sortedObservations = observations.sorted { $0.1.origin.y > $1.1.origin.y }
-    let allTextLines = sortedObservations.map { $0.0 }
+    let textBlocks = observations.map { TextBlock(text: $0.0, rect: $0.1) }
 
-    // Extract merchant name and date from top of receipt
-    receipt.merchantName = extractMerchantName(from: allTextLines)
-    receipt.date = extractDate(from: allTextLines)
+    // ── Extract merchant name using text HEIGHT (biggest text near top = store name) ──
+    receipt.merchantName = extractMerchantNameSpatial(from: textBlocks)
+    receipt.date = extractDateFromBlocks(textBlocks)
 
-    // Group text observations on the same horizontal line into single receipt lines
-    let receiptLines = groupIntoReceiptLines(sortedObservations)
+    // ── Group into receipt lines using Y-coordinate overlap ──
+    let receiptLines = groupIntoLines(textBlocks)
 
     NSLog("[VisionKitReceiptScanner] Grouped into \(receiptLines.count) receipt lines")
     for (i, line) in receiptLines.enumerated() {
-      NSLog("[VisionKitReceiptScanner] Line \(i): \"\(line.text)\"")
+      NSLog("[VisionKitReceiptScanner] Line \(i): \"\(line.fullText)\" [blocks=\(line.blocks.count)]")
     }
 
-    // ── Price regex: matches $12.34, 12.34, $ 12.34 ──
-    // Handles trailing single letter (Walmart uses R, F, T; Hy-Vee uses other letters)
-    let pricePattern = try! NSRegularExpression(pattern: #"(?:\$\s*)?(\d{1,6}\.\d{2})\s*[A-Z]?\s*$"#, options: .caseInsensitive)
-    // Fallback: price anywhere in the line (with or without $)
-    let priceAnywhere = try! NSRegularExpression(pattern: #"(?:\$\s*)(\d{1,6}\.\d{2})"#)
-    // Quantity patterns: "2 @", "2x", "QTY 2", "QTY: 2"
-    let quantityPattern = try! NSRegularExpression(pattern: #"(\d+)\s*[xX@]|(?:QTY|Qty|qty)[:\s]*(\d+)"#)
+    // ── Classify each line ──
+    // We process top-to-bottom. Receipt structure is typically:
+    // [Header/Store info] → [Items] → [Subtotal] → [Tax] → [Total] → [Payment/Footer]
 
-    // ── Keywords that identify NON-item summary/footer lines ──
-    // These must contain one of these keywords to be skipped as summary lines.
-    // IMPORTANT: Only skip lines where the keyword IS the topic, not just a substring;
-    // e.g. "TAX $0.52" is a summary, but "TAXIDERMY KIT $19.99" is an item.
-    let summaryPatterns: [(pattern: String, isRegex: Bool)] = [
-      ("subtotal", false), ("sub total", false), ("sub-total", false),
-      ("grand total", false),
-      ("sales tax", false), (" tax ", false), ("tax$", true), ("^tax\\d?\\s", true),
-      ("hst ", false), ("gst ", false), (" vat ", false), ("^vat ", true),
-      ("tip", false), ("gratuity", false), ("service charge", false),
-      ("change due", false), ("cash tend", false), ("credit tend", false),
-      ("visa tend", false), ("wmp ", false), ("walmart pay", false),
-      ("total purchase", false),
-      ("amount tend", false), ("amount due", false), ("amount paid", false),
-      ("balance due", false), ("balance ", false),
-      ("visa", false), ("mastercard", false), ("amex", false), ("discover", false),
-      ("debit", false), ("cash", false), ("check", false),
-      ("card ending", false), ("card #", false), ("card no", false),
-      ("account #", false), ("appr#", false),
-      ("approval", false), ("auth code", false), ("ref #", false), ("ref:", false),
-      ("thank you", false), ("thanks", false),
-      ("receipt", false), ("invoice", false), ("transaction", false),
-      ("store #", false), ("store:", false), ("register", false), ("cashier", false),
-      ("you saved", false), ("your savings", false), ("member", false),
-      ("loyalty", false), ("rewards", false), ("points", false),
-      ("refund", false), ("return", false), ("exchange", false),
-      ("coupon", false), ("discount", false), ("promo", false),
-      ("# items", false), ("items sold", false), ("item count", false),
-    ]
-
-    // ── Lines that are just headers / column labels ──
-    let headerPatterns = ["qty", "price", "amount", "description", "dept", "upc"]
-
-    // ── For handling multi-line items (e.g., GRANNY APPLE on one line, weight+price on next) ──
-    var pendingName: String? = nil
-    var pendingPrice: Double? = nil
+    var inItemSection = false
+    var lastItemName: String? = nil // for weight continuation lines
 
     for line in receiptLines {
-      let text = line.text
+      let text = line.fullText
       let trimmed = text.trimmingCharacters(in: .whitespaces)
       let lower = trimmed.lowercased()
 
-      // Skip empty / very short lines
+      // Skip empty or very short lines
       guard trimmed.count >= 3 else { continue }
 
-      // Skip lines that are ALL numbers/separators (dates, phone numbers, barcodes)
+      // Skip lines that are ALL numbers/punctuation (barcodes, phone numbers, IDs)
       let alphaCount = trimmed.filter { $0.isLetter }.count
       if alphaCount == 0 { continue }
 
-      // ── Check for TOTAL line first (special handling, last total wins) ──
+      // ── TOTAL ──
       if matchesTotal(lower) {
-        if let price = extractBestPrice(from: trimmed, primary: pricePattern, fallback: priceAnywhere) {
+        if let price = line.rightPrice ?? extractAnyPrice(from: trimmed) {
           receipt.total = price
         }
+        inItemSection = false
         continue
       }
 
-      // ── Check for SUBTOTAL ──
-      if lower.contains("subtotal") || lower.contains("sub total") || lower.contains("sub-total") {
-        if let price = extractBestPrice(from: trimmed, primary: pricePattern, fallback: priceAnywhere) {
+      // ── SUBTOTAL ──
+      if matchesSubtotal(lower) {
+        if let price = line.rightPrice ?? extractAnyPrice(from: trimmed) {
           receipt.subtotal = price
         }
+        inItemSection = false
         continue
       }
 
-      // ── Check for TAX ──
+      // ── TAX ──
       if matchesTax(lower) {
-        if let price = extractBestPrice(from: trimmed, primary: pricePattern, fallback: priceAnywhere) {
+        if let price = line.rightPrice ?? extractAnyPrice(from: trimmed) {
           receipt.tax = price
         }
         continue
       }
 
-      // ── Check for TIP ──
-      if lower.contains("tip") || lower.contains("gratuity") || lower.contains("service charg") {
-        if let price = extractBestPrice(from: trimmed, primary: pricePattern, fallback: priceAnywhere) {
+      // ── TIP ──
+      if matchesTip(lower) {
+        if let price = line.rightPrice ?? extractAnyPrice(from: trimmed) {
           receipt.tip = price
         }
         continue
       }
 
-      // ── Check if this is a summary / footer line (skip it) ──
-      if isSummaryLine(lower, patterns: summaryPatterns) { continue }
+      // ── SKIP: Non-item lines (payment, footer, store info, addresses) ──
+      if isSkipLine(lower) { continue }
 
-      // ── Check if this is a header row ──
-      let isHeader = headerPatterns.allSatisfy { lower.contains($0) } ||
-                     (lower.hasPrefix("qty") && lower.contains("price"))
-      if isHeader { continue }
+      // ── Detect start of item section ──
+      // Item sections often start after header info. We start parsing items
+      // when we see the first line with a valid price that isn't a summary line.
+      if let price = line.rightPrice, price > 0 && price < 5000 {
+        inItemSection = true
 
-      // ── Try to parse as an ITEM line ──
-      let maybePrice = extractBestPrice(from: trimmed, primary: pricePattern, fallback: priceAnywhere)
+        // Extract item name from left-side text blocks
+        var itemName = extractItemName(from: line)
 
-      if let price = maybePrice, price > 0, price < 10000 {
-        // If there's a pending name from a previous line (name-only line),
-        // merge this price with that name.
-        if let pName = pendingName {
-          receipt.items.append(ReceiptItem(name: pName, price: price, quantity: 1))
-          NSLog("[VisionKitReceiptScanner] ✅ Merged Item: \"\(pName)\" $\(price)")
-          pendingName = nil
-          continue
-        }
-
-        // Extract quantity (default 1)
-        var quantity = 1
-        let qtyRange = NSRange(trimmed.startIndex..., in: trimmed)
-        if let qtyMatch = quantityPattern.firstMatch(in: trimmed, range: qtyRange) {
-          let g1 = qtyMatch.range(at: 1)
-          let g2 = qtyMatch.range(at: 2)
-          if g1.location != NSNotFound, let r = Range(g1, in: trimmed) {
-            quantity = Int(trimmed[r]) ?? 1
-          } else if g2.location != NSNotFound, let r = Range(g2, in: trimmed) {
-            quantity = Int(trimmed[r]) ?? 1
+        // Check if this is a weight continuation line (e.g., "1.97 lb. @ 1.00 lb. / 1.53 3.01 R")
+        if isWeightLine(lower) {
+          // Attach price to previous item name
+          if let prevName = lastItemName {
+            receipt.items.append(ReceiptItem(name: prevName, price: price, quantity: 1))
+            NSLog("[VisionKitReceiptScanner] ✅ Weight item: \"\(prevName)\" $\(price)")
+            lastItemName = nil
+            continue
           }
         }
 
-        // Extract item name: remove prices, quantity patterns, UPCs, and trailing tax indicators
-        let itemName = cleanItemName(from: trimmed, pricePattern: priceAnywhere, qtyPattern: quantityPattern)
-
-        // Only add items with a meaningful name
         if itemName.count >= 2 {
-          receipt.items.append(ReceiptItem(name: itemName, price: price, quantity: quantity))
-          NSLog("[VisionKitReceiptScanner] ✅ Item: \"\(itemName)\" $\(price) qty=\(quantity)")
-        } else {
-          // No name but has price — could be a weight/continuation line.
-          NSLog("[VisionKitReceiptScanner] ⚠️ Price $\(price) with no name, saving for merge")
-          pendingPrice = price
+          receipt.items.append(ReceiptItem(name: itemName, price: price, quantity: 1))
+          NSLog("[VisionKitReceiptScanner] ✅ Item: \"\(itemName)\" $\(price)")
+          lastItemName = nil
         }
-      } else {
-        // No price found. This might be a name-only line (e.g., "GRANNY APPLE 000000040170 F")
-        // where the item name is here but the price is on the next line (weight calculation)
-        let candidateName = cleanItemName(from: trimmed, pricePattern: priceAnywhere, qtyPattern: quantityPattern)
-        if candidateName.count >= 2 && !isSummaryLine(lower, patterns: summaryPatterns) {
-          // Check if this looks like an item name line (has some alpha characters, not just codes)
-          let alphaRatio = Double(candidateName.filter { $0.isLetter }.count) / Double(max(1, candidateName.count))
-          if alphaRatio > 0.4 {
-            pendingName = candidateName
-            NSLog("[VisionKitReceiptScanner] 📝 Name-only line saved: \"\(candidateName)\"")
-          }
+      } else if inItemSection {
+        // Line in item section but no price — could be name-only (e.g., weight items)
+        let candidateName = extractItemName(from: line)
+        if candidateName.count >= 2 && !isAddressLine(lower) {
+          lastItemName = candidateName
+          NSLog("[VisionKitReceiptScanner] 📝 Name-only: \"\(candidateName)\"")
         }
       }
     }
 
-    // ── Post-processing: compute total if missing ──
-    if receipt.total == nil {
-      if let subtotal = receipt.subtotal {
-        receipt.total = subtotal + (receipt.tax ?? 0) + (receipt.tip ?? 0)
-      } else if !receipt.items.isEmpty {
-        let itemsTotal = receipt.items.reduce(0.0) { $0 + $1.price * Double($1.quantity) }
-        receipt.total = itemsTotal + (receipt.tax ?? 0) + (receipt.tip ?? 0)
-      }
+    // ── Post-processing ──
+    if receipt.total == nil && receipt.subtotal != nil {
+      let itemSum = receipt.items.reduce(0.0) { $0 + $1.price }
+      receipt.total = itemSum + (receipt.tax ?? 0) + (receipt.tip ?? 0)
     }
 
     return receipt
   }
 
-  // MARK: - Line Grouping
+  // MARK: - Line Grouping (Spatial)
 
-  private struct ReceiptLine {
-    let text: String
-    let y: CGFloat
-  }
+  /// Groups text blocks into receipt lines based on Y-coordinate overlap.
+  /// Uses a generous threshold to handle slight vertical misalignments.
+  private func groupIntoLines(_ blocks: [TextBlock]) -> [ReceiptLine] {
+    guard !blocks.isEmpty else { return [] }
 
-  /// Groups OCR observations into receipt lines based on vertical position.
-  /// Text blocks at approximately the same Y coordinate are joined into one line (left to right).
-  private func groupIntoReceiptLines(_ observations: [(String, CGRect)]) -> [ReceiptLine] {
-    guard !observations.isEmpty else { return [] }
+    // Sort by Y descending (top of receipt first, since Vision Y=1 is top)
+    let sorted = blocks.sorted { $0.centerY > $1.centerY }
 
-    // Use a more generous Y threshold — receipt text can be slightly off-axis.
-    // 0.008 works well for most receipt heights (a pixel or two of skew).
-    let yThreshold: CGFloat = 0.015
+    var lines: [ReceiptLine] = []
+    var currentGroup: [TextBlock] = [sorted[0]]
+    var currentY = sorted[0].centerY
+    var currentHeight = sorted[0].rect.size.height
 
-    var groups: [(y: CGFloat, segments: [(text: String, x: CGFloat)])] = []
+    for i in 1..<sorted.count {
+      let block = sorted[i]
+      // Two blocks are on the same line if their Y centers are within
+      // the height of the taller block (generous overlap threshold)
+      let threshold = max(currentHeight, block.rect.size.height) * 0.8
+      let yDiff = abs(block.centerY - currentY)
 
-    for (text, box) in observations {
-      let centerY = box.origin.y + box.size.height / 2.0
-      let centerX = box.origin.x
-
-      var merged = false
-      for i in 0..<groups.count {
-        if abs(groups[i].y - centerY) < yThreshold {
-          // Update group Y to weighted average for better grouping
-          let oldCount = CGFloat(groups[i].segments.count)
-          groups[i].y = (groups[i].y * oldCount + centerY) / (oldCount + 1)
-          groups[i].segments.append((text: text, x: centerX))
-          merged = true
-          break
-        }
-      }
-
-      if !merged {
-        groups.append((y: centerY, segments: [(text: text, x: centerX)]))
+      if yDiff <= threshold {
+        // Same line
+        currentGroup.append(block)
+        // Update Y using weighted average
+        let totalBlocks = CGFloat(currentGroup.count)
+        currentY = currentGroup.reduce(0.0) { $0 + $1.centerY } / totalBlocks
+        currentHeight = max(currentHeight, block.rect.size.height)
+      } else {
+        // New line — save current group
+        lines.append(makeReceiptLine(from: currentGroup))
+        currentGroup = [block]
+        currentY = block.centerY
+        currentHeight = block.rect.size.height
       }
     }
+    // Don't forget the last group
+    if !currentGroup.isEmpty {
+      lines.append(makeReceiptLine(from: currentGroup))
+    }
 
-    // Sort each group's segments left-to-right, join with spacing
-    return groups.map { group in
-      let sorted = group.segments.sorted { $0.x < $1.x }
-      let joined = sorted.map { $0.text }.joined(separator: "  ")
-      return ReceiptLine(text: joined, y: group.y)
-    }.sorted { $0.y > $1.y } // top to bottom (higher Y = closer to top of image)
+    return lines
+  }
+
+  private func makeReceiptLine(from blocks: [TextBlock]) -> ReceiptLine {
+    // Sort blocks left to right for the full text
+    let sorted = blocks.sorted { $0.rect.origin.x < $1.rect.origin.x }
+    let fullText = sorted.map { $0.text.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
+    let avgY = sorted.reduce(0.0) { $0 + $1.centerY } / CGFloat(sorted.count)
+    return ReceiptLine(blocks: sorted, fullText: fullText, avgY: avgY)
   }
 
   // MARK: - Price Extraction
 
-  /// Tries the primary pattern first (price at end of line), then falls back to price anywhere.
-  private func extractBestPrice(from text: String, primary: NSRegularExpression, fallback: NSRegularExpression) -> Double? {
-    let range = NSRange(text.startIndex..., in: text)
+  /// Checks if a text block is primarily a price (e.g., "12.44", "3.78 R", "$5.99")
+  private static func isPriceBlock(_ text: String) -> Bool {
+    let trimmed = text.trimmingCharacters(in: .whitespaces)
+    // A price block: optional $, digits with one decimal point, optional trailing letter
+    let pattern = #"^\$?\s*\d{1,6}\.\d{2}\s*[A-Z]?\s*$"#
+    return (try? NSRegularExpression(pattern: pattern, options: .caseInsensitive))
+      .flatMap { $0.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)) } != nil
+  }
 
-    // Primary: price near end of line (most accurate for receipts)
-    let primaryMatches = primary.matches(in: text, range: range)
-    if let lastMatch = primaryMatches.last,
-       let priceRange = Range(lastMatch.range(at: 1), in: text),
-       let price = Double(text[priceRange]) {
+  /// Extracts a price (Double) from a text block
+  private static func extractPriceFromBlock(_ text: String) -> Double? {
+    let trimmed = text.trimmingCharacters(in: .whitespaces)
+    let pattern = #"\$?\s*(\d{1,6}\.\d{2})"#
+    guard let regex = try? NSRegularExpression(pattern: pattern),
+          let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+          let range = Range(match.range(at: 1), in: trimmed),
+          let price = Double(trimmed[range]) else { return nil }
+    return price
+  }
+
+  /// Extracts any price from a full line of text (fallback)
+  private func extractAnyPrice(from text: String) -> Double? {
+    // Find all decimal numbers in the text, return the LAST one (most likely the price)
+    let pattern = #"\$?\s*(\d{1,6}\.\d{2})"#
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+
+    // Return the last match (prices are typically at the end)
+    if let lastMatch = matches.last,
+       let range = Range(lastMatch.range(at: 1), in: text),
+       let price = Double(text[range]),
+       price > 0 && price < 50000 {
       return price
     }
-
-    // Fallback: any $X.XX in the line — use the last occurrence
-    let fallbackMatches = fallback.matches(in: text, range: range)
-    if let lastMatch = fallbackMatches.last,
-       let priceRange = Range(lastMatch.range(at: 1), in: text),
-       let price = Double(text[priceRange]) {
-      return price
-    }
-
-    // Last resort: bare number pattern X.XX at end of string, optionally followed by a single letter
-    let barePattern = try! NSRegularExpression(pattern: #"(\d{1,6}\.\d{2})\s*[A-Z]?\s*$"#, options: .caseInsensitive)
-    let bareMatches = barePattern.matches(in: text, range: range)
-    if let lastMatch = bareMatches.last,
-       let priceRange = Range(lastMatch.range(at: 1), in: text),
-       let price = Double(text[priceRange]) {
-      return price
-    }
-
     return nil
   }
 
-  // MARK: - Item Name Cleaning
+  // MARK: - Item Name Extraction
 
-  /// Strips prices, quantities, tax indicators and trailing junk from an item line to get just the name.
-  private func cleanItemName(from text: String, pricePattern: NSRegularExpression, qtyPattern: NSRegularExpression) -> String {
-    var name = text
+  /// Extracts a clean item name from the left-side text blocks of a receipt line.
+  private func extractItemName(from line: ReceiptLine) -> String {
+    let sorted = line.blocks.sorted { $0.rect.origin.x < $1.rect.origin.x }
 
-    // Remove ALL price occurrences ($X.XX or X.XX)
-    let allPricePattern = try! NSRegularExpression(pattern: #"\$?\s*\d{1,6}\.\d{2}"#)
-    name = allPricePattern.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+    // Collect text from left blocks, stopping before price blocks
+    var nameParts: [String] = []
+    for block in sorted {
+      let t = block.text.trimmingCharacters(in: .whitespaces)
+      if Self.isPriceBlock(t) { break }
 
-    // Remove quantity patterns (2x, 3 @, QTY 2, etc.)
-    name = qtyPattern.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+      // Also skip blocks that are pure UPC codes (8+ digits with no letters)
+      if isUPCCode(t) { continue }
 
-    // Remove UPC/barcode codes: sequences of 8+ digits (can appear ANYWHERE in the line)
-    let upcPattern = try! NSRegularExpression(pattern: #"\d{8,}"#)
-    name = upcPattern.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+      // Skip single-letter blocks (tax indicators: F, T, R, N, X)
+      if t.count == 1 && t.first?.isLetter == true { continue }
 
-    // Remove standalone single letters (tax indicators like F, T, R, N, X, A, B, O)
-    // Only remove if they stand alone (surrounded by spaces or at line edges)
-    let taxIndicator = try! NSRegularExpression(pattern: #"(?:^|\s)[FTNXABORW](?:\s|$)"#, options: .caseInsensitive)
-    name = taxIndicator.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: " ")
+      nameParts.append(t)
+    }
 
-    // Remove weight/unit info like "1.97 lb. @ 1.00 lb. / 1.53" (weight calculation lines)
-    let weightCalc = try! NSRegularExpression(pattern: #"\d+\.?\d*\s*(?:lb|lbs|oz|kg)\s*\.?\s*@.*"#, options: .caseInsensitive)
-    name = weightCalc.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+    var name = nameParts.joined(separator: " ")
 
-    // Remove leading item/dept codes like "004011" (5+ consecutive digits at start)
-    let codePattern = try! NSRegularExpression(pattern: #"^\d{5,}\s*"#)
-    name = codePattern.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+    // Clean up the name
+    name = cleanItemName(name)
 
-    // Remove leading/trailing special characters
+    return name
+  }
+
+  /// Cleans an item name by removing UPC codes, single trailing letters, weight info, etc.
+  private func cleanItemName(_ rawName: String) -> String {
+    var name = rawName
+
+    // Remove UPC/barcode codes: 8+ consecutive digits
+    if let regex = try? NSRegularExpression(pattern: #"\d{8,}"#) {
+      name = regex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+    }
+
+    // Remove inline price patterns ($X.XX or X.XX)
+    if let regex = try? NSRegularExpression(pattern: #"\$?\s*\d{1,6}\.\d{2}"#) {
+      name = regex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+    }
+
+    // Remove weight calculation info (e.g., "1.97 lb. @ 1.00 lb. / 1.53")
+    if let regex = try? NSRegularExpression(pattern: #"\d+\.?\d*\s*(?:lb|lbs|oz|kg)\s*\.?\s*@.*"#, options: .caseInsensitive) {
+      name = regex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+    }
+
+    // Remove standalone single uppercase letters (tax indicators F, T, R, N, X, etc.)
+    // Only at the start or end of the name, or surrounded by spaces
+    if let regex = try? NSRegularExpression(pattern: #"\s+[A-Z]\s*$"#) {
+      name = regex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+    }
+    if let regex = try? NSRegularExpression(pattern: #"^\s*[A-Z]\s+"#) {
+      name = regex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+    }
+
+    // Remove leading item/dept codes (5+ digit codes at the start)
+    if let regex = try? NSRegularExpression(pattern: #"^\d{5,}\s*"#) {
+      name = regex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+    }
+
+    // Clean up
     name = name
       .trimmingCharacters(in: .whitespaces)
-      .trimmingCharacters(in: CharacterSet(charactersIn: ".-–—:*#/"))
+      .trimmingCharacters(in: CharacterSet(charactersIn: ".-–—:*#/$@"))
       .trimmingCharacters(in: .whitespaces)
-
-    // Remove stray $ signs
-    name = name.replacingOccurrences(of: "$", with: "").trimmingCharacters(in: .whitespaces)
 
     // Collapse multiple spaces
     while name.contains("  ") {
       name = name.replacingOccurrences(of: "  ", with: " ")
     }
 
+    // Final trailing single letter removal (catches any remaining)
+    if name.count > 2 {
+      let lastSpace = name.lastIndex(of: " ")
+      if let lastSpace = lastSpace {
+        let trailing = String(name[name.index(after: lastSpace)...])
+        if trailing.count == 1 && trailing.first?.isUppercase == true {
+          name = String(name[..<lastSpace]).trimmingCharacters(in: .whitespaces)
+        }
+      }
+    }
+
     return name
   }
 
-  // MARK: - Summary / Footer Detection
+  // MARK: - Line Classification
 
-  /// Checks if a line is a "TOTAL" line (not subtotal)
   private func matchesTotal(_ lower: String) -> Bool {
-    // Must contain "total" but NOT "subtotal" / "sub total"
     guard lower.contains("total") else { return false }
     if lower.contains("subtotal") || lower.contains("sub total") || lower.contains("sub-total") { return false }
+    if lower.contains("total purchase") { return false } // Walmart footer
     return true
   }
 
-  /// Checks if a line is a TAX line.
-  /// Handles TAX, TAX1, TAX2, SALES TAX, STATE TAX, etc.
+  private func matchesSubtotal(_ lower: String) -> Bool {
+    return lower.contains("subtotal") || lower.contains("sub total") || lower.contains("sub-total")
+  }
+
   private func matchesTax(_ lower: String) -> Bool {
-    // "tax" followed by optional digit, then space or colon or end
-    if let regex = try? NSRegularExpression(pattern: #"^tax\d?\s"#),
-       regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) != nil { return true }
-    if lower.hasPrefix("tax:") || lower == "tax" { return true }
+    // "tax", "tax1", "tax2", "tax 6.1000%", "sales tax", etc.
+    if lower.hasPrefix("tax") {
+      // Make sure it's not "taxi" or "taxidermy"
+      let afterTax = String(lower.dropFirst(3))
+      if afterTax.isEmpty { return true }
+      let firstChar = afterTax.first!
+      if firstChar.isNumber || firstChar.isWhitespace || firstChar == ":" { return true }
+    }
     if lower.hasSuffix(" tax") { return true }
-    if lower.contains("sales tax") { return true }
-    if lower.contains("state tax") || lower.contains("local tax") || lower.contains("county tax") { return true }
-    if lower.hasPrefix("hst") || lower.hasPrefix("gst") || lower.hasPrefix("vat") { return true }
+    if lower.contains("sales tax") || lower.contains("state tax") || lower.contains("local tax") || lower.contains("county tax") { return true }
+    if lower.hasPrefix("hst") || lower.hasPrefix("gst") || lower.hasPrefix("vat ") { return true }
     return false
   }
 
-  /// Checks if a line matches any of the summary/footer patterns.
-  private func isSummaryLine(_ lower: String, patterns: [(pattern: String, isRegex: Bool)]) -> Bool {
-    for p in patterns {
-      if p.isRegex {
-        if let regex = try? NSRegularExpression(pattern: p.pattern, options: .caseInsensitive) {
-          let range = NSRange(lower.startIndex..., in: lower)
-          if regex.firstMatch(in: lower, range: range) != nil {
-            return true
-          }
-        }
-      } else {
-        if lower.contains(p.pattern) { return true }
-      }
+  private func matchesTip(_ lower: String) -> Bool {
+    return lower.contains("tip") || lower.contains("gratuity") || lower.contains("service charg")
+  }
+
+  /// Lines to skip entirely (payment info, store info, headers, footers)
+  private func isSkipLine(_ lower: String) -> Bool {
+    let skipPatterns = [
+      // Payment
+      "change due", "cash tend", "credit tend", "visa tend", "visa", "mastercard",
+      "amex", "discover", "debit", "wmp ", "walmart pay",
+      // Card info
+      "card ending", "card #", "card no", "account #", "appr#", "approval",
+      "auth code", "ref #", "ref:",
+      // Footer
+      "thank you", "thanks", "receipt", "invoice", "transaction",
+      "total purchase",
+      // Store info
+      "store #", "store:", "register", "cashier", "mgr.",
+      "supercenter", "supermarket",
+      // Savings/loyalty
+      "you saved", "your savings", "member", "loyalty", "rewards", "points",
+      // Returns
+      "refund", "return", "exchange", "coupon", "discount", "promo",
+      // Item count headers
+      "# items", "items sold", "item count",
+      // Misc
+      "survey", "feedback", "www.", "http", ".com",
+      // Transaction IDs
+      "tc#", "te#", "tr#", "op#", "st#",
+      // Free delivery ads
+      "free delivery", "walmart+",
+    ]
+
+    for pattern in skipPatterns {
+      if lower.contains(pattern) { return true }
+    }
+
+    // Skip lines that look like phone numbers (3-3-4 or 3-7 digit patterns)
+    if let _ = try? NSRegularExpression(pattern: #"^\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4}$"#)
+      .firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) {
+      return true
+    }
+
+    return false
+  }
+
+  /// Checks if a line looks like an address (contains state/zip pattern)
+  private func isAddressLine(_ lower: String) -> Bool {
+    // State abbreviation + zip code pattern: "MO 64468", "CA 90210"
+    if let _ = try? NSRegularExpression(pattern: #"\b[A-Z]{2}\s+\d{5}\b"#, options: .caseInsensitive)
+      .firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) {
+      return true
+    }
+    // Street patterns
+    if lower.contains(" st ") || lower.contains(" ave ") || lower.contains(" blvd ") ||
+       lower.contains(" rd ") || lower.contains(" dr ") || lower.hasSuffix(" st") {
+      return true
     }
     return false
   }
 
-  // MARK: - Merchant & Date Extraction
+  /// Checks if text is a UPC/barcode code (8+ digits, possibly with spaces)
+  private func isUPCCode(_ text: String) -> Bool {
+    let digitsOnly = text.filter { $0.isNumber }
+    let nonDigits = text.filter { !$0.isNumber && !$0.isWhitespace }
+    return digitsOnly.count >= 8 && nonDigits.count <= 1
+  }
 
-  private func extractMerchantName(from lines: [String]) -> String? {
-    for line in lines.prefix(5) {
-      let trimmed = line.trimmingCharacters(in: .whitespaces)
-      // Need at least 3 chars and some letters
-      if trimmed.count >= 3 {
-        let letters = trimmed.filter { $0.isLetter }
-        guard letters.count >= 2 else { continue }
-        let lower = trimmed.lowercased()
-        // Skip common non-merchant lines
-        if lower.contains("receipt") || lower.contains("invoice") || lower.contains("order #") { continue }
-        if lower.allSatisfy({ $0.isNumber || $0 == "/" || $0 == "-" || $0 == " " || $0 == "." || $0 == "(" || $0 == ")" }) { continue }
-        return String(trimmed.prefix(60))
+  /// Checks if a line is a weight/calculation line (e.g., "1.97 lb. @ 1.00 lb.")
+  private func isWeightLine(_ lower: String) -> Bool {
+    return lower.contains(" lb") && lower.contains("@") ||
+           lower.contains(" oz") && lower.contains("@") ||
+           lower.contains(" kg") && lower.contains("@")
+  }
+
+  // MARK: - Merchant Name (Spatial - uses text height)
+
+  /// Finds the merchant name by looking for the TALLEST text near the top of the receipt.
+  /// Store names are typically printed in large, bold letters.
+  private func extractMerchantNameSpatial(from blocks: [TextBlock]) -> String? {
+    // Consider only the top 40% of the receipt
+    let topBlocks = blocks.filter { $0.centerY > 0.6 } // Y > 0.6 means top 40% (Vision coords)
+
+    guard !topBlocks.isEmpty else {
+      // Fallback: just use top text
+      return extractMerchantNameFallback(from: blocks)
+    }
+
+    // Find the block with the largest height (biggest text = store name)
+    // Filter out very short text (< 3 chars) and numeric-only text
+    let candidates = topBlocks.filter { block in
+      let text = block.text.trimmingCharacters(in: .whitespaces)
+      let letterCount = text.filter { $0.isLetter }.count
+      return text.count >= 3 && letterCount >= 2
+    }
+
+    // Sort by height descending — largest text first
+    let sortedByHeight = candidates.sorted { $0.rect.size.height > $1.rect.size.height }
+
+    for block in sortedByHeight {
+      let text = block.text.trimmingCharacters(in: .whitespaces)
+      let lower = text.lowercased()
+
+      // Skip lines that are clearly not store names
+      if lower.contains("receipt") || lower.contains("invoice") || lower.contains("feedback") ||
+         lower.contains("survey") || lower.contains("www.") || lower.contains(".com") ||
+         lower.contains("thank") || lower.contains("id #") || lower.contains("id#") { continue }
+
+      // This is likely the store name!
+      NSLog("[VisionKitReceiptScanner] 🏪 Merchant detected: \"\(text)\" (height=\(String(format: "%.4f", block.rect.size.height)))")
+      return String(text.prefix(60))
+    }
+
+    return extractMerchantNameFallback(from: blocks)
+  }
+
+  private func extractMerchantNameFallback(from blocks: [TextBlock]) -> String? {
+    let sorted = blocks.sorted { $0.centerY > $1.centerY }
+    for block in sorted.prefix(5) {
+      let text = block.text.trimmingCharacters(in: .whitespaces)
+      let lower = text.lowercased()
+      if text.count >= 3 && text.filter({ $0.isLetter }).count >= 2 {
+        if !lower.contains("receipt") && !lower.contains("feedback") && !lower.contains("survey") &&
+           !lower.contains(".com") && !lower.contains("thank") && !lower.contains("id #") {
+          return String(text.prefix(60))
+        }
       }
     }
     return nil
   }
 
-  private func extractDate(from lines: [String]) -> String? {
+  // MARK: - Date Extraction
+
+  private func extractDateFromBlocks(_ blocks: [TextBlock]) -> String? {
     let datePatterns = [
       try! NSRegularExpression(pattern: #"(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})"#),
       try! NSRegularExpression(pattern: #"(\w{3,9}\s+\d{1,2},?\s+\d{4})"#, options: .caseInsensitive),
       try! NSRegularExpression(pattern: #"(\d{4}[/\-]\d{2}[/\-]\d{2})"#),
     ]
 
-    for line in lines {
-      let range = NSRange(line.startIndex..., in: line)
+    for block in blocks {
+      let text = block.text
+      let range = NSRange(text.startIndex..., in: text)
       for pattern in datePatterns {
-        if let match = pattern.firstMatch(in: line, range: range),
-           let dateRange = Range(match.range(at: 1), in: line) {
-          return String(line[dateRange])
+        if let match = pattern.firstMatch(in: text, range: range),
+           let dateRange = Range(match.range(at: 1), in: text) {
+          return String(text[dateRange])
         }
       }
     }
