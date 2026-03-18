@@ -367,39 +367,41 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
 
   // MARK: - Line Grouping (Spatial)
 
-  /// Groups text blocks into receipt lines based on Y-coordinate overlap.
-  /// Uses a generous threshold to handle slight vertical misalignments.
+  /// Groups text blocks into receipt lines based on Y-coordinate proximity.
+  /// Uses a conservative, data-driven threshold to avoid merging adjacent receipt lines.
   private func groupIntoLines(_ blocks: [TextBlock]) -> [ReceiptLine] {
     guard !blocks.isEmpty else { return [] }
+
+    // Calculate median text height for a data-driven threshold
+    let heights = blocks.map { $0.rect.size.height }.sorted()
+    let medianHeight = heights[heights.count / 2]
+
+    // Threshold: 50% of median height, clamped to [0.005, 0.012]
+    // This is conservative — receipt lines are typically spaced 1.5-2x the text height apart,
+    // while text blocks on the SAME line vary by < 0.3x the text height.
+    let threshold = min(max(medianHeight * 0.5, 0.005), 0.012)
+
+    NSLog("[VisionKitReceiptScanner] Line grouping: medianHeight=\(String(format: "%.4f", medianHeight)) threshold=\(String(format: "%.4f", threshold))")
 
     // Sort by Y descending (top of receipt first, since Vision Y=1 is top)
     let sorted = blocks.sorted { $0.centerY > $1.centerY }
 
     var lines: [ReceiptLine] = []
     var currentGroup: [TextBlock] = [sorted[0]]
-    var currentY = sorted[0].centerY
-    var currentHeight = sorted[0].rect.size.height
+    var anchorY = sorted[0].centerY // Use first block as anchor, not running average
 
     for i in 1..<sorted.count {
       let block = sorted[i]
-      // Two blocks are on the same line if their Y centers are within
-      // the height of the taller block (generous overlap threshold)
-      let threshold = max(currentHeight, block.rect.size.height) * 0.8
-      let yDiff = abs(block.centerY - currentY)
+      let yDiff = abs(block.centerY - anchorY)
 
       if yDiff <= threshold {
-        // Same line
+        // Same line — add to group
         currentGroup.append(block)
-        // Update Y using weighted average
-        let totalBlocks = CGFloat(currentGroup.count)
-        currentY = currentGroup.reduce(0.0) { $0 + $1.centerY } / totalBlocks
-        currentHeight = max(currentHeight, block.rect.size.height)
       } else {
-        // New line — save current group
+        // New line — save current group and start new one
         lines.append(makeReceiptLine(from: currentGroup))
         currentGroup = [block]
-        currentY = block.centerY
-        currentHeight = block.rect.size.height
+        anchorY = block.centerY
       }
     }
     // Don't forget the last group
