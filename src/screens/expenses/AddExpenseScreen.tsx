@@ -3,10 +3,11 @@ import type { Participant, SplitMethod } from '@/components/BillSplit/types';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { ReceiptScannerSheet, type ReceiptScannerResult } from '@/components/ReceiptScannerSheet';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { ExpenseSplitMetadata, Group, ParticipantShare, SplitType } from '@/models';
+import type { ExpenseReceiptItem, ExpenseSplitMetadata, Group, ParticipantShare, SplitType } from '@/models';
 import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
 import { formatCurrency } from '@/utils/currency';
 import {
@@ -69,6 +70,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   const [showReceiptMenu, setShowReceiptMenu] = useState(false);
   const [isProcessingOCR, setIsProcessingOCR] = useState(false);
   const [showBillSplit, setShowBillSplit] = useState(false);
+  const [showReceiptScanner, setShowReceiptScanner] = useState(false);
   const [splitMethodLabel, setSplitMethodLabel] = useState<string>('Equal');
 
   useLayoutEffect(() => {
@@ -290,6 +292,89 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     }
   };
 
+  const handleReceiptScanComplete = (scanResult: ReceiptScannerResult) => {
+    setShowReceiptScanner(false);
+    successHaptic();
+
+    // Auto-attach the scanned receipt image
+    if (scanResult.imageUri) {
+      setReceiptUri(scanResult.imageUri);
+      setReceiptType('image');
+      setReceiptName('receipt_scan.jpg');
+    }
+
+    // Auto-fill merchant name as title
+    if (scanResult.merchantName && !title.trim()) {
+      setTitle(scanResult.merchantName);
+    }
+
+    // Auto-fill category
+    if (scanResult.inferredCategory && category === 'General') {
+      setCategory(scanResult.inferredCategory);
+    }
+
+    // Handle amount — show dialog if already entered and different
+    const scannedTotal = scanResult.total;
+    const currentAmount = Number(amount) || 0;
+
+    if (scannedTotal > 0) {
+      if (currentAmount > 0 && Math.abs(currentAmount - scannedTotal) > 0.01) {
+        // Amount conflict — ask user
+        Alert.alert(
+          'Amount Differs',
+          `Scanned total is $${scannedTotal.toFixed(2)}, but you entered $${currentAmount.toFixed(2)}. Which would you like to use?`,
+          [
+            { text: `Keep $${currentAmount.toFixed(2)}`, style: 'cancel' },
+            {
+              text: `Use $${scannedTotal.toFixed(2)}`,
+              onPress: () => setAmount(scannedTotal.toFixed(2)),
+            },
+          ],
+        );
+      } else if (currentAmount === 0) {
+        setAmount(scannedTotal.toFixed(2));
+      }
+    }
+
+    // Auto-populate itemized split with scanned items
+    if (scanResult.items.length > 0) {
+      const receiptItems: ExpenseReceiptItem[] = scanResult.items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        price: item.price * item.quantity,
+        assignedTo: group.members.map((m) => m.userId), // default: assigned to all
+      }));
+
+      const newMetadata: ExpenseSplitMetadata = {
+        version: 1,
+        method: 'itemized',
+        participantConfig: group.members.map((m) => ({
+          userId: m.userId,
+          included: selectedMembers.includes(m.userId),
+        })),
+        receiptItems,
+        taxAmount: scanResult.tax,
+        tipAmount: scanResult.tip,
+      };
+
+      setSplitMetadata(newMetadata);
+      setSplitType('custom');
+      setSplitMethodLabel('Itemized receipt');
+
+      // Compute custom shares from itemized data
+      const shares: Record<string, string> = {};
+      group.members.forEach((m) => {
+        const memberItems = receiptItems.filter((ri) => ri.assignedTo.includes(m.userId));
+        const itemTotal = memberItems.reduce((sum, ri) => {
+          const shareCount = ri.assignedTo.length;
+          return sum + (shareCount > 0 ? ri.price / shareCount : 0);
+        }, 0);
+        shares[m.userId] = itemTotal.toFixed(2);
+      });
+      setCustomShares(shares);
+    }
+  };
+
   const handleTakePhoto = async () => {
     setShowReceiptMenu(false);
     const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -465,6 +550,33 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
               </Button>
             </View>
 
+            {/* Smart Receipt Scanner Button */}
+            {!expenseId && (
+              <TouchableOpacity
+                onPress={() => {
+                  mediumHaptic();
+                  setShowReceiptScanner(true);
+                }}
+                activeOpacity={0.7}
+                style={[styles.scanReceiptBtn, { borderColor: theme.colors.primary }]}
+              >
+                <View style={styles.scanReceiptBtnContent}>
+                  <View style={[styles.scanReceiptIconCircle, { backgroundColor: `${theme.colors.primary}15` }]}>
+                    <Icon source="camera-document" size={24} color={theme.colors.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                      Scan Receipt
+                    </Text>
+                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                      Auto-extract items, tax, tip & total
+                    </Text>
+                  </View>
+                  <Icon source="chevron-right" size={20} color={theme.colors.primary} />
+                </View>
+              </TouchableOpacity>
+            )}
+
             <View style={styles.field}>
               <Menu
                 visible={showReceiptMenu}
@@ -559,6 +671,21 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
           </GlassView>
         </ScrollView>
       </LiquidBackground>
+
+      {/* Receipt Scanner Modal */}
+      <Modal
+        visible={showReceiptScanner}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setShowReceiptScanner(false)}
+      >
+        {showReceiptScanner && (
+          <ReceiptScannerSheet
+            onComplete={handleReceiptScanComplete}
+            onCancel={() => setShowReceiptScanner(false)}
+          />
+        )}
+      </Modal>
 
       {/* BillSplit Modal */}
       <Modal
@@ -657,6 +784,26 @@ const styles = StyleSheet.create({
     marginTop: 24,
     flexDirection: 'row',
     justifyContent: 'space-between',
+  },
+  scanReceiptBtn: {
+    borderWidth: 1.5,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+    borderStyle: 'solid',
+  },
+  scanReceiptBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  scanReceiptIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   splitOptionsBtn: {
     borderWidth: 1,

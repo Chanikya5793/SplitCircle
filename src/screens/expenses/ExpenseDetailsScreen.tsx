@@ -175,6 +175,53 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             </View>
           )}
 
+          {/* Receipt Items Section (from itemized split / scan) */}
+          {expense.splitMetadata?.method === 'itemized' && expense.splitMetadata.receiptItems && expense.splitMetadata.receiptItems.length > 0 && (
+            <>
+              <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
+              <View style={styles.section}>
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+                  Scanned Items
+                </Text>
+                {expense.splitMetadata.receiptItems.map((item, index) => (
+                  <View key={item.id || index} style={styles.receiptItemRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+                        {item.name}
+                      </Text>
+                      {item.assignedTo && item.assignedTo.length > 0 && (
+                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                          {item.assignedTo.map((uid) => memberMap[uid] || 'Unknown').join(', ')}
+                        </Text>
+                      )}
+                    </View>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                      {formatCurrency(item.price, group.currency)}
+                    </Text>
+                  </View>
+                ))}
+
+                {(expense.splitMetadata.taxAmount != null && expense.splitMetadata.taxAmount > 0) && (
+                  <View style={styles.receiptItemRow}>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>Tax</Text>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                      {formatCurrency(expense.splitMetadata.taxAmount, group.currency)}
+                    </Text>
+                  </View>
+                )}
+
+                {(expense.splitMetadata.tipAmount != null && expense.splitMetadata.tipAmount > 0) && (
+                  <View style={styles.receiptItemRow}>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>Tip</Text>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                      {formatCurrency(expense.splitMetadata.tipAmount, group.currency)}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </>
+          )}
+
           <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
 
           <View style={styles.section}>
@@ -409,6 +456,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: 8,
     padding: 8,
+  },
+  receiptItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    gap: 16,
   },
   modalContainer: {
     flex: 1,

@@ -41,6 +41,7 @@ export interface ExpenseReceiptItem {
   id: string;
   name: string;
   price: number;
+  quantity?: number;
   assignedTo: string[];
 }
 
@@ -79,6 +80,7 @@ export interface ReceiptMetadata {
   url?: string;
   fileName?: string;
   size?: number;
+  scannedWith?: 'visionkit' | 'ocr' | 'manual';
 }
 
 export interface RecurringExpenseMetadata {

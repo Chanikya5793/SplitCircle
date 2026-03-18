@@ -169,7 +169,7 @@ export const extractReceiptData = async (imageUri: string): Promise<OCRResult> =
  * Parse receipt text to extract structured data
  */
 const parseReceiptText = (text: string): OCRResult['parsedData'] => {
-    const result: OCRResult['parsedData'] = {};
+    const result: OCRResult['parsedData'] = { items: [] };
 
     // Extract total amount
     for (const pattern of TOTAL_PATTERNS) {
@@ -209,6 +209,40 @@ const parseReceiptText = (text: string): OCRResult['parsedData'] => {
     const lines = text.split('\n').filter((line) => line.trim().length > 0);
     if (lines.length > 0) {
         result.title = lines[0].trim().slice(0, 50);
+    }
+
+    // Extract line items — lines with a price pattern that aren't summary lines
+    const summaryKeywords = [
+        'subtotal', 'sub total', 'total', 'tax', 'tip', 'gratuity',
+        'change', 'cash', 'credit', 'debit', 'visa', 'mastercard',
+        'balance', 'amount due', 'amount paid', 'tendered', 'thank',
+        'receipt', 'invoice', 'card ending', 'approval', 'auth',
+    ];
+    const priceRegex = /\$?\s*(\d+\.\d{2})/;
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        const lower = trimmed.toLowerCase();
+
+        // Skip empty or summary lines
+        if (trimmed.length < 3) continue;
+        if (summaryKeywords.some((kw) => lower.includes(kw))) continue;
+
+        const priceMatch = trimmed.match(priceRegex);
+        if (priceMatch && priceMatch[1]) {
+            const price = parseFloat(priceMatch[1]);
+            if (isNaN(price) || price <= 0) continue;
+
+            // Extract item name by removing the price portion
+            let itemName = trimmed
+                .replace(/\$?\s*\d+\.\d{2}/, '')
+                .replace(/^[\s.\-:]+|[\s.\-:]+$/g, '')
+                .trim();
+
+            if (itemName.length >= 2) {
+                result.items!.push({ name: itemName, price });
+            }
+        }
     }
 
     return result;
