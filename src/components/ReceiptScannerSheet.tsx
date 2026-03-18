@@ -88,7 +88,7 @@ export const ReceiptScannerSheet = ({
 
   // Result state
   const [imageUri, setImageUri] = useState<string | null>(null);
-  const [items, setItems] = useState<{ id: string; name: string; price: string; quantity: number }[]>([]);
+  const [items, setItems] = useState<{ id: string; name: string; price: string; quantity: number; confidence: number }[]>([]);
   const [tax, setTax] = useState('');
   const [tip, setTip] = useState('');
   const [total, setTotal] = useState('');
@@ -137,6 +137,7 @@ export const ReceiptScannerSheet = ({
           name: item.name,
           price: item.price.toFixed(2),
           quantity: item.quantity,
+          confidence: item.confidence ?? 0.7,
         })),
       );
     }
@@ -237,6 +238,7 @@ export const ReceiptScannerSheet = ({
               name: item.name,
               price: item.price.toFixed(2),
               quantity: 1,
+              confidence: 0.5,
             })),
           );
           setScanItemCount(ocrResult.parsedData.items.length);
@@ -269,7 +271,7 @@ export const ReceiptScannerSheet = ({
 
   const handleAddItem = () => {
     mediumHaptic();
-    setItems((prev) => [...prev, { id: generateId(), name: '', price: '', quantity: 1 }]);
+    setItems((prev) => [...prev, { id: generateId(), name: '', price: '', quantity: 1, confidence: 1.0 }]);
   };
 
   const handleRemoveItem = (id: string) => {
@@ -313,8 +315,15 @@ export const ReceiptScannerSheet = ({
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  const getConfidenceColor = (c: number) => c >= 0.8 ? '#4CAF50' : c >= 0.6 ? '#FF9800' : '#F44336';
+
   const renderItem = ({ item }: { item: typeof items[0] }) => (
     <View style={[styles.itemRow, { borderColor: `${theme.colors.outline}40` }]}>
+      {/* Confidence dot */}
+      <View style={[
+        styles.confidenceDot,
+        { backgroundColor: getConfidenceColor(item.confidence) }
+      ]} />
       <View style={styles.itemInputs}>
         <TextInput
           mode="flat"
@@ -488,7 +497,12 @@ export const ReceiptScannerSheet = ({
               >
                 Review Items
               </Text>
-              <View style={{ width: 40 }} />
+              <IconButton
+                icon="camera-retake-outline"
+                size={22}
+                onPress={() => { setPhase('idle'); setItems([]); setTax(''); setTip(''); setTotal(''); setMerchantName(null); setDate(null); }}
+                iconColor={theme.colors.onSurfaceVariant}
+              />
             </View>
 
             {merchantName && (
@@ -737,7 +751,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderRadius: 10,
-    paddingLeft: 8,
+    paddingLeft: 4,
+  },
+  confidenceDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginLeft: 4,
+    marginRight: 2,
   },
   itemInputs: {
     flex: 1,

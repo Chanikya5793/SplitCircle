@@ -4,9 +4,15 @@ import VisionKit
 import Vision
 internal import React
 
-/// Native iOS module that wraps VNDocumentCameraViewController for document scanning
-/// and VNRecognizeTextRequest for on-device OCR text extraction.
-/// Returns structured receipt data (items, tax, tip, total) back to React Native.
+/// VisionKit Receipt Scanner — v3: Price-First Spatial Association
+///
+/// Instead of clustering text into lines (fragile), this approach:
+/// 1. Finds ALL standalone price blocks first
+/// 2. Associates each price with left-side text on the same Y level
+/// 3. Also handles inline prices (name+price in one observation)
+/// 4. Classifies each (name, price) pair: item / total / tax / payment
+/// 5. Self-heals by cross-checking against subtotal/total
+///
 @objc(VisionKitReceiptScanner)
 class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDelegate {
 
@@ -15,187 +21,146 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
 
   // MARK: - RCTEventEmitter
 
-  override static func requiresMainQueueSetup() -> Bool {
-    return true
-  }
-
-  override func supportedEvents() -> [String]! {
-    return ["onScanProgress"]
-  }
+  override static func requiresMainQueueSetup() -> Bool { true }
+  override func supportedEvents() -> [String]! { ["onScanProgress"] }
 
   // MARK: - Public API
 
   @objc func isAvailable(_ resolve: @escaping RCTPromiseResolveBlock,
                           rejecter reject: @escaping RCTPromiseRejectBlock) {
-    if #available(iOS 13.0, *) {
-      resolve(VNDocumentCameraViewController.isSupported)
-    } else {
-      resolve(false)
-    }
+    if #available(iOS 13.0, *) { resolve(VNDocumentCameraViewController.isSupported) }
+    else { resolve(false) }
   }
 
   @objc func scanDocument(_ resolve: @escaping RCTPromiseResolveBlock,
                            rejecter reject: @escaping RCTPromiseRejectBlock) {
     guard #available(iOS 13.0, *), VNDocumentCameraViewController.isSupported else {
-      reject("UNSUPPORTED", "VisionKit document scanning is not supported on this device.", nil)
-      return
+      reject("UNSUPPORTED", "VisionKit not supported.", nil); return
     }
-
     self.scanResolve = resolve
     self.scanReject = reject
 
     DispatchQueue.main.async { [weak self] in
-      let scannerVC = VNDocumentCameraViewController()
-      scannerVC.delegate = self
-      scannerVC.modalPresentationStyle = .fullScreen
-
-      guard let rootVC = self?.topViewController() else {
-        reject("NO_VIEW_CONTROLLER", "Could not find a view controller to present the scanner.", nil)
-        self?.scanResolve = nil
-        self?.scanReject = nil
-        return
+      let vc = VNDocumentCameraViewController()
+      vc.delegate = self
+      vc.modalPresentationStyle = .fullScreen
+      guard let root = self?.topViewController() else {
+        reject("NO_VC", "No view controller.", nil)
+        self?.scanResolve = nil; self?.scanReject = nil; return
       }
-
-      rootVC.present(scannerVC, animated: true)
+      root.present(vc, animated: true)
     }
   }
 
-  // MARK: - VNDocumentCameraViewControllerDelegate
+  // MARK: - Delegate
 
   @available(iOS 13.0, *)
-  func documentCameraViewController(_ controller: VNDocumentCameraViewController,
-                                     didFinishWith scan: VNDocumentCameraScan) {
-    controller.dismiss(animated: true) { [weak self] in
-      self?.processScannedDocument(scan)
-    }
+  func documentCameraViewController(_ c: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
+    c.dismiss(animated: true) { [weak self] in self?.processScannedDocument(scan) }
   }
-
   @available(iOS 13.0, *)
-  func documentCameraViewController(_ controller: VNDocumentCameraViewController,
-                                     didFailWithError error: Error) {
-    controller.dismiss(animated: true) { [weak self] in
+  func documentCameraViewController(_ c: VNDocumentCameraViewController, didFailWithError error: Error) {
+    c.dismiss(animated: true) { [weak self] in
       self?.scanReject?("SCAN_FAILED", error.localizedDescription, error)
-      self?.scanResolve = nil
-      self?.scanReject = nil
+      self?.scanResolve = nil; self?.scanReject = nil
     }
   }
-
   @available(iOS 13.0, *)
-  func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
-    controller.dismiss(animated: true) { [weak self] in
+  func documentCameraViewControllerDidCancel(_ c: VNDocumentCameraViewController) {
+    c.dismiss(animated: true) { [weak self] in
       self?.scanResolve?(["cancelled": true])
-      self?.scanResolve = nil
-      self?.scanReject = nil
+      self?.scanResolve = nil; self?.scanReject = nil
     }
   }
 
-  // MARK: - OCR Processing
+  // MARK: - OCR
 
   @available(iOS 13.0, *)
   private func processScannedDocument(_ scan: VNDocumentCameraScan) {
     DispatchQueue.main.async { [weak self] in
       self?.sendEvent(withName: "onScanProgress", body: ["status": "processing", "message": "Processing scanned document..."])
     }
-
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       guard let self = self else { return }
+      var allObs: [(String, CGRect)] = []
+      var savedUri: String?
 
-      var allObservations: [(String, CGRect)] = []
-      var savedImageUri: String?
-
-      for pageIndex in 0..<scan.pageCount {
-        let image = scan.imageOfPage(at: pageIndex)
-
-        if pageIndex == 0 {
-          savedImageUri = self.saveImageToTemp(image)
-        }
-
-        guard let cgImage = image.cgImage else { continue }
-
-        let requestHandler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        let textRequest = VNRecognizeTextRequest()
-        textRequest.recognitionLevel = .accurate
-        textRequest.recognitionLanguages = ["en-US"]
-        textRequest.usesLanguageCorrection = true
-
+      for p in 0..<scan.pageCount {
+        let img = scan.imageOfPage(at: p)
+        if p == 0 { savedUri = self.saveImageToTemp(img) }
+        guard let cg = img.cgImage else { continue }
+        let req = VNRecognizeTextRequest()
+        req.recognitionLevel = .accurate
+        req.recognitionLanguages = ["en-US"]
+        req.usesLanguageCorrection = true
         do {
-          try requestHandler.perform([textRequest])
-
-          if let results = textRequest.results {
-            for observation in results {
-              if let topCandidate = observation.topCandidates(1).first {
-                allObservations.append((topCandidate.string, observation.boundingBox))
-              }
+          try VNImageRequestHandler(cgImage: cg, options: [:]).perform([req])
+          for obs in (req.results ?? []) {
+            if let c = obs.topCandidates(1).first {
+              allObs.append((c.string, obs.boundingBox))
             }
           }
-        } catch {
-          NSLog("[VisionKitReceiptScanner] OCR error on page \(pageIndex): \(error.localizedDescription)")
-        }
+        } catch {}
       }
 
-      NSLog("[VisionKitReceiptScanner] Raw OCR found \(allObservations.count) text observations")
-      for (i, obs) in allObservations.enumerated() {
-        NSLog("[VisionKitReceiptScanner] Obs \(i): \"\(obs.0)\" x=\(String(format: "%.3f", obs.1.origin.x)) y=\(String(format: "%.3f", obs.1.origin.y)) w=\(String(format: "%.3f", obs.1.size.width)) h=\(String(format: "%.3f", obs.1.size.height))")
+      NSLog("[VK] \(allObs.count) observations")
+      for (i, o) in allObs.enumerated() {
+        NSLog("[VK] #\(i): \"\(o.0)\" x=\(self.f3(o.1.origin.x)) y=\(self.f3(o.1.origin.y)) w=\(self.f3(o.1.size.width)) h=\(self.f3(o.1.size.height))")
       }
 
       DispatchQueue.main.async { [weak self] in
-        self?.sendEvent(withName: "onScanProgress", body: [
-          "status": "parsing",
-          "message": "Extracting receipt items...",
-          "textLinesFound": allObservations.count
-        ])
+        self?.sendEvent(withName: "onScanProgress", body: ["status": "parsing", "message": "Extracting receipt items...", "textLinesFound": allObs.count])
       }
 
-      let receiptData = self.parseReceiptFromObservations(allObservations)
-
-      NSLog("[VisionKitReceiptScanner] Parsed \(receiptData.items.count) items, total=\(receiptData.total ?? -1), tax=\(receiptData.tax ?? -1)")
+      let result = self.parseReceipt(allObs)
+      NSLog("[VK] Final: \(result.items.count) items, tax=\(result.tax ?? -1), total=\(result.total ?? -1)")
 
       DispatchQueue.main.async {
-        var result: [String: Any] = [
+        var dict: [String: Any] = [
           "cancelled": false,
-          "rawText": allObservations.map { $0.0 }.joined(separator: "\n"),
-          "items": receiptData.items.map { item -> [String: Any] in
-            return [
-              "name": item.name,
-              "price": item.price,
-              "quantity": item.quantity
-            ]
-          },
-          "subtotal": receiptData.subtotal ?? NSNull(),
-          "tax": receiptData.tax ?? NSNull(),
-          "tip": receiptData.tip ?? NSNull(),
-          "total": receiptData.total ?? NSNull(),
-          "merchantName": receiptData.merchantName ?? NSNull(),
-          "date": receiptData.date ?? NSNull()
+          "rawText": allObs.map { $0.0 }.joined(separator: "\n"),
+          "items": result.items.map { ["name": $0.name, "price": $0.price, "quantity": $0.quantity, "confidence": $0.confidence] },
+          "subtotal": result.subtotal ?? NSNull(),
+          "tax": result.tax ?? NSNull(),
+          "tip": result.tip ?? NSNull(),
+          "total": result.total ?? NSNull(),
+          "merchantName": result.merchantName ?? NSNull(),
+          "date": result.date ?? NSNull()
         ]
-
-        if let imageUri = savedImageUri {
-          result["imageUri"] = imageUri
-        }
-
-        self.sendEvent(withName: "onScanProgress", body: [
-          "status": "complete",
-          "message": "Receipt scanned successfully!",
-          "itemCount": receiptData.items.count
-        ])
-
-        self.scanResolve?(result)
-        self.scanResolve = nil
-        self.scanReject = nil
+        if let u = savedUri { dict["imageUri"] = u }
+        self.sendEvent(withName: "onScanProgress", body: ["status": "complete", "message": "Receipt scanned!", "itemCount": result.items.count])
+        self.scanResolve?(dict)
+        self.scanResolve = nil; self.scanReject = nil
       }
     }
   }
 
+  // ════════════════════════════════════════════════════════════════════════════
   // MARK: - Data Structures
+  // ════════════════════════════════════════════════════════════════════════════
 
-  private struct ReceiptItem {
+  private struct Blk {
+    let text: String
+    let rect: CGRect
+    let idx: Int
+    var cy: CGFloat { rect.midY }
+    var cx: CGFloat { rect.midX }
+    var le: CGFloat { rect.minX }
+    var re: CGFloat { rect.maxX }
+    var h: CGFloat  { rect.height }
+    var topY: CGFloat { rect.maxY }   // Vision coords: maxY = highest
+    var botY: CGFloat { rect.minY }
+  }
+
+  private struct RItem {
     let name: String
     let price: Double
     let quantity: Int
+    let confidence: Double
   }
 
-  private struct ParsedReceipt {
-    var items: [ReceiptItem] = []
+  private struct Parsed {
+    var items: [RItem] = []
     var subtotal: Double?
     var tax: Double?
     var tip: Double?
@@ -204,568 +169,523 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
     var date: String?
   }
 
-  /// An individual text observation with its position info
-  private struct TextBlock {
-    let text: String
-    let rect: CGRect // normalized: origin at bottom-left, x goes right, y goes up
-    var centerY: CGFloat { rect.origin.y + rect.size.height / 2 }
-    var centerX: CGFloat { rect.origin.x + rect.size.width / 2 }
-    var rightEdge: CGFloat { rect.origin.x + rect.size.width }
+  /// A matched (name, price) from spatial association
+  private struct PricedEntry {
+    let nameText: String
+    let price: Double
+    let y: CGFloat
+    let isInline: Bool // was the price inside the same observation as the name?
   }
 
-  /// A grouped receipt line containing multiple text blocks on the same horizontal line
-  private struct ReceiptLine {
-    let blocks: [TextBlock]
-    let fullText: String
-    let avgY: CGFloat
+  // ════════════════════════════════════════════════════════════════════════════
+  // MARK: - v3 Main Pipeline: Price-First Spatial Association
+  // ════════════════════════════════════════════════════════════════════════════
 
-    /// The leftmost text (item name region)
-    var leftText: String {
-      let sorted = blocks.sorted { $0.rect.origin.x < $1.rect.origin.x }
-      // Take blocks from the left until we hit a price-like block
-      var parts: [String] = []
-      for block in sorted {
-        let t = block.text.trimmingCharacters(in: .whitespaces)
-        // Stop if this block is purely a price (e.g. "12.44", "3.78 R", "$5.99")
-        if isPriceBlock(t) { break }
-        parts.append(t)
+  private func parseReceipt(_ obs: [(String, CGRect)]) -> Parsed {
+    var receipt = Parsed()
+    let blocks = obs.enumerated().map { Blk(text: $0.1.0, rect: $0.1.1, idx: $0.0) }
+    guard !blocks.isEmpty else { return receipt }
+
+    receipt.merchantName = extractMerchant(blocks)
+    receipt.date = extractDate(blocks)
+
+    // ── PASS 1: Find standalone price blocks ──
+    // A "standalone price" is an observation whose text is purely a price value.
+    var claimed = Set<Int>() // indices of blocks already consumed
+    var entries: [PricedEntry] = []
+
+    var standalonePrice: [(blk: Blk, price: Double)] = []
+    for b in blocks {
+      if isStandalonePrice(b.text) {
+        if let p = parsePrice(b.text), p > 0, p < 50000 {
+          standalonePrice.append((b, p))
+        }
       }
-      return parts.joined(separator: " ")
+    }
+    // Sort top → bottom (descending Y in Vision coords)
+    standalonePrice.sort { $0.blk.cy > $1.blk.cy }
+
+    for (pb, price) in standalonePrice {
+      // Find text blocks at similar Y, to the LEFT of this price
+      let yTol = max(pb.h * 0.9, 0.006)
+      var nameBlocks: [Blk] = []
+
+      for b in blocks {
+        guard !claimed.contains(b.idx) && b.idx != pb.idx else { continue }
+        guard abs(b.cy - pb.cy) <= yTol else { continue }
+        guard b.re < pb.le + 0.03 else { continue } // must end before price starts
+        guard !isStandalonePrice(b.text) else { continue }
+        nameBlocks.append(b)
+      }
+      nameBlocks.sort { $0.le < $1.le }
+      let nameText = nameBlocks.map { $0.text.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
+
+      // Claim all these blocks
+      claimed.insert(pb.idx)
+      for nb in nameBlocks { claimed.insert(nb.idx) }
+
+      entries.append(PricedEntry(nameText: nameText, price: price, y: pb.cy, isInline: false))
+      NSLog("[VK] Pass1: \"\(nameText)\" → $\(f2(price))")
     }
 
-    /// The rightmost price value on this line
-    var rightPrice: Double? {
-      let sorted = blocks.sorted { $0.rect.origin.x < $1.rect.origin.x }
-      // Scan from right to find the first price
-      for block in sorted.reversed() {
-        if let price = extractPriceFromBlock(block.text) {
-          return price
+    // ── PASS 2: Find inline prices in remaining observations ──
+    // Some receipts return "ITEM NAME $17.99" as a single observation.
+    for b in blocks {
+      guard !claimed.contains(b.idx) else { continue }
+      let text = b.text.trimmingCharacters(in: .whitespaces)
+      guard text.count >= 4 else { continue }
+
+      if let price = extractInlinePrice(text), price > 0, price < 50000 {
+        let nameText = extractNameBeforePrice(text)
+        if nameText.count >= 2 {
+          entries.append(PricedEntry(nameText: nameText, price: price, y: b.cy, isInline: true))
+          claimed.insert(b.idx)
+          NSLog("[VK] Pass2: \"\(nameText)\" → $\(f2(price))")
         }
       }
-      return nil
-    }
-  }
-
-  // MARK: - Main Parsing
-
-  private func parseReceiptFromObservations(_ observations: [(String, CGRect)]) -> ParsedReceipt {
-    var receipt = ParsedReceipt()
-
-    let textBlocks = observations.map { TextBlock(text: $0.0, rect: $0.1) }
-
-    // ── Extract merchant name using text HEIGHT (biggest text near top = store name) ──
-    receipt.merchantName = extractMerchantNameSpatial(from: textBlocks)
-    receipt.date = extractDateFromBlocks(textBlocks)
-
-    // ── Group into receipt lines using Y-coordinate overlap ──
-    let receiptLines = groupIntoLines(textBlocks)
-
-    NSLog("[VisionKitReceiptScanner] Grouped into \(receiptLines.count) receipt lines")
-    for (i, line) in receiptLines.enumerated() {
-      NSLog("[VisionKitReceiptScanner] Line \(i): \"\(line.fullText)\" [blocks=\(line.blocks.count)]")
     }
 
-    // ── Classify each line ──
-    // We process top-to-bottom. Receipt structure is typically:
-    // [Header/Store info] → [Items] → [Subtotal] → [Tax] → [Total] → [Payment/Footer]
+    // Sort all entries top → bottom
+    entries.sort { $0.y > $1.y }
 
-    var inItemSection = false
-    var lastItemName: String? = nil // for weight continuation lines
+    // ── Collect unclaimed text blocks for name-only line handling ──
+    var orphanBlocks: [Blk] = []
+    for b in blocks {
+      guard !claimed.contains(b.idx) else { continue }
+      let t = b.text.trimmingCharacters(in: .whitespaces)
+      let alphaCount = t.filter { $0.isLetter }.count
+      if t.count >= 3 && alphaCount >= 2 { orphanBlocks.append(b) }
+    }
 
-    for line in receiptLines {
-      let text = line.fullText
-      let trimmed = text.trimmingCharacters(in: .whitespaces)
-      let lower = trimmed.lowercased()
+    // ── PASS 3: Merge entries with orphan name-only blocks, classify ──
+    // Build a unified timeline sorted by Y (top → bottom)
+    enum TimelineItem {
+      case priced(PricedEntry)
+      case nameOnly(Blk)
+    }
+    var timeline: [(y: CGFloat, item: TimelineItem)] = []
+    for e in entries { timeline.append((e.y, .priced(e))) }
+    for o in orphanBlocks { timeline.append((o.cy, .nameOnly(o))) }
+    timeline.sort { $0.y > $1.y } // top → bottom
 
-      // Skip empty or very short lines
-      guard trimmed.count >= 3 else { continue }
+    var pendingName: String? = nil
+    var expectedItemCount: Int? = nil
 
-      // Skip lines that are ALL numbers/punctuation (barcodes, phone numbers, IDs)
-      let alphaCount = trimmed.filter { $0.isLetter }.count
-      if alphaCount == 0 { continue }
+    for (_, tItem) in timeline {
+      switch tItem {
+      case .nameOnly(let blk):
+        let text = blk.text.trimmingCharacters(in: .whitespaces)
+        let lower = text.lowercased()
 
-      // ── TOTAL ──
-      if matchesTotal(lower) {
-        if let price = line.rightPrice ?? extractAnyPrice(from: trimmed) {
-          receipt.total = price
+        // Check for "Item Count: 18" pattern
+        if let ic = parseItemCount(lower) { expectedItemCount = ic; continue }
+
+        // Skip non-item text
+        if isPaymentOrFooter(lower) || isHeaderOrStore(lower) || isAddress(lower) { continue }
+
+        // Save as pending name for weight-line merging
+        let cleaned = cleanItemName(text)
+        if cleaned.count >= 2 {
+          pendingName = cleaned
+          NSLog("[VK] Pending: \"\(cleaned)\"")
         }
-        inItemSection = false
-        continue
-      }
 
-      // ── SUBTOTAL ──
-      if matchesSubtotal(lower) {
-        if let price = line.rightPrice ?? extractAnyPrice(from: trimmed) {
-          receipt.subtotal = price
+      case .priced(let entry):
+        let lower = entry.nameText.lowercased().trimmingCharacters(in: .whitespaces)
+
+        // ── Summary classification ──
+        if matchTotal(lower) { receipt.total = entry.price; pendingName = nil; continue }
+        if matchSubtotal(lower) { receipt.subtotal = entry.price; pendingName = nil; continue }
+        if matchTax(lower) {
+          // Accumulate tax (some receipts have TAX1 + TAX2)
+          receipt.tax = (receipt.tax ?? 0) + entry.price; continue
         }
-        inItemSection = false
-        continue
-      }
+        if matchTip(lower) { receipt.tip = entry.price; continue }
+        if isPaymentOrFooter(lower) { continue }
+        if isHeaderOrStore(lower) { continue }
 
-      // ── TAX ──
-      if matchesTax(lower) {
-        if let price = line.rightPrice ?? extractAnyPrice(from: trimmed) {
-          receipt.tax = price
-        }
-        continue
-      }
-
-      // ── TIP ──
-      if matchesTip(lower) {
-        if let price = line.rightPrice ?? extractAnyPrice(from: trimmed) {
-          receipt.tip = price
-        }
-        continue
-      }
-
-      // ── SKIP: Non-item lines (payment, footer, store info, addresses) ──
-      if isSkipLine(lower) { continue }
-
-      // ── Detect start of item section ──
-      // Item sections often start after header info. We start parsing items
-      // when we see the first line with a valid price that isn't a summary line.
-      if let price = line.rightPrice, price > 0 && price < 5000 {
-        inItemSection = true
-
-        // Extract item name from left-side text blocks
-        var itemName = extractItemName(from: line)
-
-        // Check if this is a weight continuation line (e.g., "1.97 lb. @ 1.00 lb. / 1.53 3.01 R")
+        // ── Weight continuation ──
         if isWeightLine(lower) {
-          // Attach price to previous item name
-          if let prevName = lastItemName {
-            receipt.items.append(ReceiptItem(name: prevName, price: price, quantity: 1))
-            NSLog("[VisionKitReceiptScanner] ✅ Weight item: \"\(prevName)\" $\(price)")
-            lastItemName = nil
+          if let prev = pendingName {
+            let conf = confidenceScore(prev, entry.price)
+            receipt.items.append(RItem(name: prev, price: entry.price, quantity: 1, confidence: conf))
+            NSLog("[VK] ✅ Weight-merge: \"\(prev)\" $\(f2(entry.price))")
+            pendingName = nil
             continue
           }
         }
 
-        if itemName.count >= 2 {
-          receipt.items.append(ReceiptItem(name: itemName, price: price, quantity: 1))
-          NSLog("[VisionKitReceiptScanner] ✅ Item: \"\(itemName)\" $\(price)")
-          lastItemName = nil
-        }
-      } else if inItemSection {
-        // Line in item section but no price — could be name-only (e.g., weight items)
-        let candidateName = extractItemName(from: line)
-        if candidateName.count >= 2 && !isAddressLine(lower) {
-          lastItemName = candidateName
-          NSLog("[VisionKitReceiptScanner] 📝 Name-only: \"\(candidateName)\"")
+        // ── It's an item! ──
+        let cleaned = cleanItemName(entry.nameText)
+        if cleaned.count >= 2 {
+          let conf = confidenceScore(cleaned, entry.price)
+          receipt.items.append(RItem(name: cleaned, price: entry.price, quantity: 1, confidence: conf))
+          NSLog("[VK] ✅ Item: \"\(cleaned)\" $\(f2(entry.price)) conf=\(f2(conf))")
+          pendingName = nil
+        } else if entry.nameText.isEmpty, let prev = pendingName {
+          // Price with empty name → attach to pending name
+          let conf = confidenceScore(prev, entry.price)
+          receipt.items.append(RItem(name: prev, price: entry.price, quantity: 1, confidence: conf))
+          NSLog("[VK] ✅ Pending→price: \"\(prev)\" $\(f2(entry.price))")
+          pendingName = nil
         }
       }
     }
 
-    // ── Post-processing ──
-    if receipt.total == nil && receipt.subtotal != nil {
-      let itemSum = receipt.items.reduce(0.0) { $0 + $1.price }
-      receipt.total = itemSum + (receipt.tax ?? 0) + (receipt.tip ?? 0)
+    // ── PASS 4: Validate & self-heal ──
+    receipt = selfHeal(receipt, expectedCount: expectedItemCount)
+
+    return receipt
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // MARK: - Price Detection
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /// Returns true if this text block is PURELY a price value.
+  /// e.g., "$17.99", "5.98", "12.44 R", "$2.28"
+  private func isStandalonePrice(_ text: String) -> Bool {
+    let t = text.trimmingCharacters(in: .whitespaces)
+    // Patterns: "$17.99", "17.99", "5.98 R", "$100.11", "-$2.00", "- 2.00"
+    let pattern = #"^-?\s*\$?\s*\d{1,6}\.\d{2}\s*[A-Z]?\s*$"#
+    return regMatch(t, pattern)
+  }
+
+  /// Parses a price from text. Returns the first decimal number found.
+  private func parsePrice(_ text: String) -> Double? {
+    let t = text.trimmingCharacters(in: .whitespaces)
+    let pattern = #"-?\s*\$?\s*(\d{1,6}\.\d{2})"#
+    guard let match = regFirst(t, pattern, group: 1), let val = Double(match) else { return nil }
+    if t.contains("-") { return -val }
+    return val
+  }
+
+  /// Extracts an inline price from the END of a text string.
+  /// e.g., "FS LAXMI URAD GOTA 8LB* $17.99" → 17.99
+  private func extractInlinePrice(_ text: String) -> Double? {
+    // Match price at end: capture just the number
+    let pattern = #"\$?\s*(\d{1,6}\.\d{2})\s*[A-Z]?\s*$"#
+    guard let match = regFirst(text, pattern, group: 1), let val = Double(match) else { return nil }
+    return val
+  }
+
+  /// Extracts the name portion BEFORE an inline price.
+  /// e.g., "FS LAXMI URAD GOTA 8LB* $17.99" → "FS LAXMI URAD GOTA 8LB*"
+  private func extractNameBeforePrice(_ text: String) -> String {
+    let pattern = #"^(.*?)\s*\$?\s*\d{1,6}\.\d{2}\s*[A-Z]?\s*$"#
+    if let name = regFirst(text, pattern, group: 1) {
+      return name.trimmingCharacters(in: .whitespaces)
+    }
+    return text
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // MARK: - Item Name Cleaning
+  // ════════════════════════════════════════════════════════════════════════════
+
+  private func cleanItemName(_ raw: String) -> String {
+    var n = raw.trimmingCharacters(in: .whitespaces)
+
+    // Remove leading item number: "1 FS LAXMI..." → "FS LAXMI..."
+    // Match: starts with 1-2 digit number followed by space
+    n = regReplace(n, #"^\d{1,2}\s+"#, "")
+
+    // Remove UPC codes (8+ digits)
+    n = regReplace(n, #"\d{8,}"#, "")
+
+    // Remove inline prices
+    n = regReplace(n, #"\$?\s*\d{1,6}\.\d{2}"#, "")
+
+    // Remove weight calculations (1.97 lb. @ ...)
+    n = regReplace(n, #"\d+\.?\d*\s*(?:lb|lbs|oz|kg)\s*\.?\s*@.*"#, "", ci: true)
+
+    // Remove per-unit prices (@$X.XX/lb)
+    n = regReplace(n, #"@\s*\$?\d+\.\d+\s*/\s*\w+"#, "", ci: true)
+
+    // Remove trailing single uppercase letter (tax indicator: F, R, T, N, X)
+    n = regReplace(n, #"\s+[A-Z]\s*$"#, "")
+
+    // Remove leading single uppercase letter
+    n = regReplace(n, #"^[A-Z]\s{2,}"#, "")
+
+    // Remove trailing asterisks
+    n = regReplace(n, #"\*+\s*$"#, "")
+
+    // Remove leading dept codes (5+ digits)
+    n = regReplace(n, #"^\d{5,}\s*"#, "")
+
+    // Trim junk chars
+    n = n.trimmingCharacters(in: .whitespaces)
+      .trimmingCharacters(in: CharacterSet(charactersIn: ".-–—:*#/$@,;()"))
+      .trimmingCharacters(in: .whitespaces)
+
+    // Collapse multiple spaces
+    while n.contains("  ") { n = n.replacingOccurrences(of: "  ", with: " ") }
+
+    // Final trailing single letter
+    if n.count > 2, let sp = n.lastIndex(of: " ") {
+      let tail = String(n[n.index(after: sp)...])
+      if tail.count == 1, tail.first?.isUppercase == true {
+        n = String(n[..<sp]).trimmingCharacters(in: .whitespaces)
+      }
+    }
+
+    return n
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // MARK: - Line Classification
+  // ════════════════════════════════════════════════════════════════════════════
+
+  private func matchTotal(_ l: String) -> Bool {
+    if l.contains("grand total") { return true }
+    guard l.contains("total") else { return false }
+    if l.contains("subtotal") || l.contains("sub total") || l.contains("sub-total") { return false }
+    if l.contains("total purchase") || l.contains("total savings") || l.contains("total bonus") { return false }
+    if l.contains("total earned") || l.contains("total points") { return false }
+    return true
+  }
+
+  private func matchSubtotal(_ l: String) -> Bool {
+    l.contains("subtotal") || l.contains("sub total") || l.contains("sub-total")
+  }
+
+  private func matchTax(_ l: String) -> Bool {
+    if l.hasPrefix("tax") {
+      let rest = String(l.dropFirst(3))
+      if rest.isEmpty || rest.first!.isNumber || rest.first!.isWhitespace || rest.first! == ":" { return true }
+    }
+    if l.hasSuffix(" tax") || l.hasSuffix(" tax:") { return true }
+    let taxKeywords = ["sales tax", "state tax", "local tax", "county tax", "city tax", "hst", "gst", "vat "]
+    for k in taxKeywords { if l.contains(k) { return true } }
+    return false
+  }
+
+  private func matchTip(_ l: String) -> Bool {
+    l.contains("tip") || l.contains("gratuity") || l.contains("service charg")
+  }
+
+  private func isPaymentOrFooter(_ l: String) -> Bool {
+    let p = [
+      // Payment
+      "change due", "cash tend", "credit tend", "visa tend", "visa", "mastercard", "amex",
+      "discover", "debit card", "debit", "credit card", "wmp ", "walmart pay",
+      "apple pay", "google pay", "paypal",
+      // Just "credit" (standalone) — catches "Credit $102.96" lines
+      "credit",
+      // Card details
+      "card ending", "card #", "card no", "card type", "card entry", "xxxx",
+      "account #", "acct#", "acct #", "appr#", "approval", "auth code",
+      "ref num", "ref #", "ref:", "aid:", "tc:", "tvr:", "tsi:",
+      "trace", "app label",
+      // Footer
+      "thank you", "thanks for", "come again", "have a nice",
+      "total purchase", "total savings", "total bonus", "bonus points",
+      // Receipt metadata
+      "transaction", "receipt", "invoice:",
+      // Ops
+      "register", "cashier", "clerk", "server:", "host:", "table:",
+      // Loyalty
+      "you saved", "your savings", "loyalty", "rewards", "points earned",
+      "club card", "plus card",
+      // Returns & promos
+      "refund", "exchange", "coupon", "promo code",
+      // Walmart
+      "# items sold", "items sold", "item count",
+      // Ads & web
+      "free delivery", "download", "app today",
+      "survey", "feedback", "www.", "http", ".com", ".org", ".net",
+      // ID patterns
+      "tc acc", "tc#",
+      // Misc
+      "no refund", "exchange", "cooler", "frozen",
+      "redemption",
+    ]
+    for k in p { if l.contains(k) { return true } }
+    // Phone number
+    if regMatch(l, #"\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4}"#) { return true }
+    return false
+  }
+
+  private func isHeaderOrStore(_ l: String) -> Bool {
+    let p = [
+      "supercenter", "supermarket", "grocery", "one stop shop",
+      "mgr.", "manager",
+      "st#", "op#", "te#", "tr#",
+      "date/time", "date:", "station:", "station ",
+      "closed to", "order #", "order:", "invoice #",
+    ]
+    for k in p { if l.contains(k) { return true } }
+    return false
+  }
+
+  private func isAddress(_ l: String) -> Bool {
+    if regMatch(l, #"\b[A-Z]{2}\s+\d{5}\b"#, ci: true) { return true }
+    let st = [" st ", " ave ", " blvd ", " rd ", " dr ", " ln ", " pkwy ", " hwy ", " way ", " street"]
+    for k in st { if l.contains(k) || l.hasSuffix(k.trimmingCharacters(in: .whitespaces)) { return true } }
+    return false
+  }
+
+  private func isWeightLine(_ l: String) -> Bool {
+    (l.contains("lb") || l.contains("oz") || l.contains("kg")) && l.contains("@")
+  }
+
+  /// Parses "Item Count: 18" or "# ITEMS SOLD 4" or "Item Count 18"
+  private func parseItemCount(_ l: String) -> Int? {
+    if let m = regFirst(l, #"item\s*count\s*:?\s*(\d+)"#, group: 1, ci: true), let n = Int(m) { return n }
+    if let m = regFirst(l, #"#?\s*items?\s*sold\s*:?\s*(\d+)"#, group: 1, ci: true), let n = Int(m) { return n }
+    return nil
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // MARK: - Confidence Scoring
+  // ════════════════════════════════════════════════════════════════════════════
+
+  private func confidenceScore(_ name: String, _ price: Double) -> Double {
+    var s = 0.7
+    if name.count >= 3 { s += 0.05 }
+    if name.count >= 5 { s += 0.05 }
+    let lr = Double(name.filter { $0.isLetter }.count) / Double(max(1, name.count))
+    if lr > 0.6 { s += 0.05 }
+    if lr > 0.8 { s += 0.05 }
+    if price >= 0.50 && price <= 200 { s += 0.05 }
+    let dr = Double(name.filter { $0.isNumber }.count) / Double(max(1, name.count))
+    if dr > 0.3 { s -= 0.15 }
+    if name.count < 3 { s -= 0.2 }
+    return min(max(s, 0.1), 1.0)
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // MARK: - Self-Healing Validation
+  // ════════════════════════════════════════════════════════════════════════════
+
+  private func selfHeal(_ r: Parsed, expectedCount: Int?) -> Parsed {
+    var receipt = r
+
+    let itemSum = receipt.items.reduce(0.0) { $0 + $1.price * Double($1.quantity) }
+
+    // Validate against subtotal
+    if let sub = receipt.subtotal {
+      let diff = abs(itemSum - sub)
+      if diff > max(0.05, sub * 0.01) {
+        NSLog("[VK] ⚠️ Items=$\(f2(itemSum)) ≠ subtotal=$\(f2(sub)), Δ=$\(f2(diff))")
+        // If over, remove low-confidence items matching the overage
+        if itemSum > sub + 0.50 {
+          let over = itemSum - sub
+          if let idx = receipt.items.firstIndex(where: {
+            $0.confidence < 0.6 && abs($0.price - over) < 0.05
+          }) {
+            NSLog("[VK] 🔧 Removing: \"\(receipt.items[idx].name)\" $\(receipt.items[idx].price)")
+            receipt.items.remove(at: idx)
+          }
+        }
+      } else {
+        NSLog("[VK] ✅ Items match subtotal: $\(f2(itemSum)) ≈ $\(f2(sub))")
+      }
+    }
+
+    // Validate item count
+    if let expected = expectedCount, receipt.items.count != expected {
+      NSLog("[VK] ⚠️ Expected \(expected) items, got \(receipt.items.count)")
+    }
+
+    // Compute total if missing
+    if receipt.total == nil {
+      let newSum = receipt.items.reduce(0.0) { $0 + $1.price * Double($1.quantity) }
+      receipt.total = newSum + (receipt.tax ?? 0) + (receipt.tip ?? 0)
     }
 
     return receipt
   }
 
-  // MARK: - Line Grouping (Spatial)
+  // ════════════════════════════════════════════════════════════════════════════
+  // MARK: - Merchant & Date
+  // ════════════════════════════════════════════════════════════════════════════
 
-  /// Groups text blocks into receipt lines based on Y-coordinate proximity.
-  /// Uses a conservative, data-driven threshold to avoid merging adjacent receipt lines.
-  private func groupIntoLines(_ blocks: [TextBlock]) -> [ReceiptLine] {
-    guard !blocks.isEmpty else { return [] }
+  private func extractMerchant(_ blocks: [Blk]) -> String? {
+    // Top 35% of receipt, sorted by text height (biggest = store name)
+    let top = blocks.filter { $0.cy > 0.65 }
+    let candidates = (top.isEmpty ? Array(blocks.sorted { $0.cy > $1.cy }.prefix(10)) : top)
+      .filter { $0.text.trimmingCharacters(in: .whitespaces).count >= 3 &&
+                $0.text.filter({ $0.isLetter }).count >= 2 }
+      .sorted { $0.h > $1.h }
 
-    // Calculate median text height for a data-driven threshold
-    let heights = blocks.map { $0.rect.size.height }.sorted()
-    let medianHeight = heights[heights.count / 2]
-
-    // Threshold: 50% of median height, clamped to [0.005, 0.012]
-    // This is conservative — receipt lines are typically spaced 1.5-2x the text height apart,
-    // while text blocks on the SAME line vary by < 0.3x the text height.
-    let threshold = min(max(medianHeight * 0.5, 0.005), 0.012)
-
-    NSLog("[VisionKitReceiptScanner] Line grouping: medianHeight=\(String(format: "%.4f", medianHeight)) threshold=\(String(format: "%.4f", threshold))")
-
-    // Sort by Y descending (top of receipt first, since Vision Y=1 is top)
-    let sorted = blocks.sorted { $0.centerY > $1.centerY }
-
-    var lines: [ReceiptLine] = []
-    var currentGroup: [TextBlock] = [sorted[0]]
-    var anchorY = sorted[0].centerY // Use first block as anchor, not running average
-
-    for i in 1..<sorted.count {
-      let block = sorted[i]
-      let yDiff = abs(block.centerY - anchorY)
-
-      if yDiff <= threshold {
-        // Same line — add to group
-        currentGroup.append(block)
-      } else {
-        // New line — save current group and start new one
-        lines.append(makeReceiptLine(from: currentGroup))
-        currentGroup = [block]
-        anchorY = block.centerY
-      }
-    }
-    // Don't forget the last group
-    if !currentGroup.isEmpty {
-      lines.append(makeReceiptLine(from: currentGroup))
-    }
-
-    return lines
-  }
-
-  private func makeReceiptLine(from blocks: [TextBlock]) -> ReceiptLine {
-    // Sort blocks left to right for the full text
-    let sorted = blocks.sorted { $0.rect.origin.x < $1.rect.origin.x }
-    let fullText = sorted.map { $0.text.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
-    let avgY = sorted.reduce(0.0) { $0 + $1.centerY } / CGFloat(sorted.count)
-    return ReceiptLine(blocks: sorted, fullText: fullText, avgY: avgY)
-  }
-
-  // MARK: - Price Extraction
-
-  /// Checks if a text block is primarily a price (e.g., "12.44", "3.78 R", "$5.99")
-  private static func isPriceBlock(_ text: String) -> Bool {
-    let trimmed = text.trimmingCharacters(in: .whitespaces)
-    // A price block: optional $, digits with one decimal point, optional trailing letter
-    let pattern = #"^\$?\s*\d{1,6}\.\d{2}\s*[A-Z]?\s*$"#
-    return (try? NSRegularExpression(pattern: pattern, options: .caseInsensitive))
-      .flatMap { $0.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)) } != nil
-  }
-
-  /// Extracts a price (Double) from a text block
-  private static func extractPriceFromBlock(_ text: String) -> Double? {
-    let trimmed = text.trimmingCharacters(in: .whitespaces)
-    let pattern = #"\$?\s*(\d{1,6}\.\d{2})"#
-    guard let regex = try? NSRegularExpression(pattern: pattern),
-          let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
-          let range = Range(match.range(at: 1), in: trimmed),
-          let price = Double(trimmed[range]) else { return nil }
-    return price
-  }
-
-  /// Extracts any price from a full line of text (fallback)
-  private func extractAnyPrice(from text: String) -> Double? {
-    // Find all decimal numbers in the text, return the LAST one (most likely the price)
-    let pattern = #"\$?\s*(\d{1,6}\.\d{2})"#
-    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-    let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
-
-    // Return the last match (prices are typically at the end)
-    if let lastMatch = matches.last,
-       let range = Range(lastMatch.range(at: 1), in: text),
-       let price = Double(text[range]),
-       price > 0 && price < 50000 {
-      return price
+    for b in candidates {
+      let t = b.text.trimmingCharacters(in: .whitespaces)
+      let l = t.lowercased()
+      if l.contains("feedback") || l.contains("survey") || l.contains(".com") ||
+         l.contains("thank") || l.contains("id #") || l.contains("receipt") ||
+         l.contains("invoice") { continue }
+      if isAddress(l) { continue }
+      if regMatch(l, #"\d{3}[\-\.]\d{3}[\-\.]\d{4}"#) { continue }
+      NSLog("[VK] 🏪 Merchant: \"\(t)\" h=\(f3(b.h))")
+      return String(t.prefix(60))
     }
     return nil
   }
 
-  // MARK: - Item Name Extraction
-
-  /// Extracts a clean item name from the left-side text blocks of a receipt line.
-  private func extractItemName(from line: ReceiptLine) -> String {
-    let sorted = line.blocks.sorted { $0.rect.origin.x < $1.rect.origin.x }
-
-    // Collect text from left blocks, stopping before price blocks
-    var nameParts: [String] = []
-    for block in sorted {
-      let t = block.text.trimmingCharacters(in: .whitespaces)
-      if Self.isPriceBlock(t) { break }
-
-      // Also skip blocks that are pure UPC codes (8+ digits with no letters)
-      if isUPCCode(t) { continue }
-
-      // Skip single-letter blocks (tax indicators: F, T, R, N, X)
-      if t.count == 1 && t.first?.isLetter == true { continue }
-
-      nameParts.append(t)
-    }
-
-    var name = nameParts.joined(separator: " ")
-
-    // Clean up the name
-    name = cleanItemName(name)
-
-    return name
-  }
-
-  /// Cleans an item name by removing UPC codes, single trailing letters, weight info, etc.
-  private func cleanItemName(_ rawName: String) -> String {
-    var name = rawName
-
-    // Remove UPC/barcode codes: 8+ consecutive digits
-    if let regex = try? NSRegularExpression(pattern: #"\d{8,}"#) {
-      name = regex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
-    }
-
-    // Remove inline price patterns ($X.XX or X.XX)
-    if let regex = try? NSRegularExpression(pattern: #"\$?\s*\d{1,6}\.\d{2}"#) {
-      name = regex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
-    }
-
-    // Remove weight calculation info (e.g., "1.97 lb. @ 1.00 lb. / 1.53")
-    if let regex = try? NSRegularExpression(pattern: #"\d+\.?\d*\s*(?:lb|lbs|oz|kg)\s*\.?\s*@.*"#, options: .caseInsensitive) {
-      name = regex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
-    }
-
-    // Remove standalone single uppercase letters (tax indicators F, T, R, N, X, etc.)
-    // Only at the start or end of the name, or surrounded by spaces
-    if let regex = try? NSRegularExpression(pattern: #"\s+[A-Z]\s*$"#) {
-      name = regex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
-    }
-    if let regex = try? NSRegularExpression(pattern: #"^\s*[A-Z]\s+"#) {
-      name = regex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
-    }
-
-    // Remove leading item/dept codes (5+ digit codes at the start)
-    if let regex = try? NSRegularExpression(pattern: #"^\d{5,}\s*"#) {
-      name = regex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
-    }
-
-    // Clean up
-    name = name
-      .trimmingCharacters(in: .whitespaces)
-      .trimmingCharacters(in: CharacterSet(charactersIn: ".-–—:*#/$@"))
-      .trimmingCharacters(in: .whitespaces)
-
-    // Collapse multiple spaces
-    while name.contains("  ") {
-      name = name.replacingOccurrences(of: "  ", with: " ")
-    }
-
-    // Final trailing single letter removal (catches any remaining)
-    if name.count > 2 {
-      let lastSpace = name.lastIndex(of: " ")
-      if let lastSpace = lastSpace {
-        let trailing = String(name[name.index(after: lastSpace)...])
-        if trailing.count == 1 && trailing.first?.isUppercase == true {
-          name = String(name[..<lastSpace]).trimmingCharacters(in: .whitespaces)
-        }
-      }
-    }
-
-    return name
-  }
-
-  // MARK: - Line Classification
-
-  private func matchesTotal(_ lower: String) -> Bool {
-    guard lower.contains("total") else { return false }
-    if lower.contains("subtotal") || lower.contains("sub total") || lower.contains("sub-total") { return false }
-    if lower.contains("total purchase") { return false } // Walmart footer
-    return true
-  }
-
-  private func matchesSubtotal(_ lower: String) -> Bool {
-    return lower.contains("subtotal") || lower.contains("sub total") || lower.contains("sub-total")
-  }
-
-  private func matchesTax(_ lower: String) -> Bool {
-    // "tax", "tax1", "tax2", "tax 6.1000%", "sales tax", etc.
-    if lower.hasPrefix("tax") {
-      // Make sure it's not "taxi" or "taxidermy"
-      let afterTax = String(lower.dropFirst(3))
-      if afterTax.isEmpty { return true }
-      let firstChar = afterTax.first!
-      if firstChar.isNumber || firstChar.isWhitespace || firstChar == ":" { return true }
-    }
-    if lower.hasSuffix(" tax") { return true }
-    if lower.contains("sales tax") || lower.contains("state tax") || lower.contains("local tax") || lower.contains("county tax") { return true }
-    if lower.hasPrefix("hst") || lower.hasPrefix("gst") || lower.hasPrefix("vat ") { return true }
-    return false
-  }
-
-  private func matchesTip(_ lower: String) -> Bool {
-    return lower.contains("tip") || lower.contains("gratuity") || lower.contains("service charg")
-  }
-
-  /// Lines to skip entirely (payment info, store info, headers, footers)
-  private func isSkipLine(_ lower: String) -> Bool {
-    let skipPatterns = [
-      // Payment
-      "change due", "cash tend", "credit tend", "visa tend", "visa", "mastercard",
-      "amex", "discover", "debit", "wmp ", "walmart pay",
-      // Card info
-      "card ending", "card #", "card no", "account #", "appr#", "approval",
-      "auth code", "ref #", "ref:",
-      // Footer
-      "thank you", "thanks", "receipt", "invoice", "transaction",
-      "total purchase",
-      // Store info
-      "store #", "store:", "register", "cashier", "mgr.",
-      "supercenter", "supermarket",
-      // Savings/loyalty
-      "you saved", "your savings", "member", "loyalty", "rewards", "points",
-      // Returns
-      "refund", "return", "exchange", "coupon", "discount", "promo",
-      // Item count headers
-      "# items", "items sold", "item count",
-      // Misc
-      "survey", "feedback", "www.", "http", ".com",
-      // Transaction IDs
-      "tc#", "te#", "tr#", "op#", "st#",
-      // Free delivery ads
-      "free delivery", "walmart+",
-    ]
-
-    for pattern in skipPatterns {
-      if lower.contains(pattern) { return true }
-    }
-
-    // Skip lines that look like phone numbers (3-3-4 or 3-7 digit patterns)
-    if let _ = try? NSRegularExpression(pattern: #"^\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4}$"#)
-      .firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) {
-      return true
-    }
-
-    return false
-  }
-
-  /// Checks if a line looks like an address (contains state/zip pattern)
-  private func isAddressLine(_ lower: String) -> Bool {
-    // State abbreviation + zip code pattern: "MO 64468", "CA 90210"
-    if let _ = try? NSRegularExpression(pattern: #"\b[A-Z]{2}\s+\d{5}\b"#, options: .caseInsensitive)
-      .firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) {
-      return true
-    }
-    // Street patterns
-    if lower.contains(" st ") || lower.contains(" ave ") || lower.contains(" blvd ") ||
-       lower.contains(" rd ") || lower.contains(" dr ") || lower.hasSuffix(" st") {
-      return true
-    }
-    return false
-  }
-
-  /// Checks if text is a UPC/barcode code (8+ digits, possibly with spaces)
-  private func isUPCCode(_ text: String) -> Bool {
-    let digitsOnly = text.filter { $0.isNumber }
-    let nonDigits = text.filter { !$0.isNumber && !$0.isWhitespace }
-    return digitsOnly.count >= 8 && nonDigits.count <= 1
-  }
-
-  /// Checks if a line is a weight/calculation line (e.g., "1.97 lb. @ 1.00 lb.")
-  private func isWeightLine(_ lower: String) -> Bool {
-    return lower.contains(" lb") && lower.contains("@") ||
-           lower.contains(" oz") && lower.contains("@") ||
-           lower.contains(" kg") && lower.contains("@")
-  }
-
-  // MARK: - Merchant Name (Spatial - uses text height)
-
-  /// Finds the merchant name by looking for the TALLEST text near the top of the receipt.
-  /// Store names are typically printed in large, bold letters.
-  private func extractMerchantNameSpatial(from blocks: [TextBlock]) -> String? {
-    // Consider only the top 40% of the receipt
-    let topBlocks = blocks.filter { $0.centerY > 0.6 } // Y > 0.6 means top 40% (Vision coords)
-
-    guard !topBlocks.isEmpty else {
-      // Fallback: just use top text
-      return extractMerchantNameFallback(from: blocks)
-    }
-
-    // Find the block with the largest height (biggest text = store name)
-    // Filter out very short text (< 3 chars) and numeric-only text
-    let candidates = topBlocks.filter { block in
-      let text = block.text.trimmingCharacters(in: .whitespaces)
-      let letterCount = text.filter { $0.isLetter }.count
-      return text.count >= 3 && letterCount >= 2
-    }
-
-    // Sort by height descending — largest text first
-    let sortedByHeight = candidates.sorted { $0.rect.size.height > $1.rect.size.height }
-
-    for block in sortedByHeight {
-      let text = block.text.trimmingCharacters(in: .whitespaces)
-      let lower = text.lowercased()
-
-      // Skip lines that are clearly not store names
-      if lower.contains("receipt") || lower.contains("invoice") || lower.contains("feedback") ||
-         lower.contains("survey") || lower.contains("www.") || lower.contains(".com") ||
-         lower.contains("thank") || lower.contains("id #") || lower.contains("id#") { continue }
-
-      // This is likely the store name!
-      NSLog("[VisionKitReceiptScanner] 🏪 Merchant detected: \"\(text)\" (height=\(String(format: "%.4f", block.rect.size.height)))")
-      return String(text.prefix(60))
-    }
-
-    return extractMerchantNameFallback(from: blocks)
-  }
-
-  private func extractMerchantNameFallback(from blocks: [TextBlock]) -> String? {
-    let sorted = blocks.sorted { $0.centerY > $1.centerY }
-    for block in sorted.prefix(5) {
-      let text = block.text.trimmingCharacters(in: .whitespaces)
-      let lower = text.lowercased()
-      if text.count >= 3 && text.filter({ $0.isLetter }).count >= 2 {
-        if !lower.contains("receipt") && !lower.contains("feedback") && !lower.contains("survey") &&
-           !lower.contains(".com") && !lower.contains("thank") && !lower.contains("id #") {
-          return String(text.prefix(60))
-        }
-      }
-    }
-    return nil
-  }
-
-  // MARK: - Date Extraction
-
-  private func extractDateFromBlocks(_ blocks: [TextBlock]) -> String? {
-    let datePatterns = [
+  private func extractDate(_ blocks: [Blk]) -> String? {
+    let patterns = [
       try! NSRegularExpression(pattern: #"(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})"#),
       try! NSRegularExpression(pattern: #"(\w{3,9}\s+\d{1,2},?\s+\d{4})"#, options: .caseInsensitive),
       try! NSRegularExpression(pattern: #"(\d{4}[/\-]\d{2}[/\-]\d{2})"#),
     ]
-
-    for block in blocks {
-      let text = block.text
-      let range = NSRange(text.startIndex..., in: text)
-      for pattern in datePatterns {
-        if let match = pattern.firstMatch(in: text, range: range),
-           let dateRange = Range(match.range(at: 1), in: text) {
-          return String(text[dateRange])
+    for b in blocks {
+      let text = b.text
+      let r = NSRange(text.startIndex..., in: text)
+      for p in patterns {
+        if let m = p.firstMatch(in: text, range: r), let dr = Range(m.range(at: 1), in: text) {
+          return String(text[dr])
         }
       }
     }
     return nil
   }
 
+  // ════════════════════════════════════════════════════════════════════════════
+  // MARK: - Regex Utilities
+  // ════════════════════════════════════════════════════════════════════════════
+
+  private func regMatch(_ s: String, _ p: String, ci: Bool = false) -> Bool {
+    guard let rx = try? NSRegularExpression(pattern: p, options: ci ? [.caseInsensitive] : []) else { return false }
+    return rx.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil
+  }
+
+  private func regFirst(_ s: String, _ p: String, group: Int = 0, ci: Bool = false) -> String? {
+    guard let rx = try? NSRegularExpression(pattern: p, options: ci ? [.caseInsensitive] : []),
+          let m = rx.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+          let r = Range(m.range(at: group), in: s) else { return nil }
+    return String(s[r])
+  }
+
+  private func regReplace(_ s: String, _ p: String, _ repl: String, ci: Bool = false) -> String {
+    guard let rx = try? NSRegularExpression(pattern: p, options: ci ? [.caseInsensitive] : []) else { return s }
+    return rx.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: repl)
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // MARK: - Utilities
+  // ════════════════════════════════════════════════════════════════════════════
 
-  private func saveImageToTemp(_ image: UIImage) -> String? {
-    guard let data = image.jpegData(compressionQuality: 0.85) else { return nil }
+  private func f2(_ v: Double) -> String { String(format: "%.2f", v) }
+  private func f3(_ v: CGFloat) -> String { String(format: "%.3f", v) }
 
-    let fileName = "receipt_scan_\(Int(Date().timeIntervalSince1970 * 1000)).jpg"
-    let tempDir = NSTemporaryDirectory()
-    let filePath = (tempDir as NSString).appendingPathComponent(fileName)
-    let fileURL = URL(fileURLWithPath: filePath)
-
-    do {
-      try data.write(to: fileURL)
-      return fileURL.absoluteString
-    } catch {
-      NSLog("[VisionKitReceiptScanner] Failed to save image: \(error.localizedDescription)")
-      return nil
-    }
+  private func saveImageToTemp(_ img: UIImage) -> String? {
+    guard let d = img.jpegData(compressionQuality: 0.85) else { return nil }
+    let p = (NSTemporaryDirectory() as NSString).appendingPathComponent("receipt_\(Int(Date().timeIntervalSince1970 * 1000)).jpg")
+    do { try d.write(to: URL(fileURLWithPath: p)); return URL(fileURLWithPath: p).absoluteString }
+    catch { return nil }
   }
 
   private func topViewController() -> UIViewController? {
-    guard let windowScene = UIApplication.shared.connectedScenes
-      .compactMap({ $0 as? UIWindowScene })
-      .first,
-      let rootVC = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
-      return nil
-    }
-    return findTopViewController(from: rootVC)
+    guard let sc = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first,
+          let r = sc.windows.first(where: { $0.isKeyWindow })?.rootViewController else { return nil }
+    return findTop(r)
   }
-
-  private func findTopViewController(from vc: UIViewController) -> UIViewController {
-    if let presented = vc.presentedViewController {
-      return findTopViewController(from: presented)
-    }
-    if let nav = vc as? UINavigationController, let top = nav.topViewController {
-      return findTopViewController(from: top)
-    }
-    if let tab = vc as? UITabBarController, let selected = tab.selectedViewController {
-      return findTopViewController(from: selected)
-    }
-    return vc
+  private func findTop(_ v: UIViewController) -> UIViewController {
+    if let p = v.presentedViewController { return findTop(p) }
+    if let n = v as? UINavigationController, let t = n.topViewController { return findTop(t) }
+    if let t = v as? UITabBarController, let s = t.selectedViewController { return findTop(s) }
+    return v
   }
 }
