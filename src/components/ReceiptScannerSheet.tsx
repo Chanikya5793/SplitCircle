@@ -9,11 +9,10 @@
  * 5. Confirming and returning structured receipt data
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
-  Keyboard,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -39,6 +38,12 @@ import {
   type ScanProgressEvent,
   type VisionKitScannedItem,
 } from '@/services/visionKitService';
+import {
+  applyReceiptLearning,
+  getStrictReviewMode,
+  recordReceiptLearningFeedback,
+  type LearningScannedItem,
+} from '@/services/receiptLearningService';
 import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
 import { mediumHaptic, successHaptic } from '@/utils/haptics';
 import * as ImagePicker from 'expo-image-picker';
@@ -73,6 +78,21 @@ interface ReceiptScannerSheetProps {
 
 type ScanPhase = 'idle' | 'scanning' | 'processing' | 'parsing' | 'complete' | 'review';
 
+type EditableReceiptItem = {
+  id: string;
+  name: string;
+  price: string;
+  quantity: number;
+  confidence: number;
+  reviewed: boolean;
+  source: 'scan' | 'learned' | 'manual';
+  originalName: string;
+};
+
+const LOW_CONFIDENCE_THRESHOLD = 0.75;
+const DEBUG_TAP_THRESHOLD = 7;
+const HIGH_CONFIDENCE_THRESHOLD = 0.9;
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 export const ReceiptScannerSheet = ({
@@ -88,13 +108,18 @@ export const ReceiptScannerSheet = ({
 
   // Result state
   const [imageUri, setImageUri] = useState<string | null>(null);
-  const [items, setItems] = useState<{ id: string; name: string; price: string; quantity: number; confidence: number }[]>([]);
+  const [items, setItems] = useState<EditableReceiptItem[]>([]);
   const [tax, setTax] = useState('');
   const [tip, setTip] = useState('');
   const [total, setTotal] = useState('');
   const [merchantName, setMerchantName] = useState<string | null>(null);
   const [date, setDate] = useState<string | null>(null);
   const [rawText, setRawText] = useState<string | null>(null);
+  const [parserTelemetry, setParserTelemetry] = useState<string[]>([]);
+  const [showDebugTelemetry, setShowDebugTelemetry] = useState(false);
+  const [headerTapCount, setHeaderTapCount] = useState(0);
+  const [scannedBaselineItems, setScannedBaselineItems] = useState<LearningScannedItem[]>([]);
+  const [strictReviewMode, setStrictReviewModeState] = useState(false);
 
   // Computed values
   const itemsSubtotal = useMemo(
@@ -110,6 +135,53 @@ export const ReceiptScannerSheet = ({
   const scannedTotal = parseFloat(total) || 0;
   const hasTotalMismatch = scannedTotal > 0 && Math.abs(calculatedTotal - scannedTotal) > 0.02;
 
+  const lowConfidenceCount = useMemo(
+    () => items.filter((item) => !item.reviewed).length,
+    [items],
+  );
+
+  const orderedItems = useMemo(
+    () => [...items].sort((a, b) => Number(a.reviewed) - Number(b.reviewed) || a.confidence - b.confidence),
+    [items],
+  );
+
+  const confidenceStats = useMemo(() => {
+    const low = items.filter((item) => item.confidence < LOW_CONFIDENCE_THRESHOLD).length;
+    const medium = items.filter((item) => item.confidence >= LOW_CONFIDENCE_THRESHOLD && item.confidence < HIGH_CONFIDENCE_THRESHOLD).length;
+    const high = items.filter((item) => item.confidence >= HIGH_CONFIDENCE_THRESHOLD).length;
+    const avg = items.length > 0 ? items.reduce((sum, item) => sum + item.confidence, 0) / items.length : 0;
+    return {
+      low,
+      medium,
+      high,
+      avg,
+      total: items.length,
+    };
+  }, [items]);
+
+  const parserHealthScore = useMemo(() => {
+    if (confidenceStats.total === 0) return 0;
+    let score = confidenceStats.avg * 100;
+    score -= confidenceStats.low * 6;
+    if (hasTotalMismatch) score -= 8;
+    score -= lowConfidenceCount * 2;
+    return Math.max(0, Math.min(100, Math.round(score)));
+  }, [confidenceStats, hasTotalMismatch, lowConfidenceCount]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadStrictMode = async () => {
+      const enabled = await getStrictReviewMode();
+      if (isMounted) {
+        setStrictReviewModeState(enabled);
+      }
+    };
+    void loadStrictMode();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // ── Handlers ──────────────────────────────────────────────────────────────
 
   const generateId = () => `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -124,20 +196,41 @@ export const ReceiptScannerSheet = ({
     }
   }, []);
 
-  const populateFromVisionKit = useCallback((result: NonNullable<Awaited<ReturnType<typeof scanReceiptWithVisionKit>>>) => {
+  const populateFromVisionKit = useCallback(async (result: NonNullable<Awaited<ReturnType<typeof scanReceiptWithVisionKit>>>) => {
     setImageUri(result.imageUri || null);
     setMerchantName(result.merchantName || null);
     setDate(result.date || null);
     setRawText(result.rawText || null);
+    setParserTelemetry(result.parserTelemetry ?? []);
+
+    const scannedItems = (result.items ?? []).map((item: VisionKitScannedItem) => ({
+      name: item.name,
+      price: item.price,
+      confidence: item.confidence ?? 0.7,
+    }));
+    setScannedBaselineItems(scannedItems);
 
     if (result.items && result.items.length > 0) {
-      setItems(
+      const learnedItems = await applyReceiptLearning(
+        result.merchantName,
         result.items.map((item: VisionKitScannedItem) => ({
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+          confidence: item.confidence ?? 0.7,
+        })),
+      );
+
+      setItems(
+        learnedItems.map((item) => ({
           id: generateId(),
           name: item.name,
           price: item.price.toFixed(2),
           quantity: item.quantity,
           confidence: item.confidence ?? 0.7,
+          reviewed: (item.confidence ?? 0.7) >= LOW_CONFIDENCE_THRESHOLD,
+          source: item.source,
+          originalName: item.originalName,
         })),
       );
     }
@@ -180,7 +273,7 @@ export const ReceiptScannerSheet = ({
         setScanItemCount(result.items.length);
         successHaptic();
 
-        populateFromVisionKit(result);
+        await populateFromVisionKit(result);
 
         // Brief delay to show completion, then transition to review
         setTimeout(() => {
@@ -224,6 +317,7 @@ export const ReceiptScannerSheet = ({
 
     setPhase('processing');
     setScanMessage('Processing receipt...');
+    setParserTelemetry([]);
 
     try {
       const ocrResult = await extractReceiptData(uri);
@@ -232,6 +326,13 @@ export const ReceiptScannerSheet = ({
         mediumHaptic();
 
         if (ocrResult.parsedData.items && ocrResult.parsedData.items.length > 0) {
+          setScannedBaselineItems(
+            ocrResult.parsedData.items.map((item) => ({
+              name: item.name,
+              price: item.price,
+              confidence: 0.5,
+            })),
+          );
           setItems(
             ocrResult.parsedData.items.map((item) => ({
               id: generateId(),
@@ -239,6 +340,9 @@ export const ReceiptScannerSheet = ({
               price: item.price.toFixed(2),
               quantity: 1,
               confidence: 0.5,
+              reviewed: false,
+              source: 'scan',
+              originalName: item.name,
             })),
           );
           setScanItemCount(ocrResult.parsedData.items.length);
@@ -271,7 +375,19 @@ export const ReceiptScannerSheet = ({
 
   const handleAddItem = () => {
     mediumHaptic();
-    setItems((prev) => [...prev, { id: generateId(), name: '', price: '', quantity: 1, confidence: 1.0 }]);
+    setItems((prev) => [
+      ...prev,
+      {
+        id: generateId(),
+        name: '',
+        price: '',
+        quantity: 1,
+        confidence: 1.0,
+        reviewed: true,
+        source: 'manual',
+        originalName: '',
+      },
+    ]);
   };
 
   const handleRemoveItem = (id: string) => {
@@ -281,11 +397,51 @@ export const ReceiptScannerSheet = ({
 
   const handleUpdateItem = (id: string, field: 'name' | 'price', value: string) => {
     setItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, [field]: value } : item)),
+      prev.map((item) => (item.id === id ? { ...item, [field]: value, reviewed: true } : item)),
     );
   };
 
+  const handleMarkReviewed = (id: string) => {
+    setItems((prev) => prev.map((item) => (item.id === id ? { ...item, reviewed: true } : item)));
+  };
+
+  const handleHeaderTap = () => {
+    if (!__DEV__) return;
+    const nextCount = headerTapCount + 1;
+    if (nextCount >= DEBUG_TAP_THRESHOLD) {
+      setShowDebugTelemetry((prev) => !prev);
+      setHeaderTapCount(0);
+      return;
+    }
+    setHeaderTapCount(nextCount);
+  };
+
   const handleConfirm = () => {
+    if (lowConfidenceCount > 0) {
+      if (strictReviewMode) {
+        Alert.alert(
+          'Strict Review Enabled',
+          `Review all ${lowConfidenceCount} low-confidence item${lowConfidenceCount > 1 ? 's' : ''} before confirming.`,
+          [{ text: 'OK' }],
+        );
+        return;
+      }
+
+      Alert.alert(
+        'Review Needed',
+        `${lowConfidenceCount} low-confidence item${lowConfidenceCount > 1 ? 's are' : ' is'} still unreviewed.`,
+        [
+          { text: 'Continue Anyway', style: 'destructive', onPress: () => finalizeConfirmation() },
+          { text: 'Review First', style: 'cancel' },
+        ],
+      );
+      return;
+    }
+
+    finalizeConfirmation();
+  };
+
+  const finalizeConfirmation = async () => {
     successHaptic();
     const validItems = items
       .filter((item) => item.name.trim() && parseFloat(item.price) > 0)
@@ -299,6 +455,12 @@ export const ReceiptScannerSheet = ({
     const inferredCategory = rawText ? inferCategoryFromText(rawText) : null;
 
     const finalTotal = scannedTotal > 0 ? scannedTotal : calculatedTotal;
+
+    await recordReceiptLearningFeedback({
+      merchantName,
+      scannedItems: scannedBaselineItems,
+      finalItems: validItems.map((item) => ({ name: item.name, price: item.price })),
+    });
 
     onComplete({
       imageUri,
@@ -317,8 +479,16 @@ export const ReceiptScannerSheet = ({
 
   const getConfidenceColor = (c: number) => c >= 0.8 ? '#4CAF50' : c >= 0.6 ? '#FF9800' : '#F44336';
 
-  const renderItem = ({ item }: { item: typeof items[0] }) => (
-    <View style={[styles.itemRow, { borderColor: `${theme.colors.outline}40` }]}>
+  const renderItem = ({ item }: { item: EditableReceiptItem }) => (
+    <View
+      style={[
+        styles.itemRow,
+        {
+          borderColor: item.reviewed ? `${theme.colors.outline}40` : '#FF9500',
+          backgroundColor: item.reviewed ? 'transparent' : (isDark ? 'rgba(255,149,0,0.10)' : 'rgba(255,149,0,0.08)'),
+        },
+      ]}
+    >
       {/* Confidence dot */}
       <View style={[
         styles.confidenceDot,
@@ -352,6 +522,15 @@ export const ReceiptScannerSheet = ({
           dense
         />
       </View>
+      {!item.reviewed && (
+        <IconButton
+          icon="check-circle-outline"
+          size={20}
+          iconColor={theme.colors.primary}
+          onPress={() => handleMarkReviewed(item.id)}
+          style={styles.reviewBtn}
+        />
+      )}
       <IconButton
         icon="close-circle-outline"
         size={20}
@@ -491,16 +670,29 @@ export const ReceiptScannerSheet = ({
                 onPress={onCancel}
                 iconColor={theme.colors.onSurfaceVariant}
               />
-              <Text
-                variant="titleLarge"
-                style={[styles.headerTitle, { color: theme.colors.onSurface }]}
-              >
-                Review Items
-              </Text>
+              <TouchableOpacity style={{ flex: 1 }} activeOpacity={0.8} onPress={handleHeaderTap}>
+                <Text
+                  variant="titleLarge"
+                  style={[styles.headerTitle, { color: theme.colors.onSurface }]}
+                >
+                  Review Items
+                </Text>
+              </TouchableOpacity>
               <IconButton
                 icon="camera-retake-outline"
                 size={22}
-                onPress={() => { setPhase('idle'); setItems([]); setTax(''); setTip(''); setTotal(''); setMerchantName(null); setDate(null); }}
+                onPress={() => {
+                  setPhase('idle');
+                  setItems([]);
+                  setTax('');
+                  setTip('');
+                  setTotal('');
+                  setMerchantName(null);
+                  setDate(null);
+                  setRawText(null);
+                  setParserTelemetry([]);
+                  setScannedBaselineItems([]);
+                }}
                 iconColor={theme.colors.onSurfaceVariant}
               />
             </View>
@@ -524,6 +716,22 @@ export const ReceiptScannerSheet = ({
               <Text variant="titleSmall" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
                 Items ({items.length})
               </Text>
+              {strictReviewMode && (
+                <View style={[styles.strictBadge, { backgroundColor: `${theme.colors.primary}20` }]}>
+                  <Icon source="shield-lock-outline" size={14} color={theme.colors.primary} />
+                  <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                    Strict
+                  </Text>
+                </View>
+              )}
+              {lowConfidenceCount > 0 && (
+                <View style={[styles.reviewBadge, { backgroundColor: isDark ? 'rgba(255,149,0,0.14)' : 'rgba(255,149,0,0.12)' }]}>
+                  <Icon source="alert-circle-outline" size={14} color="#FF9500" />
+                  <Text variant="labelSmall" style={{ color: '#FF9500', fontWeight: '700' }}>
+                    Review {lowConfidenceCount}
+                  </Text>
+                </View>
+              )}
               <TouchableOpacity onPress={handleAddItem} style={styles.addItemBtn}>
                 <Icon source="plus-circle" size={18} color={theme.colors.primary} />
                 <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>
@@ -533,7 +741,7 @@ export const ReceiptScannerSheet = ({
             </View>
 
             <FlatList
-              data={items}
+              data={orderedItems}
               renderItem={renderItem}
               keyExtractor={(item) => item.id}
               style={styles.itemList}
@@ -551,6 +759,63 @@ export const ReceiptScannerSheet = ({
               }
               keyboardShouldPersistTaps="handled"
             />
+
+            {__DEV__ && showDebugTelemetry && (
+              <View style={[styles.debugPanel, { borderColor: `${theme.colors.outline}40`, backgroundColor: `${theme.colors.surfaceVariant}66` }]}>
+                <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700', marginBottom: 6 }}>
+                  Parser Telemetry (Dev)
+                </Text>
+
+                <View style={styles.healthRow}>
+                  <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                    Parser health
+                  </Text>
+                  <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                    {parserHealthScore}/100
+                  </Text>
+                </View>
+
+                <View style={styles.histogramContainer}>
+                  <View style={styles.histogramRow}>
+                    <Text variant="labelSmall" style={[styles.histogramLabel, { color: '#F44336' }]}>Low</Text>
+                    <View style={[styles.histogramTrack, { backgroundColor: `${theme.colors.onSurface}18` }]}>
+                      <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.low / confidenceStats.total) * 100 : 0}%`, backgroundColor: '#F44336' }]} />
+                    </View>
+                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>{confidenceStats.low}</Text>
+                  </View>
+                  <View style={styles.histogramRow}>
+                    <Text variant="labelSmall" style={[styles.histogramLabel, { color: '#FF9800' }]}>Med</Text>
+                    <View style={[styles.histogramTrack, { backgroundColor: `${theme.colors.onSurface}18` }]}>
+                      <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.medium / confidenceStats.total) * 100 : 0}%`, backgroundColor: '#FF9800' }]} />
+                    </View>
+                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>{confidenceStats.medium}</Text>
+                  </View>
+                  <View style={styles.histogramRow}>
+                    <Text variant="labelSmall" style={[styles.histogramLabel, { color: '#4CAF50' }]}>High</Text>
+                    <View style={[styles.histogramTrack, { backgroundColor: `${theme.colors.onSurface}18` }]}>
+                      <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.high / confidenceStats.total) * 100 : 0}%`, backgroundColor: '#4CAF50' }]} />
+                    </View>
+                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>{confidenceStats.high}</Text>
+                  </View>
+                </View>
+
+                <FlatList
+                  data={parserTelemetry}
+                  keyExtractor={(line, index) => `telemetry_${index}_${line.slice(0, 20)}`}
+                  style={styles.debugList}
+                  ListEmptyComponent={
+                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                      No parser telemetry captured for this scan.
+                    </Text>
+                  }
+                  renderItem={({ item: line }) => (
+                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 3 }}>
+                      {line}
+                    </Text>
+                  )}
+                />
+              </View>
+            )}
 
             {/* Subtotal line */}
             {items.length > 0 && (
@@ -778,6 +1043,67 @@ const styles = StyleSheet.create({
   },
   removeBtn: {
     margin: 0,
+  },
+  reviewBtn: {
+    margin: 0,
+  },
+  reviewBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    marginLeft: 'auto',
+    marginRight: 8,
+  },
+  strictBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    marginLeft: 'auto',
+    marginRight: 8,
+  },
+  debugPanel: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+  },
+  healthRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  histogramContainer: {
+    gap: 4,
+    marginBottom: 8,
+  },
+  histogramRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  histogramLabel: {
+    width: 32,
+    fontWeight: '700',
+  },
+  histogramTrack: {
+    flex: 1,
+    height: 6,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  histogramFill: {
+    height: '100%',
+    borderRadius: 999,
+  },
+  debugList: {
+    maxHeight: 140,
   },
   subtotalRow: {
     flexDirection: 'row',
