@@ -4,14 +4,14 @@ import VisionKit
 import Vision
 internal import React
 
-/// VisionKit Receipt Scanner — v3: Price-First Spatial Association
+/// VisionKit Receipt Scanner — v4: Row Reconstruction + Price Association
 ///
-/// Instead of clustering text into lines (fragile), this approach:
-/// 1. Finds ALL standalone price blocks first
-/// 2. Associates each price with left-side text on the same Y level
-/// 3. Also handles inline prices (name+price in one observation)
-/// 4. Classifies each (name, price) pair: item / total / tax / payment
-/// 5. Self-heals by cross-checking against subtotal/total
+/// This parser reconstructs rows from OCR bounding boxes, then:
+/// 1. Extracts right-column prices per row
+/// 2. Merges multiline item text with nearby priced rows
+/// 3. Classifies summary lines (subtotal/tax/tip/total)
+/// 4. Filters payment/footer noise
+/// 5. Self-heals against subtotal and expected item count
 ///
 @objc(VisionKitReceiptScanner)
 class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDelegate {
@@ -92,21 +92,22 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
         let req = VNRecognizeTextRequest()
         req.recognitionLevel = .accurate
         req.recognitionLanguages = ["en-US"]
-        req.usesLanguageCorrection = true
+        if #available(iOS 16.0, *) {
+          req.automaticallyDetectsLanguage = true
+        }
+        req.usesLanguageCorrection = false
+        req.minimumTextHeight = 0.006
         do {
           try VNImageRequestHandler(cgImage: cg, options: [:]).perform([req])
           for obs in (req.results ?? []) {
-            if let c = obs.topCandidates(1).first {
-              allObs.append((c.string, obs.boundingBox))
+            if let text = self.pickBestTextCandidate(obs) {
+              allObs.append((text, obs.boundingBox))
             }
           }
         } catch {}
       }
 
       NSLog("[VK] \(allObs.count) observations")
-      for (i, o) in allObs.enumerated() {
-        NSLog("[VK] #\(i): \"\(o.0)\" x=\(self.f3(o.1.origin.x)) y=\(self.f3(o.1.origin.y)) w=\(self.f3(o.1.size.width)) h=\(self.f3(o.1.size.height))")
-      }
 
       DispatchQueue.main.async { [weak self] in
         self?.sendEvent(withName: "onScanProgress", body: ["status": "parsing", "message": "Extracting receipt items...", "textLinesFound": allObs.count])
@@ -125,7 +126,8 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
           "tip": result.tip ?? NSNull(),
           "total": result.total ?? NSNull(),
           "merchantName": result.merchantName ?? NSNull(),
-          "date": result.date ?? NSNull()
+          "date": result.date ?? NSNull(),
+          "parserTelemetry": result.telemetry
         ]
         if let u = savedUri { dict["imageUri"] = u }
         self.sendEvent(withName: "onScanProgress", body: ["status": "complete", "message": "Receipt scanned!", "itemCount": result.items.count])
@@ -167,6 +169,7 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
     var total: Double?
     var merchantName: String?
     var date: String?
+    var telemetry: [String] = []
   }
 
   /// A matched (name, price) from spatial association
@@ -177,8 +180,23 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
     let isInline: Bool // was the price inside the same observation as the name?
   }
 
+  private struct ReceiptRow {
+    let blocks: [Blk]
+    let text: String
+    let y: CGFloat
+    let topY: CGFloat
+    let botY: CGFloat
+    let leftX: CGFloat
+    let rightX: CGFloat
+  }
+
+  private struct RowPrice {
+    let value: Double
+    let priceBlock: Blk?
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
-  // MARK: - v3 Main Pipeline: Price-First Spatial Association
+  // MARK: - v4 Main Pipeline: Row Reconstruction
   // ════════════════════════════════════════════════════════════════════════════
 
   private func parseReceipt(_ obs: [(String, CGRect)]) -> Parsed {
@@ -186,156 +204,279 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
     let blocks = obs.enumerated().map { Blk(text: $0.1.0, rect: $0.1.1, idx: $0.0) }
     guard !blocks.isEmpty else { return receipt }
 
-    receipt.merchantName = extractMerchant(blocks)
+    let rows = buildRows(blocks)
+    receipt.merchantName = extractMerchant(rows)
     receipt.date = extractDate(blocks)
+    var telemetry: [String] = []
+    telemetry.append("rows=\(rows.count), observations=\(blocks.count)")
+    if let merchant = receipt.merchantName { telemetry.append("merchant=\(merchant)") }
+    if let date = receipt.date { telemetry.append("date=\(date)") }
 
-    // ── PASS 1: Find standalone price blocks ──
-    // A "standalone price" is an observation whose text is purely a price value.
-    var claimed = Set<Int>() // indices of blocks already consumed
-    var entries: [PricedEntry] = []
-
-    var standalonePrice: [(blk: Blk, price: Double)] = []
-    for b in blocks {
-      if isStandalonePrice(b.text) {
-        if let p = parsePrice(b.text), p > 0, p < 50000 {
-          standalonePrice.append((b, p))
-        }
-      }
-    }
-    // Sort top → bottom (descending Y in Vision coords)
-    standalonePrice.sort { $0.blk.cy > $1.blk.cy }
-
-    for (pb, price) in standalonePrice {
-      // Find text blocks at similar Y, to the LEFT of this price
-      let yTol = max(pb.h * 0.9, 0.006)
-      var nameBlocks: [Blk] = []
-
-      for b in blocks {
-        guard !claimed.contains(b.idx) && b.idx != pb.idx else { continue }
-        guard abs(b.cy - pb.cy) <= yTol else { continue }
-        guard b.re < pb.le + 0.03 else { continue } // must end before price starts
-        guard !isStandalonePrice(b.text) else { continue }
-        nameBlocks.append(b)
-      }
-      nameBlocks.sort { $0.le < $1.le }
-      let nameText = nameBlocks.map { $0.text.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
-
-      // Claim all these blocks
-      claimed.insert(pb.idx)
-      for nb in nameBlocks { claimed.insert(nb.idx) }
-
-      entries.append(PricedEntry(nameText: nameText, price: price, y: pb.cy, isInline: false))
-      NSLog("[VK] Pass1: \"\(nameText)\" → $\(f2(price))")
-    }
-
-    // ── PASS 2: Find inline prices in remaining observations ──
-    // Some receipts return "ITEM NAME $17.99" as a single observation.
-    for b in blocks {
-      guard !claimed.contains(b.idx) else { continue }
-      let text = b.text.trimmingCharacters(in: .whitespaces)
-      guard text.count >= 4 else { continue }
-
-      if let price = extractInlinePrice(text), price > 0, price < 50000 {
-        let nameText = extractNameBeforePrice(text)
-        if nameText.count >= 2 {
-          entries.append(PricedEntry(nameText: nameText, price: price, y: b.cy, isInline: true))
-          claimed.insert(b.idx)
-          NSLog("[VK] Pass2: \"\(nameText)\" → $\(f2(price))")
-        }
-      }
-    }
-
-    // Sort all entries top → bottom
-    entries.sort { $0.y > $1.y }
-
-    // ── Collect unclaimed text blocks for name-only line handling ──
-    var orphanBlocks: [Blk] = []
-    for b in blocks {
-      guard !claimed.contains(b.idx) else { continue }
-      let t = b.text.trimmingCharacters(in: .whitespaces)
-      let alphaCount = t.filter { $0.isLetter }.count
-      if t.count >= 3 && alphaCount >= 2 { orphanBlocks.append(b) }
-    }
-
-    // ── PASS 3: Merge entries with orphan name-only blocks, classify ──
-    // Build a unified timeline sorted by Y (top → bottom)
-    enum TimelineItem {
-      case priced(PricedEntry)
-      case nameOnly(Blk)
-    }
-    var timeline: [(y: CGFloat, item: TimelineItem)] = []
-    for e in entries { timeline.append((e.y, .priced(e))) }
-    for o in orphanBlocks { timeline.append((o.cy, .nameOnly(o))) }
-    timeline.sort { $0.y > $1.y } // top → bottom
-
-    var pendingName: String? = nil
     var expectedItemCount: Int? = nil
+    var summaryStarted = false
+    var pendingNameParts: [String] = []
 
-    for (_, tItem) in timeline {
-      switch tItem {
-      case .nameOnly(let blk):
-        let text = blk.text.trimmingCharacters(in: .whitespaces)
-        let lower = text.lowercased()
+    var i = 0
+    while i < rows.count {
+      let row = rows[i]
+      let lower = row.text.lowercased().trimmingCharacters(in: .whitespaces)
+      telemetry.append("row[\(i)] text=\(row.text)")
 
-        // Check for "Item Count: 18" pattern
-        if let ic = parseItemCount(lower) { expectedItemCount = ic; continue }
+      if let ic = parseItemCount(lower) {
+        expectedItemCount = ic
+        telemetry.append("row[\(i)] itemCountHint=\(ic)")
+      }
 
-        // Skip non-item text
-        if isPaymentOrFooter(lower) || isHeaderOrStore(lower) || isAddress(lower) { continue }
-
-        // Save as pending name for weight-line merging
-        let cleaned = cleanItemName(text)
-        if cleaned.count >= 2 {
-          pendingName = cleaned
-          NSLog("[VK] Pending: \"\(cleaned)\"")
+      let rowPrice = extractRowPrice(row)
+      if let rp = rowPrice {
+        telemetry.append("row[\(i)] price=\(f2(rp.value))")
+        // Summary values (tax, subtotal, total, tip)
+        if matchSubtotal(lower) {
+          receipt.subtotal = rp.value
+          summaryStarted = true
+          pendingNameParts.removeAll()
+          telemetry.append("row[\(i)] classified=subtotal")
+          i += 1
+          continue
         }
-
-      case .priced(let entry):
-        let lower = entry.nameText.lowercased().trimmingCharacters(in: .whitespaces)
-
-        // ── Summary classification ──
-        if matchTotal(lower) { receipt.total = entry.price; pendingName = nil; continue }
-        if matchSubtotal(lower) { receipt.subtotal = entry.price; pendingName = nil; continue }
         if matchTax(lower) {
-          // Accumulate tax (some receipts have TAX1 + TAX2)
-          receipt.tax = (receipt.tax ?? 0) + entry.price; continue
+          receipt.tax = (receipt.tax ?? 0) + rp.value
+          summaryStarted = true
+          pendingNameParts.removeAll()
+          telemetry.append("row[\(i)] classified=tax")
+          i += 1
+          continue
         }
-        if matchTip(lower) { receipt.tip = entry.price; continue }
-        if isPaymentOrFooter(lower) { continue }
-        if isHeaderOrStore(lower) { continue }
+        if matchTip(lower) {
+          receipt.tip = rp.value
+          summaryStarted = true
+          pendingNameParts.removeAll()
+          telemetry.append("row[\(i)] classified=tip")
+          i += 1
+          continue
+        }
+        if matchTotal(lower) {
+          if receipt.total == nil || lower.contains("grand total") {
+            receipt.total = rp.value
+          }
+          summaryStarted = true
+          pendingNameParts.removeAll()
+          telemetry.append("row[\(i)] classified=total")
+          i += 1
+          continue
+        }
 
-        // ── Weight continuation ──
-        if isWeightLine(lower) {
-          if let prev = pendingName {
-            let conf = confidenceScore(prev, entry.price)
-            receipt.items.append(RItem(name: prev, price: entry.price, quantity: 1, confidence: conf))
-            NSLog("[VK] ✅ Weight-merge: \"\(prev)\" $\(f2(entry.price))")
-            pendingName = nil
-            continue
+        // Some receipts place "tax" and amount in separate rows.
+        if matchTax(lower), receipt.tax == nil {
+          receipt.tax = rp.value
+          summaryStarted = true
+          telemetry.append("row[\(i)] classified=tax_fallback")
+          i += 1
+          continue
+        }
+
+        if isPaymentOrFooter(lower) || isHeaderOrStore(lower) || isAddress(lower) {
+          telemetry.append("row[\(i)] classified=ignored_footer_or_header")
+          i += 1
+          continue
+        }
+
+        // Ignore obvious non-item rows after summary section starts.
+        if summaryStarted && (isPaymentOrFooter(lower) || regMatch(lower, #"authorization|approval|transaction|account"#, ci: true)) {
+          telemetry.append("row[\(i)] classified=ignored_post_summary")
+          i += 1
+          continue
+        }
+
+        var itemName = extractItemName(row, price: rp)
+        let pending = pendingNameParts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+
+        // For multiline receipts, prepend pending continuation when helpful.
+        if !pending.isEmpty {
+          if itemName.isEmpty || isWeakItemName(itemName) || row.text.lowercased().contains("@") {
+            itemName = cleanItemName("\(pending) \(itemName)")
+            telemetry.append("row[\(i)] mergedPending=\(pending)")
           }
         }
 
-        // ── It's an item! ──
-        let cleaned = cleanItemName(entry.nameText)
-        if cleaned.count >= 2 {
-          let conf = confidenceScore(cleaned, entry.price)
-          receipt.items.append(RItem(name: cleaned, price: entry.price, quantity: 1, confidence: conf))
-          NSLog("[VK] ✅ Item: \"\(cleaned)\" $\(f2(entry.price)) conf=\(f2(conf))")
-          pendingName = nil
-        } else if entry.nameText.isEmpty, let prev = pendingName {
-          // Price with empty name → attach to pending name
-          let conf = confidenceScore(prev, entry.price)
-          receipt.items.append(RItem(name: prev, price: entry.price, quantity: 1, confidence: conf))
-          NSLog("[VK] ✅ Pending→price: \"\(prev)\" $\(f2(entry.price))")
-          pendingName = nil
+        if isValidItemName(itemName) {
+          let qty = inferQuantity(from: row.text)
+          let conf = confidenceScore(itemName, rp.value)
+          receipt.items.append(RItem(name: itemName, price: rp.value, quantity: max(1, qty), confidence: conf))
+          pendingNameParts.removeAll()
+          telemetry.append("row[\(i)] classified=item name=\(itemName) qty=\(qty) conf=\(f2(conf))")
+          NSLog("[VK] ✅ Item: \"\(itemName)\" $\(f2(rp.value))")
+        } else {
+          telemetry.append("row[\(i)] classified=discarded_invalid_item")
         }
+
+        i += 1
+        continue
+      }
+
+      // No row price: can be multiline continuation, store/address, or footer.
+      if isLikelyContinuationRow(lower) {
+        let cleaned = cleanItemName(row.text)
+        if cleaned.count >= 2 {
+          pendingNameParts.append(cleaned)
+          telemetry.append("row[\(i)] continuation=\(cleaned)")
+          if pendingNameParts.count > 3 {
+            pendingNameParts.removeFirst()
+          }
+        }
+      } else {
+        telemetry.append("row[\(i)] classified=ignored_no_price")
+      }
+
+      i += 1
+    }
+
+    // Fallback summary extraction from rows when keyword and amount are split.
+    if receipt.tax == nil || receipt.subtotal == nil || receipt.total == nil {
+      fillMissingSummaryValues(from: rows, into: &receipt)
+      telemetry.append("summaryFallbackApplied=true")
+    }
+
+    receipt = selfHeal(receipt, expectedCount: expectedItemCount)
+    telemetry.append("result items=\(receipt.items.count) subtotal=\(receipt.subtotal.map { f2($0) } ?? "nil") tax=\(receipt.tax.map { f2($0) } ?? "nil") total=\(receipt.total.map { f2($0) } ?? "nil")")
+    receipt.telemetry = Array(telemetry.suffix(220))
+    return receipt
+  }
+
+  private func buildRows(_ blocks: [Blk]) -> [ReceiptRow] {
+    if blocks.isEmpty { return [] }
+
+    struct MutableRow {
+      var blocks: [Blk]
+      var y: CGFloat
+      var topY: CGFloat
+      var botY: CGFloat
+    }
+
+    var rows: [MutableRow] = []
+    let sorted = blocks.sorted { $0.cy > $1.cy }
+
+    for b in sorted {
+      let tol = max(0.012, min(0.035, b.h * 1.6))
+      if let idx = rows.firstIndex(where: { abs($0.y - b.cy) <= tol }) {
+        rows[idx].blocks.append(b)
+        let count = CGFloat(rows[idx].blocks.count)
+        rows[idx].y = ((rows[idx].y * (count - 1)) + b.cy) / count
+        rows[idx].topY = max(rows[idx].topY, b.topY)
+        rows[idx].botY = min(rows[idx].botY, b.botY)
+      } else {
+        rows.append(MutableRow(blocks: [b], y: b.cy, topY: b.topY, botY: b.botY))
       }
     }
 
-    // ── PASS 4: Validate & self-heal ──
-    receipt = selfHeal(receipt, expectedCount: expectedItemCount)
+    return rows
+      .map { row in
+        let lineBlocks = row.blocks.sorted { $0.le < $1.le }
+        let text = lineBlocks
+          .map { $0.text.trimmingCharacters(in: .whitespaces) }
+          .filter { !$0.isEmpty }
+          .joined(separator: " ")
+        let leftX = lineBlocks.first?.le ?? 0
+        let rightX = lineBlocks.last?.re ?? 0
+        return ReceiptRow(blocks: lineBlocks, text: text, y: row.y, topY: row.topY, botY: row.botY, leftX: leftX, rightX: rightX)
+      }
+      .filter { !$0.text.isEmpty }
+      .sorted { $0.y > $1.y }
+  }
 
-    return receipt
+  private func extractRowPrice(_ row: ReceiptRow) -> RowPrice? {
+    // Prefer right-most standalone price block.
+    for b in row.blocks.sorted(by: { $0.le > $1.le }) {
+      if isStandalonePrice(b.text), let value = parsePrice(b.text), value > 0, value < 50000 {
+        return RowPrice(value: value, priceBlock: b)
+      }
+    }
+
+    // Fallback: right-most inline decimal amount from full row text.
+    guard let m = regLast(row.text, #"\$?\s*(\d{1,6}\.\d{2})\s*[A-Z]?\s*$"#, group: 1),
+          let value = Double(m), value > 0, value < 50000 else {
+      return nil
+    }
+    return RowPrice(value: value, priceBlock: nil)
+  }
+
+  private func extractItemName(_ row: ReceiptRow, price: RowPrice) -> String {
+    var raw = row.text
+    if let pb = price.priceBlock {
+      let leftBlocks = row.blocks.filter { $0.re <= pb.le + 0.01 }.sorted { $0.le < $1.le }
+      let leftText = leftBlocks.map { $0.text.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
+      if !leftText.isEmpty {
+        raw = leftText
+      }
+    }
+
+    raw = regReplace(raw, #"\$?\s*\d{1,6}\.\d{2}\s*[A-Z]?\s*$"#, "")
+    let cleaned = cleanItemName(raw)
+    return cleaned
+  }
+
+  private func isWeakItemName(_ name: String) -> Bool {
+    let trimmed = name.trimmingCharacters(in: .whitespaces)
+    if trimmed.count < 4 { return true }
+    let letterCount = trimmed.filter { $0.isLetter }.count
+    let digitCount = trimmed.filter { $0.isNumber }.count
+    if letterCount < 2 { return true }
+    return digitCount > letterCount
+  }
+
+  private func isValidItemName(_ name: String) -> Bool {
+    let n = name.trimmingCharacters(in: .whitespaces)
+    if n.count < 2 { return false }
+    let l = n.lowercased()
+    if matchSubtotal(l) || matchTax(l) || matchTip(l) || matchTotal(l) { return false }
+    if isPaymentOrFooter(l) || isHeaderOrStore(l) || isAddress(l) { return false }
+    let letterCount = n.filter { $0.isLetter }.count
+    if letterCount < 2 { return false }
+    return true
+  }
+
+  private func isLikelyContinuationRow(_ lower: String) -> Bool {
+    if lower.count < 2 { return false }
+    if regMatch(lower, #"\$?\s*\d{1,6}\.\d{2}"#) { return false }
+    if isPaymentOrFooter(lower) || isHeaderOrStore(lower) || isAddress(lower) { return false }
+    if matchSubtotal(lower) || matchTax(lower) || matchTip(lower) || matchTotal(lower) { return false }
+    if regMatch(lower, #"\b(date|time|station|invoice|order|auth|approval|trace)\b"#, ci: true) { return false }
+    let letters = lower.filter { $0.isLetter }.count
+    return letters >= 2
+  }
+
+  private func inferQuantity(from rowText: String) -> Int {
+    let text = rowText.trimmingCharacters(in: .whitespaces)
+    if let m = regFirst(text, #"^(\d{1,2})\s*[xX]\b"#, group: 1), let q = Int(m), q > 0, q < 50 {
+      return q
+    }
+    if let m = regFirst(text, #"^(\d{1,2})\s+"#, group: 1), let q = Int(m), q > 0, q < 50 {
+      return q
+    }
+    return 1
+  }
+
+  private func fillMissingSummaryValues(from rows: [ReceiptRow], into receipt: inout Parsed) {
+    for idx in rows.indices {
+      let row = rows[idx]
+      let lower = row.text.lowercased().trimmingCharacters(in: .whitespaces)
+
+      if let rp = extractRowPrice(row) {
+        if receipt.subtotal == nil && matchSubtotal(lower) { receipt.subtotal = rp.value }
+        if matchTax(lower) { receipt.tax = (receipt.tax ?? 0) + rp.value }
+        if receipt.tip == nil && matchTip(lower) { receipt.tip = rp.value }
+        if receipt.total == nil && matchTotal(lower) { receipt.total = rp.value }
+        continue
+      }
+
+      // Handle split label/value rows: "Tax" then next row has amount.
+      if idx + 1 < rows.count, let nextPrice = extractRowPrice(rows[idx + 1]) {
+        if receipt.subtotal == nil && matchSubtotal(lower) { receipt.subtotal = nextPrice.value }
+        if matchTax(lower) { receipt.tax = (receipt.tax ?? 0) + nextPrice.value }
+        if receipt.tip == nil && matchTip(lower) { receipt.tip = nextPrice.value }
+        if receipt.total == nil && matchTotal(lower) { receipt.total = nextPrice.value }
+      }
+    }
   }
 
   // ════════════════════════════════════════════════════════════════════════════
@@ -603,25 +744,48 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
   // ════════════════════════════════════════════════════════════════════════════
 
   private func extractMerchant(_ blocks: [Blk]) -> String? {
-    // Top 35% of receipt, sorted by text height (biggest = store name)
-    let top = blocks.filter { $0.cy > 0.65 }
-    let candidates = (top.isEmpty ? Array(blocks.sorted { $0.cy > $1.cy }.prefix(10)) : top)
-      .filter { $0.text.trimmingCharacters(in: .whitespaces).count >= 3 &&
-                $0.text.filter({ $0.isLetter }).count >= 2 }
-      .sorted { $0.h > $1.h }
+    let rows = buildRows(blocks)
+    return extractMerchant(rows)
+  }
 
-    for b in candidates {
-      let t = b.text.trimmingCharacters(in: .whitespaces)
+  private func extractMerchant(_ rows: [ReceiptRow]) -> String? {
+    let candidates = rows
+      .filter { $0.y > 0.55 }
+      .prefix(12)
+
+    var best: (name: String, score: Double)? = nil
+    for row in candidates {
+      let t = row.text.trimmingCharacters(in: .whitespaces)
+      if t.count < 3 { continue }
       let l = t.lowercased()
       if l.contains("feedback") || l.contains("survey") || l.contains(".com") ||
          l.contains("thank") || l.contains("id #") || l.contains("receipt") ||
-         l.contains("invoice") { continue }
+         l.contains("invoice") || l.contains("store #") || l.contains("st#") {
+        continue
+      }
       if isAddress(l) { continue }
       if regMatch(l, #"\d{3}[\-\.]\d{3}[\-\.]\d{4}"#) { continue }
-      NSLog("[VK] 🏪 Merchant: \"\(t)\" h=\(f3(b.h))")
-      return String(t.prefix(60))
+
+      let chars = max(1, t.count)
+      let letters = t.filter { $0.isLetter }.count
+      let digits = t.filter { $0.isNumber }.count
+      let upper = t.filter { $0.isUppercase }.count
+      let letterRatio = Double(letters) / Double(chars)
+      let digitRatio = Double(digits) / Double(chars)
+      let upperRatio = Double(upper) / Double(max(1, letters))
+
+      var score = 0.0
+      score += Double(row.topY) * 1.8
+      score += letterRatio * 1.2
+      score += upperRatio * 0.8
+      score -= digitRatio * 1.0
+      score -= Double(abs(0.5 - row.leftX)) * 0.1
+
+      if best == nil || score > best!.score {
+        best = (String(t.prefix(60)), score)
+      }
     }
-    return nil
+    return best?.name
   }
 
   private func extractDate(_ blocks: [Blk]) -> String? {
@@ -658,6 +822,13 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
     return String(s[r])
   }
 
+  private func regLast(_ s: String, _ p: String, group: Int = 0, ci: Bool = false) -> String? {
+    guard let rx = try? NSRegularExpression(pattern: p, options: ci ? [.caseInsensitive] : []) else { return nil }
+    let matches = rx.matches(in: s, range: NSRange(s.startIndex..., in: s))
+    guard let m = matches.last, let r = Range(m.range(at: group), in: s) else { return nil }
+    return String(s[r])
+  }
+
   private func regReplace(_ s: String, _ p: String, _ repl: String, ci: Bool = false) -> String {
     guard let rx = try? NSRegularExpression(pattern: p, options: ci ? [.caseInsensitive] : []) else { return s }
     return rx.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: repl)
@@ -669,6 +840,34 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
 
   private func f2(_ v: Double) -> String { String(format: "%.2f", v) }
   private func f3(_ v: CGFloat) -> String { String(format: "%.3f", v) }
+
+  @available(iOS 13.0, *)
+  private func pickBestTextCandidate(_ obs: VNRecognizedTextObservation) -> String? {
+    let candidates = obs.topCandidates(3)
+    guard !candidates.isEmpty else { return nil }
+
+    var bestText: String?
+    var bestScore = -Double.infinity
+
+    for candidate in candidates {
+      let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+      if text.isEmpty { continue }
+
+      var score = Double(candidate.confidence)
+      if regMatch(text, #"\$?\s*\d{1,6}\.\d{2}"#) { score += 0.08 }
+
+      let letters = text.filter { $0.isLetter }.count
+      if letters >= 2 { score += 0.03 }
+      if text.contains("|") || text.contains("[") || text.contains("]") { score -= 0.05 }
+
+      if score > bestScore {
+        bestScore = score
+        bestText = text
+      }
+    }
+
+    return bestText
+  }
 
   private func saveImageToTemp(_ img: UIImage) -> String? {
     guard let d = img.jpegData(compressionQuality: 0.85) else { return nil }

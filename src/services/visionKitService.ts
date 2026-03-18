@@ -30,6 +30,7 @@ export interface VisionKitScanResult {
   total?: number | null;
   merchantName?: string | null;
   date?: string | null;
+  parserTelemetry?: string[];
 }
 
 export interface ScanProgressEvent {
@@ -116,6 +117,9 @@ export const scanReceiptWithVisionKit = async (
       total: typeof result.total === 'number' ? result.total : null,
       merchantName: typeof result.merchantName === 'string' ? result.merchantName : null,
       date: typeof result.date === 'string' ? result.date : null,
+      parserTelemetry: Array.isArray(result.parserTelemetry)
+        ? result.parserTelemetry.filter((line: unknown): line is string => typeof line === 'string')
+        : [],
     } as VisionKitScanResult;
   } finally {
     subscription?.remove();
