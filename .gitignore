@@ -40,5 +40,6 @@ GoogleService-Info.plist
 *.tsbuildinfo
 
 # generated native folders
-/ios
+/ios/Build
+/ios/Pods
 /android
