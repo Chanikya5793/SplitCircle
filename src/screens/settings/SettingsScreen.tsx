@@ -5,18 +5,18 @@ import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetri
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import {
-  getStrictReviewMode,
-  listLearningMerchants,
-  resetLearningForMerchant,
-  setStrictReviewMode,
-  type LearningMerchantSummary,
+    getStrictReviewMode,
+    listLearningMerchants,
+    resetLearningForMerchant,
+    setStrictReviewMode,
+    type LearningMerchantSummary,
 } from '@/services/receiptLearningService';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Alert, Animated, StyleSheet, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Divider, List, Switch, Text } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export const SettingsScreen = () => {
   const navigation = useNavigation();

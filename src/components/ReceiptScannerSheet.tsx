@@ -9,44 +9,44 @@
  * 5. Confirming and returning structured receipt data
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Alert,
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  TouchableOpacity,
-  View,
-} from 'react-native';
-import {
-  Button,
-  Divider,
-  Icon,
-  IconButton,
-  Text,
-  TextInput,
-} from 'react-native-paper';
-import { useTheme } from '@/context/ThemeContext';
+import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ScanningAnimation } from '@/components/ScanningAnimation';
-import { FloatingLabelInput } from '@/components/FloatingLabelInput';
-import {
-  isVisionKitAvailable,
-  scanReceiptWithVisionKit,
-  type ScanProgressEvent,
-  type VisionKitScannedItem,
-} from '@/services/visionKitService';
-import {
-  applyReceiptLearning,
-  getStrictReviewMode,
-  recordReceiptLearningFeedback,
-  type LearningScannedItem,
-} from '@/services/receiptLearningService';
+import { useTheme } from '@/context/ThemeContext';
 import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
+import {
+    applyReceiptLearning,
+    getStrictReviewMode,
+    recordReceiptLearningFeedback,
+    type LearningScannedItem,
+} from '@/services/receiptLearningService';
+import {
+    isVisionKitAvailable,
+    scanReceiptWithVisionKit,
+    type ScanProgressEvent,
+    type VisionKitScannedItem,
+} from '@/services/visionKitService';
 import { mediumHaptic, successHaptic } from '@/utils/haptics';
 import * as ImagePicker from 'expo-image-picker';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+    Alert,
+    FlatList,
+    KeyboardAvoidingView,
+    Platform,
+    StyleSheet,
+    TouchableOpacity,
+    View,
+} from 'react-native';
+import {
+    Button,
+    Divider,
+    Icon,
+    IconButton,
+    Text,
+    TextInput,
+} from 'react-native-paper';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

@@ -100,6 +100,25 @@ npm run web      # Starts web development server
 
 The Metro bundler QR code can be scanned using Expo Go. Ensure your Firebase project allows the configured bundle IDs/package names.
 
+## TestFlight Release
+
+TestFlight builds do not require a dev server. Use the production EAS profile to create a standalone iOS build:
+
+```bash
+npx eas build --platform ios --profile production
+```
+
+After the build finishes, submit it to App Store Connect/TestFlight:
+
+```bash
+npx eas submit --platform ios --profile production
+```
+
+Notes:
+- The production profile is configured to auto-increment the iOS build number.
+- Make sure the required public environment variables are available in your local `.env` or EAS secrets before building.
+- If EAS asks for authentication, sign in with the Apple/Expo account that owns the `com.splitcircle.app` bundle identifier.
+
 ## Firebase Setup
 
 1. Create a Firestore database in **production mode**.
