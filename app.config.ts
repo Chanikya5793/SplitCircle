@@ -146,7 +146,6 @@ const config = {
       },
     ],
     ['expo-build-properties', { android: { minSdkVersion: 24 } }],
-    '@config-plugins/react-native-webrtc',
     '@livekit/react-native-expo-plugin',
   ],
   extra: {
