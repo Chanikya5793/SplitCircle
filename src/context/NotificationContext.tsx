@@ -119,16 +119,20 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
           setPushToken(token);
           setPermissionGranted(true);
 
-          // Persist token + enable push in Firestore
+          // Persist token only. Do not override user-level push preference here.
           await updateDoc(doc(db, 'users', user.userId), {
             pushToken: token,
-            'preferences.pushEnabled': true,
           });
         } else {
+          setPushToken(null);
           setPermissionGranted(false);
         }
       } catch (error) {
         console.error('Failed to register push notifications', error);
+        if (isMounted) {
+          setPushToken(null);
+          setPermissionGranted(false);
+        }
       }
     };
 
@@ -184,6 +188,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
     async <K extends keyof NotificationPreference>(key: K, value: NotificationPreference[K]) => {
       if (!user) return;
 
+      const previousValue = preferences[key];
       setPreferences((prev) => ({ ...prev, [key]: value }));
 
       try {
@@ -193,10 +198,10 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
       } catch (error) {
         console.error('Failed to update notification preference:', error);
         // Revert optimistic update on failure
-        setPreferences((prev) => ({ ...prev, [key]: !value }));
+        setPreferences((prev) => ({ ...prev, [key]: previousValue }));
       }
     },
-    [user?.userId],
+    [preferences, user?.userId],
   );
 
   // ─── Badge ────────────────────────────────────────────────
