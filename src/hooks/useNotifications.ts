@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
 import { useNotificationContext } from '@/context/NotificationContext';
-import { clearBadgeCount } from '@/utils/notifications';
 import { AppState, type AppStateStatus } from 'react-native';
 
 /**
@@ -14,7 +13,7 @@ export const useNotifications = () => {
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'active') {
-        void clearBadgeCount();
+        void clearBadge();
       }
     };
 

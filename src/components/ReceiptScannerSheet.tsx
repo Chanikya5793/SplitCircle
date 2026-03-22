@@ -98,6 +98,178 @@ const DEBUG_TAP_THRESHOLD = 7;
 const HIGH_CONFIDENCE_THRESHOLD = 0.9;
 const AUTO_TITLE_MERCHANT_CONFIDENCE = 0.72;
 
+const SUMMARY_EXCLUSION_TOKENS = [
+  'subtotal',
+  'sub total',
+  'total',
+  'tax',
+  'tip',
+  'gratuity',
+  'cash',
+  'credit',
+  'debit',
+  'visa',
+  'amex',
+  'mastercard',
+  'change due',
+  'account',
+  'approval',
+  'auth',
+  'transaction',
+  'terminal',
+  'survey',
+  'feedback',
+  'receipt',
+  'items sold',
+  'item count',
+  'op#',
+  'te#',
+  'tr#',
+  'ref #',
+];
+
+const normalizeScanLine = (line: string): string => line.replace(/\s+/g, ' ').trim();
+
+const parseLineAmounts = (line: string): number[] => {
+  const matches = line.match(/\d{1,6}\.\d{2}/g);
+  if (!matches) return [];
+  return matches
+    .map((value) => parseFloat(value))
+    .filter((value) => Number.isFinite(value) && value > 0 && value < 50000);
+};
+
+const parseExpectedItemCountHint = (rawText: string | null | undefined): number | null => {
+  if (!rawText) return null;
+  const match = rawText.match(/(?:#?\s*items?\s*sold|item\s*count)\s*[:#-]?\s*(\d+)/i);
+  if (!match?.[1]) return null;
+  const parsed = parseInt(match[1], 10);
+  return Number.isFinite(parsed) && parsed > 0 && parsed < 500 ? parsed : null;
+};
+
+const sanitizeTaxValue = (taxValue: number | null, subtotalValue: number | null, totalValue: number | null): number | null => {
+  if (taxValue == null || !Number.isFinite(taxValue) || taxValue <= 0) return null;
+  if (subtotalValue != null && taxValue >= subtotalValue * 0.5) return null;
+  if (totalValue != null && taxValue >= totalValue * 0.5) return null;
+  return taxValue;
+};
+
+const extractSummaryFromRawText = (rawText: string | null | undefined): {
+  subtotal: number | null;
+  tax: number | null;
+  total: number | null;
+} => {
+  if (!rawText) {
+    return { subtotal: null, tax: null, total: null };
+  }
+
+  const lines = rawText.split('\n').map(normalizeScanLine).filter(Boolean);
+  let subtotal: number | null = null;
+  let tax: number | null = null;
+  let total: number | null = null;
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    const amounts = parseLineAmounts(line);
+    if (!amounts.length) continue;
+
+    if (lower.includes('subtotal') || lower.includes('sub total') || lower.includes('sub-total')) {
+      subtotal = amounts[amounts.length - 1];
+      continue;
+    }
+
+    const isTaxLine = /(^|\s)tax\d*([\s:.-]|$)|sales tax|state tax|local tax|vat|gst|hst/i.test(lower);
+    if (isTaxLine) {
+      // Tax lines sometimes include a percentage (e.g., 6.1000 %) and amount (e.g., 0.38).
+      tax = lower.includes('%') && amounts.length > 1 ? Math.min(...amounts) : amounts[amounts.length - 1];
+      continue;
+    }
+
+    const isTotalLine = lower.includes('total')
+      && !lower.includes('subtotal')
+      && !lower.includes('sub total')
+      && !lower.includes('total purchase')
+      && !lower.includes('items sold');
+    if (isTotalLine) {
+      total = amounts[amounts.length - 1];
+      continue;
+    }
+  }
+
+  return {
+    subtotal,
+    tax: sanitizeTaxValue(tax, subtotal, total),
+    total,
+  };
+};
+
+const extractItemsFromRawText = (rawText: string | null | undefined): Array<{ name: string; price: number }> => {
+  if (!rawText) return [];
+
+  const lines = rawText.split('\n').map(normalizeScanLine).filter(Boolean);
+  const recovered: Array<{ name: string; price: number }> = [];
+  let pendingName = '';
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    const hasSummaryToken = SUMMARY_EXCLUSION_TOKENS.some((token) => lower.includes(token));
+    const amounts = parseLineAmounts(line);
+    const hasPrice = amounts.length > 0;
+
+    if (!hasPrice) {
+      if (!hasSummaryToken && /[a-z]{2,}/i.test(line) && line.length >= 3) {
+        pendingName = line;
+      }
+      continue;
+    }
+
+    if (hasSummaryToken) {
+      pendingName = '';
+      continue;
+    }
+
+    const price = amounts[amounts.length - 1];
+    if (!Number.isFinite(price) || price <= 0) {
+      pendingName = '';
+      continue;
+    }
+
+    const withoutPrices = line
+      .replace(/\d{1,6}\.\d{2}/g, ' ')
+      .replace(/\b\d{8,}\b/g, ' ')
+      .replace(/\b(?:qty|x)\s*\d+\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    let name = withoutPrices;
+    if (!/[a-z]{2,}/i.test(name) && /[a-z]{2,}/i.test(pendingName)) {
+      name = pendingName;
+    }
+
+    name = name
+      .replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, '')
+      .trim();
+
+    if (name.length < 2 || !/[a-z]{2,}/i.test(name)) {
+      pendingName = '';
+      continue;
+    }
+
+    recovered.push({ name, price });
+    pendingName = '';
+  }
+
+  // De-duplicate by normalized name + price.
+  const dedup = new Map<string, { name: string; price: number }>();
+  for (const item of recovered) {
+    const key = `${item.name.toLowerCase().replace(/\s+/g, ' ').trim()}|${item.price.toFixed(2)}`;
+    if (!dedup.has(key)) {
+      dedup.set(key, item);
+    }
+  }
+
+  return Array.from(dedup.values());
+};
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 export const ReceiptScannerSheet = ({
@@ -211,21 +383,57 @@ export const ReceiptScannerSheet = ({
     setRawText(result.rawText || null);
     setParserTelemetry(result.parserTelemetry ?? []);
 
-    const scannedItems = (result.items ?? []).map((item: VisionKitScannedItem) => ({
+    const expectedItemCount = parseExpectedItemCountHint(result.rawText);
+    const rawRecoveredItems = extractItemsFromRawText(result.rawText);
+    const rawSummary = extractSummaryFromRawText(result.rawText);
+
+    const taxLooksHallucinated = (
+      result.tax != null
+      && result.tax > 0
+      && ((result.subtotal != null && result.tax >= result.subtotal * 0.5)
+        || (result.total != null && result.tax >= result.total * 0.5)
+        || (result.subtotal != null && Math.abs(result.tax - result.subtotal) <= 0.01))
+    );
+
+    const shouldRecoverItemsFromRaw = (
+      rawRecoveredItems.length > 0
+      && (
+        (expectedItemCount != null && (result.items?.length ?? 0) < expectedItemCount && rawRecoveredItems.length >= expectedItemCount)
+        || rawRecoveredItems.length > (result.items?.length ?? 0)
+      )
+    );
+
+    const normalizedVisionItems = (result.items ?? []).map((item: VisionKitScannedItem) => ({
       name: item.name,
       price: item.price,
+      quantity: item.quantity,
       confidence: item.confidence ?? 0.7,
+    }));
+
+    const effectiveItems = shouldRecoverItemsFromRaw
+      ? rawRecoveredItems.map((item) => ({
+          name: item.name,
+          price: item.price,
+          quantity: 1,
+          confidence: 0.64,
+        }))
+      : normalizedVisionItems;
+
+    const scannedItems = effectiveItems.map((item) => ({
+      name: item.name,
+      price: item.price,
+      confidence: item.confidence,
     }));
     setScannedBaselineItems(scannedItems);
 
-    if (result.items && result.items.length > 0) {
+    if (effectiveItems.length > 0) {
       const learnedItems = await applyReceiptLearning(
         normalizedMerchant,
-        result.items.map((item: VisionKitScannedItem) => ({
+        effectiveItems.map((item) => ({
           name: item.name,
           price: item.price,
           quantity: item.quantity,
-          confidence: item.confidence ?? 0.7,
+          confidence: item.confidence,
         })),
       );
 
@@ -243,9 +451,23 @@ export const ReceiptScannerSheet = ({
       );
     }
 
-    if (result.tax != null && result.tax > 0) setTax(result.tax.toFixed(2));
+    const effectiveSubtotal = rawSummary.subtotal ?? result.subtotal ?? null;
+    const effectiveTotal = rawSummary.total ?? result.total ?? null;
+    const effectiveTax = taxLooksHallucinated
+      ? (rawSummary.tax ?? sanitizeTaxValue(result.tax ?? null, effectiveSubtotal, effectiveTotal))
+      : (sanitizeTaxValue(result.tax ?? null, effectiveSubtotal, effectiveTotal) ?? rawSummary.tax);
+
+    if (effectiveTax != null && effectiveTax > 0) {
+      setTax(effectiveTax.toFixed(2));
+    } else {
+      setTax('');
+    }
+
     if (result.tip != null && result.tip > 0) setTip(result.tip.toFixed(2));
-    if (result.total != null && result.total > 0) setTotal(result.total.toFixed(2));
+
+    if (effectiveTotal != null && effectiveTotal > 0) {
+      setTotal(effectiveTotal.toFixed(2));
+    }
   }, []);
 
   const handleStartScan = async () => {

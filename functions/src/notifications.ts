@@ -44,38 +44,60 @@ interface UserNotificationInfo {
 // ─────────────────────────────────────────────────────────────
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+const EXPO_MAX_BATCH_SIZE = 100;
+
+const isExpoPushToken = (value: string): boolean => {
+    return /^(Expo|Exponent)PushToken\[[A-Za-z0-9_-]+\]$/.test(value);
+};
+
+const chunkArray = <T>(input: T[], size: number): T[][] => {
+    if (input.length === 0) return [];
+    const result: T[][] = [];
+    for (let i = 0; i < input.length; i += size) {
+        result.push(input.slice(i, i + size));
+    }
+    return result;
+};
 
 const sendExpoPush = async (messages: ExpoPushMessage[]): Promise<ExpoPushTicket[]> => {
     if (messages.length === 0) {
         return [];
     }
 
-    try {
-        const response = await fetch(EXPO_PUSH_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            body: JSON.stringify(messages),
-        });
+    const tickets: ExpoPushTicket[] = [];
+    const batches = chunkArray(messages, EXPO_MAX_BATCH_SIZE);
 
-        if (!response.ok) {
-            logger.error("Expo push API returned error status", {
-                status: response.status,
-                statusText: response.statusText,
+    for (const batch of batches) {
+        try {
+            const response = await fetch(EXPO_PUSH_URL, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                body: JSON.stringify(batch),
             });
-            return [];
-        }
 
-        const result = await response.json() as { data: ExpoPushTicket[] };
-        return result.data ?? [];
-    } catch (error) {
-        logger.error("Failed to call Expo push API", {
-            message: error instanceof Error ? error.message : "Unknown error",
-        });
-        return [];
+            if (!response.ok) {
+                logger.error("Expo push API returned error status", {
+                    status: response.status,
+                    statusText: response.statusText,
+                    batchSize: batch.length,
+                });
+                continue;
+            }
+
+            const result = await response.json() as { data: ExpoPushTicket[] };
+            tickets.push(...(result.data ?? []));
+        } catch (error) {
+            logger.error("Failed to call Expo push API", {
+                message: error instanceof Error ? error.message : "Unknown error",
+                batchSize: batch.length,
+            });
+        }
     }
+
+    return tickets;
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -99,31 +121,35 @@ export const getEligibleRecipients = async (
     const db = getFirestore();
     const results: UserNotificationInfo[] = [];
 
-    // Firestore `in` queries support max 30 items
-    const chunks: string[][] = [];
-    for (let i = 0; i < userIds.length; i += 30) {
-        chunks.push(userIds.slice(i, i + 30));
-    }
+    // getAll supports up to 100 document refs per call.
+    const chunks = chunkArray(userIds, 100);
 
     for (const chunk of chunks) {
-        const snapshot = await db
-            .collection("users")
-            .where("userId", "in", chunk)
-            .get();
+        const refs = chunk.map((userId) => db.collection("users").doc(userId));
+        const docs = await db.getAll(...refs);
 
-        for (const doc of snapshot.docs) {
-            const data = doc.data();
-            const pushToken = data.pushToken as string | undefined;
+        for (let index = 0; index < docs.length; index += 1) {
+            const userDoc = docs[index];
+            if (!userDoc.exists) {
+                continue;
+            }
+
+            const requestedUserId = chunk[index];
+            const data = userDoc.data() ?? {};
             const preferences = (data.preferences ?? {}) as Record<string, unknown>;
+            const tokenRaw = typeof data.pushToken === "string" ? data.pushToken.trim() : "";
+            const mutedChatIdsRaw = preferences.muteChatIds;
+            const mutedChatIds = Array.isArray(mutedChatIdsRaw)
+                ? mutedChatIdsRaw.filter((value): value is string => typeof value === "string")
+                : [];
 
             const pushEnabled = preferences.pushEnabled === true;
             const categoryEnabled = preferences[category] !== false; // default true
-            const mutedChatIds = (preferences.muteChatIds ?? []) as string[];
             const isMuted = chatId ? mutedChatIds.includes(chatId) : false;
 
             results.push({
-                userId: data.userId as string,
-                pushToken: pushToken ?? null,
+                userId: requestedUserId,
+                pushToken: isExpoPushToken(tokenRaw) ? tokenRaw : null,
                 pushEnabled,
                 categoryEnabled,
                 isMuted,

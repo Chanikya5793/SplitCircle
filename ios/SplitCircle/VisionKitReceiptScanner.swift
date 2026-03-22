@@ -154,6 +154,7 @@ struct ReceiptParserCore {
     var expectedItemCount: Int?
     var summaryStarted = false
     var pendingNameParts: [String] = []
+    var consumedRowIndexes = Set<Int>()
 
     for (rowIndex, row) in rows.enumerated() {
       let lower = normalizedLower(row.text)
@@ -176,7 +177,12 @@ struct ReceiptParserCore {
         }
 
         if matchTax(lower) {
-          receipt.tax = (receipt.tax ?? 0) + rowPrice.value
+          let candidateTax = rowPrice.value
+          if isPlausibleTax(candidateTax, subtotal: receipt.subtotal, total: receipt.total) {
+            receipt.tax = (receipt.tax ?? 0) + candidateTax
+          } else {
+            telemetry.append("row[\(rowIndex)] classified=ignored_implausible_tax")
+          }
           summaryStarted = true
           pendingNameParts.removeAll()
           telemetry.append("row[\(rowIndex)] classified=tax")
@@ -239,6 +245,7 @@ struct ReceiptParserCore {
               rowIndex: rowIndex
             )
           )
+          consumedRowIndexes.insert(row.index)
           pendingNameParts.removeAll()
           telemetry.append("row[\(rowIndex)] classified=item name=\(itemName) qty=\(quantity) conf=\(f2(confidence))")
         } else {
@@ -274,6 +281,19 @@ struct ReceiptParserCore {
       telemetry.append("summaryFallbackApplied=true")
     }
 
+    if let expected = expectedItemCount, receipt.items.count < expected {
+      let recoveredItems = recoverMissingItems(
+        from: rows,
+        existingItems: receipt.items,
+        consumedRowIndexes: consumedRowIndexes,
+        expectedCount: expected
+      )
+      if !recoveredItems.isEmpty {
+        receipt.items.append(contentsOf: recoveredItems)
+        telemetry.append("missingItemRecovery added=\(recoveredItems.count)")
+      }
+    }
+
     receipt = selfHeal(receipt, expectedCount: expectedItemCount)
     telemetry.append(
       "result items=\(receipt.items.count) subtotal=\(receipt.subtotal.map { f2($0) } ?? "nil") tax=\(receipt.tax.map { f2($0) } ?? "nil") total=\(receipt.total.map { f2($0) } ?? "nil")"
@@ -296,8 +316,28 @@ struct ReceiptParserCore {
     let sorted = blocks.sorted { $0.midY > $1.midY }
 
     for block in sorted {
-      let tolerance = max(0.012, min(0.03, block.height * 1.45))
-      if let index = rows.firstIndex(where: { abs($0.midY - block.midY) <= tolerance }) {
+      let tolerance = max(0.0085, min(0.020, block.height * 1.15))
+      var selectedIndex: Int?
+      var selectedDelta = CGFloat.greatestFiniteMagnitude
+
+      for (index, row) in rows.enumerated() {
+        let delta = abs(row.midY - block.midY)
+        if delta > tolerance { continue }
+
+        let rowHeight = max(0.001, row.topY - row.bottomY)
+        let blockAboveGap = max(0, block.minY - row.topY)
+        let blockBelowGap = max(0, row.bottomY - block.maxY)
+        let verticalGap = max(blockAboveGap, blockBelowGap)
+        let maxGap = max(0.003, min(0.010, min(block.height, rowHeight) * 0.32))
+
+        if verticalGap > maxGap { continue }
+        if delta < selectedDelta {
+          selectedDelta = delta
+          selectedIndex = index
+        }
+      }
+
+      if let index = selectedIndex {
         rows[index].blocks.append(block)
         let count = CGFloat(rows[index].blocks.count)
         rows[index].midY = ((rows[index].midY * (count - 1)) + block.midY) / count
@@ -549,7 +589,9 @@ struct ReceiptParserCore {
 
       if let rowPrice = extractRowPrice(from: row) {
         if receipt.subtotal == nil, matchSubtotal(lower) { receipt.subtotal = rowPrice.value }
-        if receipt.tax == nil, matchTax(lower) { receipt.tax = rowPrice.value }
+        if receipt.tax == nil, matchTax(lower), isPlausibleTax(rowPrice.value, subtotal: receipt.subtotal, total: receipt.total) {
+          receipt.tax = rowPrice.value
+        }
         if receipt.tip == nil, matchTip(lower) { receipt.tip = rowPrice.value }
         if receipt.total == nil, matchTotal(lower) { receipt.total = rowPrice.value }
         continue
@@ -557,10 +599,75 @@ struct ReceiptParserCore {
 
       guard index + 1 < rows.count, let nextPrice = extractRowPrice(from: rows[index + 1]) else { continue }
       if receipt.subtotal == nil, matchSubtotal(lower) { receipt.subtotal = nextPrice.value }
-      if receipt.tax == nil, matchTax(lower) { receipt.tax = nextPrice.value }
+      if receipt.tax == nil, matchTax(lower), isPlausibleTax(nextPrice.value, subtotal: receipt.subtotal, total: receipt.total) {
+        receipt.tax = nextPrice.value
+      }
       if receipt.tip == nil, matchTip(lower) { receipt.tip = nextPrice.value }
       if receipt.total == nil, matchTotal(lower) { receipt.total = nextPrice.value }
     }
+  }
+
+  private static func isPlausibleTax(_ tax: Double, subtotal: Double?, total: Double?) -> Bool {
+    guard tax > 0 else { return false }
+    if let subtotal = subtotal, tax >= subtotal * 0.5 { return false }
+    if let total = total, tax >= total * 0.5 { return false }
+    return true
+  }
+
+  private static func recoverMissingItems(
+    from rows: [Row],
+    existingItems: [ReceiptParserItem],
+    consumedRowIndexes: Set<Int>,
+    expectedCount: Int
+  ) -> [ReceiptParserItem] {
+    let missing = expectedCount - existingItems.count
+    guard missing > 0 else { return [] }
+
+    func signature(name: String, price: Double, quantity: Int) -> String {
+      let normalizedName = normalizedLower(name)
+      return "\(normalizedName)|\(Int((price * 100).rounded()))|\(quantity)"
+    }
+
+    let existingSignatures = Set(existingItems.map { signature(name: $0.name, price: $0.price, quantity: $0.quantity) })
+    var seenSignatures = existingSignatures
+
+    let candidates = rows.compactMap { row -> ReceiptParserItem? in
+      if consumedRowIndexes.contains(row.index) { return nil }
+
+      let lower = normalizedLower(row.text)
+      guard let rowPrice = extractRowPrice(from: row) else { return nil }
+      if matchSubtotal(lower) || matchTax(lower) || matchTip(lower) || matchTotal(lower) { return nil }
+      if isNonItemPricedRow(lower) { return nil }
+
+      let itemName = extractItemName(from: row, price: rowPrice)
+      guard isValidItemName(itemName) else { return nil }
+
+      let quantity = max(1, inferQuantity(from: row.text))
+      let key = signature(name: itemName, price: rowPrice.value, quantity: quantity)
+      if seenSignatures.contains(key) { return nil }
+      seenSignatures.insert(key)
+
+      let confidence = max(0.34, confidenceScore(name: itemName, price: rowPrice.value, row: row, priceInfo: rowPrice) - 0.14)
+      return ReceiptParserItem(
+        name: itemName,
+        price: rowPrice.value,
+        quantity: quantity,
+        confidence: confidence,
+        rowIndex: row.index
+      )
+    }
+
+    guard !candidates.isEmpty else { return [] }
+
+    let ranked = candidates.sorted {
+      if $0.confidence == $1.confidence {
+        return $0.rowIndex < $1.rowIndex
+      }
+      return $0.confidence > $1.confidence
+    }
+
+    let selected = Array(ranked.prefix(missing))
+    return selected.sorted { $0.rowIndex < $1.rowIndex }
   }
 
   private static func selfHeal(_ receipt: ReceiptParserResult, expectedCount: Int?) -> ReceiptParserResult {
@@ -1371,7 +1478,6 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
         contentsOf: recognizeTextBlocks(
           in: cgImage,
           minimumTextHeight: 0.012,
-          usesLanguageCorrection: false,
           regionOfInterest: nil
         )
       )
@@ -1380,7 +1486,6 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
         headerObservations = recognizeTextBlocks(
           in: cgImage,
           minimumTextHeight: 0.018,
-          usesLanguageCorrection: true,
           regionOfInterest: CGRect(x: 0.0, y: 0.60, width: 1.0, height: 0.34)
         )
       }
@@ -1446,18 +1551,17 @@ class VisionKitReceiptScanner: RCTEventEmitter, VNDocumentCameraViewControllerDe
   private func recognizeTextBlocks(
     in cgImage: CGImage,
     minimumTextHeight: Float,
-    usesLanguageCorrection: Bool,
     regionOfInterest: CGRect?
   ) -> [(String, CGRect)] {
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     request.recognitionLanguages = ["en-US"]
-    request.usesLanguageCorrection = usesLanguageCorrection
+    request.usesLanguageCorrection = false
     request.minimumTextHeight = minimumTextHeight
     request.customWords = ReceiptParserCore.ocrCustomWords
 
     if #available(iOS 16.0, *) {
-      request.automaticallyDetectsLanguage = false
+      request.automaticallyDetectsLanguage = true
     }
 
     if let regionOfInterest = regionOfInterest {
