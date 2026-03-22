@@ -34,11 +34,13 @@ import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Alert,
-    FlatList,
+    Keyboard,
     KeyboardAvoidingView,
     Platform,
+    ScrollView,
     StyleSheet,
     TouchableOpacity,
+    TouchableWithoutFeedback,
     View,
 } from 'react-native';
 import {
@@ -732,22 +734,31 @@ export const ReceiptScannerSheet = ({
 
   const getConfidenceColor = (c: number) => c >= 0.8 ? '#4CAF50' : c >= 0.6 ? '#FF9800' : '#F44336';
 
-  const renderItem = ({ item }: { item: EditableReceiptItem }) => (
+  const renderItemCard = (item: EditableReceiptItem) => (
     <View
+      key={item.id}
       style={[
         styles.itemRow,
         {
-          borderColor: item.reviewed ? `${theme.colors.outline}40` : '#FF9500',
-          backgroundColor: item.reviewed ? 'transparent' : (isDark ? 'rgba(255,149,0,0.10)' : 'rgba(255,149,0,0.08)'),
+          borderColor: item.reviewed ? `${theme.colors.outline}20` : '#FF950060',
+          backgroundColor: item.reviewed
+            ? (isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+            : (isDark ? 'rgba(255,149,0,0.08)' : 'rgba(255,149,0,0.05)'),
         },
       ]}
     >
-      {/* Confidence dot */}
-      <View style={[
-        styles.confidenceDot,
-        { backgroundColor: getConfidenceColor(item.confidence) }
-      ]} />
-      <View style={styles.itemInputs}>
+      <View style={styles.itemTopRow}>
+        {/* Confidence indicator */}
+        <View style={[
+          styles.confidenceDot,
+          {
+            backgroundColor: getConfidenceColor(item.confidence),
+            shadowColor: item.confidence < LOW_CONFIDENCE_THRESHOLD ? '#FF9500' : 'transparent',
+            shadowOpacity: item.confidence < LOW_CONFIDENCE_THRESHOLD ? 0.6 : 0,
+            shadowRadius: 4,
+            shadowOffset: { width: 0, height: 0 },
+          }
+        ]} />
         <TextInput
           mode="flat"
           placeholder="Item name"
@@ -755,9 +766,11 @@ export const ReceiptScannerSheet = ({
           onChangeText={(v) => handleUpdateItem(item.id, 'name', v)}
           style={[styles.itemNameInput, { backgroundColor: 'transparent' }]}
           textColor={theme.colors.onSurface}
-          placeholderTextColor={theme.colors.onSurfaceVariant}
+          placeholderTextColor={`${theme.colors.onSurfaceVariant}90`}
           underlineColor="transparent"
           activeUnderlineColor={theme.colors.primary}
+          returnKeyType="next"
+          blurOnSubmit={false}
           dense
         />
         <TextInput
@@ -768,29 +781,33 @@ export const ReceiptScannerSheet = ({
           keyboardType="decimal-pad"
           style={[styles.itemPriceInput, { backgroundColor: 'transparent' }]}
           textColor={theme.colors.onSurface}
-          placeholderTextColor={theme.colors.onSurfaceVariant}
+          placeholderTextColor={`${theme.colors.onSurfaceVariant}90`}
           underlineColor="transparent"
           activeUnderlineColor={theme.colors.primary}
           left={<TextInput.Affix text="$" />}
+          returnKeyType="done"
+          blurOnSubmit
           dense
         />
+        <View style={styles.itemActions}>
+          {!item.reviewed && (
+            <IconButton
+              icon="check-circle-outline"
+              size={18}
+              iconColor={theme.colors.primary}
+              onPress={() => handleMarkReviewed(item.id)}
+              style={styles.reviewBtn}
+            />
+          )}
+          <IconButton
+            icon="close-circle-outline"
+            size={18}
+            iconColor={`${theme.colors.error}B0`}
+            onPress={() => handleRemoveItem(item.id)}
+            style={styles.removeBtn}
+          />
+        </View>
       </View>
-      {!item.reviewed && (
-        <IconButton
-          icon="check-circle-outline"
-          size={20}
-          iconColor={theme.colors.primary}
-          onPress={() => handleMarkReviewed(item.id)}
-          style={styles.reviewBtn}
-        />
-      )}
-      <IconButton
-        icon="close-circle-outline"
-        size={20}
-        iconColor={theme.colors.error}
-        onPress={() => handleRemoveItem(item.id)}
-        style={styles.removeBtn}
-      />
     </View>
   );
 
@@ -909,257 +926,275 @@ export const ReceiptScannerSheet = ({
   // Review phase — editable item list
   return (
     <LiquidBackground>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View style={styles.container}>
-          <GlassView style={styles.reviewCard}>
-            {/* Header */}
-            <View style={styles.header}>
-              <IconButton
-                icon="arrow-left"
-                size={24}
-                onPress={onCancel}
-                iconColor={theme.colors.onSurfaceVariant}
-              />
-              <TouchableOpacity style={{ flex: 1 }} activeOpacity={0.8} onPress={handleHeaderTap}>
-                <Text
-                  variant="titleLarge"
-                  style={[styles.headerTitle, { color: theme.colors.onSurface }]}
-                >
-                  Review Items
-                </Text>
-              </TouchableOpacity>
-              <IconButton
-                icon="camera-retake-outline"
-                size={22}
-                onPress={() => {
-                  setPhase('idle');
-                  setItems([]);
-                  setTax('');
-                  setTip('');
-                  setTotal('');
-                  setMerchantName(null);
-                  setMerchantConfidence(null);
-                  setDate(null);
-                  setRawText(null);
-                  setParserTelemetry([]);
-                  setScannedBaselineItems([]);
-                }}
-                iconColor={theme.colors.onSurfaceVariant}
-              />
-            </View>
-
-            {merchantName && (
-              <View style={[styles.merchantBanner, { backgroundColor: `${theme.colors.primary}10` }]}>
-                <Icon source="store" size={16} color={theme.colors.primary} />
-                <View>
-                  <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>
-                    {merchantName}
-                  </Text>
-                  {merchantConfidence != null && merchantConfidence < AUTO_TITLE_MERCHANT_CONFIDENCE && (
-                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                      Possible merchant. Review before using as the expense title.
-                    </Text>
-                  )}
-                </View>
-                {date && (
-                  <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, marginLeft: 'auto' }}>
-                    {date}
-                  </Text>
-                )}
-              </View>
-            )}
-
-            {/* Item list */}
-            <View style={styles.sectionHeader}>
-              <Text variant="titleSmall" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-                Items ({items.length})
-              </Text>
-              {strictReviewMode && (
-                <View style={[styles.strictBadge, { backgroundColor: `${theme.colors.primary}20` }]}>
-                  <Icon source="shield-lock-outline" size={14} color={theme.colors.primary} />
-                  <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                    Strict
-                  </Text>
-                </View>
-              )}
-              {lowConfidenceCount > 0 && (
-                <View style={[styles.reviewBadge, { backgroundColor: isDark ? 'rgba(255,149,0,0.14)' : 'rgba(255,149,0,0.12)' }]}>
-                  <Icon source="alert-circle-outline" size={14} color="#FF9500" />
-                  <Text variant="labelSmall" style={{ color: '#FF9500', fontWeight: '700' }}>
-                    Review {lowConfidenceCount}
-                  </Text>
-                </View>
-              )}
-              <TouchableOpacity onPress={handleAddItem} style={styles.addItemBtn}>
-                <Icon source="plus-circle" size={18} color={theme.colors.primary} />
-                <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>
-                  Add Item
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <FlatList
-              data={orderedItems}
-              renderItem={renderItem}
-              keyExtractor={(item) => item.id}
-              style={styles.itemList}
-              contentContainerStyle={styles.itemListContent}
-              ListEmptyComponent={
-                <TouchableOpacity
-                  onPress={handleAddItem}
-                  style={[styles.emptyState, { borderColor: `${theme.colors.outline}30` }]}
-                >
-                  <Icon source="plus-circle-outline" size={32} color={theme.colors.onSurfaceVariant} />
-                  <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                    Tap to add the first item
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <View style={styles.container}>
+            <GlassView style={styles.reviewCard}>
+              {/* Header */}
+              <View style={styles.header}>
+                <IconButton
+                  icon="arrow-left"
+                  size={24}
+                  onPress={onCancel}
+                  iconColor={theme.colors.onSurfaceVariant}
+                />
+                <TouchableOpacity style={{ flex: 1 }} activeOpacity={0.8} onPress={handleHeaderTap}>
+                  <Text
+                    variant="titleLarge"
+                    style={[styles.headerTitle, { color: theme.colors.onSurface }]}
+                  >
+                    Review Items
                   </Text>
                 </TouchableOpacity>
-              }
-              keyboardShouldPersistTaps="handled"
-            />
-
-            {__DEV__ && showDebugTelemetry && (
-              <View style={[styles.debugPanel, { borderColor: `${theme.colors.outline}40`, backgroundColor: `${theme.colors.surfaceVariant}66` }]}>
-                <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700', marginBottom: 6 }}>
-                  Parser Telemetry (Dev)
-                </Text>
-
-                <View style={styles.healthRow}>
-                  <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                    Parser health
-                  </Text>
-                  <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-                    {parserHealthScore}/100
-                  </Text>
-                </View>
-
-                <View style={styles.histogramContainer}>
-                  <View style={styles.histogramRow}>
-                    <Text variant="labelSmall" style={[styles.histogramLabel, { color: '#F44336' }]}>Low</Text>
-                    <View style={[styles.histogramTrack, { backgroundColor: `${theme.colors.onSurface}18` }]}>
-                      <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.low / confidenceStats.total) * 100 : 0}%`, backgroundColor: '#F44336' }]} />
-                    </View>
-                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>{confidenceStats.low}</Text>
-                  </View>
-                  <View style={styles.histogramRow}>
-                    <Text variant="labelSmall" style={[styles.histogramLabel, { color: '#FF9800' }]}>Med</Text>
-                    <View style={[styles.histogramTrack, { backgroundColor: `${theme.colors.onSurface}18` }]}>
-                      <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.medium / confidenceStats.total) * 100 : 0}%`, backgroundColor: '#FF9800' }]} />
-                    </View>
-                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>{confidenceStats.medium}</Text>
-                  </View>
-                  <View style={styles.histogramRow}>
-                    <Text variant="labelSmall" style={[styles.histogramLabel, { color: '#4CAF50' }]}>High</Text>
-                    <View style={[styles.histogramTrack, { backgroundColor: `${theme.colors.onSurface}18` }]}>
-                      <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.high / confidenceStats.total) * 100 : 0}%`, backgroundColor: '#4CAF50' }]} />
-                    </View>
-                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>{confidenceStats.high}</Text>
-                  </View>
-                </View>
-
-                <FlatList
-                  data={parserTelemetry}
-                  keyExtractor={(line, index) => `telemetry_${index}_${line.slice(0, 20)}`}
-                  style={styles.debugList}
-                  ListEmptyComponent={
-                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                      No parser telemetry captured for this scan.
-                    </Text>
-                  }
-                  renderItem={({ item: line }) => (
-                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 3 }}>
-                      {line}
-                    </Text>
-                  )}
+                <IconButton
+                  icon="camera-retake-outline"
+                  size={22}
+                  onPress={() => {
+                    setPhase('idle');
+                    setItems([]);
+                    setTax('');
+                    setTip('');
+                    setTotal('');
+                    setMerchantName(null);
+                    setMerchantConfidence(null);
+                    setDate(null);
+                    setRawText(null);
+                    setParserTelemetry([]);
+                    setScannedBaselineItems([]);
+                  }}
+                  iconColor={theme.colors.onSurfaceVariant}
                 />
               </View>
-            )}
 
-            {/* Subtotal line */}
-            {items.length > 0 && (
-              <View style={styles.subtotalRow}>
-                <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-                  Items subtotal
-                </Text>
-                <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                  ${itemsSubtotal.toFixed(2)}
-                </Text>
-              </View>
-            )}
+              {/* Scrollable content */}
+              <ScrollView
+                style={styles.scrollContent}
+                contentContainerStyle={styles.scrollContentContainer}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                showsVerticalScrollIndicator={false}
+                automaticallyAdjustKeyboardInsets
+              >
+                {merchantName && (
+                  <View style={[styles.merchantBanner, { backgroundColor: `${theme.colors.primary}10` }]}>
+                    <Icon source="store" size={16} color={theme.colors.primary} />
+                    <View style={{ flex: 1 }}>
+                      <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>
+                        {merchantName}
+                      </Text>
+                      {merchantConfidence != null && merchantConfidence < AUTO_TITLE_MERCHANT_CONFIDENCE && (
+                        <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                          Possible merchant. Review before using as the expense title.
+                        </Text>
+                      )}
+                    </View>
+                    {date && (
+                      <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                        {date}
+                      </Text>
+                    )}
+                  </View>
+                )}
 
-            <Divider style={{ backgroundColor: `${theme.colors.outline}20`, marginVertical: 8 }} />
-
-            {/* Tax & Tip */}
-            <View style={styles.extraFields}>
-              <FloatingLabelInput
-                label="Tax"
-                value={tax}
-                onChangeText={setTax}
-                keyboardType="decimal-pad"
-                left={<TextInput.Affix text="$" />}
-                containerStyle={{ flex: 1 }}
-              />
-              <FloatingLabelInput
-                label="Tip"
-                value={tip}
-                onChangeText={setTip}
-                keyboardType="decimal-pad"
-                left={<TextInput.Affix text="$" />}
-                containerStyle={{ flex: 1 }}
-              />
-            </View>
-
-            {/* Total */}
-            <View style={styles.totalSection}>
-              <View style={styles.totalRow}>
-                <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-                  Calculated Total
-                </Text>
-                <Text variant="titleMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                  ${calculatedTotal.toFixed(2)}
-                </Text>
-              </View>
-
-              {hasTotalMismatch && (
-                <View
-                  style={[
-                    styles.mismatchBanner,
-                    { backgroundColor: isDark ? 'rgba(255,180,0,0.12)' : 'rgba(255,150,0,0.08)' },
-                  ]}
-                >
-                  <Icon source="alert-circle-outline" size={16} color="#FF9500" />
-                  <Text variant="labelSmall" style={{ color: '#FF9500', flex: 1 }}>
-                    Scanned total (${scannedTotal.toFixed(2)}) differs from items + tax + tip (${calculatedTotal.toFixed(2)})
+                {/* Item list header */}
+                <View style={styles.sectionHeader}>
+                  <Text variant="titleSmall" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                    Items ({items.length})
                   </Text>
+                  {strictReviewMode && (
+                    <View style={[styles.strictBadge, { backgroundColor: `${theme.colors.primary}20` }]}>
+                      <Icon source="shield-lock-outline" size={14} color={theme.colors.primary} />
+                      <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                        Strict
+                      </Text>
+                    </View>
+                  )}
+                  {lowConfidenceCount > 0 && (
+                    <View style={[styles.reviewBadge, { backgroundColor: isDark ? 'rgba(255,149,0,0.14)' : 'rgba(255,149,0,0.12)' }]}>
+                      <Icon source="alert-circle-outline" size={14} color="#FF9500" />
+                      <Text variant="labelSmall" style={{ color: '#FF9500', fontWeight: '700' }}>
+                        Review {lowConfidenceCount}
+                      </Text>
+                    </View>
+                  )}
+                  <TouchableOpacity onPress={handleAddItem} style={styles.addItemBtn}>
+                    <Icon source="plus-circle" size={18} color={theme.colors.primary} />
+                    <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>
+                      Add Item
+                    </Text>
+                  </TouchableOpacity>
                 </View>
-              )}
-            </View>
 
-            {/* Actions */}
-            <View style={styles.actions}>
-              <Button
-                mode="outlined"
-                onPress={onCancel}
-                style={{ flex: 1, borderColor: theme.colors.outline }}
-              >
-                Cancel
-              </Button>
-              <Button
-                mode="contained"
-                onPress={handleConfirm}
-                style={{ flex: 2 }}
-                icon="check"
-                disabled={items.length === 0 && !total}
-              >
-                Use These Items
-              </Button>
-            </View>
-          </GlassView>
-        </View>
-      </KeyboardAvoidingView>
+                {/* Items */}
+                {orderedItems.length > 0 ? (
+                  <View style={styles.itemListContainer}>
+                    {orderedItems.map(renderItemCard)}
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    onPress={handleAddItem}
+                    style={[styles.emptyState, { borderColor: `${theme.colors.outline}30` }]}
+                  >
+                    <Icon source="plus-circle-outline" size={32} color={theme.colors.onSurfaceVariant} />
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                      Tap to add the first item
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {__DEV__ && showDebugTelemetry && (
+                  <View style={[styles.debugPanel, { borderColor: `${theme.colors.outline}40`, backgroundColor: `${theme.colors.surfaceVariant}66` }]}>
+                    <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700', marginBottom: 6 }}>
+                      Parser Telemetry (Dev)
+                    </Text>
+
+                    <View style={styles.healthRow}>
+                      <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                        Parser health
+                      </Text>
+                      <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                        {parserHealthScore}/100
+                      </Text>
+                    </View>
+
+                    <View style={styles.histogramContainer}>
+                      <View style={styles.histogramRow}>
+                        <Text variant="labelSmall" style={[styles.histogramLabel, { color: '#F44336' }]}>Low</Text>
+                        <View style={[styles.histogramTrack, { backgroundColor: `${theme.colors.onSurface}18` }]}>
+                          <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.low / confidenceStats.total) * 100 : 0}%`, backgroundColor: '#F44336' }]} />
+                        </View>
+                        <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>{confidenceStats.low}</Text>
+                      </View>
+                      <View style={styles.histogramRow}>
+                        <Text variant="labelSmall" style={[styles.histogramLabel, { color: '#FF9800' }]}>Med</Text>
+                        <View style={[styles.histogramTrack, { backgroundColor: `${theme.colors.onSurface}18` }]}>
+                          <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.medium / confidenceStats.total) * 100 : 0}%`, backgroundColor: '#FF9800' }]} />
+                        </View>
+                        <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>{confidenceStats.medium}</Text>
+                      </View>
+                      <View style={styles.histogramRow}>
+                        <Text variant="labelSmall" style={[styles.histogramLabel, { color: '#4CAF50' }]}>High</Text>
+                        <View style={[styles.histogramTrack, { backgroundColor: `${theme.colors.onSurface}18` }]}>
+                          <View style={[styles.histogramFill, { width: `${confidenceStats.total > 0 ? (confidenceStats.high / confidenceStats.total) * 100 : 0}%`, backgroundColor: '#4CAF50' }]} />
+                        </View>
+                        <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>{confidenceStats.high}</Text>
+                      </View>
+                    </View>
+
+                    <ScrollView style={styles.debugList} nestedScrollEnabled>
+                      {parserTelemetry.length === 0 ? (
+                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                          No parser telemetry captured for this scan.
+                        </Text>
+                      ) : (
+                        parserTelemetry.map((line: string, index: number) => (
+                          <Text key={`telemetry_${index}`} variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 3 }}>
+                            {line}
+                          </Text>
+                        ))
+                      )}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Summary section */}
+                <View style={[styles.summarySection, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)', borderColor: `${theme.colors.outline}15` }]}>
+                  {/* Subtotal line */}
+                  {items.length > 0 && (
+                    <View style={styles.subtotalRow}>
+                      <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                        Items subtotal
+                      </Text>
+                      <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                        ${itemsSubtotal.toFixed(2)}
+                      </Text>
+                    </View>
+                  )}
+
+                  <Divider style={{ backgroundColor: `${theme.colors.outline}15`, marginVertical: 6 }} />
+
+                  {/* Tax & Tip */}
+                  <View style={styles.extraFields}>
+                    <FloatingLabelInput
+                      label="Tax"
+                      value={tax}
+                      onChangeText={setTax}
+                      keyboardType="decimal-pad"
+                      left={<TextInput.Affix text="$" />}
+                      containerStyle={{ flex: 1 }}
+                      returnKeyType="done"
+                    />
+                    <FloatingLabelInput
+                      label="Tip"
+                      value={tip}
+                      onChangeText={setTip}
+                      keyboardType="decimal-pad"
+                      left={<TextInput.Affix text="$" />}
+                      containerStyle={{ flex: 1 }}
+                      returnKeyType="done"
+                    />
+                  </View>
+
+                  <Divider style={{ backgroundColor: `${theme.colors.outline}15`, marginVertical: 6 }} />
+
+                  {/* Total */}
+                  <View style={styles.totalRow}>
+                    <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                      Calculated Total
+                    </Text>
+                    <Text variant="titleLarge" style={{ color: theme.colors.primary, fontWeight: '800', fontSize: 22 }}>
+                      ${calculatedTotal.toFixed(2)}
+                    </Text>
+                  </View>
+
+                  {hasTotalMismatch && (
+                    <View
+                      style={[
+                        styles.mismatchBanner,
+                        { backgroundColor: isDark ? 'rgba(255,180,0,0.12)' : 'rgba(255,150,0,0.08)' },
+                      ]}
+                    >
+                      <Icon source="alert-circle-outline" size={16} color="#FF9500" />
+                      <Text variant="labelSmall" style={{ color: '#FF9500', flex: 1 }}>
+                        Scanned total (${scannedTotal.toFixed(2)}) differs from items + tax + tip (${calculatedTotal.toFixed(2)})
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Bottom spacer for keyboard */}
+                <View style={{ height: 16 }} />
+              </ScrollView>
+
+              {/* Actions — pinned to bottom */}
+              <View style={[styles.actions, { borderTopWidth: 1, borderTopColor: `${theme.colors.outline}15` }]}>
+                <Button
+                  mode="outlined"
+                  onPress={onCancel}
+                  style={[styles.cancelBtn, { borderColor: `${theme.colors.outline}60` }]}
+                  labelStyle={{ fontWeight: '600' }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  mode="contained"
+                  onPress={handleConfirm}
+                  style={styles.confirmBtn}
+                  icon="check"
+                  labelStyle={{ fontWeight: '700', fontSize: 15 }}
+                  contentStyle={{ paddingVertical: 4 }}
+                  disabled={items.length === 0 && !total}
+                >
+                  Use These Items
+                </Button>
+              </View>
+            </GlassView>
+          </View>
+        </KeyboardAvoidingView>
+      </TouchableWithoutFeedback>
     </LiquidBackground>
   );
 };
@@ -1169,7 +1204,7 @@ export const ReceiptScannerSheet = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
+    padding: 12,
     justifyContent: 'center',
   },
   card: {
@@ -1178,7 +1213,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   reviewCard: {
-    padding: 16,
+    padding: 14,
     borderRadius: 24,
     flex: 1,
     marginTop: Platform.OS === 'ios' ? 50 : 16,
@@ -1187,12 +1222,18 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   headerTitle: {
     flex: 1,
     textAlign: 'center',
     fontWeight: '700',
+  },
+  scrollContent: {
+    flex: 1,
+  },
+  scrollContentContainer: {
+    paddingBottom: 8,
   },
   idleContent: {
     alignItems: 'center',
@@ -1247,16 +1288,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 12,
-    borderRadius: 10,
-    marginBottom: 8,
+    borderRadius: 12,
+    marginBottom: 10,
   },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
+    paddingHorizontal: 2,
   },
   addItemBtn: {
     flexDirection: 'row',
@@ -1265,48 +1307,48 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 8,
   },
-  itemList: {
-    flexGrow: 0,
-    maxHeight: 300,
-  },
-  itemListContent: {
-    gap: 4,
+  itemListContainer: {
+    gap: 6,
   },
   itemRow: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  itemTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingLeft: 4,
   },
   confidenceDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginLeft: 4,
-    marginRight: 2,
-  },
-  itemInputs: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
   },
   itemNameInput: {
     flex: 2,
     fontSize: 14,
-    height: 40,
+    height: 38,
   },
   itemPriceInput: {
     flex: 1,
     fontSize: 14,
-    height: 40,
+    height: 38,
     textAlign: 'right',
+  },
+  itemActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: -4,
   },
   removeBtn: {
     margin: 0,
+    marginLeft: -4,
   },
   reviewBtn: {
     margin: 0,
+    marginRight: -4,
   },
   reviewBadge: {
     flexDirection: 'row',
@@ -1366,12 +1408,18 @@ const styles = StyleSheet.create({
   debugList: {
     maxHeight: 140,
   },
+  summarySection: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+  },
   subtotalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
   },
   emptyState: {
     alignItems: 'center',
@@ -1385,16 +1433,13 @@ const styles = StyleSheet.create({
   extraFields: {
     flexDirection: 'row',
     gap: 12,
-    marginBottom: 8,
-  },
-  totalSection: {
-    gap: 6,
+    marginVertical: 4,
   },
   totalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 4,
+    paddingVertical: 6,
   },
   mismatchBanner: {
     flexDirection: 'row',
@@ -1403,11 +1448,21 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 10,
+    marginTop: 4,
   },
   actions: {
     flexDirection: 'row',
     gap: 12,
-    marginTop: 16,
-    paddingBottom: Platform.OS === 'ios' ? 16 : 0,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 16 : 8,
+  },
+  cancelBtn: {
+    flex: 1,
+    borderRadius: 12,
+  },
+  confirmBtn: {
+    flex: 2,
+    borderRadius: 12,
   },
 });
+
