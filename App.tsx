@@ -3,6 +3,7 @@ import { AuthProvider } from '@/context/AuthContext';
 import { CallProvider } from '@/context/CallContext';
 import { ChatProvider } from '@/context/ChatContext';
 import { GroupProvider } from '@/context/GroupContext';
+import { NotificationProvider } from '@/context/NotificationContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { AppNavigator } from '@/navigation/AppNavigator';
 import { StatusBar } from 'expo-status-bar';
@@ -17,16 +18,18 @@ function AppContent() {
   return (
     <PaperProvider theme={theme}>
       <AuthProvider>
-        <GroupProvider>
-          <ChatProvider>
-            <CallProvider>
-              <StatusBar style={isDark ? "light" : "dark"} />
-              <LiquidBackground>
-                <AppNavigator />
-              </LiquidBackground>
-            </CallProvider>
-          </ChatProvider>
-        </GroupProvider>
+        <NotificationProvider>
+          <GroupProvider>
+            <ChatProvider>
+              <CallProvider>
+                <StatusBar style={isDark ? "light" : "dark"} />
+                <LiquidBackground>
+                  <AppNavigator />
+                </LiquidBackground>
+              </CallProvider>
+            </ChatProvider>
+          </GroupProvider>
+        </NotificationProvider>
       </AuthProvider>
     </PaperProvider>
   );

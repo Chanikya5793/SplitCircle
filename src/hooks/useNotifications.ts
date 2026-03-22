@@ -1,37 +1,24 @@
 import { useEffect } from 'react';
-import { useAuth } from '@/context/AuthContext';
-import { db } from '@/firebase';
-import { registerForPushNotificationsAsync } from '@/utils/notifications';
-import { doc, updateDoc } from 'firebase/firestore';
+import { useNotificationContext } from '@/context/NotificationContext';
+import { clearBadgeCount } from '@/utils/notifications';
+import { AppState, type AppStateStatus } from 'react-native';
 
+/**
+ * Convenience hook that wires up notification badge clearing
+ * when the app comes to foreground. The heavy lifting (token registration,
+ * preference sync, listeners) lives in NotificationContext.
+ */
 export const useNotifications = () => {
-  const { user } = useAuth();
+  const { clearBadge } = useNotificationContext();
 
   useEffect(() => {
-    if (!user) {
-      return () => undefined;
-    }
-
-    let isMounted = true;
-
-    const syncToken = async () => {
-      try {
-        const token = await registerForPushNotificationsAsync();
-        if (token && isMounted) {
-          await updateDoc(doc(db, 'users', user.userId), {
-            pushToken: token,
-            'preferences.pushEnabled': true,
-          });
-        }
-      } catch (error) {
-        console.error('Failed to register push notifications', error);
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        void clearBadgeCount();
       }
     };
 
-    void syncToken();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [user?.userId]);
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => subscription.remove();
+  }, [clearBadge]);
 };

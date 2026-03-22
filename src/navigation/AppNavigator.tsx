@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useCallContext } from '@/context/CallContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
+import { useNotificationContext } from '@/context/NotificationContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { CallType, Group, PresenceStatus } from '@/models';
 import { ForgotPasswordScreen } from '@/screens/auth/ForgotPasswordScreen';
@@ -25,11 +26,14 @@ import { GroupInfoScreen } from '@/screens/groups/GroupInfoScreen';
 import { GroupListScreen } from '@/screens/groups/GroupListScreen';
 import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
+import { NotificationSettingsScreen } from '@/screens/settings/NotificationSettingsScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
+import type { NotificationData } from '@/utils/notifications';
 import { lightHaptic } from '@/utils/haptics';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
 import {
+    createNavigationContainerRef,
     DarkTheme,
     DefaultTheme,
     NavigationContainer,
@@ -42,6 +46,8 @@ import { Platform, StyleSheet, TouchableOpacity, View, type ImageSourcePropType 
 import { Icon, Text, TouchableRipple } from 'react-native-paper';
 
 import { AppStack, AuthStack, NativeTab } from './stacks';
+
+const navigationRef = createNavigationContainerRef<any>();
 
 type GroupWithFallback = Group | undefined;
 type TabIconKey = 'groups' | 'chat' | 'calls' | 'settings';
@@ -732,6 +738,14 @@ const AppStackNavigator = () => {
         component={CallSessionRoute}
         options={{ title: 'Live call', headerBackTitle: 'Calls' }}
       />
+      <AppStack.Screen
+        name={ROUTES.APP.NOTIFICATION_SETTINGS}
+        component={NotificationSettingsScreen}
+        options={{
+          title: 'Notifications',
+          headerBackTitle: 'Settings',
+        }}
+      />
     </AppStack.Navigator>
   );
 };
@@ -762,6 +776,63 @@ const IncomingCallHandler = () => {
       onDecline={dismissIncomingCall}
     />
   );
+};
+
+// Deep-link navigation handler for tapped push notifications
+const NotificationNavigator = () => {
+  const { pendingNavigation, consumeNavigation } = useNotificationContext();
+  const navigation = useNavigation<any>();
+
+  useEffect(() => {
+    if (!pendingNavigation) return;
+
+    const navigate = (data: NotificationData) => {
+      switch (data.type) {
+        case 'message':
+          if (data.chatId) {
+            navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId: data.chatId });
+          }
+          break;
+        case 'expense':
+          if (data.groupId) {
+            navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: data.groupId });
+          }
+          break;
+        case 'settlement':
+          if (data.groupId) {
+            navigation.navigate(ROUTES.APP.SETTLEMENTS, { groupId: data.groupId });
+          }
+          break;
+        case 'group_join':
+          if (data.groupId) {
+            navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: data.groupId });
+          }
+          break;
+        case 'call':
+          if (data.chatId) {
+            navigation.navigate(ROUTES.APP.CALL_DETAIL, {
+              chatId: data.chatId,
+              groupId: data.groupId,
+              type: 'audio',
+              joinCallId: data.callId,
+            });
+          }
+          break;
+        default:
+          break;
+      }
+    };
+
+    // Small delay so the navigation tree is ready
+    const timer = setTimeout(() => {
+      navigate(pendingNavigation);
+      consumeNavigation();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [pendingNavigation, consumeNavigation, navigation]);
+
+  return null;
 };
 
 const styles = StyleSheet.create({
@@ -909,10 +980,11 @@ export const AppNavigator = () => {
   };
 
   return (
-    <NavigationContainer theme={navigationTheme}>
+    <NavigationContainer ref={navigationRef} theme={navigationTheme}>
       <View style={[styles.navigatorRoot, { backgroundColor: navigationBackground }]}>
         {user ? <AppStackNavigator /> : <AuthStackNavigator />}
         {user && <IncomingCallHandler />}
+        {user && <NotificationNavigator />}
       </View>
     </NavigationContainer>
   );

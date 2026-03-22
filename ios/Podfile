@@ -59,5 +59,13 @@ target 'SplitCircle' do
       :mac_catalyst_enabled => false,
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
+
+    # ExpoSQLite's umbrella header can resolve to system sqlite3.h; force pod-scoped header.
+    umbrella_path = File.join(__dir__, 'Pods', 'Target Support Files', 'ExpoSQLite', 'ExpoSQLite-umbrella.h')
+    if File.exist?(umbrella_path)
+      umbrella_content = File.read(umbrella_path)
+      patched_content = umbrella_content.gsub('#import "sqlite3.h"', '#import <ExpoSQLite/sqlite3.h>')
+      File.write(umbrella_path, patched_content) if patched_content != umbrella_content
+    end
   end
 end
