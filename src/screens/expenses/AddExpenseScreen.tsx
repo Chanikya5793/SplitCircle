@@ -9,6 +9,11 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ExpenseReceiptItem, ExpenseSplitMetadata, Group, ParticipantShare, SplitType } from '@/models';
 import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
+import {
+  normalizeScannedMerchantName,
+  shouldAutofillExpenseTitleFromMerchant,
+} from '@/services/receiptScanNormalization';
+import { parseReceiptImageWithVisionKit } from '@/services/visionKitService';
 import { formatCurrency } from '@/utils/currency';
 import {
   computeSharesFromExpenseSplit,
@@ -255,47 +260,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     }
   };
 
-  const processReceiptOCR = async (imageUri: string) => {
-    setIsProcessingOCR(true);
-    try {
-      const ocrResult = await extractReceiptData(imageUri);
-      if (ocrResult.success && ocrResult.parsedData) {
-        mediumHaptic();
-        const { total, title: extractedTitle, date } = ocrResult.parsedData;
-
-        // Auto-fill fields if empty
-        if (total && !amount) {
-          setAmount(total.toFixed(2));
-        }
-        if (extractedTitle && !title) {
-          setTitle(extractedTitle);
-        }
-
-        // Infer category from OCR text
-        if (ocrResult.extractedText && category === 'General') {
-          const inferredCategory = inferCategoryFromText(ocrResult.extractedText);
-          setCategory(inferredCategory);
-        }
-
-        Alert.alert(
-          'Receipt Scanned',
-          `Found: ${total ? `$${total.toFixed(2)}` : 'No total'}${extractedTitle ? `, ${extractedTitle}` : ''}`,
-          [{ text: 'OK' }]
-        );
-      } else if (ocrResult.error) {
-        Alert.alert('OCR unavailable', ocrResult.error);
-      }
-    } catch (error) {
-      console.error('OCR processing error:', error);
-    } finally {
-      setIsProcessingOCR(false);
-    }
-  };
-
-  const handleReceiptScanComplete = (scanResult: ReceiptScannerResult) => {
-    setShowReceiptScanner(false);
-    successHaptic();
-
+  const applyReceiptScanResult = (scanResult: ReceiptScannerResult) => {
     // Auto-attach the scanned receipt image
     if (scanResult.imageUri) {
       setReceiptUri(scanResult.imageUri);
@@ -304,8 +269,9 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     }
 
     // Auto-fill merchant name as title
-    if (scanResult.merchantName && !title.trim()) {
-      setTitle(scanResult.merchantName);
+    const normalizedMerchant = normalizeScannedMerchantName(scanResult.merchantName, scanResult.merchantConfidence);
+    if (normalizedMerchant && shouldAutofillExpenseTitleFromMerchant(normalizedMerchant, scanResult.merchantConfidence) && !title.trim()) {
+      setTitle(normalizedMerchant);
     }
 
     // Auto-fill category
@@ -373,6 +339,76 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       });
       setCustomShares(shares);
     }
+  };
+
+  const processReceiptOCR = async (imageUri: string) => {
+    setIsProcessingOCR(true);
+    try {
+      const nativeResult = await parseReceiptImageWithVisionKit(imageUri);
+      if (nativeResult && !nativeResult.cancelled) {
+        const inferredCategory = nativeResult.rawText ? inferCategoryFromText(nativeResult.rawText) : null;
+        const scanResult: ReceiptScannerResult = {
+          imageUri: nativeResult.imageUri ?? imageUri,
+          items: nativeResult.items.map((item, index) => ({
+            id: `native-scan-${index}`,
+            name: item.name,
+            price: item.price,
+            quantity: item.quantity,
+          })),
+          tax: nativeResult.tax ?? 0,
+          tip: nativeResult.tip ?? 0,
+          total: nativeResult.total ?? 0,
+          merchantName: nativeResult.merchantName ?? null,
+          merchantConfidence: nativeResult.merchantConfidence ?? null,
+          date: nativeResult.date ?? null,
+          inferredCategory,
+          rawText: nativeResult.rawText ?? null,
+        };
+
+        successHaptic();
+        applyReceiptScanResult(scanResult);
+        return;
+      }
+
+      const ocrResult = await extractReceiptData(imageUri);
+      if (ocrResult.success && ocrResult.parsedData) {
+        mediumHaptic();
+        const { total, title: extractedTitle, date } = ocrResult.parsedData;
+        const normalizedTitle = normalizeScannedMerchantName(extractedTitle, null);
+
+        // Auto-fill fields if empty
+        if (total && !amount) {
+          setAmount(total.toFixed(2));
+        }
+        if (normalizedTitle && !title) {
+          setTitle(normalizedTitle);
+        }
+
+        // Infer category from OCR text
+        if (ocrResult.extractedText && category === 'General') {
+          const inferredCategory = inferCategoryFromText(ocrResult.extractedText);
+          setCategory(inferredCategory);
+        }
+
+        Alert.alert(
+          'Receipt Scanned',
+          `Found: ${total ? `$${total.toFixed(2)}` : 'No total'}${normalizedTitle ? `, ${normalizedTitle}` : ''}`,
+          [{ text: 'OK' }]
+        );
+      } else if (ocrResult.error) {
+        Alert.alert('OCR unavailable', ocrResult.error);
+      }
+    } catch (error) {
+      console.error('OCR processing error:', error);
+    } finally {
+      setIsProcessingOCR(false);
+    }
+  };
+
+  const handleReceiptScanComplete = (scanResult: ReceiptScannerResult) => {
+    setShowReceiptScanner(false);
+    successHaptic();
+    applyReceiptScanResult(scanResult);
   };
 
   const handleTakePhoto = async () => {

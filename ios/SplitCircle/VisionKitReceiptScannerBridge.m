@@ -16,4 +16,8 @@ RCT_EXTERN_METHOD(isAvailable:(RCTPromiseResolveBlock)resolve
 RCT_EXTERN_METHOD(scanDocument:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(scanImage:(NSString *)imageUri
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
 @end

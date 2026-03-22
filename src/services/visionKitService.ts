@@ -29,6 +29,7 @@ export interface VisionKitScanResult {
   tip?: number | null;
   total?: number | null;
   merchantName?: string | null;
+  merchantConfidence?: number | null;
   date?: string | null;
   parserTelemetry?: string[];
 }
@@ -51,6 +52,30 @@ console.log('[VisionKit] Native module available:', !!VisionKitNative, 'Platform
 const VisionKitEventEmitter = VisionKitNative
   ? new NativeEventEmitter(VisionKitNative)
   : null;
+
+const normalizeNativeScanResult = (result: any): VisionKitScanResult => ({
+  cancelled: result.cancelled === true,
+  imageUri: result.imageUri || undefined,
+  rawText: result.rawText || undefined,
+  items: Array.isArray(result.items)
+    ? result.items.map((item: any) => ({
+        name: typeof item.name === 'string' ? item.name : '',
+        price: typeof item.price === 'number' ? item.price : 0,
+        quantity: typeof item.quantity === 'number' ? item.quantity : 1,
+        confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
+      }))
+    : [],
+  subtotal: typeof result.subtotal === 'number' ? result.subtotal : null,
+  tax: typeof result.tax === 'number' ? result.tax : null,
+  tip: typeof result.tip === 'number' ? result.tip : null,
+  total: typeof result.total === 'number' ? result.total : null,
+  merchantName: typeof result.merchantName === 'string' ? result.merchantName : null,
+  merchantConfidence: typeof result.merchantConfidence === 'number' ? result.merchantConfidence : null,
+  date: typeof result.date === 'string' ? result.date : null,
+  parserTelemetry: Array.isArray(result.parserTelemetry)
+    ? result.parserTelemetry.filter((line: unknown): line is string => typeof line === 'string')
+    : [],
+});
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -99,28 +124,41 @@ export const scanReceiptWithVisionKit = async (
       date: result.date,
     }));
 
-    return {
-      cancelled: result.cancelled === true,
-      imageUri: result.imageUri || undefined,
-      rawText: result.rawText || undefined,
-      items: Array.isArray(result.items)
-        ? result.items.map((item: any) => ({
-            name: typeof item.name === 'string' ? item.name : '',
-            price: typeof item.price === 'number' ? item.price : 0,
-            quantity: typeof item.quantity === 'number' ? item.quantity : 1,
-            confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
-          }))
-        : [],
-      subtotal: typeof result.subtotal === 'number' ? result.subtotal : null,
-      tax: typeof result.tax === 'number' ? result.tax : null,
-      tip: typeof result.tip === 'number' ? result.tip : null,
-      total: typeof result.total === 'number' ? result.total : null,
-      merchantName: typeof result.merchantName === 'string' ? result.merchantName : null,
-      date: typeof result.date === 'string' ? result.date : null,
-      parserTelemetry: Array.isArray(result.parserTelemetry)
-        ? result.parserTelemetry.filter((line: unknown): line is string => typeof line === 'string')
-        : [],
-    } as VisionKitScanResult;
+    return normalizeNativeScanResult(result);
+  } finally {
+    subscription?.remove();
+  }
+};
+
+/**
+ * Parse a local receipt image on-device using the same native Vision pipeline as the scanner.
+ */
+export const parseReceiptImageWithVisionKit = async (
+  imageUri: string,
+  onProgress?: (event: ScanProgressEvent) => void,
+): Promise<VisionKitScanResult | null> => {
+  if (Platform.OS !== 'ios' || !VisionKitNative) return null;
+
+  let subscription: { remove: () => void } | null = null;
+
+  try {
+    if (onProgress && VisionKitEventEmitter) {
+      subscription = VisionKitEventEmitter.addListener('onScanProgress', onProgress);
+    }
+
+    const result = await VisionKitNative.scanImage(imageUri);
+
+    console.log('[VisionKit] Raw native image-parse result:', JSON.stringify({
+      itemCount: result.items?.length,
+      total: result.total,
+      tax: result.tax,
+      subtotal: result.subtotal,
+      merchantName: result.merchantName,
+      imageUri: result.imageUri,
+      date: result.date,
+    }));
+
+    return normalizeNativeScanResult(result);
   } finally {
     subscription?.remove();
   }
