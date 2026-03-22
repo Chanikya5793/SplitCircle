@@ -4002,7 +4002,7 @@ SPEC CHECKSUMS:
   ExpoSecureStore: ebb13e5e590b1e62ec530bd0cfe1a3e7f1867e26
   ExpoSharing: 5f1435af23bcf740c63b1d322400d1e26bf77393
   ExpoSplashScreen: 6452aefb424acc76347d62482caef9b4e613e59e
-  ExpoSQLite: 77506d3d056c57118280d1e2a2d76cc06e4926b3
+  ExpoSQLite: 46f6faf09117364adddd7cfd3be06559dbc8cbcd
   ExpoSystemUI: ae936ff8f78ca3d6c13884704beb7705fe26d136
   ExpoTaskManager: 6038b80fbe63915383dcf57fa0156b23e2615fab
   ExpoVideo: e26820485c2d3143290afb9dc91493c5befd5e91

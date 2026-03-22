@@ -15,7 +15,7 @@ import Vision
 #endif
 
 #if canImport(React)
-import React
+internal import React
 #endif
 
 struct ReceiptTextObservation {

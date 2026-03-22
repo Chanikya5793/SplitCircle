@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.generateLiveKitToken = exports.triggerRecurringBillsForGroup = exports.runRecurringBillsScheduler = void 0;
+exports.generateLiveKitToken = exports.triggerRecurringBillsForGroup = exports.runRecurringBillsScheduler = exports.onGroupUpdated = exports.onChatUpdated = void 0;
 const app_1 = require("firebase-admin/app");
 const auth_1 = require("firebase-admin/auth");
 const database_1 = require("firebase-admin/database");
@@ -42,8 +42,10 @@ const logger = __importStar(require("firebase-functions/logger"));
 const params_1 = require("firebase-functions/params");
 const https_1 = require("firebase-functions/v2/https");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
+const firestore_2 = require("firebase-functions/v2/firestore");
 const livekit_server_sdk_1 = require("livekit-server-sdk");
 const recurringBills_1 = require("./recurringBills");
+const notifications_1 = require("./notifications");
 (0, app_1.initializeApp)();
 const livekitUrlSecret = (0, params_1.defineSecret)("LIVEKIT_URL");
 const livekitApiKeySecret = (0, params_1.defineSecret)("LIVEKIT_API_KEY");
@@ -99,6 +101,217 @@ const getAuthenticatedUid = async (authorizationHeader) => {
         return null;
     }
 };
+// ─────────────────────────────────────────────────────────────
+// Push Notifications — Chat Messages
+// ─────────────────────────────────────────────────────────────
+exports.onChatUpdated = (0, firestore_2.onDocumentUpdated)("chats/{chatId}", async (event) => {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const before = (_a = event.data) === null || _a === void 0 ? void 0 : _a.before.data();
+    const after = (_b = event.data) === null || _b === void 0 ? void 0 : _b.after.data();
+    if (!before || !after) {
+        return;
+    }
+    const chatId = event.params.chatId;
+    // Detect new lastMessage
+    const beforeMsg = before.lastMessage;
+    const afterMsg = after.lastMessage;
+    if (!afterMsg) {
+        return;
+    }
+    // Skip if lastMessage hasn't changed
+    const beforeMsgId = (_c = beforeMsg === null || beforeMsg === void 0 ? void 0 : beforeMsg.messageId) !== null && _c !== void 0 ? _c : beforeMsg === null || beforeMsg === void 0 ? void 0 : beforeMsg.id;
+    const afterMsgId = (_d = afterMsg.messageId) !== null && _d !== void 0 ? _d : afterMsg.id;
+    if (beforeMsgId === afterMsgId) {
+        return;
+    }
+    // Skip system messages
+    if (afterMsg.type === "system") {
+        return;
+    }
+    const senderId = afterMsg.senderId;
+    const content = afterMsg.content;
+    const msgType = afterMsg.type;
+    const participantIds = ((_e = after.participantIds) !== null && _e !== void 0 ? _e : []);
+    // Get sender name
+    let senderName = "Someone";
+    try {
+        const senderDoc = await (0, firestore_1.getFirestore)().collection("users").doc(senderId).get();
+        if (senderDoc.exists) {
+            senderName = ((_f = senderDoc.data()) === null || _f === void 0 ? void 0 : _f.displayName) || "Someone";
+        }
+    }
+    catch (_h) {
+        // Use fallback name
+    }
+    // Get group name if group chat
+    let title = senderName;
+    const groupId = after.groupId;
+    if (groupId) {
+        try {
+            const groupDoc = await (0, firestore_1.getFirestore)().collection("groups").doc(groupId).get();
+            if (groupDoc.exists) {
+                const groupName = (_g = groupDoc.data()) === null || _g === void 0 ? void 0 : _g.name;
+                title = `${senderName} in ${groupName}`;
+            }
+        }
+        catch (_j) {
+            // Use sender name as title
+        }
+    }
+    // Build body based on message type
+    let body;
+    switch (msgType) {
+        case "image":
+            body = "📷 Sent a photo";
+            break;
+        case "video":
+            body = "🎥 Sent a video";
+            break;
+        case "audio":
+            body = "🎵 Sent an audio message";
+            break;
+        case "file":
+            body = "📎 Sent a file";
+            break;
+        case "location":
+            body = "📍 Shared a location";
+            break;
+        default:
+            body = content.length > 100 ? `${content.substring(0, 100)}…` : content;
+    }
+    // Send to all participants except the sender
+    const recipientIds = participantIds.filter((id) => id !== senderId);
+    if (recipientIds.length === 0) {
+        return;
+    }
+    try {
+        const sent = await (0, notifications_1.sendPushToUsers)(recipientIds, title, body, Object.assign(Object.assign({ type: "message", chatId }, (groupId ? { groupId } : {})), { senderId,
+            senderName }), "messages", chatId, "messages");
+        logger.info(`Sent ${sent} message notification(s) for chat ${chatId}`);
+    }
+    catch (error) {
+        logger.error("Failed to send message notifications", toSafeError(error));
+    }
+});
+// ─────────────────────────────────────────────────────────────
+// Push Notifications — Group Updates (Expenses, Settlements, Members)
+// ─────────────────────────────────────────────────────────────
+exports.onGroupUpdated = (0, firestore_2.onDocumentUpdated)("groups/{groupId}", async (event) => {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+    const before = (_a = event.data) === null || _a === void 0 ? void 0 : _a.before.data();
+    const after = (_b = event.data) === null || _b === void 0 ? void 0 : _b.after.data();
+    if (!before || !after) {
+        return;
+    }
+    const groupId = event.params.groupId;
+    const groupName = after.name || "Group";
+    const memberIds = ((_c = after.memberIds) !== null && _c !== void 0 ? _c : []);
+    // ─── Detect new expenses ────────────────────────────
+    const beforeExpenses = ((_d = before.expenses) !== null && _d !== void 0 ? _d : []);
+    const afterExpenses = ((_e = after.expenses) !== null && _e !== void 0 ? _e : []);
+    if (afterExpenses.length > beforeExpenses.length) {
+        const beforeIds = new Set(beforeExpenses.map((e) => e.expenseId));
+        const newExpenses = afterExpenses.filter((e) => !beforeIds.has(e.expenseId));
+        for (const expense of newExpenses) {
+            const paidBy = expense.paidBy;
+            const description = expense.description || "New expense";
+            const amount = expense.amount;
+            const currency = after.currency || "USD";
+            let payerName = "Someone";
+            try {
+                const payerDoc = await (0, firestore_1.getFirestore)().collection("users").doc(paidBy).get();
+                if (payerDoc.exists) {
+                    payerName = ((_f = payerDoc.data()) === null || _f === void 0 ? void 0 : _f.displayName) || "Someone";
+                }
+            }
+            catch (_m) {
+                // Use fallback
+            }
+            const recipientIds = memberIds.filter((id) => id !== paidBy);
+            if (recipientIds.length > 0) {
+                try {
+                    const sent = await (0, notifications_1.sendPushToUsers)(recipientIds, `💰 ${groupName}`, `${payerName} added "${description}" — ${currency} ${amount.toFixed(2)}`, {
+                        type: "expense",
+                        groupId,
+                        expenseId: expense.expenseId,
+                    }, "expenses", undefined, "expenses");
+                    logger.info(`Sent ${sent} expense notification(s) for group ${groupId}`);
+                }
+                catch (error) {
+                    logger.error("Failed to send expense notification", toSafeError(error));
+                }
+            }
+        }
+    }
+    // ─── Detect new settlements ─────────────────────────
+    const beforeSettlements = ((_g = before.settlements) !== null && _g !== void 0 ? _g : []);
+    const afterSettlements = ((_h = after.settlements) !== null && _h !== void 0 ? _h : []);
+    if (afterSettlements.length > beforeSettlements.length) {
+        const beforeSettlementIds = new Set(beforeSettlements.map((s) => s.settlementId));
+        const newSettlements = afterSettlements.filter((s) => !beforeSettlementIds.has(s.settlementId));
+        for (const settlement of newSettlements) {
+            const fromUserId = settlement.fromUserId;
+            const toUserId = settlement.toUserId;
+            const amount = settlement.amount;
+            const currency = after.currency || "USD";
+            let fromName = "Someone";
+            try {
+                const fromDoc = await (0, firestore_1.getFirestore)().collection("users").doc(fromUserId).get();
+                if (fromDoc.exists) {
+                    fromName = ((_j = fromDoc.data()) === null || _j === void 0 ? void 0 : _j.displayName) || "Someone";
+                }
+            }
+            catch (_o) {
+                // Use fallback
+            }
+            // Notify the person being paid
+            try {
+                const sent = await (0, notifications_1.sendPushToUsers)([toUserId], `🤝 ${groupName}`, `${fromName} settled ${currency} ${amount.toFixed(2)} with you`, {
+                    type: "settlement",
+                    groupId,
+                    settlementId: settlement.settlementId,
+                }, "settlements", undefined, "expenses");
+                logger.info(`Sent ${sent} settlement notification(s) for group ${groupId}`);
+            }
+            catch (error) {
+                logger.error("Failed to send settlement notification", toSafeError(error));
+            }
+        }
+    }
+    // ─── Detect new members ─────────────────────────────
+    const beforeMemberIds = ((_k = before.memberIds) !== null && _k !== void 0 ? _k : []);
+    const newMemberIds = memberIds.filter((id) => !beforeMemberIds.includes(id));
+    if (newMemberIds.length > 0) {
+        for (const newMemberId of newMemberIds) {
+            let memberName = "Someone";
+            try {
+                const memberDoc = await (0, firestore_1.getFirestore)().collection("users").doc(newMemberId).get();
+                if (memberDoc.exists) {
+                    memberName = ((_l = memberDoc.data()) === null || _l === void 0 ? void 0 : _l.displayName) || "Someone";
+                }
+            }
+            catch (_p) {
+                // Use fallback
+            }
+            const existingMembers = beforeMemberIds;
+            if (existingMembers.length > 0) {
+                try {
+                    const sent = await (0, notifications_1.sendPushToUsers)(existingMembers, `👋 ${groupName}`, `${memberName} joined the group`, {
+                        type: "group_join",
+                        groupId,
+                    }, "groupUpdates", undefined, "groups");
+                    logger.info(`Sent ${sent} group join notification(s) for group ${groupId}`);
+                }
+                catch (error) {
+                    logger.error("Failed to send group join notification", toSafeError(error));
+                }
+            }
+        }
+    }
+});
+// ─────────────────────────────────────────────────────────────
+// Scheduler — Recurring Bills
+// ─────────────────────────────────────────────────────────────
 exports.runRecurringBillsScheduler = (0, scheduler_1.onSchedule)("every 15 minutes", async () => {
     try {
         const result = await (0, recurringBills_1.processAllDueRecurringBills)();
@@ -145,6 +358,9 @@ exports.triggerRecurringBillsForGroup = (0, https_1.onCall)(async (request) => {
         throw new https_1.HttpsError("internal", "Failed to sync recurring bills.");
     }
 });
+// ─────────────────────────────────────────────────────────────
+// LiveKit Token Generation
+// ─────────────────────────────────────────────────────────────
 exports.generateLiveKitToken = (0, https_1.onRequest)({
     cors: true,
     secrets: [livekitUrlSecret, livekitApiKeySecret, livekitApiSecretSecret],

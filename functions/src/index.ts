@@ -6,8 +6,10 @@ import * as logger from "firebase-functions/logger";
 import { defineSecret } from "firebase-functions/params";
 import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { AccessToken } from "livekit-server-sdk";
 import { processAllDueRecurringBills, processGroupDueRecurringBills } from "./recurringBills";
+import { sendPushToUsers } from "./notifications";
 
 initializeApp();
 
@@ -18,8 +20,6 @@ const livekitApiSecretSecret = defineSecret("LIVEKIT_API_SECRET");
 type SecretLike = {
     value: () => string;
 };
-
-
 
 type MaybeCall = {
     chatId?: string;
@@ -81,6 +81,289 @@ const getAuthenticatedUid = async (authorizationHeader: string | undefined): Pro
     }
 };
 
+// ─────────────────────────────────────────────────────────────
+// Push Notifications — Chat Messages
+// ─────────────────────────────────────────────────────────────
+
+export const onChatUpdated = onDocumentUpdated(
+    "chats/{chatId}",
+    async (event) => {
+        const before = event.data?.before.data();
+        const after = event.data?.after.data();
+
+        if (!before || !after) {
+            return;
+        }
+
+        const chatId = event.params.chatId;
+
+        // Detect new lastMessage
+        const beforeMsg = before.lastMessage as Record<string, unknown> | undefined;
+        const afterMsg = after.lastMessage as Record<string, unknown> | undefined;
+
+        if (!afterMsg) {
+            return;
+        }
+
+        // Skip if lastMessage hasn't changed
+        const beforeMsgId = beforeMsg?.messageId ?? beforeMsg?.id;
+        const afterMsgId = afterMsg.messageId ?? afterMsg.id;
+
+        if (beforeMsgId === afterMsgId) {
+            return;
+        }
+
+        // Skip system messages
+        if (afterMsg.type === "system") {
+            return;
+        }
+
+        const senderId = afterMsg.senderId as string;
+        const content = afterMsg.content as string;
+        const msgType = afterMsg.type as string;
+        const participantIds = (after.participantIds ?? []) as string[];
+
+        // Get sender name
+        let senderName = "Someone";
+        try {
+            const senderDoc = await getFirestore().collection("users").doc(senderId).get();
+            if (senderDoc.exists) {
+                senderName = (senderDoc.data()?.displayName as string) || "Someone";
+            }
+        } catch {
+            // Use fallback name
+        }
+
+        // Get group name if group chat
+        let title = senderName;
+        const groupId = after.groupId as string | undefined;
+        if (groupId) {
+            try {
+                const groupDoc = await getFirestore().collection("groups").doc(groupId).get();
+                if (groupDoc.exists) {
+                    const groupName = groupDoc.data()?.name as string;
+                    title = `${senderName} in ${groupName}`;
+                }
+            } catch {
+                // Use sender name as title
+            }
+        }
+
+        // Build body based on message type
+        let body: string;
+        switch (msgType) {
+            case "image":
+                body = "📷 Sent a photo";
+                break;
+            case "video":
+                body = "🎥 Sent a video";
+                break;
+            case "audio":
+                body = "🎵 Sent an audio message";
+                break;
+            case "file":
+                body = "📎 Sent a file";
+                break;
+            case "location":
+                body = "📍 Shared a location";
+                break;
+            default:
+                body = content.length > 100 ? `${content.substring(0, 100)}…` : content;
+        }
+
+        // Send to all participants except the sender
+        const recipientIds = participantIds.filter((id) => id !== senderId);
+
+        if (recipientIds.length === 0) {
+            return;
+        }
+
+        try {
+            const sent = await sendPushToUsers(
+                recipientIds,
+                title,
+                body,
+                {
+                    type: "message",
+                    chatId,
+                    ...(groupId ? { groupId } : {}),
+                    senderId,
+                    senderName,
+                },
+                "messages",
+                chatId,
+                "messages",
+            );
+            logger.info(`Sent ${sent} message notification(s) for chat ${chatId}`);
+        } catch (error) {
+            logger.error("Failed to send message notifications", toSafeError(error));
+        }
+    },
+);
+
+// ─────────────────────────────────────────────────────────────
+// Push Notifications — Group Updates (Expenses, Settlements, Members)
+// ─────────────────────────────────────────────────────────────
+
+export const onGroupUpdated = onDocumentUpdated(
+    "groups/{groupId}",
+    async (event) => {
+        const before = event.data?.before.data();
+        const after = event.data?.after.data();
+
+        if (!before || !after) {
+            return;
+        }
+
+        const groupId = event.params.groupId;
+        const groupName = (after.name as string) || "Group";
+        const memberIds = (after.memberIds ?? []) as string[];
+
+        // ─── Detect new expenses ────────────────────────────
+        const beforeExpenses = (before.expenses ?? []) as Array<Record<string, unknown>>;
+        const afterExpenses = (after.expenses ?? []) as Array<Record<string, unknown>>;
+
+        if (afterExpenses.length > beforeExpenses.length) {
+            const beforeIds = new Set(beforeExpenses.map((e) => e.expenseId as string));
+            const newExpenses = afterExpenses.filter(
+                (e) => !beforeIds.has(e.expenseId as string),
+            );
+
+            for (const expense of newExpenses) {
+                const paidBy = expense.paidBy as string;
+                const description = (expense.description as string) || "New expense";
+                const amount = expense.amount as number;
+                const currency = (after.currency as string) || "USD";
+
+                let payerName = "Someone";
+                try {
+                    const payerDoc = await getFirestore().collection("users").doc(paidBy).get();
+                    if (payerDoc.exists) {
+                        payerName = (payerDoc.data()?.displayName as string) || "Someone";
+                    }
+                } catch {
+                    // Use fallback
+                }
+
+                const recipientIds = memberIds.filter((id) => id !== paidBy);
+                if (recipientIds.length > 0) {
+                    try {
+                        const sent = await sendPushToUsers(
+                            recipientIds,
+                            `💰 ${groupName}`,
+                            `${payerName} added "${description}" — ${currency} ${amount.toFixed(2)}`,
+                            {
+                                type: "expense",
+                                groupId,
+                                expenseId: expense.expenseId as string,
+                            },
+                            "expenses",
+                            undefined,
+                            "expenses",
+                        );
+                        logger.info(`Sent ${sent} expense notification(s) for group ${groupId}`);
+                    } catch (error) {
+                        logger.error("Failed to send expense notification", toSafeError(error));
+                    }
+                }
+            }
+        }
+
+        // ─── Detect new settlements ─────────────────────────
+        const beforeSettlements = (before.settlements ?? []) as Array<Record<string, unknown>>;
+        const afterSettlements = (after.settlements ?? []) as Array<Record<string, unknown>>;
+
+        if (afterSettlements.length > beforeSettlements.length) {
+            const beforeSettlementIds = new Set(
+                beforeSettlements.map((s) => s.settlementId as string),
+            );
+            const newSettlements = afterSettlements.filter(
+                (s) => !beforeSettlementIds.has(s.settlementId as string),
+            );
+
+            for (const settlement of newSettlements) {
+                const fromUserId = settlement.fromUserId as string;
+                const toUserId = settlement.toUserId as string;
+                const amount = settlement.amount as number;
+                const currency = (after.currency as string) || "USD";
+
+                let fromName = "Someone";
+                try {
+                    const fromDoc = await getFirestore().collection("users").doc(fromUserId).get();
+                    if (fromDoc.exists) {
+                        fromName = (fromDoc.data()?.displayName as string) || "Someone";
+                    }
+                } catch {
+                    // Use fallback
+                }
+
+                // Notify the person being paid
+                try {
+                    const sent = await sendPushToUsers(
+                        [toUserId],
+                        `🤝 ${groupName}`,
+                        `${fromName} settled ${currency} ${amount.toFixed(2)} with you`,
+                        {
+                            type: "settlement",
+                            groupId,
+                            settlementId: settlement.settlementId as string,
+                        },
+                        "settlements",
+                        undefined,
+                        "expenses",
+                    );
+                    logger.info(`Sent ${sent} settlement notification(s) for group ${groupId}`);
+                } catch (error) {
+                    logger.error("Failed to send settlement notification", toSafeError(error));
+                }
+            }
+        }
+
+        // ─── Detect new members ─────────────────────────────
+        const beforeMemberIds = (before.memberIds ?? []) as string[];
+        const newMemberIds = memberIds.filter((id) => !beforeMemberIds.includes(id));
+
+        if (newMemberIds.length > 0) {
+            for (const newMemberId of newMemberIds) {
+                let memberName = "Someone";
+                try {
+                    const memberDoc = await getFirestore().collection("users").doc(newMemberId).get();
+                    if (memberDoc.exists) {
+                        memberName = (memberDoc.data()?.displayName as string) || "Someone";
+                    }
+                } catch {
+                    // Use fallback
+                }
+
+                const existingMembers = beforeMemberIds;
+                if (existingMembers.length > 0) {
+                    try {
+                        const sent = await sendPushToUsers(
+                            existingMembers,
+                            `👋 ${groupName}`,
+                            `${memberName} joined the group`,
+                            {
+                                type: "group_join",
+                                groupId,
+                            },
+                            "groupUpdates",
+                            undefined,
+                            "groups",
+                        );
+                        logger.info(`Sent ${sent} group join notification(s) for group ${groupId}`);
+                    } catch (error) {
+                        logger.error("Failed to send group join notification", toSafeError(error));
+                    }
+                }
+            }
+        }
+    },
+);
+
+// ─────────────────────────────────────────────────────────────
+// Scheduler — Recurring Bills
+// ─────────────────────────────────────────────────────────────
+
 export const runRecurringBillsScheduler = onSchedule(
     "every 15 minutes",
     async () => {
@@ -141,6 +424,10 @@ export const triggerRecurringBillsForGroup = onCall(
         }
     }
 );
+
+// ─────────────────────────────────────────────────────────────
+// LiveKit Token Generation
+// ─────────────────────────────────────────────────────────────
 
 export const generateLiveKitToken = onRequest(
     {

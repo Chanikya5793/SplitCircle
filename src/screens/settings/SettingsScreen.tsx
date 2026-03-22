@@ -132,7 +132,16 @@ export const SettingsScreen = () => {
               right={() => <Switch value={strictReviewMode} onValueChange={handleToggleStrictReviewMode} />}
             />
             <Divider />
-            <List.Item title="Push notifications" description="Managed automatically via device settings" left={() => <List.Icon icon="bell" />} />
+            <List.Item
+              title="Notifications"
+              description="Messages, expenses, sounds & more"
+              left={() => <List.Icon icon="bell" />}
+              right={() => <List.Icon icon="chevron-right" />}
+              onPress={() => {
+                lightHaptic();
+                (navigation as any).navigate('NotificationSettings');
+              }}
+            />
             <Divider />
             <List.Item title="Offline sync" description="Enabled" left={() => <List.Icon icon="cloud-sync" />} />
           </List.Section>

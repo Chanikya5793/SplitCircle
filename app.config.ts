@@ -85,7 +85,7 @@ const config = {
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
-      UIBackgroundModes: ['fetch'],
+      UIBackgroundModes: ['fetch', 'remote-notification'],
     },
   },
   android: {

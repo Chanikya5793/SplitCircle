@@ -10,6 +10,14 @@ export interface NotificationPreference {
   pushEnabled: boolean;
   emailEnabled: boolean;
   muteChatIds?: string[];
+  // Granular per-category toggles (default to true when missing)
+  messages?: boolean;
+  expenses?: boolean;
+  settlements?: boolean;
+  groupUpdates?: boolean;
+  calls?: boolean;
+  sounds?: boolean;
+  vibration?: boolean;
 }
 
 export interface UserProfile {
