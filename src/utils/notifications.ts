@@ -131,32 +131,54 @@ export const registerForPushNotificationsAsync = async (): Promise<string | null
   }
 
   if (!Device.isDevice) {
+    console.log('[Notifications] Running on simulator — push notifications are not supported.');
     return null;
   }
 
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
+  try {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
 
-  if (finalStatus !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
-  }
+    if (finalStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
 
-  if (finalStatus !== 'granted') {
+    if (finalStatus !== 'granted') {
+      console.log('[Notifications] Permission not granted.');
+      return null;
+    }
+
+    const projectId = getExpoProjectId();
+    if (!projectId) {
+      console.warn('[Notifications] EAS projectId is missing; cannot register push token.');
+      return null;
+    }
+
+    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+
+    // Set up Android notification channels
+    await setupNotificationChannels();
+
+    return tokenData.data;
+  } catch (error: any) {
+    // Gracefully handle entitlement / provisioning errors (e.g. missing aps-environment)
+    const message = error?.message ?? String(error);
+    if (
+      message.includes('aps-environment') ||
+      message.includes('entitlement') ||
+      message.includes('APNS')
+    ) {
+      console.warn(
+        '[Notifications] Push notifications are not available — missing aps-environment entitlement.\n' +
+        'Ensure the entitlements file includes aps-environment and the app is code-signed with a push-capable profile.\n' +
+        'Push notifications will be disabled for this session.',
+      );
+    } else {
+      console.warn('[Notifications] Failed to register push token:', message);
+    }
     return null;
   }
-
-  const projectId = getExpoProjectId();
-  if (!projectId) {
-    throw new Error('EAS projectId is missing; cannot register push token.');
-  }
-
-  const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-
-  // Set up Android notification channels
-  await setupNotificationChannels();
-
-  return tokenData.data;
 };
 
 // ─────────────────────────────────────────────────────────────
