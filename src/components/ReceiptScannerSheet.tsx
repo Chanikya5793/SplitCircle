@@ -21,8 +21,10 @@ import {
     recordReceiptLearningFeedback,
     type LearningScannedItem,
 } from '@/services/receiptLearningService';
+import { normalizeScannedMerchantName } from '@/services/receiptScanNormalization';
 import {
     isVisionKitAvailable,
+    parseReceiptImageWithVisionKit,
     scanReceiptWithVisionKit,
     type ScanProgressEvent,
     type VisionKitScannedItem,
@@ -63,6 +65,8 @@ export interface ReceiptScannerResult {
   total: number;
   /** Merchant/store name */
   merchantName: string | null;
+  /** Confidence that the detected merchant is usable as a title */
+  merchantConfidence: number | null;
   /** Detected date */
   date: string | null;
   /** Category inferred from text */
@@ -92,6 +96,7 @@ type EditableReceiptItem = {
 const LOW_CONFIDENCE_THRESHOLD = 0.75;
 const DEBUG_TAP_THRESHOLD = 7;
 const HIGH_CONFIDENCE_THRESHOLD = 0.9;
+const AUTO_TITLE_MERCHANT_CONFIDENCE = 0.72;
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -113,6 +118,7 @@ export const ReceiptScannerSheet = ({
   const [tip, setTip] = useState('');
   const [total, setTotal] = useState('');
   const [merchantName, setMerchantName] = useState<string | null>(null);
+  const [merchantConfidence, setMerchantConfidence] = useState<number | null>(null);
   const [date, setDate] = useState<string | null>(null);
   const [rawText, setRawText] = useState<string | null>(null);
   const [parserTelemetry, setParserTelemetry] = useState<string[]>([]);
@@ -197,8 +203,10 @@ export const ReceiptScannerSheet = ({
   }, []);
 
   const populateFromVisionKit = useCallback(async (result: NonNullable<Awaited<ReturnType<typeof scanReceiptWithVisionKit>>>) => {
+    const normalizedMerchant = normalizeScannedMerchantName(result.merchantName, result.merchantConfidence);
     setImageUri(result.imageUri || null);
-    setMerchantName(result.merchantName || null);
+    setMerchantName(normalizedMerchant);
+    setMerchantConfidence(normalizedMerchant && typeof result.merchantConfidence === 'number' ? result.merchantConfidence : null);
     setDate(result.date || null);
     setRawText(result.rawText || null);
     setParserTelemetry(result.parserTelemetry ?? []);
@@ -212,7 +220,7 @@ export const ReceiptScannerSheet = ({
 
     if (result.items && result.items.length > 0) {
       const learnedItems = await applyReceiptLearning(
-        result.merchantName,
+        normalizedMerchant,
         result.items.map((item: VisionKitScannedItem) => ({
           name: item.name,
           price: item.price,
@@ -306,6 +314,31 @@ export const ReceiptScannerSheet = ({
 
     const uri = result.assets[0].uri;
     setImageUri(uri);
+    setPhase('processing');
+    setScanMessage('Processing receipt...');
+    setParserTelemetry([]);
+
+    if (Platform.OS === 'ios') {
+      try {
+        const nativeResult = await parseReceiptImageWithVisionKit(uri, handleProgressEvent);
+
+        if (nativeResult && !nativeResult.cancelled) {
+          setPhase('complete');
+          setScanMessage(`Found ${nativeResult.items.length} items!`);
+          setScanItemCount(nativeResult.items.length);
+          successHaptic();
+
+          await populateFromVisionKit(nativeResult);
+
+          setTimeout(() => {
+            setPhase('review');
+          }, 1200);
+          return;
+        }
+      } catch (error) {
+        console.warn('[ReceiptScanner] Native image parse failed, falling back to OCR service:', error);
+      }
+    }
 
     // Check if backend OCR is configured before attempting
     const ocrEndpoint = process.env.EXPO_PUBLIC_OCR_PROXY_ENDPOINT;
@@ -314,10 +347,6 @@ export const ReceiptScannerSheet = ({
       setPhase('review');
       return;
     }
-
-    setPhase('processing');
-    setScanMessage('Processing receipt...');
-    setParserTelemetry([]);
 
     try {
       const ocrResult = await extractReceiptData(uri);
@@ -354,8 +383,9 @@ export const ReceiptScannerSheet = ({
 
         if (ocrResult.extractedText) {
           setRawText(ocrResult.extractedText);
-          const titleLine = ocrResult.extractedText.split('\n')[0]?.trim();
-          if (titleLine) setMerchantName(titleLine.slice(0, 50));
+          const titleLine = ocrResult.extractedText.split('\n')[0]?.trim() ?? '';
+          setMerchantName(normalizeScannedMerchantName(titleLine.slice(0, 50), null));
+          setMerchantConfidence(null);
         }
 
         setPhase('complete');
@@ -469,6 +499,7 @@ export const ReceiptScannerSheet = ({
       tip: parseFloat(tip) || 0,
       total: finalTotal,
       merchantName,
+      merchantConfidence,
       date,
       inferredCategory,
       rawText,
@@ -688,6 +719,7 @@ export const ReceiptScannerSheet = ({
                   setTip('');
                   setTotal('');
                   setMerchantName(null);
+                  setMerchantConfidence(null);
                   setDate(null);
                   setRawText(null);
                   setParserTelemetry([]);
@@ -700,9 +732,16 @@ export const ReceiptScannerSheet = ({
             {merchantName && (
               <View style={[styles.merchantBanner, { backgroundColor: `${theme.colors.primary}10` }]}>
                 <Icon source="store" size={16} color={theme.colors.primary} />
-                <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>
-                  {merchantName}
-                </Text>
+                <View>
+                  <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>
+                    {merchantName}
+                  </Text>
+                  {merchantConfidence != null && merchantConfidence < AUTO_TITLE_MERCHANT_CONFIDENCE && (
+                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                      Possible merchant. Review before using as the expense title.
+                    </Text>
+                  )}
+                </View>
                 {date && (
                   <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, marginLeft: 'auto' }}>
                     {date}

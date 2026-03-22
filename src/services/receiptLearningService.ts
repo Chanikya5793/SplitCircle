@@ -60,6 +60,26 @@ const correctionKey = (merchantName: string | null | undefined, fromName: string
 
 const isSamePrice = (a: number, b: number): boolean => Math.abs(a - b) <= 0.03;
 
+const tokenSet = (value: string): Set<string> =>
+  new Set(
+    normalize(value)
+      .split(' ')
+      .filter((token) => token.length >= 2),
+  );
+
+const tokenSimilarity = (left: string, right: string): number => {
+  const leftTokens = tokenSet(left);
+  const rightTokens = tokenSet(right);
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+
+  let overlap = 0;
+  leftTokens.forEach((token) => {
+    if (rightTokens.has(token)) overlap += 1;
+  });
+
+  return overlap / Math.max(leftTokens.size, rightTokens.size);
+};
+
 const loadProfile = async (): Promise<LearningProfile> => {
   try {
     const raw = await AsyncStorage.getItem(LEARNING_KEY);
@@ -237,11 +257,34 @@ export const recordReceiptLearningFeedback = async (params: {
     if (!fromNorm) return;
 
     const byIndex = finalItems[index];
-    const matchByIndex = byIndex && isSamePrice(scanned.price, byIndex.price) ? byIndex : undefined;
+    const matchByIndex =
+      byIndex &&
+      isSamePrice(scanned.price, byIndex.price) &&
+      tokenSimilarity(scanned.name, byIndex.name) >= 0.25
+        ? byIndex
+        : undefined;
 
     let matchedFinal: LearningFinalItem | undefined = matchByIndex;
     if (!matchedFinal) {
-      matchedFinal = finalItems.find((candidate) => isSamePrice(candidate.price, scanned.price));
+      const samePriceCandidates = finalItems.filter((candidate) => isSamePrice(candidate.price, scanned.price));
+
+      if (samePriceCandidates.length === 1) {
+        matchedFinal = samePriceCandidates[0];
+      } else if (samePriceCandidates.length > 1) {
+        const ranked = samePriceCandidates
+          .map((candidate) => ({
+            candidate,
+            score: tokenSimilarity(scanned.name, candidate.name),
+          }))
+          .sort((a, b) => b.score - a.score);
+
+        if (ranked[0] && ranked[0].score >= 0.5) {
+          const runnerUpScore = ranked[1]?.score ?? 0;
+          if (ranked[0].score - runnerUpScore >= 0.15) {
+            matchedFinal = ranked[0].candidate;
+          }
+        }
+      }
     }
 
     if (matchedFinal) {
