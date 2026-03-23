@@ -42,7 +42,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { KeyboardAwareScrollView, KeyboardProvider, KeyboardStickyView } from 'react-native-keyboard-controller';
+import { KeyboardAwareScrollView, KeyboardProvider } from 'react-native-keyboard-controller';
 import {
     Button,
     Divider,
@@ -976,7 +976,7 @@ export const ReceiptScannerSheet = ({
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
                 showsVerticalScrollIndicator={false}
-                bottomOffset={140}
+                bottomOffset={40}
               >
                 {merchantName && (
                   <View style={[styles.merchantBanner, { backgroundColor: `${theme.colors.primary}10` }]}>
@@ -1163,38 +1163,32 @@ export const ReceiptScannerSheet = ({
                   )}
                 </View>
 
-                {/* Bottom spacer for keyboard clearance handled by bottomOffset */}
+                {/* Bottom spacer for keyboard clearance */}
                 <View style={{ height: 16 }} />
-              </KeyboardAwareScrollView>
 
-              {/* Actions — pinned to bottom */}
-              <KeyboardStickyView offset={{ closed: 0, opened: 0 }}>
-                <GlassView 
-                  style={{ marginHorizontal: -14, borderBottomLeftRadius: 24, borderBottomRightRadius: 24, borderTopWidth: 1, borderTopColor: `${theme.colors.outline}20` }}
-                  contentStyle={[styles.actions, { paddingHorizontal: 14 }]}
-                  intensity={70}
-                >
+                {/* Actions natively integrated into the page to preserve single GlassView layer natively */}
+                <View style={[styles.actions, { borderTopWidth: 1, borderTopColor: `${theme.colors.outline}15` }]}>
                   <Button
                     mode="outlined"
-                  onPress={onCancel}
-                  style={[styles.cancelBtn, { borderColor: `${theme.colors.outline}60` }]}
-                  labelStyle={{ fontWeight: '600' }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  mode="contained"
-                  onPress={handleConfirm}
-                  style={styles.confirmBtn}
-                  icon="check"
-                  labelStyle={{ fontWeight: '700', fontSize: 15 }}
-                  contentStyle={{ paddingVertical: 4 }}
-                  disabled={items.length === 0 && !total}
-                >
+                    onPress={onCancel}
+                    style={[styles.cancelBtn, { borderColor: `${theme.colors.outline}60` }]}
+                    labelStyle={{ fontWeight: '600' }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    mode="contained"
+                    onPress={handleConfirm}
+                    style={styles.confirmBtn}
+                    icon="check"
+                    labelStyle={{ fontWeight: '700', fontSize: 15 }}
+                    contentStyle={{ paddingVertical: 4 }}
+                    disabled={items.length === 0 && !total}
+                  >
                     Use These Items
                   </Button>
-                </GlassView>
-              </KeyboardStickyView>
+                </View>
+              </KeyboardAwareScrollView>
             </GlassView>
           </Pressable>
         </View>
