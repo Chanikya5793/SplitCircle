@@ -879,6 +879,13 @@ export const ReceiptScannerSheet = ({
                   </View>
                 ))}
               </View>
+
+              <View style={[styles.mismatchBanner, { backgroundColor: isDark ? 'rgba(255,150,0,0.12)' : 'rgba(255,140,0,0.08)', marginHorizontal: 20, marginTop: 24 }]}>
+                <Icon source="shield-alert-outline" size={20} color="#FF9500" />
+                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1, lineHeight: 18 }}>
+                  Scanned securely on-device. Auto-extraction may contain errors—please cross-check and correct items if required.
+                </Text>
+              </View>
             </View>
 
             {/* Scan button */}
@@ -915,14 +922,17 @@ export const ReceiptScannerSheet = ({
         <LiquidBackground>
           <View style={styles.container}>
             <ScanningAnimation
-            phase={phase}
-            message={scanMessage}
-            itemCount={scanItemCount}
-            imageUri={imageUri || undefined}
-          />
-        </View>
-      </LiquidBackground>
-    </KeyboardProvider>
+              phase={phase}
+              message={scanMessage}
+              itemCount={scanItemCount}
+              imageUri={imageUri || undefined}
+            />
+            <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center', marginTop: 32, paddingHorizontal: 32, opacity: 0.8, lineHeight: 18 }}>
+              Processing securely on-device. Please be ready to review and correct any potential misreads.
+            </Text>
+          </View>
+        </LiquidBackground>
+      </KeyboardProvider>
     );
   }
 
@@ -978,6 +988,13 @@ export const ReceiptScannerSheet = ({
                 showsVerticalScrollIndicator={false}
                 bottomOffset={40}
               >
+                <View style={[styles.mismatchBanner, { backgroundColor: isDark ? 'rgba(255,150,0,0.12)' : 'rgba(255,140,0,0.08)', marginBottom: 16, marginTop: 0 }]}>
+                  <Icon source="shield-alert-outline" size={18} color="#FF9500" />
+                  <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, flex: 1, lineHeight: 18 }}>
+                    Processed entirely on-device! Please cross-check and correct any OCR misreads below.
+                  </Text>
+                </View>
+
                 {merchantName && (
                   <View style={[styles.merchantBanner, { backgroundColor: `${theme.colors.primary}10` }]}>
                     <Icon source="store" size={16} color={theme.colors.primary} />
