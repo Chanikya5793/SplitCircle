@@ -42,7 +42,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { KeyboardAwareScrollView, KeyboardStickyView } from 'react-native-keyboard-controller';
+import { KeyboardAwareScrollView, KeyboardProvider, KeyboardStickyView } from 'react-native-keyboard-controller';
 import {
     Button,
     Divider,
@@ -812,8 +812,9 @@ export const ReceiptScannerSheet = ({
 
   if (phase === 'idle') {
     return (
-      <LiquidBackground>
-        <View style={styles.container}>
+      <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
+        <LiquidBackground>
+          <View style={styles.container}>
           <GlassView style={styles.card} contentStyle={{ gap: 8 }}>
             {/* Header */}
             <View style={styles.header}>
@@ -904,14 +905,16 @@ export const ReceiptScannerSheet = ({
           </GlassView>
         </View>
       </LiquidBackground>
+    </KeyboardProvider>
     );
   }
 
   if (phase !== 'review') {
     return (
-      <LiquidBackground>
-        <View style={styles.container}>
-          <ScanningAnimation
+      <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
+        <LiquidBackground>
+          <View style={styles.container}>
+            <ScanningAnimation
             phase={phase}
             message={scanMessage}
             itemCount={scanItemCount}
@@ -919,13 +922,15 @@ export const ReceiptScannerSheet = ({
           />
         </View>
       </LiquidBackground>
+    </KeyboardProvider>
     );
   }
 
   // Review phase — editable item list
   return (
-    <LiquidBackground>
-      <View style={{ flex: 1 }}>
+    <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
+      <LiquidBackground>
+        <View style={{ flex: 1 }}>
         <Pressable style={styles.container} onPress={Keyboard.dismiss}>
             <GlassView style={styles.reviewCard} contentStyle={{ flex: 1 }}>
               {/* Header */}
@@ -967,11 +972,11 @@ export const ReceiptScannerSheet = ({
               {/* Scrollable content */}
               <KeyboardAwareScrollView
                 style={styles.scrollContent}
-                contentContainerStyle={styles.scrollContentContainer}
+                contentContainerStyle={[styles.scrollContentContainer, { paddingBottom: 100 }]}
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
                 showsVerticalScrollIndicator={false}
-                bottomOffset={40}
+                bottomOffset={140}
               >
                 {merchantName && (
                   <View style={[styles.merchantBanner, { backgroundColor: `${theme.colors.primary}10` }]}>
@@ -1164,7 +1169,11 @@ export const ReceiptScannerSheet = ({
 
               {/* Actions — pinned to bottom */}
               <KeyboardStickyView offset={{ closed: 0, opened: 0 }}>
-                <View style={[styles.actions, { borderTopWidth: 1, borderTopColor: `${theme.colors.outline}15` }]}>
+                <GlassView 
+                  style={{ marginHorizontal: -14, borderBottomLeftRadius: 24, borderBottomRightRadius: 24, borderTopWidth: 1, borderTopColor: `${theme.colors.outline}20` }}
+                  contentStyle={[styles.actions, { paddingHorizontal: 14 }]}
+                  intensity={70}
+                >
                   <Button
                     mode="outlined"
                   onPress={onCancel}
@@ -1182,14 +1191,15 @@ export const ReceiptScannerSheet = ({
                   contentStyle={{ paddingVertical: 4 }}
                   disabled={items.length === 0 && !total}
                 >
-                  Use These Items
-                </Button>
-              </View>
-            </KeyboardStickyView>
-          </GlassView>
-        </Pressable>
-      </View>
-    </LiquidBackground>
+                    Use These Items
+                  </Button>
+                </GlassView>
+              </KeyboardStickyView>
+            </GlassView>
+          </Pressable>
+        </View>
+      </LiquidBackground>
+    </KeyboardProvider>
   );
 };
 
