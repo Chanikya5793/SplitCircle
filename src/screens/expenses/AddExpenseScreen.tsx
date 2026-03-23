@@ -308,7 +308,9 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
         id: item.id,
         name: item.name,
         price: item.price * item.quantity,
-        assignedTo: group.members.map((m) => m.userId), // default: assigned to all
+        assignedTo: item.assignedTo && item.assignedTo.length > 0 ? item.assignedTo : group.members.map((m) => m.userId), // default: assigned to all
+        splitMode: item.splitConfig?.mode,
+        splitData: item.splitConfig?.data,
       }));
 
       const newMetadata: ExpenseSplitMetadata = {
@@ -320,22 +322,33 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
         })),
         receiptItems,
         taxAmount: scanResult.tax,
+        taxSplitConfig: scanResult.taxSplitConfig as any, // Cast assuming identical fields 
         tipAmount: scanResult.tip,
+        tipSplitConfig: scanResult.tipSplitConfig as any,
       };
 
       setSplitMetadata(newMetadata);
       setSplitType('custom');
       setSplitMethodLabel('Itemized receipt');
 
-      // Compute custom shares from itemized data
+      // Compute custom shares using the new advanced engine
+      const tempParticipants = group.members.map(m => ({
+        id: m.userId,
+        name: m.displayName,
+        included: selectedMembers.includes(m.userId),
+        exactAmount: 0, percentage: 0, shares: 1, adjustment: 0,
+        incomeWeight: 50000, daysStayed: 1, partsConsumed: 0, rouletteWeight: 25,
+        historicalPaid: 0, computedAmount: 0
+      }));
+      const computedShares = computeSharesFromExpenseSplit(
+        scannedTotal > 0 ? scannedTotal : Number(amount) || 0,
+        tempParticipants,
+        newMetadata
+      );
+      
       const shares: Record<string, string> = {};
-      group.members.forEach((m) => {
-        const memberItems = receiptItems.filter((ri) => ri.assignedTo.includes(m.userId));
-        const itemTotal = memberItems.reduce((sum, ri) => {
-          const shareCount = ri.assignedTo.length;
-          return sum + (shareCount > 0 ? ri.price / shareCount : 0);
-        }, 0);
-        shares[m.userId] = itemTotal.toFixed(2);
+      computedShares.forEach((share) => {
+        shares[share.userId] = share.share.toFixed(2);
       });
       setCustomShares(shares);
     }
@@ -717,6 +730,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       >
         {showReceiptScanner && (
           <ReceiptScannerSheet
+            members={group.members.map(m => ({ id: m.userId, name: m.displayName, avatarUrl: m.photoURL }))}
             onComplete={handleReceiptScanComplete}
             onCancel={() => setShowReceiptScanner(false)}
           />

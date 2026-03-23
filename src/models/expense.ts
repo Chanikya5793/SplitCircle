@@ -43,6 +43,13 @@ export interface ExpenseReceiptItem {
   price: number;
   quantity?: number;
   assignedTo: string[];
+  splitMode?: 'equal' | 'exact' | 'percentage' | 'shares';
+  splitData?: Record<string, number>;
+}
+
+export interface ExpenseItemSplitConfig {
+  mode: 'equal' | 'exact' | 'percentage' | 'shares';
+  data?: Record<string, number>;
 }
 
 export interface ExpenseItemCategory {
@@ -63,7 +70,9 @@ export interface ExpenseSplitMetadata {
   participantConfig: ExpenseSplitParticipantConfig[];
   receiptItems?: ExpenseReceiptItem[];
   taxAmount?: number;
+  taxSplitConfig?: ExpenseItemSplitConfig;
   tipAmount?: number;
+  tipSplitConfig?: ExpenseItemSplitConfig;
   totalParts?: number;
   timeSplitVariant?: ExpenseTimeSplitVariant;
   timePeriodDays?: number;

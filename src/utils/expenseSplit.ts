@@ -237,6 +237,8 @@ export function computeParticipantsFromSplitMetadata(
         metadata.taxAmount ?? 0,
         metadata.tipAmount ?? 0,
         participants,
+        metadata.taxSplitConfig,
+        metadata.tipSplitConfig,
       );
     case 'income':
       return computeIncome(amount, participants);
