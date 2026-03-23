@@ -358,7 +358,28 @@ const handleAutoFill = (
   return newData;
 };
 
-const GlobalSplitOptions = memo(({ members, title, price, config, onUpdate, theme, isExpanded, onToggleExpand }: { members: ReceiptScannerSheetMember[], title: string, price: number, config: InlineSplitConfig | undefined, onUpdate: (c: InlineSplitConfig | undefined) => void, theme: any, isExpanded: boolean, onToggleExpand: () => void }) => {
+const GlobalSplitToggle = memo(({ title, price, config, members, theme, isExpanded, onToggleExpand }: { title: string, price: number, config: InlineSplitConfig | undefined, members: ReceiptScannerSheetMember[], theme: any, isExpanded: boolean, onToggleExpand: () => void }) => {
+  const activeMode = config?.mode || 'equal';
+  const assignedSet = new Set(config?.data ? Object.keys(config.data).filter(k => k !== '_target') : members.map(m => m.id));
+  const isValid = checkConfigValid(config, Array.from(assignedSet), price);
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+      <IconButton 
+        icon="tune-variant" 
+        size={16} 
+        iconColor={isExpanded ? theme.colors.primary : (!isValid ? theme.colors.error : theme.colors.onSurfaceVariant)}
+        onPress={onToggleExpand}
+        style={{ margin: 0, backgroundColor: isExpanded ? `${theme.colors.primary}15` : 'transparent', width: 28, height: 28 }}
+      />
+      <Text variant="bodySmall" style={{ color: !isValid ? theme.colors.error : theme.colors.onSurfaceVariant }}>
+        {activeMode === 'equal' ? `Split ${title} evenly` : (!isValid ? `Invalid custom ${title} split` : `Custom ${title} split`)}
+      </Text>
+    </View>
+  );
+});
+
+const GlobalSplitPanel = memo(({ members, title, price, config, onUpdate, theme }: { members: ReceiptScannerSheetMember[], title: string, price: number, config: InlineSplitConfig | undefined, onUpdate: (c: InlineSplitConfig | undefined) => void, theme: any }) => {
   const [editHistory, setEditHistory] = useState<string[]>([]);
   const [localInputs, setLocalInputs] = useState<Record<string, string>>({});
   const [focusedInput, setFocusedInput] = useState<string | null>(null);
@@ -395,7 +416,10 @@ const GlobalSplitOptions = memo(({ members, title, price, config, onUpdate, them
     setEditHistory([]);
     if (mode === 'equal') onUpdate(undefined);
     else {
-      const newData = { ...config?.data };
+      const newData: Record<string, number> = { ...config?.data };
+      if (Object.keys(newData).filter(k => k !== '_target').length === 0) {
+        assignedSet.forEach(id => newData[id] = 0);
+      }
       if (mode === 'shares') newData._target = assignedSet.size;
       else delete newData._target;
       onUpdate({ mode, data: newData });
@@ -416,76 +440,60 @@ const GlobalSplitOptions = memo(({ members, title, price, config, onUpdate, them
   };
 
   return (
-    <View style={{ marginTop: 4 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <IconButton 
-          icon="tune-variant" 
-          size={16} 
-          iconColor={isExpanded ? theme.colors.primary : (!isValid ? theme.colors.error : theme.colors.onSurfaceVariant)}
-          onPress={onToggleExpand}
-          style={{ margin: 0, backgroundColor: isExpanded ? `${theme.colors.primary}15` : 'transparent', width: 28, height: 28 }}
-        />
-        <Text variant="bodySmall" style={{ color: !isValid ? theme.colors.error : theme.colors.onSurfaceVariant }}>
-          {activeMode === 'equal' ? `Split ${title} evenly` : (!isValid ? `Invalid custom ${title} split` : `Custom ${title} split`)}
-        </Text>
+    <View style={{ padding: 12, backgroundColor: `${theme.colors.surfaceVariant}40`, borderRadius: 12, marginTop: 8, borderWidth: 1, borderColor: isValid ? 'transparent' : theme.colors.error }}>
+      <View style={{ flexDirection: 'row', gap: 6 }}>
+        {(['equal', 'exact', 'percentage', 'shares'] as InlineSplitMode[]).map(m => (
+          <TouchableOpacity
+            key={m}
+            onPress={() => setMode(m)}
+            style={{
+              flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8,
+              backgroundColor: activeMode === m ? theme.colors.primary : 'transparent',
+              borderWidth: 1, borderColor: activeMode === m ? theme.colors.primary : theme.colors.outline,
+            }}
+          >
+            <Text style={{ fontSize: 12, color: activeMode === m ? theme.colors.onPrimary : theme.colors.onSurface }}>
+              {m === 'percentage' ? '%' : m.charAt(0).toUpperCase() + m.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
-      {isExpanded && (
-        <View style={{ padding: 12, backgroundColor: `${theme.colors.surfaceVariant}40`, borderRadius: 12, marginTop: 8, borderWidth: 1, borderColor: isValid ? 'transparent' : theme.colors.error }}>
-          <View style={{ flexDirection: 'row', gap: 6 }}>
-            {(['equal', 'exact', 'percentage', 'shares'] as InlineSplitMode[]).map(m => (
-              <TouchableOpacity
-                key={m}
-                onPress={() => setMode(m)}
-                style={{
-                  flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8,
-                  backgroundColor: activeMode === m ? theme.colors.primary : 'transparent',
-                  borderWidth: 1, borderColor: activeMode === m ? theme.colors.primary : theme.colors.outline,
-                }}
-              >
-                <Text style={{ fontSize: 12, color: activeMode === m ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                  {m === 'percentage' ? '%' : m.charAt(0).toUpperCase() + m.slice(1)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
 
-          {activeMode !== 'equal' && (
-            <View style={{ gap: 8, marginTop: 12 }}>
-              {activeMode === 'shares' && (
-                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                   <Text style={{ fontSize: 13, color: theme.colors.onSurface, fontWeight: '600' }}>Total Shares</Text>
-                   <TextInput
-                     mode="outlined" dense keyboardType="decimal-pad"
-                     value={targetFocused && localTargetShares ? localTargetShares : String(targetShares)}
-                     onFocus={() => { setTargetFocused(true); setLocalTargetShares(String(targetShares)); }}
-                     onBlur={() => setTargetFocused(false)}
-                     onChangeText={updateTargetSharesParam}
-                     style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
-                     contentStyle={{ paddingHorizontal: 8 }}
-                   />
-                 </View>
-              )}
-              {members.filter(m => assignedSet.has(m.id)).map(m => (
-                <View key={m.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text style={{ fontSize: 13, color: theme.colors.onSurface }}>{m.name}</Text>
-                  <TextInput
-                    mode="outlined"
-                    dense
-                    keyboardType="decimal-pad"
-                    placeholder="0"
-                    value={focusedInput === m.id && localInputs[m.id] !== undefined ? localInputs[m.id] : String(config?.data?.[m.id] ?? '')}
-                    onFocus={() => { setFocusedInput(m.id); setLocalInputs(prev => ({ ...prev, [m.id]: String(config?.data?.[m.id] ?? '') })); }}
-                    onBlur={() => setFocusedInput(null)}
-                    onChangeText={v => updateSplitData(m.id, v)}
-                    style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
-                    left={activeMode === 'exact' ? <TextInput.Affix text="$" /> : undefined}
-                    right={activeMode === 'percentage' ? <TextInput.Affix text="%" /> : undefined}
-                    contentStyle={{ paddingHorizontal: 8 }}
-                  />
-                </View>
-              ))}
-            </View>
+      {activeMode !== 'equal' && (
+        <View style={{ gap: 8, marginTop: 12 }}>
+          {activeMode === 'shares' && (
+             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+               <Text style={{ fontSize: 13, color: theme.colors.onSurface, fontWeight: '600' }}>Total Shares</Text>
+               <TextInput
+                 mode="outlined" dense keyboardType="decimal-pad"
+                 value={targetFocused && localTargetShares ? localTargetShares : String(targetShares)}
+                 onFocus={() => { setTargetFocused(true); setLocalTargetShares(String(targetShares)); }}
+                 onBlur={() => setTargetFocused(false)}
+                 onChangeText={updateTargetSharesParam}
+                 style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
+                 contentStyle={{ paddingHorizontal: 8 }}
+               />
+             </View>
           )}
+          {members.filter(m => assignedSet.has(m.id)).map(m => (
+            <View key={m.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ fontSize: 13, color: theme.colors.onSurface }}>{m.name}</Text>
+              <TextInput
+                mode="outlined"
+                dense
+                keyboardType="decimal-pad"
+                placeholder="0"
+                value={focusedInput === m.id && localInputs[m.id] !== undefined ? localInputs[m.id] : String(config?.data?.[m.id] ?? '')}
+                onFocus={() => { setFocusedInput(m.id); setLocalInputs(prev => ({ ...prev, [m.id]: String(config?.data?.[m.id] ?? '') })); }}
+                onBlur={() => setFocusedInput(null)}
+                onChangeText={v => updateSplitData(m.id, v)}
+                style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
+                left={activeMode === 'exact' ? <TextInput.Affix text="$" /> : undefined}
+                right={activeMode === 'percentage' ? <TextInput.Affix text="%" /> : undefined}
+                contentStyle={{ paddingHorizontal: 8 }}
+              />
+            </View>
+          ))}
         </View>
       )}
     </View>
@@ -1531,9 +1539,9 @@ export const ReceiptScannerSheet = ({
 
                   <Divider style={{ backgroundColor: `${theme.colors.outline}15`, marginVertical: 6 }} />
 
-                  {/* Tax & Tip */}
-                  <View style={{ flexDirection: 'column', gap: 12 }}>
-                    <View style={{ width: '100%' }}>
+                  {/* Tax & Tip Inputs Row */}
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <View style={{ flex: 1 }}>
                       <FloatingLabelInput
                         label="Tax"
                         value={tax}
@@ -1541,9 +1549,9 @@ export const ReceiptScannerSheet = ({
                         keyboardType="decimal-pad"
                         left={<TextInput.Affix text="$" />}
                       />
-                      <GlobalSplitOptions members={members} title="tax" price={parseFloat(tax) || 0} config={taxSplitConfig} onUpdate={setTaxSplitConfig} theme={theme} isExpanded={expandedPanelId === 'tax'} onToggleExpand={() => setExpandedPanelId(prev => prev === 'tax' ? null : 'tax')} />
+                      <GlobalSplitToggle title="tax" price={parseFloat(tax) || 0} config={taxSplitConfig} members={members} theme={theme} isExpanded={expandedPanelId === 'tax'} onToggleExpand={() => setExpandedPanelId(prev => prev === 'tax' ? null : 'tax')} />
                     </View>
-                    <View style={{ width: '100%' }}>
+                    <View style={{ flex: 1 }}>
                       <FloatingLabelInput
                         label="Tip"
                         value={tip}
@@ -1551,9 +1559,17 @@ export const ReceiptScannerSheet = ({
                         keyboardType="decimal-pad"
                         left={<TextInput.Affix text="$" />}
                       />
-                      <GlobalSplitOptions members={members} title="tip" price={parseFloat(tip) || 0} config={tipSplitConfig} onUpdate={setTipSplitConfig} theme={theme} isExpanded={expandedPanelId === 'tip'} onToggleExpand={() => setExpandedPanelId(prev => prev === 'tip' ? null : 'tip')} />
+                      <GlobalSplitToggle title="tip" price={parseFloat(tip) || 0} config={tipSplitConfig} members={members} theme={theme} isExpanded={expandedPanelId === 'tip'} onToggleExpand={() => setExpandedPanelId(prev => prev === 'tip' ? null : 'tip')} />
                     </View>
                   </View>
+
+                  {/* Expanded Global Options Panel */}
+                  {expandedPanelId === 'tax' && (
+                     <GlobalSplitPanel title="tax" price={parseFloat(tax) || 0} config={taxSplitConfig} onUpdate={setTaxSplitConfig} members={members} theme={theme} />
+                  )}
+                  {expandedPanelId === 'tip' && (
+                     <GlobalSplitPanel title="tip" price={parseFloat(tip) || 0} config={tipSplitConfig} onUpdate={setTipSplitConfig} members={members} theme={theme} />
+                  )}
 
                   <Divider style={{ backgroundColor: `${theme.colors.outline}15`, marginVertical: 6 }} />
 
