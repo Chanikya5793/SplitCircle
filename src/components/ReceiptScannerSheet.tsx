@@ -810,13 +810,13 @@ export const ReceiptScannerSheet = ({
     </View>
   );
 
-  if (phase === 'idle') {
-    return (
-      <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
-        <LiquidBackground>
+  return (
+    <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
+      <LiquidBackground>
+        {phase === 'idle' && (
           <View style={styles.container}>
-          <GlassView style={styles.card} contentStyle={{ gap: 8 }}>
-            {/* Header */}
+            <GlassView style={styles.card} contentStyle={{ gap: 8 }}>
+              {/* Header */}
             <View style={styles.header}>
               <IconButton
                 icon="close"
@@ -911,15 +911,9 @@ export const ReceiptScannerSheet = ({
             </Button>
           </GlassView>
         </View>
-      </LiquidBackground>
-    </KeyboardProvider>
-    );
-  }
+        )}
 
-  if (phase !== 'review') {
-    return (
-      <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
-        <LiquidBackground>
+        {phase !== 'idle' && phase !== 'review' && (
           <View style={styles.container}>
             <ScanningAnimation
               phase={phase}
@@ -931,18 +925,13 @@ export const ReceiptScannerSheet = ({
               Processing securely on-device. Please be ready to review and correct any potential misreads.
             </Text>
           </View>
-        </LiquidBackground>
-      </KeyboardProvider>
-    );
-  }
+        )}
 
-  // Review phase — editable item list
-  return (
-    <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
-      <LiquidBackground>
-        <View style={{ flex: 1 }}>
-        <Pressable style={styles.container} onPress={Keyboard.dismiss}>
-            <GlassView style={styles.reviewCard} contentStyle={{ flex: 1 }}>
+        {/* Review phase — editable item list */}
+        {phase === 'review' && (
+          <View style={{ flex: 1 }}>
+            <Pressable style={styles.container} onPress={Keyboard.dismiss}>
+              <GlassView style={styles.reviewCard} contentStyle={{ flex: 1 }}>
               {/* Header */}
               <View style={styles.header}>
                 <IconButton
@@ -1206,9 +1195,10 @@ export const ReceiptScannerSheet = ({
                   </Button>
                 </View>
               </KeyboardAwareScrollView>
-            </GlassView>
-          </Pressable>
-        </View>
+              </GlassView>
+            </Pressable>
+          </View>
+        )}
       </LiquidBackground>
     </KeyboardProvider>
   );
