@@ -82,6 +82,9 @@ const config = {
     supportsTablet: true,
     bundleIdentifier: 'com.splitcircle.app',
     backgroundColor: '#121212',
+    entitlements: {
+      'aps-environment': 'development',
+    },
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',

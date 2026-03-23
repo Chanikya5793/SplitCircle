@@ -35,14 +35,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Alert,
     Keyboard,
-    KeyboardAvoidingView,
     Platform,
+    Pressable,
     ScrollView,
     StyleSheet,
     TouchableOpacity,
-    TouchableWithoutFeedback,
     View,
 } from 'react-native';
+import { KeyboardAwareScrollView, KeyboardStickyView } from 'react-native-keyboard-controller';
 import {
     Button,
     Divider,
@@ -785,7 +785,6 @@ export const ReceiptScannerSheet = ({
           underlineColor="transparent"
           activeUnderlineColor={theme.colors.primary}
           left={<TextInput.Affix text="$" />}
-          returnKeyType="done"
           blurOnSubmit
           dense
         />
@@ -815,7 +814,7 @@ export const ReceiptScannerSheet = ({
     return (
       <LiquidBackground>
         <View style={styles.container}>
-          <GlassView style={styles.card}>
+          <GlassView style={styles.card} contentStyle={{ gap: 8 }}>
             {/* Header */}
             <View style={styles.header}>
               <IconButton
@@ -926,13 +925,9 @@ export const ReceiptScannerSheet = ({
   // Review phase — editable item list
   return (
     <LiquidBackground>
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <View style={styles.container}>
-            <GlassView style={styles.reviewCard}>
+      <View style={{ flex: 1 }}>
+        <Pressable style={styles.container} onPress={Keyboard.dismiss}>
+            <GlassView style={styles.reviewCard} contentStyle={{ flex: 1 }}>
               {/* Header */}
               <View style={styles.header}>
                 <IconButton
@@ -970,13 +965,13 @@ export const ReceiptScannerSheet = ({
               </View>
 
               {/* Scrollable content */}
-              <ScrollView
+              <KeyboardAwareScrollView
                 style={styles.scrollContent}
                 contentContainerStyle={styles.scrollContentContainer}
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
                 showsVerticalScrollIndicator={false}
-                automaticallyAdjustKeyboardInsets
+                bottomOffset={40}
               >
                 {merchantName && (
                   <View style={[styles.merchantBanner, { backgroundColor: `${theme.colors.primary}10` }]}>
@@ -1125,7 +1120,6 @@ export const ReceiptScannerSheet = ({
                       keyboardType="decimal-pad"
                       left={<TextInput.Affix text="$" />}
                       containerStyle={{ flex: 1 }}
-                      returnKeyType="done"
                     />
                     <FloatingLabelInput
                       label="Tip"
@@ -1134,7 +1128,6 @@ export const ReceiptScannerSheet = ({
                       keyboardType="decimal-pad"
                       left={<TextInput.Affix text="$" />}
                       containerStyle={{ flex: 1 }}
-                      returnKeyType="done"
                     />
                   </View>
 
@@ -1165,14 +1158,15 @@ export const ReceiptScannerSheet = ({
                   )}
                 </View>
 
-                {/* Bottom spacer for keyboard */}
+                {/* Bottom spacer for keyboard clearance handled by bottomOffset */}
                 <View style={{ height: 16 }} />
-              </ScrollView>
+              </KeyboardAwareScrollView>
 
               {/* Actions — pinned to bottom */}
-              <View style={[styles.actions, { borderTopWidth: 1, borderTopColor: `${theme.colors.outline}15` }]}>
-                <Button
-                  mode="outlined"
+              <KeyboardStickyView offset={{ closed: 0, opened: 0 }}>
+                <View style={[styles.actions, { borderTopWidth: 1, borderTopColor: `${theme.colors.outline}15` }]}>
+                  <Button
+                    mode="outlined"
                   onPress={onCancel}
                   style={[styles.cancelBtn, { borderColor: `${theme.colors.outline}60` }]}
                   labelStyle={{ fontWeight: '600' }}
@@ -1191,10 +1185,10 @@ export const ReceiptScannerSheet = ({
                   Use These Items
                 </Button>
               </View>
-            </GlassView>
-          </View>
-        </KeyboardAvoidingView>
-      </TouchableWithoutFeedback>
+            </KeyboardStickyView>
+          </GlassView>
+        </Pressable>
+      </View>
     </LiquidBackground>
   );
 };
