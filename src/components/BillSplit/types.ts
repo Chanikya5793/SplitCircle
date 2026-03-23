@@ -29,6 +29,8 @@ export interface ReceiptItem {
   name: string;
   price: number;
   assignedTo: string[];
+  splitMode?: 'equal' | 'exact' | 'percentage' | 'shares';
+  splitData?: Record<string, number>;
 }
 
 export interface ItemCategory {

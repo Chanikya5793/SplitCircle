@@ -31,7 +31,7 @@ import {
 } from '@/services/visionKitService';
 import { mediumHaptic, successHaptic } from '@/utils/haptics';
 import * as ImagePicker from 'expo-image-picker';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Alert,
     Keyboard,
@@ -54,15 +54,37 @@ import {
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+export type InlineSplitMode = 'equal' | 'exact' | 'percentage' | 'shares';
+
+export interface InlineSplitConfig {
+  mode: InlineSplitMode;
+  data?: Record<string, number>;
+}
+
+export interface ReceiptScannerSheetMember {
+  id: string;
+  name: string;
+  avatarUrl?: string | null;
+}
+
 export interface ReceiptScannerResult {
   /** Scanned receipt image URI */
   imageUri: string | null;
   /** Extracted line items */
-  items: { id: string; name: string; price: number; quantity: number }[];
+  items: { 
+    id: string; 
+    name: string; 
+    price: number; 
+    quantity: number; 
+    assignedTo?: string[];
+    splitConfig?: InlineSplitConfig;
+  }[];
   /** Tax amount */
   tax: number;
+  taxSplitConfig?: InlineSplitConfig;
   /** Tip amount */
   tip: number;
+  tipSplitConfig?: InlineSplitConfig;
   /** Total amount from receipt */
   total: number;
   /** Merchant/store name */
@@ -78,6 +100,7 @@ export interface ReceiptScannerResult {
 }
 
 interface ReceiptScannerSheetProps {
+  members?: ReceiptScannerSheetMember[];
   onComplete: (result: ReceiptScannerResult) => void;
   onCancel: () => void;
 }
@@ -93,6 +116,8 @@ type EditableReceiptItem = {
   reviewed: boolean;
   source: 'scan' | 'learned' | 'manual';
   originalName: string;
+  assignedTo?: string[];
+  splitConfig?: InlineSplitConfig;
 };
 
 const LOW_CONFIDENCE_THRESHOLD = 0.75;
@@ -272,9 +297,412 @@ const extractItemsFromRawText = (rawText: string | null | undefined): Array<{ na
   return Array.from(dedup.values());
 };
 
-// ── Component ───────────────────────────────────────────────────────────────
+// ── Subcomponents ─────────────────────────────────────────────────────────────
+
+const getItemConfidenceColor = (c: number) => c >= 0.8 ? '#4CAF50' : c >= 0.6 ? '#FF9800' : '#F44336';
+
+const checkConfigValid = (config: InlineSplitConfig | undefined, assignedList: string[], price?: number): boolean => {
+  if (!config || config.mode === 'equal') return true;
+  const mode = config.mode;
+  const data = config.data || {};
+  let sum = 0;
+  assignedList.forEach(id => sum += (data[id] || 0));
+  
+  const target = mode === 'percentage' ? 100 : mode === 'exact' ? (price || 0) : (data._target || assignedList.length);
+  return Math.abs(sum - target) < 0.01;
+};
+
+const handleAutoFill = (
+  uid: string,
+  value: string,
+  config: InlineSplitConfig | undefined,
+  activeMode: string,
+  assignedSet: Set<string>,
+  target: number,
+  touched: Set<string>,
+  setTouched: React.Dispatch<React.SetStateAction<Set<string>>>
+) => {
+  let num = parseFloat(value);
+  if (isNaN(num)) num = 0;
+  
+  const newTouched = new Set(touched);
+  newTouched.add(uid);
+  setTouched(newTouched);
+
+  const newData = { ...(config?.data || {}), [uid]: num };
+  const assignedArray = Array.from(assignedSet);
+
+  if (activeMode !== 'equal') {
+    if (assignedArray.length === 2) {
+      // 2-member specific auto-fill override
+      const otherId = assignedArray.find(id => id !== uid)!;
+      const diff = Math.max(0, target - num);
+      newData[otherId] = parseFloat(diff.toFixed(2));
+    } else {
+      // N-member auto fill for last untouched
+      const untouched = assignedArray.filter(id => !newTouched.has(id));
+      if (untouched.length === 1) {
+        const autoFillId = untouched[0];
+        const currentSumOfOthers = assignedArray.reduce((acc, id) => id !== autoFillId ? acc + (newData[id] || 0) : acc, 0);
+        const diff = Math.max(0, target - currentSumOfOthers);
+        newData[autoFillId] = parseFloat(diff.toFixed(2));
+      }
+    }
+  }
+  return newData;
+};
+
+const GlobalSplitOptions = memo(({ members, title, price, config, onUpdate, theme }: { members: ReceiptScannerSheetMember[], title: string, price: number, config: InlineSplitConfig | undefined, onUpdate: (c: InlineSplitConfig | undefined) => void, theme: any }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [touched, setTouched] = useState<Set<string>>(new Set());
+  
+  const activeMode = config?.mode || 'equal';
+  const assignedSet = new Set(config?.data ? Object.keys(config.data).filter(k => k !== '_target') : members.map(m => m.id));
+  const targetShares = config?.data?._target || assignedSet.size;
+  const target = activeMode === 'percentage' ? 100 : activeMode === 'exact' ? price : targetShares;
+
+  const isValid = checkConfigValid(config, Array.from(assignedSet), price);
+
+  const toggleAssignee = (uid: string) => {
+    const next = new Set(assignedSet);
+    if (next.has(uid)) next.delete(uid);
+    else next.add(uid);
+    
+    if (activeMode !== 'equal') {
+      const newData = { ...(config?.data || {}) };
+      if (!next.has(uid)) delete newData[uid];
+      else newData[uid] = 0;
+      onUpdate({ mode: activeMode, data: newData });
+    } else {
+      const dummyData: Record<string, number> = {};
+      next.forEach(id => dummyData[id] = 1);
+      onUpdate({ mode: 'shares', data: dummyData });
+    }
+    setTouched(new Set()); // reset touched
+  };
+
+  const setMode = (mode: InlineSplitMode) => {
+    setTouched(new Set());
+    if (mode === 'equal') onUpdate(undefined);
+    else {
+      const newData = { ...config?.data };
+      if (mode === 'shares') newData._target = assignedSet.size;
+      else delete newData._target;
+      onUpdate({ mode, data: newData });
+    }
+  };
+
+  const updateSplitData = (uid: string, value: string) => {
+    const newData = handleAutoFill(uid, value, config, activeMode, assignedSet, target, touched, setTouched);
+    onUpdate({ mode: activeMode, data: newData });
+  };
+
+  const updateTargetShares = (value: string) => {
+    let num = parseFloat(value);
+    if (isNaN(num)) num = assignedSet.size;
+    onUpdate({ mode: activeMode, data: { ...(config?.data || {}), _target: num } });
+  };
+
+  return (
+    <View style={{ marginTop: 4 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <IconButton 
+          icon="tune-variant" 
+          size={16} 
+          iconColor={expanded ? theme.colors.primary : (!isValid ? theme.colors.error : theme.colors.onSurfaceVariant)}
+          onPress={() => setExpanded(!expanded)}
+          style={{ margin: 0, backgroundColor: expanded ? `${theme.colors.primary}15` : 'transparent', width: 28, height: 28 }}
+        />
+        <Text variant="bodySmall" style={{ color: !isValid ? theme.colors.error : theme.colors.onSurfaceVariant }}>
+          {activeMode === 'equal' ? `Split ${title} evenly` : (!isValid ? `Invalid custom ${title} split` : `Custom ${title} split`)}
+        </Text>
+      </View>
+      {expanded && (
+        <View style={{ padding: 12, backgroundColor: `${theme.colors.surfaceVariant}40`, borderRadius: 12, marginTop: 8, borderWidth: 1, borderColor: isValid ? 'transparent' : theme.colors.error }}>
+          <View style={{ flexDirection: 'row', gap: 6 }}>
+            {(['equal', 'exact', 'percentage', 'shares'] as InlineSplitMode[]).map(m => (
+              <TouchableOpacity
+                key={m}
+                onPress={() => setMode(m)}
+                style={{
+                  flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8,
+                  backgroundColor: activeMode === m ? theme.colors.primary : 'transparent',
+                  borderWidth: 1, borderColor: activeMode === m ? theme.colors.primary : theme.colors.outline,
+                }}
+              >
+                <Text style={{ fontSize: 12, color: activeMode === m ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                  {m === 'percentage' ? '%' : m.charAt(0).toUpperCase() + m.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {activeMode !== 'equal' && (
+            <View style={{ gap: 8, marginTop: 12 }}>
+              {activeMode === 'shares' && (
+                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                   <Text style={{ fontSize: 13, color: theme.colors.onSurface, fontWeight: '600' }}>Total Shares</Text>
+                   <TextInput
+                     mode="outlined" dense keyboardType="decimal-pad"
+                     value={String(targetShares)}
+                     onChangeText={updateTargetShares}
+                     style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
+                     contentStyle={{ paddingHorizontal: 8 }}
+                   />
+                 </View>
+              )}
+              {members.filter(m => assignedSet.has(m.id)).map(m => (
+                <View key={m.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ fontSize: 13, color: theme.colors.onSurface }}>{m.name}</Text>
+                  <TextInput
+                    mode="outlined"
+                    dense
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    value={String(config?.data?.[m.id] || '')}
+                    onChangeText={v => updateSplitData(m.id, v)}
+                    style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
+                    left={activeMode === 'exact' ? <TextInput.Affix text="$" /> : undefined}
+                    right={activeMode === 'percentage' ? <TextInput.Affix text="%" /> : undefined}
+                    contentStyle={{ paddingHorizontal: 8 }}
+                  />
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+    </View>
+  );
+});
+
+interface ItemCardProps {
+  item: EditableReceiptItem;
+  members: ReceiptScannerSheetMember[];
+  theme: any;
+  isDark: boolean;
+  onUpdateItem: (id: string, field: 'name' | 'price', value: string) => void;
+  onUpdateSplitConfig: (id: string, config: InlineSplitConfig | undefined) => void;
+  onUpdateAssignedTo: (id: string, assignedTo: string[]) => void;
+  onMarkReviewed: (id: string) => void;
+  onRemoveItem: (id: string) => void;
+}
+
+const ItemCard = memo(({ 
+  item, members, theme, isDark, onUpdateItem, onUpdateSplitConfig, onUpdateAssignedTo, onMarkReviewed, onRemoveItem 
+}: ItemCardProps) => {
+  const [expanded, setExpanded] = useState(false);
+  const [touched, setTouched] = useState<Set<string>>(new Set());
+  const assignedSet = new Set(item.assignedTo || members.map(m => m.id));
+  const activeMode = item.splitConfig?.mode || 'equal';
+  const price = parseFloat(item.price) || 0;
+  const targetShares = item.splitConfig?.data?._target || assignedSet.size;
+  const target = activeMode === 'percentage' ? 100 : activeMode === 'exact' ? price : targetShares;
+
+  const isValid = checkConfigValid(item.splitConfig, Array.from(assignedSet), price);
+
+  const toggleAssignee = (uid: string) => {
+    const next = new Set(assignedSet);
+    if (next.has(uid)) next.delete(uid);
+    else next.add(uid);
+    onUpdateAssignedTo(item.id, Array.from(next));
+    setTouched(new Set()); // reset touched
+  };
+
+  const setMode = (mode: InlineSplitMode) => {
+    setTouched(new Set());
+    if (mode === 'equal') {
+      onUpdateSplitConfig(item.id, undefined);
+    } else {
+      const newData = { ...item.splitConfig?.data };
+      if (mode === 'shares') newData._target = assignedSet.size;
+      else delete newData._target;
+      onUpdateSplitConfig(item.id, { mode, data: newData });
+    }
+  };
+
+  const updateSplitData = (uid: string, value: string) => {
+    const newData = handleAutoFill(uid, value, item.splitConfig, activeMode, assignedSet, target, touched, setTouched);
+    onUpdateSplitConfig(item.id, { mode: activeMode, data: newData });
+  };
+
+  const updateTargetShares = (value: string) => {
+    let num = parseFloat(value);
+    if (isNaN(num)) num = assignedSet.size;
+    onUpdateSplitConfig(item.id, { mode: activeMode, data: { ...(item.splitConfig?.data || {}), _target: num } });
+  };
+
+  return (
+  <View
+    style={[
+      styles.itemRow,
+      {
+        flexDirection: 'column',
+        borderColor: item.reviewed ? `${theme.colors.outline}20` : '#FF950060',
+        backgroundColor: item.reviewed
+          ? (isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
+          : (isDark ? 'rgba(255,149,0,0.08)' : 'rgba(255,149,0,0.05)'),
+      },
+    ]}
+  >
+    <View style={styles.itemTopRow}>
+      <View style={[
+        styles.confidenceDot,
+        {
+          backgroundColor: getItemConfidenceColor(item.confidence),
+          shadowColor: item.confidence < LOW_CONFIDENCE_THRESHOLD ? '#FF9500' : 'transparent',
+          shadowOpacity: item.confidence < LOW_CONFIDENCE_THRESHOLD ? 0.6 : 0,
+          shadowRadius: 4,
+          shadowOffset: { width: 0, height: 0 },
+        }
+      ]} />
+      <TextInput
+        mode="flat"
+        placeholder="Item name"
+        value={item.name}
+        onChangeText={(v) => onUpdateItem(item.id, 'name', v)}
+        style={[styles.itemNameInput, { backgroundColor: 'transparent' }]}
+        textColor={theme.colors.onSurface}
+        placeholderTextColor={`${theme.colors.onSurfaceVariant}90`}
+        underlineColor="transparent"
+        activeUnderlineColor={theme.colors.primary}
+        returnKeyType="next"
+        blurOnSubmit={false}
+        dense
+      />
+      <TextInput
+        mode="flat"
+        placeholder="0.00"
+        value={item.price}
+        onChangeText={(v) => onUpdateItem(item.id, 'price', v)}
+        keyboardType="decimal-pad"
+        style={[styles.itemPriceInput, { backgroundColor: 'transparent' }]}
+        textColor={theme.colors.onSurface}
+        placeholderTextColor={`${theme.colors.onSurfaceVariant}90`}
+        underlineColor="transparent"
+        activeUnderlineColor={theme.colors.primary}
+        left={<TextInput.Affix text="$" />}
+        blurOnSubmit
+        dense
+      />
+      <View style={styles.itemActions}>
+        {!item.reviewed && (
+          <IconButton
+            icon="check-circle-outline"
+            size={18}
+            iconColor={theme.colors.primary}
+            onPress={() => onMarkReviewed(item.id)}
+            style={styles.reviewBtn}
+          />
+        )}
+        <IconButton
+          icon="close-circle-outline"
+          size={18}
+          iconColor={`${theme.colors.error}B0`}
+          onPress={() => onRemoveItem(item.id)}
+          style={styles.removeBtn}
+        />
+      </View>
+    </View>
+
+    {/* Assignment Row */}
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 8, gap: 8 }}>
+      <IconButton 
+        icon="account-group" 
+        size={20} 
+        iconColor={expanded ? theme.colors.primary : (!isValid ? theme.colors.error : theme.colors.onSurfaceVariant)}
+        onPress={() => setExpanded(!expanded)}
+        style={{ margin: 0, backgroundColor: expanded ? `${theme.colors.primary}15` : 'transparent' }}
+      />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+        {members.map(m => {
+          const isAssigned = assignedSet.has(m.id);
+          return (
+            <TouchableOpacity 
+              key={m.id} 
+              onPress={() => toggleAssignee(m.id)}
+              activeOpacity={0.7}
+              style={{
+                width: 28, height: 28, borderRadius: 14,
+                backgroundColor: isAssigned ? theme.colors.primary : theme.colors.surfaceVariant,
+                alignItems: 'center', justifyContent: 'center',
+                borderWidth: isAssigned ? 0 : 1, borderColor: theme.colors.outline,
+                opacity: isAssigned ? 1 : 0.5
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '700', color: isAssigned ? theme.colors.onPrimary : theme.colors.onSurfaceVariant }}>
+                {m.name.charAt(0).toUpperCase()}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    </View>
+
+    {/* Advanced Split Panel */}
+    {expanded && (
+      <View style={{ paddingHorizontal: 12, paddingBottom: 12, paddingTop: 4, gap: 12, borderTopWidth: 1, borderTopColor: isValid ? `${theme.colors.outline}30` : theme.colors.error }}>
+        <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+          {(['equal', 'exact', 'percentage', 'shares'] as InlineSplitMode[]).map(m => (
+            <TouchableOpacity
+              key={m}
+              onPress={() => setMode(m)}
+              style={{
+                flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8,
+                backgroundColor: activeMode === m ? theme.colors.primary : 'transparent',
+                borderWidth: 1, borderColor: activeMode === m ? theme.colors.primary : theme.colors.outline,
+              }}
+            >
+              <Text style={{ fontSize: 12, color: activeMode === m ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                {m === 'percentage' ? '%' : m.charAt(0).toUpperCase() + m.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {activeMode !== 'equal' && (
+          <View style={{ gap: 8, marginTop: 4 }}>
+            {activeMode === 'shares' && (
+                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                   <Text style={{ fontSize: 13, color: theme.colors.onSurface, fontWeight: '600' }}>Total Shares</Text>
+                   <TextInput
+                     mode="outlined" dense keyboardType="decimal-pad"
+                     value={String(targetShares)}
+                     onChangeText={updateTargetShares}
+                     style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
+                     contentStyle={{ paddingHorizontal: 8 }}
+                   />
+                 </View>
+            )}
+            {members.filter(m => assignedSet.has(m.id)).map(m => (
+              <View key={m.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ fontSize: 13, color: theme.colors.onSurface }}>{m.name}</Text>
+                <TextInput
+                  mode="outlined"
+                  dense
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  value={String(item.splitConfig?.data?.[m.id] || '')}
+                  onChangeText={v => updateSplitData(m.id, v)}
+                  style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
+                  left={activeMode === 'exact' ? <TextInput.Affix text="$" /> : undefined}
+                  right={activeMode === 'percentage' ? <TextInput.Affix text="%" /> : undefined}
+                  contentStyle={{ paddingHorizontal: 8 }}
+                />
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    )}
+  </View>
+  );
+});
+
+// ── Main Component ────────────────────────────────────────────────────────────
 
 export const ReceiptScannerSheet = ({
+  members = [],
   onComplete,
   onCancel,
 }: ReceiptScannerSheetProps) => {
@@ -289,7 +717,9 @@ export const ReceiptScannerSheet = ({
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [items, setItems] = useState<EditableReceiptItem[]>([]);
   const [tax, setTax] = useState('');
+  const [taxSplitConfig, setTaxSplitConfig] = useState<InlineSplitConfig | undefined>();
   const [tip, setTip] = useState('');
+  const [tipSplitConfig, setTipSplitConfig] = useState<InlineSplitConfig | undefined>();
   const [total, setTotal] = useState('');
   const [merchantName, setMerchantName] = useState<string | null>(null);
   const [merchantConfidence, setMerchantConfidence] = useState<number | null>(null);
@@ -627,7 +1057,7 @@ export const ReceiptScannerSheet = ({
     }
   };
 
-  const handleAddItem = () => {
+  const handleAddItem = useCallback(() => {
     mediumHaptic();
     setItems((prev) => [
       ...prev,
@@ -642,22 +1072,30 @@ export const ReceiptScannerSheet = ({
         originalName: '',
       },
     ]);
-  };
+  }, []);
 
-  const handleRemoveItem = (id: string) => {
+  const handleRemoveItem = useCallback((id: string) => {
     mediumHaptic();
     setItems((prev) => prev.filter((item) => item.id !== id));
-  };
+  }, []);
 
-  const handleUpdateItem = (id: string, field: 'name' | 'price', value: string) => {
+  const handleUpdateItem = useCallback((id: string, field: 'name' | 'price', value: string) => {
     setItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, [field]: value, reviewed: true } : item)),
     );
-  };
+  }, []);
 
-  const handleMarkReviewed = (id: string) => {
+  const handleUpdateSplitConfig = useCallback((id: string, config: InlineSplitConfig | undefined) => {
+    setItems((prev) => prev.map((item) => (item.id === id ? { ...item, splitConfig: config } : item)));
+  }, []);
+
+  const handleUpdateAssignedTo = useCallback((id: string, assignedTo: string[]) => {
+    setItems((prev) => prev.map((item) => (item.id === id ? { ...item, assignedTo } : item)));
+  }, []);
+
+  const handleMarkReviewed = useCallback((id: string) => {
     setItems((prev) => prev.map((item) => (item.id === id ? { ...item, reviewed: true } : item)));
-  };
+  }, []);
 
   const handleHeaderTap = () => {
     if (!__DEV__) return;
@@ -704,6 +1142,8 @@ export const ReceiptScannerSheet = ({
         name: item.name.trim(),
         price: parseFloat(item.price) || 0,
         quantity: item.quantity,
+        assignedTo: item.assignedTo,
+        splitConfig: item.splitConfig,
       }));
 
     const inferredCategory = rawText ? inferCategoryFromText(rawText) : null;
@@ -720,7 +1160,9 @@ export const ReceiptScannerSheet = ({
       imageUri,
       items: validItems,
       tax: parseFloat(tax) || 0,
+      taxSplitConfig,
       tip: parseFloat(tip) || 0,
+      tipSplitConfig,
       total: finalTotal,
       merchantName,
       merchantConfidence,
@@ -731,84 +1173,6 @@ export const ReceiptScannerSheet = ({
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
-
-  const getConfidenceColor = (c: number) => c >= 0.8 ? '#4CAF50' : c >= 0.6 ? '#FF9800' : '#F44336';
-
-  const renderItemCard = (item: EditableReceiptItem) => (
-    <View
-      key={item.id}
-      style={[
-        styles.itemRow,
-        {
-          borderColor: item.reviewed ? `${theme.colors.outline}20` : '#FF950060',
-          backgroundColor: item.reviewed
-            ? (isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')
-            : (isDark ? 'rgba(255,149,0,0.08)' : 'rgba(255,149,0,0.05)'),
-        },
-      ]}
-    >
-      <View style={styles.itemTopRow}>
-        {/* Confidence indicator */}
-        <View style={[
-          styles.confidenceDot,
-          {
-            backgroundColor: getConfidenceColor(item.confidence),
-            shadowColor: item.confidence < LOW_CONFIDENCE_THRESHOLD ? '#FF9500' : 'transparent',
-            shadowOpacity: item.confidence < LOW_CONFIDENCE_THRESHOLD ? 0.6 : 0,
-            shadowRadius: 4,
-            shadowOffset: { width: 0, height: 0 },
-          }
-        ]} />
-        <TextInput
-          mode="flat"
-          placeholder="Item name"
-          value={item.name}
-          onChangeText={(v) => handleUpdateItem(item.id, 'name', v)}
-          style={[styles.itemNameInput, { backgroundColor: 'transparent' }]}
-          textColor={theme.colors.onSurface}
-          placeholderTextColor={`${theme.colors.onSurfaceVariant}90`}
-          underlineColor="transparent"
-          activeUnderlineColor={theme.colors.primary}
-          returnKeyType="next"
-          blurOnSubmit={false}
-          dense
-        />
-        <TextInput
-          mode="flat"
-          placeholder="0.00"
-          value={item.price}
-          onChangeText={(v) => handleUpdateItem(item.id, 'price', v)}
-          keyboardType="decimal-pad"
-          style={[styles.itemPriceInput, { backgroundColor: 'transparent' }]}
-          textColor={theme.colors.onSurface}
-          placeholderTextColor={`${theme.colors.onSurfaceVariant}90`}
-          underlineColor="transparent"
-          activeUnderlineColor={theme.colors.primary}
-          left={<TextInput.Affix text="$" />}
-          blurOnSubmit
-          dense
-        />
-        <View style={styles.itemActions}>
-          {!item.reviewed && (
-            <IconButton
-              icon="check-circle-outline"
-              size={18}
-              iconColor={theme.colors.primary}
-              onPress={() => handleMarkReviewed(item.id)}
-              style={styles.reviewBtn}
-            />
-          )}
-          <IconButton
-            icon="close-circle-outline"
-            size={18}
-            iconColor={`${theme.colors.error}B0`}
-            onPress={() => handleRemoveItem(item.id)}
-            style={styles.removeBtn}
-          />
-        </View>
-      </View>
-    </View>
-  );
 
   return (
     <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
@@ -1037,7 +1401,20 @@ export const ReceiptScannerSheet = ({
                 {/* Items */}
                 {orderedItems.length > 0 ? (
                   <View style={styles.itemListContainer}>
-                    {orderedItems.map(renderItemCard)}
+                    {orderedItems.map((item) => (
+                      <ItemCard
+                        key={item.id}
+                        item={item}
+                        members={members}
+                        theme={theme}
+                        isDark={isDark}
+                        onUpdateItem={handleUpdateItem}
+                        onUpdateSplitConfig={handleUpdateSplitConfig}
+                        onUpdateAssignedTo={handleUpdateAssignedTo}
+                        onMarkReviewed={handleMarkReviewed}
+                        onRemoveItem={handleRemoveItem}
+                      />
+                    ))}
                   </View>
                 ) : (
                   <TouchableOpacity
@@ -1123,23 +1500,27 @@ export const ReceiptScannerSheet = ({
                   <Divider style={{ backgroundColor: `${theme.colors.outline}15`, marginVertical: 6 }} />
 
                   {/* Tax & Tip */}
-                  <View style={styles.extraFields}>
-                    <FloatingLabelInput
-                      label="Tax"
-                      value={tax}
-                      onChangeText={setTax}
-                      keyboardType="decimal-pad"
-                      left={<TextInput.Affix text="$" />}
-                      containerStyle={{ flex: 1 }}
-                    />
-                    <FloatingLabelInput
-                      label="Tip"
-                      value={tip}
-                      onChangeText={setTip}
-                      keyboardType="decimal-pad"
-                      left={<TextInput.Affix text="$" />}
-                      containerStyle={{ flex: 1 }}
-                    />
+                  <View style={{ flexDirection: 'column', gap: 12 }}>
+                    <View style={{ width: '100%' }}>
+                      <FloatingLabelInput
+                        label="Tax"
+                        value={tax}
+                        onChangeText={setTax}
+                        keyboardType="decimal-pad"
+                        left={<TextInput.Affix text="$" />}
+                      />
+                      <GlobalSplitOptions members={members} title="tax" price={parseFloat(tax) || 0} config={taxSplitConfig} onUpdate={setTaxSplitConfig} theme={theme} />
+                    </View>
+                    <View style={{ width: '100%' }}>
+                      <FloatingLabelInput
+                        label="Tip"
+                        value={tip}
+                        onChangeText={setTip}
+                        keyboardType="decimal-pad"
+                        left={<TextInput.Affix text="$" />}
+                      />
+                      <GlobalSplitOptions members={members} title="tip" price={parseFloat(tip) || 0} config={tipSplitConfig} onUpdate={setTipSplitConfig} theme={theme} />
+                    </View>
                   </View>
 
                   <Divider style={{ backgroundColor: `${theme.colors.outline}15`, marginVertical: 6 }} />
@@ -1189,7 +1570,12 @@ export const ReceiptScannerSheet = ({
                     icon="check"
                     labelStyle={{ fontWeight: '700', fontSize: 15 }}
                     contentStyle={{ paddingVertical: 4 }}
-                    disabled={items.length === 0 && !total}
+                    disabled={
+                      (items.length === 0 && !total) || 
+                      !items.reduce((acc, item) => acc && checkConfigValid(item.splitConfig, item.assignedTo || members.map(m => m.id), parseFloat(item.price) || 0), true as boolean) ||
+                      !checkConfigValid(taxSplitConfig, taxSplitConfig?.data ? Object.keys(taxSplitConfig.data).filter(k => k !== '_target') : members.map(m => m.id), parseFloat(tax) || 0) ||
+                      !checkConfigValid(tipSplitConfig, tipSplitConfig?.data ? Object.keys(tipSplitConfig.data).filter(k => k !== '_target') : members.map(m => m.id), parseFloat(tip) || 0)
+                    }
                   >
                     Use These Items
                   </Button>
