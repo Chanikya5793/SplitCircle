@@ -319,15 +319,15 @@ const handleAutoFill = (
   activeMode: string,
   assignedSet: Set<string>,
   target: number,
-  touched: Set<string>,
-  setTouched: React.Dispatch<React.SetStateAction<Set<string>>>
+  editHistory: string[],
+  setEditHistory: React.Dispatch<React.SetStateAction<string[]>>
 ) => {
   let num = parseFloat(value);
   if (isNaN(num)) num = 0;
   
-  const newTouched = new Set(touched);
-  newTouched.add(uid);
-  setTouched(newTouched);
+  const newHistory = editHistory.filter(id => id !== uid);
+  newHistory.push(uid);
+  setEditHistory(newHistory);
 
   const newData = { ...(config?.data || {}), [uid]: num };
   const assignedArray = Array.from(assignedSet);
@@ -339,10 +339,16 @@ const handleAutoFill = (
       const diff = Math.max(0, target - num);
       newData[otherId] = parseFloat(diff.toFixed(2));
     } else {
-      // N-member auto fill for last untouched
-      const untouched = assignedArray.filter(id => !newTouched.has(id));
+      // N-member auto fill for last untouched or oldest
+      const untouched = assignedArray.filter(id => !newHistory.includes(id));
+      let autoFillId: string | null = null;
       if (untouched.length === 1) {
-        const autoFillId = untouched[0];
+        autoFillId = untouched[0];
+      } else if (untouched.length === 0 && newHistory.length > 1) {
+        autoFillId = newHistory[0];
+      }
+      
+      if (autoFillId) {
         const currentSumOfOthers = assignedArray.reduce((acc, id) => id !== autoFillId ? acc + (newData[id] || 0) : acc, 0);
         const diff = Math.max(0, target - currentSumOfOthers);
         newData[autoFillId] = parseFloat(diff.toFixed(2));
@@ -352,9 +358,13 @@ const handleAutoFill = (
   return newData;
 };
 
-const GlobalSplitOptions = memo(({ members, title, price, config, onUpdate, theme }: { members: ReceiptScannerSheetMember[], title: string, price: number, config: InlineSplitConfig | undefined, onUpdate: (c: InlineSplitConfig | undefined) => void, theme: any }) => {
-  const [expanded, setExpanded] = useState(false);
-  const [touched, setTouched] = useState<Set<string>>(new Set());
+const GlobalSplitOptions = memo(({ members, title, price, config, onUpdate, theme, isExpanded, onToggleExpand }: { members: ReceiptScannerSheetMember[], title: string, price: number, config: InlineSplitConfig | undefined, onUpdate: (c: InlineSplitConfig | undefined) => void, theme: any, isExpanded: boolean, onToggleExpand: () => void }) => {
+  const [editHistory, setEditHistory] = useState<string[]>([]);
+  const [localInputs, setLocalInputs] = useState<Record<string, string>>({});
+  const [focusedInput, setFocusedInput] = useState<string | null>(null);
+  
+  const [localTargetShares, setLocalTargetShares] = useState<string>('');
+  const [targetFocused, setTargetFocused] = useState(false);
   
   const activeMode = config?.mode || 'equal';
   const assignedSet = new Set(config?.data ? Object.keys(config.data).filter(k => k !== '_target') : members.map(m => m.id));
@@ -378,11 +388,11 @@ const GlobalSplitOptions = memo(({ members, title, price, config, onUpdate, them
       next.forEach(id => dummyData[id] = 1);
       onUpdate({ mode: 'shares', data: dummyData });
     }
-    setTouched(new Set()); // reset touched
+    setEditHistory([]);
   };
 
   const setMode = (mode: InlineSplitMode) => {
-    setTouched(new Set());
+    setEditHistory([]);
     if (mode === 'equal') onUpdate(undefined);
     else {
       const newData = { ...config?.data };
@@ -393,11 +403,13 @@ const GlobalSplitOptions = memo(({ members, title, price, config, onUpdate, them
   };
 
   const updateSplitData = (uid: string, value: string) => {
-    const newData = handleAutoFill(uid, value, config, activeMode, assignedSet, target, touched, setTouched);
+    setLocalInputs(prev => ({ ...prev, [uid]: value }));
+    const newData = handleAutoFill(uid, value, config, activeMode, assignedSet, target, editHistory, setEditHistory);
     onUpdate({ mode: activeMode, data: newData });
   };
 
-  const updateTargetShares = (value: string) => {
+  const updateTargetSharesParam = (value: string) => {
+    setLocalTargetShares(value);
     let num = parseFloat(value);
     if (isNaN(num)) num = assignedSet.size;
     onUpdate({ mode: activeMode, data: { ...(config?.data || {}), _target: num } });
@@ -409,15 +421,15 @@ const GlobalSplitOptions = memo(({ members, title, price, config, onUpdate, them
         <IconButton 
           icon="tune-variant" 
           size={16} 
-          iconColor={expanded ? theme.colors.primary : (!isValid ? theme.colors.error : theme.colors.onSurfaceVariant)}
-          onPress={() => setExpanded(!expanded)}
-          style={{ margin: 0, backgroundColor: expanded ? `${theme.colors.primary}15` : 'transparent', width: 28, height: 28 }}
+          iconColor={isExpanded ? theme.colors.primary : (!isValid ? theme.colors.error : theme.colors.onSurfaceVariant)}
+          onPress={onToggleExpand}
+          style={{ margin: 0, backgroundColor: isExpanded ? `${theme.colors.primary}15` : 'transparent', width: 28, height: 28 }}
         />
         <Text variant="bodySmall" style={{ color: !isValid ? theme.colors.error : theme.colors.onSurfaceVariant }}>
           {activeMode === 'equal' ? `Split ${title} evenly` : (!isValid ? `Invalid custom ${title} split` : `Custom ${title} split`)}
         </Text>
       </View>
-      {expanded && (
+      {isExpanded && (
         <View style={{ padding: 12, backgroundColor: `${theme.colors.surfaceVariant}40`, borderRadius: 12, marginTop: 8, borderWidth: 1, borderColor: isValid ? 'transparent' : theme.colors.error }}>
           <View style={{ flexDirection: 'row', gap: 6 }}>
             {(['equal', 'exact', 'percentage', 'shares'] as InlineSplitMode[]).map(m => (
@@ -444,8 +456,10 @@ const GlobalSplitOptions = memo(({ members, title, price, config, onUpdate, them
                    <Text style={{ fontSize: 13, color: theme.colors.onSurface, fontWeight: '600' }}>Total Shares</Text>
                    <TextInput
                      mode="outlined" dense keyboardType="decimal-pad"
-                     value={String(targetShares)}
-                     onChangeText={updateTargetShares}
+                     value={targetFocused && localTargetShares ? localTargetShares : String(targetShares)}
+                     onFocus={() => { setTargetFocused(true); setLocalTargetShares(String(targetShares)); }}
+                     onBlur={() => setTargetFocused(false)}
+                     onChangeText={updateTargetSharesParam}
                      style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
                      contentStyle={{ paddingHorizontal: 8 }}
                    />
@@ -459,7 +473,9 @@ const GlobalSplitOptions = memo(({ members, title, price, config, onUpdate, them
                     dense
                     keyboardType="decimal-pad"
                     placeholder="0"
-                    value={String(config?.data?.[m.id] || '')}
+                    value={focusedInput === m.id && localInputs[m.id] !== undefined ? localInputs[m.id] : String(config?.data?.[m.id] ?? '')}
+                    onFocus={() => { setFocusedInput(m.id); setLocalInputs(prev => ({ ...prev, [m.id]: String(config?.data?.[m.id] ?? '') })); }}
+                    onBlur={() => setFocusedInput(null)}
                     onChangeText={v => updateSplitData(m.id, v)}
                     style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
                     left={activeMode === 'exact' ? <TextInput.Affix text="$" /> : undefined}
@@ -481,6 +497,8 @@ interface ItemCardProps {
   members: ReceiptScannerSheetMember[];
   theme: any;
   isDark: boolean;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
   onUpdateItem: (id: string, field: 'name' | 'price', value: string) => void;
   onUpdateSplitConfig: (id: string, config: InlineSplitConfig | undefined) => void;
   onUpdateAssignedTo: (id: string, assignedTo: string[]) => void;
@@ -489,10 +507,15 @@ interface ItemCardProps {
 }
 
 const ItemCard = memo(({ 
-  item, members, theme, isDark, onUpdateItem, onUpdateSplitConfig, onUpdateAssignedTo, onMarkReviewed, onRemoveItem 
+  item, members, theme, isDark, isExpanded, onToggleExpand, onUpdateItem, onUpdateSplitConfig, onUpdateAssignedTo, onMarkReviewed, onRemoveItem 
 }: ItemCardProps) => {
-  const [expanded, setExpanded] = useState(false);
-  const [touched, setTouched] = useState<Set<string>>(new Set());
+  const [editHistory, setEditHistory] = useState<string[]>([]);
+  const [localInputs, setLocalInputs] = useState<Record<string, string>>({});
+  const [focusedInput, setFocusedInput] = useState<string | null>(null);
+  
+  const [localTargetShares, setLocalTargetShares] = useState<string>('');
+  const [targetFocused, setTargetFocused] = useState(false);
+  
   const assignedSet = new Set(item.assignedTo || members.map(m => m.id));
   const activeMode = item.splitConfig?.mode || 'equal';
   const price = parseFloat(item.price) || 0;
@@ -506,11 +529,11 @@ const ItemCard = memo(({
     if (next.has(uid)) next.delete(uid);
     else next.add(uid);
     onUpdateAssignedTo(item.id, Array.from(next));
-    setTouched(new Set()); // reset touched
+    setEditHistory([]);
   };
 
   const setMode = (mode: InlineSplitMode) => {
-    setTouched(new Set());
+    setEditHistory([]);
     if (mode === 'equal') {
       onUpdateSplitConfig(item.id, undefined);
     } else {
@@ -522,11 +545,13 @@ const ItemCard = memo(({
   };
 
   const updateSplitData = (uid: string, value: string) => {
-    const newData = handleAutoFill(uid, value, item.splitConfig, activeMode, assignedSet, target, touched, setTouched);
+    setLocalInputs(prev => ({ ...prev, [uid]: value }));
+    const newData = handleAutoFill(uid, value, item.splitConfig, activeMode, assignedSet, target, editHistory, setEditHistory);
     onUpdateSplitConfig(item.id, { mode: activeMode, data: newData });
   };
 
-  const updateTargetShares = (value: string) => {
+  const updateTargetSharesParam = (value: string) => {
+    setLocalTargetShares(value);
     let num = parseFloat(value);
     if (isNaN(num)) num = assignedSet.size;
     onUpdateSplitConfig(item.id, { mode: activeMode, data: { ...(item.splitConfig?.data || {}), _target: num } });
@@ -610,9 +635,9 @@ const ItemCard = memo(({
       <IconButton 
         icon="account-group" 
         size={20} 
-        iconColor={expanded ? theme.colors.primary : (!isValid ? theme.colors.error : theme.colors.onSurfaceVariant)}
-        onPress={() => setExpanded(!expanded)}
-        style={{ margin: 0, backgroundColor: expanded ? `${theme.colors.primary}15` : 'transparent' }}
+        iconColor={isExpanded ? theme.colors.primary : (!isValid ? theme.colors.error : theme.colors.onSurfaceVariant)}
+        onPress={onToggleExpand}
+        style={{ margin: 0, backgroundColor: isExpanded ? `${theme.colors.primary}15` : 'transparent' }}
       />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
         {members.map(m => {
@@ -640,7 +665,7 @@ const ItemCard = memo(({
     </View>
 
     {/* Advanced Split Panel */}
-    {expanded && (
+    {isExpanded && (
       <View style={{ paddingHorizontal: 12, paddingBottom: 12, paddingTop: 4, gap: 12, borderTopWidth: 1, borderTopColor: isValid ? `${theme.colors.outline}30` : theme.colors.error }}>
         <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
           {(['equal', 'exact', 'percentage', 'shares'] as InlineSplitMode[]).map(m => (
@@ -667,8 +692,10 @@ const ItemCard = memo(({
                    <Text style={{ fontSize: 13, color: theme.colors.onSurface, fontWeight: '600' }}>Total Shares</Text>
                    <TextInput
                      mode="outlined" dense keyboardType="decimal-pad"
-                     value={String(targetShares)}
-                     onChangeText={updateTargetShares}
+                     value={targetFocused && localTargetShares ? localTargetShares : String(targetShares)}
+                     onFocus={() => { setTargetFocused(true); setLocalTargetShares(String(targetShares)); }}
+                     onBlur={() => setTargetFocused(false)}
+                     onChangeText={updateTargetSharesParam}
                      style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
                      contentStyle={{ paddingHorizontal: 8 }}
                    />
@@ -682,7 +709,9 @@ const ItemCard = memo(({
                   dense
                   keyboardType="decimal-pad"
                   placeholder="0"
-                  value={String(item.splitConfig?.data?.[m.id] || '')}
+                  value={focusedInput === m.id && localInputs[m.id] !== undefined ? localInputs[m.id] : String(item.splitConfig?.data?.[m.id] ?? '')}
+                  onFocus={() => { setFocusedInput(m.id); setLocalInputs(prev => ({ ...prev, [m.id]: String(item.splitConfig?.data?.[m.id] ?? '') })); }}
+                  onBlur={() => setFocusedInput(null)}
                   onChangeText={v => updateSplitData(m.id, v)}
                   style={{ width: 80, height: 32, fontSize: 13, backgroundColor: 'transparent' }}
                   left={activeMode === 'exact' ? <TextInput.Affix text="$" /> : undefined}
@@ -712,6 +741,7 @@ export const ReceiptScannerSheet = ({
   const [phase, setPhase] = useState<ScanPhase>('idle');
   const [scanMessage, setScanMessage] = useState('Ready to scan');
   const [scanItemCount, setScanItemCount] = useState(0);
+  const [expandedPanelId, setExpandedPanelId] = useState<string | null>(null);
 
   // Result state
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -1408,6 +1438,8 @@ export const ReceiptScannerSheet = ({
                         members={members}
                         theme={theme}
                         isDark={isDark}
+                        isExpanded={expandedPanelId === item.id}
+                        onToggleExpand={() => setExpandedPanelId(prev => prev === item.id ? null : item.id)}
                         onUpdateItem={handleUpdateItem}
                         onUpdateSplitConfig={handleUpdateSplitConfig}
                         onUpdateAssignedTo={handleUpdateAssignedTo}
@@ -1509,7 +1541,7 @@ export const ReceiptScannerSheet = ({
                         keyboardType="decimal-pad"
                         left={<TextInput.Affix text="$" />}
                       />
-                      <GlobalSplitOptions members={members} title="tax" price={parseFloat(tax) || 0} config={taxSplitConfig} onUpdate={setTaxSplitConfig} theme={theme} />
+                      <GlobalSplitOptions members={members} title="tax" price={parseFloat(tax) || 0} config={taxSplitConfig} onUpdate={setTaxSplitConfig} theme={theme} isExpanded={expandedPanelId === 'tax'} onToggleExpand={() => setExpandedPanelId(prev => prev === 'tax' ? null : 'tax')} />
                     </View>
                     <View style={{ width: '100%' }}>
                       <FloatingLabelInput
@@ -1519,7 +1551,7 @@ export const ReceiptScannerSheet = ({
                         keyboardType="decimal-pad"
                         left={<TextInput.Affix text="$" />}
                       />
-                      <GlobalSplitOptions members={members} title="tip" price={parseFloat(tip) || 0} config={tipSplitConfig} onUpdate={setTipSplitConfig} theme={theme} />
+                      <GlobalSplitOptions members={members} title="tip" price={parseFloat(tip) || 0} config={tipSplitConfig} onUpdate={setTipSplitConfig} theme={theme} isExpanded={expandedPanelId === 'tip'} onToggleExpand={() => setExpandedPanelId(prev => prev === 'tip' ? null : 'tip')} />
                     </View>
                   </View>
 
