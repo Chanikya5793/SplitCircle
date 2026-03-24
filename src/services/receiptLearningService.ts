@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const LEARNING_KEY = 'receipt_learning_v1';
 const STRICT_MODE_KEY = 'receipt_strict_review_mode_v1';
+const USE_AI_KEY = 'receipt_use_ai_v1';
 const MIN_CORRECTION_HITS = 2;
 const MIN_DROP_HITS = 2;
 
@@ -116,6 +117,23 @@ export const setStrictReviewMode = async (enabled: boolean): Promise<void> => {
     await AsyncStorage.setItem(STRICT_MODE_KEY, enabled ? '1' : '0');
   } catch {
     // Non-blocking user preference save.
+  }
+};
+
+export const getUseAIForReceipts = async (): Promise<boolean> => {
+  try {
+    const raw = await AsyncStorage.getItem(USE_AI_KEY);
+    return raw !== '0'; // default true
+  } catch {
+    return true;
+  }
+};
+
+export const setUseAIForReceipts = async (enabled: boolean): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(USE_AI_KEY, enabled ? '1' : '0');
+  } catch {
+    // Non-blocking
   }
 };
 

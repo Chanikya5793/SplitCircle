@@ -825,6 +825,24 @@ struct ReceiptParserCore {
     if row.text.contains("@") { score -= 0.02 }
     if isNonItemPricedRow(normalizedLower(row.text)) { score -= 0.24 }
 
+    // --- On-Device Probability Enhancements ---
+    if let pb = priceInfo.priceBlock {
+      let nameBlocks = row.blocks.filter { $0.text != pb.text }
+      if !nameBlocks.isEmpty {
+        let avgNameY = nameBlocks.map(\.midY).reduce(0, +) / CGFloat(nameBlocks.count)
+        let delta = abs(pb.midY - avgNameY)
+        if delta < 0.01 { score += 0.12 } // Perfect spatial horizontal alignment
+        else if delta < 0.02 { score += 0.06 }
+        else if delta > 0.05 { score -= 0.15 } // Poor spatial alignment, likely noise
+      }
+    }
+
+    let lowerName = normalizedLower(name)
+    let dictionaryItems = ["coffee", "tea", "cake", "bread", "milk", "cheese", "apple", "chicken", "beef", "pork", "beer", "wine", "chips", "water", "juice", "pizza", "burger", "salad", "soup", "sushi", "taco", "noodle", "pasta", "rice", "beans", "t-shirt", "pants", "shoes", "socks", "shampoo", "soap"]
+    if dictionaryItems.contains(where: { lowerName.contains($0) }) {
+        score += 0.10 // Known commercial item keyword bonus
+    }
+
     return clamp(score)
   }
 

@@ -18,6 +18,7 @@ import { extractReceiptData, inferCategoryFromText, parseStructuredReceiptWithAI
 import {
     applyReceiptLearning,
     getStrictReviewMode,
+    getUseAIForReceipts,
     recordReceiptLearningFeedback,
     type LearningScannedItem,
 } from '@/services/receiptLearningService';
@@ -816,15 +817,21 @@ export const ReceiptScannerSheet = ({
     return Math.max(0, Math.min(100, Math.round(score)));
   }, [confidenceStats, hasTotalMismatch, lowConfidenceCount]);
 
+  const [useAI, setUseAI] = useState(true);
+
   useEffect(() => {
     let isMounted = true;
-    const loadStrictMode = async () => {
-      const enabled = await getStrictReviewMode();
+    const loadSettings = async () => {
+      const [enabled, aiPref] = await Promise.all([
+        getStrictReviewMode(),
+        getUseAIForReceipts(),
+      ]);
       if (isMounted) {
         setStrictReviewModeState(enabled);
+        setUseAI(aiPref);
       }
     };
-    void loadStrictMode();
+    void loadSettings();
     return () => {
       isMounted = false;
     };
@@ -1024,7 +1031,17 @@ export const ReceiptScannerSheet = ({
           rawTextLength: result.rawText?.length,
         }));
 
-        await processScanResultWithAI(result);
+        if (useAI) {
+          await processScanResultWithAI(result);
+        } else {
+          setScanMessage(`Found ${result.items?.length || 0} items!`);
+          setScanItemCount(result.items?.length || 0);
+          successHaptic();
+          await populateFromVisionKit(result);
+          setTimeout(() => {
+            setPhase('review');
+          }, 1200);
+        }
       } catch (error: any) {
         setPhase('idle');
         setScanMessage('Ready to scan');
@@ -1061,7 +1078,17 @@ export const ReceiptScannerSheet = ({
         const nativeResult = await parseReceiptImageWithVisionKit(uri, handleProgressEvent);
 
         if (nativeResult && !nativeResult.cancelled) {
-          await processScanResultWithAI(nativeResult);
+          if (useAI) {
+            await processScanResultWithAI(nativeResult);
+          } else {
+            setScanMessage(`Found ${nativeResult.items?.length || 0} items!`);
+            setScanItemCount(nativeResult.items?.length || 0);
+            successHaptic();
+            await populateFromVisionKit(nativeResult);
+            setTimeout(() => {
+              setPhase('review');
+            }, 1200);
+          }
           return;
         }
       } catch (error) {
@@ -1379,13 +1406,18 @@ export const ReceiptScannerSheet = ({
                   onPress={onCancel}
                   iconColor={theme.colors.onSurfaceVariant}
                 />
-                <TouchableOpacity style={{ flex: 1 }} activeOpacity={0.8} onPress={handleHeaderTap}>
+                <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }} activeOpacity={0.8} onPress={handleHeaderTap}>
                   <Text
                     variant="titleLarge"
                     style={[styles.headerTitle, { color: theme.colors.onSurface }]}
                   >
                     Review Items
                   </Text>
+                  <View style={[styles.aiBadge, { backgroundColor: useAI ? 'rgba(76, 175, 80, 0.15)' : 'rgba(158, 158, 158, 0.12)' }]}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: useAI ? '#4CAF50' : theme.colors.onSurfaceVariant }}>
+                      {useAI ? '🤖 AI Enhanced' : '📱 On-Device Only'}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
                 <IconButton
                   icon="camera-retake-outline"
@@ -1419,7 +1451,7 @@ export const ReceiptScannerSheet = ({
                 <View style={[styles.mismatchBanner, { backgroundColor: isDark ? 'rgba(255,150,0,0.12)' : 'rgba(255,140,0,0.08)', marginBottom: 16, marginTop: 0 }]}>
                   <Icon source="shield-alert-outline" size={18} color="#FF9500" />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, flex: 1, lineHeight: 18 }}>
-                    Processed entirely on-device! Please cross-check and correct any OCR misreads below.
+                    {useAI ? "Processed securely using Gemini AI. Please cross-check and correct any misreads below." : "Processed completely on-device! Please cross-check and correct any OCR misreads below."}
                   </Text>
                 </View>
 
@@ -1704,6 +1736,11 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
     fontWeight: '700',
+  },
+  aiBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
   scrollContent: {
     flex: 1,
