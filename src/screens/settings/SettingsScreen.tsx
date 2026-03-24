@@ -6,9 +6,11 @@ import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import {
     getStrictReviewMode,
+    getUseAIForReceipts,
     listLearningMerchants,
     resetLearningForMerchant,
     setStrictReviewMode,
+    setUseAIForReceipts,
     type LearningMerchantSummary,
 } from '@/services/receiptLearningService';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
@@ -26,6 +28,7 @@ export const SettingsScreen = () => {
   const scrollY = useRef(new Animated.Value(0)).current;
   const bottomPadding = getFloatingTabBarContentPadding(insets.bottom, 20);
   const [strictReviewMode, setStrictReviewModeState] = useState(false);
+  const [useAIForReceipts, setUseAIForReceiptsState] = useState(true);
   const [merchantLearning, setMerchantLearning] = useState<LearningMerchantSummary[]>([]);
 
   useLayoutEffect(() => {
@@ -52,11 +55,13 @@ export const SettingsScreen = () => {
   };
 
   const loadReceiptLearningSettings = async () => {
-    const [strictMode, merchants] = await Promise.all([
+    const [strictMode, useAI, merchants] = await Promise.all([
       getStrictReviewMode(),
+      getUseAIForReceipts(),
       listLearningMerchants(),
     ]);
     setStrictReviewModeState(strictMode);
+    setUseAIForReceiptsState(useAI);
     setMerchantLearning(merchants);
   };
 
@@ -68,6 +73,12 @@ export const SettingsScreen = () => {
     selectionHaptic();
     setStrictReviewModeState(enabled);
     await setStrictReviewMode(enabled);
+  };
+
+  const handleToggleUseAI = async (enabled: boolean) => {
+    selectionHaptic();
+    setUseAIForReceiptsState(enabled);
+    await setUseAIForReceipts(enabled);
   };
 
   const handleResetMerchantLearning = (merchant: LearningMerchantSummary) => {
@@ -123,6 +134,13 @@ export const SettingsScreen = () => {
               title="Dark Mode"
               left={() => <List.Icon icon="theme-light-dark" />}
               right={() => <Switch value={isDark} onValueChange={handleToggleTheme} />}
+            />
+            <Divider />
+            <List.Item
+              title="AI Receipt Parsing"
+              description="Use AI APIs to drastically improve OCR accuracy."
+              left={() => <List.Icon icon="robot-outline" />}
+              right={() => <Switch value={useAIForReceipts} onValueChange={handleToggleUseAI} />}
             />
             <Divider />
             <List.Item
