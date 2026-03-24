@@ -512,11 +512,12 @@ interface ItemCardProps {
   onUpdateSplitConfig: (id: string, config: InlineSplitConfig | undefined) => void;
   onUpdateAssignedTo: (id: string, assignedTo: string[]) => void;
   onMarkReviewed: (id: string) => void;
+  onDuplicateItem: (id: string) => void;
   onRemoveItem: (id: string) => void;
 }
 
 const ItemCard = memo(({ 
-  item, members, theme, isDark, isExpanded, onToggleExpand, onUpdateItem, onUpdateSplitConfig, onUpdateAssignedTo, onMarkReviewed, onRemoveItem 
+  item, members, theme, isDark, isExpanded, onToggleExpand, onUpdateItem, onUpdateSplitConfig, onUpdateAssignedTo, onMarkReviewed, onDuplicateItem, onRemoveItem 
 }: ItemCardProps) => {
   const [editHistory, setEditHistory] = useState<string[]>([]);
   const [localInputs, setLocalInputs] = useState<Record<string, string>>({});
@@ -629,6 +630,13 @@ const ItemCard = memo(({
             style={styles.reviewBtn}
           />
         )}
+        <IconButton
+          icon="content-copy"
+          size={18}
+          iconColor={theme.colors.onSurfaceVariant}
+          onPress={() => onDuplicateItem(item.id)}
+          style={styles.removeBtn}
+        />
         <IconButton
           icon="close-circle-outline"
           size={18}
@@ -1181,6 +1189,27 @@ export const ReceiptScannerSheet = ({
     setItems((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
+  const handleDuplicateItem = useCallback((id: string) => {
+    mediumHaptic();
+    setItems((prev) => {
+      const itemIndex = prev.findIndex(item => item.id === id);
+      if (itemIndex === -1) return prev;
+      const original = prev[itemIndex];
+      const duplicated = {
+        ...original,
+        id: generateId(),
+        assignedTo: original.assignedTo ? [...original.assignedTo] : undefined,
+        splitConfig: original.splitConfig ? {
+          mode: original.splitConfig.mode,
+          data: original.splitConfig.data ? { ...original.splitConfig.data } : undefined,
+        } : undefined,
+      };
+      const next = [...prev];
+      next.splice(itemIndex + 1, 0, duplicated);
+      return next;
+    });
+  }, []);
+
   const handleUpdateItem = useCallback((id: string, field: 'name' | 'price', value: string) => {
     setItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, [field]: value, reviewed: true } : item)),
@@ -1521,6 +1550,7 @@ export const ReceiptScannerSheet = ({
                         onUpdateSplitConfig={handleUpdateSplitConfig}
                         onUpdateAssignedTo={handleUpdateAssignedTo}
                         onMarkReviewed={handleMarkReviewed}
+                        onDuplicateItem={handleDuplicateItem}
                         onRemoveItem={handleRemoveItem}
                       />
                     ))}

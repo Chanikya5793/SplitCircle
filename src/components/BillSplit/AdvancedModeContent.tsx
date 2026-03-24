@@ -444,6 +444,21 @@ const ItemizedReceiptMode = React.memo(({
     onItemsChange(items.filter((it) => it.id !== id));
   }, [items, onItemsChange]);
 
+  const duplicateItem = useCallback((id: string) => {
+    mediumHaptic();
+    const itemIndex = items.findIndex((it) => it.id === id);
+    if (itemIndex === -1) return;
+    const original = items[itemIndex];
+    const duplicated = {
+      ...original,
+      id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      assignedTo: [...original.assignedTo], // deep copy arrays for perfect data isolation
+    };
+    const next = [...items];
+    next.splice(itemIndex + 1, 0, duplicated);
+    onItemsChange(next);
+  }, [items, onItemsChange]);
+
   const toggleAssignment = useCallback((itemId: string, userId: string) => {
     lightHaptic();
     const item = items.find((it) => it.id === itemId);
@@ -484,7 +499,10 @@ const ItemizedReceiptMode = React.memo(({
                   placeholderTextColor={palette.muted}
                 />
               </View>
-              <IconButton icon="close-circle" size={18} iconColor={palette.muted} onPress={() => removeItem(item.id)} />
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <IconButton icon="content-copy" size={18} iconColor={palette.muted} onPress={() => duplicateItem(item.id)} style={{ margin: 0, marginRight: -8 }} />
+                <IconButton icon="close-circle" size={18} iconColor={palette.muted} onPress={() => removeItem(item.id)} style={{ margin: 0 }} />
+              </View>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.assignRow}>
               {participants.filter((p) => p.included).map((p, pi) => {
