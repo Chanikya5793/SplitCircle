@@ -7,14 +7,19 @@
 
 import { getAuth } from 'firebase/auth';
 
+
 export interface OCRResult {
     success: boolean;
     extractedText?: string;
     parsedData?: {
-        total?: number;
-        date?: string;
-        title?: string;
-        items?: { name: string; price: number }[];
+        total?: number | null;
+        subtotal?: number | null;
+        tax?: number | null;
+        tip?: number | null;
+        date?: string | null;
+        title?: string | null;
+        merchantName?: string | null;
+        items?: { name: string; price: number; quantity?: number }[];
     };
     error?: string;
 }
@@ -287,4 +292,96 @@ export const inferCategoryFromText = (text: string): string => {
     }
 
     return 'General';
+};
+
+/**
+ * Call the ultra-fast Gemini 2.5 Flash model directly from the client to structure the receipt.
+ */
+export const parseStructuredReceiptWithAI = async (rawText: string): Promise<OCRResult> => {
+    try {
+        const apiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+        if (!apiKey) {
+            throw new Error("EXPO_PUBLIC_GEMINI_API_KEY is not set in .env");
+        }
+
+        const prompt = `
+You are a highly accurate receipt parsing assistant. 
+I am going to provide you with the raw Optical Character Recognition (OCR) text of a receipt.
+Your task is to extract the line items (name, price, quantity), the subtotal, tax, tip, total, merchant name, and date into a structured format.
+
+Rules:
+1. Ignore items that are not actual merchandise or food (e.g. do not treat "Subtotal", "Tax", "Tip", "Total", "Visa XXXX", "Approval Code", "Total Items Sold" as line items).
+2. Clean up item names to be concise and readable. Correct obvious OCR errors in spelling if you are extremely confident.
+3. If quantity is missing but implied by the item, default to 1.
+4. Ensure the prices are numbers (e.g., 5.99).
+5. Only return the final calculated structured data.
+
+Raw OCR Text:
+"""
+${rawText}
+"""
+`;
+
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: {
+                    temperature: 0.1,
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            items: {
+                                type: "ARRAY",
+                                items: {
+                                    type: "OBJECT",
+                                    properties: {
+                                        name: { type: "STRING" },
+                                        price: { type: "NUMBER" },
+                                        quantity: { type: "NUMBER" }
+                                    },
+                                    required: ["name", "price", "quantity"]
+                                }
+                            },
+                            subtotal: { type: "NUMBER", nullable: true },
+                            tax: { type: "NUMBER", nullable: true },
+                            tip: { type: "NUMBER", nullable: true },
+                            total: { type: "NUMBER", nullable: true },
+                            merchantName: { type: "STRING", nullable: true },
+                            date: { type: "STRING", nullable: true }
+                        },
+                        required: ["items"]
+                    }
+                }
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.text();
+            throw new Error(`Gemini API Error: ${response.status} ${err}`);
+        }
+
+        const data = await response.json();
+        const jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!jsonString) {
+            throw new Error("No parsed data returned from Gemini");
+        }
+
+        const parsedData = JSON.parse(jsonString);
+
+        return {
+            success: true,
+            extractedText: rawText,
+            parsedData,
+        };
+    } catch (error) {
+        console.error('AI Parsing Error:', error);
+        return {
+            success: false,
+            extractedText: rawText, // return text so we can fallback natively if needed
+            error: error instanceof Error ? error.message : 'Unknown error during AI breakdown',
+        };
+    }
 };

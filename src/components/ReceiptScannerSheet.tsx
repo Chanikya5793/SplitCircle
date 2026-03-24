@@ -14,7 +14,7 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ScanningAnimation } from '@/components/ScanningAnimation';
 import { useTheme } from '@/context/ThemeContext';
-import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
+import { extractReceiptData, inferCategoryFromText, parseStructuredReceiptWithAI } from '@/services/ocrService';
 import {
     applyReceiptLearning,
     getStrictReviewMode,
@@ -105,7 +105,7 @@ interface ReceiptScannerSheetProps {
   onCancel: () => void;
 }
 
-type ScanPhase = 'idle' | 'scanning' | 'processing' | 'parsing' | 'complete' | 'review';
+type ScanPhase = 'idle' | 'scanning' | 'processing' | 'parsing' | 'parsing_with_ai' | 'complete' | 'review';
 
 type EditableReceiptItem = {
   id: string;
@@ -940,6 +940,62 @@ export const ReceiptScannerSheet = ({
     }
   }, []);
 
+  const processScanResultWithAI = async (result: NonNullable<Awaited<ReturnType<typeof scanReceiptWithVisionKit>>>) => {
+    if (result.rawText) {
+      setPhase('parsing_with_ai');
+      setScanMessage('Applying AI magic...');
+      
+      const aiResult = await parseStructuredReceiptWithAI(result.rawText);
+      if (aiResult.success && aiResult.parsedData) {
+        setPhase('complete');
+        const itemsList = aiResult.parsedData.items || [];
+        setScanMessage(`Found ${itemsList.length} items!`);
+        setScanItemCount(itemsList.length);
+        successHaptic();
+        
+        setImageUri(result.imageUri || null);
+        const titleLine = result.rawText.split('\n')[0]?.trim() ?? '';
+        setMerchantName(aiResult.parsedData.merchantName || normalizeScannedMerchantName(titleLine.slice(0, 50), null));
+        setDate(aiResult.parsedData.date || result.date || null);
+        setRawText(result.rawText);
+        setParserTelemetry(['AI Parser used successfully']);
+
+        const mappedItems = itemsList.map((item) => ({
+          id: generateId(),
+          name: item.name,
+          price: String(Number(item.price).toFixed(2)),
+          quantity: item.quantity || 1,
+          confidence: 1.0,
+          reviewed: true,
+          source: 'scan' as const,
+          originalName: item.name,
+        }));
+        
+        setScannedBaselineItems(mappedItems.map(m => ({ name: m.name, price: Number(m.price), confidence: 1.0 })));
+        setItems(mappedItems);
+
+        if (aiResult.parsedData.tax != null) setTax(aiResult.parsedData.tax.toFixed(2));
+        else setTax('');
+        if (aiResult.parsedData.tip != null) setTip(aiResult.parsedData.tip.toFixed(2));
+        else setTip('');
+        if (aiResult.parsedData.total != null) setTotal(aiResult.parsedData.total.toFixed(2));
+
+        setTimeout(() => setPhase('review'), 1200);
+        return;
+      }
+    }
+    
+    // Fallback if AI fails or rawText is missing
+    setPhase('complete');
+    setScanMessage(`Found ${result.items?.length || 0} items!`);
+    setScanItemCount(result.items?.length || 0);
+    successHaptic();
+    await populateFromVisionKit(result);
+    setTimeout(() => {
+      setPhase('review');
+    }, 1200);
+  };
+
   const handleStartScan = async () => {
     mediumHaptic();
 
@@ -968,17 +1024,7 @@ export const ReceiptScannerSheet = ({
           rawTextLength: result.rawText?.length,
         }));
 
-        setPhase('complete');
-        setScanMessage(`Found ${result.items.length} items!`);
-        setScanItemCount(result.items.length);
-        successHaptic();
-
-        await populateFromVisionKit(result);
-
-        // Brief delay to show completion, then transition to review
-        setTimeout(() => {
-          setPhase('review');
-        }, 1200);
+        await processScanResultWithAI(result);
       } catch (error: any) {
         setPhase('idle');
         setScanMessage('Ready to scan');
@@ -1015,16 +1061,7 @@ export const ReceiptScannerSheet = ({
         const nativeResult = await parseReceiptImageWithVisionKit(uri, handleProgressEvent);
 
         if (nativeResult && !nativeResult.cancelled) {
-          setPhase('complete');
-          setScanMessage(`Found ${nativeResult.items.length} items!`);
-          setScanItemCount(nativeResult.items.length);
-          successHaptic();
-
-          await populateFromVisionKit(nativeResult);
-
-          setTimeout(() => {
-            setPhase('review');
-          }, 1200);
+          await processScanResultWithAI(nativeResult);
           return;
         }
       } catch (error) {

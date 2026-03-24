@@ -40,36 +40,55 @@ const logger = __importStar(require("firebase-functions/logger"));
 // Expo Push API
 // ─────────────────────────────────────────────────────────────
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+const EXPO_MAX_BATCH_SIZE = 100;
+const isExpoPushToken = (value) => {
+    return /^(Expo|Exponent)PushToken\[[A-Za-z0-9_-]+\]$/.test(value);
+};
+const chunkArray = (input, size) => {
+    if (input.length === 0)
+        return [];
+    const result = [];
+    for (let i = 0; i < input.length; i += size) {
+        result.push(input.slice(i, i + size));
+    }
+    return result;
+};
 const sendExpoPush = async (messages) => {
     var _a;
     if (messages.length === 0) {
         return [];
     }
-    try {
-        const response = await fetch(EXPO_PUSH_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            body: JSON.stringify(messages),
-        });
-        if (!response.ok) {
-            logger.error("Expo push API returned error status", {
-                status: response.status,
-                statusText: response.statusText,
+    const tickets = [];
+    const batches = chunkArray(messages, EXPO_MAX_BATCH_SIZE);
+    for (const batch of batches) {
+        try {
+            const response = await fetch(EXPO_PUSH_URL, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                body: JSON.stringify(batch),
             });
-            return [];
+            if (!response.ok) {
+                logger.error("Expo push API returned error status", {
+                    status: response.status,
+                    statusText: response.statusText,
+                    batchSize: batch.length,
+                });
+                continue;
+            }
+            const result = await response.json();
+            tickets.push(...((_a = result.data) !== null && _a !== void 0 ? _a : []));
         }
-        const result = await response.json();
-        return (_a = result.data) !== null && _a !== void 0 ? _a : [];
+        catch (error) {
+            logger.error("Failed to call Expo push API", {
+                message: error instanceof Error ? error.message : "Unknown error",
+                batchSize: batch.length,
+            });
+        }
     }
-    catch (error) {
-        logger.error("Failed to call Expo push API", {
-            message: error instanceof Error ? error.message : "Unknown error",
-        });
-        return [];
-    }
+    return tickets;
 };
 // ─────────────────────────────────────────────────────────────
 // User Token Lookup
@@ -86,27 +105,30 @@ const getEligibleRecipients = async (userIds, category, chatId) => {
     }
     const db = (0, firestore_1.getFirestore)();
     const results = [];
-    // Firestore `in` queries support max 30 items
-    const chunks = [];
-    for (let i = 0; i < userIds.length; i += 30) {
-        chunks.push(userIds.slice(i, i + 30));
-    }
+    // getAll supports up to 100 document refs per call.
+    const chunks = chunkArray(userIds, 100);
     for (const chunk of chunks) {
-        const snapshot = await db
-            .collection("users")
-            .where("userId", "in", chunk)
-            .get();
-        for (const doc of snapshot.docs) {
-            const data = doc.data();
-            const pushToken = data.pushToken;
-            const preferences = ((_a = data.preferences) !== null && _a !== void 0 ? _a : {});
+        const refs = chunk.map((userId) => db.collection("users").doc(userId));
+        const docs = await db.getAll(...refs);
+        for (let index = 0; index < docs.length; index += 1) {
+            const userDoc = docs[index];
+            if (!userDoc.exists) {
+                continue;
+            }
+            const requestedUserId = chunk[index];
+            const data = (_a = userDoc.data()) !== null && _a !== void 0 ? _a : {};
+            const preferences = ((_b = data.preferences) !== null && _b !== void 0 ? _b : {});
+            const tokenRaw = typeof data.pushToken === "string" ? data.pushToken.trim() : "";
+            const mutedChatIdsRaw = preferences.muteChatIds;
+            const mutedChatIds = Array.isArray(mutedChatIdsRaw)
+                ? mutedChatIdsRaw.filter((value) => typeof value === "string")
+                : [];
             const pushEnabled = preferences.pushEnabled === true;
             const categoryEnabled = preferences[category] !== false; // default true
-            const mutedChatIds = ((_b = preferences.muteChatIds) !== null && _b !== void 0 ? _b : []);
             const isMuted = chatId ? mutedChatIds.includes(chatId) : false;
             results.push({
-                userId: data.userId,
-                pushToken: pushToken !== null && pushToken !== void 0 ? pushToken : null,
+                userId: requestedUserId,
+                pushToken: isExpoPushToken(tokenRaw) ? tokenRaw : null,
                 pushEnabled,
                 categoryEnabled,
                 isMuted,
