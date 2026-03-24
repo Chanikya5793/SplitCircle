@@ -771,7 +771,7 @@ export const ReceiptScannerSheet = ({
 
   // Computed values
   const itemsSubtotal = useMemo(
-    () => items.reduce((sum, item) => sum + (parseFloat(item.price) || 0) * item.quantity, 0),
+    () => items.reduce((sum, item) => sum + (parseFloat(item.price as unknown as string) || 0), 0),
     [items],
   );
 

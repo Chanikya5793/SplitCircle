@@ -27,24 +27,28 @@ return name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 }
 
 export const ParticipantRow = React.memo(({
-participant: p,
-index,
-activeMethod,
-currency,
-onToggle,
-onExactChange,
-onPercentageChange,
-onSharesChange,
-onAdjustmentChange,
+  participant: p,
+  index,
+  activeMethod,
+  currency,
+  onToggle,
+  onExactChange,
+  onPercentageChange,
+  onSharesChange,
+  onAdjustmentChange,
 }: ParticipantRowProps) => {
-const { isDark, theme } = useTheme();
-const palette = isDark ? darkColors : colors;
-const avatarColor = AVATAR_COLORS[index % AVATAR_COLORS.length];
+  const { isDark, theme } = useTheme();
+  const palette = isDark ? darkColors : colors;
+  const avatarColor = AVATAR_COLORS[index % AVATAR_COLORS.length];
 
-const handleToggle = useCallback(() => {
-selectionHaptic();
-onToggle(p.id);
-}, [p.id, onToggle]);
+  const [localExact, setLocalExact] = React.useState<string | null>(null);
+  const [localPercentage, setLocalPercentage] = React.useState<string | null>(null);
+  const [localAdjustment, setLocalAdjustment] = React.useState<string | null>(null);
+
+  const handleToggle = useCallback(() => {
+    selectionHaptic();
+    onToggle(p.id);
+  }, [p.id, onToggle]);
 
 const renderInputForMethod = () => {
 if (!p.included) return null;
@@ -56,8 +60,12 @@ switch (activeMethod) {
         <Text style={[styles.prefix, { color: palette.muted }]}>{getCurrencySymbol(currency)}</Text>
         <TextInput
             style={[styles.input, { color: theme.colors.onSurface, borderColor: palette.border }]}
-            value={p.exactAmount > 0 ? p.exactAmount.toString() : ''}
-            onChangeText={(v) => onExactChange(p.id, v)}
+            value={localExact !== null ? localExact : (p.exactAmount > 0 ? p.exactAmount.toString() : '')}
+            onChangeText={(v) => {
+              setLocalExact(v);
+              onExactChange(p.id, v);
+            }}
+            onBlur={() => setLocalExact(null)}
             keyboardType="decimal-pad"
             placeholder="0.00"
             placeholderTextColor={palette.muted}
@@ -69,8 +77,12 @@ switch (activeMethod) {
         <View style={styles.inputRow}>
         <TextInput
             style={[styles.input, { color: theme.colors.onSurface, borderColor: palette.border }]}
-            value={p.percentage > 0 ? p.percentage.toString() : ''}
-            onChangeText={(v) => onPercentageChange(p.id, v)}
+            value={localPercentage !== null ? localPercentage : (p.percentage > 0 ? p.percentage.toString() : '')}
+            onChangeText={(v) => {
+              setLocalPercentage(v);
+              onPercentageChange(p.id, v);
+            }}
+            onBlur={() => setLocalPercentage(null)}
             keyboardType="decimal-pad"
             placeholder="0"
             placeholderTextColor={palette.muted}
@@ -110,8 +122,12 @@ switch (activeMethod) {
         <Text style={[styles.prefix, { color: palette.muted }]}>{`±${getCurrencySymbol(currency)}`}</Text>
         <TextInput
             style={[styles.input, { color: theme.colors.onSurface, borderColor: palette.border }]}
-            value={p.adjustment !== 0 ? p.adjustment.toString() : ''}
-            onChangeText={(v) => onAdjustmentChange(p.id, v)}
+            value={localAdjustment !== null ? localAdjustment : (p.adjustment !== 0 ? p.adjustment.toString() : '')}
+            onChangeText={(v) => {
+              setLocalAdjustment(v);
+              onAdjustmentChange(p.id, v);
+            }}
+            onBlur={() => setLocalAdjustment(null)}
             keyboardType="numeric"
             placeholder="0.00"
             placeholderTextColor={palette.muted}

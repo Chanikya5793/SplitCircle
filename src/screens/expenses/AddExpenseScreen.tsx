@@ -307,7 +307,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       const receiptItems: ExpenseReceiptItem[] = scanResult.items.map((item) => ({
         id: item.id,
         name: item.name,
-        price: item.price * item.quantity,
+        price: item.price,
         assignedTo: item.assignedTo && item.assignedTo.length > 0 ? item.assignedTo : group.members.map((m) => m.userId), // default: assigned to all
         splitMode: item.splitConfig?.mode,
         splitData: item.splitConfig?.data,

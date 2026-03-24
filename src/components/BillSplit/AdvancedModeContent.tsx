@@ -392,6 +392,24 @@ const TimeValueSlider = ({
   );
 };
 
+const DecimalInput = React.memo(({ value, onChange, placeholder, placeholderTextColor, style, keyboardType = 'decimal-pad' }: any) => {
+  const [local, setLocal] = React.useState<string | null>(null);
+  return (
+    <TextInput
+      style={style}
+      value={local !== null ? local : (value > 0 ? value.toString() : '')}
+      onChangeText={(v) => {
+        setLocal(v);
+        onChange(v);
+      }}
+      onBlur={() => setLocal(null)}
+      keyboardType={keyboardType}
+      placeholder={placeholder}
+      placeholderTextColor={placeholderTextColor}
+    />
+  );
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // A. ITEMIZED RECEIPT SPLIT
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -457,10 +475,10 @@ const ItemizedReceiptMode = React.memo(({
               />
               <View style={styles.itemPriceRow}>
                 <Text style={{ color: palette.muted }}>$</Text>
-                <TextInput
+                <DecimalInput
                   style={[styles.itemPriceInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
-                  value={item.price > 0 ? item.price.toString() : ''}
-                  onChangeText={(v) => updateItem(item.id, 'price', parseFloat(v) || 0)}
+                  value={item.price}
+                  onChange={(v: string) => updateItem(item.id, 'price', parseFloat(v) || 0)}
                   keyboardType="decimal-pad"
                   placeholder="0.00"
                   placeholderTextColor={palette.muted}
@@ -501,10 +519,10 @@ const ItemizedReceiptMode = React.memo(({
           <Text variant="bodySmall" style={{ color: palette.muted }}>Tax</Text>
           <View style={styles.inputRow}>
             <Text style={{ color: palette.muted }}>$</Text>
-            <TextInput
+            <DecimalInput
               style={[styles.extraInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
-              value={taxAmount > 0 ? taxAmount.toString() : ''}
-              onChangeText={(v) => onTaxChange(parseFloat(v) || 0)}
+              value={taxAmount}
+              onChange={(v: string) => onTaxChange(parseFloat(v) || 0)}
               keyboardType="decimal-pad"
               placeholder="0.00"
               placeholderTextColor={palette.muted}
@@ -515,10 +533,10 @@ const ItemizedReceiptMode = React.memo(({
           <Text variant="bodySmall" style={{ color: palette.muted }}>Tip</Text>
           <View style={styles.inputRow}>
             <Text style={{ color: palette.muted }}>$</Text>
-            <TextInput
+            <DecimalInput
               style={[styles.extraInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
-              value={tipAmount > 0 ? tipAmount.toString() : ''}
-              onChangeText={(v) => onTipChange(parseFloat(v) || 0)}
+              value={tipAmount}
+              onChange={(v: string) => onTipChange(parseFloat(v) || 0)}
               keyboardType="decimal-pad"
               placeholder="0.00"
               placeholderTextColor={palette.muted}
@@ -567,10 +585,10 @@ const IncomeProportionalMode = React.memo(({ participants, onWeightChange, curre
                 <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
               </View>
               <Text style={[styles.incomeName, { color: theme.colors.onSurface }]}>{p.name}</Text>
-              <TextInput
+              <DecimalInput
                 style={[styles.incomeInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
-                value={p.incomeWeight > 0 ? p.incomeWeight.toString() : ''}
-                onChangeText={(v) => onWeightChange(p.id, v)}
+                value={p.incomeWeight > 0 ? p.incomeWeight : ''}
+                onChange={(v: string) => onWeightChange(p.id, v)}
                 keyboardType="numeric"
                 placeholder="0"
                 placeholderTextColor={palette.muted}
@@ -2476,10 +2494,10 @@ const ItemTypeMode = React.memo(({ categories, onCategoriesChange, participants,
               </Text>
               <View style={styles.inputRow}>
                 <Text style={{ color: palette.muted }}>$</Text>
-                <TextInput
+                <DecimalInput
                   style={[styles.catAmountInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
-                  value={cat.amount > 0 ? cat.amount.toString() : ''}
-                  onChangeText={(v) => updateCategory(cat.id, 'amount', parseFloat(v) || 0)}
+                  value={cat.amount}
+                  onChange={(v: string) => updateCategory(cat.id, 'amount', parseFloat(v) || 0)}
                   keyboardType="decimal-pad"
                   placeholder="0.00"
                   placeholderTextColor={palette.muted}
