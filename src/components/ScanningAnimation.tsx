@@ -14,7 +14,7 @@ import { GlassView } from '@/components/GlassView';
 
 interface ScanningAnimationProps {
   /** Current scan phase */
-  phase: 'scanning' | 'processing' | 'parsing' | 'complete';
+  phase: 'scanning' | 'processing' | 'parsing' | 'parsing_with_ai' | 'complete';
   /** Status message to display */
   message: string;
   /** Number of items found so far */
@@ -99,7 +99,7 @@ export const ScanningAnimation = ({
     outputRange: [0, 160],
   });
 
-  const isActive = phase === 'scanning' || phase === 'processing' || phase === 'parsing';
+  const isActive = phase === 'scanning' || phase === 'processing' || phase === 'parsing' || phase === 'parsing_with_ai';
   const isComplete = phase === 'complete';
 
   const accentColor = isComplete ? '#34C759' : '#007AFF';

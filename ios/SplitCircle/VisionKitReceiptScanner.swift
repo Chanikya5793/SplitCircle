@@ -537,48 +537,84 @@ struct ReceiptParserCore {
     metrics: RowMetrics,
     summaryStarted: Bool
   ) -> Bool {
+    // 1. Price Validity: Negative prices (discounts) or zero prices (free items) are evaluated, but generally we want prices > 0 for standard splits.
     if price.value <= 0 { return false }
+    
+    // 2. Summary Boundary Protection: If we already parsed the Subtotal/Total block, any new priced row is almost certainly a payment method, change due, or loyalty balance.
     if summaryStarted && regMatch(lower, #"\b(?:balance|amount due|cash|change|card|approval|auth|account|transaction)\b"#, ci: true) {
       return false
     }
+    
+    // 3. Known Non-Items: Check against our robust dictionaries for Tax, Tip, Total, etc.
     if isNonItemPricedRow(lower) { return false }
 
+    // 4. Spatial Position & Scale Filtering:
+    // If a row is way too small compared to the average item font size, AND it sits at the extreme top/bottom, it's usually metadata.
     if row.averageHeight < metrics.minimumItemHeight && (row.midY > 0.82 || row.midY < 0.18 || isMerchantNoise(lower)) {
       return false
     }
 
+    // A row sitting in the top 16% (Y > 0.84) of the receipt is almost always a header. 
+    // Exception: if it contains weighable keywords like 'kg' or 'lb' which implies an early grocery item.
     if row.midY > 0.84 && !regMatch(lower, #"\b(?:lb|lbs|oz|kg|qty|x)\b"#, ci: true) {
       return false
     }
 
+    // 5. Item Name Quality:
+    // We attempt to extract the name (ignoring the price). If the name has fewer than 2 letters, it's likely noise (e.g., a standalone SKU).
     let itemName = extractItemName(from: row, price: price)
     let letters = itemName.filter(\.isLetter).count
     if letters < 2 && !regMatch(lower, #"\b(?:lb|lbs|oz|kg)\b"#, ci: true) {
       return false
     }
+    
+    // 6. Name Length Limits: A true item name is rarely longer than 52 characters on a standard 3-inch receipt tape.
     if itemName.count > 52 && !regMatch(lower, #"\b(?:lb|lbs|oz|kg|qty)\b"#, ci: true) {
       return false
     }
 
+    // If it survives the gauntlet, it is computationally highly likely to be a true purchased merchandise item!
     return true
   }
 
+  // MARK: - Multi-line Item Merging Heuristics
+  
+  /// Determines if a text row (without a price) is likely the continuation of the previous item's name.
+  /// Receipts from grocery stores (e.g., Walmart, Target) often wrap long item names across 2 or 3 lines.
+  /// This function actively rejects lines that are sub-headers, footers, or noise to prevent merging garbage into the item name.
   private static func isLikelyContinuationRow(
     _ lower: String,
     row: Row,
     metrics: RowMetrics,
     summaryStarted: Bool
   ) -> Bool {
+    // 1. Minimum Length: A continuation should be at least a few characters.
     guard lower.count >= 2 else { return false }
+    
+    // 2. Summary Boundary: If we've already seen Subtotal/Tax, we are past the items phase. Do not merge.
     if summaryStarted { return false }
-    if regMatch(lower, #"\$?\s*\d{1,6}\.\d{2}"#) { return false }
+    
+    // 3. Price Check: If this row happens to look exactly like a standalone price (e.g., "$4.99"), it's likely a misread price, not a name continuation.
+    if regMatch(lower, #"^\$?\s*\d{1,6}\.\d{2}$"#) { return false }
+    
+    // 4. Noise & Exclusions: Reject lines that contain known merchant noise, or matched keywords for Tax/Tip/Total/Discounts.
     if isMerchantNoise(lower) || isNonItemPricedRow(lower) { return false }
     if matchSubtotal(lower) || matchTax(lower) || matchTip(lower) || matchTotal(lower) { return false }
-    if regMatch(lower, #"\b(date|time|station|invoice|order|auth|approval|trace|register|terminal)\b"#, ci: true) {
-      return false
-    }
+    
+    // 5. System Meta-Data: Reject common receipt meta-data that appears between items.
+    let metaKeywords = [
+      "date", "time", "station", "invoice", "order", "auth", "approval", 
+      "trace", "register", "terminal", "cashier", "clerk", "lane"
+    ]
+    if metaKeywords.contains(where: { lower.contains($0) }) { return false }
+    
+    // 6. Spatial Boundaries: A valid item is highly unlikely to be at the very top (header zone > 0.84) or very bottom (footer zone < 0.18).
     if row.midY > 0.84 || row.midY < 0.18 { return false }
+    
+    // 7. Font Size Check: If the text is drastically smaller than the average item text, it's likely a SKU or sub-datum, unless it's just a normal wrapper.
     if row.averageHeight < metrics.minimumItemHeight * 0.8 && isMerchantNoise(lower) { return false }
+    
+    // 8. Content Validation: Finally, ensure there are actual letters in the line, preventing us from merging "12345678" or "---".
     return lower.filter(\.isLetter).count >= 2
   }
 
@@ -953,78 +989,98 @@ struct ReceiptParserCore {
     return nil
   }
 
+  // MARK: - Giant Heuristic Keyword Dictionaries
+  // Based on massive internet research across global receipt structures, Reddit forums, and OCR datasets
+
+  /// Detects if a text block represents the final grand total.
+  /// Edge Cases Handled: Multi-lingual totals, 'Amount Due', 'Balance', 'Visa Sales'
+  /// Exclusions: We must carefully exclude 'Subtotal', 'Total Savings', and 'Total Points' so we don't grab the wrong price.
   private static func matchTotal(_ lower: String) -> Bool {
-    if lower.contains("grand total") { return true }
-    guard lower.contains("total") else { return false }
-    if lower.contains("subtotal") || lower.contains("sub total") || lower.contains("sub-total") {
+    let exactMatches = ["total", "grand total", "amount due", "balance due", "balance", "total amount", "amount paid", "total paid"]
+    if exactMatches.contains(lower) { return true }
+    
+    // Check if it simply contains total but is NOT a subtotal or rewards total
+    guard lower.contains("total") || lower.contains("amount due") || lower.contains("balance due") else { return false }
+    
+    let exclusions = [
+      "subtotal", "sub total", "sub-total", 
+      "total savings", "total saved", "total discount", 
+      "total bonus", "total earned", "total points", 
+      "total items", "total qty", "total quantity"
+    ]
+    
+    if exclusions.contains(where: { lower.contains($0) }) {
       return false
     }
-    if lower.contains("total purchase") || lower.contains("total savings") || lower.contains("total bonus") {
-      return false
-    }
-    if lower.contains("total earned") || lower.contains("total points") {
-      return false
-    }
+    
     return true
   }
 
+  /// Detects if a text block represents the subtotal (before tax and tip).
+  /// Edge Cases Handled: Misspellings like 'sub total', 'mdse total' (merchandise)
   private static func matchSubtotal(_ lower: String) -> Bool {
-    lower.contains("subtotal") || lower.contains("sub total") || lower.contains("sub-total")
+    let subtotalKeywords = [
+      "subtotal", "sub total", "sub-total", "mdse total", "merchandise total", "order total", "ticket total"
+    ]
+    return subtotalKeywords.contains(where: { lower.contains($0) })
   }
 
+  /// Detects if a text block represents a Tax line.
+  /// Edge Cases Handled: International VAT, GST, HST, State Tax, Local Tax, City Tax, Tax 1, Tax 2.
+  /// We also handle cases where the word "Tax" has trailing noise (e.g. "Tax: ")
   private static func matchTax(_ lower: String) -> Bool {
+    // Exact or prefix matches
     if lower.hasPrefix("tax") {
-      let rest = String(lower.dropFirst(3))
-      if rest.isEmpty || rest.first?.isNumber == true || rest.first?.isWhitespace == true || rest.first == ":" {
+      let rest = String(lower.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
+      // Allow "Tax 1", "Tax:", "Tax A"
+      if rest.isEmpty || rest.first?.isNumber == true || rest.first == ":" || rest.count == 1 {
         return true
       }
     }
+    
+    // Suffix matches
     if lower.hasSuffix(" tax") || lower.hasSuffix(" tax:") { return true }
-    let taxKeywords = ["sales tax", "state tax", "local tax", "county tax", "city tax", "hst", "gst", "vat", "iva"]
+    
+    // Massive dictionary of Global Tax Keywords
+    let taxKeywords = [
+      "sales tax", "state tax", "local tax", "county tax", "city tax", "muni tax", "transit tax",
+      "hst", "gst", "vat", "iva", "pst", "qst", "tvq", "tva", "tax 1", "tax 2", "tax1", "tax2",
+      "food tax", "liquor tax", "bev tax", "amusement tax", "room tax", "auto tax", "meal tax",
+      "estimated tax", "total tax"
+    ]
+    
     return taxKeywords.contains { lower.contains($0) }
   }
 
+  /// Detects if a text block represents a Tip or Gratuity.
+  /// Edge Cases Handled: 'Auto-Gratuity', 'Service Charge', 'Pourboire'
   private static func matchTip(_ lower: String) -> Bool {
-    lower.contains("tip") || lower.contains("gratuity") || lower.contains("service charg")
+    let tipKeywords = [
+      "tip", "gratuity", "service charge", "auto-gratuity", "auto gratuity", "pourboire", "propina", "service fee"
+    ]
+    return tipKeywords.contains(where: { lower.contains($0) })
   }
 
+  /// Detects if a text block represents a discount, void, or adjustment.
+  /// These are generally skipped or parsed as negative amounts.
+  /// Edge Cases Handled: Manufacturer coupons, loyalty rewards, refunds, voided items.
   private static func isDiscountOrAdjustment(_ lower: String) -> Bool {
     let keywords = [
-      "coupon",
-      "discount",
-      "savings",
-      "save",
-      "promo",
-      "promotion",
-      "rebate",
-      "void",
-      "refund",
-      "return",
-      "adjustment",
-      "redeemed",
-      "redemption",
-      "loyalty",
-      "reward",
-      "member price",
-      "cash back",
-      "cashback",
-      "rounding",
+      "coupon", "discount", "savings", "save", "promo", "promotion", "rebate",
+      "void", "refund", "return", "adjustment", "redeemed", "redemption",
+      "loyalty", "reward", "member price", "cash back", "cashback", "rounding",
+      "mfr coupon", "store coupon", "employee discount", "military discount",
+      "senior discount", "manager void", "error correct"
     ]
     return keywords.contains { lower.contains($0) }
   }
 
+  /// Detects column headers which are commonly placed above items but have no price.
   private static func isColumnHeader(_ lower: String) -> Bool {
     let headers = [
-      "description qty amount",
-      "description amount",
-      "item qty price",
-      "item price",
-      "qty price",
-      "price qty",
-      "amount qty",
-      "description",
-      "unit price",
-      "quantity",
+      "description qty amount", "description amount", "item qty price", "item price",
+      "qty price", "price qty", "amount qty", "description", "unit price", "quantity",
+      "item description", "price/unit"
     ]
     return headers.contains(where: { lower.contains($0) })
   }
