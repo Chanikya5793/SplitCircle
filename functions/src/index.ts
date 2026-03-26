@@ -10,6 +10,7 @@ import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { AccessToken } from "livekit-server-sdk";
 import { processAllDueRecurringBills, processGroupDueRecurringBills } from "./recurringBills";
 import { sendPushToUsers } from "./notifications";
+export { parseReceiptWithLLM } from "./parseReceiptWithLLM";
 
 initializeApp();
 

@@ -324,7 +324,7 @@ PODS:
     - ExpoModulesCore
   - fast_float (8.0.0)
   - FBLazyVector (0.83.2)
-  - fmt (11.0.2)
+  - fmt (12.1.0)
   - glog (0.3.5)
   - hermes-engine (0.14.1):
     - hermes-engine/Pre-built (= 0.14.1)
@@ -380,20 +380,20 @@ PODS:
     - boost
     - DoubleConversion
     - fast_float (= 8.0.0)
-    - fmt (= 11.0.2)
+    - fmt (= 12.1.0)
     - glog
     - RCT-Folly/Default (= 2024.11.18.00)
   - RCT-Folly/Default (2024.11.18.00):
     - boost
     - DoubleConversion
     - fast_float (= 8.0.0)
-    - fmt (= 11.0.2)
+    - fmt (= 12.1.0)
     - glog
   - RCT-Folly/Fabric (2024.11.18.00):
     - boost
     - DoubleConversion
     - fast_float (= 8.0.0)
-    - fmt (= 11.0.2)
+    - fmt (= 12.1.0)
     - glog
   - RCTDeprecation (0.83.2)
   - RCTRequired (0.83.2)
@@ -4011,14 +4011,14 @@ SPEC CHECKSUMS:
   EXUpdatesInterface: d48f288b92900bd95a27c6cf92a7b9aff826d49a
   fast_float: b32c788ed9c6a8c584d114d0047beda9664e7cc6
   FBLazyVector: f1200e6ef6cf24885501668bdbb9eff4cf48843f
-  fmt: a40bb5bd0294ea969aaaba240a927bd33d878cdd
+  fmt: 530618a01105dae0fa3a2f27c81ae11fa8f67eac
   glog: 5683914934d5b6e4240e497e0f4a3b42d1854183
   hermes-engine: b127c6dd46e3fbbc648d40719cfddefcc9bd3287
   libwebp: 02b23773aedb6ff1fd38cec7a77b81414c6842a8
   livekit-react-native: 7098d44b34b78ede49582a9ef5731c665faf43c7
   livekit-react-native-webrtc: c03e72c608fbb8284a99e095dd7835a85bdb0279
   LiveKitExpoPlugin: 8e0f4bdffa921c27c13e1504ea0e668b6f859278
-  RCT-Folly: 846fda9475e61ec7bcbf8a3fe81edfcaeb090669
+  RCT-Folly: b29feb752b08042c62badaef7d453f3bb5e6ae23
   RCTDeprecation: 3b915a7b166f7d04eaeb4ae30aaf24236a016551
   RCTRequired: fcfec6ba532cfe4e53c49e0a4061b5eff87f8c64
   RCTSwiftUI: b2f0c2f2761631b8cd605767536cbb1cbf8d020f
