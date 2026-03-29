@@ -12,6 +12,8 @@ export const ROOT_SCREEN_TITLES = {
 } as const;
 
 export const SCREEN_TITLES = {
+  groupDetailsFallback: 'Group',
+  groupChatFallback: 'Chat',
   groupInfo: 'Group Info',
   messageInfo: 'Message Info',
   expenseDetailsFallback: 'Expense Details',

@@ -205,7 +205,10 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
               onPress={() => {
                 lightHaptic();
                 if (thread) {
-                  navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId: entry.chatId });
+                  navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+                    chatId: entry.chatId,
+                    initialTitle: groupName || entry.otherParticipant.displayName || 'Chat',
+                  });
                 }
               }}
             >

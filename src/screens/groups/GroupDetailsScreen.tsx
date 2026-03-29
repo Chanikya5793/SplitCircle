@@ -655,7 +655,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                             lightHaptic();
                             navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, {
                               groupId: group.groupId,
-                              expenseId: activity.data.expenseId
+                              expenseId: activity.data.expenseId,
+                              expenseTitle: activity.data.title,
                             });
                           }}
                           onDelete={handleDeleteExpense}

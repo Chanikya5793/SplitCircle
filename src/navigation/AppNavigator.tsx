@@ -30,7 +30,7 @@ import { NotificationSettingsScreen } from '@/screens/settings/NotificationSetti
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import type { NotificationData } from '@/utils/notifications';
 import { lightHaptic } from '@/utils/haptics';
-import { getChatThreadTitle, SCREEN_TITLES } from '@/navigation/screenTitles';
+import { getCallInfoTitle, getChatThreadTitle, getExpenseDetailsTitle, SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
@@ -127,7 +127,7 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
         status: 'online' as PresenceStatus,
       }));
       const chatId = await ensureGroupThread(group.groupId, participants);
-      navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId });
+      navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId, initialTitle: group.name });
     } catch (error) {
       console.error('Unable to open chat', error);
     }
@@ -233,6 +233,7 @@ const GroupListRoute = ({ navigation }: any) => (
     onOpenGroup={(group) => {
       navigation.navigate(ROUTES.APP.GROUP_DETAILS, {
         groupId: group.groupId,
+        initialTitle: group.name,
       });
     }}
   />
@@ -314,7 +315,7 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
         status: 'online' as PresenceStatus,
       }));
       const chatId = await ensureGroupThread(group.groupId, participants);
-      navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId });
+      navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId, initialTitle: group.name });
     } catch (error) {
       console.error('Unable to open chat', error);
     }
@@ -341,10 +342,15 @@ const GroupsStackNavigator = () => {
         freezeOnBlur: true,
         fullScreenGestureEnabled: true,
         animation: 'default',
+        headerBackButtonDisplayMode: Platform.OS === 'ios' ? 'default' : undefined,
       }}
     >
       <GroupsStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ headerShown: false }} />
-      <GroupsStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
+      <GroupsStack.Screen
+        name={ROUTES.APP.GROUP_DETAILS}
+        component={GroupDetailsRoute}
+        options={({ route }: any) => ({ title: route.params?.initialTitle ?? SCREEN_TITLES.groupDetailsFallback })}
+      />
     </GroupsStack.Navigator>
   );
 };
@@ -425,9 +431,26 @@ const RecurringBillsRoute = ({ route }: any) => {
   return <RecurringBillsScreen group={group} />;
 };
 
-const ChatListRoute = ({ navigation }: any) => (
-  <ChatListScreen onOpenThread={(thread) => navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId: thread.chatId })} />
-);
+const ChatListRoute = ({ navigation }: any) => {
+  const { threads } = useChat();
+  const { groups } = useGroups();
+  const { user } = useAuth();
+
+  return (
+    <ChatListScreen
+      onOpenThread={(thread) =>
+        navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+          chatId: thread.chatId,
+          initialTitle: getChatThreadTitle(
+            threads.find((item) => item.chatId === thread.chatId) ?? thread,
+            groups,
+            user?.userId,
+          ),
+        })
+      }
+    />
+  );
+};
 
 const ChatRoomRoute = ({ route, navigation }: any) => {
   const { threads } = useChat();
@@ -676,6 +699,7 @@ const AppStackNavigator = () => {
       <AppStack.Navigator
         screenOptions={{
           contentStyle: { backgroundColor: screenBackground },
+          headerBackButtonDisplayMode: Platform.OS === 'ios' ? 'default' : undefined,
         }}
       >
       <AppStack.Screen name={ROUTES.APP.ROOT} component={AppTabs} options={{ headerShown: false, title: 'Home' }} />
@@ -683,7 +707,7 @@ const AppStackNavigator = () => {
         name={ROUTES.APP.GROUP_INFO}
         component={GroupInfoScreen}
         options={{
-          title: '',
+          title: SCREEN_TITLES.groupInfo,
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
@@ -691,17 +715,17 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.GROUP_CHAT}
         component={ChatRoomRoute}
-        options={{
-          title: '',
+        options={({ route }: any) => ({
+          title: route.params?.initialTitle ?? SCREEN_TITLES.groupChatFallback,
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
-        }}
+        })}
       />
       <AppStack.Screen
         name={ROUTES.APP.MESSAGE_INFO}
         component={MessageInfoScreen}
         options={{
-          title: '',
+          title: SCREEN_TITLES.messageInfo,
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
@@ -719,7 +743,9 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.EXPENSE_DETAILS}
         component={ExpenseDetailsScreen}
-        options={{ title: 'Expense Details' }}
+        options={({ route }: any) => ({
+          title: getExpenseDetailsTitle(route.params?.expenseTitle),
+        })}
       />
       <AppStack.Screen
         name={ROUTES.APP.GROUP_STATS}
@@ -739,11 +765,11 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.CALL_INFO}
         component={CallInfoRoute}
-        options={{
-          title: '',
+        options={({ route }: any) => ({
+          title: getCallInfoTitle(route.params.entry),
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
-        }}
+        })}
       />
       <AppStack.Screen
         name={ROUTES.APP.CALL_DETAIL}
@@ -793,20 +819,36 @@ const IncomingCallHandler = () => {
 const NotificationNavigator = () => {
   const { pendingNavigation, consumeNavigation } = useNotificationContext();
   const navigation = useNavigation<any>();
+  const { threads } = useChat();
+  const { groups } = useGroups();
+  const { user } = useAuth();
 
   useEffect(() => {
     if (!pendingNavigation) return;
+
+    const getInitialGroupTitle = (groupId?: string) =>
+      groups.find((group) => group.groupId === groupId)?.name ?? SCREEN_TITLES.groupDetailsFallback;
 
     const navigate = (data: NotificationData) => {
       switch (data.type) {
         case 'message':
           if (data.chatId) {
-            navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId: data.chatId });
+            navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+              chatId: data.chatId,
+              initialTitle: getChatThreadTitle(
+                threads.find((thread) => thread.chatId === data.chatId),
+                groups,
+                user?.userId,
+              ) || data.senderName || SCREEN_TITLES.groupChatFallback,
+            });
           }
           break;
         case 'expense':
           if (data.groupId) {
-            navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: data.groupId });
+            navigation.navigate(ROUTES.APP.GROUP_DETAILS, {
+              groupId: data.groupId,
+              initialTitle: getInitialGroupTitle(data.groupId),
+            });
           }
           break;
         case 'settlement':
@@ -816,7 +858,10 @@ const NotificationNavigator = () => {
           break;
         case 'group_join':
           if (data.groupId) {
-            navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: data.groupId });
+            navigation.navigate(ROUTES.APP.GROUP_DETAILS, {
+              groupId: data.groupId,
+              initialTitle: getInitialGroupTitle(data.groupId),
+            });
           }
           break;
         case 'call':
