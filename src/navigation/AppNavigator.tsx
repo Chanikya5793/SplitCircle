@@ -30,7 +30,7 @@ import { NotificationSettingsScreen } from '@/screens/settings/NotificationSetti
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import type { NotificationData } from '@/utils/notifications';
 import { lightHaptic } from '@/utils/haptics';
-import { getCallInfoTitle, getChatThreadTitle, getExpenseDetailsTitle, SCREEN_TITLES } from '@/navigation/screenTitles';
+import { getCallInfoTitle, getChatThreadTitle, getExpenseDetailsTitle, ROOT_SCREEN_TITLES, SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
@@ -74,6 +74,42 @@ const GroupsStack = createNativeStackNavigator();
 
 const IOS_NATIVE_ACCESSORY_SUPPORTED =
   Platform.OS === 'ios' && Number.parseInt(String(Platform.Version), 10) >= 26;
+
+type IOSBackButtonProps = {
+  label?: string;
+  onPress: () => void;
+  tintColor?: string;
+};
+
+const IOSBackButton = ({ label, onPress, tintColor }: IOSBackButtonProps) => {
+  const { theme, isDark } = useTheme();
+  const resolvedTintColor = tintColor ?? theme.colors.primary;
+  const resolvedLabel = label?.trim() || 'Back';
+
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel={`Back to ${resolvedLabel}`}
+      activeOpacity={0.82}
+      onPress={onPress}
+      style={[
+        styles.iosBackButton,
+        {
+          backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.72)',
+          borderColor: `${resolvedTintColor}40`,
+        },
+      ]}
+    >
+      <Icon source="chevron-left" size={20} color={resolvedTintColor} />
+      <Text
+        numberOfLines={1}
+        style={[styles.iosBackButtonLabel, { color: resolvedTintColor }]}
+      >
+        {resolvedLabel}
+      </Text>
+    </TouchableOpacity>
+  );
+};
 
 const useGroupById = (groupId: string): GroupWithFallback => {
   const { groups } = useGroups();
@@ -332,20 +368,35 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
 };
 
 const GroupsStackNavigator = () => {
-  const { isDark } = useTheme();
+  const { theme, isDark } = useTheme();
   const screenBackground = isDark ? '#121212' : '#FDFBFB';
 
   return (
     <GroupsStack.Navigator
-      screenOptions={{
+      screenOptions={({ navigation }) => ({
         contentStyle: { backgroundColor: screenBackground },
         freezeOnBlur: true,
         fullScreenGestureEnabled: true,
         animation: 'default',
         headerBackButtonDisplayMode: Platform.OS === 'ios' ? 'default' : undefined,
-      }}
+        headerBackVisible: Platform.OS === 'ios' ? false : undefined,
+        headerLeft: Platform.OS === 'ios'
+          ? ({ canGoBack, label, tintColor }) =>
+              canGoBack ? (
+                <IOSBackButton
+                  label={label}
+                  onPress={() => navigation.goBack()}
+                  tintColor={tintColor ?? theme.colors.primary}
+                />
+              ) : null
+          : undefined,
+      })}
     >
-      <GroupsStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ headerShown: false }} />
+      <GroupsStack.Screen
+        name={ROUTES.APP.GROUPS}
+        component={GroupListRoute}
+        options={{ headerShown: false, title: ROOT_SCREEN_TITLES.groups }}
+      />
       <GroupsStack.Screen
         name={ROUTES.APP.GROUP_DETAILS}
         component={GroupDetailsRoute}
@@ -697,12 +748,27 @@ const AppStackNavigator = () => {
 
   return (
       <AppStack.Navigator
-        screenOptions={{
+        screenOptions={({ navigation }) => ({
           contentStyle: { backgroundColor: screenBackground },
           headerBackButtonDisplayMode: Platform.OS === 'ios' ? 'default' : undefined,
-        }}
+          headerBackVisible: Platform.OS === 'ios' ? false : undefined,
+          headerLeft: Platform.OS === 'ios'
+            ? ({ canGoBack, label, tintColor }) =>
+                canGoBack ? (
+                  <IOSBackButton
+                    label={label}
+                    onPress={() => navigation.goBack()}
+                    tintColor={tintColor ?? theme.colors.primary}
+                  />
+                ) : null
+            : undefined,
+        })}
       >
-      <AppStack.Screen name={ROUTES.APP.ROOT} component={AppTabs} options={{ headerShown: false, title: 'Home' }} />
+      <AppStack.Screen
+        name={ROUTES.APP.ROOT}
+        component={AppTabs}
+        options={{ headerShown: false, title: ROOT_SCREEN_TITLES.groups }}
+      />
       <AppStack.Screen
         name={ROUTES.APP.GROUP_INFO}
         component={GroupInfoScreen}
@@ -743,9 +809,7 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.EXPENSE_DETAILS}
         component={ExpenseDetailsScreen}
-        options={({ route }: any) => ({
-          title: getExpenseDetailsTitle(route.params?.expenseTitle),
-        })}
+        options={({ route }: any) => ({ title: getExpenseDetailsTitle(route.params?.expenseTitle) })}
       />
       <AppStack.Screen
         name={ROUTES.APP.GROUP_STATS}
@@ -894,6 +958,22 @@ const NotificationNavigator = () => {
 const styles = StyleSheet.create({
   navigatorRoot: {
     flex: 1,
+  },
+  iosBackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    maxWidth: 180,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 4,
+  },
+  iosBackButtonLabel: {
+    flexShrink: 1,
+    fontSize: 16,
+    fontWeight: '600',
+    lineHeight: 20,
   },
   groupAccessoryRegularWrap: {
     paddingHorizontal: 8,
