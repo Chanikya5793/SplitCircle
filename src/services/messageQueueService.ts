@@ -46,6 +46,7 @@ interface GroupReceiptData {
 interface QueueMessagePayload {
   senderId: string;
   chatId: string;
+  requestId?: string;
   content: string;
   type: MessageType;
   timestamp: number;
@@ -121,6 +122,7 @@ const parseQueuePayload = (value: unknown): QueueMessagePayload | null => {
   return {
     senderId,
     chatId,
+    requestId: typeof payload.requestId === 'string' ? payload.requestId : undefined,
     content,
     type,
     timestamp: normalizeTimestamp(payload.timestamp),
@@ -158,6 +160,7 @@ export const queueMessage = async (
     const messageData: Record<string, unknown> = {
       senderId: message.senderId,
       chatId: message.chatId,
+      requestId: message.requestId,
       content: message.content,
       type: message.type,
       timestamp: message.timestamp,
@@ -298,6 +301,7 @@ export const listenForMessages = (
       const message: ChatMessage = {
         id: messageId,
         messageId,
+        requestId: payload.requestId ?? messageId,
         chatId: payload.chatId,
         senderId: payload.senderId,
         content: payload.content,

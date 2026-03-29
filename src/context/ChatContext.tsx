@@ -37,6 +37,7 @@ import { useAuth } from '@/context/AuthContext';
 
 interface SendMessagePayload {
   chatId: string;
+  requestId?: string;
   content: string;
   type?: MessageType;
   mediaUri?: string;
@@ -400,12 +401,12 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   }, [getRecipientCount, getThreadByChatId]);
 
   const sendMessage = useCallback(
-    async ({ chatId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo, location }: SendMessagePayload) => {
+    async ({ chatId, requestId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo, location }: SendMessagePayload) => {
       if (!user) {
         throw new Error('Missing user for chat send');
       }
 
-      const msgId = uuid();
+      const msgId = requestId ?? uuid();
       const now = Date.now();
 
       let localMediaPath = mediaUri;
@@ -422,6 +423,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       const message: ChatMessage = {
         id: msgId,
         messageId: msgId,
+        requestId: requestId ?? msgId,
         chatId,
         senderId: user.userId,
         type,

@@ -3,7 +3,6 @@ import type { ChatMessage, ChatParticipant, Expense, Group, ParticipantShare, Se
 import { queueMessage } from '@/services/messageQueueService';
 import { deleteFile, uploadFile } from '@/services/storageService';
 import {
-    addDoc,
     arrayUnion,
     collection,
     deleteDoc,
@@ -11,6 +10,7 @@ import {
     getDocs,
     onSnapshot,
     query,
+    runTransaction,
     serverTimestamp,
     setDoc,
     updateDoc,
@@ -24,13 +24,13 @@ import { useAuth } from './AuthContext';
 interface GroupContextValue {
   groups: Group[];
   loading: boolean;
-  createGroup: (name: string, currency: string) => Promise<string>;
-  joinGroup: (inviteCode: string) => Promise<void>;
-  addExpense: (groupId: string, expense: Omit<Expense, 'expenseId' | 'createdAt' | 'updatedAt'>, fileUri?: string, fileName?: string) => Promise<void>;
-  updateExpense: (groupId: string, expense: Expense, newFileUri?: string | null, newFileName?: string) => Promise<void>;
+  createGroup: (name: string, currency: string, requestId?: string) => Promise<string>;
+  joinGroup: (inviteCode: string, requestId?: string) => Promise<void>;
+  addExpense: (groupId: string, expense: Omit<Expense, 'expenseId' | 'createdAt' | 'updatedAt'>, fileUri?: string, fileName?: string, requestId?: string) => Promise<void>;
+  updateExpense: (groupId: string, expense: Expense, newFileUri?: string | null, newFileName?: string, requestId?: string) => Promise<void>;
   deleteExpense: (groupId: string, expenseId: string) => Promise<void>;
-  settleUp: (groupId: string, settlement: Omit<Settlement, 'settlementId' | 'createdAt' | 'status'>) => Promise<void>;
-  updateSettlement: (groupId: string, settlement: Settlement) => Promise<void>;
+  settleUp: (groupId: string, settlement: Omit<Settlement, 'settlementId' | 'createdAt' | 'status'>, requestId?: string) => Promise<void>;
+  updateSettlement: (groupId: string, settlement: Settlement, requestId?: string) => Promise<void>;
   deleteSettlement: (groupId: string, settlementId: string) => Promise<void>;
 }
 
@@ -140,11 +140,12 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     return () => unsubscribe();
   }, [user?.userId]);
 
-  const createGroup = async (name: string, currency: string) => {
+  const createGroup = async (name: string, currency: string, requestId?: string) => {
     if (!user) throw new Error('Missing user');
-    const groupId = uuid();
-    await setDoc(doc(collection(db, 'groups'), groupId), {
+    const groupId = requestId ?? uuid();
+    await setDoc(doc(db, 'groups', groupId), {
       groupId,
+      requestId: requestId ?? groupId,
       name,
       currency,
       inviteCode: groupId.slice(0, 6).toUpperCase(),
@@ -167,7 +168,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     return groupId;
   };
 
-  const joinGroup = async (inviteCode: string) => {
+  const joinGroup = async (inviteCode: string, requestId?: string) => {
     if (!user) throw new Error('Missing user');
     const groupsRef = collection(db, 'groups');
     const q = query(groupsRef, where('inviteCode', '==', inviteCode));
@@ -215,11 +216,12 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         status: 'online',
       };
 
-      const msgId = uuid();
+      const msgId = requestId ?? uuid();
       const now = Date.now();
       systemMessage = {
         id: msgId,
         messageId: msgId,
+        requestId: requestId ?? msgId,
         chatId,
         // RTDB queue rules require senderId to match auth.uid on create.
         senderId: user.userId,
@@ -264,10 +266,11 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     expense: Omit<Expense, 'expenseId' | 'createdAt' | 'updatedAt'>,
     fileUri?: string,
     originalFileName?: string,
+    requestId?: string,
   ) => {
     try {
       console.log('Adding expense to group:', groupId, expense);
-      const expenseId = uuid();
+      const expenseId = requestId ?? expense.requestId ?? uuid();
       const docRef = doc(db, 'groups', groupId);
 
       let receipt = expense.receipt;
@@ -289,6 +292,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       const newExpense = stripUndefinedDeep({
         ...expense,
         expenseId,
+        requestId: requestId ?? expense.requestId ?? expenseId,
         participants: splitShares,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -298,18 +302,37 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         newExpense.receipt = stripUndefinedDeep(receipt);
       }
 
-      await updateDoc(docRef, {
-        expenses: arrayUnion(newExpense),
-        updatedAt: serverTimestamp(),
+      const writtenExpenseId = await runTransaction(db, async (transaction) => {
+        const groupSnapshot = await transaction.get(docRef);
+        if (!groupSnapshot.exists()) {
+          throw new Error('Group not found');
+        }
+
+        const groupData = groupSnapshot.data() as Group;
+        const existingExpense = (groupData.expenses ?? []).find((entry) =>
+          entry.expenseId === expenseId ||
+          ((requestId ?? expense.requestId) && entry.requestId === (requestId ?? expense.requestId)),
+        );
+
+        if (existingExpense) {
+          return existingExpense.expenseId;
+        }
+
+        transaction.update(docRef, {
+          expenses: [...(groupData.expenses ?? []), newExpense],
+          updatedAt: serverTimestamp(),
+        });
+
+        return expenseId;
       });
 
-      // Also add to the top-level expenses collection for easier querying later
-      await addDoc(collection(db, 'expenses'), {
+      // Also add to the top-level expenses collection for easier querying later.
+      await setDoc(doc(db, 'expenses', writtenExpenseId), {
         ...newExpense,
         groupId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      });
+      }, { merge: true });
       console.log('Expense added successfully');
     } catch (error) {
       console.error('Error adding expense:', error);
@@ -317,7 +340,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     }
   };
 
-  const updateExpense = async (groupId: string, updatedExpense: Expense, newFileUri?: string | null, newFileName?: string) => {
+  const updateExpense = async (groupId: string, updatedExpense: Expense, newFileUri?: string | null, newFileName?: string, requestId?: string) => {
     try {
       const group = groups.find((g) => g.groupId === groupId);
       if (!group) throw new Error('Group not found');
@@ -351,7 +374,11 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         }
       }
 
-      const finalExpense = stripUndefinedDeep({ ...updatedExpense, updatedAt: Date.now() });
+      const finalExpense = stripUndefinedDeep({
+        ...updatedExpense,
+        requestId: requestId ?? updatedExpense.requestId ?? updatedExpense.expenseId,
+        updatedAt: Date.now(),
+      });
 
       if (receipt) {
         finalExpense.receipt = stripUndefinedDeep(receipt);
@@ -370,15 +397,25 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         updatedAt: serverTimestamp(),
       });
 
-      // Update top-level expenses collection (best effort)
+      await setDoc(doc(db, 'expenses', finalExpense.expenseId), {
+        ...finalExpense,
+        groupId,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+
+      // Update legacy top-level expenses collection docs (best effort).
       const q = query(collection(db, 'expenses'), where('expenseId', '==', finalExpense.expenseId));
       const snapshot = await getDocs(q);
-      snapshot.forEach(async (docSnap) => {
+      await Promise.all(snapshot.docs.map(async (docSnap) => {
+        if (docSnap.id === finalExpense.expenseId) {
+          return;
+        }
+
         await updateDoc(doc(db, 'expenses', docSnap.id), {
           ...finalExpense,
           updatedAt: serverTimestamp(),
         });
-      });
+      }));
     } catch (error) {
       console.error('Error updating expense:', error);
       throw error;
@@ -405,12 +442,18 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         updatedAt: serverTimestamp(),
       });
 
-      // Delete from top-level expenses collection
+      await deleteDoc(doc(db, 'expenses', expenseId));
+
+      // Delete from legacy top-level expenses collection docs
       const q = query(collection(db, 'expenses'), where('expenseId', '==', expenseId));
       const snapshot = await getDocs(q);
-      snapshot.forEach(async (docSnap) => {
+      await Promise.all(snapshot.docs.map(async (docSnap) => {
+        if (docSnap.id === expenseId) {
+          return;
+        }
+
         await deleteDoc(doc(db, 'expenses', docSnap.id));
-      });
+      }));
     } catch (error) {
       console.error('Error deleting expense:', error);
       throw error;
@@ -421,26 +464,57 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
   const settleUp = async (
     groupId: string,
     settlement: Omit<Settlement, 'settlementId' | 'createdAt' | 'status'>,
+    requestId?: string,
   ) => {
     const docRef = doc(db, 'groups', groupId);
-    await updateDoc(docRef, {
-      settlements: arrayUnion({
-        ...settlement,
-        settlementId: uuid(),
-        createdAt: Date.now(),
-        status: 'pending',
-      }),
-      updatedAt: serverTimestamp(),
+    const settlementId = requestId ?? settlement.requestId ?? uuid();
+
+    await runTransaction(db, async (transaction) => {
+      const groupSnapshot = await transaction.get(docRef);
+      if (!groupSnapshot.exists()) {
+        throw new Error('Group not found');
+      }
+
+      const groupData = groupSnapshot.data() as Group;
+      const existingSettlement = (groupData.settlements ?? []).find((entry) =>
+        entry.settlementId === settlementId ||
+        ((requestId ?? settlement.requestId) && entry.requestId === (requestId ?? settlement.requestId)),
+      );
+
+      if (existingSettlement) {
+        return existingSettlement.settlementId;
+      }
+
+      transaction.update(docRef, {
+        settlements: [
+          ...(groupData.settlements ?? []),
+          {
+            ...settlement,
+            settlementId,
+            requestId: requestId ?? settlement.requestId ?? settlementId,
+            createdAt: Date.now(),
+            status: 'pending',
+          },
+        ],
+        updatedAt: serverTimestamp(),
+      });
+
+      return settlementId;
     });
   };
 
-  const updateSettlement = async (groupId: string, updatedSettlement: Settlement) => {
+  const updateSettlement = async (groupId: string, updatedSettlement: Settlement, requestId?: string) => {
     try {
       const group = groups.find((g) => g.groupId === groupId);
       if (!group) throw new Error('Group not found');
 
       const updatedSettlements = group.settlements.map((settlement) =>
-        settlement.settlementId === updatedSettlement.settlementId ? updatedSettlement : settlement
+        settlement.settlementId === updatedSettlement.settlementId
+          ? {
+              ...updatedSettlement,
+              requestId: requestId ?? updatedSettlement.requestId ?? updatedSettlement.settlementId,
+            }
+          : settlement
       );
 
       const docRef = doc(db, 'groups', groupId);
