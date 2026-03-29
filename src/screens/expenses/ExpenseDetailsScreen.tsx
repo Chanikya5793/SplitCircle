@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { PrimaryButton } from '@/components/PrimaryButton';
 import { ROUTES } from '@/constants';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -89,9 +90,9 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
     }
   };
 
-  const handleSaveNote = async () => {
+  const handleSaveNote = async (requestId: string) => {
     try {
-      await updateExpense(groupId, { ...expense, notes: note });
+      await updateExpense(groupId, { ...expense, notes: note }, undefined, undefined, requestId);
       setIsEditingNote(false);
     } catch (error) {
       Alert.alert('Error', 'Failed to save note');
@@ -308,9 +309,14 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
                 />
                 <View style={styles.noteActions}>
                   <Button onPress={() => setIsEditingNote(false)}>Cancel</Button>
-                  <Button mode="contained" onPress={handleSaveNote}>
+                  <PrimaryButton
+                    onPress={handleSaveNote}
+                    requestKey={`expense-note-${expenseId}`}
+                    loadingMessage="Saving note..."
+                    showGlobalOverlay
+                  >
                     Save
-                  </Button>
+                  </PrimaryButton>
                 </View>
               </View>
             ) : (

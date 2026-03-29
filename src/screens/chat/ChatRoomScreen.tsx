@@ -10,13 +10,14 @@ import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import type { ChatMessage, ChatThread, MessageType } from '@/models';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Avatar, IconButton, Text, TextInput } from 'react-native-paper';
+import { ActivityIndicator, Avatar, Icon, IconButton, Text, TextInput } from 'react-native-paper';
 
 interface ChatRoomScreenProps {
   thread: ChatThread;
@@ -32,8 +33,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Text input state for composer
   const [text, setText] = useState('');
-  // Sending flag - disables the send button while awaiting network
-  const [sending, setSending] = useState(false);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
   // Track focus state of the composer input so we can highlight the
@@ -53,6 +52,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
   const markReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const markReadInFlightRef = useRef(false);
+  const { loading: sending, run: runSend } = usePreventDoubleSubmit();
 
   const requestMarkAsRead = useCallback(() => {
     if (markReadTimerRef.current) {
@@ -191,10 +191,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     if (!trimmed) {
       return;
     }
-    lightHaptic();
-    setSending(true);
-    try {
-      // Build replyTo data if replying
+    await runSend(async (requestId) => {
+      lightHaptic();
+
       let replyData = undefined;
       if (replyingTo) {
         const participant = thread.participants.find(p => p.userId === replyingTo.senderId);
@@ -205,13 +204,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           content: replyingTo.content,
         };
       }
-      await sendMessage({ chatId: thread.chatId, content: trimmed, groupId: thread.groupId, replyTo: replyData });
+
+      await sendMessage({
+        chatId: thread.chatId,
+        requestId,
+        content: trimmed,
+        groupId: thread.groupId,
+        replyTo: replyData,
+      });
       successHaptic();
       setText('');
       setReplyingTo(null);
-    } finally {
-      setSending(false);
-    }
+    }, { key: `chat-send-${thread.chatId}` });
   };
 
   // Handle swipe reply from message bubble
@@ -322,15 +326,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       }
 
       // Send the message directly - ChatContext handles upload
-      await sendMessage({
-        chatId: thread.chatId,
-        content: caption || getMediaPlaceholder(messageType),
-        type: messageType,
-        mediaUri: processedUri,
-        groupId: thread.groupId,
-        replyTo: replyData,
-        mediaMetadata: Object.keys(mediaMetadata).length > 0 ? mediaMetadata as any : undefined,
-      });
+      await runSend(async (requestId) => {
+        await sendMessage({
+          chatId: thread.chatId,
+          requestId,
+          content: caption || getMediaPlaceholder(messageType),
+          type: messageType,
+          mediaUri: processedUri,
+          groupId: thread.groupId,
+          replyTo: replyData,
+          mediaMetadata: Object.keys(mediaMetadata).length > 0 ? mediaMetadata as any : undefined,
+        });
+      }, { key: `chat-media-${thread.chatId}` });
 
       setSelectedMedia(null);
       setReplyingTo(null);
@@ -346,13 +353,16 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Handle sending location
   const handleSendLocation = async (location: { latitude: number; longitude: number; address?: string }) => {
     try {
-      await sendMessage({
-        chatId: thread.chatId,
-        content: '📍 Location',
-        type: 'location',
-        groupId: thread.groupId,
-        location: location,
-      });
+      await runSend(async (requestId) => {
+        await sendMessage({
+          chatId: thread.chatId,
+          requestId,
+          content: '📍 Location',
+          type: 'location',
+          groupId: thread.groupId,
+          location,
+        });
+      }, { key: `chat-location-${thread.chatId}` });
     } catch (error) {
       console.error('Failed to send location:', error);
       alert('Failed to send location');
@@ -561,23 +571,33 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                     }
                   }}
                   returnKeyType="send"
-                  onSubmitEditing={handleSend}
+                  onSubmitEditing={() => {
+                    void handleSend();
+                  }}
                   blurOnSubmit={false}
                   keyboardAppearance={isDark ? 'dark' : 'light'}
                 />
               </GlassView>
             </View>
-            <IconButton
-              icon="send"
-              mode="contained"
-              onPress={handleSend}
+            <TouchableOpacity
+              onPress={() => {
+                void handleSend();
+              }}
               disabled={!text.trim() || sending}
-              containerColor={!text.trim() || sending ? (isDark ? '#555' : '#ccc') : theme.colors.primary}
-              iconColor={theme.colors.onPrimary}
-              size={28}
-              style={styles.sendButton}
+              activeOpacity={0.8}
+              style={[
+                styles.sendButtonTouchable,
+                { backgroundColor: !text.trim() || sending ? (isDark ? '#555' : '#ccc') : theme.colors.primary },
+              ]}
               accessibilityLabel="Send message"
-            />
+              accessibilityState={{ disabled: !text.trim() || sending, busy: sending }}
+            >
+              {sending ? (
+                <ActivityIndicator animating size="small" color={theme.colors.onPrimary} />
+              ) : (
+                <Icon source="send" size={24} color={theme.colors.onPrimary} />
+              )}
+            </TouchableOpacity>
           </View>
         </GlassView>
       </KeyboardAvoidingView>
@@ -671,6 +691,15 @@ const styles = StyleSheet.create({
     // Add a little extra touch area by increasing container size if needed
     width: 44,
     height: 44,
+  },
+  sendButtonTouchable: {
+    margin: 5,
+    marginBottom: 5.5,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   attachButton: {
     margin: 5,

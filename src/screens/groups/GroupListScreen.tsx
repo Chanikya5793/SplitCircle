@@ -1,6 +1,7 @@
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { PrimaryButton } from '@/components/PrimaryButton';
 import { GroupCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableGroupCard } from '@/components/SwipeableGroupCard';
 import { GroupFilterSortSheet, GroupSortField, GroupSortOrder } from '@/components/GroupFilterSortSheet';
@@ -121,7 +122,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     return result;
   }, [groups, selectedCurrencies, sortField, sortOrder]);
 
-  const handleCreate = async () => {
+  const handleCreate = async (requestId: string) => {
     const selectedCurrency = CURRENCIES.find(c => c.code === currencyInput.toUpperCase());
 
     if (!selectedCurrency) {
@@ -130,7 +131,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     }
 
     try {
-      await createGroup(name.trim(), selectedCurrency.code);
+      await createGroup(name.trim(), selectedCurrency.code, requestId);
       successHaptic();
       setDialog(null);
       setName('');
@@ -142,9 +143,9 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     }
   };
 
-  const handleJoin = async () => {
+  const handleJoin = async (requestId: string) => {
     try {
-      await joinGroup(inviteCode.trim().toUpperCase());
+      await joinGroup(inviteCode.trim().toUpperCase(), requestId);
       successHaptic();
       setDialog(null);
       setInviteCode('');
@@ -338,9 +339,15 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
             </ScrollView>
             <View style={styles.modalActions}>
               <Button onPress={() => setDialog(null)} textColor={theme.colors.primary}>Cancel</Button>
-              <Button mode="contained" onPress={handleCreate} disabled={!name}>
+              <PrimaryButton
+                onPress={handleCreate}
+                disabled={!name}
+                requestKey="group-create"
+                loadingMessage="Creating group..."
+                showGlobalOverlay
+              >
                 Create
-              </Button>
+              </PrimaryButton>
             </View>
           </GlassView>
         </Modal>
@@ -363,9 +370,15 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
             />
             <View style={styles.modalActions}>
               <Button onPress={() => setDialog(null)} textColor={theme.colors.primary}>Cancel</Button>
-              <Button mode="contained" onPress={handleJoin} disabled={!inviteCode}>
+              <PrimaryButton
+                onPress={handleJoin}
+                disabled={!inviteCode}
+                requestKey="group-join"
+                loadingMessage="Joining group..."
+                showGlobalOverlay
+              >
                 Join
-              </Button>
+              </PrimaryButton>
             </View>
           </GlassView>
         </Modal>
