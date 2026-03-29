@@ -10,6 +10,7 @@ export interface GroupMember {
 
 export interface Settlement {
   settlementId: string;
+  requestId?: string;
   fromUserId: string;
   toUserId: string;
   amount: number;
@@ -20,6 +21,7 @@ export interface Settlement {
 
 export interface Group {
   groupId: string;
+  requestId?: string;
   inviteCode: string;
   name: string;
   description?: string;
