@@ -17,7 +17,7 @@ import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, AppState, FlatList, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, AppState, FlatList, InteractionManager, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ActivityIndicator, Avatar, Icon, IconButton, Text, TextInput } from 'react-native-paper';
 
 interface ChatRoomScreenProps {
@@ -243,10 +243,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       return;
     }
 
-    mediaPipelineLoading.start(getPreviewLoadingMessage(media.type));
     setAttachmentMenuVisible(false);
     setSelectedMedia(media);
-    requestAnimationFrame(() => {
+    InteractionManager.runAfterInteractions(() => {
       setMediaPreviewVisible(true);
     });
   };
@@ -444,22 +443,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
     return 'GC';
   }, [thread.type, groupName]);
-
-  const getPreviewLoadingMessage = useCallback((type: SelectedMedia['type']) => {
-    switch (type) {
-      case 'video':
-        return 'Preparing video preview…';
-      case 'image':
-      case 'camera':
-        return 'Preparing photo preview…';
-      case 'document':
-        return 'Opening document preview…';
-      case 'audio':
-        return 'Opening audio preview…';
-      default:
-        return 'Preparing attachment…';
-    }
-  }, []);
 
   const getProcessingLoadingMessage = useCallback((type: SelectedMedia['type']) => {
     switch (type) {
@@ -675,12 +658,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         onClose={() => {
           setMediaPreviewVisible(false);
           setSelectedMedia(null);
-          mediaPipelineLoading.stop();
         }}
         onSend={handleSendMedia}
-        onPreviewReady={() => {
-          mediaPipelineLoading.stop();
-        }}
       />
 
       {/* Location Picker Modal */}

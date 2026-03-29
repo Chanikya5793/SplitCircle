@@ -285,6 +285,9 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
         setStatus({ type: 'camera', message: getProcessingMessage('camera') });
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        });
         await Promise.resolve(onMediaSelected({
           type: 'camera',
           uri: asset.uri,
@@ -323,6 +326,9 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
         setStatus({ type: 'image', message: getProcessingMessage('image') });
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        });
         await Promise.resolve(onMediaSelected({
           type: 'image',
           uri: asset.uri,
@@ -364,6 +370,9 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
         setStatus({ type: 'video', message: getProcessingMessage('video') });
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        });
         await Promise.resolve(onMediaSelected({
           type: 'video',
           uri: asset.uri,
@@ -394,6 +403,9 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
         setStatus({ type: 'document', message: getProcessingMessage('document') });
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        });
         await Promise.resolve(onMediaSelected({
           type: 'document',
           uri: asset.uri,
@@ -430,6 +442,9 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           console.warn('Failed to get audio duration:', e);
         }
 
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        });
         await Promise.resolve(onMediaSelected({
           type: 'audio',
           uri: asset.uri,
