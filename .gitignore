@@ -45,3 +45,6 @@ GoogleService-Info.plist
 /android
 
 .tmp-build-logs
+ 
+# Ignore docs folder
+docs/
