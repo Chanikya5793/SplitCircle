@@ -30,6 +30,8 @@ import { NotificationSettingsScreen } from '@/screens/settings/NotificationSetti
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import type { NotificationData } from '@/utils/notifications';
 import { lightHaptic } from '@/utils/haptics';
+import { getChatThreadTitle, SCREEN_TITLES } from '@/navigation/screenTitles';
+import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
 import {
@@ -250,6 +252,7 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
       navigation.setOptions({ title: group.name });
     }
   }, [navigation, group?.name]);
+  useSyncRootStackTitle(group?.name);
 
   // Listen for focus/blur without causing component re-renders.
   useEffect(() => {
@@ -404,14 +407,8 @@ const SettlementsRoute = ({ route, navigation }: any) => {
   );
 };
 
-const GroupStatsRoute = ({ route, navigation }: any) => {
+const GroupStatsRoute = ({ route }: any) => {
   const group = useGroupById(route.params.groupId);
-
-  useLayoutEffect(() => {
-    if (group) {
-      navigation.setOptions({ headerBackTitle: group.name });
-    }
-  }, [navigation, group?.name]);
 
   if (!group) {
     return <LoadingScreen />;
@@ -419,14 +416,8 @@ const GroupStatsRoute = ({ route, navigation }: any) => {
   return <GroupStatsScreen group={group} />;
 };
 
-const RecurringBillsRoute = ({ route, navigation }: any) => {
+const RecurringBillsRoute = ({ route }: any) => {
   const group = useGroupById(route.params.groupId);
-
-  useLayoutEffect(() => {
-    if (group) {
-      navigation.setOptions({ headerBackTitle: group.name });
-    }
-  }, [navigation, group?.name]);
 
   if (!group) {
     return <LoadingScreen />;
@@ -443,20 +434,14 @@ const ChatRoomRoute = ({ route, navigation }: any) => {
   const { groups } = useGroups();
   const { user } = useAuth();
   const thread = threads.find((item) => item.chatId === route.params.chatId);
-
-  const chatTitle = useMemo(() => {
-    if (!thread) return '';
-    if (thread.type === 'group' && thread.groupId) {
-      const grp = groups.find((g) => g.groupId === thread.groupId);
-      return grp?.name || 'Group Chat';
-    }
-    const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
-    return other?.displayName || 'Chat';
-  }, [thread, groups, user?.userId]);
+  const chatTitle = useMemo(
+    () => getChatThreadTitle(thread, groups, user?.userId),
+    [thread, groups, user?.userId],
+  );
 
   useLayoutEffect(() => {
     if (chatTitle) {
-      navigation.setOptions({ headerBackTitle: chatTitle });
+      navigation.setOptions({ title: chatTitle });
     }
   }, [navigation, chatTitle]);
 
@@ -717,7 +702,6 @@ const AppStackNavigator = () => {
         component={MessageInfoScreen}
         options={{
           title: '',
-          headerBackTitle: 'Chat',
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
@@ -740,7 +724,7 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.GROUP_STATS}
         component={GroupStatsRoute}
-        options={{ title: 'Group Stats', headerBackTitle: 'Group' }}
+        options={{ title: SCREEN_TITLES.groupStats }}
       />
       <AppStack.Screen
         name={ROUTES.APP.BILL_SPLIT}
@@ -750,14 +734,13 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.RECURRING_BILLS}
         component={RecurringBillsRoute}
-        options={{ title: 'Recurring Bills', headerBackTitle: 'Group' }}
+        options={{ title: SCREEN_TITLES.recurringBills }}
       />
       <AppStack.Screen
         name={ROUTES.APP.CALL_INFO}
         component={CallInfoRoute}
         options={{
           title: '',
-          headerBackTitle: 'Calls',
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
@@ -765,14 +748,13 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.CALL_DETAIL}
         component={CallSessionRoute}
-        options={{ title: 'Live call', headerBackTitle: 'Calls' }}
+        options={{ title: SCREEN_TITLES.liveCall }}
       />
       <AppStack.Screen
         name={ROUTES.APP.NOTIFICATION_SETTINGS}
         component={NotificationSettingsScreen}
         options={{
-          title: 'Notifications',
-          headerBackTitle: 'Settings',
+          title: SCREEN_TITLES.notifications,
         }}
       />
     </AppStack.Navigator>

@@ -13,6 +13,8 @@ import { CURRENCIES } from '@/constants/currencies';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
+import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
+import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -43,6 +45,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const [sortField, setSortField] = useState<GroupSortField>('updatedAt');
   const [sortOrder, setSortOrder] = useState<GroupSortOrder>('desc');
   const [selectedCurrencies, setSelectedCurrencies] = useState<string[]>([]);
+  useSyncRootStackTitle(ROOT_SCREEN_TITLES.groups);
 
   useLayoutEffect(() => {
     navigation.setOptions({

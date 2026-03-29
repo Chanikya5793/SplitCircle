@@ -2,6 +2,7 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useNotificationContext } from '@/context/NotificationContext';
 import { useTheme } from '@/context/ThemeContext';
+import { SCREEN_TITLES } from '@/navigation/screenTitles';
 import { getNotificationPermissionStatus } from '@/utils/notifications';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -34,8 +35,7 @@ export const NotificationSettingsScreen = () => {
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: 'Notifications',
-      headerBackTitle: 'Settings',
+      title: SCREEN_TITLES.notifications,
     });
   }, [navigation]);
 
