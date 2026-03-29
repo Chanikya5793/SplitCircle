@@ -9,6 +9,7 @@ import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
+import { useLoadingState } from '@/context/LoadingContext';
 import { useTheme } from '@/context/ThemeContext';
 import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import type { ChatMessage, ChatThread, MessageType } from '@/models';
@@ -46,13 +47,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Media preview state
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
-  // Media processing state
-  const [isProcessingMedia, setIsProcessingMedia] = useState(false);
   // Location picker state
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
   const markReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const markReadInFlightRef = useRef(false);
   const { loading: sending, run: runSend } = usePreventDoubleSubmit();
+  const mediaPipelineLoading = useLoadingState(`chat-media:${thread.chatId}`);
 
   const requestMarkAsRead = useCallback(() => {
     if (markReadTimerRef.current) {
@@ -191,31 +191,36 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     if (!trimmed) {
       return;
     }
-    await runSend(async (requestId) => {
-      lightHaptic();
+    try {
+      await runSend(async (requestId) => {
+        lightHaptic();
 
-      let replyData = undefined;
-      if (replyingTo) {
-        const participant = thread.participants.find(p => p.userId === replyingTo.senderId);
-        replyData = {
-          messageId: replyingTo.messageId,
-          senderId: replyingTo.senderId,
-          senderName: participant?.displayName || 'Unknown',
-          content: replyingTo.content,
-        };
-      }
+        let replyData = undefined;
+        if (replyingTo) {
+          const participant = thread.participants.find(p => p.userId === replyingTo.senderId);
+          replyData = {
+            messageId: replyingTo.messageId,
+            senderId: replyingTo.senderId,
+            senderName: participant?.displayName || 'Unknown',
+            content: replyingTo.content,
+          };
+        }
 
-      await sendMessage({
-        chatId: thread.chatId,
-        requestId,
-        content: trimmed,
-        groupId: thread.groupId,
-        replyTo: replyData,
-      });
-      successHaptic();
-      setText('');
-      setReplyingTo(null);
-    }, { key: `chat-send-${thread.chatId}` });
+        await sendMessage({
+          chatId: thread.chatId,
+          requestId,
+          content: trimmed,
+          groupId: thread.groupId,
+          replyTo: replyData,
+        });
+        successHaptic();
+        setText('');
+        setReplyingTo(null);
+      }, { key: `chat-send-${thread.chatId}` });
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      alert(error instanceof Error ? error.message : 'Failed to send message');
+    }
   };
 
   // Handle swipe reply from message bubble
@@ -231,47 +236,47 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread });
   };
 
-  // Handle media selection from attachment menu
-  const handleMediaSelected = (media: SelectedMedia) => {
-    // Close attachment menu first
-    setAttachmentMenuVisible(false);
+  const handleMediaSelected = async (media: SelectedMedia) => {
+    if (media.type === 'location') {
+      setAttachmentMenuVisible(false);
+      setLocationPickerVisible(true);
+      return;
+    }
 
-    // Wait for menu close animation to finish before showing preview
-    // This prevents modal conflict issues on iOS/Android
-    setTimeout(() => {
-      if (media.type === 'location') {
-        setLocationPickerVisible(true);
-      } else {
-        setSelectedMedia(media);
-        setMediaPreviewVisible(true);
-      }
-    }, 500);
+    mediaPipelineLoading.start(getPreviewLoadingMessage(media.type));
+    setAttachmentMenuVisible(false);
+    setSelectedMedia(media);
+    requestAnimationFrame(() => {
+      setMediaPreviewVisible(true);
+    });
   };
 
   // Handle sending media with optional caption
   const handleSendMedia = async (caption: string, quality: QualityLevel) => {
     if (!selectedMedia) return;
+    const mediaToSend = selectedMedia;
 
+    // Show processing overlay FIRST, then close preview — this avoids
+    // a blank flash between preview dismissal and overlay appearance.
+    mediaPipelineLoading.start(getProcessingLoadingMessage(mediaToSend.type));
     setMediaPreviewVisible(false);
-    setIsProcessingMedia(true);
 
     try {
       // Process media based on quality selection
-      let processedUri = selectedMedia.uri;
-      let processedWidth = selectedMedia.width;
-      let processedHeight = selectedMedia.height;
-      let processedSize = selectedMedia.fileSize;
+      let processedUri = mediaToSend.uri;
+      let processedWidth = mediaToSend.width;
+      let processedHeight = mediaToSend.height;
+      let processedSize = mediaToSend.fileSize;
 
-      if (selectedMedia.type === 'image' || selectedMedia.type === 'camera') {
-        const result = await processImage(selectedMedia.uri, quality);
+      if (mediaToSend.type === 'image' || mediaToSend.type === 'camera') {
+        const result = await processImage(mediaToSend.uri, quality);
         processedUri = result.uri;
         processedWidth = result.width;
         processedHeight = result.height;
         processedSize = result.size;
-      } else if (selectedMedia.type === 'video') {
-        const result = await processVideo(selectedMedia.uri, quality);
+      } else if (mediaToSend.type === 'video') {
+        const result = await processVideo(mediaToSend.uri, quality);
         processedUri = result.uri;
-        // Video processing might not return dimensions if we can't read them easily
         if (result.width > 0) processedWidth = result.width;
         if (result.height > 0) processedHeight = result.height;
         processedSize = result.size;
@@ -279,7 +284,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
       // Map attachment type to message type
       let messageType: MessageType;
-      switch (selectedMedia.type) {
+      switch (mediaToSend.type) {
         case 'camera':
         case 'image':
           messageType = 'image';
@@ -315,15 +320,20 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
       // Build mediaMetadata with only defined values
       const mediaMetadata: Record<string, unknown> = {};
-      if (selectedMedia.fileName) mediaMetadata.fileName = selectedMedia.fileName;
+      if (mediaToSend.fileName) mediaMetadata.fileName = mediaToSend.fileName;
       if (processedSize) mediaMetadata.fileSize = processedSize;
-      if (selectedMedia.mimeType) mediaMetadata.mimeType = selectedMedia.mimeType;
+      if (mediaToSend.mimeType) mediaMetadata.mimeType = mediaToSend.mimeType;
       if (processedWidth) mediaMetadata.width = processedWidth;
       if (processedHeight) mediaMetadata.height = processedHeight;
-      if (selectedMedia.duration) mediaMetadata.duration = selectedMedia.duration;
+      if (mediaToSend.duration) mediaMetadata.duration = mediaToSend.duration;
       if (processedWidth && processedHeight) {
         mediaMetadata.aspectRatio = processedWidth / processedHeight;
       }
+
+      // Update overlay message to uploading phase
+      mediaPipelineLoading.setMessage(
+        `Uploading ${mediaToSend.type === 'video' ? 'video' : 'attachment'}…`,
+      );
 
       // Send the message directly - ChatContext handles upload
       await runSend(async (requestId) => {
@@ -336,6 +346,15 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           groupId: thread.groupId,
           replyTo: replyData,
           mediaMetadata: Object.keys(mediaMetadata).length > 0 ? mediaMetadata as any : undefined,
+          onStageChange: (stage, details) => {
+            if (stage === 'complete') {
+              return;
+            }
+
+            if (details?.message) {
+              mediaPipelineLoading.setMessage(details.message);
+            }
+          },
         });
       }, { key: `chat-media-${thread.chatId}` });
 
@@ -343,10 +362,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       setReplyingTo(null);
     } catch (error) {
       console.error('Failed to send media:', error);
-      // Show error to user
       alert(error instanceof Error ? error.message : 'Failed to send media');
     } finally {
-      setIsProcessingMedia(false);
+      mediaPipelineLoading.stop();
     }
   };
 
@@ -426,6 +444,38 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
     return 'GC';
   }, [thread.type, groupName]);
+
+  const getPreviewLoadingMessage = useCallback((type: SelectedMedia['type']) => {
+    switch (type) {
+      case 'video':
+        return 'Preparing video preview…';
+      case 'image':
+      case 'camera':
+        return 'Preparing photo preview…';
+      case 'document':
+        return 'Opening document preview…';
+      case 'audio':
+        return 'Opening audio preview…';
+      default:
+        return 'Preparing attachment…';
+    }
+  }, []);
+
+  const getProcessingLoadingMessage = useCallback((type: SelectedMedia['type']) => {
+    switch (type) {
+      case 'video':
+        return 'Preparing video for upload…';
+      case 'image':
+      case 'camera':
+        return 'Optimizing photo…';
+      case 'document':
+        return 'Preparing document…';
+      case 'audio':
+        return 'Preparing audio…';
+      default:
+        return 'Preparing attachment…';
+    }
+  }, []);
 
   return (
     <LiquidBackground>
@@ -531,12 +581,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             <IconButton
               icon="plus"
               mode="contained"
-              onPress={() => setAttachmentMenuVisible(true)}
+              onPress={mediaPipelineLoading.loading ? undefined : () => setAttachmentMenuVisible(true)}
               containerColor={isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'}
               iconColor={theme.colors.onSurfaceVariant}
               size={24}
               style={styles.attachButton}
               accessibilityLabel="Add attachment"
+              disabled={mediaPipelineLoading.loading}
             />
             <View
               style={[
@@ -583,14 +634,22 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               onPress={() => {
                 void handleSend();
               }}
-              disabled={!text.trim() || sending}
+              disabled={!text.trim() || sending || mediaPipelineLoading.loading}
               activeOpacity={0.8}
               style={[
                 styles.sendButtonTouchable,
-                { backgroundColor: !text.trim() || sending ? (isDark ? '#555' : '#ccc') : theme.colors.primary },
+                {
+                  backgroundColor:
+                    !text.trim() || sending || mediaPipelineLoading.loading
+                      ? (isDark ? '#555' : '#ccc')
+                      : theme.colors.primary,
+                },
               ]}
               accessibilityLabel="Send message"
-              accessibilityState={{ disabled: !text.trim() || sending, busy: sending }}
+              accessibilityState={{
+                disabled: !text.trim() || sending || mediaPipelineLoading.loading,
+                busy: sending || mediaPipelineLoading.loading,
+              }}
             >
               {sending ? (
                 <ActivityIndicator animating size="small" color={theme.colors.onPrimary} />
@@ -616,8 +675,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         onClose={() => {
           setMediaPreviewVisible(false);
           setSelectedMedia(null);
+          mediaPipelineLoading.stop();
         }}
         onSend={handleSendMedia}
+        onPreviewReady={() => {
+          mediaPipelineLoading.stop();
+        }}
       />
 
       {/* Location Picker Modal */}
@@ -627,8 +690,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         onSendLocation={handleSendLocation}
       />
 
-      {/* Processing Overlay */}
-      <LoadingOverlay visible={isProcessingMedia} message="Processing media..." />
+      {/* Media Processing Overlay — driven by keyed loading state */}
+      <LoadingOverlay visible={mediaPipelineLoading.loading} message={mediaPipelineLoading.message ?? 'Processing media…'} />
+
     </LiquidBackground>
   );
 };

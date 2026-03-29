@@ -15,7 +15,7 @@ import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { BlurView } from 'expo-blur';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Platform, StyleSheet, View } from 'react-native';
+import { Alert, Animated, InteractionManager, Platform, StyleSheet, View } from 'react-native';
 import { Icon, IconButton, Text, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -144,10 +144,15 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
     });
   }, [navigation, theme.colors.primary]);
 
+  // Defer the recurring bill sync until the navigation transition finishes.
+  // This avoids heavy Firestore I/O on the JS thread during the slide-in animation.
   useEffect(() => {
-    syncRecurringBillsForGroupWithFallback(group.groupId).catch((error) => {
-      console.warn('Recurring bill sync on group open failed:', error);
+    const task = InteractionManager.runAfterInteractions(() => {
+      syncRecurringBillsForGroupWithFallback(group.groupId).catch((error) => {
+        console.warn('Recurring bill sync on group open failed:', error);
+      });
     });
+    return () => task.cancel();
   }, [group.groupId]);
 
   const memberMap = useMemo(

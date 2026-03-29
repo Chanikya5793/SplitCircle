@@ -7,7 +7,6 @@ import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { IconButton, Text, TouchableRipple } from 'react-native-paper';
-import Animated, { FadeInDown } from 'react-native-reanimated';
 
 interface SettlementCardProps {
     settlement: Settlement;
@@ -72,7 +71,7 @@ export const SettlementCard = ({
     };
 
     return (
-        <Animated.View entering={FadeInDown.springify()} style={{ marginBottom: 1 }}>
+        <View style={{ marginBottom: 1 }}>
             <Swipeable
                 ref={swipeableRef}
                 renderRightActions={onDelete ? renderRightActions : undefined}
@@ -121,7 +120,7 @@ export const SettlementCard = ({
                     </TouchableRipple>
                 </GlassView>
             </Swipeable>
-        </Animated.View>
+        </View>
     );
 };
 

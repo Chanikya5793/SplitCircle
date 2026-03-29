@@ -37,7 +37,6 @@ import {
     DarkTheme,
     DefaultTheme,
     NavigationContainer,
-    useIsFocused,
     useNavigation,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -228,16 +227,23 @@ const ForgotPasswordRoute = ({ navigation }: any) => (
 );
 
 const GroupListRoute = ({ navigation }: any) => (
-  <GroupListScreen onOpenGroup={(group) => navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: group.groupId })} />
+  <GroupListScreen
+    onOpenGroup={(group) => {
+      navigation.navigate(ROUTES.APP.GROUP_DETAILS, {
+        groupId: group.groupId,
+      });
+    }}
+  />
 );
 
 const GroupDetailsRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
   const groupId = group?.groupId;
-  const isFocused = useIsFocused();
   const { ensureGroupThread } = useChat();
   const [showAccessory, setShowAccessory] = useState(false);
   const accessoryVisibleRef = useRef<boolean | null>(null);
+  // Track focus via ref instead of useIsFocused() to avoid mid-transition re-renders.
+  const isFocusedRef = useRef(true);
 
   useLayoutEffect(() => {
     if (group) {
@@ -245,13 +251,33 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
     }
   }, [navigation, group?.name]);
 
+  // Listen for focus/blur without causing component re-renders.
+  useEffect(() => {
+    const unsubFocus = navigation.addListener('focus', () => {
+      isFocusedRef.current = true;
+    });
+    const unsubBlur = navigation.addListener('blur', () => {
+      isFocusedRef.current = false;
+      // Clear accessory when blurred
+      const parent = navigation.getParent();
+      if (parent && IOS_NATIVE_ACCESSORY_SUPPORTED) {
+        parent.setOptions({ bottomAccessory: undefined });
+        accessoryVisibleRef.current = false;
+      }
+    });
+    return () => {
+      unsubFocus();
+      unsubBlur();
+    };
+  }, [navigation]);
+
   useLayoutEffect(() => {
     const parent = navigation.getParent();
     if (!parent || !IOS_NATIVE_ACCESSORY_SUPPORTED) {
       return;
     }
 
-    const shouldShowAccessory = Boolean(groupId && showAccessory && isFocused);
+    const shouldShowAccessory = Boolean(groupId && showAccessory && isFocusedRef.current);
     if (accessoryVisibleRef.current === shouldShowAccessory) {
       return;
     }
@@ -271,7 +297,7 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
       parent.setOptions({ bottomAccessory: undefined });
       accessoryVisibleRef.current = null;
     };
-  }, [navigation, groupId, showAccessory, isFocused]);
+  }, [navigation, groupId, showAccessory]);
 
   if (!group) {
     return <LoadingScreen />;
@@ -309,6 +335,9 @@ const GroupsStackNavigator = () => {
     <GroupsStack.Navigator
       screenOptions={{
         contentStyle: { backgroundColor: screenBackground },
+        freezeOnBlur: true,
+        fullScreenGestureEnabled: true,
+        animation: 'default',
       }}
     >
       <GroupsStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ headerShown: false }} />

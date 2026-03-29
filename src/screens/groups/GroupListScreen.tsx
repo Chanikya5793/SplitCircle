@@ -36,6 +36,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const [inviteCode, setInviteCode] = useState('');
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const scrollY = useRef(new Animated.Value(0)).current;
+  const [openingGroupId, setOpeningGroupId] = useState<string | null>(null);
 
   // Filter & Sort State
   const [filterVisible, setFilterVisible] = useState(false);
@@ -73,6 +74,14 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       hideSubscription.remove();
     };
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      setOpeningGroupId(null);
+    });
+
+    return unsubscribe;
+  }, [navigation]);
 
   const filteredCurrencies = useMemo(() => {
     const input = currencyInput.toUpperCase();
@@ -180,6 +189,19 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     );
   };
 
+  const handleOpenGroup = (group: Group) => {
+    if (openingGroupId) return;
+
+    lightHaptic();
+    setOpeningGroupId(group.groupId);
+
+    // Delay navigation by one frame so React can paint the loading
+    // spinner on the card before the heavy navigation transition begins.
+    requestAnimationFrame(() => {
+      onOpenGroup(group);
+    });
+  };
+
   return (
     <LiquidBackground style={styles.container}>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
@@ -194,9 +216,10 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         renderItem={({ item, index }) => (
           <SwipeableGroupCard
             group={item}
-            onPress={() => onOpenGroup(item)}
+            onPress={openingGroupId ? undefined : () => handleOpenGroup(item)}
             onArchive={handleArchive}
             index={index}
+            loading={openingGroupId === item.groupId}
           />
         )}
         contentContainerStyle={[
@@ -383,6 +406,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           </GlassView>
         </Modal>
       </Portal>
+
     </LiquidBackground>
   );
 };

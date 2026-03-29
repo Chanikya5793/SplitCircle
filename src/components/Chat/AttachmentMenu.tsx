@@ -1,10 +1,12 @@
+import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import { useTheme } from '@/context/ThemeContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { createAudioPlayer, type AudioStatus } from 'expo-audio';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Dimensions,
   Modal, Platform, Pressable,
@@ -40,7 +42,7 @@ export interface SelectedMedia {
 interface AttachmentMenuProps {
   visible: boolean;
   onClose: () => void;
-  onMediaSelected: (media: SelectedMedia) => void;
+  onMediaSelected: (media: SelectedMedia) => void | Promise<void>;
 }
 
 interface AttachmentOption {
@@ -138,13 +140,62 @@ const ATTACHMENT_OPTIONS: AttachmentOption[] = [
   },
 ];
 
+// Loading messages shown inside the menu after native picker returns
+const getProcessingMessage = (type: AttachmentType): string => {
+  switch (type) {
+    case 'video':
+      return 'Preparing video…';
+    case 'camera':
+      return 'Processing photo…';
+    case 'image':
+      return 'Loading image…';
+    case 'document':
+      return 'Loading document…';
+    case 'audio':
+      return 'Loading audio…';
+    case 'location':
+      return 'Opening map…';
+    default:
+      return 'Preparing…';
+  }
+};
+
+const getSelectionMessage = (type: AttachmentType): string => {
+  switch (type) {
+    case 'video':
+      return 'Opening video library…';
+    case 'image':
+      return 'Opening photo library…';
+    case 'camera':
+      return 'Opening camera…';
+    case 'document':
+      return 'Opening files…';
+    case 'audio':
+      return 'Opening audio files…';
+    case 'location':
+      return 'Opening map…';
+    default:
+      return 'Opening attachment…';
+  }
+};
+
 export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: AttachmentMenuProps) => {
   const { theme, isDark } = useTheme();
+  const { loading: selectingAttachment, run: runAttachmentSelection } = usePreventDoubleSubmit();
+  const [status, setStatus] = useState<{ type: AttachmentType; message: string } | null>(null);
+  const isProcessing = status !== null;
 
   // Reanimated shared values
   const slideAnim = useSharedValue(300);
   const fadeAnim = useSharedValue(0);
   const context = useSharedValue({ y: 0 });
+
+  // Reset processing state when menu becomes hidden
+  useEffect(() => {
+    if (!visible) {
+      setStatus(null);
+    }
+  }, [visible]);
 
   useEffect(() => {
     if (visible) {
@@ -158,6 +209,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
   // Gesture handler with context for smooth dragging
   const gesture = Gesture.Pan()
+    .enabled(!(selectingAttachment || isProcessing))
     .onStart(() => {
       context.value = { y: slideAnim.value };
     })
@@ -217,7 +269,10 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
   const handleCamera = useCallback(async () => {
     const hasPermission = await requestCameraPermission();
-    if (!hasPermission) return;
+    if (!hasPermission) {
+      setStatus(null);
+      return;
+    }
 
     try {
       const result = await ImagePicker.launchCameraAsync({
@@ -229,7 +284,8 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
-        onMediaSelected({
+        setStatus({ type: 'camera', message: getProcessingMessage('camera') });
+        await Promise.resolve(onMediaSelected({
           type: 'camera',
           uri: asset.uri,
           fileName: asset.fileName || `IMG_${Date.now()}.jpg`,
@@ -237,18 +293,23 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           mimeType: asset.mimeType || 'image/jpeg',
           width: asset.width,
           height: asset.height,
-        });
-        onClose();
+        }));
+      } else {
+        setStatus(null);
       }
     } catch (error) {
       console.error('Camera error:', error);
+      setStatus(null);
       Alert.alert('Camera Error', 'Failed to capture photo. Please try again.');
     }
-  }, [onMediaSelected, onClose]);
+  }, [onMediaSelected]);
 
   const handleGalleryImage = useCallback(async () => {
     const hasPermission = await requestMediaLibraryPermission();
-    if (!hasPermission) return;
+    if (!hasPermission) {
+      setStatus(null);
+      return;
+    }
 
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -261,7 +322,8 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
-        onMediaSelected({
+        setStatus({ type: 'image', message: getProcessingMessage('image') });
+        await Promise.resolve(onMediaSelected({
           type: 'image',
           uri: asset.uri,
           fileName: asset.fileName || `IMG_${Date.now()}.jpg`,
@@ -269,18 +331,23 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           mimeType: asset.mimeType || 'image/jpeg',
           width: asset.width,
           height: asset.height,
-        });
-        onClose();
+        }));
+      } else {
+        setStatus(null);
       }
     } catch (error) {
       console.error('Gallery image error:', error);
+      setStatus(null);
       Alert.alert('Selection Error', 'Failed to select image. Please try again.');
     }
-  }, [onMediaSelected, onClose]);
+  }, [onMediaSelected]);
 
   const handleGalleryVideo = useCallback(async () => {
     const hasPermission = await requestMediaLibraryPermission();
-    if (!hasPermission) return;
+    if (!hasPermission) {
+      setStatus(null);
+      return;
+    }
 
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -296,7 +363,8 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
-        onMediaSelected({
+        setStatus({ type: 'video', message: getProcessingMessage('video') });
+        await Promise.resolve(onMediaSelected({
           type: 'video',
           uri: asset.uri,
           fileName: asset.fileName || `VID_${Date.now()}.mp4`,
@@ -305,14 +373,16 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           width: asset.width,
           height: asset.height,
           duration: asset.duration ? asset.duration * 1000 : undefined,
-        });
-        onClose();
+        }));
+      } else {
+        setStatus(null);
       }
     } catch (error) {
       console.error('Gallery video error:', error);
+      setStatus(null);
       Alert.alert('Selection Error', 'Failed to select video. Please try again.');
     }
-  }, [onMediaSelected, onClose]);
+  }, [onMediaSelected]);
 
   const handleDocument = useCallback(async () => {
     try {
@@ -323,20 +393,23 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
-        onMediaSelected({
+        setStatus({ type: 'document', message: getProcessingMessage('document') });
+        await Promise.resolve(onMediaSelected({
           type: 'document',
           uri: asset.uri,
           fileName: asset.name,
           fileSize: asset.size,
           mimeType: asset.mimeType || 'application/octet-stream',
-        });
-        onClose();
+        }));
+      } else {
+        setStatus(null);
       }
     } catch (error) {
       console.error('Document picker error:', error);
+      setStatus(null);
       Alert.alert('Selection Error', 'Failed to select document. Please try again.');
     }
-  }, [onMediaSelected, onClose]);
+  }, [onMediaSelected]);
 
   const handleAudio = useCallback(async () => {
     try {
@@ -347,6 +420,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
+        setStatus({ type: 'audio', message: getProcessingMessage('audio') });
         let duration: number | undefined;
 
         // Try to get duration
@@ -356,62 +430,86 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           console.warn('Failed to get audio duration:', e);
         }
 
-        onMediaSelected({
+        await Promise.resolve(onMediaSelected({
           type: 'audio',
           uri: asset.uri,
           fileName: asset.name,
           fileSize: asset.size,
           mimeType: asset.mimeType || 'audio/mpeg',
           duration: duration,
-        });
-        onClose();
+        }));
+      } else {
+        setStatus(null);
       }
     } catch (error) {
       console.error('Audio picker error:', error);
+      setStatus(null);
       Alert.alert('Selection Error', 'Failed to select audio. Please try again.');
     }
-  }, [onMediaSelected, onClose]);
+  }, [onMediaSelected]);
 
-  const handleLocation = useCallback(() => {
-    onMediaSelected({
+  const handleLocation = useCallback(async () => {
+    setStatus({ type: 'location', message: getProcessingMessage('location') });
+    await Promise.resolve(onMediaSelected({
       type: 'location',
       uri: '', // No URI needed for initial selection
-    });
-    onClose();
-  }, [onMediaSelected, onClose]);
+    }));
+  }, [onMediaSelected]);
 
   const handleOptionPress = useCallback((option: AttachmentOption) => {
-    switch (option.id) {
-      case 'camera':
-        handleCamera();
-        break;
-      case 'image':
-        handleGalleryImage();
-        break;
-      case 'video':
-        handleGalleryVideo();
-        break;
-      case 'document':
-        handleDocument();
-        break;
-      case 'audio':
-        handleAudio();
-        break;
-      case 'location':
-        handleLocation();
-        break;
-    }
-  }, [handleCamera, handleGalleryImage, handleGalleryVideo, handleDocument, handleAudio, handleLocation]);
+    void runAttachmentSelection(async () => {
+      setStatus({ type: option.id, message: getSelectionMessage(option.id) });
+
+      switch (option.id) {
+        case 'camera':
+          await handleCamera();
+          break;
+        case 'image':
+          await handleGalleryImage();
+          break;
+        case 'video':
+          await handleGalleryVideo();
+          break;
+        case 'document':
+          await handleDocument();
+          break;
+        case 'audio':
+          await handleAudio();
+          break;
+        case 'location':
+          await handleLocation();
+          break;
+      }
+    }, {
+      key: 'chat-attachment-selection',
+      // NO global overlay — it renders behind this Modal and is invisible.
+      // Instead we show inline feedback inside the sheet itself.
+      overlay: false,
+    });
+  }, [
+    handleAudio,
+    handleCamera,
+    handleDocument,
+    handleGalleryImage,
+    handleGalleryVideo,
+    handleLocation,
+    runAttachmentSelection,
+  ]);
 
   const renderOption = (option: AttachmentOption) => {
+    const isDisabled = selectingAttachment || isProcessing;
     return (
       <TouchableOpacity
         key={option.id}
         style={styles.optionContainer}
-        onPress={() => handleOptionPress(option)}
-        activeOpacity={0.7}
+        onPress={isDisabled ? undefined : () => handleOptionPress(option)}
+        activeOpacity={isDisabled ? 1 : 0.7}
       >
-        <View style={[styles.optionButton, { backgroundColor: option.backgroundColor }]}>
+        <View style={[
+          styles.optionButton,
+          { backgroundColor: option.backgroundColor },
+          isDisabled && { opacity: 0.4 },
+        ]}>
           <Ionicons name={option.icon} size={28} color={option.color} />
         </View>
         <Text style={[styles.optionLabel, { color: theme.colors.onSurface }]}>{option.label}</Text>
@@ -427,11 +525,11 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       transparent
       animationType="none"
       statusBarTranslucent
-      onRequestClose={onClose}
+      onRequestClose={(selectingAttachment || isProcessing) ? () => undefined : onClose}
     >
       <View style={styles.modalContainer}>
         {/* Backdrop */}
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={(selectingAttachment || isProcessing) ? undefined : onClose}>
           <Animated.View
             style={[
               styles.backdrop,
@@ -453,22 +551,38 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
               <View style={[styles.handle, { backgroundColor: isDark ? '#555' : '#ccc' }]} />
             </View>
 
-            {/* Options Grid */}
-            <View style={styles.optionsGrid}>
-              {ATTACHMENT_OPTIONS.map((option) => renderOption(option))}
-            </View>
+            {/* Processing indicator — shown after native picker returns */}
+            {isProcessing ? (
+              <View style={styles.processingContainer}>
+                <ActivityIndicator size="large" color={theme.colors.primary} />
+                <Text style={[styles.processingText, { color: theme.colors.onSurface }]}>
+                  {status?.message ?? 'Preparing…'}
+                </Text>
+                <Text style={[styles.processingHint, { color: theme.colors.onSurfaceVariant }]}>
+                  Please keep this screen open while we prepare your attachment.
+                </Text>
+              </View>
+            ) : (
+              <>
+                {/* Options Grid */}
+                <View style={styles.optionsGrid}>
+                  {ATTACHMENT_OPTIONS.map((option) => renderOption(option))}
+                </View>
 
-            {/* Cancel Button */}
-            <TouchableOpacity
-              style={[
-                styles.cancelButton,
-                { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' },
-              ]}
-              onPress={onClose}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.cancelText, { color: theme.colors.error }]}>Cancel</Text>
-            </TouchableOpacity>
+                {/* Cancel Button */}
+                <TouchableOpacity
+                  style={[
+                    styles.cancelButton,
+                    { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' },
+                    selectingAttachment && { opacity: 0.5 },
+                  ]}
+                  onPress={selectingAttachment ? undefined : onClose}
+                  activeOpacity={selectingAttachment ? 1 : 0.7}
+                >
+                  <Text style={[styles.cancelText, { color: theme.colors.error }]}>Cancel</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </Animated.View>
         </GestureDetector>
       </View>
@@ -539,6 +653,22 @@ const styles = StyleSheet.create({
   cancelText: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  processingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    gap: 16,
+  },
+  processingText: {
+    fontSize: 16,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  processingHint: {
+    fontSize: 13,
+    textAlign: 'center',
+    paddingHorizontal: 32,
   },
 });
 

@@ -17,8 +17,8 @@ function AppContent() {
   const { theme, isDark } = useTheme();
 
   return (
-    <PaperProvider theme={theme}>
-      <LoadingProvider>
+    <LoadingProvider>
+      <PaperProvider theme={theme}>
         <AuthProvider>
           <NotificationProvider>
             <GroupProvider>
@@ -33,8 +33,8 @@ function AppContent() {
             </GroupProvider>
           </NotificationProvider>
         </AuthProvider>
-      </LoadingProvider>
-    </PaperProvider>
+      </PaperProvider>
+    </LoadingProvider>
   );
 }
 
