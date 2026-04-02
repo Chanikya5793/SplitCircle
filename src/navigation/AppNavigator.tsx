@@ -30,7 +30,7 @@ import { NotificationSettingsScreen } from '@/screens/settings/NotificationSetti
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import type { NotificationData } from '@/utils/notifications';
 import { lightHaptic } from '@/utils/haptics';
-import { getCallInfoTitle, getChatThreadTitle, getExpenseDetailsTitle, ROOT_SCREEN_TITLES, SCREEN_TITLES } from '@/navigation/screenTitles';
+import { getCallInfoTitle, getChatThreadTitle, getExpenseDetailsTitle, getRouteBackLabel, ROOT_SCREEN_TITLES, SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
@@ -81,32 +81,61 @@ type IOSBackButtonProps = {
   tintColor?: string;
 };
 
+const getResolvedIOSBackLabel = ({
+  navigation,
+  route,
+  nativeLabel,
+  fallbackLabel,
+}: {
+  navigation: any;
+  route: any;
+  nativeLabel?: string;
+  fallbackLabel?: string;
+}) => {
+  const state = navigation?.getState?.();
+  const currentIndex = state?.routes?.findIndex?.((candidate: any) => candidate.key === route.key) ?? -1;
+  const previousRoute = currentIndex > 0 ? state.routes[currentIndex - 1] : undefined;
+  const trimmedNativeLabel = nativeLabel?.trim();
+  const trimmedFallbackLabel = fallbackLabel?.trim();
+
+  if (trimmedNativeLabel && trimmedNativeLabel.toLowerCase() !== 'back') {
+    return trimmedNativeLabel;
+  }
+
+  const derivedLabel = getRouteBackLabel(previousRoute);
+  if (derivedLabel) {
+    return derivedLabel;
+  }
+
+  if (trimmedFallbackLabel && trimmedFallbackLabel.toLowerCase() !== 'back') {
+    return trimmedFallbackLabel;
+  }
+
+  return undefined;
+};
+
 const IOSBackButton = ({ label, onPress, tintColor }: IOSBackButtonProps) => {
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
   const resolvedTintColor = tintColor ?? theme.colors.primary;
-  const resolvedLabel = label?.trim() || 'Back';
+  const resolvedLabel = label?.trim();
 
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityLabel={`Back to ${resolvedLabel}`}
+      accessibilityLabel={resolvedLabel ? `Back to ${resolvedLabel}` : 'Go back'}
       activeOpacity={0.82}
       onPress={onPress}
-      style={[
-        styles.iosBackButton,
-        {
-          backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.72)',
-          borderColor: `${resolvedTintColor}40`,
-        },
-      ]}
+      style={styles.iosBackButton}
     >
       <Icon source="chevron-left" size={20} color={resolvedTintColor} />
-      <Text
-        numberOfLines={1}
-        style={[styles.iosBackButtonLabel, { color: resolvedTintColor }]}
-      >
-        {resolvedLabel}
-      </Text>
+      {resolvedLabel ? (
+        <Text
+          numberOfLines={1}
+          style={[styles.iosBackButtonLabel, { color: resolvedTintColor }]}
+        >
+          {resolvedLabel}
+        </Text>
+      ) : null}
     </TouchableOpacity>
   );
 };
@@ -135,12 +164,12 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
 
   const openStats = () => {
     lightHaptic();
-    navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId });
+    navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: group.name });
   };
 
   const openBills = () => {
     lightHaptic();
-    navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId });
+    navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: group.name });
   };
 
   const openAddExpense = () => {
@@ -163,7 +192,11 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
         status: 'online' as PresenceStatus,
       }));
       const chatId = await ensureGroupThread(group.groupId, participants);
-      navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId, initialTitle: group.name });
+      navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+        chatId,
+        initialTitle: group.name,
+        backTitle: group.name,
+      });
     } catch (error) {
       console.error('Unable to open chat', error);
     }
@@ -270,6 +303,7 @@ const GroupListRoute = ({ navigation }: any) => (
       navigation.navigate(ROUTES.APP.GROUP_DETAILS, {
         groupId: group.groupId,
         initialTitle: group.name,
+        backTitle: ROOT_SCREEN_TITLES.groups,
       });
     }}
   />
@@ -351,7 +385,11 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
         status: 'online' as PresenceStatus,
       }));
       const chatId = await ensureGroupThread(group.groupId, participants);
-      navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId, initialTitle: group.name });
+      navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+        chatId,
+        initialTitle: group.name,
+        backTitle: group.name,
+      });
     } catch (error) {
       console.error('Unable to open chat', error);
     }
@@ -373,7 +411,7 @@ const GroupsStackNavigator = () => {
 
   return (
     <GroupsStack.Navigator
-      screenOptions={({ navigation }) => ({
+      screenOptions={({ navigation, route }) => ({
         contentStyle: { backgroundColor: screenBackground },
         freezeOnBlur: true,
         fullScreenGestureEnabled: true,
@@ -384,7 +422,12 @@ const GroupsStackNavigator = () => {
           ? ({ canGoBack, label, tintColor }) =>
               canGoBack ? (
                 <IOSBackButton
-                  label={label}
+                  label={getResolvedIOSBackLabel({
+                    navigation,
+                    route,
+                    nativeLabel: label,
+                    fallbackLabel: (route.params as any)?.backTitle,
+                  })}
                   onPress={() => navigation.goBack()}
                   tintColor={tintColor ?? theme.colors.primary}
                 />
@@ -400,7 +443,9 @@ const GroupsStackNavigator = () => {
       <GroupsStack.Screen
         name={ROUTES.APP.GROUP_DETAILS}
         component={GroupDetailsRoute}
-        options={({ route }: any) => ({ title: route.params?.initialTitle ?? SCREEN_TITLES.groupDetailsFallback })}
+        options={({ route }: any) => ({
+          title: route.params?.initialTitle ?? SCREEN_TITLES.groupDetailsFallback,
+        })}
       />
     </GroupsStack.Navigator>
   );
@@ -497,6 +542,7 @@ const ChatListRoute = ({ navigation }: any) => {
             groups,
             user?.userId,
           ),
+          backTitle: ROOT_SCREEN_TITLES.chats,
         })
       }
     />
@@ -533,10 +579,11 @@ const CallHistoryRoute = ({ navigation }: any) => (
         chatId: thread.chatId,
         groupId: thread.groupId,
         type,
+        backTitle: ROOT_SCREEN_TITLES.calls,
       })
     }
     onOpenCallInfo={(entry) =>
-      navigation.navigate(ROUTES.APP.CALL_INFO, { entry })
+      navigation.navigate(ROUTES.APP.CALL_INFO, { entry, backTitle: ROOT_SCREEN_TITLES.calls })
     }
   />
 );
@@ -549,6 +596,7 @@ const CallInfoRoute = ({ route, navigation }: any) => (
         chatId: thread.chatId,
         groupId: thread.groupId,
         type,
+        backTitle: getCallInfoTitle(route.params.entry),
       })
     }
   />
@@ -748,7 +796,7 @@ const AppStackNavigator = () => {
 
   return (
       <AppStack.Navigator
-        screenOptions={({ navigation }) => ({
+        screenOptions={({ navigation, route }) => ({
           contentStyle: { backgroundColor: screenBackground },
           headerBackButtonDisplayMode: Platform.OS === 'ios' ? 'default' : undefined,
           headerBackVisible: Platform.OS === 'ios' ? false : undefined,
@@ -756,7 +804,12 @@ const AppStackNavigator = () => {
             ? ({ canGoBack, label, tintColor }) =>
                 canGoBack ? (
                   <IOSBackButton
-                    label={label}
+                    label={getResolvedIOSBackLabel({
+                      navigation,
+                      route,
+                      nativeLabel: label,
+                      fallbackLabel: (route.params as any)?.backTitle,
+                    })}
                     onPress={() => navigation.goBack()}
                     tintColor={tintColor ?? theme.colors.primary}
                   />
@@ -962,18 +1015,17 @@ const styles = StyleSheet.create({
   iosBackButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    maxWidth: 180,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    gap: 4,
+    maxWidth: 220,
+    paddingVertical: 6,
+    paddingRight: 8,
+    marginLeft: -6,
+    gap: 2,
   },
   iosBackButtonLabel: {
     flexShrink: 1,
-    fontSize: 16,
-    fontWeight: '600',
-    lineHeight: 20,
+    fontSize: 17,
+    fontWeight: '500',
+    lineHeight: 22,
   },
   groupAccessoryRegularWrap: {
     paddingHorizontal: 8,

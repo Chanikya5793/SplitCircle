@@ -657,6 +657,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                               groupId: group.groupId,
                               expenseId: activity.data.expenseId,
                               expenseTitle: activity.data.title,
+                              backTitle: group.name,
                             });
                           }}
                           onDelete={handleDeleteExpense}
@@ -723,7 +724,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
             <View style={styles.actionGrid}>
               <TouchableRipple
-                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId }); }}
+                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: group.name }); }}
                 style={styles.compactButtonSmall}
                 borderless
               >
@@ -751,7 +752,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               </TouchableRipple>
 
               <TouchableRipple
-                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId }); }}
+                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: group.name }); }}
                 style={styles.compactButtonSmall}
                 borderless
               >
@@ -785,7 +786,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                     <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Settle</Text>
                   </View>
                 </TouchableRipple>
-                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: group.name })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="chart-pie" size={18} color={theme.colors.primary} />
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
@@ -797,7 +798,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
                   </View>
                 </TouchableRipple>
-                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: group.name })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="repeat" size={18} color={theme.colors.primary} />
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>

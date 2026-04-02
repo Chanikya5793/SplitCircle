@@ -160,7 +160,7 @@ export const SettingsScreen = () => {
               right={() => <List.Icon icon="chevron-right" />}
               onPress={() => {
                 lightHaptic();
-                (navigation as any).navigate('NotificationSettings');
+                (navigation as any).navigate('NotificationSettings', { backTitle: ROOT_SCREEN_TITLES.settings });
               }}
             />
             <Divider />

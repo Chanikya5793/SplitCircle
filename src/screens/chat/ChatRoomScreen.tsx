@@ -233,7 +233,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const handleSwipeInfo = (message: ChatMessage) => {
     lightHaptic();
     // @ts-ignore - navigation route typing is intentionally loose in this app
-    navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread, initialTitle: 'Message Info' });
+    navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread, initialTitle: 'Message Info', backTitle: title });
   };
 
   const handleMediaSelected = async (media: SelectedMedia) => {
@@ -432,7 +432,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const handleHeaderPress = () => {
     if (thread.type === 'group' && thread.groupId) {
       // @ts-ignore - navigation types
-      navigation.navigate(ROUTES.APP.GROUP_INFO, { groupId: thread.groupId, initialTitle: 'Group Info' });
+      navigation.navigate(ROUTES.APP.GROUP_INFO, { groupId: thread.groupId, initialTitle: 'Group Info', backTitle: title });
     }
   };
 

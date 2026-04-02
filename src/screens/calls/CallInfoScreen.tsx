@@ -208,6 +208,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
                   navigation.navigate(ROUTES.APP.GROUP_CHAT, {
                     chatId: entry.chatId,
                     initialTitle: groupName || entry.otherParticipant.displayName || 'Chat',
+                    backTitle: getCallInfoTitle(entry),
                   });
                 }
               }}

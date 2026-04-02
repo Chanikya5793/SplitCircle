@@ -72,7 +72,7 @@ export const GroupInfoScreen = () => {
 
     const handleViewStats = () => {
         // @ts-ignore
-        navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId });
+        navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: SCREEN_TITLES.groupInfo });
     };
 
     const handleViewSplits = () => {
@@ -81,7 +81,7 @@ export const GroupInfoScreen = () => {
             screen: ROUTES.APP.GROUPS_TAB,
             params: {
                 screen: ROUTES.APP.GROUP_DETAILS,
-                params: { groupId: group.groupId },
+                params: { groupId: group.groupId, initialTitle: group.name },
             },
         });
     };
