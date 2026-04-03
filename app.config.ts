@@ -62,7 +62,7 @@ const googleMapsApiKey = readEnv(['EXPO_PUBLIC_GOOGLE_MAPS_API_KEY'], { optional
 const config = {
   name: 'SplitCircle',
   slug: 'SplitCircle',
-  version: '0.0.1',
+  version: '0.0.2',
   owner: 'chanikya6163',
   orientation: 'portrait',
   icon: './assets/icon.png',
