@@ -269,6 +269,20 @@ const parseRegistrationError = (error: unknown): string => {
   return 'Unknown notification registration error';
 };
 
+const describeNotificationRuntime = (): string => {
+  const details = [
+    Device.isDevice ? 'physical-device' : 'simulator-or-non-device',
+    typeof Constants.executionEnvironment === 'string'
+      ? `execution:${Constants.executionEnvironment}`
+      : null,
+    typeof Constants.appOwnership === 'string'
+      ? `ownership:${Constants.appOwnership}`
+      : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return details.join(' · ');
+};
+
 export const createNotificationRegistrationAttempt = async (
   options?: { requestPermission?: boolean; tokenOverride?: string | null },
 ): Promise<NotificationRegistrationAttempt> => {
@@ -309,17 +323,6 @@ export const createNotificationRegistrationAttempt = async (
     };
   }
 
-  if (!isPhysicalDevice) {
-    return {
-      deviceId,
-      projectId,
-      expoPushToken: null,
-      permission,
-      isPhysicalDevice,
-      error: 'Remote push notifications require a physical device.',
-    };
-  }
-
   if (!projectId) {
     return {
       deviceId,
@@ -356,13 +359,20 @@ export const createNotificationRegistrationAttempt = async (
       error: null,
     };
   } catch (error) {
+    const parsedError = parseRegistrationError(error);
+    const errorMessage =
+      !isPhysicalDevice &&
+      !/physical device/i.test(parsedError)
+        ? `${parsedError} Expo reported this runtime as ${describeNotificationRuntime()}.`
+        : parsedError;
+
     return {
       deviceId,
       projectId,
       expoPushToken: null,
       permission,
       isPhysicalDevice,
-      error: parseRegistrationError(error),
+      error: errorMessage,
     };
   }
 };

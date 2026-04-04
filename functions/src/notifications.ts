@@ -196,6 +196,27 @@ const summarizeBody = (body: string): string => {
 const getDeviceDocRef = (userId: string, deviceId: string) =>
     getFirestore().collection(USER_COLLECTION).doc(userId).collection(DEVICE_COLLECTION).doc(deviceId);
 
+const listUserDeviceRecords = async (
+    db: FirebaseFirestore.Firestore,
+    userId: string,
+): Promise<NotificationDeviceState[]> => {
+    const snapshot = await db
+        .collection(USER_COLLECTION)
+        .doc(userId)
+        .collection(DEVICE_COLLECTION)
+        .get();
+
+    return snapshot.docs.map((docSnap) => {
+        const data = docSnap.data() as Record<string, unknown>;
+        return normalizeDeviceRecord(
+            userId,
+            docSnap.id,
+            docSnap.ref.path,
+            data,
+        );
+    });
+};
+
 const normalizeDeviceRecord = (
     userId: string,
     deviceId: string,
@@ -429,28 +450,22 @@ const resolveNotificationTargets = async (
         }
     }
 
-    for (const chunk of chunkArray(userIds, 30)) {
-        const deviceQuery = db.collectionGroup(DEVICE_COLLECTION)
-            .where("userId", "in", chunk);
-        const deviceSnapshot = await deviceQuery.get();
+    for (const chunk of chunkArray(userIds, 20)) {
+        const deviceLists = await Promise.all(
+            chunk.map(async (userId) => ({
+                userId,
+                devices: await listUserDeviceRecords(db, userId),
+            })),
+        );
 
-        deviceSnapshot.docs.forEach((docSnap) => {
-            const data = docSnap.data() as Record<string, unknown>;
-            const userId = normalizeString(data.userId);
-            if (!userId) {
+        deviceLists.forEach(({ userId, devices }) => {
+            if (devices.length === 0) {
                 return;
             }
 
-            const normalized = normalizeDeviceRecord(
-                userId,
-                docSnap.id,
-                docSnap.ref.path,
-                data,
-            );
-
-            const devices = devicesByUserId.get(userId) ?? [];
-            devices.push(normalized);
-            devicesByUserId.set(userId, devices);
+            const existing = devicesByUserId.get(userId) ?? [];
+            existing.push(...devices);
+            devicesByUserId.set(userId, existing);
         });
     }
 
@@ -625,9 +640,8 @@ export const sendPushToUsers = async (
         };
     }
 
-    const messageByToken = new Map<string, NotificationDeviceState>();
-    const messages: ExpoPushMessage[] = targetDevices.map((device) => {
-        messageByToken.set(device.expoPushToken!, device);
+    const dispatchTargets = [...targetDevices];
+    const messages: ExpoPushMessage[] = dispatchTargets.map((device) => {
         return {
             to: device.expoPushToken!,
             title,
@@ -665,8 +679,9 @@ export const sendPushToUsers = async (
     const pendingReceipts: PendingReceiptRecord[] = [];
     let acceptedCount = 0;
 
-    for (const result of ticketResults) {
-        const device = messageByToken.get(result.message.to);
+    for (let index = 0; index < ticketResults.length; index += 1) {
+        const result = ticketResults[index];
+        const device = dispatchTargets[index];
         if (!device) {
             continue;
         }

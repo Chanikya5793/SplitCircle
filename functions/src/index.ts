@@ -159,32 +159,50 @@ export const sendTestPushNotification = onCall(async (request) => {
         throw new HttpsError("unauthenticated", "Authentication required.");
     }
 
-    const result = await sendPushToUsers(
-        [uid],
-        "SplitCircle test notification",
-        "Remote push is flowing through the backend, Expo, and your device registration.",
-        {
-            type: "general",
-            source: "settings_test",
-        },
-        "general",
-        undefined,
-        "general",
-    );
-
-    if (result.acceptedCount === 0) {
-        throw new HttpsError(
-            "failed-precondition",
-            "No eligible devices are currently registered for remote push delivery.",
+    try {
+        const result = await sendPushToUsers(
+            [uid],
+            "SplitCircle test notification",
+            "Remote push is flowing through the backend, Expo, and your device registration.",
             {
-                deliveryId: result.deliveryId,
-                status: result.status,
-                droppedCount: result.droppedCount,
+                type: "general",
+                source: "settings_test",
             },
+            "general",
+            undefined,
+            "general",
+        );
+
+        if (result.acceptedCount === 0) {
+            throw new HttpsError(
+                "failed-precondition",
+                "No eligible devices are currently registered for remote push delivery.",
+                {
+                    deliveryId: result.deliveryId,
+                    status: result.status,
+                    droppedCount: result.droppedCount,
+                },
+            );
+        }
+
+        return result;
+    } catch (error) {
+        if (error instanceof HttpsError) {
+            throw error;
+        }
+
+        logger.error("Failed to send test push notification", {
+            uid,
+            error: toSafeError(error),
+        });
+
+        throw new HttpsError(
+            "internal",
+            error instanceof Error
+                ? error.message
+                : "Unexpected notification delivery failure.",
         );
     }
-
-    return result;
 });
 
 // ─────────────────────────────────────────────────────────────

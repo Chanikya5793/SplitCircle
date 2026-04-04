@@ -97,6 +97,17 @@ const summarizeBody = (body) => {
     return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
 };
 const getDeviceDocRef = (userId, deviceId) => (0, firestore_1.getFirestore)().collection(USER_COLLECTION).doc(userId).collection(DEVICE_COLLECTION).doc(deviceId);
+const listUserDeviceRecords = async (db, userId) => {
+    const snapshot = await db
+        .collection(USER_COLLECTION)
+        .doc(userId)
+        .collection(DEVICE_COLLECTION)
+        .get();
+    return snapshot.docs.map((docSnap) => {
+        const data = docSnap.data();
+        return normalizeDeviceRecord(userId, docSnap.id, docSnap.ref.path, data);
+    });
+};
 const normalizeDeviceRecord = (userId, deviceId, path, data) => ({
     userId,
     deviceId,
@@ -284,21 +295,19 @@ const resolveNotificationTargets = async (userIds, category, chatId) => {
             });
         }
     }
-    for (const chunk of chunkArray(userIds, 30)) {
-        const deviceQuery = db.collectionGroup(DEVICE_COLLECTION)
-            .where("userId", "in", chunk);
-        const deviceSnapshot = await deviceQuery.get();
-        deviceSnapshot.docs.forEach((docSnap) => {
+    for (const chunk of chunkArray(userIds, 20)) {
+        const deviceLists = await Promise.all(chunk.map(async (userId) => ({
+            userId,
+            devices: await listUserDeviceRecords(db, userId),
+        })));
+        deviceLists.forEach(({ userId, devices }) => {
             var _a;
-            const data = docSnap.data();
-            const userId = normalizeString(data.userId);
-            if (!userId) {
+            if (devices.length === 0) {
                 return;
             }
-            const normalized = normalizeDeviceRecord(userId, docSnap.id, docSnap.ref.path, data);
-            const devices = (_a = devicesByUserId.get(userId)) !== null && _a !== void 0 ? _a : [];
-            devices.push(normalized);
-            devicesByUserId.set(userId, devices);
+            const existing = (_a = devicesByUserId.get(userId)) !== null && _a !== void 0 ? _a : [];
+            existing.push(...devices);
+            devicesByUserId.set(userId, existing);
         });
     }
     const devices = [];
@@ -430,9 +439,8 @@ const sendPushToUsers = async (userIds, title, body, data, category, chatId, cha
             status: "no_targets",
         };
     }
-    const messageByToken = new Map();
-    const messages = targetDevices.map((device) => {
-        messageByToken.set(device.expoPushToken, device);
+    const dispatchTargets = [...targetDevices];
+    const messages = dispatchTargets.map((device) => {
         return {
             to: device.expoPushToken,
             title,
@@ -461,8 +469,9 @@ const sendPushToUsers = async (userIds, title, body, data, category, chatId, cha
     const expoTickets = [];
     const pendingReceipts = [];
     let acceptedCount = 0;
-    for (const result of ticketResults) {
-        const device = messageByToken.get(result.message.to);
+    for (let index = 0; index < ticketResults.length; index += 1) {
+        const result = ticketResults[index];
+        const device = dispatchTargets[index];
         if (!device) {
             continue;
         }

@@ -165,18 +165,32 @@ exports.sendTestPushNotification = (0, https_1.onCall)(async (request) => {
     if (!uid) {
         throw new https_1.HttpsError("unauthenticated", "Authentication required.");
     }
-    const result = await (0, notifications_1.sendPushToUsers)([uid], "SplitCircle test notification", "Remote push is flowing through the backend, Expo, and your device registration.", {
-        type: "general",
-        source: "settings_test",
-    }, "general", undefined, "general");
-    if (result.acceptedCount === 0) {
-        throw new https_1.HttpsError("failed-precondition", "No eligible devices are currently registered for remote push delivery.", {
-            deliveryId: result.deliveryId,
-            status: result.status,
-            droppedCount: result.droppedCount,
-        });
+    try {
+        const result = await (0, notifications_1.sendPushToUsers)([uid], "SplitCircle test notification", "Remote push is flowing through the backend, Expo, and your device registration.", {
+            type: "general",
+            source: "settings_test",
+        }, "general", undefined, "general");
+        if (result.acceptedCount === 0) {
+            throw new https_1.HttpsError("failed-precondition", "No eligible devices are currently registered for remote push delivery.", {
+                deliveryId: result.deliveryId,
+                status: result.status,
+                droppedCount: result.droppedCount,
+            });
+        }
+        return result;
     }
-    return result;
+    catch (error) {
+        if (error instanceof https_1.HttpsError) {
+            throw error;
+        }
+        logger.error("Failed to send test push notification", {
+            uid,
+            error: toSafeError(error),
+        });
+        throw new https_1.HttpsError("internal", error instanceof Error
+            ? error.message
+            : "Unexpected notification delivery failure.");
+    }
 });
 // ─────────────────────────────────────────────────────────────
 // Push Notifications — Chat Messages

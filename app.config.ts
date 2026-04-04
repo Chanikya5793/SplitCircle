@@ -140,7 +140,7 @@ const config = {
     'expo-secure-store',
     'expo-web-browser',
     'expo-sqlite',
-    ...(iosPushNotificationsEnabled ? ['expo-notifications'] : []),
+    'expo-notifications',
     'expo-audio',
     'expo-sharing',
     'expo-video',

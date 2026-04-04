@@ -158,6 +158,32 @@ export const NotificationSettingsScreen = () => {
     currentDevice?.registrationStatus === 'active' &&
     Boolean(pushToken);
 
+  const remoteTestBlockedReason = useMemo(() => {
+    if (permission.state === 'denied') {
+      return 'iPhone settings are currently blocking notifications for SplitCircle.';
+    }
+
+    if (!preferences.pushEnabled) {
+      return 'Enable notifications in SplitCircle before running a remote test.';
+    }
+
+    if (!currentDevice) {
+      return 'This device has not synced its registration record yet.';
+    }
+
+    if (!pushToken || currentDevice.registrationStatus !== 'active') {
+      return currentDevice.lastRegistrationError
+        ?? 'This device does not have an active Expo push token yet. Refresh this device first.';
+    }
+
+    return null;
+  }, [
+    currentDevice,
+    permission.state,
+    preferences.pushEnabled,
+    pushToken,
+  ]);
+
   const statusCard = useMemo(() => {
     if (permission.state === 'denied') {
       return {
@@ -275,6 +301,12 @@ export const NotificationSettingsScreen = () => {
 
   const handleRemoteTest = async () => {
     lightHaptic();
+
+    if (remoteTestBlockedReason) {
+      Alert.alert('Remote test unavailable', remoteTestBlockedReason);
+      return;
+    }
+
     setIsSendingRemoteTest(true);
 
     try {
@@ -302,6 +334,12 @@ export const NotificationSettingsScreen = () => {
       setIsSendingLocalTest(false);
     }
   };
+
+  const runtimeLabel = currentDevice
+    ? currentDevice.isPhysicalDevice
+      ? 'Physical device'
+      : 'Simulator or non-device runtime reported by Expo'
+    : 'Waiting for device diagnostics';
 
   return (
     <LiquidBackground>
@@ -376,11 +414,16 @@ export const NotificationSettingsScreen = () => {
                 void handleRemoteTest();
               }}
               loading={isSendingRemoteTest}
-              disabled={isSendingRemoteTest}
+              disabled={isSendingRemoteTest || Boolean(remoteTestBlockedReason)}
             >
               Send Remote Test
             </Button>
           </View>
+          {remoteTestBlockedReason ? (
+            <Text variant="bodySmall" style={[styles.inlineNotice, { color: noticeColor }]}>
+              {remoteTestBlockedReason}
+            </Text>
+          ) : null}
         </GlassView>
 
         <GlassView style={styles.sectionCard} contentStyle={styles.sectionContent}>
@@ -547,7 +590,7 @@ export const NotificationSettingsScreen = () => {
                 void handleRemoteTest();
               }}
               loading={isSendingRemoteTest}
-              disabled={isSendingRemoteTest}
+              disabled={isSendingRemoteTest || Boolean(remoteTestBlockedReason)}
             >
               Remote Test
             </Button>
@@ -575,6 +618,12 @@ export const NotificationSettingsScreen = () => {
             title="Registration status"
             description={deliveryStatusLabel}
             left={() => <List.Icon icon="radar" color={theme.colors.primary} />}
+          />
+          <Divider />
+          <List.Item
+            title="Device runtime"
+            description={runtimeLabel}
+            left={() => <List.Icon icon="cellphone-information" color={theme.colors.primary} />}
           />
           <Divider />
           <List.Item
