@@ -84,7 +84,7 @@ const config = {
     bundleIdentifier: 'com.splitcircle.app',
     backgroundColor: '#121212',
     entitlements: {
-      'aps-environment': 'development',
+      'aps-environment': 'production',
     },
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
