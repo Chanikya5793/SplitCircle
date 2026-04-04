@@ -79,6 +79,37 @@ export type NotificationRegistrationAttempt = {
   error: string | null;
 };
 
+const getFunctionErrorCode = (error: unknown): string => {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === 'string') {
+      return code;
+    }
+  }
+  return '';
+};
+
+const getFunctionErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message.trim();
+  }
+  return 'Unknown Firebase Functions error';
+};
+
+const normalizeCallableError = (functionName: string, error: unknown): Error => {
+  const code = getFunctionErrorCode(error);
+  const message = getFunctionErrorMessage(error);
+
+  if (code === 'functions/not-found' || code === 'not-found') {
+    return new Error(
+      `Cloud Function "${functionName}" was not found in the active Firebase project. ` +
+      `Deploy the latest Functions code, or point the app at the Firebase project where "${functionName}" exists.`,
+    );
+  }
+
+  return new Error(`${functionName} failed: ${message}`);
+};
+
 const getExpoProjectId = (): string | null => {
   const projectId =
     Constants.expoConfig?.extra?.eas?.projectId ??
@@ -341,30 +372,42 @@ export const syncCurrentDeviceRegistration = async (
 ): Promise<NotificationRegistrationAttempt> => {
   const attempt = await createNotificationRegistrationAttempt(options);
 
-  await syncNotificationDeviceCallable({
-    deviceId: attempt.deviceId,
-    platform: Platform.OS === 'ios' ? 'ios' : 'android',
-    expoPushToken: attempt.expoPushToken,
-    permissionState: attempt.permission.state,
-    projectId: attempt.projectId,
-    appVersion: getAppVersion(),
-    deviceName: Device.deviceName ?? null,
-    modelName: Device.modelName ?? null,
-    isPhysicalDevice: attempt.isPhysicalDevice,
-    lastRegistrationError: attempt.error,
-  });
+  try {
+    await syncNotificationDeviceCallable({
+      deviceId: attempt.deviceId,
+      platform: Platform.OS === 'ios' ? 'ios' : 'android',
+      expoPushToken: attempt.expoPushToken,
+      permissionState: attempt.permission.state,
+      projectId: attempt.projectId,
+      appVersion: getAppVersion(),
+      deviceName: Device.deviceName ?? null,
+      modelName: Device.modelName ?? null,
+      isPhysicalDevice: attempt.isPhysicalDevice,
+      lastRegistrationError: attempt.error,
+    });
+  } catch (error) {
+    throw normalizeCallableError('syncNotificationDevice', error);
+  }
 
   return attempt;
 };
 
 export const unregisterCurrentDevice = async (): Promise<void> => {
   const deviceId = await getOrCreateInstallationId();
-  await unregisterNotificationDeviceCallable({ deviceId });
+  try {
+    await unregisterNotificationDeviceCallable({ deviceId });
+  } catch (error) {
+    throw normalizeCallableError('unregisterNotificationDevice', error);
+  }
 };
 
 export const sendRemoteTestPush = async (): Promise<SendTestPushNotificationResponse> => {
-  const response = await sendTestPushNotificationCallable({});
-  return response.data;
+  try {
+    const response = await sendTestPushNotificationCallable({});
+    return response.data;
+  } catch (error) {
+    throw normalizeCallableError('sendTestPushNotification', error);
+  }
 };
 
 const normalizeDeviceRecord = (

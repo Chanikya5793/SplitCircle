@@ -134,7 +134,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
         const attempt = await syncCurrentDeviceRegistration(options);
         setPermission(attempt.permission);
       } catch (error) {
-        console.error('Failed to sync notification device registration', error);
+        console.warn('Failed to sync notification device registration', error);
       }
     },
     [user?.userId],
