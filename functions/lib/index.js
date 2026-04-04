@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.generateLiveKitToken = exports.triggerRecurringBillsForGroup = exports.runRecurringBillsScheduler = exports.onGroupUpdated = exports.onChatUpdated = exports.parseReceiptWithLLM = void 0;
+exports.generateLiveKitToken = exports.triggerRecurringBillsForGroup = exports.processNotificationReceipts = exports.runRecurringBillsScheduler = exports.onGroupUpdated = exports.onChatUpdated = exports.sendTestPushNotification = exports.unregisterNotificationDevice = exports.syncNotificationDevice = exports.parseReceiptWithLLM = void 0;
 const app_1 = require("firebase-admin/app");
 const auth_1 = require("firebase-admin/auth");
 const database_1 = require("firebase-admin/database");
@@ -103,6 +103,81 @@ const getAuthenticatedUid = async (authorizationHeader) => {
         return null;
     }
 };
+// ─────────────────────────────────────────────────────────────
+// Push Notifications — Device Registration and Diagnostics
+// ─────────────────────────────────────────────────────────────
+exports.syncNotificationDevice = (0, https_1.onCall)(async (request) => {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+    const uid = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid;
+    if (!uid) {
+        throw new https_1.HttpsError("unauthenticated", "Authentication required.");
+    }
+    const deviceId = getStringValue((_b = request.data) === null || _b === void 0 ? void 0 : _b.deviceId);
+    const platform = ((_c = request.data) === null || _c === void 0 ? void 0 : _c.platform) === "android" ? "android" : "ios";
+    const rawPermissionState = getStringValue((_d = request.data) === null || _d === void 0 ? void 0 : _d.permissionState);
+    const permissionState = rawPermissionState === "granted" ||
+        rawPermissionState === "provisional" ||
+        rawPermissionState === "ephemeral" ||
+        rawPermissionState === "denied"
+        ? rawPermissionState
+        : "undetermined";
+    if (!deviceId) {
+        throw new https_1.HttpsError("invalid-argument", "Missing required field: deviceId");
+    }
+    const result = await (0, notifications_1.syncNotificationDeviceRecord)(uid, {
+        deviceId,
+        platform,
+        expoPushToken: getStringValue((_e = request.data) === null || _e === void 0 ? void 0 : _e.expoPushToken) || null,
+        permissionState,
+        projectId: getStringValue((_f = request.data) === null || _f === void 0 ? void 0 : _f.projectId) || null,
+        appVersion: getStringValue((_g = request.data) === null || _g === void 0 ? void 0 : _g.appVersion) || null,
+        deviceName: getStringValue((_h = request.data) === null || _h === void 0 ? void 0 : _h.deviceName) || null,
+        modelName: getStringValue((_j = request.data) === null || _j === void 0 ? void 0 : _j.modelName) || null,
+        isPhysicalDevice: ((_k = request.data) === null || _k === void 0 ? void 0 : _k.isPhysicalDevice) === true,
+        lastRegistrationError: getStringValue((_l = request.data) === null || _l === void 0 ? void 0 : _l.lastRegistrationError) || null,
+    });
+    logger.info("Synced notification device", {
+        uid,
+        deviceId,
+        registrationStatus: result.registrationStatus,
+        platform,
+        permissionState,
+    });
+    return result;
+});
+exports.unregisterNotificationDevice = (0, https_1.onCall)(async (request) => {
+    var _a, _b;
+    const uid = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid;
+    if (!uid) {
+        throw new https_1.HttpsError("unauthenticated", "Authentication required.");
+    }
+    const deviceId = getStringValue((_b = request.data) === null || _b === void 0 ? void 0 : _b.deviceId);
+    if (!deviceId) {
+        throw new https_1.HttpsError("invalid-argument", "Missing required field: deviceId");
+    }
+    await (0, notifications_1.unregisterNotificationDeviceRecord)(uid, deviceId);
+    logger.info("Unregistered notification device", { uid, deviceId });
+    return { success: true };
+});
+exports.sendTestPushNotification = (0, https_1.onCall)(async (request) => {
+    var _a;
+    const uid = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid;
+    if (!uid) {
+        throw new https_1.HttpsError("unauthenticated", "Authentication required.");
+    }
+    const result = await (0, notifications_1.sendPushToUsers)([uid], "SplitCircle test notification", "Remote push is flowing through the backend, Expo, and your device registration.", {
+        type: "general",
+        source: "settings_test",
+    }, "general", undefined, "general");
+    if (result.acceptedCount === 0) {
+        throw new https_1.HttpsError("failed-precondition", "No eligible devices are currently registered for remote push delivery.", {
+            deliveryId: result.deliveryId,
+            status: result.status,
+            droppedCount: result.droppedCount,
+        });
+    }
+    return result;
+});
 // ─────────────────────────────────────────────────────────────
 // Push Notifications — Chat Messages
 // ─────────────────────────────────────────────────────────────
@@ -187,9 +262,14 @@ exports.onChatUpdated = (0, firestore_2.onDocumentUpdated)("chats/{chatId}", asy
         return;
     }
     try {
-        const sent = await (0, notifications_1.sendPushToUsers)(recipientIds, title, body, Object.assign(Object.assign({ type: "message", chatId }, (groupId ? { groupId } : {})), { senderId,
+        const dispatch = await (0, notifications_1.sendPushToUsers)(recipientIds, title, body, Object.assign(Object.assign({ type: "message", chatId }, (groupId ? { groupId } : {})), { senderId,
             senderName }), "messages", chatId, "messages");
-        logger.info(`Sent ${sent} message notification(s) for chat ${chatId}`);
+        logger.info("Queued message notifications", {
+            chatId,
+            deliveryId: dispatch.deliveryId,
+            acceptedCount: dispatch.acceptedCount,
+            targetedDeviceCount: dispatch.targetedDeviceCount,
+        });
     }
     catch (error) {
         logger.error("Failed to send message notifications", toSafeError(error));
@@ -232,12 +312,17 @@ exports.onGroupUpdated = (0, firestore_2.onDocumentUpdated)("groups/{groupId}", 
             const recipientIds = memberIds.filter((id) => id !== paidBy);
             if (recipientIds.length > 0) {
                 try {
-                    const sent = await (0, notifications_1.sendPushToUsers)(recipientIds, `💰 ${groupName}`, `${payerName} added "${description}" — ${currency} ${amount.toFixed(2)}`, {
+                    const dispatch = await (0, notifications_1.sendPushToUsers)(recipientIds, `💰 ${groupName}`, `${payerName} added "${description}" — ${currency} ${amount.toFixed(2)}`, {
                         type: "expense",
                         groupId,
                         expenseId: expense.expenseId,
                     }, "expenses", undefined, "expenses");
-                    logger.info(`Sent ${sent} expense notification(s) for group ${groupId}`);
+                    logger.info("Queued expense notifications", {
+                        groupId,
+                        deliveryId: dispatch.deliveryId,
+                        acceptedCount: dispatch.acceptedCount,
+                        targetedDeviceCount: dispatch.targetedDeviceCount,
+                    });
                 }
                 catch (error) {
                     logger.error("Failed to send expense notification", toSafeError(error));
@@ -268,12 +353,17 @@ exports.onGroupUpdated = (0, firestore_2.onDocumentUpdated)("groups/{groupId}", 
             }
             // Notify the person being paid
             try {
-                const sent = await (0, notifications_1.sendPushToUsers)([toUserId], `🤝 ${groupName}`, `${fromName} settled ${currency} ${amount.toFixed(2)} with you`, {
+                const dispatch = await (0, notifications_1.sendPushToUsers)([toUserId], `🤝 ${groupName}`, `${fromName} settled ${currency} ${amount.toFixed(2)} with you`, {
                     type: "settlement",
                     groupId,
                     settlementId: settlement.settlementId,
                 }, "settlements", undefined, "expenses");
-                logger.info(`Sent ${sent} settlement notification(s) for group ${groupId}`);
+                logger.info("Queued settlement notifications", {
+                    groupId,
+                    deliveryId: dispatch.deliveryId,
+                    acceptedCount: dispatch.acceptedCount,
+                    targetedDeviceCount: dispatch.targetedDeviceCount,
+                });
             }
             catch (error) {
                 logger.error("Failed to send settlement notification", toSafeError(error));
@@ -298,11 +388,16 @@ exports.onGroupUpdated = (0, firestore_2.onDocumentUpdated)("groups/{groupId}", 
             const existingMembers = beforeMemberIds;
             if (existingMembers.length > 0) {
                 try {
-                    const sent = await (0, notifications_1.sendPushToUsers)(existingMembers, `👋 ${groupName}`, `${memberName} joined the group`, {
+                    const dispatch = await (0, notifications_1.sendPushToUsers)(existingMembers, `👋 ${groupName}`, `${memberName} joined the group`, {
                         type: "group_join",
                         groupId,
                     }, "groupUpdates", undefined, "groups");
-                    logger.info(`Sent ${sent} group join notification(s) for group ${groupId}`);
+                    logger.info("Queued group-join notifications", {
+                        groupId,
+                        deliveryId: dispatch.deliveryId,
+                        acceptedCount: dispatch.acceptedCount,
+                        targetedDeviceCount: dispatch.targetedDeviceCount,
+                    });
                 }
                 catch (error) {
                     logger.error("Failed to send group join notification", toSafeError(error));
@@ -321,6 +416,16 @@ exports.runRecurringBillsScheduler = (0, scheduler_1.onSchedule)("every 15 minut
     }
     catch (error) {
         logger.error("Recurring bills scheduler failed", toSafeError(error));
+        throw error;
+    }
+});
+exports.processNotificationReceipts = (0, scheduler_1.onSchedule)("every 10 minutes", async () => {
+    try {
+        const result = await (0, notifications_1.processPendingNotificationReceipts)();
+        logger.info("Processed pending notification receipts", result);
+    }
+    catch (error) {
+        logger.error("Failed to process notification receipts", toSafeError(error));
         throw error;
     }
 });

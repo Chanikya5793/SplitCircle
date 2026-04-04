@@ -58,6 +58,7 @@ const google: GoogleEnv = {
 };
 
 const googleMapsApiKey = readEnv(['EXPO_PUBLIC_GOOGLE_MAPS_API_KEY'], { optional: true });
+const iosPushNotificationsEnabled = process.env.EXPO_PUBLIC_IOS_PUSH_NOTIFICATIONS === 'true';
 
 const config = {
   name: 'SplitCircle',
@@ -82,13 +83,17 @@ const config = {
     supportsTablet: true,
     bundleIdentifier: 'com.splitcircle.app',
     backgroundColor: '#121212',
-    entitlements: {
-      'aps-environment': 'development',
-    },
+    ...(iosPushNotificationsEnabled
+      ? {
+          entitlements: {
+            'aps-environment': 'development',
+          },
+        }
+      : {}),
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
-      UIBackgroundModes: ['fetch', 'remote-notification'],
+      UIBackgroundModes: iosPushNotificationsEnabled ? ['fetch', 'remote-notification'] : ['fetch'],
     },
   },
   android: {
@@ -135,7 +140,7 @@ const config = {
     'expo-secure-store',
     'expo-web-browser',
     'expo-sqlite',
-    'expo-notifications',
+    ...(iosPushNotificationsEnabled ? ['expo-notifications'] : []),
     'expo-audio',
     'expo-sharing',
     'expo-video',

@@ -1,7 +1,9 @@
-import Constants from 'expo-constants';
-import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import {
+  getNotificationPermissionSnapshot,
+  requestNotificationPermissionSnapshot,
+} from '@/services/notificationService';
 
 // ─────────────────────────────────────────────────────────────
 // Notification Channels (Android)
@@ -111,88 +113,26 @@ export const setupNotificationChannels = async (): Promise<void> => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// Push Token Registration
-// ─────────────────────────────────────────────────────────────
-
-const getExpoProjectId = (): string | null => {
-  const projectId =
-    Constants.expoConfig?.extra?.eas?.projectId ??
-    Constants.easConfig?.projectId ??
-    null;
-
-  return typeof projectId === 'string' && projectId.trim().length > 0
-    ? projectId.trim()
-    : null;
-};
-
-export const registerForPushNotificationsAsync = async (): Promise<string | null> => {
-  if (Platform.OS === 'web') {
-    return null;
-  }
-
-  if (!Device.isDevice) {
-    console.log('[Notifications] Running on simulator — push notifications are not supported.');
-    return null;
-  }
-
-  try {
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-
-    if (finalStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
-
-    if (finalStatus !== 'granted') {
-      console.log('[Notifications] Permission not granted.');
-      return null;
-    }
-
-    const projectId = getExpoProjectId();
-    if (!projectId) {
-      console.warn('[Notifications] EAS projectId is missing; cannot register push token.');
-      return null;
-    }
-
-    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-
-    // Set up Android notification channels
-    await setupNotificationChannels();
-
-    return tokenData.data;
-  } catch (error: any) {
-    // Gracefully handle entitlement / provisioning errors (e.g. missing aps-environment)
-    const message = error?.message ?? String(error);
-    if (
-      message.includes('aps-environment') ||
-      message.includes('entitlement') ||
-      message.includes('APNS')
-    ) {
-      console.warn(
-        '[Notifications] Push notifications are not available — missing aps-environment entitlement.\n' +
-        'Ensure the entitlements file includes aps-environment and the app is code-signed with a push-capable profile.\n' +
-        'Push notifications will be disabled for this session.',
-      );
-    } else {
-      console.warn('[Notifications] Failed to register push token:', message);
-    }
-    return null;
-  }
-};
-
-// ─────────────────────────────────────────────────────────────
 // Permission Helpers
 // ─────────────────────────────────────────────────────────────
 
 export const getNotificationPermissionStatus = async (): Promise<Notifications.PermissionStatus> => {
-  const { status } = await Notifications.getPermissionsAsync();
-  return status;
+  const snapshot = await getNotificationPermissionSnapshot();
+  switch (snapshot.state) {
+    case 'granted':
+    case 'provisional':
+    case 'ephemeral':
+      return 'granted' as Notifications.PermissionStatus;
+    case 'denied':
+      return 'denied' as Notifications.PermissionStatus;
+    default:
+      return 'undetermined' as Notifications.PermissionStatus;
+  }
 };
 
 export const requestNotificationPermission = async (): Promise<boolean> => {
-  const { status } = await Notifications.requestPermissionsAsync();
-  return status === 'granted';
+  const snapshot = await requestNotificationPermissionSnapshot();
+  return snapshot.granted;
 };
 
 // ─────────────────────────────────────────────────────────────
