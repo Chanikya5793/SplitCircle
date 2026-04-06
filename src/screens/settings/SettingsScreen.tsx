@@ -4,12 +4,23 @@ import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
+import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
+import {
+    getStrictReviewMode,
+    getUseAIForReceipts,
+    listLearningMerchants,
+    resetLearningForMerchant,
+    setStrictReviewMode,
+    setUseAIForReceipts,
+    type LearningMerchantSummary,
+} from '@/services/receiptLearningService';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useLayoutEffect, useRef } from 'react';
-import { Animated, StyleSheet, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Alert, Animated, StyleSheet, View } from 'react-native';
 import { Button, Divider, List, Switch, Text } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export const SettingsScreen = () => {
   const navigation = useNavigation();
@@ -18,6 +29,10 @@ export const SettingsScreen = () => {
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
   const bottomPadding = getFloatingTabBarContentPadding(insets.bottom, 20);
+  const [strictReviewMode, setStrictReviewModeState] = useState(false);
+  const [useAIForReceipts, setUseAIForReceiptsState] = useState(true);
+  const [merchantLearning, setMerchantLearning] = useState<LearningMerchantSummary[]>([]);
+  useSyncRootStackTitle(ROOT_SCREEN_TITLES.settings);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -40,6 +55,51 @@ export const SettingsScreen = () => {
   const handleSignOut = () => {
     lightHaptic();
     signOutUser();
+  };
+
+  const loadReceiptLearningSettings = async () => {
+    const [strictMode, useAI, merchants] = await Promise.all([
+      getStrictReviewMode(),
+      getUseAIForReceipts(),
+      listLearningMerchants(),
+    ]);
+    setStrictReviewModeState(strictMode);
+    setUseAIForReceiptsState(useAI);
+    setMerchantLearning(merchants);
+  };
+
+  useEffect(() => {
+    void loadReceiptLearningSettings();
+  }, []);
+
+  const handleToggleStrictReviewMode = async (enabled: boolean) => {
+    selectionHaptic();
+    setStrictReviewModeState(enabled);
+    await setStrictReviewMode(enabled);
+  };
+
+  const handleToggleUseAI = async (enabled: boolean) => {
+    selectionHaptic();
+    setUseAIForReceiptsState(enabled);
+    await setUseAIForReceipts(enabled);
+  };
+
+  const handleResetMerchantLearning = (merchant: LearningMerchantSummary) => {
+    Alert.alert(
+      'Reset Receipt Learning',
+      `Clear local scan-learning memory for ${merchant.label}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            await resetLearningForMerchant(merchant.key);
+            await loadReceiptLearningSettings();
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -79,9 +139,61 @@ export const SettingsScreen = () => {
               right={() => <Switch value={isDark} onValueChange={handleToggleTheme} />}
             />
             <Divider />
-            <List.Item title="Push notifications" description="Managed automatically via device settings" left={() => <List.Icon icon="bell" />} />
+            <List.Item
+              title="AI Receipt Parsing"
+              description="Use AI APIs to drastically improve OCR accuracy."
+              left={() => <List.Icon icon="robot-outline" />}
+              right={() => <Switch value={useAIForReceipts} onValueChange={handleToggleUseAI} />}
+            />
+            <Divider />
+            <List.Item
+              title="Strict Receipt Review"
+              description="Block confirmation until low-confidence rows are reviewed"
+              left={() => <List.Icon icon="shield-lock-outline" />}
+              right={() => <Switch value={strictReviewMode} onValueChange={handleToggleStrictReviewMode} />}
+            />
+            <Divider />
+            <List.Item
+              title="Notifications"
+              description="Messages, expenses, sounds & more"
+              left={() => <List.Icon icon="bell" />}
+              right={() => <List.Icon icon="chevron-right" />}
+              onPress={() => {
+                lightHaptic();
+                (navigation as any).navigate('NotificationSettings', { backTitle: ROOT_SCREEN_TITLES.settings });
+              }}
+            />
             <Divider />
             <List.Item title="Offline sync" description="Enabled" left={() => <List.Icon icon="cloud-sync" />} />
+          </List.Section>
+        </GlassView>
+
+        <GlassView style={styles.settingsList}>
+          <List.Section>
+            <List.Subheader>Receipt Learning (On Device)</List.Subheader>
+            {merchantLearning.length === 0 ? (
+              <List.Item
+                title="No learned merchants yet"
+                description="As you correct scanned receipts, local memory will appear here"
+                left={() => <List.Icon icon="brain" />}
+              />
+            ) : (
+              merchantLearning.map((merchant, index) => (
+                <View key={merchant.key}>
+                  {index > 0 ? <Divider /> : null}
+                  <List.Item
+                    title={merchant.label}
+                    description={`Corrections: ${merchant.correctionCount} • Drops: ${merchant.droppedCount}`}
+                    left={() => <List.Icon icon="store-cog-outline" />}
+                    right={() => (
+                      <Button mode="text" onPress={() => handleResetMerchantLearning(merchant)}>
+                        Reset
+                      </Button>
+                    )}
+                  />
+                </View>
+              ))
+            )}
           </List.Section>
         </GlassView>
       </Animated.ScrollView>
@@ -125,5 +237,6 @@ const styles = StyleSheet.create({
   settingsList: {
     borderRadius: 24,
     overflow: 'hidden',
+    marginBottom: 16,
   },
 });

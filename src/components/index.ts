@@ -8,8 +8,8 @@ export * from './IncomingCallModal';
 export * from './LoadingOverlay';
 export * from './MessageBubble';
 export * from './OfflineBanner';
+export * from './PrimaryButton';
 export * from './ProfilePhotoUploader';
 export * from './SkeletonLoader';
 export * from './SwipeableExpenseCard';
 export * from './SwipeableGroupCard';
-

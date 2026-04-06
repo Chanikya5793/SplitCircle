@@ -1,0 +1,85 @@
+[
+  {
+    "name": "merchant_and_footer_noise",
+    "observations": [
+      { "text": "WHOLE FOODS MARKET", "rect": [0.18, 0.90, 0.62, 0.04] },
+      { "text": "Austin TX 78701", "rect": [0.30, 0.86, 0.40, 0.025] },
+      { "text": "BANANAS", "rect": [0.10, 0.68, 0.25, 0.03] },
+      { "text": "1.56", "rect": [0.86, 0.68, 0.08, 0.03] },
+      { "text": "MILK", "rect": [0.10, 0.63, 0.18, 0.03] },
+      { "text": "4.29", "rect": [0.86, 0.63, 0.08, 0.03] },
+      { "text": "SUBTOTAL", "rect": [0.58, 0.46, 0.20, 0.03] },
+      { "text": "5.85", "rect": [0.86, 0.46, 0.08, 0.03] },
+      { "text": "TAX", "rect": [0.70, 0.42, 0.08, 0.03] },
+      { "text": "0.47", "rect": [0.86, 0.42, 0.08, 0.03] },
+      { "text": "TOTAL", "rect": [0.67, 0.37, 0.11, 0.03] },
+      { "text": "6.32", "rect": [0.86, 0.37, 0.08, 0.03] },
+      { "text": "VISA", "rect": [0.74, 0.30, 0.10, 0.02] },
+      { "text": "6.32", "rect": [0.86, 0.30, 0.08, 0.02] },
+      { "text": "THANK YOU", "rect": [0.35, 0.18, 0.30, 0.02] }
+    ],
+    "expect": {
+      "merchant": "WHOLE FOODS MARKET",
+      "merchantConfidenceAtLeast": 0.35,
+      "itemCount": 2,
+      "itemNames": ["BANANAS", "MILK"],
+      "absentItemNames": ["VISA", "THANK YOU"],
+      "subtotal": 5.85,
+      "tax": 0.47,
+      "total": 6.32
+    }
+  },
+  {
+    "name": "discount_line_not_item",
+    "observations": [
+      { "text": "COSTCO", "rect": [0.31, 0.91, 0.28, 0.045] },
+      { "text": "PIZZA", "rect": [0.10, 0.70, 0.20, 0.03] },
+      { "text": "9.99", "rect": [0.86, 0.70, 0.08, 0.03] },
+      { "text": "SODA", "rect": [0.10, 0.65, 0.18, 0.03] },
+      { "text": "1.99", "rect": [0.86, 0.65, 0.08, 0.03] },
+      { "text": "COUPON", "rect": [0.10, 0.60, 0.20, 0.03] },
+      { "text": "1.50", "rect": [0.86, 0.60, 0.08, 0.03] },
+      { "text": "ITEM COUNT 2", "rect": [0.60, 0.54, 0.24, 0.025] },
+      { "text": "SUBTOTAL", "rect": [0.58, 0.46, 0.20, 0.03] },
+      { "text": "11.98", "rect": [0.84, 0.46, 0.10, 0.03] },
+      { "text": "TAX", "rect": [0.70, 0.42, 0.08, 0.03] },
+      { "text": "0.97", "rect": [0.84, 0.42, 0.10, 0.03] },
+      { "text": "TOTAL", "rect": [0.67, 0.37, 0.11, 0.03] },
+      { "text": "12.95", "rect": [0.84, 0.37, 0.10, 0.03] }
+    ],
+    "expect": {
+      "merchant": "COSTCO",
+      "merchantConfidenceAtLeast": 0.35,
+      "itemCount": 2,
+      "itemNames": ["PIZZA", "SODA"],
+      "absentItemNames": ["COUPON"],
+      "subtotal": 11.98,
+      "tax": 0.97,
+      "total": 12.95
+    }
+  },
+  {
+    "name": "header_pass_recovers_merchant",
+    "observations": [
+      { "text": "WELCOME TO", "rect": [0.33, 0.92, 0.25, 0.03] },
+      { "text": "store # 1234", "rect": [0.34, 0.88, 0.22, 0.025] },
+      { "text": "TARGET", "rect": [0.37, 0.84, 0.18, 0.04] },
+      { "text": "APPLE JUICE", "rect": [0.10, 0.68, 0.25, 0.03] },
+      { "text": "3.49", "rect": [0.86, 0.68, 0.08, 0.03] },
+      { "text": "BREAD", "rect": [0.10, 0.63, 0.18, 0.03] },
+      { "text": "2.19", "rect": [0.86, 0.63, 0.08, 0.03] },
+      { "text": "TOTAL", "rect": [0.67, 0.37, 0.11, 0.03] },
+      { "text": "5.68", "rect": [0.86, 0.37, 0.08, 0.03] }
+    ],
+    "headerObservations": [
+      { "text": "TARGET", "rect": [0.37, 0.84, 0.18, 0.04] }
+    ],
+    "expect": {
+      "merchant": "TARGET",
+      "merchantConfidenceAtLeast": 0.35,
+      "itemCount": 2,
+      "itemNames": ["APPLE JUICE", "BREAD"],
+      "total": 5.68
+    }
+  }
+]

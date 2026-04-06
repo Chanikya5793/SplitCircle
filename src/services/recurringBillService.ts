@@ -273,6 +273,16 @@ export const generateExpenseFromBill = (bill: RecurringBill, occurrenceAt: numbe
         paidBy: bill.paidBy,
         splitType: 'custom',
         participants: bill.participants,
+        splitMetadata: {
+            version: 1,
+            method: 'exact',
+            participantConfig: bill.participants.map((participant) => ({
+                userId: participant.userId,
+                included: true,
+                exactAmount: participant.share,
+                computedAmount: participant.share,
+            })),
+        },
         settled: false,
         notes: `Auto-generated from recurring bill (${new Date(occurrenceAt).toISOString().slice(0, 10)})`,
         recurring: {

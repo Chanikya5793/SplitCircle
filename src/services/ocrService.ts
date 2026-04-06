@@ -7,14 +7,19 @@
 
 import { getAuth } from 'firebase/auth';
 
+
 export interface OCRResult {
     success: boolean;
     extractedText?: string;
     parsedData?: {
-        total?: number;
-        date?: string;
-        title?: string;
-        items?: { name: string; price: number }[];
+        total?: number | null;
+        subtotal?: number | null;
+        tax?: number | null;
+        tip?: number | null;
+        date?: string | null;
+        title?: string | null;
+        merchantName?: string | null;
+        items?: { name: string; price: number; quantity?: number }[];
     };
     error?: string;
 }
@@ -169,7 +174,7 @@ export const extractReceiptData = async (imageUri: string): Promise<OCRResult> =
  * Parse receipt text to extract structured data
  */
 const parseReceiptText = (text: string): OCRResult['parsedData'] => {
-    const result: OCRResult['parsedData'] = {};
+    const result: OCRResult['parsedData'] = { items: [] };
 
     // Extract total amount
     for (const pattern of TOTAL_PATTERNS) {
@@ -209,6 +214,40 @@ const parseReceiptText = (text: string): OCRResult['parsedData'] => {
     const lines = text.split('\n').filter((line) => line.trim().length > 0);
     if (lines.length > 0) {
         result.title = lines[0].trim().slice(0, 50);
+    }
+
+    // Extract line items — lines with a price pattern that aren't summary lines
+    const summaryKeywords = [
+        'subtotal', 'sub total', 'total', 'tax', 'tip', 'gratuity',
+        'change', 'cash', 'credit', 'debit', 'visa', 'mastercard',
+        'balance', 'amount due', 'amount paid', 'tendered', 'thank',
+        'receipt', 'invoice', 'card ending', 'approval', 'auth',
+    ];
+    const priceRegex = /\$?\s*(\d+\.\d{2})/;
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        const lower = trimmed.toLowerCase();
+
+        // Skip empty or summary lines
+        if (trimmed.length < 3) continue;
+        if (summaryKeywords.some((kw) => lower.includes(kw))) continue;
+
+        const priceMatch = trimmed.match(priceRegex);
+        if (priceMatch && priceMatch[1]) {
+            const price = parseFloat(priceMatch[1]);
+            if (isNaN(price) || price <= 0) continue;
+
+            // Extract item name by removing the price portion
+            let itemName = trimmed
+                .replace(/\$?\s*\d+\.\d{2}/, '')
+                .replace(/^[\s.\-:]+|[\s.\-:]+$/g, '')
+                .trim();
+
+            if (itemName.length >= 2) {
+                result.items!.push({ name: itemName, price });
+            }
+        }
     }
 
     return result;
@@ -253,4 +292,63 @@ export const inferCategoryFromText = (text: string): string => {
     }
 
     return 'General';
+};
+
+/**
+ * Parse receipt text using a server-side AI proxy.
+ *
+ * The Gemini API key lives only in Firebase Functions Secret Manager.
+ * This function sends the raw OCR text to the authenticated Cloud Function
+ * which performs the LLM call and returns structured data.
+ */
+export const parseStructuredReceiptWithAI = async (rawText: string): Promise<OCRResult> => {
+    try {
+        const proxyEndpoint = process.env.EXPO_PUBLIC_GEMINI_PROXY_ENDPOINT?.trim()
+            ?? OCR_PROXY_ENDPOINT;
+
+        if (!proxyEndpoint) {
+            throw new Error('AI parsing endpoint is not configured.');
+        }
+
+        const currentUser = getAuth().currentUser;
+        if (!currentUser) {
+            throw new Error('You must be signed in to use AI receipt parsing.');
+        }
+
+        const idToken = await currentUser.getIdToken();
+
+        const response = await fetch(proxyEndpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'Authorization': `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({ rawText }),
+        });
+
+        if (!response.ok) {
+            const errBody = await response.text().catch(() => '');
+            throw new Error(`AI proxy error: ${response.status} ${errBody}`);
+        }
+
+        const data = await response.json();
+
+        if (!data?.success || !data?.parsedData) {
+            throw new Error('AI proxy returned an invalid response.');
+        }
+
+        return {
+            success: true,
+            extractedText: rawText,
+            parsedData: data.parsedData,
+        };
+    } catch (error) {
+        console.error('AI Parsing Error:', error);
+        return {
+            success: false,
+            extractedText: rawText,
+            error: error instanceof Error ? error.message : 'Unknown error during AI breakdown',
+        };
+    }
 };

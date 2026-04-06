@@ -1,10 +1,12 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { PrimaryButton } from '@/components/PrimaryButton';
 import { ROUTES } from '@/constants';
-import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { getExpenseDetailsTitle } from '@/navigation/screenTitles';
 import { formatCurrency } from '@/utils/currency';
+import { getExpenseSplitDetails } from '@/utils/expenseSplit';
 import { useNavigation } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -35,17 +37,19 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   const navigation = useNavigation<any>();
   const { groupId, expenseId } = route.params;
   const { groups, deleteExpense, updateExpense } = useGroups();
-  const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const group = groups.find((g) => g.groupId === groupId);
+  const expense = group?.expenses.find((e) => e.expenseId === expenseId);
 
   useLayoutEffect(() => {
     navigation.setOptions({
+      title: getExpenseDetailsTitle(expense?.title),
       headerTitle: '',
       headerTransparent: true,
       headerTintColor: theme.colors.primary,
     });
-  }, [navigation, theme.colors.primary]);
+  }, [navigation, theme.colors.primary, expense?.title]);
 
   useLayoutEffect(() => {
     const grp = groups.find((g) => g.groupId === groupId);
@@ -59,9 +63,6 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
-
-  const group = groups.find((g) => g.groupId === groupId);
-  const expense = group?.expenses.find((e) => e.expenseId === expenseId);
 
   const [note, setNote] = useState(expense?.notes || '');
   const [isEditingNote, setIsEditingNote] = useState(false);
@@ -90,9 +91,9 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
     }
   };
 
-  const handleSaveNote = async () => {
+  const handleSaveNote = async (requestId: string) => {
     try {
-      await updateExpense(groupId, { ...expense, notes: note });
+      await updateExpense(groupId, { ...expense, notes: note }, undefined, undefined, requestId);
       setIsEditingNote(false);
     } catch (error) {
       Alert.alert('Error', 'Failed to save note');
@@ -104,6 +105,10 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   };
 
   const payerName = memberMap[expense.paidBy] || 'Unknown';
+  const splitDetails = useMemo(
+    () => getExpenseSplitDetails(expense, memberMap, group.currency),
+    [expense, group.currency, memberMap],
+  );
 
   return (
     <LiquidBackground>
@@ -136,7 +141,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
           </View>
 
           <Text style={[styles.meta, { color: theme.colors.onSurfaceVariant }]}>
-            Added by {payerName} on {new Date(expense.createdAt).toLocaleDateString()}
+            Paid by {payerName} on {new Date(expense.createdAt).toLocaleDateString()}
           </Text>
 
           {expense.recurring && (
@@ -172,6 +177,53 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             </View>
           )}
 
+          {/* Receipt Items Section (from itemized split / scan) */}
+          {expense.splitMetadata?.method === 'itemized' && expense.splitMetadata.receiptItems && expense.splitMetadata.receiptItems.length > 0 && (
+            <>
+              <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
+              <View style={styles.section}>
+                <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+                  Scanned Items
+                </Text>
+                {expense.splitMetadata.receiptItems.map((item, index) => (
+                  <View key={item.id || index} style={styles.receiptItemRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+                        {item.name}
+                      </Text>
+                      {item.assignedTo && item.assignedTo.length > 0 && (
+                        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                          {item.assignedTo.map((uid) => memberMap[uid] || 'Unknown').join(', ')}
+                        </Text>
+                      )}
+                    </View>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                      {formatCurrency(item.price, group.currency)}
+                    </Text>
+                  </View>
+                ))}
+
+                {(expense.splitMetadata.taxAmount != null && expense.splitMetadata.taxAmount > 0) && (
+                  <View style={styles.receiptItemRow}>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>Tax</Text>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                      {formatCurrency(expense.splitMetadata.taxAmount, group.currency)}
+                    </Text>
+                  </View>
+                )}
+
+                {(expense.splitMetadata.tipAmount != null && expense.splitMetadata.tipAmount > 0) && (
+                  <View style={styles.receiptItemRow}>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>Tip</Text>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                      {formatCurrency(expense.splitMetadata.tipAmount, group.currency)}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </>
+          )}
+
           <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
 
           <View style={styles.section}>
@@ -184,6 +236,36 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
                 {formatCurrency(expense.amount, group.currency)}
               </Text>
             </View>
+          </View>
+
+          <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
+
+          <View style={styles.section}>
+            <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+              Split mode
+            </Text>
+            <View style={styles.splitModeHeader}>
+              <Chip
+                icon="tune-variant"
+                style={{ backgroundColor: theme.colors.secondaryContainer }}
+                textStyle={{ color: theme.colors.onSecondaryContainer }}
+              >
+                {splitDetails.label}
+              </Chip>
+            </View>
+            <Text variant="bodySmall" style={[styles.splitModeNote, { color: theme.colors.onSurfaceVariant }]}>
+              {splitDetails.note}
+            </Text>
+            {splitDetails.rows.map((row) => (
+              <View key={`${row.label}-${row.value}`} style={styles.row}>
+                <Text variant="bodyMedium" style={[styles.detailLabel, { color: theme.colors.onSurfaceVariant }]}>
+                  {row.label}
+                </Text>
+                <Text variant="bodyMedium" style={[styles.detailValue, { color: theme.colors.onSurface }]}>
+                  {row.value}
+                </Text>
+              </View>
+            ))}
           </View>
 
           <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
@@ -228,9 +310,14 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
                 />
                 <View style={styles.noteActions}>
                   <Button onPress={() => setIsEditingNote(false)}>Cancel</Button>
-                  <Button mode="contained" onPress={handleSaveNote}>
+                  <PrimaryButton
+                    onPress={handleSaveNote}
+                    requestKey={`expense-note-${expenseId}`}
+                    loadingMessage="Saving note..."
+                    showGlobalOverlay
+                  >
                     Save
-                  </Button>
+                  </PrimaryButton>
                 </View>
               </View>
             ) : (
@@ -334,11 +421,26 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     fontWeight: '600',
   },
+  splitModeHeader: {
+    marginBottom: 10,
+  },
+  splitModeNote: {
+    marginBottom: 12,
+    lineHeight: 18,
+  },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 8,
     alignItems: 'center',
+    gap: 16,
+  },
+  detailLabel: {
+    flex: 1,
+  },
+  detailValue: {
+    flex: 1,
+    textAlign: 'right',
   },
   noteActions: {
     flexDirection: 'row',
@@ -361,6 +463,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: 8,
     padding: 8,
+  },
+  receiptItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    gap: 16,
   },
   modalContainer: {
     flex: 1,

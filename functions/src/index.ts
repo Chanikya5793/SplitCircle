@@ -5,9 +5,19 @@ import { getFirestore } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
 import { defineSecret } from "firebase-functions/params";
 import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
+import { onValueCreated } from "firebase-functions/v2/database";
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { AccessToken } from "livekit-server-sdk";
 import { processAllDueRecurringBills, processGroupDueRecurringBills } from "./recurringBills";
+import {
+    processPendingNotificationReceipts,
+    sendPushToUsers,
+    syncNotificationDeviceRecord,
+    unregisterNotificationDeviceRecord,
+    type NotificationPermissionState,
+} from "./notifications";
+export { parseReceiptWithLLM } from "./parseReceiptWithLLM";
 
 initializeApp();
 
@@ -19,12 +29,23 @@ type SecretLike = {
     value: () => string;
 };
 
-
-
 type MaybeCall = {
     chatId?: string;
     status?: string;
+    type?: string;
+    initiatorId?: string;
+    groupId?: string;
+    startedAt?: number;
     allowedUserIds?: Record<string, boolean>;
+    participants?: Record<string, MaybeCallParticipant> | MaybeCallParticipant[];
+};
+
+type MaybeCallParticipant = {
+    userId?: string;
+    displayName?: string;
+    photoURL?: string;
+    muted?: boolean;
+    cameraEnabled?: boolean;
 };
 
 type SafeErrorPayload = {
@@ -34,6 +55,33 @@ type SafeErrorPayload = {
 
 const getStringValue = (input: unknown): string => {
     return typeof input === "string" ? input.trim() : "";
+};
+
+const truncate = (input: string, maxLength: number): string => {
+    const compact = input.replace(/\s+/g, " ").trim();
+    if (compact.length <= maxLength) {
+        return compact;
+    }
+    return `${compact.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+};
+
+const getAllowedUserIds = (allowedUserIds: Record<string, boolean> | undefined): string[] =>
+    Object.entries(allowedUserIds ?? {})
+        .filter(([, allowed]) => allowed === true)
+        .map(([userId]) => userId);
+
+const normalizeCallParticipants = (
+    input: Record<string, MaybeCallParticipant> | MaybeCallParticipant[] | undefined,
+): MaybeCallParticipant[] => {
+    if (!input) {
+        return [];
+    }
+
+    if (Array.isArray(input)) {
+        return input;
+    }
+
+    return Object.values(input);
 };
 
 const sanitizeParticipantName = (rawName: string, fallback: string): string => {
@@ -81,6 +129,635 @@ const getAuthenticatedUid = async (authorizationHeader: string | undefined): Pro
     }
 };
 
+const describeMessagePreview = (messageType: string, content: string): string => {
+    switch (messageType) {
+        case "image":
+            return "sent a photo";
+        case "video":
+            return "sent a video";
+        case "audio":
+            return "sent an audio message";
+        case "file":
+            return "shared a file";
+        case "location":
+            return "shared a location";
+        default:
+            return truncate(content || "sent a message", 110);
+    }
+};
+
+const buildMessageNotificationCopy = (params: {
+    senderName: string;
+    groupName?: string;
+    messageType: string;
+    content: string;
+}): { title: string; subtitle?: string; body: string } => {
+    const preview = describeMessagePreview(params.messageType, params.content);
+
+    if (params.groupName) {
+        return {
+            title: params.groupName,
+            subtitle: params.senderName,
+            body: preview,
+        };
+    }
+
+    return {
+        title: params.senderName,
+        body: preview,
+    };
+};
+
+const buildExpenseNotificationCopy = (params: {
+    groupName: string;
+    payerName: string;
+    description: string;
+    currency: string;
+    amount: number;
+}): { title: string; subtitle: string; body: string } => ({
+    title: params.groupName,
+    subtitle: `${params.currency} ${params.amount.toFixed(2)}`,
+    body: `${params.payerName} added "${truncate(params.description || "New expense", 60)}"`,
+});
+
+const buildSettlementNotificationCopy = (params: {
+    groupName: string;
+    fromName: string;
+    currency: string;
+    amount: number;
+}): { title: string; subtitle: string; body: string } => ({
+    title: params.groupName,
+    subtitle: "Settlement update",
+    body: `${params.fromName} settled ${params.currency} ${params.amount.toFixed(2)} with you`,
+});
+
+const buildGroupJoinNotificationCopy = (params: {
+    groupName: string;
+    memberName: string;
+}): { title: string; subtitle: string; body: string } => ({
+    title: params.groupName,
+    subtitle: "Group update",
+    body: `${params.memberName} joined the group`,
+});
+
+const buildIncomingCallNotificationCopy = (params: {
+    callerName: string;
+    callType: "audio" | "video";
+    conversationName?: string;
+    participantCount: number;
+}): { title: string; subtitle: string; body: string } => {
+    const typeLabel = params.callType === "video" ? "Video call" : "Audio call";
+    const isGroup = params.participantCount > 2 || Boolean(params.conversationName);
+
+    if (isGroup && params.conversationName) {
+        return {
+            title: `Incoming ${typeLabel.toLowerCase()}`,
+            subtitle: params.conversationName,
+            body: `${params.callerName} started a group ${params.callType} call`,
+        };
+    }
+
+    return {
+        title: `${params.callerName} is calling`,
+        subtitle: typeLabel,
+        body: `Tap to join the ${params.callType} call in SplitCircle.`,
+    };
+};
+
+// ─────────────────────────────────────────────────────────────
+// Push Notifications — Device Registration and Diagnostics
+// ─────────────────────────────────────────────────────────────
+
+export const syncNotificationDevice = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const deviceId = getStringValue(request.data?.deviceId);
+    const platform = request.data?.platform === "android" ? "android" : "ios";
+    const rawPermissionState = getStringValue(request.data?.permissionState) as NotificationPermissionState;
+    const permissionState: NotificationPermissionState =
+        rawPermissionState === "granted" ||
+            rawPermissionState === "provisional" ||
+            rawPermissionState === "ephemeral" ||
+            rawPermissionState === "denied"
+            ? rawPermissionState
+            : "undetermined";
+
+    if (!deviceId) {
+        throw new HttpsError("invalid-argument", "Missing required field: deviceId");
+    }
+
+    const result = await syncNotificationDeviceRecord(uid, {
+        deviceId,
+        platform,
+        expoPushToken: getStringValue(request.data?.expoPushToken) || null,
+        permissionState,
+        projectId: getStringValue(request.data?.projectId) || null,
+        appVersion: getStringValue(request.data?.appVersion) || null,
+        deviceName: getStringValue(request.data?.deviceName) || null,
+        modelName: getStringValue(request.data?.modelName) || null,
+        isPhysicalDevice: request.data?.isPhysicalDevice === true,
+        lastRegistrationError: getStringValue(request.data?.lastRegistrationError) || null,
+    });
+
+    logger.info("Synced notification device", {
+        uid,
+        deviceId,
+        registrationStatus: result.registrationStatus,
+        platform,
+        permissionState,
+    });
+
+    return result;
+});
+
+export const unregisterNotificationDevice = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const deviceId = getStringValue(request.data?.deviceId);
+    if (!deviceId) {
+        throw new HttpsError("invalid-argument", "Missing required field: deviceId");
+    }
+
+    await unregisterNotificationDeviceRecord(uid, deviceId);
+    logger.info("Unregistered notification device", { uid, deviceId });
+    return { success: true };
+});
+
+export const sendTestPushNotification = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    try {
+        const result = await sendPushToUsers(
+            [uid],
+            "SplitCircle test notification",
+            "Remote push is flowing through the backend, Expo, and your device registration.",
+            {
+                type: "general",
+                source: "settings_test",
+            },
+            "general",
+            undefined,
+            "general",
+        );
+
+        if (result.acceptedCount === 0) {
+            throw new HttpsError(
+                "failed-precondition",
+                "No eligible devices are currently registered for remote push delivery.",
+                {
+                    deliveryId: result.deliveryId,
+                    status: result.status,
+                    droppedCount: result.droppedCount,
+                },
+            );
+        }
+
+        return result;
+    } catch (error) {
+        if (error instanceof HttpsError) {
+            throw error;
+        }
+
+        logger.error("Failed to send test push notification", {
+            uid,
+            error: toSafeError(error),
+        });
+
+        throw new HttpsError(
+            "internal",
+            error instanceof Error
+                ? error.message
+                : "Unexpected notification delivery failure.",
+        );
+    }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Push Notifications — Chat Messages
+// ─────────────────────────────────────────────────────────────
+
+export const onChatUpdated = onDocumentUpdated(
+    "chats/{chatId}",
+    async (event) => {
+        const before = event.data?.before.data();
+        const after = event.data?.after.data();
+
+        if (!before || !after) {
+            return;
+        }
+
+        const chatId = event.params.chatId;
+
+        // Detect new lastMessage
+        const beforeMsg = before.lastMessage as Record<string, unknown> | undefined;
+        const afterMsg = after.lastMessage as Record<string, unknown> | undefined;
+
+        if (!afterMsg) {
+            return;
+        }
+
+        // Skip if lastMessage hasn't changed
+        const beforeMsgId = beforeMsg?.messageId ?? beforeMsg?.id;
+        const afterMsgId = afterMsg.messageId ?? afterMsg.id;
+
+        if (beforeMsgId === afterMsgId) {
+            return;
+        }
+
+        // Skip system messages
+        if (afterMsg.type === "system") {
+            return;
+        }
+
+        const senderId = afterMsg.senderId as string;
+        const content = afterMsg.content as string;
+        const msgType = afterMsg.type as string;
+        const participantIds = (after.participantIds ?? []) as string[];
+
+        // Get sender name
+        let senderName = "Someone";
+        try {
+            const senderDoc = await getFirestore().collection("users").doc(senderId).get();
+            if (senderDoc.exists) {
+                senderName = (senderDoc.data()?.displayName as string) || "Someone";
+            }
+        } catch {
+            // Use fallback name
+        }
+
+        const groupId = after.groupId as string | undefined;
+        let groupName: string | undefined;
+        if (groupId) {
+            try {
+                const groupDoc = await getFirestore().collection("groups").doc(groupId).get();
+                if (groupDoc.exists) {
+                    groupName = getStringValue(groupDoc.data()?.name);
+                }
+            } catch {
+                // Keep direct-chat fallback styling
+            }
+        }
+
+        const notificationCopy = buildMessageNotificationCopy({
+            senderName,
+            groupName,
+            messageType: msgType,
+            content,
+        });
+
+        // Send to all participants except the sender
+        const recipientIds = participantIds.filter((id) => id !== senderId);
+
+        if (recipientIds.length === 0) {
+            return;
+        }
+
+        try {
+            const dispatch = await sendPushToUsers(
+                recipientIds,
+                notificationCopy.title,
+                notificationCopy.body,
+                {
+                    type: "message",
+                    chatId,
+                    ...(groupId ? { groupId } : {}),
+                    senderId,
+                    senderName,
+                },
+                "messages",
+                chatId,
+                "messages",
+                { subtitle: notificationCopy.subtitle },
+            );
+            logger.info("Queued message notifications", {
+                chatId,
+                deliveryId: dispatch.deliveryId,
+                acceptedCount: dispatch.acceptedCount,
+                targetedDeviceCount: dispatch.targetedDeviceCount,
+            });
+        } catch (error) {
+            logger.error("Failed to send message notifications", toSafeError(error));
+        }
+    },
+);
+
+// ─────────────────────────────────────────────────────────────
+// Push Notifications — Group Updates (Expenses, Settlements, Members)
+// ─────────────────────────────────────────────────────────────
+
+export const onGroupUpdated = onDocumentUpdated(
+    "groups/{groupId}",
+    async (event) => {
+        const before = event.data?.before.data();
+        const after = event.data?.after.data();
+
+        if (!before || !after) {
+            return;
+        }
+
+        const groupId = event.params.groupId;
+        const groupName = (after.name as string) || "Group";
+        const memberIds = (after.memberIds ?? []) as string[];
+
+        // ─── Detect new expenses ────────────────────────────
+        const beforeExpenses = (before.expenses ?? []) as Array<Record<string, unknown>>;
+        const afterExpenses = (after.expenses ?? []) as Array<Record<string, unknown>>;
+
+        if (afterExpenses.length > beforeExpenses.length) {
+            const beforeIds = new Set(beforeExpenses.map((e) => e.expenseId as string));
+            const newExpenses = afterExpenses.filter(
+                (e) => !beforeIds.has(e.expenseId as string),
+            );
+
+            for (const expense of newExpenses) {
+                const paidBy = expense.paidBy as string;
+                const description = (expense.description as string) || "New expense";
+                const amount = expense.amount as number;
+                const currency = (after.currency as string) || "USD";
+
+                let payerName = "Someone";
+                try {
+                    const payerDoc = await getFirestore().collection("users").doc(paidBy).get();
+                    if (payerDoc.exists) {
+                        payerName = (payerDoc.data()?.displayName as string) || "Someone";
+                    }
+                } catch {
+                    // Use fallback
+                }
+
+                const recipientIds = memberIds.filter((id) => id !== paidBy);
+                if (recipientIds.length > 0) {
+                    try {
+                        const notificationCopy = buildExpenseNotificationCopy({
+                            groupName,
+                            payerName,
+                            description,
+                            currency,
+                            amount,
+                        });
+                        const dispatch = await sendPushToUsers(
+                            recipientIds,
+                            notificationCopy.title,
+                            notificationCopy.body,
+                            {
+                                type: "expense",
+                                groupId,
+                                expenseId: expense.expenseId as string,
+                            },
+                            "expenses",
+                            undefined,
+                            "expenses",
+                            { subtitle: notificationCopy.subtitle },
+                        );
+                        logger.info("Queued expense notifications", {
+                            groupId,
+                            deliveryId: dispatch.deliveryId,
+                            acceptedCount: dispatch.acceptedCount,
+                            targetedDeviceCount: dispatch.targetedDeviceCount,
+                        });
+                    } catch (error) {
+                        logger.error("Failed to send expense notification", toSafeError(error));
+                    }
+                }
+            }
+        }
+
+        // ─── Detect new settlements ─────────────────────────
+        const beforeSettlements = (before.settlements ?? []) as Array<Record<string, unknown>>;
+        const afterSettlements = (after.settlements ?? []) as Array<Record<string, unknown>>;
+
+        if (afterSettlements.length > beforeSettlements.length) {
+            const beforeSettlementIds = new Set(
+                beforeSettlements.map((s) => s.settlementId as string),
+            );
+            const newSettlements = afterSettlements.filter(
+                (s) => !beforeSettlementIds.has(s.settlementId as string),
+            );
+
+            for (const settlement of newSettlements) {
+                const fromUserId = settlement.fromUserId as string;
+                const toUserId = settlement.toUserId as string;
+                const amount = settlement.amount as number;
+                const currency = (after.currency as string) || "USD";
+
+                let fromName = "Someone";
+                try {
+                    const fromDoc = await getFirestore().collection("users").doc(fromUserId).get();
+                    if (fromDoc.exists) {
+                        fromName = (fromDoc.data()?.displayName as string) || "Someone";
+                    }
+                } catch {
+                    // Use fallback
+                }
+
+                // Notify the person being paid
+                try {
+                    const notificationCopy = buildSettlementNotificationCopy({
+                        groupName,
+                        fromName,
+                        currency,
+                        amount,
+                    });
+                    const dispatch = await sendPushToUsers(
+                        [toUserId],
+                        notificationCopy.title,
+                        notificationCopy.body,
+                        {
+                            type: "settlement",
+                            groupId,
+                            settlementId: settlement.settlementId as string,
+                        },
+                        "settlements",
+                        undefined,
+                        "expenses",
+                        { subtitle: notificationCopy.subtitle },
+                    );
+                    logger.info("Queued settlement notifications", {
+                        groupId,
+                        deliveryId: dispatch.deliveryId,
+                        acceptedCount: dispatch.acceptedCount,
+                        targetedDeviceCount: dispatch.targetedDeviceCount,
+                    });
+                } catch (error) {
+                    logger.error("Failed to send settlement notification", toSafeError(error));
+                }
+            }
+        }
+
+        // ─── Detect new members ─────────────────────────────
+        const beforeMemberIds = (before.memberIds ?? []) as string[];
+        const newMemberIds = memberIds.filter((id) => !beforeMemberIds.includes(id));
+
+        if (newMemberIds.length > 0) {
+            for (const newMemberId of newMemberIds) {
+                let memberName = "Someone";
+                try {
+                    const memberDoc = await getFirestore().collection("users").doc(newMemberId).get();
+                    if (memberDoc.exists) {
+                        memberName = (memberDoc.data()?.displayName as string) || "Someone";
+                    }
+                } catch {
+                    // Use fallback
+                }
+
+                const existingMembers = beforeMemberIds;
+                if (existingMembers.length > 0) {
+                    try {
+                        const notificationCopy = buildGroupJoinNotificationCopy({
+                            groupName,
+                            memberName,
+                        });
+                        const dispatch = await sendPushToUsers(
+                            existingMembers,
+                            notificationCopy.title,
+                            notificationCopy.body,
+                            {
+                                type: "group_join",
+                                groupId,
+                            },
+                            "groupUpdates",
+                            undefined,
+                            "groups",
+                            { subtitle: notificationCopy.subtitle },
+                        );
+                        logger.info("Queued group-join notifications", {
+                            groupId,
+                            deliveryId: dispatch.deliveryId,
+                            acceptedCount: dispatch.acceptedCount,
+                            targetedDeviceCount: dispatch.targetedDeviceCount,
+                        });
+                    } catch (error) {
+                        logger.error("Failed to send group join notification", toSafeError(error));
+                    }
+                }
+            }
+        }
+    },
+);
+
+// ─────────────────────────────────────────────────────────────
+// Push Notifications — Incoming Calls
+// ─────────────────────────────────────────────────────────────
+
+export const onCallCreated = onValueCreated(
+    "/calls/{callId}",
+    async (event) => {
+        const callId = event.params.callId;
+        const callData = event.data?.val() as MaybeCall | null;
+
+        if (!callId || !callData) {
+            return;
+        }
+
+        if (callData.status !== "ringing") {
+            return;
+        }
+
+        const chatId = getStringValue(callData.chatId);
+        const initiatorId = getStringValue(callData.initiatorId);
+        const groupId = getStringValue(callData.groupId);
+        const callType = callData.type === "video" ? "video" : "audio";
+        const recipientIds = getAllowedUserIds(callData.allowedUserIds).filter((userId) => userId !== initiatorId);
+
+        if (!chatId || !initiatorId || recipientIds.length === 0) {
+            return;
+        }
+
+        const participants = normalizeCallParticipants(callData.participants);
+        const initiatorParticipant = participants.find((participant) => getStringValue(participant.userId) === initiatorId);
+        let callerName = sanitizeParticipantName(
+            getStringValue(initiatorParticipant?.displayName),
+            "Someone",
+        );
+
+        if (!callerName || callerName === "Someone") {
+            try {
+                const initiatorDoc = await getFirestore().collection("users").doc(initiatorId).get();
+                if (initiatorDoc.exists) {
+                    callerName = sanitizeParticipantName(
+                        getStringValue(initiatorDoc.data()?.displayName),
+                        "Someone",
+                    );
+                }
+            } catch {
+                // Use best-effort caller name from session.
+            }
+        }
+
+        let conversationName: string | undefined;
+        if (groupId) {
+            try {
+                const groupDoc = await getFirestore().collection("groups").doc(groupId).get();
+                if (groupDoc.exists) {
+                    const rawName = getStringValue(groupDoc.data()?.name);
+                    conversationName = rawName || undefined;
+                }
+            } catch {
+                // Best-effort only.
+            }
+        }
+
+        const notificationCopy = buildIncomingCallNotificationCopy({
+            callerName,
+            callType,
+            conversationName,
+            participantCount: getAllowedUserIds(callData.allowedUserIds).length,
+        });
+
+        try {
+            const dispatch = await sendPushToUsers(
+                recipientIds,
+                notificationCopy.title,
+                notificationCopy.body,
+                {
+                    type: "call",
+                    chatId,
+                    callId,
+                    callType,
+                    senderId: initiatorId,
+                    senderName: callerName,
+                    ...(groupId ? { groupId } : {}),
+                },
+                "calls",
+                undefined,
+                "calls",
+                { subtitle: notificationCopy.subtitle },
+            );
+
+            logger.info("Queued incoming call notifications", {
+                callId,
+                chatId,
+                groupId: groupId || null,
+                initiatorId,
+                callType,
+                deliveryId: dispatch.deliveryId,
+                acceptedCount: dispatch.acceptedCount,
+                targetedDeviceCount: dispatch.targetedDeviceCount,
+            });
+        } catch (error) {
+            logger.error("Failed to send incoming call notification", {
+                callId,
+                chatId,
+                initiatorId,
+                error: toSafeError(error),
+            });
+        }
+    },
+);
+
+// ─────────────────────────────────────────────────────────────
+// Scheduler — Recurring Bills
+// ─────────────────────────────────────────────────────────────
+
 export const runRecurringBillsScheduler = onSchedule(
     "every 15 minutes",
     async () => {
@@ -92,6 +769,19 @@ export const runRecurringBillsScheduler = onSchedule(
             throw error;
         }
     }
+);
+
+export const processNotificationReceipts = onSchedule(
+    "every 10 minutes",
+    async () => {
+        try {
+            const result = await processPendingNotificationReceipts();
+            logger.info("Processed pending notification receipts", result);
+        } catch (error) {
+            logger.error("Failed to process notification receipts", toSafeError(error));
+            throw error;
+        }
+    },
 );
 
 export const triggerRecurringBillsForGroup = onCall(
@@ -141,6 +831,10 @@ export const triggerRecurringBillsForGroup = onCall(
         }
     }
 );
+
+// ─────────────────────────────────────────────────────────────
+// LiveKit Token Generation
+// ─────────────────────────────────────────────────────────────
 
 export const generateLiveKitToken = onRequest(
     {

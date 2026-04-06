@@ -1,4 +1,5 @@
 import type { ItemCategory, Participant, ReceiptItem, ValidationResult } from './types';
+import type { ExpenseItemSplitConfig } from '@/models';
 
 /** Crypto-quality random float in [0, 1) */
 function cryptoRandom(): number {
@@ -137,53 +138,147 @@ export function computeItemized(
   taxAmount: number,
   tipAmount: number,
   participants: Participant[],
+  taxSplitConfig?: ExpenseItemSplitConfig,
+  tipSplitConfig?: ExpenseItemSplitConfig,
 ): Participant[] {
   const subtotalCents = items.reduce((s, it) => s + toCents(it.price), 0);
-  if (subtotalCents === 0) return participants.map((p) => ({ ...p, computedAmount: 0 }));
+  if (subtotalCents === 0 && taxAmount === 0 && tipAmount === 0) {
+    return participants.map((p) => ({ ...p, computedAmount: 0 }));
+  }
 
-  // each participant's raw subtotal share (only for included participants)
   const included = participants.filter((p) => p.included);
+  if (included.length === 0) {
+    return participants.map((p) => ({ ...p, computedAmount: 0 }));
+  }
+
   const participantSubtotals: Record<string, number> = {};
   for (const p of included) participantSubtotals[p.id] = 0;
 
+  // --- ITEM DISTRIBUTION ---
   for (const item of items) {
-    // only assign to included participants
     const validAssignees = item.assignedTo.filter((uid) => participantSubtotals[uid] !== undefined);
     if (validAssignees.length === 0) continue;
-    const perPersonCents = distributeEvenly(toCents(item.price), validAssignees.length);
-    validAssignees.forEach((uid, i) => {
-      participantSubtotals[uid] += perPersonCents[i];
-    });
+
+    const totalItemCents = toCents(item.price);
+
+    if (item.splitMode === 'exact' && item.splitData) {
+      // Just map exact inputs, ignore total difference matching (relies on UI constraints)
+      validAssignees.forEach((uid) => {
+        participantSubtotals[uid] += toCents(item.splitData![uid] || 0);
+      });
+    } else if (item.splitMode === 'percentage' && item.splitData) {
+      const rawCents = validAssignees.map((uid) => ((item.splitData![uid] || 0) / 100) * totalItemCents);
+      const flooredCents = rawCents.map(Math.floor);
+      let remainder = totalItemCents - flooredCents.reduce((a, b) => a + b, 0);
+      const fractions = rawCents.map((c, i) => ({ i, frac: c - Math.floor(c) })).sort((a, b) => b.frac - a.frac);
+      for (const { i } of fractions) {
+        if (remainder <= 0) break;
+        flooredCents[i] += 1;
+        remainder -= 1;
+      }
+      validAssignees.forEach((uid, i) => {
+        participantSubtotals[uid] += flooredCents[i];
+      });
+    } else if (item.splitMode === 'shares' && item.splitData) {
+      const totalShares = validAssignees.reduce((sum, uid) => sum + (item.splitData![uid] || 0), 0);
+      if (totalShares === 0) {
+        const perPersonCents = distributeEvenly(totalItemCents, validAssignees.length);
+        validAssignees.forEach((uid, i) => { participantSubtotals[uid] += perPersonCents[i]; });
+      } else {
+        const rawCents = validAssignees.map((uid) => ((item.splitData![uid] || 0) / totalShares) * totalItemCents);
+        const flooredCents = rawCents.map(Math.floor);
+        let remainder = totalItemCents - flooredCents.reduce((a, b) => a + b, 0);
+        const fractions = rawCents.map((c, i) => ({ i, frac: c - Math.floor(c) })).sort((a, b) => b.frac - a.frac);
+        for (const { i } of fractions) {
+          if (remainder <= 0) break;
+          flooredCents[i] += 1;
+          remainder -= 1;
+        }
+        validAssignees.forEach((uid, i) => {
+          participantSubtotals[uid] += flooredCents[i];
+        });
+      }
+    } else {
+      // Default: equal
+      const perPersonCents = distributeEvenly(totalItemCents, validAssignees.length);
+      validAssignees.forEach((uid, i) => {
+        participantSubtotals[uid] += perPersonCents[i];
+      });
+    }
   }
 
-  // prorate tax & tip by subtotal ratio using fractional-remainder to avoid drift
-  const extrasCents = toCents(taxAmount) + toCents(tipAmount);
+  // --- REUSABLE DISTRIBUTION FUNCTION FOR OVERRIDES ---
+  const distributeOverride = (
+    totalCents: number,
+    config: ExpenseItemSplitConfig | undefined,
+    defaultProportionalBase?: number
+  ): number[] => {
+    if (totalCents === 0) return included.map(() => 0);
 
-  if (extrasCents === 0 || subtotalCents === 0) {
-    return participants.map((p) => ({
-      ...p,
-      computedAmount: p.included ? fromCents(participantSubtotals[p.id] || 0) : 0,
-    }));
-  }
+    const validAssignees = included.map(p => p.id); // By default, tax/tip applies to all included
 
-  // Use largest-remainder method to distribute extras without drift
-  const rawExtras = included.map((p) => ((participantSubtotals[p.id] || 0) / subtotalCents) * extrasCents);
-  const flooredExtras = rawExtras.map((c) => Math.floor(c));
-  let allocatedExtras = flooredExtras.reduce((a, b) => a + b, 0);
-  let remainderExtras = extrasCents - allocatedExtras;
+    if (config?.mode === 'exact' && config.data) {
+      // Exact tax/tip override
+      return included.map(p => toCents(config.data![p.id] || 0));
+    } else if (config?.mode === 'percentage' && config.data) {
+      const rawCents = validAssignees.map((uid) => ((config.data![uid] || 0) / 100) * totalCents);
+      const flooredCents = rawCents.map(Math.floor);
+      let remainder = totalCents - flooredCents.reduce((a, b) => a + b, 0);
+      const fractions = rawCents.map((c, i) => ({ i, frac: c - Math.floor(c) })).sort((a, b) => b.frac - a.frac);
+      for (const { i } of fractions) {
+        if (remainder <= 0) break;
+        flooredCents[i] += 1;
+        remainder -= 1;
+      }
+      return flooredCents;
+    } else if (config?.mode === 'shares' && config.data) {
+      const totalShares = validAssignees.reduce((sum, uid) => sum + (config.data![uid] || 0), 0);
+      if (totalShares > 0) {
+        const rawCents = validAssignees.map((uid) => ((config.data![uid] || 0) / totalShares) * totalCents);
+        const flooredCents = rawCents.map(Math.floor);
+        let remainder = totalCents - flooredCents.reduce((a, b) => a + b, 0);
+        const fractions = rawCents.map((c, i) => ({ i, frac: c - Math.floor(c) })).sort((a, b) => b.frac - a.frac);
+        for (const { i } of fractions) {
+          if (remainder <= 0) break;
+          flooredCents[i] += 1;
+          remainder -= 1;
+        }
+        return flooredCents;
+      } else {
+        return distributeEvenly(totalCents, validAssignees.length);
+      }
+    } else if (config?.mode === 'equal') {
+      return distributeEvenly(totalCents, validAssignees.length);
+    }
 
-  const fractions = rawExtras
-    .map((c, i) => ({ i, frac: c - Math.floor(c) }))
-    .sort((a, b) => b.frac - a.frac);
-  for (const { i } of fractions) {
-    if (remainderExtras <= 0) break;
-    flooredExtras[i] += 1;
-    remainderExtras -= 1;
-  }
+    // Default: Proportional to subtotal (the original logic)
+    if (defaultProportionalBase && defaultProportionalBase > 0) {
+      const rawExtras = included.map((p) => ((participantSubtotals[p.id] || 0) / defaultProportionalBase) * totalCents);
+      const flooredExtras = rawExtras.map((c) => Math.floor(c));
+      let allocatedExtras = flooredExtras.reduce((a, b) => a + b, 0);
+      let remainderExtras = totalCents - allocatedExtras;
+
+      const fractions = rawExtras
+        .map((c, i) => ({ i, frac: c - Math.floor(c) }))
+        .sort((a, b) => b.frac - a.frac);
+      for (const { i } of fractions) {
+        if (remainderExtras <= 0) break;
+        flooredExtras[i] += 1;
+        remainderExtras -= 1;
+      }
+      return flooredExtras;
+    }
+
+    // Fallback if subtotal is 0 but we have tax/tip (rare, but mathematically possible)
+    return distributeEvenly(totalCents, validAssignees.length);
+  };
+
+  const taxDistribution = distributeOverride(toCents(taxAmount), taxSplitConfig, subtotalCents);
+  const tipDistribution = distributeOverride(toCents(tipAmount), tipSplitConfig, subtotalCents);
 
   const includedResults: Record<string, number> = {};
   included.forEach((p, idx) => {
-    includedResults[p.id] = (participantSubtotals[p.id] || 0) + flooredExtras[idx];
+    includedResults[p.id] = (participantSubtotals[p.id] || 0) + taxDistribution[idx] + tipDistribution[idx];
   });
 
   return participants.map((p) => ({
@@ -250,6 +345,60 @@ export function computeConsumption(total: number, totalParts: number, participan
   }));
 }
 
+// ─── TIME-BASED HELPERS ─────────────────────────────────────────────────────
+function parseDateOnly(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const monthIndex = Number(monthText) - 1;
+  const day = Number(dayText);
+  const date = new Date(year, monthIndex, day);
+
+  if (
+    Number.isNaN(date.getTime())
+    || date.getFullYear() !== year
+    || date.getMonth() !== monthIndex
+    || date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function formatDateOnly(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function daysBetweenDates(checkIn: string, checkOut: string): number {
+  const d1 = parseDateOnly(checkIn);
+  const d2 = parseDateOnly(checkOut);
+  if (!d1 || !d2) return 0;
+  const diffMs = d2.getTime() - d1.getTime();
+  const ONE_DAY_MS = 1000 * 60 * 60 * 24;
+  return Math.max(0, Math.floor(diffMs / ONE_DAY_MS) + 1);
+}
+
+export function listDatesBetween(checkIn: string, checkOut: string): string[] {
+  const start = parseDateOnly(checkIn);
+  const end = parseDateOnly(checkOut);
+  if (!start || !end || end.getTime() < start.getTime()) return [];
+
+  const dates: string[] = [];
+  const current = new Date(start);
+  while (current.getTime() <= end.getTime()) {
+    dates.push(formatDateOnly(current));
+    current.setDate(current.getDate() + 1);
+  }
+  return dates;
+}
+
 // ─── TIME-BASED / PRORATED ──────────────────────────────────────────────────
 export function computeTimeBased(total: number, participants: Participant[]): Participant[] {
   const included = participants.filter((p) => p.included);
@@ -275,6 +424,57 @@ export function computeTimeBased(total: number, participants: Participant[]): Pa
   return participants.map((p) => ({
     ...p,
     computedAmount: p.included ? fromCents(flooredCents[idx++]) : 0,
+  }));
+}
+
+export function computeStandardTimeBased(total: number, periodDays: number, participants: Participant[]): Participant[] {
+  const included = participants.filter((participant) => participant.included);
+  const participantCount = included.length;
+  const normalizedPeriodDays = Math.max(1, Math.round(periodDays));
+
+  if (participantCount === 0) {
+    return participants.map((participant) => ({ ...participant, computedAmount: 0 }));
+  }
+
+  if (participantCount === 1) {
+    const onlyParticipantId = included[0].id;
+    return participants.map((participant) => ({
+      ...participant,
+      computedAmount: participant.id === onlyParticipantId ? roundCents(total) : 0,
+    }));
+  }
+
+  const basePerPersonPerDay = total / normalizedPeriodDays / participantCount;
+  const totalMissingDays = included.reduce((sum, participant) => (
+    sum + Math.max(0, normalizedPeriodDays - Math.min(normalizedPeriodDays, Math.max(0, participant.daysStayed)))
+  ), 0);
+
+  const totalCents = toCents(total);
+  const rawCents = included.map((participant) => {
+    const normalizedStayedDays = Math.min(normalizedPeriodDays, Math.max(0, participant.daysStayed));
+    const ownDaysCost = normalizedStayedDays * basePerPersonPerDay;
+    const participantMissingDays = Math.max(0, normalizedPeriodDays - normalizedStayedDays);
+    const redistributedCost = (totalMissingDays - participantMissingDays) * basePerPersonPerDay / (participantCount - 1);
+    return (ownDaysCost + redistributedCost) * 100;
+  });
+  const flooredCents = rawCents.map((value) => Math.floor(value));
+  const allocated = flooredCents.reduce((sum, value) => sum + value, 0);
+  let remainder = totalCents - allocated;
+
+  const fractions = rawCents
+    .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+    .sort((a, b) => b.fraction - a.fraction);
+
+  for (const { index } of fractions) {
+    if (remainder <= 0) break;
+    flooredCents[index] += 1;
+    remainder -= 1;
+  }
+
+  let includedIndex = 0;
+  return participants.map((participant) => ({
+    ...participant,
+    computedAmount: participant.included ? fromCents(flooredCents[includedIndex++]) : 0,
   }));
 }
 

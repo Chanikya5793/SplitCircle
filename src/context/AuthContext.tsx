@@ -1,5 +1,6 @@
 import { auth, db } from '@/firebase';
 import type { UserProfile } from '@/models';
+import { unregisterCurrentDevice } from '@/services/notificationService';
 import * as Google from 'expo-auth-session/providers/google';
 import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
@@ -57,6 +58,13 @@ const buildUserProfile = (firebaseUser: FirebaseUser, existing?: UserProfile): U
   preferences: existing?.preferences ?? {
     pushEnabled: false,
     emailEnabled: true,
+    messages: true,
+    expenses: true,
+    settlements: true,
+    groupUpdates: true,
+    calls: true,
+    sounds: true,
+    vibration: true,
   },
 });
 
@@ -187,7 +195,17 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         status: 'online',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        preferences: { pushEnabled: false, emailEnabled: true },
+        preferences: {
+          pushEnabled: false,
+          emailEnabled: true,
+          messages: true,
+          expenses: true,
+          settlements: true,
+          groupUpdates: true,
+          calls: true,
+          sounds: true,
+          vibration: true,
+        },
       });
     } catch (error: any) {
       console.error('Registration Error:', error);
@@ -207,6 +225,13 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   };
 
   const signOutUser = async () => {
+    if (user) {
+      try {
+        await unregisterCurrentDevice();
+      } catch (error) {
+        console.warn('Failed to unregister notification device during sign out:', error);
+      }
+    }
     await signOut(auth);
   };
 

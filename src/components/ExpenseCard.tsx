@@ -2,6 +2,7 @@ import { GlassView } from '@/components/GlassView';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
 import { formatCurrency } from '@/utils/currency';
+import { getExpenseSplitLabel } from '@/utils/expenseSplit';
 import { StyleSheet, View } from 'react-native';
 import { IconButton, Text, TouchableRipple } from 'react-native-paper';
 import Animated, { FadeInDown } from 'react-native-reanimated';
@@ -18,6 +19,7 @@ export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0 }
   const { theme, isDark } = useTheme();
   const payerName = memberMap[expense.paidBy] || 'Unknown';
   const isSettlement = expense.category === 'Settlement';
+  const splitLabel = getExpenseSplitLabel(expense);
 
   return (
     <Animated.View entering={FadeInDown.delay(index * 50).springify()}>
@@ -28,7 +30,9 @@ export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0 }
               <View style={styles.titleRow}>
                 <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{expense.title}</Text>
                 <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
-                  {expense.category} · Paid by {payerName}
+                  {isSettlement
+                    ? `${expense.category} · Paid by ${payerName}`
+                    : `${expense.category} · ${splitLabel} · Paid by ${payerName}`}
                 </Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                   {new Date(expense.createdAt).toLocaleDateString()}

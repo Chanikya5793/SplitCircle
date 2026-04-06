@@ -1,6 +1,6 @@
 # SplitCircle
 
-SplitCircle is an Expo + React Native + TypeScript application that combines Splitwise-style group expense tracking with WhatsApp-inspired chat and call experiences. It is designed to run on iOS, Android, and web with Firebase providing authentication, Firestore data storage, Storage for receipts, and FCM push notifications.
+SplitCircle is an Expo + React Native + TypeScript application that combines Splitwise-style group expense tracking with WhatsApp-inspired chat and call experiences. It is designed to run on iOS, Android, and web with Firebase providing authentication, Firestore data storage, Storage for receipts, and push delivery through Expo Push Service backed by APNs on iOS and FCM on Android.
 
 ## Features
 
@@ -9,7 +9,7 @@ SplitCircle is an Expo + React Native + TypeScript application that combines Spl
 - **Settlements** – Record payments between members and keep everyone even.
 - **Chat** – Real-time 1:1 and group messaging with Firestore listeners, media uploads, and offline queueing.
 - **Calls** – Secure audio/video calls built on `react-native-webrtc` with signaling over Firestore.
-- **Notifications** – FCM push token registration and foreground handling using `expo-notifications`.
+- **Notifications** – Per-device Expo push registration, receipt tracking, and foreground handling using `expo-notifications`.
 - **Offline-first** – Firestore persistent cache, NetInfo-based offline banner, and optimistic UI updates.
 
 ## Project Structure
@@ -100,13 +100,35 @@ npm run web      # Starts web development server
 
 The Metro bundler QR code can be scanned using Expo Go. Ensure your Firebase project allows the configured bundle IDs/package names.
 
+## TestFlight Release
+
+TestFlight builds do not require a dev server. Use the production EAS profile to create a standalone iOS build:
+
+```bash
+npx eas build --platform ios --profile production
+```
+
+After the build finishes, submit it to App Store Connect/TestFlight:
+
+```bash
+npx eas submit --platform ios --profile production
+```
+
+Notes:
+- The production profile is configured to auto-increment the iOS build number.
+- Make sure the required public environment variables are available in your local `.env` or EAS secrets before building.
+- If EAS asks for authentication, sign in with the Apple/Expo account that owns the `com.splitcircle.app` bundle identifier.
+
 ## Firebase Setup
 
 1. Create a Firestore database in **production mode**.
 2. Enable Authentication providers: **Email/Password** and **Google**.
 3. Create `google-services.json` and `GoogleService-Info.plist` and place them at the project root (paths referenced in `app.config.ts`).
 4. Upload placeholder icons in `assets/` or replace them with your own branding.
-5. Configure FCM by following the Expo notifications guide and set up server keys for sending pushes.
+5. Configure push credentials for Expo notifications:
+   - iOS: create or select an APNs Auth Key in Apple Developer and attach it with `eas credentials`.
+   - Android: upload Firebase service-account credentials for FCM v1 in Expo/EAS.
+   - Build a development client or release build after credentials are configured. Expo Go and simulators are not valid for remote push verification.
 
 ## Firestore Security Rules
 
@@ -124,7 +146,7 @@ Customize rules to match your compliance requirements before going to production
 - **Groups & Expenses**: `GroupContext` streams Firestore groups for the signed-in user, exposes helpers to create/join groups, add expenses (equal/custom splits), and record settlements. `GroupListScreen` and `GroupDetailsScreen` provide the UI.
 - **Chat**: `ChatContext` subscribes to chat threads and message collections; `ChatRoomScreen` renders them with `MessageBubble` and sends messages (text/media) through Firebase Storage + Firestore.
 - **Calls**: `useCallManager` wraps WebRTC setup with Firestore signaling documents. `CallLobbyScreen` selects a thread, and `CallSessionScreen` shows the live call with camera/mic toggles.
-- **Notifications**: `useNotifications` registers Expo push tokens, updates the user profile, and listens to foreground notification taps.
+- **Notifications**: `NotificationContext` keeps account-level preferences on the user profile, syncs a per-device registration record under `users/{uid}/notificationDevices/{deviceId}`, listens for push-token refreshes, and tracks foreground/tap behavior.
 - **Offline Support**: Firestore persistence plus `useOfflineSync` and `OfflineBanner` keep the UI responsive when the device loses connectivity.
 
 ## Testing & Quality
@@ -132,6 +154,41 @@ Customize rules to match your compliance requirements before going to production
 - **Type Safety**: `tsconfig.json` enables `strict` mode.
 - **Linting**: Use TypeScript diagnostics (`npx tsc --noEmit`) to catch issues.
 - **Expo Doctor**: `npx expo doctor` verifies project health.
+
+## Push Notification Setup
+
+### Architecture
+
+- User-wide notification preferences stay on `users/{uid}.preferences`.
+- Each signed-in device registers independently at `users/{uid}/notificationDevices/{deviceId}`.
+- Cloud Functions fan out to every eligible device, write a delivery trace to `notificationDeliveries/{deliveryId}`, inspect Expo receipts, and invalidate tokens that Expo marks as dead.
+- The legacy `users/{uid}.pushToken` field is still read as a fallback during rollout, but new registrations no longer write to it.
+
+### iOS Checklist
+
+1. Confirm the Apple Developer App ID for `com.splitcircle.app` has Push Notifications enabled.
+2. Ensure an APNs Auth Key is available for the Apple team used by this app.
+3. Run `eas credentials --platform ios` and verify Expo/EAS is using the correct push key.
+4. Build a fresh iOS development build or release build after credentials change.
+5. Verify the checked-in native target still contains:
+   - `ios/SplitCircle/SplitCircle.entitlements` with `aps-environment`
+   - `ios/SplitCircle/Info.plist` with `remote-notification` in `UIBackgroundModes`
+6. Test on a physical iPhone in foreground, background, and killed states.
+
+### Android Checklist
+
+1. Enable Firebase Cloud Messaging in the Firebase project.
+2. Upload the FCM v1 service-account credentials through Expo/EAS.
+3. Build a fresh Android binary after credential updates.
+4. Verify Expo notification channels are created on-device for messages, expenses, groups, calls, and general alerts.
+
+### Verification Notes
+
+- Remote push delivery must be tested on a physical device with a development build, preview build, TestFlight build, or production build.
+- The Notifications settings screen now includes:
+  - a remote test that exercises the backend and Expo delivery path
+  - a local preview that only tests in-app presentation
+  - device registration and last-receipt diagnostics for the current device
 
 ## Next Steps
 

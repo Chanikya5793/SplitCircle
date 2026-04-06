@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { PrimaryButton } from '@/components/PrimaryButton';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group, GroupMember } from '@/models';
@@ -48,7 +49,7 @@ export const SettlementsScreen = ({
 
   const isEditMode = !!settlementId && !!existingSettlement;
 
-  const handleSettle = async () => {
+  const handleSettle = async (requestId: string) => {
     if (isEditMode && existingSettlement) {
       // Update existing settlement
       await updateSettlement(group.groupId, {
@@ -57,7 +58,7 @@ export const SettlementsScreen = ({
         toUserId,
         amount: Number(amount),
         note,
-      });
+      }, requestId);
     } else {
       // Create new settlement
       await settleUp(group.groupId, {
@@ -65,7 +66,7 @@ export const SettlementsScreen = ({
         toUserId,
         amount: Number(amount),
         note,
-      });
+      }, requestId);
     }
     onClose();
   };
@@ -148,13 +149,15 @@ export const SettlementsScreen = ({
             <Button mode="outlined" onPress={onClose} textColor={theme.colors.onSurface}>
               Cancel
             </Button>
-            <Button
-              mode="contained"
+            <PrimaryButton
               onPress={handleSettle}
               disabled={!amount || fromUserId === toUserId}
+              requestKey={isEditMode && settlementId ? `settlement-update-${settlementId}` : `settlement-create-${group.groupId}`}
+              loadingMessage={isEditMode ? 'Saving settlement...' : 'Recording settlement...'}
+              showGlobalOverlay
             >
               {isEditMode ? 'Update settlement' : 'Save settlement'}
-            </Button>
+            </PrimaryButton>
           </View>
         </GlassView>
       </ScrollView>

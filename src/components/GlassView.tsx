@@ -7,10 +7,11 @@ import Animated, { interpolateColor, useAnimatedStyle } from 'react-native-reani
 interface GlassViewProps {
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
+  contentStyle?: StyleProp<ViewStyle>;
   intensity?: number;
 }
 
-export const GlassView = React.memo(({ children, style, intensity = 30 }: GlassViewProps) => {
+export const GlassView = React.memo(({ children, style, contentStyle, intensity = 30 }: GlassViewProps) => {
   const { isDark, themeProgress } = useTheme();
 
   const animatedStyle = useAnimatedStyle(() => {
@@ -52,7 +53,7 @@ export const GlassView = React.memo(({ children, style, intensity = 30 }: GlassV
           pointerEvents="none"
         />
       )}
-      <View style={styles.content}>
+      <View style={[styles.content, contentStyle]}>
         {children}
       </View>
     </Animated.View>

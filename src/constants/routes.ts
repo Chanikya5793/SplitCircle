@@ -26,6 +26,7 @@ export const ROUTES = {
     GROUP_STATS: 'GroupStats',
     BILL_SPLIT: 'BillSplit',
     SETTINGS: 'Settings',
+    NOTIFICATION_SETTINGS: 'NotificationSettings',
     PROFILE: 'Profile',
   },
 } as const;

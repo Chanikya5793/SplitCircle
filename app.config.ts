@@ -58,11 +58,12 @@ const google: GoogleEnv = {
 };
 
 const googleMapsApiKey = readEnv(['EXPO_PUBLIC_GOOGLE_MAPS_API_KEY'], { optional: true });
+const iosPushNotificationsEnabled = true;
 
 const config = {
   name: 'SplitCircle',
   slug: 'SplitCircle',
-  version: '1.0.0',
+  version: '0.0.2',
   owner: 'chanikya6163',
   orientation: 'portrait',
   icon: './assets/icon.png',
@@ -82,10 +83,13 @@ const config = {
     supportsTablet: true,
     bundleIdentifier: 'com.splitcircle.app',
     backgroundColor: '#121212',
+    entitlements: {
+      'aps-environment': 'production',
+    },
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
-      UIBackgroundModes: ['fetch'],
+      UIBackgroundModes: iosPushNotificationsEnabled ? ['fetch', 'remote-notification'] : ['fetch'],
     },
   },
   android: {
@@ -146,7 +150,6 @@ const config = {
       },
     ],
     ['expo-build-properties', { android: { minSdkVersion: 24 } }],
-    '@config-plugins/react-native-webrtc',
     '@livekit/react-native-expo-plugin',
   ],
   extra: {
