@@ -13,6 +13,7 @@ import { LiveKitService } from '@/services/LiveKitService';
 import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { AudioSession } from '@livekit/react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 
 const debugLog = (...args: unknown[]) => {
   if (__DEV__) {
@@ -58,12 +59,15 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const callIdRef = useRef<string | null>(null);
   const callStartedAtRef = useRef<number | null>(null);
   const otherParticipantRef = useRef<{ userId: string; displayName: string; photoURL?: string } | null>(null);
+  const statusRef = useRef<CallStatus>('idle');
   const isInitiatorRef = useRef<boolean>(false);
   const hasSessionToCleanupRef = useRef(false);
   const allowUnmountCleanupRef = useRef(false);
   const sessionVersionRef = useRef(0);
   const isEndingRef = useRef(false);
-  const endCallRef = useRef<(reason?: 'manual' | 'session-ended' | 'unmount') => Promise<void>>(async () => undefined);
+  const endCallRef = useRef<(reason?: 'manual' | 'session-ended' | 'unmount' | 'app-backgrounded') => Promise<void>>(async () => undefined);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const backgroundLeaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const unsubscribes = useRef<Array<() => void>>([]);
 
   // Cleanup subscriptions
@@ -71,6 +75,13 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     debugLog('useCallManager cleanup subscriptions');
     unsubscribes.current.forEach((unsub) => unsub());
     unsubscribes.current = [];
+  }, []);
+
+  const clearBackgroundLeaveTimer = useCallback(() => {
+    if (backgroundLeaveTimerRef.current) {
+      clearTimeout(backgroundLeaveTimerRef.current);
+      backgroundLeaveTimerRef.current = null;
+    }
   }, []);
 
   // Start a new call (as initiator)
@@ -302,25 +313,32 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   }, [chatId, threads, user]);
 
   // End the call
-  const endCall = useCallback(async (reason: 'manual' | 'session-ended' | 'unmount' = 'manual') => {
+  const endCall = useCallback(async (reason: 'manual' | 'session-ended' | 'unmount' | 'app-backgrounded' = 'manual') => {
     if (isEndingRef.current) {
       return;
     }
 
     isEndingRef.current = true;
     sessionVersionRef.current += 1;
+    clearBackgroundLeaveTimer();
     debugLog('useCallManager ending call', reason);
 
     try {
       cleanupSubscriptions();
+      const endingCallId = callIdRef.current;
+      const endingStartedAt = callStartedAtRef.current;
+      const endingParticipant = otherParticipantRef.current;
+
+      setStatus('ended');
+      setCallId(null);
 
       // Save call history locally before deleting from Realtime DB
-      if (callIdRef.current && user && callStartedAtRef.current && chatId) {
+      if (endingCallId && user && endingStartedAt && chatId) {
         const endedAt = Date.now();
-        const duration = Math.floor((endedAt - callStartedAtRef.current) / 1000);
+        const duration = Math.floor((endedAt - endingStartedAt) / 1000);
 
         // Last-resort: resolve from thread if ref was somehow never set
-        let participant = otherParticipantRef.current;
+        let participant = endingParticipant;
         if (!participant) {
           const thread = threads.find((t) => t.chatId === chatId);
           const threadOther = thread?.participants.find((p) => p.userId !== user.userId);
@@ -330,13 +348,13 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         }
 
         const historyEntry: CallHistoryEntry = {
-          callId: callIdRef.current,
+          callId: endingCallId,
           chatId,
           groupId,
           type: callType,
           direction: isInitiatorRef.current ? 'outgoing' : 'incoming',
           otherParticipant: participant || { userId: 'unknown', displayName: 'Unknown' },
-          startedAt: callStartedAtRef.current,
+          startedAt: endingStartedAt,
           endedAt,
           duration,
           status: duration > 0 ? 'completed' : 'missed',
@@ -346,14 +364,10 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       }
 
       // Remove this participant from signaling.
-      if (callIdRef.current && user) {
-        await leaveCall(callIdRef.current, user.userId);
+      if (endingCallId && user) {
+        await leaveCall(endingCallId, user.userId);
       }
 
-      setToken(null);
-      setServerUrl(null);
-      setStatus('ended');
-      setCallId(null);
       callIdRef.current = null;
       callStartedAtRef.current = null;
       otherParticipantRef.current = null;
@@ -367,11 +381,15 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     } finally {
       // Keep `true` while idle; reset when starting/joining a new call.
     }
-  }, [user, chatId, groupId, threads, callType, cleanupSubscriptions]);
+  }, [user, chatId, groupId, threads, callType, cleanupSubscriptions, clearBackgroundLeaveTimer]);
 
   useEffect(() => {
     endCallRef.current = endCall;
   }, [endCall]);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   useEffect(() => {
     hasSessionToCleanupRef.current = Boolean(callIdRef.current || callId || token || serverUrl);
@@ -386,6 +404,56 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
 
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      appStateRef.current = nextState;
+
+      if (nextState === 'active') {
+        clearBackgroundLeaveTimer();
+        return;
+      }
+
+      const hasLiveCall = Boolean(callIdRef.current);
+      const isInForegroundOnlyCallState =
+        statusRef.current === 'ringing' || statusRef.current === 'connected';
+
+      if (!hasLiveCall || !isInForegroundOnlyCallState || isEndingRef.current) {
+        clearBackgroundLeaveTimer();
+        return;
+      }
+
+      if (backgroundLeaveTimerRef.current) {
+        return;
+      }
+
+      debugLog('useCallManager app left foreground during call; arming forced leave');
+      backgroundLeaveTimerRef.current = setTimeout(() => {
+        backgroundLeaveTimerRef.current = null;
+
+        if (appStateRef.current === 'active' || isEndingRef.current) {
+          return;
+        }
+
+        const stillHasLiveCall = Boolean(callIdRef.current);
+        const stillInForegroundOnlyCallState =
+          statusRef.current === 'ringing' || statusRef.current === 'connected';
+
+        if (!stillHasLiveCall || !stillInForegroundOnlyCallState) {
+          return;
+        }
+
+        debugLog('useCallManager app stayed backgrounded during call; ending call');
+        void endCallRef.current('app-backgrounded');
+      }, 700);
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => {
+      clearBackgroundLeaveTimer();
+      subscription.remove();
+    };
+  }, [clearBackgroundLeaveTimer]);
 
   // Local state toggles (actual media toggle happens in the UI via LiveKitRoom)
   const toggleMute = useCallback(() => {
