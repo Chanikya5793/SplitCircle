@@ -38,6 +38,7 @@ export interface LocationData {
 export interface ChatMessage {
   id: string;
   messageId: string;
+  requestId?: string;
   chatId: string;
   senderId: string;
   type: MessageType;

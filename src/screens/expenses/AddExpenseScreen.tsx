@@ -3,6 +3,7 @@ import type { Participant, SplitMethod } from '@/components/BillSplit/types';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { PrimaryButton } from '@/components/PrimaryButton';
 import { ReceiptScannerSheet, type ReceiptScannerResult } from '@/components/ReceiptScannerSheet';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
@@ -468,7 +469,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (requestId: string) => {
     try {
       const shareMap = Object.fromEntries(participantShares.map((participant) => [participant.userId, participant.share]));
       const finalSplitMetadata: ExpenseSplitMetadata = splitMetadata
@@ -532,9 +533,9 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
           ...expenseData,
           notes: existingExpense.notes || '',
           updatedAt: Date.now(),
-        }, newImageUriArg, receiptName || undefined);
+        }, newImageUriArg, receiptName || undefined, requestId);
       } else {
-        await addExpense(group.groupId, expenseData, receiptUri || undefined, receiptName || undefined);
+        await addExpense(group.groupId, expenseData, receiptUri || undefined, receiptName || undefined, requestId);
       }
       successHaptic();
       onClose();
@@ -713,9 +714,15 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
               <Button mode="outlined" onPress={onClose} style={{ borderColor: theme.colors.outline }}>
                 Cancel
               </Button>
-              <Button mode="contained" onPress={handleSubmit} disabled={!formValid}>
-                Save expense
-              </Button>
+              <PrimaryButton
+                onPress={handleSubmit}
+                disabled={!formValid}
+                requestKey={expenseId ? `expense-update-${expenseId}` : `expense-create-${group.groupId}`}
+                loadingMessage={expenseId ? 'Saving expense...' : 'Creating expense...'}
+                showGlobalOverlay
+              >
+                {expenseId ? 'Save changes' : 'Save expense'}
+              </PrimaryButton>
             </View>
           </GlassView>
         </ScrollView>

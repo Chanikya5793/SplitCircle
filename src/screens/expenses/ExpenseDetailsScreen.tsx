@@ -1,8 +1,10 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { PrimaryButton } from '@/components/PrimaryButton';
 import { ROUTES } from '@/constants';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { getExpenseDetailsTitle } from '@/navigation/screenTitles';
 import { formatCurrency } from '@/utils/currency';
 import { getExpenseSplitDetails } from '@/utils/expenseSplit';
 import { useNavigation } from '@react-navigation/native';
@@ -37,30 +39,23 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   const { groups, deleteExpense, updateExpense } = useGroups();
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const group = groups.find((g) => g.groupId === groupId);
+  const expense = group?.expenses.find((e) => e.expenseId === expenseId);
 
   useLayoutEffect(() => {
     navigation.setOptions({
+      title: getExpenseDetailsTitle(expense?.title),
       headerTitle: '',
       headerTransparent: true,
       headerTintColor: theme.colors.primary,
     });
-  }, [navigation, theme.colors.primary]);
-
-  useLayoutEffect(() => {
-    const grp = groups.find((g) => g.groupId === groupId);
-    if (grp) {
-      navigation.setOptions({ headerBackTitle: grp.name });
-    }
-  }, [navigation, groups, groupId]);
+  }, [navigation, theme.colors.primary, expense?.title]);
 
   const headerOpacity = scrollY.interpolate({
     inputRange: [40, 80],
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
-
-  const group = groups.find((g) => g.groupId === groupId);
-  const expense = group?.expenses.find((e) => e.expenseId === expenseId);
 
   const [note, setNote] = useState(expense?.notes || '');
   const [isEditingNote, setIsEditingNote] = useState(false);
@@ -89,9 +84,9 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
     }
   };
 
-  const handleSaveNote = async () => {
+  const handleSaveNote = async (requestId: string) => {
     try {
-      await updateExpense(groupId, { ...expense, notes: note });
+      await updateExpense(groupId, { ...expense, notes: note }, undefined, undefined, requestId);
       setIsEditingNote(false);
     } catch (error) {
       Alert.alert('Error', 'Failed to save note');
@@ -308,9 +303,14 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
                 />
                 <View style={styles.noteActions}>
                   <Button onPress={() => setIsEditingNote(false)}>Cancel</Button>
-                  <Button mode="contained" onPress={handleSaveNote}>
+                  <PrimaryButton
+                    onPress={handleSaveNote}
+                    requestKey={`expense-note-${expenseId}`}
+                    loadingMessage="Saving note..."
+                    showGlobalOverlay
+                  >
                     Save
-                  </Button>
+                  </PrimaryButton>
                 </View>
               </View>
             ) : (

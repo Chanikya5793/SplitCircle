@@ -99,6 +99,7 @@ export interface RecurringExpenseMetadata {
 
 export interface Expense {
   expenseId: string;
+  requestId?: string;
   groupId: string;
   title: string;
   category: string;

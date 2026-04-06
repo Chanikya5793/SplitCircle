@@ -7,6 +7,8 @@ import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
+import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
+import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import { lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -33,6 +35,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const [filterVisible, setFilterVisible] = useState(false);
   const [sortField, setSortField] = useState<ChatSortField>('updatedAt');
   const [sortOrder, setSortOrder] = useState<ChatSortOrder>('desc');
+  useSyncRootStackTitle(ROOT_SCREEN_TITLES.chats);
 
   useLayoutEffect(() => {
     navigation.setOptions({

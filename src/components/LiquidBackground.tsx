@@ -1,6 +1,6 @@
 import { useTheme } from '@/context/ThemeContext';
-import React, { useEffect, useMemo } from 'react';
-import { Dimensions, StyleSheet, View, ViewStyle } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Dimensions, InteractionManager, StyleSheet, View, ViewStyle } from 'react-native';
 import Animated, {
     Easing,
     interpolateColor,
@@ -24,32 +24,46 @@ interface LiquidBackgroundProps {
 // Color palettes for different health statuses
 const COLOR_PALETTES = {
   light: {
-    settled: ['#84fab0', '#a8edea', '#b8f6e6', '#c6f6d5'],
-    balanced: ['#ff9a9e', '#fad0c4', '#a18cd1', '#84fab0'],
-    debts: ['#ff6b6b', '#ffa07a', '#ff7f50', '#ff8c00'],
+    settled: ['#84fab0', '#a8edea', '#b8f6e6'],
+    balanced: ['#ff9a9e', '#fad0c4', '#a18cd1'],
+    debts: ['#ff6b6b', '#ffa07a', '#ff7f50'],
   },
   dark: {
-    settled: ['#00695C', '#00897B', '#26A69A', '#4DB6AC'],
-    balanced: ['#4527A0', '#283593', '#00695C', '#C62828'],
-    debts: ['#B71C1C', '#C62828', '#D84315', '#E65100'],
+    settled: ['#00695C', '#00897B', '#26A69A'],
+    balanced: ['#4527A0', '#283593', '#00695C'],
+    debts: ['#B71C1C', '#C62828', '#D84315'],
   },
 };
 
-const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY }: any) => {
+interface BlobProps {
+  lightColor: string;
+  darkColor: string;
+  themeProgress: { value: number };
+  size: number;
+  initialX: number;
+  initialY: number;
+  animate: boolean;
+}
+
+const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, animate }: BlobProps) => {
   const scaleSv = useSharedValue(1);
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
 
   // Generate random animation parameters for more natural movement
-  // SLOWED DOWN: Increased durations significantly for a more relaxed feel
   const durationX = 12000 + Math.random() * 6000;
   const durationY = 10000 + Math.random() * 8000;
   const durationScale = 9000 + Math.random() * 6000;
 
-  const rangeX = 60 + Math.random() * 60; // Move 60-120 units horizontally
-  const rangeY = 60 + Math.random() * 60; // Move 60-120 units vertically
+  const rangeX = 60 + Math.random() * 60;
+  const rangeY = 60 + Math.random() * 60;
 
   useEffect(() => {
+    // Don't start animations until the transition is complete.
+    // This prevents 9+ concurrent reanimated animations from competing
+    // with the navigation slide-in animation for GPU/CPU time.
+    if (!animate) return;
+
     scaleSv.value = withRepeat(
       withSequence(
         withTiming(1.3, { duration: durationScale, easing: Easing.inOut(Easing.ease) }),
@@ -77,7 +91,7 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY }
       -1,
       true
     );
-  }, []);
+  }, [animate]);
 
   const animatedStyle = useAnimatedStyle(() => {
     const backgroundColor = interpolateColor(
@@ -116,6 +130,17 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY }
 
 export const LiquidBackground = ({ children, style, healthStatus = 'balanced' }: LiquidBackgroundProps) => {
   const { themeProgress, isDark } = useTheme();
+  const [animate, setAnimate] = useState(false);
+
+  // Defer blob animations until the navigation transition finishes.
+  // Blobs render immediately as static colored circles (cheap), but their
+  // movement animations only start after InteractionManager signals idle.
+  useEffect(() => {
+    const task = InteractionManager.runAfterInteractions(() => {
+      setAnimate(true);
+    });
+    return () => task.cancel();
+  }, []);
 
   // Memoize color selection based on health status
   const { lightBlobColors, darkBlobColors } = useMemo(() => ({
@@ -141,6 +166,7 @@ export const LiquidBackground = ({ children, style, healthStatus = 'balanced' }:
         size={300}
         initialX={-50}
         initialY={-50}
+        animate={animate}
       />
       <Blob
         lightColor={lightBlobColors[1]}
@@ -149,6 +175,7 @@ export const LiquidBackground = ({ children, style, healthStatus = 'balanced' }:
         size={350}
         initialX={width - 200}
         initialY={height - 200}
+        animate={animate}
       />
       <Blob
         lightColor={lightBlobColors[2]}
@@ -157,14 +184,7 @@ export const LiquidBackground = ({ children, style, healthStatus = 'balanced' }:
         size={250}
         initialX={-50}
         initialY={height / 2}
-      />
-      <Blob
-        lightColor={lightBlobColors[3]}
-        darkColor={darkBlobColors[3]}
-        themeProgress={themeProgress}
-        size={200}
-        initialX={width - 100}
-        initialY={100}
+        animate={animate}
       />
 
       <View style={styles.content}>
@@ -177,7 +197,7 @@ export const LiquidBackground = ({ children, style, healthStatus = 'balanced' }:
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    overflow: 'hidden', // Clip blobs that go outside
+    overflow: 'hidden',
   },
   content: {
     flex: 1,
@@ -185,6 +205,6 @@ const styles = StyleSheet.create({
   },
   blob: {
     position: 'absolute',
-    opacity: 0.6,
+    opacity: 0.5,
   },
 });
