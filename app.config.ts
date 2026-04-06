@@ -58,11 +58,12 @@ const google: GoogleEnv = {
 };
 
 const googleMapsApiKey = readEnv(['EXPO_PUBLIC_GOOGLE_MAPS_API_KEY'], { optional: true });
+const iosPushNotificationsEnabled = true;
 
 const config = {
   name: 'SplitCircle',
   slug: 'SplitCircle',
-  version: '0.0.1',
+  version: '0.0.2',
   owner: 'chanikya6163',
   orientation: 'portrait',
   icon: './assets/icon.png',
@@ -83,12 +84,12 @@ const config = {
     bundleIdentifier: 'com.splitcircle.app',
     backgroundColor: '#121212',
     entitlements: {
-      'aps-environment': 'development',
+      'aps-environment': 'production',
     },
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
-      UIBackgroundModes: ['fetch', 'remote-notification'],
+      UIBackgroundModes: iosPushNotificationsEnabled ? ['fetch', 'remote-notification'] : ['fetch'],
     },
   },
   android: {

@@ -5,6 +5,7 @@ import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
+import { getCallInfoTitle } from '@/navigation/screenTitles';
 import type { CallHistoryEntry } from '@/services/localCallStorage';
 import { deleteCallFromHistory, getChatCallHistory } from '@/services/localCallStorage';
 import { formatCallDuration, formatCallTime, getCallDateSection } from '@/utils/format';
@@ -39,11 +40,12 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: '',
+      title: getCallInfoTitle(entry),
+      headerTitle: '',
       headerTransparent: true,
       headerTintColor: theme.colors.primary,
     });
-  }, [navigation, theme.colors.primary]);
+  }, [entry, navigation, theme.colors.primary]);
 
   // Load all calls with same participant
   useEffect(() => {
@@ -203,7 +205,11 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
               onPress={() => {
                 lightHaptic();
                 if (thread) {
-                  navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId: entry.chatId });
+                  navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+                    chatId: entry.chatId,
+                    initialTitle: groupName || entry.otherParticipant.displayName || 'Chat',
+                    backTitle: getCallInfoTitle(entry),
+                  });
                 }
               }}
             >

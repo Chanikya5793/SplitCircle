@@ -1,7 +1,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Dimensions,
     Image,
@@ -12,7 +12,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import { IconButton, Text, TextInput } from 'react-native-paper';
+import { ActivityIndicator, IconButton, Text, TextInput } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SelectedMedia } from './AttachmentMenu';
 
@@ -25,6 +25,7 @@ interface MediaPreviewProps {
   visible: boolean;
   onClose: () => void;
   onSend: (caption: string, quality: QualityLevel) => void;
+  onPreviewReady?: () => void;
 }
 
 // Helper to format file size
@@ -55,12 +56,14 @@ const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
   return 'document';
 };
 
-export const MediaPreview = ({ media, visible, onClose, onSend }: MediaPreviewProps) => {
+export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }: MediaPreviewProps) => {
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const [caption, setCaption] = useState('');
   const [quality, setQuality] = useState<QualityLevel>('HD');
   const [videoError, setVideoError] = useState(false);
+  const [previewReady, setPreviewReady] = useState(false);
+  const readyNotifiedRef = useRef(false);
 
   // Create video player for video media
   const videoSource = media?.type === 'video' ? media.uri : null;
@@ -68,19 +71,75 @@ export const MediaPreview = ({ media, visible, onClose, onSend }: MediaPreviewPr
     player.loop = false;
   });
 
+  const markPreviewReady = useCallback(() => {
+    setPreviewReady(true);
+
+    if (readyNotifiedRef.current) {
+      return;
+    }
+
+    readyNotifiedRef.current = true;
+    onPreviewReady?.();
+  }, [onPreviewReady]);
+
+  useEffect(() => {
+    readyNotifiedRef.current = false;
+    setVideoError(false);
+
+    if (!visible || !media) {
+      setPreviewReady(false);
+      return;
+    }
+
+    if (media.type !== 'video') {
+      const frame = requestAnimationFrame(() => {
+        markPreviewReady();
+      });
+
+      return () => cancelAnimationFrame(frame);
+    }
+
+    setPreviewReady(false);
+  }, [markPreviewReady, media, visible]);
+
   // Handle player status changes
   useEffect(() => {
-    if (!player) return;
+    if (!player || !visible || media?.type !== 'video') return;
+
     const subscription = player.addListener('statusChange', (status) => {
       if (status.error) {
         console.log('Video preview error:', status.error);
         setVideoError(true);
+        markPreviewReady();
+      }
+
+      if (status.status === 'readyToPlay') {
+        markPreviewReady();
       }
     });
     return () => subscription.remove();
-  }, [player]);
+  }, [markPreviewReady, media?.type, player, visible]);
+
+  useEffect(() => {
+    if (!visible || !media || media.type !== 'video' || previewReady || videoError) {
+      return;
+    }
+
+    // Some videos never emit a ready event reliably. Fall back to the
+    // metadata card so the user can still review and send the attachment.
+    const timeout = setTimeout(() => {
+      setVideoError(true);
+      markPreviewReady();
+    }, 5000);
+
+    return () => clearTimeout(timeout);
+  }, [markPreviewReady, media, previewReady, videoError, visible]);
 
   const handleSend = () => {
+    if (!previewReady && media?.type === 'video' && !videoError) {
+      return;
+    }
+
     const captionToSend = caption;
     setCaption('');
     onSend(captionToSend, quality);
@@ -89,6 +148,7 @@ export const MediaPreview = ({ media, visible, onClose, onSend }: MediaPreviewPr
   const handleClose = () => {
     setCaption('');
     setVideoError(false);
+    setPreviewReady(false);
     onClose();
   };
 
@@ -187,6 +247,7 @@ export const MediaPreview = ({ media, visible, onClose, onSend }: MediaPreviewPr
 
   const showCaptionInput = media.type === 'image' || media.type === 'video' || media.type === 'camera';
   const showQualityControl = media.type === 'image' || media.type === 'video' || media.type === 'camera';
+  const isPreviewLoading = media.type === 'video' && !previewReady && !videoError;
 
   return (
     <Modal
@@ -228,8 +289,13 @@ export const MediaPreview = ({ media, visible, onClose, onSend }: MediaPreviewPr
           {showQualityControl && (
             <View style={styles.qualityContainer}>
               <TouchableOpacity 
-                style={[styles.qualityButton, quality === 'HD' && styles.qualityButtonActive]}
-                onPress={() => setQuality(quality === 'HD' ? 'SD' : 'HD')}
+                style={[
+                  styles.qualityButton,
+                  quality === 'HD' && styles.qualityButtonActive,
+                  isPreviewLoading && styles.qualityButtonDisabled,
+                ]}
+                onPress={isPreviewLoading ? undefined : () => setQuality(quality === 'HD' ? 'SD' : 'HD')}
+                activeOpacity={isPreviewLoading ? 1 : 0.7}
               >
                 <Text style={[styles.qualityText, quality === 'HD' && styles.qualityTextActive]}>
                   {quality}
@@ -244,6 +310,17 @@ export const MediaPreview = ({ media, visible, onClose, onSend }: MediaPreviewPr
         {/* Media Content */}
         <View style={styles.mediaContainer}>
           {renderMediaContent()}
+          {isPreviewLoading ? (
+            <View style={styles.previewLoadingOverlay}>
+              <View style={styles.previewLoadingCard}>
+                <ActivityIndicator animating size="large" color={theme.colors.primary} />
+                <Text style={styles.previewLoadingTitle}>Loading video preview…</Text>
+                <Text style={styles.previewLoadingSubtitle}>
+                  Large videos can take a moment to prepare.
+                </Text>
+              </View>
+            </View>
+          ) : null}
         </View>
 
         {/* Caption Input & Send */}
@@ -266,11 +343,19 @@ export const MediaPreview = ({ media, visible, onClose, onSend }: MediaPreviewPr
             />
           )}
           <TouchableOpacity
-            style={[styles.sendButton, { backgroundColor: theme.colors.primary }]}
-            onPress={handleSend}
-            activeOpacity={0.8}
+            style={[
+              styles.sendButton,
+              { backgroundColor: isPreviewLoading ? 'rgba(255,255,255,0.3)' : theme.colors.primary },
+            ]}
+            onPress={isPreviewLoading ? undefined : handleSend}
+            activeOpacity={isPreviewLoading ? 1 : 0.8}
+            accessibilityState={{ disabled: isPreviewLoading, busy: isPreviewLoading }}
           >
-            <Ionicons name="send" size={24} color="#fff" />
+            {isPreviewLoading ? (
+              <ActivityIndicator animating size="small" color="#fff" />
+            ) : (
+              <Ionicons name="send" size={24} color="#fff" />
+            )}
           </TouchableOpacity>
         </View>
         </KeyboardAvoidingView>
@@ -322,6 +407,33 @@ const styles = StyleSheet.create({
   videoPreview: {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT * 0.6,
+  },
+  previewLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  previewLoadingCard: {
+    minWidth: 240,
+    maxWidth: 320,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.68)',
+    alignItems: 'center',
+    gap: 10,
+  },
+  previewLoadingTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  previewLoadingSubtitle: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 13,
+    textAlign: 'center',
   },
   videoFallback: {
     alignItems: 'center',
@@ -415,6 +527,9 @@ const styles = StyleSheet.create({
   },
   qualityTextActive: {
     color: '#000',
+  },
+  qualityButtonDisabled: {
+    opacity: 0.5,
   },
 });
 

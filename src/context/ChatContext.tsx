@@ -55,6 +55,10 @@ interface SendMessagePayload {
     longitude: number;
     address?: string;
   };
+  onStageChange?: (
+    stage: 'preparing' | 'uploading' | 'sending' | 'complete' | 'failed',
+    details?: { progress?: number; message?: string },
+  ) => void;
 }
 
 interface ChatContextValue {
@@ -100,6 +104,23 @@ const removeUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> 
 
 const sortMessagesForUi = (messages: ChatMessage[]): ChatMessage[] => {
   return [...messages].sort((a, b) => b.createdAt - a.createdAt);
+};
+
+const getMessageTypeLabel = (type: MessageType): string => {
+  switch (type) {
+    case 'image':
+      return 'photo';
+    case 'video':
+      return 'video';
+    case 'audio':
+      return 'audio';
+    case 'file':
+      return 'document';
+    case 'location':
+      return 'location';
+    default:
+      return 'message';
+  }
 };
 
 export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
@@ -401,7 +422,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   }, [getRecipientCount, getThreadByChatId]);
 
   const sendMessage = useCallback(
-    async ({ chatId, requestId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo, location }: SendMessagePayload) => {
+    async ({ chatId, requestId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo, location, onStageChange }: SendMessagePayload) => {
       if (!user) {
         throw new Error('Missing user for chat send');
       }
@@ -442,69 +463,80 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
       await saveMessageLocally(message);
 
-      (async () => {
-        try {
-          let mediaUrl: string | undefined;
-          let permanentLocalPath: string | undefined;
+      try {
+        let mediaUrl: string | undefined;
+        let permanentLocalPath: string | undefined;
+        const typeLabel = getMessageTypeLabel(type);
 
-          if (mediaUri && type !== 'text') {
-            const fileName = mediaMetadata?.fileName || `${type}_${msgId}`;
-            const mimeType = mediaMetadata?.mimeType || 'application/octet-stream';
+        if (mediaUri && type !== 'text') {
+          const fileName = mediaMetadata?.fileName || `${type}_${msgId}`;
+          const mimeType = mediaMetadata?.mimeType || 'application/octet-stream';
 
-            console.log('📤 Uploading media to Firebase Storage...');
+          onStageChange?.('preparing', { message: `Preparing ${typeLabel} upload…` });
+          console.log('📤 Uploading media to Firebase Storage...');
 
-            const uploadResult = await uploadMedia(
-              localMediaPath || mediaUri,
-              chatId,
-              msgId,
-              fileName,
-              mimeType,
-              (progress) => {
-                console.log(`📤 Upload progress: ${progress.toFixed(1)}%`);
-              }
-            );
+          const uploadResult = await uploadMedia(
+            localMediaPath || mediaUri,
+            chatId,
+            msgId,
+            fileName,
+            mimeType,
+            (progress) => {
+              console.log(`📤 Upload progress: ${progress.toFixed(1)}%`);
+              onStageChange?.('uploading', {
+                progress,
+                message: `Uploading ${typeLabel}… ${Math.round(progress)}%`,
+              });
+            }
+          );
 
-            mediaUrl = uploadResult.downloadUrl;
-            permanentLocalPath = uploadResult.localPath;
+          mediaUrl = uploadResult.downloadUrl;
+          permanentLocalPath = uploadResult.localPath;
 
-            console.log('✅ Media uploaded successfully:', mediaUrl);
+          console.log('✅ Media uploaded successfully:', mediaUrl);
 
-            message.mediaUrl = mediaUrl;
-            message.localMediaPath = permanentLocalPath;
-            message.mediaDownloaded = true;
-          }
-
-          message.status = 'sent';
-          await saveMessageLocally(message);
-
-          const latestThread = getThreadByChatId(chatId);
-          const participants = latestThread?.participants || [];
-          const isGroupChat = latestThread?.type === 'group';
-          const recipientIds = participants
-            .map((participant) => participant.userId)
-            .filter((participantId) => participantId !== user.userId);
-
-          for (const recipientId of recipientIds) {
-            await queueMessage(recipientId, message, isGroupChat);
-          }
-
-          console.log(`✅ ${type} message sent and queued`);
-
-          const threadMessage = { ...message };
-          delete (threadMessage as { localMediaPath?: string }).localMediaPath;
-          const cleanMessage = removeUndefined({ ...threadMessage, createdAt: serverTimestamp() });
-
-          await updateDoc(doc(db, 'chats', chatId), {
-            lastMessage: cleanMessage,
-            groupId: groupId ?? null,
-            updatedAt: Date.now(),
-          });
-        } catch (error) {
-          console.error('Send failed', error);
-          message.status = 'failed';
-          await saveMessageLocally(message);
+          message.mediaUrl = mediaUrl;
+          message.localMediaPath = permanentLocalPath;
+          message.mediaDownloaded = true;
         }
-      })();
+
+        onStageChange?.('sending', { message: `Sending ${typeLabel}…` });
+        message.status = 'sent';
+        await saveMessageLocally(message);
+
+        const latestThread = getThreadByChatId(chatId);
+        const participants = latestThread?.participants || [];
+        const isGroupChat = latestThread?.type === 'group';
+        const recipientIds = participants
+          .map((participant) => participant.userId)
+          .filter((participantId) => participantId !== user.userId);
+
+        for (const recipientId of recipientIds) {
+          await queueMessage(recipientId, message, isGroupChat);
+        }
+
+        console.log(`✅ ${type} message sent and queued`);
+
+        const threadMessage = { ...message };
+        delete (threadMessage as { localMediaPath?: string }).localMediaPath;
+        const cleanMessage = removeUndefined({ ...threadMessage, createdAt: serverTimestamp() });
+
+        await updateDoc(doc(db, 'chats', chatId), {
+          lastMessage: cleanMessage,
+          groupId: groupId ?? null,
+          updatedAt: Date.now(),
+        });
+
+        onStageChange?.('complete');
+      } catch (error) {
+        console.error('Send failed', error);
+        message.status = 'failed';
+        await saveMessageLocally(message);
+        onStageChange?.('failed', {
+          message: error instanceof Error ? error.message : 'Failed to send message',
+        });
+        throw error;
+      }
     },
     [getThreadByChatId, user],
   );
