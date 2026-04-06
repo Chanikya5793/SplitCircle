@@ -548,7 +548,7 @@ const unregisterNotificationDeviceRecord = async (userId, deviceId) => {
     }, { merge: true });
 };
 exports.unregisterNotificationDeviceRecord = unregisterNotificationDeviceRecord;
-const sendPushToUsers = async (userIds, title, body, data, category, chatId, channelId) => {
+const sendPushToUsers = async (userIds, title, body, data, category, chatId, channelId, options) => {
     var _a, _b, _c, _d;
     const db = (0, firestore_1.getFirestore)();
     const deliveryRef = db.collection(DELIVERY_COLLECTION).doc();
@@ -559,6 +559,7 @@ const sendPushToUsers = async (userIds, title, body, data, category, chatId, cha
         deliveryId,
         category,
         title,
+        subtitle: normalizeString(options === null || options === void 0 ? void 0 : options.subtitle),
         bodyPreview: summarizeBody(body),
         data: toStringRecord(Object.assign(Object.assign({}, data), { deliveryId })),
         requestedUserIds: userIds,
@@ -581,15 +582,7 @@ const sendPushToUsers = async (userIds, title, body, data, category, chatId, cha
     }
     const dispatchTargets = [...targetDevices];
     const messages = dispatchTargets.map((device) => {
-        return {
-            to: device.expoPushToken,
-            title,
-            body,
-            data: toStringRecord(Object.assign(Object.assign({}, data), { deliveryId })),
-            sound: "default",
-            priority: "high",
-            channelId: channelId !== null && channelId !== void 0 ? channelId : (0, exports.mapCategoryToChannel)(category),
-        };
+        return Object.assign(Object.assign({ to: device.expoPushToken, title }, ((options === null || options === void 0 ? void 0 : options.subtitle) ? { subtitle: options.subtitle } : {})), { body, data: toStringRecord(Object.assign(Object.assign({}, data), { deliveryId })), sound: "default", priority: "high", channelId: channelId !== null && channelId !== void 0 ? channelId : (0, exports.mapCategoryToChannel)(category) });
     });
     await deliveryRef.set(Object.assign(Object.assign({}, baseRecord), { createdAt: firestore_1.FieldValue.serverTimestamp(), status: "sending", targetDevices: targetDevices.map((device) => ({
             userId: device.userId,

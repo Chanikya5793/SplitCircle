@@ -30,6 +30,7 @@ export type NotificationRegistrationStatus =
 interface ExpoPushMessage {
     to: string;
     title: string;
+    subtitle?: string;
     body: string;
     data?: Record<string, string>;
     sound?: "default" | null;
@@ -785,6 +786,9 @@ export const sendPushToUsers = async (
     category: NotificationCategory,
     chatId?: string,
     channelId?: string,
+    options?: {
+        subtitle?: string;
+    },
 ): Promise<NotificationDispatchResult> => {
     const db = getFirestore();
     const deliveryRef = db.collection(DELIVERY_COLLECTION).doc();
@@ -799,6 +803,7 @@ export const sendPushToUsers = async (
         deliveryId,
         category,
         title,
+        subtitle: normalizeString(options?.subtitle),
         bodyPreview: summarizeBody(body),
         data: toStringRecord({ ...data, deliveryId }),
         requestedUserIds: userIds,
@@ -834,6 +839,7 @@ export const sendPushToUsers = async (
         return {
             to: device.expoPushToken!,
             title,
+            ...(options?.subtitle ? { subtitle: options.subtitle } : {}),
             body,
             data: toStringRecord({ ...data, deliveryId }),
             sound: "default",

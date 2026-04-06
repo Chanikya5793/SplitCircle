@@ -38,6 +38,7 @@ export interface NotificationData {
   expenseId?: string;
   settlementId?: string;
   callId?: string;
+  callType?: 'audio' | 'video';
   senderId?: string;
   senderName?: string;
 }

@@ -986,7 +986,7 @@ const NotificationNavigator = () => {
             navigation.navigate(ROUTES.APP.CALL_DETAIL, {
               chatId: data.chatId,
               groupId: data.groupId,
-              type: 'audio',
+              type: data.callType === 'video' ? 'video' : 'audio',
               joinCallId: data.callId,
             });
           }
