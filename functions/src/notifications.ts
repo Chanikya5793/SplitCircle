@@ -69,7 +69,13 @@ interface NotificationDeviceState {
     permissionState: NotificationPermissionState;
     registrationStatus: NotificationRegistrationStatus;
     projectId: string | null;
+    deviceName: string | null;
+    modelName: string | null;
     lastRegistrationError: string | null;
+    isPhysicalDevice: boolean;
+    lastSeenAt: number | null;
+    lastRegisteredAt: number | null;
+    updatedAt: number | null;
     isLegacy: boolean;
 }
 
@@ -137,6 +143,24 @@ const normalizeString = (value: unknown): string | null => {
     return typeof value === "string" && value.trim().length > 0
         ? value.trim()
         : null;
+};
+
+const toMillis = (value: unknown): number | null => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+    }
+
+    if (typeof value === "object" && value !== null) {
+        const maybeTimestamp = value as { toMillis?: () => number; seconds?: number };
+        if (typeof maybeTimestamp.toMillis === "function") {
+            return maybeTimestamp.toMillis();
+        }
+        if (typeof maybeTimestamp.seconds === "number") {
+            return maybeTimestamp.seconds * 1000;
+        }
+    }
+
+    return null;
 };
 
 const chunkArray = <T>(input: T[], size: number): T[][] => {
@@ -244,7 +268,13 @@ const normalizeDeviceRecord = (
             ? data.registrationStatus
             : "error",
     projectId: normalizeString(data.projectId),
+    deviceName: normalizeString(data.deviceName),
+    modelName: normalizeString(data.modelName),
     lastRegistrationError: normalizeString(data.lastRegistrationError),
+    isPhysicalDevice: data.isPhysicalDevice === true,
+    lastSeenAt: toMillis(data.lastSeenAt),
+    lastRegisteredAt: toMillis(data.lastRegisteredAt),
+    updatedAt: toMillis(data.updatedAt),
     isLegacy: false,
 });
 
@@ -257,9 +287,71 @@ const buildLegacyDevice = (userId: string, token: string): NotificationDeviceSta
     permissionState: "granted",
     registrationStatus: "active",
     projectId: null,
+    deviceName: null,
+    modelName: null,
     lastRegistrationError: null,
+    isPhysicalDevice: true,
+    lastSeenAt: null,
+    lastRegisteredAt: null,
+    updatedAt: null,
     isLegacy: true,
 });
+
+const getDeviceRecency = (device: NotificationDeviceState): number =>
+    device.lastSeenAt ?? device.lastRegisteredAt ?? device.updatedAt ?? 0;
+
+const getPhysicalDeviceKey = (device: NotificationDeviceState): string | null => {
+    if (device.isLegacy || !device.isPhysicalDevice) {
+        return null;
+    }
+
+    const deviceName = normalizeString(device.deviceName)?.toLowerCase();
+    const modelName = normalizeString(device.modelName)?.toLowerCase();
+    if (!deviceName || !modelName) {
+        return null;
+    }
+
+    return [
+        device.platform,
+        normalizeString(device.projectId)?.toLowerCase() ?? "unknown-project",
+        deviceName,
+        modelName,
+    ].join(":");
+};
+
+const dedupeDevicesForDelivery = (
+    devices: NotificationDeviceState[],
+): NotificationDeviceState[] => {
+    const sorted = [...devices].sort((left, right) => getDeviceRecency(right) - getDeviceRecency(left));
+    const seenTokens = new Set<string>();
+    const seenPhysicalKeys = new Set<string>();
+    const uniqueDevices: NotificationDeviceState[] = [];
+
+    for (const device of sorted) {
+        const token = normalizeString(device.expoPushToken);
+        const physicalKey = getPhysicalDeviceKey(device);
+
+        if (token && seenTokens.has(token)) {
+            continue;
+        }
+
+        if (physicalKey && seenPhysicalKeys.has(physicalKey)) {
+            continue;
+        }
+
+        uniqueDevices.push(device);
+
+        if (token) {
+            seenTokens.add(token);
+        }
+
+        if (physicalKey) {
+            seenPhysicalKeys.add(physicalKey);
+        }
+    }
+
+    return uniqueDevices;
+};
 
 const sendExpoPush = async (
     messages: ExpoPushMessage[],
@@ -398,10 +490,70 @@ const invalidateDeviceToken = async (
         registrationStatus: "invalid_token",
         invalidatedAt: FieldValue.serverTimestamp(),
         invalidationReason: reason,
+        invalidatedTokenString: device.expoPushToken,
         lastReceiptStatus: "error",
         lastReceiptError: reason,
         updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
+};
+
+const retireSupersededDevices = async (
+    userId: string,
+    currentDeviceId: string,
+): Promise<void> => {
+    const db = getFirestore();
+    const devices = await listUserDeviceRecords(db, userId);
+    const currentDevice = devices.find((device) => device.deviceId === currentDeviceId && !device.isLegacy);
+    if (!currentDevice || currentDevice.registrationStatus !== "active") {
+        return;
+    }
+
+    const currentToken = normalizeString(currentDevice.expoPushToken);
+    const currentPhysicalKey = getPhysicalDeviceKey(currentDevice);
+
+    if (!currentToken && !currentPhysicalKey) {
+        return;
+    }
+
+    const supersededDevices = devices.filter((device) => {
+        if (device.isLegacy || device.deviceId === currentDeviceId || device.registrationStatus !== "active") {
+            return false;
+        }
+
+        const sharesToken = Boolean(
+            currentToken &&
+            normalizeString(device.expoPushToken) === currentToken,
+        );
+        const sharesPhysicalDevice = Boolean(
+            currentPhysicalKey &&
+            getPhysicalDeviceKey(device) === currentPhysicalKey,
+        );
+
+        return sharesToken || sharesPhysicalDevice;
+    });
+
+    if (supersededDevices.length === 0) {
+        return;
+    }
+
+    await Promise.all(
+        supersededDevices.map((device) =>
+            getFirestore().doc(device.path).set({
+                expoPushToken: null,
+                registrationStatus: "token_missing",
+                lastRegistrationError: "Superseded by a newer registration for this device.",
+                supersededAt: FieldValue.serverTimestamp(),
+                supersededByDeviceId: currentDeviceId,
+                updatedAt: FieldValue.serverTimestamp(),
+            }, { merge: true }),
+        ),
+    );
+
+    logger.info("Retired superseded notification device registrations", {
+        userId,
+        currentDeviceId,
+        retiredDeviceIds: supersededDevices.map((device) => device.deviceId),
+    });
 };
 
 const resolveNotificationTargets = async (
@@ -493,7 +645,7 @@ const resolveNotificationTargets = async (
         );
 
         if (candidateDevices.length > 0) {
-            devices.push(...candidateDevices);
+            devices.push(...dedupeDevicesForDelivery(candidateDevices));
             continue;
         }
 
@@ -521,13 +673,22 @@ export const syncNotificationDeviceRecord = async (
     const safeToken = expoPushToken && isExpoPushToken(expoPushToken) ? expoPushToken : null;
     const lastRegistrationError = normalizeString(input.lastRegistrationError);
     const permissionState = input.permissionState;
-    const nextStatus = safeToken
-        ? "active"
-        : toRegistrationStatus(permissionState, null, lastRegistrationError);
+
     const docRef = getDeviceDocRef(userId, deviceId);
     const existingSnap = await docRef.get();
     const existing = existingSnap.exists ? existingSnap.data() ?? {} : {};
     const previousToken = normalizeString(existing.expoPushToken);
+
+    let nextStatus: NotificationRegistrationStatus = "token_missing";
+    if (safeToken) {
+        if (existing.registrationStatus === "invalid_token" && existing.invalidatedTokenString === safeToken) {
+            nextStatus = "invalid_token";
+        } else {
+            nextStatus = "active";
+        }
+    } else {
+        nextStatus = toRegistrationStatus(permissionState, null, lastRegistrationError);
+    }
 
     const payload: Record<string, unknown> = {
         userId,
@@ -535,7 +696,7 @@ export const syncNotificationDeviceRecord = async (
         platform: input.platform,
         permissionState,
         registrationStatus: nextStatus,
-        expoPushToken: safeToken,
+        expoPushToken: nextStatus === "invalid_token" ? null : safeToken,
         projectId: normalizeString(input.projectId),
         appVersion: normalizeString(input.appVersion),
         deviceName: normalizeString(input.deviceName),
@@ -562,6 +723,10 @@ export const syncNotificationDeviceRecord = async (
     }
 
     await docRef.set(payload, { merge: true });
+
+    if (nextStatus === "active") {
+        await retireSupersededDevices(userId, deviceId);
+    }
 
     return {
         deviceId,
@@ -824,7 +989,13 @@ export const processPendingNotificationReceipts = async (): Promise<{ processed:
                 permissionState: "granted",
                 registrationStatus: "active",
                 projectId: null,
+                deviceName: null,
+                modelName: null,
                 lastRegistrationError: null,
+                isPhysicalDevice: true,
+                lastSeenAt: null,
+                lastRegisteredAt: null,
+                updatedAt: null,
                 isLegacy: pending.isLegacy === true,
             };
 

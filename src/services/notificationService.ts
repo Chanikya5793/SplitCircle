@@ -8,6 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
+import * as SecureStore from 'expo-secure-store';
 import { doc, onSnapshot, type Unsubscribe } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { Platform } from 'react-native';
@@ -194,14 +195,53 @@ export const requestNotificationPermissionSnapshot = async (): Promise<Notificat
   return toPermissionSnapshot(status);
 };
 
+const loadStoredInstallationId = async (): Promise<string | null> => {
+  try {
+    const secureValue = await SecureStore.getItemAsync(INSTALLATION_ID_STORAGE_KEY);
+    if (secureValue && secureValue.trim().length > 0) {
+      const normalized = secureValue.trim();
+      const asyncValue = await AsyncStorage.getItem(INSTALLATION_ID_STORAGE_KEY);
+      if (asyncValue !== normalized) {
+        await AsyncStorage.setItem(INSTALLATION_ID_STORAGE_KEY, normalized);
+      }
+      return normalized;
+    }
+  } catch (error) {
+    console.warn('Failed to read notification installation ID from SecureStore', error);
+  }
+
+  const asyncValue = await AsyncStorage.getItem(INSTALLATION_ID_STORAGE_KEY);
+  if (asyncValue && asyncValue.trim().length > 0) {
+    const normalized = asyncValue.trim();
+    try {
+      await SecureStore.setItemAsync(INSTALLATION_ID_STORAGE_KEY, normalized);
+    } catch (error) {
+      console.warn('Failed to backfill notification installation ID into SecureStore', error);
+    }
+    return normalized;
+  }
+
+  return null;
+};
+
+const persistInstallationId = async (installationId: string): Promise<void> => {
+  await AsyncStorage.setItem(INSTALLATION_ID_STORAGE_KEY, installationId);
+
+  try {
+    await SecureStore.setItemAsync(INSTALLATION_ID_STORAGE_KEY, installationId);
+  } catch (error) {
+    console.warn('Failed to persist notification installation ID into SecureStore', error);
+  }
+};
+
 export const getOrCreateInstallationId = async (): Promise<string> => {
-  const existing = await AsyncStorage.getItem(INSTALLATION_ID_STORAGE_KEY);
-  if (existing && existing.trim().length > 0) {
-    return existing.trim();
+  const existing = await loadStoredInstallationId();
+  if (existing) {
+    return existing;
   }
 
   const generated = uuidv4();
-  await AsyncStorage.setItem(INSTALLATION_ID_STORAGE_KEY, generated);
+  await persistInstallationId(generated);
   return generated;
 };
 
