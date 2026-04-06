@@ -8,6 +8,23 @@ import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { IconButton, Text, TouchableRipple } from 'react-native-paper';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+
+// Category to Icon mapping
+const getCategoryIcon = (category: string): string => {
+  const iconMap: Record<string, string> = {
+    'General': 'tag',
+    'Food': 'food',
+    'Transport': 'car',
+    'Utilities': 'flash',
+    'Entertainment': 'movie',
+    'Shopping': 'cart',
+    'Travel': 'airplane',
+    'Health': 'medical-bag',
+    'Settlement': 'handshake',
+  };
+  return iconMap[category] || 'tag';
+};
 
 // Category to Icon mapping
 const getCategoryIcon = (category: string): string => {

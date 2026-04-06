@@ -565,6 +565,22 @@ const ChatRoomRoute = ({ route, navigation }: any) => {
     }
   }, [navigation, chatTitle]);
 
+  const chatTitle = useMemo(() => {
+    if (!thread) return '';
+    if (thread.type === 'group' && thread.groupId) {
+      const grp = groups.find((g) => g.groupId === thread.groupId);
+      return grp?.name || 'Group Chat';
+    }
+    const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+    return other?.displayName || 'Chat';
+  }, [thread, groups, user?.userId]);
+
+  useLayoutEffect(() => {
+    if (chatTitle) {
+      navigation.setOptions({ headerBackTitle: chatTitle });
+    }
+  }, [navigation, chatTitle]);
+
   if (!thread) {
     return <LoadingScreen />;
   }
@@ -597,6 +613,22 @@ const CallInfoRoute = ({ route, navigation }: any) => (
         groupId: thread.groupId,
         type,
         backTitle: getCallInfoTitle(route.params.entry),
+      })
+    }
+    onOpenCallInfo={(entry) =>
+      navigation.navigate(ROUTES.APP.CALL_INFO, { entry })
+    }
+  />
+);
+
+const CallInfoRoute = ({ route, navigation }: any) => (
+  <CallInfoScreen
+    entry={route.params.entry}
+    onCallBack={(thread, type) =>
+      navigation.navigate(ROUTES.APP.CALL_DETAIL, {
+        chatId: thread.chatId,
+        groupId: thread.groupId,
+        type,
       })
     }
   />

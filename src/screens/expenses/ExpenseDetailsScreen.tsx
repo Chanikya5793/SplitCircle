@@ -51,6 +51,13 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
     });
   }, [navigation, theme.colors.primary, expense?.title]);
 
+  useLayoutEffect(() => {
+    const grp = groups.find((g) => g.groupId === groupId);
+    if (grp) {
+      navigation.setOptions({ headerBackTitle: grp.name });
+    }
+  }, [navigation, groups, groupId]);
+
   const headerOpacity = scrollY.interpolate({
     inputRange: [40, 80],
     outputRange: [0, 1],
