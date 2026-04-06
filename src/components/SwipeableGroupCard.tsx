@@ -6,22 +6,25 @@ import { heavyHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import { Avatar, IconButton, Text, TouchableRipple } from 'react-native-paper';
-import Animated, { FadeInRight } from 'react-native-reanimated';
+import { ActivityIndicator, Avatar, IconButton, Text, TouchableRipple } from 'react-native-paper';
 
 interface SwipeableGroupCardProps {
   group: Group;
   onPress?: () => void;
   onArchive?: (group: Group) => void;
   index?: number;
+  loading?: boolean;
 }
 
-export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, index = 0 }: SwipeableGroupCardProps) => {
+export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, index = 0, loading = false }: SwipeableGroupCardProps) => {
   const { theme } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
   const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
 
   const handlePress = () => {
+    if (loading) {
+      return;
+    }
     lightHaptic();
     onPress?.();
   };
@@ -60,7 +63,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, index
   };
 
   return (
-    <Animated.View entering={FadeInRight.delay(index * 80).springify()}>
+    <View>
       <Swipeable
         ref={swipeableRef}
         renderRightActions={onArchive ? renderRightActions : undefined}
@@ -69,7 +72,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, index
         overshootRight={false}
       >
         <GlassView style={styles.container}>
-          <TouchableRipple onPress={handlePress} style={{ flex: 1 }}>
+          <TouchableRipple onPress={loading ? undefined : handlePress} style={{ flex: 1 }} disabled={loading}>
             <View style={styles.content}>
               <View style={styles.header}>
                 <Avatar.Text
@@ -84,7 +87,13 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, index
                     {group.members.length} members · {group.currency}
                   </Text>
                 </View>
-                <IconButton icon="chevron-right" onPress={handlePress} accessibilityLabel="Open group" iconColor={theme.colors.onSurfaceVariant} />
+                {loading ? (
+                  <View style={styles.loadingIndicator}>
+                    <ActivityIndicator animating size="small" color={theme.colors.primary} />
+                  </View>
+                ) : (
+                  <IconButton icon="chevron-right" onPress={handlePress} accessibilityLabel="Open group" iconColor={theme.colors.onSurfaceVariant} />
+                )}
               </View>
               <Text variant="bodyMedium" style={[styles.total, { color: theme.colors.primary }]}>
                 Total spent {formatCurrency(total, group.currency)}
@@ -93,7 +102,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, index
           </TouchableRipple>
         </GlassView>
       </Swipeable>
-    </Animated.View>
+    </View>
   );
 });
 
@@ -121,6 +130,12 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontWeight: '600',
     textAlign: 'right',
+  },
+  loadingIndicator: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rightAction: {
     justifyContent: 'center',

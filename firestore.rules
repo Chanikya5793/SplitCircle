@@ -105,6 +105,11 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /users/{userId}/notificationDevices/{deviceId} {
+      allow read: if isSelf(userId);
+      allow create, update, delete: if false;
+    }
+
     match /groups/{groupId} {
       allow create: if isSignedIn()
         && request.resource.data.createdBy == request.auth.uid

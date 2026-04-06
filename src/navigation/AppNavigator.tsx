@@ -30,6 +30,8 @@ import { NotificationSettingsScreen } from '@/screens/settings/NotificationSetti
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import type { NotificationData } from '@/utils/notifications';
 import { lightHaptic } from '@/utils/haptics';
+import { getCallInfoTitle, getChatThreadTitle, getExpenseDetailsTitle, getRouteBackLabel, ROOT_SCREEN_TITLES, SCREEN_TITLES } from '@/navigation/screenTitles';
+import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
 import {
@@ -37,7 +39,6 @@ import {
     DarkTheme,
     DefaultTheme,
     NavigationContainer,
-    useIsFocused,
     useNavigation,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -74,6 +75,71 @@ const GroupsStack = createNativeStackNavigator();
 const IOS_NATIVE_ACCESSORY_SUPPORTED =
   Platform.OS === 'ios' && Number.parseInt(String(Platform.Version), 10) >= 26;
 
+type IOSBackButtonProps = {
+  label?: string;
+  onPress: () => void;
+  tintColor?: string;
+};
+
+const getResolvedIOSBackLabel = ({
+  navigation,
+  route,
+  nativeLabel,
+  fallbackLabel,
+}: {
+  navigation: any;
+  route: any;
+  nativeLabel?: string;
+  fallbackLabel?: string;
+}) => {
+  const state = navigation?.getState?.();
+  const currentIndex = state?.routes?.findIndex?.((candidate: any) => candidate.key === route.key) ?? -1;
+  const previousRoute = currentIndex > 0 ? state.routes[currentIndex - 1] : undefined;
+  const trimmedNativeLabel = nativeLabel?.trim();
+  const trimmedFallbackLabel = fallbackLabel?.trim();
+
+  if (trimmedNativeLabel && trimmedNativeLabel.toLowerCase() !== 'back') {
+    return trimmedNativeLabel;
+  }
+
+  const derivedLabel = getRouteBackLabel(previousRoute);
+  if (derivedLabel) {
+    return derivedLabel;
+  }
+
+  if (trimmedFallbackLabel && trimmedFallbackLabel.toLowerCase() !== 'back') {
+    return trimmedFallbackLabel;
+  }
+
+  return undefined;
+};
+
+const IOSBackButton = ({ label, onPress, tintColor }: IOSBackButtonProps) => {
+  const { theme } = useTheme();
+  const resolvedTintColor = tintColor ?? theme.colors.primary;
+  const resolvedLabel = label?.trim();
+
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel={resolvedLabel ? `Back to ${resolvedLabel}` : 'Go back'}
+      activeOpacity={0.82}
+      onPress={onPress}
+      style={styles.iosBackButton}
+    >
+      <Icon source="chevron-left" size={20} color={resolvedTintColor} />
+      {resolvedLabel ? (
+        <Text
+          numberOfLines={1}
+          style={[styles.iosBackButtonLabel, { color: resolvedTintColor }]}
+        >
+          {resolvedLabel}
+        </Text>
+      ) : null}
+    </TouchableOpacity>
+  );
+};
+
 const useGroupById = (groupId: string): GroupWithFallback => {
   const { groups } = useGroups();
   return useMemo(() => groups.find((group) => group.groupId === groupId), [groups, groupId]);
@@ -98,12 +164,12 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
 
   const openStats = () => {
     lightHaptic();
-    navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId });
+    navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: group.name });
   };
 
   const openBills = () => {
     lightHaptic();
-    navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId });
+    navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: group.name });
   };
 
   const openAddExpense = () => {
@@ -126,7 +192,11 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
         status: 'online' as PresenceStatus,
       }));
       const chatId = await ensureGroupThread(group.groupId, participants);
-      navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId });
+      navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+        chatId,
+        initialTitle: group.name,
+        backTitle: group.name,
+      });
     } catch (error) {
       console.error('Unable to open chat', error);
     }
@@ -228,22 +298,52 @@ const ForgotPasswordRoute = ({ navigation }: any) => (
 );
 
 const GroupListRoute = ({ navigation }: any) => (
-  <GroupListScreen onOpenGroup={(group) => navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: group.groupId })} />
+  <GroupListScreen
+    onOpenGroup={(group) => {
+      navigation.navigate(ROUTES.APP.GROUP_DETAILS, {
+        groupId: group.groupId,
+        initialTitle: group.name,
+        backTitle: ROOT_SCREEN_TITLES.groups,
+      });
+    }}
+  />
 );
 
 const GroupDetailsRoute = ({ route, navigation }: any) => {
   const group = useGroupById(route.params.groupId);
   const groupId = group?.groupId;
-  const isFocused = useIsFocused();
   const { ensureGroupThread } = useChat();
   const [showAccessory, setShowAccessory] = useState(false);
   const accessoryVisibleRef = useRef<boolean | null>(null);
+  // Track focus via ref instead of useIsFocused() to avoid mid-transition re-renders.
+  const isFocusedRef = useRef(true);
 
   useLayoutEffect(() => {
     if (group) {
       navigation.setOptions({ title: group.name });
     }
   }, [navigation, group?.name]);
+  useSyncRootStackTitle(group?.name);
+
+  // Listen for focus/blur without causing component re-renders.
+  useEffect(() => {
+    const unsubFocus = navigation.addListener('focus', () => {
+      isFocusedRef.current = true;
+    });
+    const unsubBlur = navigation.addListener('blur', () => {
+      isFocusedRef.current = false;
+      // Clear accessory when blurred
+      const parent = navigation.getParent();
+      if (parent && IOS_NATIVE_ACCESSORY_SUPPORTED) {
+        parent.setOptions({ bottomAccessory: undefined });
+        accessoryVisibleRef.current = false;
+      }
+    });
+    return () => {
+      unsubFocus();
+      unsubBlur();
+    };
+  }, [navigation]);
 
   useLayoutEffect(() => {
     const parent = navigation.getParent();
@@ -251,7 +351,7 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
       return;
     }
 
-    const shouldShowAccessory = Boolean(groupId && showAccessory && isFocused);
+    const shouldShowAccessory = Boolean(groupId && showAccessory && isFocusedRef.current);
     if (accessoryVisibleRef.current === shouldShowAccessory) {
       return;
     }
@@ -271,7 +371,7 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
       parent.setOptions({ bottomAccessory: undefined });
       accessoryVisibleRef.current = null;
     };
-  }, [navigation, groupId, showAccessory, isFocused]);
+  }, [navigation, groupId, showAccessory]);
 
   if (!group) {
     return <LoadingScreen />;
@@ -285,7 +385,11 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
         status: 'online' as PresenceStatus,
       }));
       const chatId = await ensureGroupThread(group.groupId, participants);
-      navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId });
+      navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+        chatId,
+        initialTitle: group.name,
+        backTitle: group.name,
+      });
     } catch (error) {
       console.error('Unable to open chat', error);
     }
@@ -302,17 +406,47 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
 };
 
 const GroupsStackNavigator = () => {
-  const { isDark } = useTheme();
+  const { theme, isDark } = useTheme();
   const screenBackground = isDark ? '#121212' : '#FDFBFB';
 
   return (
     <GroupsStack.Navigator
-      screenOptions={{
+      screenOptions={({ navigation, route }) => ({
         contentStyle: { backgroundColor: screenBackground },
-      }}
+        freezeOnBlur: true,
+        fullScreenGestureEnabled: true,
+        animation: 'default',
+        headerBackButtonDisplayMode: Platform.OS === 'ios' ? 'default' : undefined,
+        headerBackVisible: Platform.OS === 'ios' ? false : undefined,
+        headerLeft: Platform.OS === 'ios'
+          ? ({ canGoBack, label, tintColor }) =>
+              canGoBack ? (
+                <IOSBackButton
+                  label={getResolvedIOSBackLabel({
+                    navigation,
+                    route,
+                    nativeLabel: label,
+                    fallbackLabel: (route.params as any)?.backTitle,
+                  })}
+                  onPress={() => navigation.goBack()}
+                  tintColor={tintColor ?? theme.colors.primary}
+                />
+              ) : null
+          : undefined,
+      })}
     >
-      <GroupsStack.Screen name={ROUTES.APP.GROUPS} component={GroupListRoute} options={{ headerShown: false }} />
-      <GroupsStack.Screen name={ROUTES.APP.GROUP_DETAILS} component={GroupDetailsRoute} options={{ title: 'Group' }} />
+      <GroupsStack.Screen
+        name={ROUTES.APP.GROUPS}
+        component={GroupListRoute}
+        options={{ headerShown: false, title: ROOT_SCREEN_TITLES.groups }}
+      />
+      <GroupsStack.Screen
+        name={ROUTES.APP.GROUP_DETAILS}
+        component={GroupDetailsRoute}
+        options={({ route }: any) => ({
+          title: route.params?.initialTitle ?? SCREEN_TITLES.groupDetailsFallback,
+        })}
+      />
     </GroupsStack.Navigator>
   );
 };
@@ -375,14 +509,8 @@ const SettlementsRoute = ({ route, navigation }: any) => {
   );
 };
 
-const GroupStatsRoute = ({ route, navigation }: any) => {
+const GroupStatsRoute = ({ route }: any) => {
   const group = useGroupById(route.params.groupId);
-
-  useLayoutEffect(() => {
-    if (group) {
-      navigation.setOptions({ headerBackTitle: group.name });
-    }
-  }, [navigation, group?.name]);
 
   if (!group) {
     return <LoadingScreen />;
@@ -390,14 +518,8 @@ const GroupStatsRoute = ({ route, navigation }: any) => {
   return <GroupStatsScreen group={group} />;
 };
 
-const RecurringBillsRoute = ({ route, navigation }: any) => {
+const RecurringBillsRoute = ({ route }: any) => {
   const group = useGroupById(route.params.groupId);
-
-  useLayoutEffect(() => {
-    if (group) {
-      navigation.setOptions({ headerBackTitle: group.name });
-    }
-  }, [navigation, group?.name]);
 
   if (!group) {
     return <LoadingScreen />;
@@ -405,29 +527,44 @@ const RecurringBillsRoute = ({ route, navigation }: any) => {
   return <RecurringBillsScreen group={group} />;
 };
 
-const ChatListRoute = ({ navigation }: any) => (
-  <ChatListScreen onOpenThread={(thread) => navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId: thread.chatId })} />
-);
+const ChatListRoute = ({ navigation }: any) => {
+  const { threads } = useChat();
+  const { groups } = useGroups();
+  const { user } = useAuth();
+
+  return (
+    <ChatListScreen
+      onOpenThread={(thread) =>
+        navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+          chatId: thread.chatId,
+          initialTitle: getChatThreadTitle(
+            threads.find((item) => item.chatId === thread.chatId) ?? thread,
+            groups,
+            user?.userId,
+          ),
+          backTitle: ROOT_SCREEN_TITLES.chats,
+        })
+      }
+    />
+  );
+};
 
 const ChatRoomRoute = ({ route, navigation }: any) => {
   const { threads } = useChat();
   const { groups } = useGroups();
   const { user } = useAuth();
   const thread = threads.find((item) => item.chatId === route.params.chatId);
-
-  const chatTitle = useMemo(() => {
-    if (!thread) return '';
-    if (thread.type === 'group' && thread.groupId) {
-      const grp = groups.find((g) => g.groupId === thread.groupId);
-      return grp?.name || 'Group Chat';
-    }
-    const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
-    return other?.displayName || 'Chat';
-  }, [thread, groups, user?.userId]);
+  const chatTitle = useMemo(
+    () => getChatThreadTitle(thread, groups, user?.userId),
+    [thread, groups, user?.userId],
+  );
 
   useLayoutEffect(() => {
     if (chatTitle) {
-      navigation.setOptions({ headerBackTitle: chatTitle });
+      navigation.setOptions({
+        title: chatTitle,
+        headerBackTitle: chatTitle,
+      });
     }
   }, [navigation, chatTitle]);
 
@@ -445,10 +582,11 @@ const CallHistoryRoute = ({ navigation }: any) => (
         chatId: thread.chatId,
         groupId: thread.groupId,
         type,
+        backTitle: ROOT_SCREEN_TITLES.calls,
       })
     }
     onOpenCallInfo={(entry) =>
-      navigation.navigate(ROUTES.APP.CALL_INFO, { entry })
+      navigation.navigate(ROUTES.APP.CALL_INFO, { entry, backTitle: ROOT_SCREEN_TITLES.calls })
     }
   />
 );
@@ -461,6 +599,7 @@ const CallInfoRoute = ({ route, navigation }: any) => (
         chatId: thread.chatId,
         groupId: thread.groupId,
         type,
+        backTitle: getCallInfoTitle(route.params.entry),
       })
     }
   />
@@ -660,16 +799,37 @@ const AppStackNavigator = () => {
 
   return (
       <AppStack.Navigator
-        screenOptions={{
+        screenOptions={({ navigation, route }) => ({
           contentStyle: { backgroundColor: screenBackground },
-        }}
+          headerBackButtonDisplayMode: Platform.OS === 'ios' ? 'default' : undefined,
+          headerBackVisible: Platform.OS === 'ios' ? false : undefined,
+          headerLeft: Platform.OS === 'ios'
+            ? ({ canGoBack, label, tintColor }) =>
+                canGoBack ? (
+                  <IOSBackButton
+                    label={getResolvedIOSBackLabel({
+                      navigation,
+                      route,
+                      nativeLabel: label,
+                      fallbackLabel: (route.params as any)?.backTitle,
+                    })}
+                    onPress={() => navigation.goBack()}
+                    tintColor={tintColor ?? theme.colors.primary}
+                  />
+                ) : null
+            : undefined,
+        })}
       >
-      <AppStack.Screen name={ROUTES.APP.ROOT} component={AppTabs} options={{ headerShown: false, title: 'Home' }} />
+      <AppStack.Screen
+        name={ROUTES.APP.ROOT}
+        component={AppTabs}
+        options={{ headerShown: false, title: ROOT_SCREEN_TITLES.groups }}
+      />
       <AppStack.Screen
         name={ROUTES.APP.GROUP_INFO}
         component={GroupInfoScreen}
         options={{
-          title: '',
+          title: SCREEN_TITLES.groupInfo,
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
@@ -677,18 +837,17 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.GROUP_CHAT}
         component={ChatRoomRoute}
-        options={{
-          title: '',
+        options={({ route }: any) => ({
+          title: route.params?.initialTitle ?? SCREEN_TITLES.groupChatFallback,
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
-        }}
+        })}
       />
       <AppStack.Screen
         name={ROUTES.APP.MESSAGE_INFO}
         component={MessageInfoScreen}
         options={{
-          title: '',
-          headerBackTitle: 'Chat',
+          title: SCREEN_TITLES.messageInfo,
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
@@ -706,12 +865,12 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.EXPENSE_DETAILS}
         component={ExpenseDetailsScreen}
-        options={{ title: 'Expense Details' }}
+        options={({ route }: any) => ({ title: getExpenseDetailsTitle(route.params?.expenseTitle) })}
       />
       <AppStack.Screen
         name={ROUTES.APP.GROUP_STATS}
         component={GroupStatsRoute}
-        options={{ title: 'Group Stats', headerBackTitle: 'Group' }}
+        options={{ title: SCREEN_TITLES.groupStats }}
       />
       <AppStack.Screen
         name={ROUTES.APP.BILL_SPLIT}
@@ -721,29 +880,27 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.RECURRING_BILLS}
         component={RecurringBillsRoute}
-        options={{ title: 'Recurring Bills', headerBackTitle: 'Group' }}
+        options={{ title: SCREEN_TITLES.recurringBills }}
       />
       <AppStack.Screen
         name={ROUTES.APP.CALL_INFO}
         component={CallInfoRoute}
-        options={{
-          title: '',
-          headerBackTitle: 'Calls',
+        options={({ route }: any) => ({
+          title: getCallInfoTitle(route.params.entry),
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
-        }}
+        })}
       />
       <AppStack.Screen
         name={ROUTES.APP.CALL_DETAIL}
         component={CallSessionRoute}
-        options={{ title: 'Live call', headerBackTitle: 'Calls' }}
+        options={{ title: SCREEN_TITLES.liveCall }}
       />
       <AppStack.Screen
         name={ROUTES.APP.NOTIFICATION_SETTINGS}
         component={NotificationSettingsScreen}
         options={{
-          title: 'Notifications',
-          headerBackTitle: 'Settings',
+          title: SCREEN_TITLES.notifications,
         }}
       />
     </AppStack.Navigator>
@@ -782,20 +939,36 @@ const IncomingCallHandler = () => {
 const NotificationNavigator = () => {
   const { pendingNavigation, consumeNavigation } = useNotificationContext();
   const navigation = useNavigation<any>();
+  const { threads } = useChat();
+  const { groups } = useGroups();
+  const { user } = useAuth();
 
   useEffect(() => {
     if (!pendingNavigation) return;
+
+    const getInitialGroupTitle = (groupId?: string) =>
+      groups.find((group) => group.groupId === groupId)?.name ?? SCREEN_TITLES.groupDetailsFallback;
 
     const navigate = (data: NotificationData) => {
       switch (data.type) {
         case 'message':
           if (data.chatId) {
-            navigation.navigate(ROUTES.APP.GROUP_CHAT, { chatId: data.chatId });
+            navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+              chatId: data.chatId,
+              initialTitle: getChatThreadTitle(
+                threads.find((thread) => thread.chatId === data.chatId),
+                groups,
+                user?.userId,
+              ) || data.senderName || SCREEN_TITLES.groupChatFallback,
+            });
           }
           break;
         case 'expense':
           if (data.groupId) {
-            navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: data.groupId });
+            navigation.navigate(ROUTES.APP.GROUP_DETAILS, {
+              groupId: data.groupId,
+              initialTitle: getInitialGroupTitle(data.groupId),
+            });
           }
           break;
         case 'settlement':
@@ -805,7 +978,10 @@ const NotificationNavigator = () => {
           break;
         case 'group_join':
           if (data.groupId) {
-            navigation.navigate(ROUTES.APP.GROUP_DETAILS, { groupId: data.groupId });
+            navigation.navigate(ROUTES.APP.GROUP_DETAILS, {
+              groupId: data.groupId,
+              initialTitle: getInitialGroupTitle(data.groupId),
+            });
           }
           break;
         case 'call':
@@ -813,7 +989,7 @@ const NotificationNavigator = () => {
             navigation.navigate(ROUTES.APP.CALL_DETAIL, {
               chatId: data.chatId,
               groupId: data.groupId,
-              type: 'audio',
+              type: data.callType === 'video' ? 'video' : 'audio',
               joinCallId: data.callId,
             });
           }
@@ -838,6 +1014,21 @@ const NotificationNavigator = () => {
 const styles = StyleSheet.create({
   navigatorRoot: {
     flex: 1,
+  },
+  iosBackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    maxWidth: 220,
+    paddingVertical: 6,
+    paddingRight: 8,
+    marginLeft: -6,
+    gap: 2,
+  },
+  iosBackButtonLabel: {
+    flexShrink: 1,
+    fontSize: 17,
+    fontWeight: '500',
+    lineHeight: 22,
   },
   groupAccessoryRegularWrap: {
     paddingHorizontal: 8,

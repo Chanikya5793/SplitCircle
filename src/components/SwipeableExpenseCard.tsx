@@ -90,7 +90,7 @@ export const SwipeableExpenseCard = ({
   };
 
   return (
-    <Animated.View entering={FadeInDown.springify()} style={{ marginBottom: 1 }}>
+    <View style={{ marginBottom: 1 }}>
       <Swipeable
         ref={swipeableRef}
         renderRightActions={onDelete ? renderRightActions : undefined}
@@ -134,7 +134,7 @@ export const SwipeableExpenseCard = ({
           </TouchableRipple>
         </GlassView>
       </Swipeable>
-    </Animated.View>
+    </View>
   );
 };
 

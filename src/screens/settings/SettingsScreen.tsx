@@ -4,6 +4,8 @@ import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
+import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import {
     getStrictReviewMode,
     getUseAIForReceipts,
@@ -30,6 +32,7 @@ export const SettingsScreen = () => {
   const [strictReviewMode, setStrictReviewModeState] = useState(false);
   const [useAIForReceipts, setUseAIForReceiptsState] = useState(true);
   const [merchantLearning, setMerchantLearning] = useState<LearningMerchantSummary[]>([]);
+  useSyncRootStackTitle(ROOT_SCREEN_TITLES.settings);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -157,7 +160,7 @@ export const SettingsScreen = () => {
               right={() => <List.Icon icon="chevron-right" />}
               onPress={() => {
                 lightHaptic();
-                (navigation as any).navigate('NotificationSettings');
+                (navigation as any).navigate('NotificationSettings', { backTitle: ROOT_SCREEN_TITLES.settings });
               }}
             />
             <Divider />

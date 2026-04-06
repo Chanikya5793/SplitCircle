@@ -6,6 +6,8 @@ import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
+import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
+import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import {
     clearCallHistory,
     deleteCallFromHistory,
@@ -74,6 +76,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   const [filter, setFilter] = useState<CallFilter>('all');
   const [showNewCallSheet, setShowNewCallSheet] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  useSyncRootStackTitle(ROOT_SCREEN_TITLES.calls);
 
   const scrollY = useRef(new RNAnimated.Value(0)).current;
   const openSwipeableRef = useRef<Swipeable | null>(null);

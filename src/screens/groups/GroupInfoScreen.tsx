@@ -4,6 +4,7 @@ import { ROUTES } from '@/constants';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -26,10 +27,11 @@ export const GroupInfoScreen = () => {
     }, [groups, groupId]);
 
     useLayoutEffect(() => {
-        if (group) {
-            (navigation as any).setOptions({ headerBackTitle: group.name });
-        }
-    }, [navigation, group?.name]);
+        (navigation as any).setOptions({
+            title: SCREEN_TITLES.groupInfo,
+            headerTitle: '',
+        });
+    }, [navigation]);
 
     if (!group) {
         return (
@@ -70,7 +72,7 @@ export const GroupInfoScreen = () => {
 
     const handleViewStats = () => {
         // @ts-ignore
-        navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId });
+        navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: SCREEN_TITLES.groupInfo });
     };
 
     const handleViewSplits = () => {
@@ -79,7 +81,7 @@ export const GroupInfoScreen = () => {
             screen: ROUTES.APP.GROUPS_TAB,
             params: {
                 screen: ROUTES.APP.GROUP_DETAILS,
-                params: { groupId: group.groupId },
+                params: { groupId: group.groupId, initialTitle: group.name },
             },
         });
     };

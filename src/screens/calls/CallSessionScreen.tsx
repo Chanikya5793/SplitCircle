@@ -37,6 +37,19 @@ const formatDuration = (seconds: number) => {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 };
 
+const isExpectedLiveKitShutdownError = (error: unknown): boolean => {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : '';
+
+  const normalized = message.toLowerCase();
+  return normalized.includes('pc manager is closed')
+    || normalized.includes('cannot negotiate on closed engine')
+    || normalized.includes('negotiation aborted');
+};
+
 interface VideoRoomContentProps {
   theme: CallTheme;
   isCameraOff: boolean;
@@ -191,7 +204,6 @@ interface CallPresenceWatcherProps {
   status: CallStatus;
   callDuration: number;
   endCall: () => Promise<void>;
-  onHangUp: () => void;
   isLocalHangupRef: MutableRefObject<boolean>;
   hasAutoClosedRef: MutableRefObject<boolean>;
 }
@@ -200,7 +212,6 @@ const CallPresenceWatcher = ({
   status,
   callDuration,
   endCall,
-  onHangUp,
   isLocalHangupRef,
   hasAutoClosedRef,
 }: CallPresenceWatcherProps) => {
@@ -266,9 +277,8 @@ const CallPresenceWatcher = ({
       hasAutoClosedRef.current = true;
       debugLog('CallSessionScreen detected remote participant left; ending call');
       void endCall();
-      onHangUp();
-    }, 3000);
-  }, [callDuration, connectionState, endCall, hasAutoClosedRef, isLocalHangupRef, onHangUp, participants, status]);
+    }, 1200);
+  }, [callDuration, connectionState, endCall, hasAutoClosedRef, isLocalHangupRef, participants, status]);
 
   useEffect(() => {
     return () => {
@@ -306,10 +316,14 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
   } = useCallManager({ chatId, groupId });
   const { theme } = useTheme();
   const [callDuration, setCallDuration] = useState(0);
+  const [shouldConnectRoom, setShouldConnectRoom] = useState(true);
 
   const hasInitializedRef = useRef(false);
   const isLocalHangupRef = useRef(false);
   const hasAutoClosedRef = useRef(false);
+  const closeRequestedRef = useRef(false);
+  const hasFinalizedHangupRef = useRef(false);
+  const hangupFallbackTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const liveKitOptions = useMemo(
     () => ({
@@ -319,15 +333,59 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
     []
   );
 
+  const finalizeHangUp = useCallback(() => {
+    if (hasFinalizedHangupRef.current) {
+      return;
+    }
+
+    hasFinalizedHangupRef.current = true;
+    if (hangupFallbackTimerRef.current) {
+      clearTimeout(hangupFallbackTimerRef.current);
+      hangupFallbackTimerRef.current = null;
+    }
+    onHangUp();
+  }, [onHangUp]);
+
+  const requestRoomShutdown = useCallback(() => {
+    if (closeRequestedRef.current) {
+      return;
+    }
+
+    closeRequestedRef.current = true;
+    setShouldConnectRoom(false);
+
+    if (!token || !serverUrl) {
+      finalizeHangUp();
+      return;
+    }
+
+    if (hangupFallbackTimerRef.current) {
+      clearTimeout(hangupFallbackTimerRef.current);
+    }
+
+    hangupFallbackTimerRef.current = setTimeout(() => {
+      debugLog('CallSessionScreen forcing close after disconnect fallback timeout');
+      finalizeHangUp();
+    }, 1500);
+  }, [finalizeHangUp, serverUrl, token]);
+
   const handleRoomConnected = useCallback(() => {
     debugLog('LiveKitRoom connected');
   }, []);
 
   const handleRoomDisconnected = useCallback(() => {
     debugLog('LiveKitRoom disconnected');
-  }, []);
+    if (closeRequestedRef.current) {
+      finalizeHangUp();
+    }
+  }, [finalizeHangUp]);
 
   const handleRoomError = useCallback((roomError: unknown) => {
+    if (isExpectedLiveKitShutdownError(roomError)) {
+      console.warn('LiveKitRoom ignored expected shutdown race:', roomError);
+      return;
+    }
+
     console.error('🎥 LiveKitRoom error:', roomError);
   }, []);
 
@@ -336,6 +394,7 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
       return;
     }
     hasInitializedRef.current = true;
+    setShouldConnectRoom(true);
 
     debugLog('CallSessionScreen mounted');
     if (joinCallId) {
@@ -365,23 +424,26 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
   const handleHangUp = useCallback(() => {
     debugLog('CallSessionScreen hang up');
     isLocalHangupRef.current = true;
+    requestRoomShutdown();
     void endCall();
-    onHangUp();
-  }, [endCall, onHangUp]);
+  }, [endCall, requestRoomShutdown]);
 
   useEffect(() => {
     if (status !== 'ended') {
       return;
     }
 
-    if (isLocalHangupRef.current || hasAutoClosedRef.current) {
-      return;
-    }
-
-    hasAutoClosedRef.current = true;
+    requestRoomShutdown();
     debugLog('CallSessionScreen auto close after remote/session end');
-    onHangUp();
-  }, [onHangUp, status]);
+  }, [requestRoomShutdown, status]);
+
+  useEffect(() => {
+    return () => {
+      if (hangupFallbackTimerRef.current) {
+        clearTimeout(hangupFallbackTimerRef.current);
+      }
+    };
+  }, []);
 
   const statusText = useMemo(() => {
     switch (status) {
@@ -424,7 +486,7 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
             <LiveKitRoom
               serverUrl={serverUrl}
               token={token}
-              connect={true}
+              connect={shouldConnectRoom}
               options={liveKitOptions}
               video={callType === 'video' && !isCameraOff}
               audio={!isMuted}
@@ -436,7 +498,6 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
                 status={status}
                 callDuration={callDuration}
                 endCall={endCall}
-                onHangUp={onHangUp}
                 isLocalHangupRef={isLocalHangupRef}
                 hasAutoClosedRef={hasAutoClosedRef}
               />
