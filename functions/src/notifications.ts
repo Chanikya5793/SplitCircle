@@ -212,6 +212,9 @@ const toRegistrationStatus = (
     return "token_missing";
 };
 
+const isPermissionStateCapable = (state: NotificationPermissionState): boolean =>
+    state === "granted" || state === "provisional" || state === "ephemeral";
+
 const summarizeBody = (body: string): string => {
     const compact = body.replace(/\s+/g, " ").trim();
     return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
@@ -678,6 +681,22 @@ export const syncNotificationDeviceRecord = async (
     const existingSnap = await docRef.get();
     const existing = existingSnap.exists ? existingSnap.data() ?? {} : {};
     const previousToken = normalizeString(existing.expoPushToken);
+    const existingRegistrationStatus =
+        existing.registrationStatus === "active" ||
+        existing.registrationStatus === "permission_blocked" ||
+        existing.registrationStatus === "token_missing" ||
+        existing.registrationStatus === "invalid_token" ||
+        existing.registrationStatus === "signed_out"
+            ? existing.registrationStatus
+            : "error";
+    const preserveExistingActiveToken = Boolean(
+        !safeToken &&
+        !lastRegistrationError &&
+        existingRegistrationStatus === "active" &&
+        isPermissionStateCapable(permissionState) &&
+        previousToken &&
+        isExpoPushToken(previousToken),
+    );
 
     let nextStatus: NotificationRegistrationStatus = "token_missing";
     if (safeToken) {
@@ -686,6 +705,8 @@ export const syncNotificationDeviceRecord = async (
         } else {
             nextStatus = "active";
         }
+    } else if (preserveExistingActiveToken) {
+        nextStatus = "active";
     } else {
         nextStatus = toRegistrationStatus(permissionState, null, lastRegistrationError);
     }
@@ -696,13 +717,16 @@ export const syncNotificationDeviceRecord = async (
         platform: input.platform,
         permissionState,
         registrationStatus: nextStatus,
-        expoPushToken: nextStatus === "invalid_token" ? null : safeToken,
+        expoPushToken:
+            nextStatus === "invalid_token"
+                ? null
+                : safeToken ?? (preserveExistingActiveToken ? previousToken : null),
         projectId: normalizeString(input.projectId),
         appVersion: normalizeString(input.appVersion),
         deviceName: normalizeString(input.deviceName),
         modelName: normalizeString(input.modelName),
         isPhysicalDevice: input.isPhysicalDevice === true,
-        lastRegistrationError,
+        lastRegistrationError: preserveExistingActiveToken ? null : lastRegistrationError,
         lastRegisteredAt: FieldValue.serverTimestamp(),
         lastSeenAt: FieldValue.serverTimestamp(),
         invalidatedAt: nextStatus === "active" ? null : existing.invalidatedAt ?? null,

@@ -81,6 +81,19 @@ const DEFAULT_PERMISSION: NotificationPermissionSnapshot = {
 
 const NotificationContext = createContext<NotificationContextValue | undefined>(undefined);
 
+type RegistrationSyncOptions = {
+  requestPermission?: boolean;
+  tokenOverride?: string | null;
+};
+
+const mergeRegistrationSyncOptions = (
+  current: RegistrationSyncOptions | null,
+  incoming: RegistrationSyncOptions | undefined,
+): RegistrationSyncOptions => ({
+  requestPermission: (current?.requestPermission ?? false) || (incoming?.requestPermission ?? false),
+  tokenOverride: incoming?.tokenOverride ?? current?.tokenOverride ?? null,
+});
+
 export const NotificationProvider = ({ children }: { children: ReactNode }) => {
   const { user } = useAuth();
   const [preferences, setPreferences] = useState<NotificationPreference>(DEFAULT_PREFERENCES);
@@ -91,6 +104,10 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
 
   const notificationListenerRef = useRef<Notifications.EventSubscription | null>(null);
   const responseListenerRef = useRef<Notifications.EventSubscription | null>(null);
+  const currentDeviceRef = useRef<NotificationDeviceRecord | null>(null);
+  const syncInFlightRef = useRef<Promise<void> | null>(null);
+  const queuedSyncOptionsRef = useRef<RegistrationSyncOptions | null>(null);
+  const lastSyncStartedAtRef = useRef(0);
 
   useEffect(() => {
     if (!user) {
@@ -121,28 +138,61 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
     return () => unsubscribe();
   }, [user?.userId]);
 
+  useEffect(() => {
+    currentDeviceRef.current = currentDevice;
+  }, [currentDevice]);
+
   const refreshRegistration = useCallback(
-    async (options?: { requestPermission?: boolean }) => {
+    async (options?: RegistrationSyncOptions) => {
       if (!user) {
+        queuedSyncOptionsRef.current = null;
         setPermission(DEFAULT_PERMISSION);
         setCurrentDevice(null);
         setPushToken(null);
         return;
       }
 
-      try {
-        const attempt = await syncCurrentDeviceRegistration(options);
-        setPermission(attempt.permission);
-        setPushToken(attempt.expoPushToken);
-      } catch (error) {
-        console.warn('Failed to sync notification device registration', error);
+      const requestedOptions = mergeRegistrationSyncOptions(null, options);
+
+      if (syncInFlightRef.current) {
+        queuedSyncOptionsRef.current = mergeRegistrationSyncOptions(queuedSyncOptionsRef.current, requestedOptions);
+        await syncInFlightRef.current;
+        return;
       }
+
+      const runSyncLoop = async () => {
+        let nextOptions: RegistrationSyncOptions | null = requestedOptions;
+
+        while (nextOptions) {
+          queuedSyncOptionsRef.current = null;
+          lastSyncStartedAtRef.current = Date.now();
+
+          try {
+            const attempt = await syncCurrentDeviceRegistration(nextOptions);
+            setPermission(attempt.permission);
+            setPushToken(attempt.expoPushToken ?? currentDeviceRef.current?.expoPushToken ?? null);
+          } catch (error) {
+            console.warn('Failed to sync notification device registration', error);
+          }
+
+          nextOptions = queuedSyncOptionsRef.current;
+        }
+      };
+
+      const syncPromise = runSyncLoop().finally(() => {
+        syncInFlightRef.current = null;
+      });
+
+      syncInFlightRef.current = syncPromise;
+      await syncPromise;
     },
     [user?.userId],
   );
 
   useEffect(() => {
     if (!user) {
+      currentDeviceRef.current = null;
+      queuedSyncOptionsRef.current = null;
       setPushToken(null);
       setPermission(DEFAULT_PERMISSION);
       setCurrentDevice(null);
@@ -172,12 +222,8 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
         await refreshRegistration();
 
         pushTokenSubscription = Notifications.addPushTokenListener(({ data }) => {
-          void refreshRegistration({ requestPermission: false }).catch((error) => {
-            console.error('Failed to refresh push token registration', error);
-          });
-
           if (typeof data === 'string' && data.trim().length > 0) {
-            void syncCurrentDeviceRegistration({ tokenOverride: data }).catch((error) => {
+            void refreshRegistration({ tokenOverride: data }).catch((error) => {
               console.error('Failed to sync refreshed push token', error);
             });
           }
@@ -185,6 +231,9 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
 
         appStateSubscription = AppState.addEventListener('change', (nextState) => {
           if (nextState === 'active') {
+            if (Date.now() - lastSyncStartedAtRef.current < 2500) {
+              return;
+            }
             void refreshRegistration().catch((error) => {
               console.error('Failed to refresh notification status on foreground', error);
             });
