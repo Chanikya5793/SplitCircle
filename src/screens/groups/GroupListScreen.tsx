@@ -47,12 +47,6 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const [selectedCurrencies, setSelectedCurrencies] = useState<string[]>([]);
   useSyncRootStackTitle(ROOT_SCREEN_TITLES.groups);
 
-  // Filter & Sort State
-  const [filterVisible, setFilterVisible] = useState(false);
-  const [sortField, setSortField] = useState<GroupSortField>('updatedAt');
-  const [sortOrder, setSortOrder] = useState<GroupSortOrder>('desc');
-  const [selectedCurrencies, setSelectedCurrencies] = useState<string[]>([]);
-
   useLayoutEffect(() => {
     navigation.setOptions({
       headerTitle: '',
