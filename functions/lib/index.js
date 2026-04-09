@@ -181,7 +181,7 @@ const buildIncomingCallNotificationCopy = (params) => {
     return {
         title: `${params.callerName} is calling`,
         subtitle: typeLabel,
-        body: `Tap to join the ${params.callType} call in SplitCircle.`,
+        body: `Tap to join the ${params.callType} call in ManaSplit.`,
     };
 };
 // ─────────────────────────────────────────────────────────────
@@ -247,7 +247,7 @@ exports.sendTestPushNotification = (0, https_1.onCall)(async (request) => {
         throw new https_1.HttpsError("unauthenticated", "Authentication required.");
     }
     try {
-        const result = await (0, notifications_1.sendPushToUsers)([uid], "SplitCircle test notification", "Remote push is flowing through the backend, Expo, and your device registration.", {
+        const result = await (0, notifications_1.sendPushToUsers)([uid], "ManaSplit test notification", "Remote push is flowing through the backend, Expo, and your device registration.", {
             type: "general",
             source: "settings_test",
         }, "general", undefined, "general");

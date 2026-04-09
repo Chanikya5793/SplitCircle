@@ -61,7 +61,7 @@ const googleMapsApiKey = readEnv(['EXPO_PUBLIC_GOOGLE_MAPS_API_KEY'], { optional
 const iosPushNotificationsEnabled = true;
 
 const config = {
-  name: 'SplitCircle',
+  name: 'ManaSplit',
   slug: 'SplitCircle',
   version: '0.0.2',
   owner: 'chanikya6163',
@@ -143,7 +143,7 @@ const config = {
     [
       'expo-location',
       {
-        locationWhenInUsePermission: 'Allow $(PRODUCT_NAME) to use your location to share it with your friends.',
+        locationWhenInUsePermission: 'Allow ManaSplit to use your location to share it with your friends.',
         isAndroidBackgroundLocationEnabled: false,
         isAndroidForegroundServiceEnabled: false,
         isIosBackgroundLocationEnabled: false,

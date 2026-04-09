@@ -7,7 +7,7 @@ export const LoadingScreen = () => (
   <LiquidBackground>
     <View style={styles.container}>
       <ActivityIndicator animating size="large" color={colors.primary} />
-      <Text style={styles.text}>Preparing SplitCircle…</Text>
+      <Text style={styles.text}>Preparing ManaSplit…</Text>
     </View>
   </LiquidBackground>
 );

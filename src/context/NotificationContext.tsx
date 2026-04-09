@@ -307,7 +307,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
 
   const sendLocalTestNotification = useCallback(async () => {
     await scheduleLocalNotification(
-      'SplitCircle local notification test',
+      'ManaSplit local notification test',
       'This preview confirms in-app presentation, sound, and tap handling on this device.',
       { type: 'general' as NotificationType },
       'general',

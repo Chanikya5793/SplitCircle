@@ -132,7 +132,7 @@ export const NotificationSettingsScreen = () => {
     }
   }, [permission.state]);
 
-  const appStatusLabel = preferences.pushEnabled ? 'Enabled' : 'Off in SplitCircle';
+  const appStatusLabel = preferences.pushEnabled ? 'Enabled' : 'Off in ManaSplit';
   const deliveryStatusLabel = useMemo(() => {
     switch (currentDevice?.registrationStatus) {
       case 'active':
@@ -160,11 +160,11 @@ export const NotificationSettingsScreen = () => {
 
   const remoteTestBlockedReason = useMemo(() => {
     if (permission.state === 'denied') {
-      return 'iPhone settings are currently blocking notifications for SplitCircle.';
+      return 'iPhone settings are currently blocking notifications for ManaSplit.';
     }
 
     if (!preferences.pushEnabled) {
-      return 'Enable notifications in SplitCircle before running a remote test.';
+      return 'Enable notifications in ManaSplit before running a remote test.';
     }
 
     if (!currentDevice) {
@@ -189,14 +189,14 @@ export const NotificationSettingsScreen = () => {
       return {
         title: 'Notifications are blocked by iPhone settings',
         description:
-          'SplitCircle cannot deliver push notifications until notifications are allowed in Settings for this device.',
+          'ManaSplit cannot deliver push notifications until notifications are allowed in Settings for this device.',
         accent: '#EF4444',
       };
     }
 
     if (!preferences.pushEnabled) {
       return {
-        title: 'Notifications are off in SplitCircle',
+        title: 'Notifications are off in ManaSplit',
         description:
           'iPhone permission may already be available, but this account is currently opted out inside the app.',
         accent: '#F59E0B',
@@ -231,7 +231,7 @@ export const NotificationSettingsScreen = () => {
     }
 
     return {
-      title: 'SplitCircle is still registering this device',
+      title: 'ManaSplit is still registering this device',
       description:
         'The app is allowed to notify you, but this device has not finished registration with the backend yet.',
       accent: '#60A5FA',
@@ -252,7 +252,7 @@ export const NotificationSettingsScreen = () => {
   const categoryDisabledReason = permission.state === 'denied'
     ? 'Turn notifications on in iPhone Settings before category toggles can take effect.'
     : !preferences.pushEnabled
-      ? 'Enable notifications in SplitCircle before choosing categories.'
+      ? 'Enable notifications in ManaSplit before choosing categories.'
       : null;
 
   const handleRefreshRegistration = async (requestPermission = false) => {
@@ -281,7 +281,7 @@ export const NotificationSettingsScreen = () => {
     if (!permission.granted && permission.state === 'denied') {
       Alert.alert(
         'Notifications are blocked',
-        'Enable notifications for SplitCircle in iPhone Settings, then return here to finish setup.',
+        'Enable notifications for ManaSplit in iPhone Settings, then return here to finish setup.',
         [
           { text: 'Not Now', style: 'cancel' },
           {
@@ -431,17 +431,17 @@ export const NotificationSettingsScreen = () => {
             Notification Access
           </Text>
           <Text variant="bodySmall" style={[styles.sectionDescription, { color: tertiaryTextColor }]}>
-            SplitCircle only delivers remote push when both iOS and your in-app preference allow it.
+            ManaSplit only delivers remote push when both iOS and your in-app preference allow it.
           </Text>
 
           <ToggleRow
-            title="Allow notifications in SplitCircle"
+            title="Allow notifications in ManaSplit"
             description={
               permission.state === 'denied'
                 ? 'Blocked by iPhone. Open Settings to allow notifications for this app.'
                 : preferences.pushEnabled
                   ? 'Remote push is enabled for your account.'
-                  : 'Turn this on to let SplitCircle deliver remote push on your registered devices.'
+                  : 'Turn this on to let ManaSplit deliver remote push on your registered devices.'
             }
             value={preferences.pushEnabled}
             icon={preferences.pushEnabled ? 'bell-ring-outline' : 'bell-off-outline'}
@@ -459,7 +459,7 @@ export const NotificationSettingsScreen = () => {
                 : permission.state === 'provisional'
                   ? 'Allowed quietly by iOS.'
                   : permission.state === 'undetermined'
-                    ? 'SplitCircle has not asked for permission yet.'
+                    ? 'ManaSplit has not asked for permission yet.'
                     : 'iOS is allowing notifications for this app.'
             }
             left={() => (
@@ -551,7 +551,7 @@ export const NotificationSettingsScreen = () => {
             Sound and Haptics
           </Text>
           <Text variant="bodySmall" style={[styles.sectionDescription, { color: tertiaryTextColor }]}>
-            These preferences only apply when notifications are enabled in SplitCircle.
+            These preferences only apply when notifications are enabled in ManaSplit.
           </Text>
 
           <ToggleRow

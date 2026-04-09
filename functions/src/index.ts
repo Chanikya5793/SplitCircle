@@ -220,7 +220,7 @@ const buildIncomingCallNotificationCopy = (params: {
     return {
         title: `${params.callerName} is calling`,
         subtitle: typeLabel,
-        body: `Tap to join the ${params.callType} call in SplitCircle.`,
+        body: `Tap to join the ${params.callType} call in ManaSplit.`,
     };
 };
 
@@ -298,7 +298,7 @@ export const sendTestPushNotification = onCall(async (request) => {
     try {
         const result = await sendPushToUsers(
             [uid],
-            "SplitCircle test notification",
+            "ManaSplit test notification",
             "Remote push is flowing through the backend, Expo, and your device registration.",
             {
                 type: "general",

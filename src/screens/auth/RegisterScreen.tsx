@@ -33,7 +33,7 @@ export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
       <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <GlassView style={styles.card}>
           <Text variant="headlineMedium" style={styles.title}>
-            Create SplitCircle account
+            Create ManaSplit account
           </Text>
           <FloatingLabelInput 
             label="Name" 
