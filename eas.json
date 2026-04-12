@@ -20,12 +20,17 @@
         "resourceClass": "m-medium"
       },
       "android": {
-        "buildType": "apk",
+        "buildType": "app-bundle",
         "credentialsSource": "remote"
       }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "android": {
+        "track": "production",
+        "releaseStatus": "completed"
+      }
+    }
   }
 }

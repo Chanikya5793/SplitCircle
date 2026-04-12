@@ -14,7 +14,7 @@ SplitCircle is an Expo + React Native + TypeScript application that combines Spl
 
 ## Project Structure
 
-```
+```text
 .
 ├── App.tsx                 # Providers, theming, navigation host
 ├── src/
@@ -78,6 +78,7 @@ npm install
 ```
 
 **Important notes:**
+
 - `react-native-svg` is pinned to version `15.12.1` for compatibility with Expo SDK 54 and `react-native-chart-kit`. Do not upgrade without testing chart rendering.
 
 ## Running the App
@@ -115,9 +116,25 @@ npx eas submit --platform ios --profile production
 ```
 
 Notes:
+
 - The production profile is configured to auto-increment the iOS build number.
 - Make sure the required public environment variables are available in your local `.env` or EAS secrets before building.
 - If EAS asks for authentication, sign in with the Apple/Expo account that owns the `com.splitcircle.app` bundle identifier.
+
+## Google Play Release
+
+Android production builds are configured to generate an App Bundle for Play Console submission. After the Play Console app exists and the Google service account key is attached in EAS credentials, build and submit with:
+
+```bash
+npx eas build --platform android --profile production
+npx eas submit --platform android --profile production
+```
+
+Notes:
+
+- Google requires one manual Play Console upload before API-based submissions work for a new Android app.
+- The Android application ID is `com.splitcircle.app`.
+- The production profile auto-increments the Android version code through EAS remote versioning.
 
 ## Firebase Setup
 

@@ -87,6 +87,8 @@ const config = {
       'aps-environment': 'production',
     },
     infoPlist: {
+      CFBundleDisplayName: 'ManaSplit',
+      CFBundleName: 'ManaSplit',
       ITSAppUsesNonExemptEncryption: false,
       NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
       UIBackgroundModes: iosPushNotificationsEnabled ? ['fetch', 'remote-notification'] : ['fetch'],
