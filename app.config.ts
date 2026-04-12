@@ -153,6 +153,8 @@ const config = {
     ],
     ['expo-build-properties', { android: { minSdkVersion: 24 } }],
     '@livekit/react-native-expo-plugin',
+    './plugins/withAdiRegistration',
+    './plugins/withSplitApk',
   ],
   extra: {
     eas: {

@@ -48,3 +48,6 @@ GoogleService-Info.plist
  
 # Ignore docs folder
 docs/
+
+
+google-service-account.json
