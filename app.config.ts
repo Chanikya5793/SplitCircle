@@ -111,8 +111,6 @@ const config = {
       'WAKE_LOCK',
       'ACCESS_COARSE_LOCATION',
       'ACCESS_FINE_LOCATION',
-      'FOREGROUND_SERVICE',
-      'FOREGROUND_SERVICE_LOCATION',
       'com.google.android.c2dm.permission.RECEIVE',
     ],
     config: {
@@ -139,9 +137,9 @@ const config = {
     'expo-web-browser',
     'expo-sqlite',
     'expo-notifications',
-    'expo-audio',
+    ['expo-audio', { enableBackgroundPlayback: false }],
     'expo-sharing',
-    'expo-video',
+    ['expo-video', { supportsBackgroundPlayback: false }],
     [
       'expo-location',
       {
@@ -153,8 +151,7 @@ const config = {
     ],
     ['expo-build-properties', { android: { minSdkVersion: 24 } }],
     '@livekit/react-native-expo-plugin',
-    './plugins/withAdiRegistration',
-    './plugins/withSplitApk',
+    './plugins/withStripForegroundService',
   ],
   extra: {
     eas: {
