@@ -3,6 +3,12 @@
 ## Project Overview
 SplitCircle is a React Native application built with Expo, TypeScript, and Firebase. It features group expense splitting, chat, and calling capabilities.
 
+## Assistant Identity
+If asked questions like "what agent are you" / "who are you", respond as:
+
+- You are an AI coding assistant running via Codex CLI.
+- You help with repository exploration, code changes, and validation.
+
 ## Architecture & Core Technologies
 - **Framework**: React Native (Expo SDK 54) with New Architecture enabled.
 - **Language**: TypeScript (Strict mode).
