@@ -91,7 +91,9 @@ const config = {
       CFBundleName: 'ManaSplit',
       ITSAppUsesNonExemptEncryption: false,
       NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
-      UIBackgroundModes: iosPushNotificationsEnabled ? ['fetch', 'remote-notification'] : ['fetch'],
+      UIBackgroundModes: iosPushNotificationsEnabled
+        ? ['audio', 'fetch', 'remote-notification']
+        : ['audio', 'fetch'],
     },
   },
   android: {
@@ -109,6 +111,10 @@ const config = {
       'READ_MEDIA_AUDIO',
       'VIBRATE',
       'WAKE_LOCK',
+      'FOREGROUND_SERVICE',
+      'FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+      'FOREGROUND_SERVICE_MICROPHONE',
+      'FOREGROUND_SERVICE_CAMERA',
       'ACCESS_COARSE_LOCATION',
       'ACCESS_FINE_LOCATION',
       'com.google.android.c2dm.permission.RECEIVE',
@@ -137,9 +143,9 @@ const config = {
     'expo-web-browser',
     'expo-sqlite',
     'expo-notifications',
-    ['expo-audio', { enableBackgroundPlayback: false }],
+    ['expo-audio', { enableBackgroundPlayback: true }],
     'expo-sharing',
-    ['expo-video', { supportsBackgroundPlayback: false }],
+    ['expo-video', { supportsBackgroundPlayback: true }],
     [
       'expo-location',
       {
@@ -151,7 +157,6 @@ const config = {
     ],
     ['expo-build-properties', { android: { minSdkVersion: 24 } }],
     '@livekit/react-native-expo-plugin',
-    './plugins/withStripForegroundService',
   ],
   extra: {
     eas: {

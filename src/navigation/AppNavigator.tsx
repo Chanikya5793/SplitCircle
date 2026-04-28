@@ -1,4 +1,5 @@
 import { BillSplitScreen } from '@/components/BillSplit';
+import { GlassView } from '@/components/GlassView';
 import { IncomingCallModal } from '@/components/IncomingCallModal';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -575,51 +576,67 @@ const ChatRoomRoute = ({ route, navigation }: any) => {
   return <ChatRoomScreen thread={thread} />;
 };
 
-const CallHistoryRoute = ({ navigation }: any) => (
-  <CallHistoryScreen
-    onStartCall={(thread, type) =>
-      navigation.navigate(ROUTES.APP.CALL_DETAIL, {
-        chatId: thread.chatId,
-        groupId: thread.groupId,
-        type,
-        backTitle: ROOT_SCREEN_TITLES.calls,
-      })
-    }
-    onOpenCallInfo={(entry) =>
-      navigation.navigate(ROUTES.APP.CALL_INFO, { entry, backTitle: ROOT_SCREEN_TITLES.calls })
-    }
-  />
-);
+const CallHistoryRoute = ({ navigation }: any) => {
+  const { startCallSession } = useCallContext();
 
-const CallInfoRoute = ({ route, navigation }: any) => (
-  <CallInfoScreen
-    entry={route.params.entry}
-    onCallBack={(thread, type) =>
-      navigation.navigate(ROUTES.APP.CALL_DETAIL, {
-        chatId: thread.chatId,
-        groupId: thread.groupId,
-        type,
-        backTitle: getCallInfoTitle(route.params.entry),
-      })
-    }
-  />
-);
+  return (
+    <CallHistoryScreen
+      onStartCall={(thread, type) =>
+        startCallSession({
+          chatId: thread.chatId,
+          groupId: thread.groupId,
+          type,
+        })
+      }
+      onOpenCallInfo={(entry) =>
+        navigation.navigate(ROUTES.APP.CALL_INFO, { entry, backTitle: ROOT_SCREEN_TITLES.calls })
+      }
+    />
+  );
+};
 
-const CallSessionRoute = ({ route, navigation }: any) => (
-  <CallSessionScreen
-    chatId={route.params.chatId}
-    groupId={route.params.groupId}
-    type={route.params.type as CallType}
-    joinCallId={route.params.joinCallId}
-    onHangUp={() => {
+const CallInfoRoute = ({ route }: any) => {
+  const { startCallSession } = useCallContext();
+
+  return (
+    <CallInfoScreen
+      entry={route.params.entry}
+      onCallBack={(thread, type) =>
+        startCallSession({
+          chatId: thread.chatId,
+          groupId: thread.groupId,
+          type,
+        })
+      }
+    />
+  );
+};
+
+const CallSessionRoute = ({ route, navigation }: any) => {
+  const { startCallSession } = useCallContext();
+
+  useEffect(() => {
+    startCallSession({
+      chatId: route.params.chatId,
+      groupId: route.params.groupId,
+      type: route.params.type as CallType,
+      joinCallId: route.params.joinCallId,
+    });
+
+    const timer = setTimeout(() => {
       if (typeof navigation.canGoBack === 'function' && navigation.canGoBack()) {
         navigation.goBack();
         return;
       }
+
       navigation.navigate(ROUTES.APP.ROOT, { screen: ROUTES.APP.CALLS_TAB });
-    }}
-  />
-);
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [navigation, route.params, startCallSession]);
+
+  return null;
+};
 
 const AuthStackNavigator = () => {
   const { isDark } = useTheme();
@@ -909,28 +926,72 @@ const AppStackNavigator = () => {
 
 // Incoming call handler - must be inside NavigationContainer
 const IncomingCallHandler = () => {
-  const { incomingCall, dismissIncomingCall, acceptCall } = useCallContext();
-  const navigation = useNavigation<any>();
-
-  const handleAccept = () => {
-    const call = acceptCall();
-    if (call) {
-      navigation.navigate(ROUTES.APP.CALL_DETAIL, {
-        chatId: call.chatId,
-        groupId: call.groupId,
-        type: call.type,
-        joinCallId: call.callId,
-      });
-    }
-  };
+  const { incomingCall, dismissIncomingCall, acceptIncomingCall } = useCallContext();
 
   return (
     <IncomingCallModal
       visible={!!incomingCall}
       callerName={incomingCall?.initiatorName || 'Unknown'}
       callType={incomingCall?.type || 'audio'}
-      onAccept={handleAccept}
+      onAccept={acceptIncomingCall}
       onDecline={dismissIncomingCall}
+    />
+  );
+};
+
+const MinimizedCallBanner = () => {
+  const { activeCallRequest, isCallUiVisible, showActiveCallUi } = useCallContext();
+  const { theme, isDark } = useTheme();
+
+  if (!activeCallRequest || isCallUiVisible) {
+    return null;
+  }
+
+  return (
+    <TouchableOpacity activeOpacity={0.92} onPress={showActiveCallUi} style={styles.callBannerWrap}>
+      <GlassView style={styles.callBanner}>
+        <View
+          style={[
+            styles.callBannerIcon,
+            { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)' },
+          ]}
+        >
+          <Icon
+            source={activeCallRequest.type === 'video' ? 'video' : 'phone'}
+            size={18}
+            color={theme.colors.primary}
+          />
+        </View>
+        <View style={styles.callBannerCopy}>
+          <Text style={[styles.callBannerTitle, { color: theme.colors.onSurface }]}>
+            Call in progress
+          </Text>
+          <Text style={[styles.callBannerSubtitle, { color: theme.colors.onSurfaceVariant }]}>
+            Tap to return to the {activeCallRequest.type === 'video' ? 'video' : 'audio'} call
+          </Text>
+        </View>
+      </GlassView>
+    </TouchableOpacity>
+  );
+};
+
+const ActiveCallHost = () => {
+  const { activeCallRequest, clearActiveCall, hideActiveCallUi, isCallUiVisible } = useCallContext();
+
+  if (!activeCallRequest) {
+    return null;
+  }
+
+  return (
+    <CallSessionScreen
+      key={`${activeCallRequest.joinCallId ?? 'outgoing'}:${activeCallRequest.chatId}:${activeCallRequest.type}`}
+      chatId={activeCallRequest.chatId}
+      groupId={activeCallRequest.groupId}
+      type={activeCallRequest.type}
+      joinCallId={activeCallRequest.joinCallId}
+      visible={isCallUiVisible}
+      onMinimize={hideActiveCallUi}
+      onHangUp={clearActiveCall}
     />
   );
 };
@@ -938,6 +999,7 @@ const IncomingCallHandler = () => {
 // Deep-link navigation handler for tapped push notifications
 const NotificationNavigator = () => {
   const { pendingNavigation, consumeNavigation } = useNotificationContext();
+  const { startCallSession } = useCallContext();
   const navigation = useNavigation<any>();
   const { threads } = useChat();
   const { groups } = useGroups();
@@ -986,7 +1048,7 @@ const NotificationNavigator = () => {
           break;
         case 'call':
           if (data.chatId) {
-            navigation.navigate(ROUTES.APP.CALL_DETAIL, {
+            startCallSession({
               chatId: data.chatId,
               groupId: data.groupId,
               type: data.callType === 'video' ? 'video' : 'audio',
@@ -1006,7 +1068,7 @@ const NotificationNavigator = () => {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [pendingNavigation, consumeNavigation, navigation]);
+  }, [pendingNavigation, consumeNavigation, navigation, startCallSession]);
 
   return null;
 };
@@ -1014,6 +1076,39 @@ const NotificationNavigator = () => {
 const styles = StyleSheet.create({
   navigatorRoot: {
     flex: 1,
+  },
+  callBannerWrap: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 16,
+    zIndex: 900,
+  },
+  callBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  callBannerIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  callBannerCopy: {
+    flex: 1,
+  },
+  callBannerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  callBannerSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
   },
   iosBackButton: {
     flexDirection: 'row',
@@ -1176,6 +1271,8 @@ export const AppNavigator = () => {
         {user ? <AppStackNavigator /> : <AuthStackNavigator />}
         {user && <IncomingCallHandler />}
         {user && <NotificationNavigator />}
+        {user && <MinimizedCallBanner />}
+        {user && <ActiveCallHost />}
       </View>
     </NavigationContainer>
   );

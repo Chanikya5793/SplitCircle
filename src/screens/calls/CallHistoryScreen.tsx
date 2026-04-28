@@ -68,7 +68,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 20);
+  const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
 
   const [callHistory, setCallHistory] = useState<CallHistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -459,7 +459,10 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
       {/* Sticky header on scroll (like existing screens) */}
       <RNAnimated.View
         pointerEvents="none"
-        style={[styles.stickyHeader, { opacity: headerOpacity }]}
+        style={[
+          styles.stickyHeader,
+          { opacity: headerOpacity, paddingTop: insets.top + 8 },
+        ]}
       >
         <GlassView style={styles.stickyHeaderGlass}>
           <Text
@@ -480,7 +483,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
           stickySectionHeadersEnabled={false}
           contentContainerStyle={[
             styles.listContent,
-            { paddingTop: 60, paddingBottom: listBottomPadding },
+            { paddingTop: insets.top + 24, paddingBottom: listBottomPadding },
           ]}
           ListHeaderComponent={
             <View style={styles.headerContainer}>
@@ -1010,7 +1013,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 100,
-    paddingTop: 50,
     paddingHorizontal: 16,
     paddingBottom: 10,
     alignItems: 'center',

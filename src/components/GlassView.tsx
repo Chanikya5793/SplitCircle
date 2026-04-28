@@ -21,16 +21,22 @@ export const GlassView = React.memo(({ children, style, contentStyle, intensity 
       ['rgba(255, 255, 255, 0.01)', 'rgba(30, 30, 30, 0.15)']
     );
 
+    // Android can't render the BlurView, so the card sits directly on top of
+    // the LiquidBackground blobs. A 30% alpha leaks the blob colors through
+    // and makes labels hard to read — bump to a near-opaque tint that still
+    // hints at the surface beneath.
     const androidBackgroundColor = interpolateColor(
       themeProgress.value,
       [0, 1],
-      ['rgba(255, 255, 255, 0.3)', 'rgba(30, 30, 30, 0.3)']
+      ['rgba(252, 252, 254, 0.86)', 'rgba(28, 30, 36, 0.86)']
     );
 
     const borderColor = interpolateColor(
       themeProgress.value,
       [0, 1],
-      ['rgba(255, 255, 255, 0.2)', 'rgba(255, 255, 255, 0.05)']
+      Platform.OS === 'android'
+        ? ['rgba(15, 23, 42, 0.08)', 'rgba(255, 255, 255, 0.08)']
+        : ['rgba(255, 255, 255, 0.2)', 'rgba(255, 255, 255, 0.05)']
     );
 
     return {

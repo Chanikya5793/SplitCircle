@@ -14,8 +14,8 @@ import {
 } from '@livekit/react-native';
 import { ConnectionState, Track } from 'livekit-client';
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
-import { StyleSheet, View } from 'react-native';
-import { ActivityIndicator, Text } from 'react-native-paper';
+import { BackHandler, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, IconButton, Text } from 'react-native-paper';
 
 const debugLog = (...args: unknown[]) => {
   if (__DEV__) {
@@ -296,10 +296,20 @@ interface CallSessionScreenProps {
   groupId?: string;
   type: CallType;
   joinCallId?: string;
+  visible?: boolean;
   onHangUp: () => void;
+  onMinimize?: () => void;
 }
 
-export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp }: CallSessionScreenProps) => {
+export const CallSessionScreen = ({
+  chatId,
+  groupId,
+  type,
+  joinCallId,
+  visible = true,
+  onHangUp,
+  onMinimize,
+}: CallSessionScreenProps) => {
   const {
     status,
     serverUrl,
@@ -428,6 +438,15 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
     void endCall();
   }, [endCall, requestRoomShutdown]);
 
+  const handleMinimize = useCallback(() => {
+    if (!onMinimize) {
+      return;
+    }
+
+    debugLog('CallSessionScreen minimize');
+    onMinimize();
+  }, [onMinimize]);
+
   useEffect(() => {
     if (status !== 'ended') {
       return;
@@ -444,6 +463,19 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!visible || !onMinimize) {
+      return;
+    }
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleMinimize();
+      return true;
+    });
+
+    return () => subscription.remove();
+  }, [handleMinimize, onMinimize, visible]);
 
   const statusText = useMemo(() => {
     switch (status) {
@@ -463,9 +495,23 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
   }, [callDuration, error, status]);
 
   return (
-    <LiquidBackground>
+    <View
+      pointerEvents={visible ? 'auto' : 'none'}
+      style={[styles.overlay, visible ? styles.overlayVisible : styles.overlayHidden]}
+    >
+      <LiquidBackground>
       <View style={styles.container}>
         <GlassView style={styles.statusContainer}>
+          {onMinimize ? (
+            <IconButton
+              icon="chevron-down"
+              mode="contained-tonal"
+              size={20}
+              onPress={handleMinimize}
+              style={styles.minimizeButton}
+              accessibilityLabel="Minimize call"
+            />
+          ) : null}
           <View style={styles.statusContent}>
             <Text style={[styles.statusTitle, { color: theme.colors.onSurface }]}> 
               {callType === 'video' ? '📹 Video Call' : '📞 Audio Call'}
@@ -529,20 +575,39 @@ export const CallSessionScreen = ({ chatId, groupId, type, joinCallId, onHangUp 
           onHangUp={handleHangUp}
         />
       </View>
-    </LiquidBackground>
+      </LiquidBackground>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1000,
+    elevation: 1000,
+  },
+  overlayVisible: {
+    opacity: 1,
+  },
+  overlayHidden: {
+    opacity: 0,
+  },
   container: {
     flex: 1,
     justifyContent: 'space-between',
     padding: 16,
   },
   statusContainer: {
+    position: 'relative',
     padding: 16,
     borderRadius: 16,
     zIndex: 10,
+  },
+  minimizeButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 20,
   },
   statusContent: {
     alignItems: 'center',

@@ -727,19 +727,20 @@ const styles = StyleSheet.create({
   },
   sectionContent: {
     paddingVertical: 12,
+    paddingHorizontal: 20,
   },
   sectionTitle: {
     fontWeight: '700',
-    paddingHorizontal: 16,
+    paddingHorizontal: 8,
   },
   sectionDescription: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 8,
     paddingTop: 4,
     paddingBottom: 8,
     lineHeight: 20,
   },
   inlineNotice: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 8,
     paddingBottom: 8,
     lineHeight: 20,
   },
@@ -753,7 +754,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    paddingHorizontal: 16,
+    paddingHorizontal: 8,
     paddingTop: 4,
   },
   diagnosticsDivider: {

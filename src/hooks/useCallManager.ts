@@ -11,9 +11,10 @@ import {
 } from '@/services/callService';
 import { LiveKitService } from '@/services/LiveKitService';
 import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
+import { nativeCallService } from '@/services/nativeCallService';
+import { requestCallPermissions } from '@/utils/permissions';
 import { AudioSession } from '@livekit/react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
 
 const debugLog = (...args: unknown[]) => {
   if (__DEV__) {
@@ -59,15 +60,14 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const callIdRef = useRef<string | null>(null);
   const callStartedAtRef = useRef<number | null>(null);
   const otherParticipantRef = useRef<{ userId: string; displayName: string; photoURL?: string } | null>(null);
-  const statusRef = useRef<CallStatus>('idle');
   const isInitiatorRef = useRef<boolean>(false);
   const hasSessionToCleanupRef = useRef(false);
   const allowUnmountCleanupRef = useRef(false);
   const sessionVersionRef = useRef(0);
   const isEndingRef = useRef(false);
-  const endCallRef = useRef<(reason?: 'manual' | 'session-ended' | 'unmount' | 'app-backgrounded') => Promise<void>>(async () => undefined);
-  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
-  const backgroundLeaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const nativeDirectionRef = useRef<'incoming' | 'outgoing'>('outgoing');
+  const hasReportedConnectedNativeRef = useRef(false);
+  const endCallRef = useRef<(reason?: 'manual' | 'session-ended' | 'unmount') => Promise<void>>(async () => undefined);
   const unsubscribes = useRef<Array<() => void>>([]);
 
   // Cleanup subscriptions
@@ -77,12 +77,22 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     unsubscribes.current = [];
   }, []);
 
-  const clearBackgroundLeaveTimer = useCallback(() => {
-    if (backgroundLeaveTimerRef.current) {
-      clearTimeout(backgroundLeaveTimerRef.current);
-      backgroundLeaveTimerRef.current = null;
-    }
-  }, []);
+  const buildNativeHandle = useCallback((
+    fallbackDisplayName?: string,
+    fallbackUserId?: string,
+  ) => {
+    const thread = threads.find((item) => item.chatId === chatId);
+    const directParticipant = thread?.participants.find((participant) => participant.userId !== user?.userId);
+    const displayName = directParticipant?.displayName
+      || fallbackDisplayName
+      || (thread?.type === 'group' ? 'Group Call' : 'SplitCircle Contact');
+    const handle = directParticipant?.userId || fallbackUserId || chatId || displayName;
+
+    return {
+      displayName,
+      handle,
+    };
+  }, [chatId, threads, user?.userId]);
 
   // Start a new call (as initiator)
   const startCall = useCallback(async (type: CallType = 'video') => {
@@ -101,8 +111,19 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setError(null);
       setStatus('ringing'); // UI shows "Calling..."
       setCallType(type);
+      hasReportedConnectedNativeRef.current = false;
       isInitiatorRef.current = true;
+      nativeDirectionRef.current = 'outgoing';
       callStartedAtRef.current = Date.now();
+
+      const hasPermissions = await requestCallPermissions(type);
+      if (!hasPermissions) {
+        throw new Error(
+          type === 'video'
+            ? 'Camera and microphone permissions are required for video calls.'
+            : 'Microphone permission is required for audio calls.'
+        );
+      }
 
       const thread = threads.find((t) => t.chatId === chatId);
       const threadParticipantIds = thread?.participantIds ?? [user.userId];
@@ -136,6 +157,17 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
 
       setCallId(newCallId);
       callIdRef.current = newCallId;
+
+      const nativePresentation = buildNativeHandle(
+        otherParticipantRef.current?.displayName,
+        otherParticipantRef.current?.userId,
+      );
+      await nativeCallService.startOutgoingCall(
+        newCallId,
+        nativePresentation.handle,
+        nativePresentation.displayName,
+        type === 'video',
+      );
 
       // 2. Fetch LiveKit Token
       const { token: roomToken, url } = await LiveKitService.getToken(
@@ -175,6 +207,12 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         if (session.status === 'connected') {
           debugLog('useCallManager call connected');
           setStatus('connected');
+
+          if (!hasReportedConnectedNativeRef.current) {
+            hasReportedConnectedNativeRef.current = true;
+            void nativeCallService.markCallConnected(newCallId, nativeDirectionRef.current);
+          }
+
           // Only fill in other participant if not already resolved from thread
           if (!otherParticipantRef.current) {
             const other = session.participants.find(p => p.userId !== user.userId);
@@ -199,12 +237,16 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
           console.warn('Failed to cleanup failed outbound call setup', cleanupError);
         }
       }
+      if (callIdRef.current) {
+        await nativeCallService.endCall(callIdRef.current);
+        nativeCallService.clearCall(callIdRef.current);
+      }
       callIdRef.current = null;
       setCallId(null);
       setError(err instanceof Error ? err.message : 'Failed to start call');
       setStatus('failed');
     }
-  }, [chatId, groupId, threads, user]);
+  }, [buildNativeHandle, chatId, groupId, threads, user]);
 
   // Join an existing call (as answerer)
   const joinExistingCall = useCallback(async (existingCallId: string) => {
@@ -223,7 +265,9 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setStatus('ringing');
       setCallId(existingCallId);
       callIdRef.current = existingCallId;
+      hasReportedConnectedNativeRef.current = false;
       isInitiatorRef.current = false;
+      nativeDirectionRef.current = 'incoming';
       callStartedAtRef.current = Date.now();
 
       // Resolve other participant from thread immediately as fallback
@@ -253,6 +297,15 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
 
       setCallType(session.type);
 
+      const hasPermissions = await requestCallPermissions(session.type);
+      if (!hasPermissions) {
+        throw new Error(
+          session.type === 'video'
+            ? 'Camera and microphone permissions are required for video calls.'
+            : 'Microphone permission is required for audio calls.'
+        );
+      }
+
       // Update from session if we got richer info (e.g. photoURL from initiator)
       const initiator = session.participants.find(p => p.userId === session.initiatorId);
       if (initiator) {
@@ -276,6 +329,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       // 2. Start Audio Session
       await AudioSession.startAudioSession();
 
+      await nativeCallService.answerIncomingCall(existingCallId);
+
       // 3. Update Realtime DB (Join) - This also updates status to 'connected'
       await joinCall(existingCallId, {
         userId: user.userId,
@@ -285,6 +340,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       });
       debugLog('useCallManager joined call');
       setStatus('connected'); // Immediately set to connected since we just joined
+      hasReportedConnectedNativeRef.current = true;
+      await nativeCallService.markCallConnected(existingCallId, nativeDirectionRef.current);
 
       // 4. Subscribe to session for further updates
       const unsubSession = subscribeToCallSession(existingCallId, (updatedSession) => {
@@ -307,20 +364,21 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
 
     } catch (err) {
       console.error('Error joining call', err);
+      await nativeCallService.endCall(existingCallId);
+      nativeCallService.clearCall(existingCallId);
       setError(err instanceof Error ? err.message : 'Failed to join call');
       setStatus('failed');
     }
   }, [chatId, threads, user]);
 
   // End the call
-  const endCall = useCallback(async (reason: 'manual' | 'session-ended' | 'unmount' | 'app-backgrounded' = 'manual') => {
+  const endCall = useCallback(async (reason: 'manual' | 'session-ended' | 'unmount' = 'manual') => {
     if (isEndingRef.current) {
       return;
     }
 
     isEndingRef.current = true;
     sessionVersionRef.current += 1;
-    clearBackgroundLeaveTimer();
     debugLog('useCallManager ending call', reason);
 
     try {
@@ -368,10 +426,16 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         await leaveCall(endingCallId, user.userId);
       }
 
+      if (endingCallId) {
+        await nativeCallService.endCall(endingCallId);
+        nativeCallService.clearCall(endingCallId);
+      }
+
       callIdRef.current = null;
       callStartedAtRef.current = null;
       otherParticipantRef.current = null;
       hasSessionToCleanupRef.current = false;
+      hasReportedConnectedNativeRef.current = false;
 
       await AudioSession.stopAudioSession();
       debugLog('useCallManager call ended');
@@ -381,15 +445,11 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     } finally {
       // Keep `true` while idle; reset when starting/joining a new call.
     }
-  }, [user, chatId, groupId, threads, callType, cleanupSubscriptions, clearBackgroundLeaveTimer]);
+  }, [user, chatId, groupId, threads, callType, cleanupSubscriptions]);
 
   useEffect(() => {
     endCallRef.current = endCall;
   }, [endCall]);
-
-  useEffect(() => {
-    statusRef.current = status;
-  }, [status]);
 
   useEffect(() => {
     hasSessionToCleanupRef.current = Boolean(callIdRef.current || callId || token || serverUrl);
@@ -406,54 +466,28 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   }, []);
 
   useEffect(() => {
-    const handleAppStateChange = (nextState: AppStateStatus) => {
-      appStateRef.current = nextState;
-
-      if (nextState === 'active') {
-        clearBackgroundLeaveTimer();
+    const unsubscribeNativeEnd = nativeCallService.subscribe('end', ({ appCallId }) => {
+      if (!appCallId || appCallId !== callIdRef.current || isEndingRef.current) {
         return;
       }
 
-      const hasLiveCall = Boolean(callIdRef.current);
-      const isInForegroundOnlyCallState =
-        statusRef.current === 'ringing' || statusRef.current === 'connected';
+      debugLog('useCallManager received native end-call action');
+      void endCallRef.current('manual');
+    });
 
-      if (!hasLiveCall || !isInForegroundOnlyCallState || isEndingRef.current) {
-        clearBackgroundLeaveTimer();
+    const unsubscribeNativeMute = nativeCallService.subscribe('mute', ({ appCallId, muted }) => {
+      if (appCallId && appCallId !== callIdRef.current) {
         return;
       }
 
-      if (backgroundLeaveTimerRef.current) {
-        return;
-      }
+      setIsMuted(muted);
+    });
 
-      debugLog('useCallManager app left foreground during call; arming forced leave');
-      backgroundLeaveTimerRef.current = setTimeout(() => {
-        backgroundLeaveTimerRef.current = null;
-
-        if (appStateRef.current === 'active' || isEndingRef.current) {
-          return;
-        }
-
-        const stillHasLiveCall = Boolean(callIdRef.current);
-        const stillInForegroundOnlyCallState =
-          statusRef.current === 'ringing' || statusRef.current === 'connected';
-
-        if (!stillHasLiveCall || !stillInForegroundOnlyCallState) {
-          return;
-        }
-
-        debugLog('useCallManager app stayed backgrounded during call; ending call');
-        void endCallRef.current('app-backgrounded');
-      }, 700);
-    };
-
-    const subscription = AppState.addEventListener('change', handleAppStateChange);
     return () => {
-      clearBackgroundLeaveTimer();
-      subscription.remove();
+      unsubscribeNativeEnd();
+      unsubscribeNativeMute();
     };
-  }, [clearBackgroundLeaveTimer]);
+  }, []);
 
   // Local state toggles (actual media toggle happens in the UI via LiveKitRoom)
   const toggleMute = useCallback(() => {

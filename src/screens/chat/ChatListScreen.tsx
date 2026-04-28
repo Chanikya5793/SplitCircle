@@ -29,7 +29,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
-  const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 20);
+  const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
 
   // Filter & Sort State
   const [filterVisible, setFilterVisible] = useState(false);
@@ -105,7 +105,12 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
 
   return (
     <LiquidBackground>
-      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+      <Animated.View
+        style={[
+          styles.stickyHeader,
+          { opacity: headerOpacity, paddingTop: insets.top + 8 },
+        ]}
+      >
         <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Chats</Text>
         </GlassView>
@@ -156,7 +161,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
               <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No chats yet.</Text>
             )
           }
-          contentContainerStyle={{ padding: 16, paddingTop: 60, paddingBottom: listBottomPadding }}
+          contentContainerStyle={{ padding: 16, paddingTop: insets.top + 24, paddingBottom: listBottomPadding }}
           ListHeaderComponent={
             <View style={styles.headerContainer}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -209,6 +214,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderRadius: 16,
     overflow: 'hidden',
+    paddingHorizontal: 16,
   },
   unreadBadge: {
     position: 'absolute',
@@ -231,7 +237,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 100,
-    paddingTop: 50,
     paddingHorizontal: 16,
     paddingBottom: 10,
     alignItems: 'center',

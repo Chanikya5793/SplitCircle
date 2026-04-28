@@ -1,6 +1,7 @@
 import { declineCall, subscribeToIncomingCallForUser } from '@/services/callService';
 import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { nativeCallService } from '@/services/nativeCallService';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 import { useChat } from './ChatContext';
 
@@ -20,93 +21,121 @@ interface IncomingCall {
   startedAt: number;
 }
 
+export interface ActiveCallRequest {
+  chatId: string;
+  groupId?: string;
+  type: 'audio' | 'video';
+  joinCallId?: string;
+}
+
 interface CallContextValue {
   incomingCall: IncomingCall | null;
+  activeCallRequest: ActiveCallRequest | null;
+  isCallUiVisible: boolean;
+  startCallSession: (request: ActiveCallRequest) => void;
+  showActiveCallUi: () => void;
+  hideActiveCallUi: () => void;
+  clearActiveCall: () => void;
   dismissIncomingCall: () => void;
-  acceptCall: () => IncomingCall | null;
+  acceptIncomingCall: () => void;
 }
 
 const CallContext = createContext<CallContextValue | null>(null);
+
+const isSameActiveCall = (
+  left: ActiveCallRequest | null,
+  right: ActiveCallRequest,
+): boolean => {
+  if (!left) {
+    return false;
+  }
+
+  return left.chatId === right.chatId
+    && left.groupId === right.groupId
+    && left.type === right.type
+    && left.joinCallId === right.joinCallId;
+};
 
 export const CallProvider = ({ children }: { children: ReactNode }) => {
   const { user } = useAuth();
   const { threads } = useChat();
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
+  const [activeCallRequest, setActiveCallRequest] = useState<ActiveCallRequest | null>(null);
+  const [isCallUiVisible, setIsCallUiVisible] = useState(false);
 
-  // Watch for incoming calls across all user's chat threads
+  const incomingCallRef = useRef<IncomingCall | null>(null);
+  const displayedIncomingCallIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!user || threads.length === 0) {
+    incomingCallRef.current = incomingCall;
+  }, [incomingCall]);
+
+  useEffect(() => {
+    void nativeCallService.initialize();
+  }, []);
+
+  useEffect(() => {
+    void nativeCallService.setAvailability(Boolean(user));
+  }, [user]);
+
+  const showActiveCallUi = useCallback(() => {
+    if (!activeCallRequest) {
       return;
     }
 
-    debugLog(`CallContext: watching ${threads.length} thread(s) for calls`);
-    const chatIds = threads.map((thread) => thread.chatId);
-    const unsubscribe = subscribeToIncomingCallForUser(user.userId, chatIds, (session) => {
-      if (
-        session &&
-        session.initiatorId !== user.userId &&
-        session.status === 'ringing' &&
-        !session.participants.some((p) => p.userId === user.userId)
-      ) {
-        // Check if call is recent (within last 60 seconds to avoid stale calls)
-        const callAge = Date.now() - session.startedAt;
-        const MAX_CALL_AGE_MS = 60000; // 60 seconds
+    setIsCallUiVisible(true);
+    nativeCallService.bringAppToForeground();
+  }, [activeCallRequest]);
 
-        if (callAge > MAX_CALL_AGE_MS) {
-          debugLog('CallContext: ignoring stale incoming call');
-          return;
-        }
+  const hideActiveCallUi = useCallback(() => {
+    setIsCallUiVisible(false);
+  }, []);
 
-        // Found an incoming call not initiated by current user
-        const initiator = session.participants.find((p) => p.userId === session.initiatorId);
-        debugLog('CallContext: incoming call detected');
+  const clearActiveCall = useCallback(() => {
+    debugLog('CallContext: clearing active call');
+    setActiveCallRequest(null);
+    setIsCallUiVisible(false);
+  }, []);
 
-        setIncomingCall({
-          callId: session.callId,
-          chatId: session.chatId,
-          groupId: session.groupId,
-          initiatorId: session.initiatorId,
-          initiatorName: initiator?.displayName || 'Unknown',
-          type: session.type,
-          startedAt: session.startedAt,
-        });
-      } else if (!session || session.status === 'ended') {
-        setIncomingCall(null);
-      } else if (session.status === 'connected') {
-        // Call was answered, clear the incoming call if it's ours
-        setIncomingCall((prev) =>
-          prev?.callId === session.callId ? null : prev
-        );
+  const startCallSession = useCallback((request: ActiveCallRequest) => {
+    debugLog('CallContext: opening call session UI');
+    setIncomingCall(null);
+    setActiveCallRequest((current) => {
+      if (!current) {
+        return request;
       }
+
+      if (isSameActiveCall(current, request)) {
+        return current;
+      }
+
+      console.warn('CallContext: a call is already active, reusing the existing session UI.');
+      return current;
     });
+    setIsCallUiVisible(true);
+    nativeCallService.bringAppToForeground();
+  }, []);
 
-    return () => {
-      debugLog('CallContext: cleanup listeners');
-      unsubscribe();
-    };
-  }, [user, threads]);
-
-  // Dismiss = decline the call and save as missed
   const dismissIncomingCall = useCallback(async () => {
-    if (!incomingCall || !user) {
+    if (!incomingCallRef.current || !user) {
       setIncomingCall(null);
       return;
     }
 
+    const currentIncomingCall = incomingCallRef.current;
     debugLog('CallContext: declining incoming call');
 
-    // Save as missed call in local history
     const historyEntry: CallHistoryEntry = {
-      callId: incomingCall.callId,
-      chatId: incomingCall.chatId,
-      groupId: incomingCall.groupId,
-      type: incomingCall.type,
+      callId: currentIncomingCall.callId,
+      chatId: currentIncomingCall.chatId,
+      groupId: currentIncomingCall.groupId,
+      type: currentIncomingCall.type,
       direction: 'incoming',
       otherParticipant: {
-        userId: incomingCall.initiatorId,
-        displayName: incomingCall.initiatorName,
+        userId: currentIncomingCall.initiatorId,
+        displayName: currentIncomingCall.initiatorName,
       },
-      startedAt: incomingCall.startedAt,
+      startedAt: currentIncomingCall.startedAt,
       endedAt: Date.now(),
       duration: 0,
       status: 'declined',
@@ -119,25 +148,164 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
       console.warn('Error saving declined call to history:', error);
     }
 
-    // Notify the caller that call was declined
     try {
-      await declineCall(incomingCall.callId);
+      await nativeCallService.rejectIncomingCall(currentIncomingCall.callId);
+      await declineCall(currentIncomingCall.callId);
     } catch (error) {
       console.warn('Error declining call:', error);
+    } finally {
+      await nativeCallService.endCall(currentIncomingCall.callId);
+      nativeCallService.clearCall(currentIncomingCall.callId);
     }
 
+    displayedIncomingCallIdRef.current = null;
     setIncomingCall(null);
-  }, [incomingCall, user]);
+  }, [user]);
 
-  const acceptCall = useCallback(() => {
-    const call = incomingCall;
-    if (call) debugLog('CallContext: accepting incoming call');
+  const acceptIncomingCall = useCallback(() => {
+    const call = incomingCallRef.current;
+    if (!call) {
+      return;
+    }
+
+    debugLog('CallContext: accepting incoming call');
     setIncomingCall(null);
-    return call;
+    startCallSession({
+      chatId: call.chatId,
+      groupId: call.groupId,
+      type: call.type,
+      joinCallId: call.callId,
+    });
+  }, [startCallSession]);
+
+  // Watch for incoming calls across all user's chat threads
+  useEffect(() => {
+    if (!user || threads.length === 0) {
+      return;
+    }
+
+    debugLog(`CallContext: watching ${threads.length} thread(s) for calls`);
+    const chatIds = threads.map((thread) => thread.chatId);
+    const unsubscribe = subscribeToIncomingCallForUser(user.userId, chatIds, (session) => {
+      const currentIncomingCall = incomingCallRef.current;
+
+      if (
+        session &&
+        session.initiatorId !== user.userId &&
+        session.status === 'ringing' &&
+        !session.participants.some((participant) => participant.userId === user.userId)
+      ) {
+        const callAge = Date.now() - session.startedAt;
+        const MAX_CALL_AGE_MS = 60000;
+
+        if (callAge > MAX_CALL_AGE_MS) {
+          debugLog('CallContext: ignoring stale incoming call');
+          return;
+        }
+
+        const initiator = session.participants.find((participant) => participant.userId === session.initiatorId);
+        debugLog('CallContext: incoming call detected');
+
+        setIncomingCall({
+          callId: session.callId,
+          chatId: session.chatId,
+          groupId: session.groupId,
+          initiatorId: session.initiatorId,
+          initiatorName: initiator?.displayName || 'Unknown',
+          type: session.type,
+          startedAt: session.startedAt,
+        });
+        return;
+      }
+
+      if (!session || session.status === 'ended') {
+        if (currentIncomingCall) {
+          void nativeCallService.endCall(currentIncomingCall.callId);
+          nativeCallService.clearCall(currentIncomingCall.callId);
+        }
+        displayedIncomingCallIdRef.current = null;
+        setIncomingCall(null);
+        return;
+      }
+
+      if (session.status === 'connected' && currentIncomingCall?.callId === session.callId) {
+        void nativeCallService.endCall(currentIncomingCall.callId);
+        displayedIncomingCallIdRef.current = null;
+        setIncomingCall(null);
+      }
+    });
+
+    return () => {
+      debugLog('CallContext: cleanup listeners');
+      unsubscribe();
+    };
+  }, [threads, user]);
+
+  useEffect(() => {
+    if (!incomingCall) {
+      return;
+    }
+
+    if (displayedIncomingCallIdRef.current === incomingCall.callId) {
+      return;
+    }
+
+    displayedIncomingCallIdRef.current = incomingCall.callId;
+    void nativeCallService.displayIncomingCall(
+      incomingCall.callId,
+      incomingCall.initiatorId,
+      incomingCall.initiatorName,
+      incomingCall.type === 'video',
+    );
   }, [incomingCall]);
 
+  useEffect(() => {
+    const unsubscribeAnswer = nativeCallService.subscribe('answer', ({ appCallId }) => {
+      const currentIncomingCall = incomingCallRef.current;
+      if (!currentIncomingCall) {
+        return;
+      }
+
+      if (appCallId && appCallId !== currentIncomingCall.callId) {
+        return;
+      }
+
+      acceptIncomingCall();
+    });
+
+    const unsubscribeEnd = nativeCallService.subscribe('end', ({ appCallId }) => {
+      const currentIncomingCall = incomingCallRef.current;
+      if (!currentIncomingCall) {
+        return;
+      }
+
+      if (appCallId && appCallId !== currentIncomingCall.callId) {
+        return;
+      }
+
+      void dismissIncomingCall();
+    });
+
+    return () => {
+      unsubscribeAnswer();
+      unsubscribeEnd();
+    };
+  }, [acceptIncomingCall, dismissIncomingCall]);
+
   return (
-    <CallContext.Provider value={{ incomingCall, dismissIncomingCall, acceptCall }}>
+    <CallContext.Provider
+      value={{
+        incomingCall,
+        activeCallRequest,
+        isCallUiVisible,
+        startCallSession,
+        showActiveCallUi,
+        hideActiveCallUi,
+        clearActiveCall,
+        dismissIncomingCall,
+        acceptIncomingCall,
+      }}
+    >
       {children}
     </CallContext.Provider>
   );

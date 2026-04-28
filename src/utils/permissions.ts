@@ -2,11 +2,25 @@ import { Camera } from 'expo-camera';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import type { CallType } from '@/models';
+
+export const requestMicrophonePermission = async (): Promise<boolean> => {
+  const { status: micStatus } = await Camera.requestMicrophonePermissionsAsync();
+  return micStatus === 'granted';
+};
 
 export const requestCameraAndAudioPermissions = async (): Promise<boolean> => {
   const { status: cameraStatus } = await Camera.requestCameraPermissionsAsync();
-  const { status: micStatus } = await Camera.requestMicrophonePermissionsAsync();
-  return cameraStatus === 'granted' && micStatus === 'granted';
+  const hasMicrophonePermission = await requestMicrophonePermission();
+  return cameraStatus === 'granted' && hasMicrophonePermission;
+};
+
+export const requestCallPermissions = async (type: CallType): Promise<boolean> => {
+  if (type === 'video') {
+    return requestCameraAndAudioPermissions();
+  }
+
+  return requestMicrophonePermission();
 };
 
 export const requestPushPermissions = async (): Promise<boolean> => {

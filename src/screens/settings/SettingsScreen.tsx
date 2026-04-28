@@ -28,7 +28,7 @@ export const SettingsScreen = () => {
   const { isDark, toggleTheme, theme } = useTheme();
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
-  const bottomPadding = getFloatingTabBarContentPadding(insets.bottom, 20);
+  const bottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
   const [strictReviewMode, setStrictReviewModeState] = useState(false);
   const [useAIForReceipts, setUseAIForReceiptsState] = useState(true);
   const [merchantLearning, setMerchantLearning] = useState<LearningMerchantSummary[]>([]);
@@ -104,14 +104,22 @@ export const SettingsScreen = () => {
 
   return (
     <LiquidBackground>
-      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+      <Animated.View
+        style={[
+          styles.stickyHeader,
+          { opacity: headerOpacity, paddingTop: insets.top + 8 },
+        ]}
+      >
         <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>Settings</Text>
         </GlassView>
       </Animated.View>
 
       <Animated.ScrollView
-        contentContainerStyle={[styles.container, { paddingBottom: bottomPadding }]}
+        contentContainerStyle={[
+          styles.container,
+          { paddingTop: insets.top + 24, paddingBottom: bottomPadding },
+        ]}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
           { useNativeDriver: true }
@@ -203,8 +211,7 @@ export const SettingsScreen = () => {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 16,
-    paddingTop: 60,
+    paddingHorizontal: 16,
   },
   stickyHeader: {
     position: 'absolute',
@@ -212,7 +219,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 100,
-    paddingTop: 50,
     paddingHorizontal: 16,
     paddingBottom: 10,
     alignItems: 'center',
@@ -224,19 +230,21 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   headerContainer: {
-    paddingHorizontal: 8,
-    paddingBottom: 16,
+    paddingBottom: 20,
   },
   profileCard: {
     alignItems: 'center',
     gap: 8,
-    marginBottom: 24,
+    marginBottom: 16,
     padding: 24,
     borderRadius: 24,
+    overflow: 'hidden',
   },
   settingsList: {
     borderRadius: 24,
     overflow: 'hidden',
     marginBottom: 16,
+    paddingHorizontal: 16,
+    paddingRight: 0,
   },
 });

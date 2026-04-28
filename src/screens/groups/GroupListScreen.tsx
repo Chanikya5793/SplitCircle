@@ -207,7 +207,12 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
 
   return (
     <LiquidBackground style={styles.container}>
-      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+      <Animated.View
+        style={[
+          styles.stickyHeader,
+          { opacity: headerOpacity, paddingTop: insets.top + 8 },
+        ]}
+      >
         <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Groups</Text>
         </GlassView>
@@ -227,7 +232,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         )}
         contentContainerStyle={[
           groups.length === 0 && !loading ? styles.emptyContainer : undefined,
-          { paddingTop: 80, paddingBottom: listBottomPadding, paddingHorizontal: 16 }
+          { paddingTop: insets.top + 32, paddingBottom: listBottomPadding, paddingHorizontal: 16 }
         ]}
         ListHeaderComponent={
           <View style={styles.headerContainer}>
@@ -478,7 +483,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 100,
-    paddingTop: 50,
     paddingHorizontal: 16,
     paddingBottom: 10,
     alignItems: 'center',
