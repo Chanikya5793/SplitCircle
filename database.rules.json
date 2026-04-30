@@ -102,7 +102,6 @@
       }
     },
     "calls": {
-      ".read": "auth != null && query.orderByChild == ('allowedUserIds/' + auth.uid) && query.equalTo == true",
       ".indexOn": [
         "chatId",
         "status",
@@ -141,6 +140,16 @@
         },
         "groupId": {
           ".validate": "!newData.exists() || newData.isString() || newData.val() == null"
+        }
+      }
+    },
+    "friends": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        "$friendUid": {
+          ".read": "auth != null && auth.uid == $uid",
+          ".write": "auth != null && auth.uid == $uid && $uid != $friendUid",
+          ".validate": "newData.exists() ? (newData.hasChildren(['source', 'since']) && newData.child('source').isString() && (newData.child('source').val() == 'group' || newData.child('source').val() == 'debt' || newData.child('source').val() == 'manual') && newData.child('since').isNumber() && (!newData.child('lastInteractionAt').exists() || newData.child('lastInteractionAt').isNumber()) && (!newData.child('isPinned').exists() || newData.child('isPinned').isBoolean()) && (!newData.child('hidden').exists() || newData.child('hidden').isBoolean())) : true"
         }
       }
     },

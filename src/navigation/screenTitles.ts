@@ -7,6 +7,7 @@ type NamedGroup = Pick<Group, 'groupId' | 'name'>;
 
 export const ROOT_SCREEN_TITLES = {
   groups: 'Groups',
+  friends: 'Friends',
   chats: 'Chats',
   calls: 'Calls',
   settings: 'Settings',

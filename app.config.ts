@@ -92,8 +92,8 @@ const config = {
       ITSAppUsesNonExemptEncryption: false,
       NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
       UIBackgroundModes: iosPushNotificationsEnabled
-        ? ['audio', 'fetch', 'remote-notification']
-        : ['audio', 'fetch'],
+        ? ['audio', 'fetch', 'remote-notification', 'voip']
+        : ['audio', 'fetch', 'voip'],
     },
   },
   android: {

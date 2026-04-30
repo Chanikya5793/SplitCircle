@@ -16,6 +16,8 @@ import { CallHistoryScreen } from '@/screens/calls/CallHistoryScreen';
 import { CallInfoScreen } from '@/screens/calls/CallInfoScreen';
 import { CallSessionScreen } from '@/screens/calls/CallSessionScreen';
 import { ChatListScreen } from '@/screens/chat/ChatListScreen';
+import { FriendInfoScreen } from '@/screens/friends/FriendInfoScreen';
+import { FriendsScreen } from '@/screens/friends/FriendsScreen';
 import { ChatRoomScreen } from '@/screens/chat/ChatRoomScreen';
 import { MessageInfoScreen } from '@/screens/chat/MessageInfoScreen';
 import { AddExpenseScreen } from '@/screens/expenses/AddExpenseScreen';
@@ -52,7 +54,7 @@ import { AppStack, AuthStack, NativeTab } from './stacks';
 const navigationRef = createNavigationContainerRef<any>();
 
 type GroupWithFallback = Group | undefined;
-type TabIconKey = 'groups' | 'chat' | 'calls' | 'settings';
+type TabIconKey = 'groups' | 'friends' | 'chat' | 'calls' | 'settings';
 
 type NativeIconPair = {
   active?: ImageSourcePropType;
@@ -63,6 +65,7 @@ type NativeIconMap = Record<TabIconKey, NativeIconPair>;
 
 const EMPTY_NATIVE_ICON_MAP: NativeIconMap = {
   groups: {},
+  friends: {},
   chat: {},
   calls: {},
   settings: {},
@@ -99,6 +102,13 @@ const getResolvedIOSBackLabel = ({
   const trimmedNativeLabel = nativeLabel?.trim();
   const trimmedFallbackLabel = fallbackLabel?.trim();
 
+  // Caller-supplied `backTitle` (route.params.backTitle) wins. Without this,
+  // chats pushed from non-default tabs end up labeled with whatever the AppStack
+  // ROOT screen's static title is ("Groups"), which is misleading.
+  if (trimmedFallbackLabel && trimmedFallbackLabel.toLowerCase() !== 'back') {
+    return trimmedFallbackLabel;
+  }
+
   if (trimmedNativeLabel && trimmedNativeLabel.toLowerCase() !== 'back') {
     return trimmedNativeLabel;
   }
@@ -106,10 +116,6 @@ const getResolvedIOSBackLabel = ({
   const derivedLabel = getRouteBackLabel(previousRoute);
   if (derivedLabel) {
     return derivedLabel;
-  }
-
-  if (trimmedFallbackLabel && trimmedFallbackLabel.toLowerCase() !== 'back') {
-    return trimmedFallbackLabel;
   }
 
   return undefined;
@@ -562,10 +568,7 @@ const ChatRoomRoute = ({ route, navigation }: any) => {
 
   useLayoutEffect(() => {
     if (chatTitle) {
-      navigation.setOptions({
-        title: chatTitle,
-        headerBackTitle: chatTitle,
-      });
+      navigation.setOptions({ title: chatTitle });
     }
   }, [navigation, chatTitle]);
 
@@ -679,6 +682,8 @@ const AppTabs = () => {
         const [
           groupsInactive,
           groupsActive,
+          friendsInactive,
+          friendsActive,
           chatInactive,
           chatActive,
           callsInactive,
@@ -688,6 +693,8 @@ const AppTabs = () => {
         ] = await Promise.all([
           loadIcon('account-group-outline', inactiveColor),
           loadIcon('account-group', activeColor),
+          loadIcon('account-heart-outline', inactiveColor),
+          loadIcon('account-heart', activeColor),
           loadIcon('chat-processing-outline', inactiveColor),
           loadIcon('chat-processing', activeColor),
           loadIcon('phone-outline', inactiveColor),
@@ -702,6 +709,7 @@ const AppTabs = () => {
 
         setAndroidIcons({
           groups: { inactive: groupsInactive, active: groupsActive ?? groupsInactive },
+          friends: { inactive: friendsInactive, active: friendsActive ?? friendsInactive },
           chat: { inactive: chatInactive, active: chatActive ?? chatInactive },
           calls: { inactive: callsInactive, active: callsActive ?? callsInactive },
           settings: { inactive: settingsInactive, active: settingsActive ?? settingsInactive },
@@ -721,6 +729,7 @@ const AppTabs = () => {
     if (Platform.OS === 'ios') {
       const iosIconMap: Record<TabIconKey, { regular: string; filled: string }> = {
         groups: { regular: 'person.3', filled: 'person.3.fill' },
+        friends: { regular: 'heart.text.square', filled: 'heart.text.square.fill' },
         chat: { regular: 'bubble.left.and.bubble.right', filled: 'bubble.left.and.bubble.right.fill' },
         calls: { regular: 'phone', filled: 'phone.fill' },
         settings: { regular: 'gearshape', filled: 'gearshape.fill' },
@@ -777,6 +786,15 @@ const AppTabs = () => {
           title: 'Groups',
           tabBarLabel: 'Groups',
           tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('groups', focused),
+        }}
+      />
+      <NativeTab.Screen
+        name={ROUTES.APP.FRIENDS_TAB}
+        component={FriendsScreen}
+        options={{
+          title: 'Friends',
+          tabBarLabel: 'Friends',
+          tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('friends', focused),
         }}
       />
       <NativeTab.Screen
@@ -850,6 +868,15 @@ const AppStackNavigator = () => {
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.FRIEND_INFO}
+        component={FriendInfoScreen}
+        options={({ route }: any) => ({
+          title: route.params?.displayName ?? 'Friend Info',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        })}
       />
       <AppStack.Screen
         name={ROUTES.APP.GROUP_CHAT}

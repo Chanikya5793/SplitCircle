@@ -1,13 +1,18 @@
 internal import Expo
 internal import React
 internal import ReactAppDependencyProvider
+import PushKit
+import CallKit
+// RNCallKeep and RNVoipPushNotificationManager are imported through
+// SplitCircle-Bridging-Header.h — they're ObjC pods without Swift modulemaps.
 
 @UIApplicationMain
-class AppDelegate: ExpoAppDelegate {
+class AppDelegate: ExpoAppDelegate, PKPushRegistryDelegate {
   var window: UIWindow?
 
   var reactNativeDelegate: ExpoReactNativeFactoryDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
+  var voipRegistry: PKPushRegistry?
 
   override func application(
     _ application: UIApplication,
@@ -51,7 +56,71 @@ class AppDelegate: ExpoAppDelegate {
       launchOptions: launchOptions)
 #endif
 
+    registerVoipPushKit()
+
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  // MARK: - PushKit (VoIP)
+
+  private func registerVoipPushKit() {
+    let registry = PKPushRegistry(queue: DispatchQueue.main)
+    registry.delegate = self
+    registry.desiredPushTypes = [.voIP]
+    voipRegistry = registry
+  }
+
+  func pushRegistry(_ registry: PKPushRegistry, didUpdate pushCredentials: PKPushCredentials, for type: PKPushType) {
+    RNVoipPushNotificationManager.didUpdate(pushCredentials, forType: type.rawValue)
+  }
+
+  func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
+    // The token is no longer valid. JS can react via the onDidLoadWithEvents flow if needed.
+  }
+
+  func pushRegistry(
+    _ registry: PKPushRegistry,
+    didReceiveIncomingPushWith payload: PKPushPayload,
+    for type: PKPushType,
+    completion: @escaping () -> Void
+  ) {
+    // iOS 13+ contract: every VoIP push MUST result in CXProvider.reportNewIncomingCall
+    // before this callback returns, or the system will throttle / disable VoIP push.
+    // We therefore report the call to CallKit synchronously here using payload data,
+    // then forward the payload to JS so the rest of the app state can catch up.
+    let dict = payload.dictionaryPayload as? [String: Any] ?? [:]
+
+    let uuid = (dict["uuid"] as? String)
+      ?? (dict["callId"] as? String)
+      ?? UUID().uuidString
+    let callerName = (dict["callerName"] as? String)
+      ?? (dict["initiatorName"] as? String)
+      ?? "Incoming call"
+    let handle = (dict["handle"] as? String)
+      ?? (dict["chatId"] as? String)
+      ?? uuid
+    let hasVideo: Bool = {
+      if let explicit = dict["hasVideo"] as? Bool { return explicit }
+      if let callType = dict["callType"] as? String { return callType == "video" }
+      return false
+    }()
+
+    RNCallKeep.reportNewIncomingCall(
+      uuid,
+      handle: handle,
+      handleType: "generic",
+      hasVideo: hasVideo,
+      localizedCallerName: callerName,
+      supportsHolding: true,
+      supportsDTMF: true,
+      supportsGrouping: false,
+      supportsUngrouping: false,
+      fromPushKit: true,
+      payload: dict,
+      withCompletionHandler: completion
+    )
+
+    RNVoipPushNotificationManager.didReceiveIncomingPush(with: payload, forType: type.rawValue as String)
   }
 
   // Called whenever JS writes a theme preference via Settings.set({ RNThemeIsDark: 0|1 }).

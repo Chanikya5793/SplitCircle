@@ -17,6 +17,16 @@ import {
     unregisterNotificationDeviceRecord,
     type NotificationPermissionState,
 } from "./notifications";
+import {
+    sendCallVoipPush,
+    upsertVoipTokenForDevice,
+    voipPushSecrets,
+} from "./voipPush";
+import {
+    materializeDebtFriendships,
+    materializeGroupFriendships,
+    touchFriendInteraction,
+} from "./friends";
 export { parseReceiptWithLLM } from "./parseReceiptWithLLM";
 
 initializeApp();
@@ -484,6 +494,18 @@ export const onGroupUpdated = onDocumentUpdated(
                 const amount = expense.amount as number;
                 const currency = (after.currency as string) || "USD";
 
+                // Debt-derived friend fan-out — pair the payer with every
+                // participant in the split. Best-effort, never blocks the
+                // notification path below.
+                const expenseParticipants = Array.isArray(expense.participants)
+                    ? (expense.participants as Array<{ userId?: string }>)
+                          .map((p) => p?.userId)
+                          .filter((id): id is string => typeof id === "string")
+                    : [];
+                if (paidBy && expenseParticipants.length > 0) {
+                    void materializeDebtFriendships(paidBy, expenseParticipants);
+                }
+
                 let payerName = "Someone";
                 try {
                     const payerDoc = await getFirestore().collection("users").doc(paidBy).get();
@@ -547,6 +569,12 @@ export const onGroupUpdated = onDocumentUpdated(
                 const fromUserId = settlement.fromUserId as string;
                 const toUserId = settlement.toUserId as string;
                 const amount = settlement.amount as number;
+
+                // Bump lastInteractionAt for both sides — keeps "active friends"
+                // sortable in the Friends tab.
+                if (fromUserId && toUserId) {
+                    void touchFriendInteraction(fromUserId, toUserId);
+                }
                 const currency = (after.currency as string) || "USD";
 
                 let fromName = "Someone";
@@ -598,6 +626,12 @@ export const onGroupUpdated = onDocumentUpdated(
         const newMemberIds = memberIds.filter((id) => !beforeMemberIds.includes(id));
 
         if (newMemberIds.length > 0) {
+            // Group-derived friend fan-out: pair every new member with every
+            // *existing* member. We pass the full member set; the helper is
+            // idempotent so existing edges are kept and only new edges get
+            // written. Fire-and-forget — must not block the notification path.
+            void materializeGroupFriendships(memberIds);
+
             for (const newMemberId of newMemberIds) {
                 let memberName = "Someone";
                 try {
@@ -649,7 +683,10 @@ export const onGroupUpdated = onDocumentUpdated(
 // ─────────────────────────────────────────────────────────────
 
 export const onCallCreated = onValueCreated(
-    "/calls/{callId}",
+    {
+        ref: "/calls/{callId}",
+        secrets: voipPushSecrets,
+    },
     async (event) => {
         const callId = event.params.callId;
         const callData = event.data?.val() as MaybeCall | null;
@@ -751,6 +788,72 @@ export const onCallCreated = onValueCreated(
                 error: toSafeError(error),
             });
         }
+
+        // Fire VoIP push in parallel — this is what wakes the system CallKit
+        // ringing UI on iOS even when the app is killed. The Expo push above
+        // remains as a fallback for Android (which uses ConnectionService) and
+        // for iOS devices that haven't yet registered a VoIP token.
+        try {
+            const voipResult = await sendCallVoipPush({
+                callId,
+                chatId,
+                groupId: groupId || undefined,
+                initiatorId,
+                initiatorName: callerName,
+                callType,
+                recipientUserIds: recipientIds,
+                handle: chatId,
+            });
+            logger.info("VoIP call push dispatched", {
+                callId,
+                accepted: voipResult.accepted,
+                failed: voipResult.failed,
+            });
+        } catch (error) {
+            logger.error("VoIP call push failed", {
+                callId,
+                error: toSafeError(error),
+            });
+        }
+    },
+);
+
+// ─────────────────────────────────────────────────────────────
+// VoIP Push Token Registration (callable)
+// ─────────────────────────────────────────────────────────────
+
+export const registerVoipPushToken = onCall(
+    {
+        cors: true,
+    },
+    async (request) => {
+        const uid = request.auth?.uid;
+        if (!uid) {
+            throw new HttpsError("unauthenticated", "Sign-in required.");
+        }
+
+        const data = (request.data ?? {}) as Record<string, unknown>;
+        const deviceId = getStringValue(data.deviceId);
+        const voipPushToken = getStringValue(data.voipPushToken);
+        const bundleId = getStringValue(data.bundleId) || undefined;
+        const platform = getStringValue(data.platform) || "ios";
+
+        if (!deviceId || !voipPushToken) {
+            throw new HttpsError("invalid-argument", "deviceId and voipPushToken are required.");
+        }
+        if (voipPushToken.length > 256 || !/^[A-Fa-f0-9]+$/.test(voipPushToken)) {
+            throw new HttpsError("invalid-argument", "voipPushToken must be a hex device token.");
+        }
+
+        await upsertVoipTokenForDevice({
+            userId: uid,
+            deviceId,
+            voipPushToken,
+            bundleId,
+            platform,
+        });
+
+        return { ok: true };
     },
 );
 
@@ -942,6 +1045,13 @@ export const generateLiveKitToken = onRequest(
             });
 
             const token = await accessToken.toJwt();
+            logger.info("livekit: token issued", {
+                uid,
+                roomName,
+                chatId,
+                url: livekitUrl,
+                tokenPreview: token.slice(0, 16) + "...",
+            });
             res.status(200).json({ token, url: livekitUrl });
         } catch (error) {
             logger.error("Error generating LiveKit token", toSafeError(error));

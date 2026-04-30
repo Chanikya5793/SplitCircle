@@ -97,6 +97,10 @@ export const LiveKitService = {
             throw new Error('Token endpoint returned a non-secure LiveKit URL.');
         }
 
+        if (__DEV__) {
+            console.log('[LiveKitService] connecting to', parsedLiveKitUrl.toString(), 'tokenLen:', data.token.length);
+        }
+
         return {
             token: data.token,
             url: parsedLiveKitUrl.toString(),

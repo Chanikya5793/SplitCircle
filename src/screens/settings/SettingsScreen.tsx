@@ -139,7 +139,7 @@ export const SettingsScreen = () => {
           </Button>
         </GlassView>
 
-        <GlassView style={styles.settingsList}>
+        <GlassView style={styles.settingsList} contentStyle={styles.settingsListContent}>
           <List.Section>
             <List.Item
               title="Dark Mode"
@@ -176,7 +176,7 @@ export const SettingsScreen = () => {
           </List.Section>
         </GlassView>
 
-        <GlassView style={styles.settingsList}>
+        <GlassView style={styles.settingsList} contentStyle={styles.settingsListContent}>
           <List.Section>
             <List.Subheader>Receipt Learning (On Device)</List.Subheader>
             {merchantLearning.length === 0 ? (
@@ -244,7 +244,9 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     overflow: 'hidden',
     marginBottom: 16,
-    paddingHorizontal: 16,
-    paddingRight: 0,
+  },
+  settingsListContent: {
+    borderRadius: 24,
+    overflow: 'hidden',
   },
 });

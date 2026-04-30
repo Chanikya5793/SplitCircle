@@ -200,7 +200,22 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                     contentContainerStyle={styles.modalContainer}
                 >
                     {selectedDebt && (
-                        <GlassView style={styles.modalContent}>
+                        <GlassView
+                            style={[
+                                styles.modalContent,
+                                {
+                                    // Default GlassView is intentionally low-opacity for cards
+                                    // floating over the LiquidBackground; for a focus modal that
+                                    // needs to be readable, override with the theme surface color
+                                    // at 96% so the blob colors don't bleed through into the
+                                    // transaction text.
+                                    backgroundColor: theme.dark
+                                        ? 'rgba(28, 30, 36, 0.96)'
+                                        : 'rgba(252, 252, 254, 0.96)',
+                                },
+                            ]}
+                            intensity={70}
+                        >
                             <View style={styles.modalHeader}>
                                 <Text variant="titleMedium" style={{ color: theme.colors.onSurface, flex: 1 }}>
                                     Breakdown

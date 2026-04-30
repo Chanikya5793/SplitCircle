@@ -67,6 +67,7 @@ interface ChatContextValue {
   sendMessage: (payload: SendMessagePayload) => Promise<void>;
   subscribeToMessages: (chatId: string, onData: (messages: ChatMessage[]) => void) => () => void;
   ensureGroupThread: (groupId: string, participants: ChatParticipant[]) => Promise<string>;
+  ensureDirectThread: (otherParticipant: ChatParticipant) => Promise<string>;
   markChatAsRead: (chatId: string) => Promise<void>;
 }
 
@@ -568,9 +569,52 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     [threads, user],
   );
 
+  const ensureDirectThread = useCallback(
+    async (otherParticipant: ChatParticipant) => {
+      if (!user) {
+        throw new Error('Missing user context');
+      }
+      if (!otherParticipant?.userId || otherParticipant.userId === user.userId) {
+        throw new Error('Invalid direct-thread participant');
+      }
+
+      // Deterministic ID so both sides always reach the same thread doc.
+      const [a, b] = [user.userId, otherParticipant.userId].sort();
+      const chatId = `direct_${a}_${b}`;
+
+      const existing = threads.find((thread) => thread.chatId === chatId);
+      if (existing) return chatId;
+
+      const me: ChatParticipant = {
+        userId: user.userId,
+        displayName: user.displayName ?? 'You',
+        photoURL: user.photoURL ?? undefined,
+        status: 'online',
+      };
+      const participants: ChatParticipant[] = [me, otherParticipant];
+
+      // setDoc with merge: tolerates both sides racing on first open.
+      await setDoc(
+        doc(db, 'chats', chatId),
+        {
+          chatId,
+          type: 'direct',
+          participantIds: [a, b],
+          participants,
+          unreadCount: 0,
+          updatedAt: Date.now(),
+        } satisfies Partial<ChatThread>,
+        { merge: true },
+      );
+
+      return chatId;
+    },
+    [threads, user],
+  );
+
   const value = useMemo(
-    () => ({ threads, loading, sendMessage, subscribeToMessages, ensureGroupThread, markChatAsRead }),
-    [ensureGroupThread, loading, markChatAsRead, sendMessage, subscribeToMessages, threads],
+    () => ({ threads, loading, sendMessage, subscribeToMessages, ensureGroupThread, ensureDirectThread, markChatAsRead }),
+    [ensureGroupThread, ensureDirectThread, loading, markChatAsRead, sendMessage, subscribeToMessages, threads],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;

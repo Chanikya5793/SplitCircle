@@ -23,6 +23,7 @@ import {
     ActionSheetIOS,
     Alert,
     FlatList,
+    KeyboardAvoidingView,
     Modal,
     Platform,
     Pressable,
@@ -677,7 +678,11 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
         onRequestClose={() => setShowNewCallSheet(false)}
       >
         <GestureHandlerRootView style={{ flex: 1 }}>
-          <View style={styles.sheetOverlay}>
+          <KeyboardAvoidingView
+            style={styles.sheetOverlay}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            pointerEvents="box-none"
+          >
             <Pressable
               style={styles.sheetBackdrop}
               onPress={() => setShowNewCallSheet(false)}
@@ -836,7 +841,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                 </View>
               </Animated.View>
             </GestureDetector>
-          </View>
+          </KeyboardAvoidingView>
         </GestureHandlerRootView>
       </Modal>
     </LiquidBackground>

@@ -45,7 +45,7 @@ interface UseCallManagerReturn {
 
 export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCallManagerReturn => {
   const { user } = useAuth();
-  const { threads } = useChat();
+  const { threads, sendMessage } = useChat();
   const [status, setStatus] = useState<CallStatus>('idle');
   const [callId, setCallId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -183,8 +183,16 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setToken(roomToken);
       setServerUrl(url);
 
-      // 3. Start Audio Session
-      await AudioSession.startAudioSession();
+      // 3. Start Audio Session — best effort. On iOS, CallKit's
+      //    provider:didActivateAudioSession will already have driven the
+      //    AVAudioSession into the right category by the time we get here on
+      //    incoming-answered flows, and a duplicate activation throws
+      //    "Session activation failed". Don't let that kill the call.
+      try {
+        await AudioSession.startAudioSession();
+      } catch (audioErr) {
+        console.warn('useCallManager: AudioSession.startAudioSession failed (CallKit likely already owns it)', audioErr);
+      }
 
       // 4. Subscribe to Call Session to see if answered or ended
       const unsubSession = subscribeToCallSession(newCallId, (session) => {
@@ -326,8 +334,17 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setToken(roomToken);
       setServerUrl(url);
 
-      // 2. Start Audio Session
-      await AudioSession.startAudioSession();
+      // 2. Start Audio Session — best effort. CallKit's
+      //    provider:didActivateAudioSession may have already activated the
+      //    AVAudioSession when the user tapped Accept on the lock screen.
+      //    Calling startAudioSession again throws on iOS; we must NOT let that
+      //    cascade into nativeCallService.endCall via the catch block below
+      //    (that would visibly hang up the call the moment the receiver answers).
+      try {
+        await AudioSession.startAudioSession();
+      } catch (audioErr) {
+        console.warn('useCallManager: AudioSession.startAudioSession failed (CallKit likely already owns it)', audioErr);
+      }
 
       await nativeCallService.answerIncomingCall(existingCallId);
 
@@ -419,6 +436,37 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         };
 
         await saveCallToHistory(historyEntry);
+
+        // Drop a system entry into the chat so the call appears in the
+        // conversation timeline like WhatsApp / iMessage. Only for direct
+        // (1:1) chats — group chats don't typically inline call summaries.
+        // Gated on isInitiator so we don't double-write: both sides run endCall
+        // when the call finishes, but only the caller persists the entry.
+        try {
+          const thread = threads.find((t) => t.chatId === chatId);
+          if (thread?.type === 'direct' && isInitiatorRef.current) {
+            const mins = Math.floor(duration / 60);
+            const secs = duration % 60;
+            const durationLabel = duration > 0
+              ? `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+              : '';
+            const callIcon = callType === 'video' ? '📹' : '📞';
+            const directionLabel = duration === 0
+              ? (isInitiatorRef.current ? 'No answer' : 'Missed call')
+              : (isInitiatorRef.current ? 'Outgoing call' : 'Incoming call');
+            const summary = duration > 0
+              ? `${callIcon} ${directionLabel} · ${durationLabel}`
+              : `${callIcon} ${directionLabel}`;
+            await sendMessage({
+              chatId,
+              content: summary,
+              type: 'system',
+              groupId,
+            });
+          }
+        } catch (msgError) {
+          console.warn('Failed to drop call summary into chat', msgError);
+        }
       }
 
       // Remove this participant from signaling.
@@ -437,7 +485,11 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       hasSessionToCleanupRef.current = false;
       hasReportedConnectedNativeRef.current = false;
 
-      await AudioSession.stopAudioSession();
+      try {
+        await AudioSession.stopAudioSession();
+      } catch (audioErr) {
+        console.warn('useCallManager: AudioSession.stopAudioSession failed', audioErr);
+      }
       debugLog('useCallManager call ended');
 
     } catch (err) {
@@ -445,7 +497,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     } finally {
       // Keep `true` while idle; reset when starting/joining a new call.
     }
-  }, [user, chatId, groupId, threads, callType, cleanupSubscriptions]);
+  }, [user, chatId, groupId, threads, callType, cleanupSubscriptions, sendMessage]);
 
   useEffect(() => {
     endCallRef.current = endCall;

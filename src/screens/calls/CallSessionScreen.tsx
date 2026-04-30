@@ -9,6 +9,7 @@ import {
   isTrackReference,
   useConnectionState,
   useParticipants,
+  useRoomContext,
   useTracks,
   VideoTrack,
 } from '@livekit/react-native';
@@ -50,6 +51,55 @@ const isExpectedLiveKitShutdownError = (error: unknown): boolean => {
     || normalized.includes('negotiation aborted');
 };
 
+// Explicitly publish/unpublish the camera + mic when the room is connected.
+// `<LiveKitRoom video audio>` props are unreliable on iOS in @livekit/react-native 2.9
+// — they don't always trigger an actual publish, which is why "no video" reproduces
+// even though the token has canPublish:true. Calling setCameraEnabled / setMicrophoneEnabled
+// against the local participant after connect is the documented robust path.
+interface LocalTrackPublisherProps {
+  callType: CallType;
+  isMuted: boolean;
+  isCameraOff: boolean;
+}
+
+const LocalTrackPublisher = ({ callType, isMuted, isCameraOff }: LocalTrackPublisherProps) => {
+  const room = useRoomContext();
+  const connectionState = useConnectionState();
+
+  useEffect(() => {
+    if (!room) return;
+    if (connectionState !== ConnectionState.Connected) return;
+
+    const local = room.localParticipant;
+    const wantCamera = callType === 'video' && !isCameraOff;
+    const wantMic = !isMuted;
+
+    void (async () => {
+      try {
+        if (local.isMicrophoneEnabled !== wantMic) {
+          await local.setMicrophoneEnabled(wantMic);
+        }
+      } catch (error) {
+        console.warn('LocalTrackPublisher: setMicrophoneEnabled failed', error);
+      }
+
+      try {
+        if (callType === 'video') {
+          if (local.isCameraEnabled !== wantCamera) {
+            await local.setCameraEnabled(wantCamera);
+          }
+        } else if (local.isCameraEnabled) {
+          await local.setCameraEnabled(false);
+        }
+      } catch (error) {
+        console.warn('LocalTrackPublisher: setCameraEnabled failed', error);
+      }
+    })();
+  }, [room, connectionState, callType, isMuted, isCameraOff]);
+
+  return null;
+};
+
 interface VideoRoomContentProps {
   theme: CallTheme;
   isCameraOff: boolean;
@@ -79,6 +129,26 @@ const VideoRoomContent = ({ theme, isCameraOff }: VideoRoomContentProps) => {
 
   const remoteTrack = tracks.find((track) => !track.participant.isLocal);
   const localTrack = tracks.find((track) => track.participant.isLocal);
+
+  // Diagnostic — surfaces what useTracks is actually returning so we can tell
+  // why a video tile is rendering an avatar placeholder ("track empty?",
+  // "not a TrackReference?", "subscribed but unmuted not yet?"). Cheap log,
+  // fires only when the underlying track set changes.
+  useEffect(() => {
+    if (!__DEV__) return;
+    debugLog('VideoRoomContent tracks snapshot:', {
+      total: tracks.length,
+      details: tracks.map((t) => ({
+        sid: t.publication?.trackSid,
+        isLocal: t.participant.isLocal,
+        participantId: t.participant.identity,
+        isTrackRef: isTrackReference(t),
+        muted: t.publication?.isMuted,
+        subscribed: t.publication?.isSubscribed,
+        track: !!t.publication?.track,
+      })),
+    });
+  }, [tracks]);
 
   const connectionText = (() => {
     switch (connectionState) {
@@ -534,12 +604,22 @@ export const CallSessionScreen = ({
               token={token}
               connect={shouldConnectRoom}
               options={liveKitOptions}
-              video={callType === 'video' && !isCameraOff}
-              audio={!isMuted}
+              // NOTE: do NOT pass `video` / `audio` props here. They fight with
+              // LocalTrackPublisher below — when both try to manage the same
+              // publication, useTracks() returns the track in a state where
+              // isTrackReference() is false, so neither local preview nor the
+              // remote tile renders even though media is flowing on the wire.
+              // LocalTrackPublisher is the single source of truth for publish
+              // state in this codebase.
               onConnected={handleRoomConnected}
               onDisconnected={handleRoomDisconnected}
               onError={handleRoomError}
             >
+              <LocalTrackPublisher
+                callType={callType}
+                isMuted={isMuted}
+                isCameraOff={isCameraOff}
+              />
               <CallPresenceWatcher
                 status={status}
                 callDuration={callDuration}

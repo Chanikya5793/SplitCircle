@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.generateLiveKitToken = exports.triggerRecurringBillsForGroup = exports.processNotificationReceipts = exports.runRecurringBillsScheduler = exports.onCallCreated = exports.onGroupUpdated = exports.onChatUpdated = exports.sendTestPushNotification = exports.unregisterNotificationDevice = exports.syncNotificationDevice = exports.parseReceiptWithLLM = void 0;
+exports.generateLiveKitToken = exports.triggerRecurringBillsForGroup = exports.processNotificationReceipts = exports.runRecurringBillsScheduler = exports.registerVoipPushToken = exports.onCallCreated = exports.onGroupUpdated = exports.onChatUpdated = exports.sendTestPushNotification = exports.unregisterNotificationDevice = exports.syncNotificationDevice = exports.parseReceiptWithLLM = void 0;
 const app_1 = require("firebase-admin/app");
 const auth_1 = require("firebase-admin/auth");
 const database_1 = require("firebase-admin/database");
@@ -47,6 +47,8 @@ const firestore_2 = require("firebase-functions/v2/firestore");
 const livekit_server_sdk_1 = require("livekit-server-sdk");
 const recurringBills_1 = require("./recurringBills");
 const notifications_1 = require("./notifications");
+const voipPush_1 = require("./voipPush");
+const friends_1 = require("./friends");
 var parseReceiptWithLLM_1 = require("./parseReceiptWithLLM");
 Object.defineProperty(exports, "parseReceiptWithLLM", { enumerable: true, get: function () { return parseReceiptWithLLM_1.parseReceiptWithLLM; } });
 (0, app_1.initializeApp)();
@@ -377,6 +379,17 @@ exports.onGroupUpdated = (0, firestore_2.onDocumentUpdated)("groups/{groupId}", 
             const description = expense.description || "New expense";
             const amount = expense.amount;
             const currency = after.currency || "USD";
+            // Debt-derived friend fan-out — pair the payer with every
+            // participant in the split. Best-effort, never blocks the
+            // notification path below.
+            const expenseParticipants = Array.isArray(expense.participants)
+                ? expense.participants
+                    .map((p) => p === null || p === void 0 ? void 0 : p.userId)
+                    .filter((id) => typeof id === "string")
+                : [];
+            if (paidBy && expenseParticipants.length > 0) {
+                void (0, friends_1.materializeDebtFriendships)(paidBy, expenseParticipants);
+            }
             let payerName = "Someone";
             try {
                 const payerDoc = await (0, firestore_1.getFirestore)().collection("users").doc(paidBy).get();
@@ -425,6 +438,11 @@ exports.onGroupUpdated = (0, firestore_2.onDocumentUpdated)("groups/{groupId}", 
             const fromUserId = settlement.fromUserId;
             const toUserId = settlement.toUserId;
             const amount = settlement.amount;
+            // Bump lastInteractionAt for both sides — keeps "active friends"
+            // sortable in the Friends tab.
+            if (fromUserId && toUserId) {
+                void (0, friends_1.touchFriendInteraction)(fromUserId, toUserId);
+            }
             const currency = after.currency || "USD";
             let fromName = "Someone";
             try {
@@ -465,6 +483,11 @@ exports.onGroupUpdated = (0, firestore_2.onDocumentUpdated)("groups/{groupId}", 
     const beforeMemberIds = ((_k = before.memberIds) !== null && _k !== void 0 ? _k : []);
     const newMemberIds = memberIds.filter((id) => !beforeMemberIds.includes(id));
     if (newMemberIds.length > 0) {
+        // Group-derived friend fan-out: pair every new member with every
+        // *existing* member. We pass the full member set; the helper is
+        // idempotent so existing edges are kept and only new edges get
+        // written. Fire-and-forget — must not block the notification path.
+        void (0, friends_1.materializeGroupFriendships)(memberIds);
         for (const newMemberId of newMemberIds) {
             let memberName = "Someone";
             try {
@@ -504,7 +527,10 @@ exports.onGroupUpdated = (0, firestore_2.onDocumentUpdated)("groups/{groupId}", 
 // ─────────────────────────────────────────────────────────────
 // Push Notifications — Incoming Calls
 // ─────────────────────────────────────────────────────────────
-exports.onCallCreated = (0, database_2.onValueCreated)("/calls/{callId}", async (event) => {
+exports.onCallCreated = (0, database_2.onValueCreated)({
+    ref: "/calls/{callId}",
+    secrets: voipPush_1.voipPushSecrets,
+}, async (event) => {
     var _a, _b, _c;
     const callId = event.params.callId;
     const callData = (_a = event.data) === null || _a === void 0 ? void 0 : _a.val();
@@ -578,6 +604,64 @@ exports.onCallCreated = (0, database_2.onValueCreated)("/calls/{callId}", async 
             error: toSafeError(error),
         });
     }
+    // Fire VoIP push in parallel — this is what wakes the system CallKit
+    // ringing UI on iOS even when the app is killed. The Expo push above
+    // remains as a fallback for Android (which uses ConnectionService) and
+    // for iOS devices that haven't yet registered a VoIP token.
+    try {
+        const voipResult = await (0, voipPush_1.sendCallVoipPush)({
+            callId,
+            chatId,
+            groupId: groupId || undefined,
+            initiatorId,
+            initiatorName: callerName,
+            callType,
+            recipientUserIds: recipientIds,
+            handle: chatId,
+        });
+        logger.info("VoIP call push dispatched", {
+            callId,
+            accepted: voipResult.accepted,
+            failed: voipResult.failed,
+        });
+    }
+    catch (error) {
+        logger.error("VoIP call push failed", {
+            callId,
+            error: toSafeError(error),
+        });
+    }
+});
+// ─────────────────────────────────────────────────────────────
+// VoIP Push Token Registration (callable)
+// ─────────────────────────────────────────────────────────────
+exports.registerVoipPushToken = (0, https_1.onCall)({
+    cors: true,
+}, async (request) => {
+    var _a, _b;
+    const uid = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid;
+    if (!uid) {
+        throw new https_1.HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const data = ((_b = request.data) !== null && _b !== void 0 ? _b : {});
+    const deviceId = getStringValue(data.deviceId);
+    const voipPushToken = getStringValue(data.voipPushToken);
+    const bundleId = getStringValue(data.bundleId) || undefined;
+    const platform = getStringValue(data.platform) || "ios";
+    if (!deviceId || !voipPushToken) {
+        throw new https_1.HttpsError("invalid-argument", "deviceId and voipPushToken are required.");
+    }
+    if (voipPushToken.length > 256 || !/^[A-Fa-f0-9]+$/.test(voipPushToken)) {
+        throw new https_1.HttpsError("invalid-argument", "voipPushToken must be a hex device token.");
+    }
+    await (0, voipPush_1.upsertVoipTokenForDevice)({
+        userId: uid,
+        deviceId,
+        voipPushToken,
+        bundleId,
+        platform,
+    });
+    return { ok: true };
 });
 // ─────────────────────────────────────────────────────────────
 // Scheduler — Recurring Bills
@@ -724,6 +808,13 @@ exports.generateLiveKitToken = (0, https_1.onRequest)({
             canSubscribe: true,
         });
         const token = await accessToken.toJwt();
+        logger.info("livekit: token issued", {
+            uid,
+            roomName,
+            chatId,
+            url: livekitUrl,
+            tokenPreview: token.slice(0, 16) + "...",
+        });
         res.status(200).json({ token, url: livekitUrl });
     }
     catch (error) {

@@ -7,6 +7,7 @@ import { LoadingOverlay } from '@/components/LoadingOverlay';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
+import { useCallContext } from '@/context/CallContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useLoadingState } from '@/context/LoadingContext';
@@ -27,6 +28,7 @@ interface ChatRoomScreenProps {
 export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const navigation = useNavigation();
   const { subscribeToMessages, sendMessage, markChatAsRead } = useChat();
+  const { startCallSession } = useCallContext();
   const { user } = useAuth();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
@@ -76,8 +78,23 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       headerTitle: '',
       headerTransparent: true,
       headerTintColor: theme.colors.primary,
+      // Call buttons live INSIDE the floating header pill row in the body of
+      // this screen, not in the navigation header — keeps them visually
+      // grouped with the chat title and avoids the iOS native header
+      // squashing them when the back-title gets long.
+      headerRight: undefined,
     });
   }, [navigation, theme.colors.primary]);
+
+  const placeAudioCall = useCallback(() => {
+    lightHaptic();
+    startCallSession({ chatId: thread.chatId, groupId: thread.groupId, type: 'audio' });
+  }, [startCallSession, thread.chatId, thread.groupId]);
+
+  const placeVideoCall = useCallback(() => {
+    lightHaptic();
+    startCallSession({ chatId: thread.chatId, groupId: thread.groupId, type: 'video' });
+  }, [startCallSession, thread.chatId, thread.groupId]);
 
   const headerOpacity = scrollY.interpolate({
     inputRange: [0, 40],
@@ -430,19 +447,34 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     : directParticipant?.displayName || 'Direct Chat';
 
   const handleHeaderPress = () => {
+    lightHaptic();
     if (thread.type === 'group' && thread.groupId) {
       // @ts-ignore - navigation types
       navigation.navigate(ROUTES.APP.GROUP_INFO, { groupId: thread.groupId, initialTitle: 'Group Info', backTitle: title });
+      return;
+    }
+    if (thread.type === 'direct' && directParticipant?.userId) {
+      // @ts-ignore - navigation types
+      navigation.navigate(ROUTES.APP.FRIEND_INFO, {
+        userId: directParticipant.userId,
+        displayName: directParticipant.displayName,
+        photoURL: directParticipant.photoURL,
+        backTitle: title,
+      });
     }
   };
 
-  // Get group initials for avatar
+  // Get initials for avatar — works for both group chats (group name) and
+  // direct chats (the other participant's display name).
   const groupInitials = useMemo(() => {
     if (thread.type === 'group' && groupName) {
       return groupName.slice(0, 2).toUpperCase();
     }
-    return 'GC';
-  }, [thread.type, groupName]);
+    if (thread.type === 'direct' && directParticipant?.displayName) {
+      return directParticipant.displayName.slice(0, 2).toUpperCase();
+    }
+    return 'SC';
+  }, [thread.type, groupName, directParticipant?.displayName]);
 
   const getProcessingLoadingMessage = useCallback((type: SelectedMedia['type']) => {
     switch (type) {
@@ -470,12 +502,19 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       >
         <View style={styles.headerContainer}>
           <TouchableOpacity
-            onPress={thread.type === 'group' ? handleHeaderPress : undefined}
-            activeOpacity={thread.type === 'group' ? 0.7 : 1}
+            onPress={handleHeaderPress}
+            activeOpacity={0.7}
+            style={styles.headerPillTouchable}
           >
-            <GlassView style={styles.headerPill} intensity={5}>
+            <GlassView style={styles.headerPill} intensity={40}>
               <View style={styles.headerPillContent}>
-                {thread.type === 'group' && (
+                {thread.type === 'direct' && directParticipant?.photoURL ? (
+                  <Avatar.Image
+                    size={40}
+                    source={{ uri: directParticipant.photoURL }}
+                    style={{ marginRight: 10 }}
+                  />
+                ) : (
                   <Avatar.Text
                     size={40}
                     label={groupInitials}
@@ -483,10 +522,28 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                     color={theme.colors.onPrimary}
                   />
                 )}
-                <Text variant="titleLarge" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>{title}</Text>
+                <Text
+                  variant="titleLarge"
+                  style={[styles.headerTitle, { color: theme.colors.onSurface }]}
+                  numberOfLines={1}
+                >
+                  {title}
+                </Text>
               </View>
             </GlassView>
           </TouchableOpacity>
+          <View style={styles.headerCallActions}>
+            <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
+              <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                <Icon source="phone" size={20} color={theme.colors.primary} />
+              </GlassView>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Video call">
+              <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                <Icon source="video" size={20} color={theme.colors.primary} />
+              </GlassView>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <Animated.FlatList
@@ -681,6 +738,11 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingTop: 60,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: -4,
+  },
   list: {
     flex: 1,
   },
@@ -783,9 +845,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 12,
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
     zIndex: 100,
     elevation: 10,
+  },
+  headerPillTouchable: {
+    flex: 1,
+    minWidth: 0,
   },
   headerPill: {
     paddingVertical: 8,
@@ -795,11 +863,30 @@ const styles = StyleSheet.create({
   headerPillContent: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
     fontWeight: 'bold',
-    fontSize: 28,
+    fontSize: 22,
+    flexShrink: 1,
     textAlign: 'center',
+  },
+  headerCallActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  headerCallButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  headerCallButtonGlass: {
+    flex: 1,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   replyPreviewContainer: {
     position: 'relative',

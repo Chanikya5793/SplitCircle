@@ -1,6 +1,8 @@
 import { declineCall, subscribeToIncomingCallForUser } from '@/services/callService';
 import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { nativeCallService } from '@/services/nativeCallService';
+import { voipPushService } from '@/services/voipPushService';
+import { startVoipPushRegistration } from '@/services/voipPushRegistration';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 import { useChat } from './ChatContext';
@@ -72,10 +74,53 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     void nativeCallService.initialize();
+    voipPushService.initialize();
   }, []);
 
   useEffect(() => {
     void nativeCallService.setAvailability(Boolean(user));
+    startVoipPushRegistration(user?.userId ?? null);
+  }, [user]);
+
+  // VoIP-pushed incoming calls. The AppDelegate already reports them to CallKit
+  // synchronously (mandatory iOS contract); here we mirror the payload into JS
+  // state so when the user accepts on the lock-screen we have everything we
+  // need to join the LiveKit room without waiting on Realtime DB to roundtrip.
+  useEffect(() => {
+    if (!user) return;
+    const unsubscribe = voipPushService.onIncomingPush((push) => {
+      const payload = push.payload as Record<string, unknown>;
+      const callId = (payload.callId ?? payload.uuid) as string | undefined;
+      const chatId = payload.chatId as string | undefined;
+      if (!callId || !chatId) return;
+
+      const initiatorId = (payload.initiatorId as string | undefined) ?? '';
+      if (initiatorId === user.userId) return; // shouldn't happen but guard
+
+      const callTypeRaw = payload.callType as string | undefined;
+      const type: 'audio' | 'video' = callTypeRaw === 'video' ? 'video' : 'audio';
+
+      const synthesized: IncomingCall = {
+        callId,
+        chatId,
+        groupId: (payload.groupId as string | undefined) || undefined,
+        initiatorId,
+        initiatorName: (payload.initiatorName as string | undefined)
+          || (payload.callerName as string | undefined)
+          || 'Incoming call',
+        type,
+        startedAt: Date.now(),
+      };
+
+      // Only adopt the VoIP payload if we don't already have richer state from
+      // the RTDB subscription. This keeps the two paths idempotent.
+      if (!incomingCallRef.current || incomingCallRef.current.callId !== callId) {
+        debugLog('CallContext: VoIP push primed incoming call', callId);
+        setIncomingCall(synthesized);
+      }
+    });
+
+    return unsubscribe;
   }, [user]);
 
   const showActiveCallUi = useCallback(() => {

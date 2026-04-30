@@ -121,7 +121,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
           data={processedThreads}
           keyExtractor={(item) => item.chatId}
           renderItem={({ item }) => (
-            <GlassView style={styles.chatItem}>
+            <GlassView style={styles.chatItem} contentStyle={styles.chatItemContent}>
               <List.Item
                 title={getChatTitle(item)}
                 description={item.lastMessage?.content ?? 'No messages yet'}
@@ -143,6 +143,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                   </View>
                 )}
                 onPress={() => handleOpenThread(item)}
+                style={styles.chatItemRow}
                 titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
                 descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
                 descriptionNumberOfLines={1}
@@ -214,7 +215,14 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderRadius: 16,
     overflow: 'hidden',
+  },
+  chatItemContent: {
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  chatItemRow: {
     paddingHorizontal: 16,
+    borderRadius: 16,
   },
   unreadBadge: {
     position: 'absolute',
