@@ -252,6 +252,19 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread, initialTitle: 'Message Info', backTitle: title });
   };
 
+  const titleRef = useRef('');
+  const handleMediaPress = useCallback((message: ChatMessage) => {
+    lightHaptic();
+    // @ts-ignore - navigation route typing is intentionally loose in this app
+    navigation.navigate(ROUTES.APP.CHAT_MEDIA_GALLERY, {
+      chatId: thread.chatId,
+      title: 'Media',
+      backTitle: titleRef.current,
+      participants: thread.participants,
+      initialMessageId: message.messageId || message.id,
+    });
+  }, [navigation, thread.chatId, thread.participants]);
+
   const handleReplyPress = useCallback((messageId: string) => {
     const index = messages.findIndex(
       (m) => (m.messageId || m.id) === messageId
@@ -468,6 +481,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const title = thread.type === 'group'
     ? groupName || 'Group Chat'
     : directParticipant?.displayName || 'Direct Chat';
+  titleRef.current = title;
 
   const handleHeaderPress = () => {
     lightHaptic();
@@ -531,12 +545,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         onSwipeReply={handleSwipeReply}
         onSwipeInfo={isGroupChat ? handleSwipeInfo : undefined}
         onReplyPress={handleReplyPress}
+        onMediaPress={handleMediaPress}
         isGroupChat={isGroupChat}
         totalRecipients={totalRecipients}
         highlighted={highlightedMessageId === itemId}
       />
     );
-  }, [messages, participantMap, isGroupChat, handleSwipeReply, handleSwipeInfo, handleReplyPress, totalRecipients, highlightedMessageId]);
+  }, [messages, participantMap, isGroupChat, handleSwipeReply, handleSwipeInfo, handleReplyPress, handleMediaPress, totalRecipients, highlightedMessageId]);
 
   return (
     <LiquidBackground>

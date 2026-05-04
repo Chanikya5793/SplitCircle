@@ -27,6 +27,8 @@ interface MessageBubbleProps {
   onSwipeReply?: (message: ChatMessage) => void;
   onSwipeInfo?: (message: ChatMessage) => void;
   onReplyPress?: (messageId: string) => void;
+  /** When provided, tapping an image bubble defers to this handler instead of opening the local fullscreen modal. Used to route into the chat media gallery. */
+  onMediaPress?: (message: ChatMessage) => void;
   isGroupChat?: boolean;
   totalRecipients?: number;
   highlighted?: boolean;
@@ -158,7 +160,7 @@ const VideoPlayerComponent = ({ uri, style, showControls = true, showOverlay = f
   );
 };
 
-export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, onReplyPress, isGroupChat, totalRecipients, highlighted }: MessageBubbleProps) => {
+export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, onReplyPress, onMediaPress, isGroupChat, totalRecipients, highlighted }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
@@ -469,7 +471,13 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     return (
       <TouchableOpacity
         activeOpacity={0.9}
-        onPress={() => setFullScreenVisible(true)}
+        onPress={() => {
+          if (onMediaPress) {
+            onMediaPress(message);
+          } else {
+            setFullScreenVisible(true);
+          }
+        }}
         style={[styles.mediaContainer, imageDimensions]}
       >
         {imageLoading && (

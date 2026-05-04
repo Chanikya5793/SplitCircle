@@ -29,9 +29,12 @@ import {
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
+  runOnJS,
+  type SharedValue,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 import { Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -117,40 +120,100 @@ const TABS: { id: TabId; label: string; icon: keyof typeof Ionicons.glyphMap }[]
   { id: 'links', label: 'Links', icon: 'link-outline' },
 ];
 
-// ─── ZoomableImage (RNGH v2 + Reanimated) ────────────────────────────────────
+// ─── ZoomableImage (RNGH v2 + Reanimated, worklet-safe) ──────────────────────
+//
+// Gestures supported:
+//   - Pinch (focal-point preserving) → smooth zoom anchored at finger midpoint
+//   - Pan (zoomed) → drag image within bounds
+//   - Pan (not zoomed) → swipe left/right to navigate, swipe down to dismiss
+//   - Double-tap → zoom in to 2.5× at tap point, or zoom out
+//   - Single-tap → toggle viewer chrome
+//
+// All math is inlined inside worklet callbacks to avoid the
+// "Tried to synchronously call a non-worklet function on the UI thread" crash.
+
+const SWIPE_DISTANCE_THRESHOLD = SCREEN_WIDTH * 0.22;
+const SWIPE_VELOCITY_THRESHOLD = 700;
+const DISMISS_DISTANCE_THRESHOLD = 120;
+const DISMISS_VELOCITY_THRESHOLD = 900;
+const DOUBLE_TAP_SCALE = 2.5;
 
 interface ZoomableImageProps {
   uri: string;
+  onSwipeNext: () => void;
+  onSwipePrev: () => void;
+  onDismiss: () => void;
+  onSingleTap: () => void;
+  hasNext: boolean;
+  hasPrev: boolean;
+  backdropOpacity: SharedValue<number>;
 }
 
-const ZoomableImage = ({ uri }: ZoomableImageProps) => {
+const ZoomableImage = React.memo(({
+  uri,
+  onSwipeNext,
+  onSwipePrev,
+  onDismiss,
+  onSingleTap,
+  hasNext,
+  hasPrev,
+  backdropOpacity,
+}: ZoomableImageProps) => {
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
-  const lastTapTs = useSharedValue(0);
+  const opacity = useSharedValue(1);
 
-  const clampTranslation = (val: number, s: number, dimension: number) => {
-    const max = ((s - 1) * dimension) / 2;
-    return Math.max(-max, Math.min(max, val));
-  };
+  // Pinch focal anchor (in centered coords)
+  const pinchOriginX = useSharedValue(0);
+  const pinchOriginY = useSharedValue(0);
+  const pinchSavedTx = useSharedValue(0);
+  const pinchSavedTy = useSharedValue(0);
 
   const pinch = Gesture.Pinch()
+    .onStart((e) => {
+      'worklet';
+      pinchOriginX.value = e.focalX - SCREEN_WIDTH / 2;
+      pinchOriginY.value = e.focalY - SCREEN_HEIGHT / 2;
+      pinchSavedTx.value = translateX.value;
+      pinchSavedTy.value = translateY.value;
+    })
     .onUpdate((e) => {
-      scale.value = Math.max(MIN_SCALE, Math.min(MAX_SCALE, savedScale.value * e.scale));
+      'worklet';
+      const newScale = Math.max(
+        MIN_SCALE * 0.7,
+        Math.min(MAX_SCALE, savedScale.value * e.scale),
+      );
+      const factor = newScale / savedScale.value;
+      scale.value = newScale;
+      // Keep the focal point under the fingers as the image grows
+      translateX.value = pinchOriginX.value + (pinchSavedTx.value - pinchOriginX.value) * factor;
+      translateY.value = pinchOriginY.value + (pinchSavedTy.value - pinchOriginY.value) * factor;
     })
     .onEnd(() => {
+      'worklet';
       if (scale.value < MIN_SCALE) {
-        scale.value = withSpring(MIN_SCALE);
-        translateX.value = withSpring(0);
-        translateY.value = withSpring(0);
+        // Rubber-band snap-back
+        scale.value = withSpring(MIN_SCALE, { damping: 18, stiffness: 200 });
+        translateX.value = withSpring(0, { damping: 18, stiffness: 200 });
+        translateY.value = withSpring(0, { damping: 18, stiffness: 200 });
         savedScale.value = MIN_SCALE;
         savedTranslateX.value = 0;
         savedTranslateY.value = 0;
       } else {
+        // Clamp translation to keep image edges within screen bounds
+        const maxX = ((scale.value - 1) * SCREEN_WIDTH) / 2;
+        const maxY = ((scale.value - 1) * SCREEN_HEIGHT) / 2;
+        const clampedX = Math.max(-maxX, Math.min(maxX, translateX.value));
+        const clampedY = Math.max(-maxY, Math.min(maxY, translateY.value));
+        translateX.value = withSpring(clampedX, { damping: 22, stiffness: 220 });
+        translateY.value = withSpring(clampedY, { damping: 22, stiffness: 220 });
         savedScale.value = scale.value;
+        savedTranslateX.value = clampedX;
+        savedTranslateY.value = clampedY;
       }
     });
 
@@ -158,45 +221,123 @@ const ZoomableImage = ({ uri }: ZoomableImageProps) => {
     .minPointers(1)
     .maxPointers(1)
     .onUpdate((e) => {
-      if (scale.value <= 1) return;
-      translateX.value = clampTranslation(
-        savedTranslateX.value + e.translationX,
-        scale.value,
-        SCREEN_WIDTH,
-      );
-      translateY.value = clampTranslation(
-        savedTranslateY.value + e.translationY,
-        scale.value,
-        SCREEN_HEIGHT,
-      );
+      'worklet';
+      if (scale.value > 1.05) {
+        // Zoomed: pan within image, hard clamp to bounds
+        const maxX = ((scale.value - 1) * SCREEN_WIDTH) / 2;
+        const maxY = ((scale.value - 1) * SCREEN_HEIGHT) / 2;
+        translateX.value = Math.max(
+          -maxX,
+          Math.min(maxX, savedTranslateX.value + e.translationX),
+        );
+        translateY.value = Math.max(
+          -maxY,
+          Math.min(maxY, savedTranslateY.value + e.translationY),
+        );
+      } else {
+        // Not zoomed: drive image with finger for swipe-nav / swipe-dismiss preview
+        translateX.value = e.translationX;
+        translateY.value = Math.max(0, e.translationY); // only allow pulling down
+        if (e.translationY > 0) {
+          const dragProgress = Math.min(1, e.translationY / 380);
+          backdropOpacity.value = 1 - dragProgress * 0.85;
+          scale.value = 1 - dragProgress * 0.18;
+        } else {
+          backdropOpacity.value = 1;
+          scale.value = 1;
+        }
+      }
     })
-    .onEnd(() => {
-      savedTranslateX.value = translateX.value;
-      savedTranslateY.value = translateY.value;
+    .onEnd((e) => {
+      'worklet';
+      if (savedScale.value > 1.05) {
+        savedTranslateX.value = translateX.value;
+        savedTranslateY.value = translateY.value;
+        return;
+      }
+      const horizDominant = Math.abs(e.translationX) > Math.abs(e.translationY);
+      const verticalDismiss =
+        !horizDominant &&
+        (e.translationY > DISMISS_DISTANCE_THRESHOLD ||
+          e.velocityY > DISMISS_VELOCITY_THRESHOLD);
+      const swipeNext =
+        horizDominant &&
+        hasNext &&
+        (e.translationX < -SWIPE_DISTANCE_THRESHOLD ||
+          e.velocityX < -SWIPE_VELOCITY_THRESHOLD);
+      const swipePrev =
+        horizDominant &&
+        hasPrev &&
+        (e.translationX > SWIPE_DISTANCE_THRESHOLD ||
+          e.velocityX > SWIPE_VELOCITY_THRESHOLD);
+
+      if (verticalDismiss) {
+        translateY.value = withTiming(SCREEN_HEIGHT, { duration: 220 });
+        opacity.value = withTiming(0, { duration: 220 });
+        backdropOpacity.value = withTiming(0, { duration: 220 });
+        runOnJS(onDismiss)();
+      } else if (swipeNext) {
+        translateX.value = withTiming(-SCREEN_WIDTH, { duration: 200 }, () => {
+          runOnJS(onSwipeNext)();
+        });
+      } else if (swipePrev) {
+        translateX.value = withTiming(SCREEN_WIDTH, { duration: 200 }, () => {
+          runOnJS(onSwipePrev)();
+        });
+      } else {
+        // Snap back to neutral
+        translateX.value = withSpring(0, { damping: 22, stiffness: 220 });
+        translateY.value = withSpring(0, { damping: 22, stiffness: 220 });
+        scale.value = withSpring(1, { damping: 22, stiffness: 220 });
+        backdropOpacity.value = withSpring(1, { damping: 22, stiffness: 220 });
+      }
     });
 
   const doubleTap = Gesture.Tap()
     .numberOfTaps(2)
-    .onEnd(() => {
-      if (scale.value > 1) {
-        scale.value = withSpring(1);
-        translateX.value = withSpring(0);
-        translateY.value = withSpring(0);
+    .maxDelay(280)
+    .onEnd((e) => {
+      'worklet';
+      if (scale.value > 1.05) {
+        scale.value = withSpring(1, { damping: 18, stiffness: 200 });
+        translateX.value = withSpring(0, { damping: 18, stiffness: 200 });
+        translateY.value = withSpring(0, { damping: 18, stiffness: 200 });
         savedScale.value = 1;
         savedTranslateX.value = 0;
         savedTranslateY.value = 0;
       } else {
-        scale.value = withSpring(2.5);
-        savedScale.value = 2.5;
+        const cTapX = e.x - SCREEN_WIDTH / 2;
+        const cTapY = e.y - SCREEN_HEIGHT / 2;
+        const newTx = -cTapX * DOUBLE_TAP_SCALE;
+        const newTy = -cTapY * DOUBLE_TAP_SCALE;
+        const maxX = ((DOUBLE_TAP_SCALE - 1) * SCREEN_WIDTH) / 2;
+        const maxY = ((DOUBLE_TAP_SCALE - 1) * SCREEN_HEIGHT) / 2;
+        const clampedX = Math.max(-maxX, Math.min(maxX, newTx));
+        const clampedY = Math.max(-maxY, Math.min(maxY, newTy));
+        scale.value = withSpring(DOUBLE_TAP_SCALE, { damping: 18, stiffness: 200 });
+        translateX.value = withSpring(clampedX, { damping: 18, stiffness: 200 });
+        translateY.value = withSpring(clampedY, { damping: 18, stiffness: 200 });
+        savedScale.value = DOUBLE_TAP_SCALE;
+        savedTranslateX.value = clampedX;
+        savedTranslateY.value = clampedY;
       }
     });
 
+  const singleTap = Gesture.Tap()
+    .numberOfTaps(1)
+    .maxDuration(250)
+    .onEnd(() => {
+      'worklet';
+      runOnJS(onSingleTap)();
+    });
+
   const composed = Gesture.Simultaneous(
-    Gesture.Race(doubleTap, pan),
+    Gesture.Race(Gesture.Exclusive(doubleTap, singleTap), pan),
     pinch,
   );
 
   const animStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
     transform: [
       { translateX: translateX.value },
       { translateY: translateY.value },
@@ -215,7 +356,8 @@ const ZoomableImage = ({ uri }: ZoomableImageProps) => {
       </Reanimated.View>
     </GestureDetector>
   );
-};
+});
+ZoomableImage.displayName = 'ZoomableImage';
 
 // ─── FullScreenVideoPlayer ────────────────────────────────────────────────────
 
@@ -383,6 +525,7 @@ const FullScreenViewer = ({
   const [showInfo, setShowInfo] = useState(false);
   const [showChrome, setShowChrome] = useState(true);
   const fadeAnim = useRef(new Animated.Value(1)).current;
+  const backdropOpacity = useSharedValue(1);
 
   useEffect(() => {
     if (visible) {
@@ -390,18 +533,40 @@ const FullScreenViewer = ({
       setShowInfo(false);
       setShowChrome(true);
       fadeAnim.setValue(1);
+      backdropOpacity.value = 1;
     }
-  }, [initialIndex, visible, fadeAnim]);
+  }, [initialIndex, visible, fadeAnim, backdropOpacity]);
 
   const toggleChrome = useCallback(() => {
-    const next = !showChrome;
-    setShowChrome(next);
-    Animated.timing(fadeAnim, {
-      toValue: next ? 1 : 0,
-      duration: 180,
-      useNativeDriver: true,
-    }).start();
-  }, [showChrome, fadeAnim]);
+    setShowChrome((prev) => {
+      const next = !prev;
+      Animated.timing(fadeAnim, {
+        toValue: next ? 1 : 0,
+        duration: 180,
+        useNativeDriver: true,
+      }).start();
+      return next;
+    });
+  }, [fadeAnim]);
+
+  const goNext = useCallback(() => {
+    setCurrentIndex((i) => Math.min(messages.length - 1, i + 1));
+    setShowInfo(false);
+  }, [messages.length]);
+
+  const goPrev = useCallback(() => {
+    setCurrentIndex((i) => Math.max(0, i - 1));
+    setShowInfo(false);
+  }, []);
+
+  const handleDismiss = useCallback(() => {
+    // Allow the dismiss animation to play before closing the modal
+    setTimeout(onClose, 230);
+  }, [onClose]);
+
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: backdropOpacity.value,
+  }));
 
   if (!visible || messages.length === 0) return null;
 
@@ -415,25 +580,47 @@ const FullScreenViewer = ({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.viewerRoot}>
-        {/* Media area — tap to toggle chrome */}
-        <TouchableOpacity
-          style={styles.viewerMedia}
-          activeOpacity={1}
-          onPress={toggleChrome}
-        >
+        {/* Animated black backdrop — fades during drag-to-dismiss */}
+        <Reanimated.View
+          style={[StyleSheet.absoluteFill, styles.viewerBackdrop, backdropStyle]}
+          pointerEvents="none"
+        />
+
+        {/* Media area */}
+        <View style={styles.viewerMedia}>
           {mediaUri ? (
             isVideo ? (
-              <FullScreenVideoPlayer uri={mediaUri} />
+              <TouchableOpacity
+                style={styles.zoomableContainer}
+                activeOpacity={1}
+                onPress={toggleChrome}
+              >
+                <FullScreenVideoPlayer uri={mediaUri} />
+              </TouchableOpacity>
             ) : (
-              <ZoomableImage uri={mediaUri} />
+              <ZoomableImage
+                key={`${msg.messageId || msg.id}_${mediaUri}`}
+                uri={mediaUri}
+                onSwipeNext={goNext}
+                onSwipePrev={goPrev}
+                onDismiss={handleDismiss}
+                onSingleTap={toggleChrome}
+                hasNext={currentIndex < messages.length - 1}
+                hasPrev={currentIndex > 0}
+                backdropOpacity={backdropOpacity}
+              />
             )
           ) : (
-            <View style={styles.viewerPlaceholder}>
+            <TouchableOpacity
+              style={styles.viewerPlaceholder}
+              activeOpacity={1}
+              onPress={toggleChrome}
+            >
               <Ionicons name="cloud-offline-outline" size={48} color="#666" />
               <Text style={{ color: '#666', marginTop: 8 }}>Media unavailable</Text>
-            </View>
+            </TouchableOpacity>
           )}
-        </TouchableOpacity>
+        </View>
 
         {/* Top bar */}
         <Animated.View
@@ -469,11 +656,11 @@ const FullScreenViewer = ({
           <Text style={styles.viewerDate}>{formatDate(msg.createdAt)}</Text>
         </Animated.View>
 
-        {/* Prev / next arrows */}
+        {/* Prev / next arrows (visual hint for non-touch users; swipe also works) */}
         {currentIndex > 0 && showChrome && (
           <TouchableOpacity
             style={[styles.viewerArrow, styles.viewerArrowLeft]}
-            onPress={() => { setCurrentIndex((i) => i - 1); setShowInfo(false); }}
+            onPress={goPrev}
             hitSlop={8}
           >
             <Ionicons name="chevron-back" size={30} color="rgba(255,255,255,0.85)" />
@@ -482,7 +669,7 @@ const FullScreenViewer = ({
         {currentIndex < messages.length - 1 && showChrome && (
           <TouchableOpacity
             style={[styles.viewerArrow, styles.viewerArrowRight]}
-            onPress={() => { setCurrentIndex((i) => i + 1); setShowInfo(false); }}
+            onPress={goNext}
             hitSlop={8}
           >
             <Ionicons name="chevron-forward" size={30} color="rgba(255,255,255,0.85)" />
@@ -671,6 +858,8 @@ interface ChatMediaGalleryParams {
   title?: string;
   backTitle?: string;
   participants?: ChatParticipant[];
+  /** When set, the viewer opens automatically on that media item (e.g. tapped from a chat bubble). */
+  initialMessageId?: string;
 }
 
 export const ChatMediaGalleryScreen = () => {
@@ -686,6 +875,7 @@ export const ChatMediaGalleryScreen = () => {
   const [activeTab, setActiveTab] = useState<TabId>('media');
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
+  const autoOpenedRef = useRef(false);
 
   // Animated tab indicator
   const tabIndicatorX = useRef(new Animated.Value(0)).current;
@@ -752,6 +942,22 @@ export const ChatMediaGalleryScreen = () => {
     setViewerIndex(index);
     setViewerVisible(true);
   }, []);
+
+  // Deep-link: if opened from a chat image tap, jump straight to the viewer
+  // on the matching media item once messages are loaded. Only runs once per mount.
+  useEffect(() => {
+    if (autoOpenedRef.current) return;
+    if (!params.initialMessageId) return;
+    if (mediaMessages.length === 0) return;
+    const idx = mediaMessages.findIndex(
+      (m) => (m.messageId || m.id) === params.initialMessageId,
+    );
+    if (idx >= 0) {
+      autoOpenedRef.current = true;
+      setActiveTab('media');
+      openViewer(idx);
+    }
+  }, [params.initialMessageId, mediaMessages, openViewer]);
 
   // Chrome heights for content padding
   const TAB_BAR_HEIGHT = insets.top + 52 + 44; // header + tabs
@@ -1037,20 +1243,23 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 15,
   },
-  // Zoomable image
+  // Zoomable image — fills the screen so pinch focal math is accurate
   zoomableContainer: {
     width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT * 0.75,
+    height: SCREEN_HEIGHT,
     alignItems: 'center',
     justifyContent: 'center',
   },
   zoomableImage: {
     width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT * 0.75,
+    height: SCREEN_HEIGHT,
   },
   // Full-screen viewer
   viewerRoot: {
     flex: 1,
+    backgroundColor: 'transparent',
+  },
+  viewerBackdrop: {
     backgroundColor: '#000',
   },
   viewerMedia: {
