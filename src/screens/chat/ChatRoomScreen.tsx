@@ -17,9 +17,12 @@ import type { ChatMessage, ChatThread, MessageType } from '@/models';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, FlatList, InteractionManager, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { ActivityIndicator, Avatar, Icon, IconButton, Text, TextInput } from 'react-native-paper';
+import { Avatar, Icon, IconButton, Text, TextInput } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const MemoizedMessageBubble = React.memo(MessageBubble);
 
 interface ChatRoomScreenProps {
   thread: ChatThread;
@@ -32,11 +35,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const { user } = useAuth();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   // Messages for this chat (inverted list - newest first)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Text input state for composer
   const [text, setText] = useState('');
   const listRef = useRef<FlatList<ChatMessage>>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
   // Track focus state of the composer input so we can highlight the
   // outer container (`GlassView`) with a border that matches the app color.
@@ -53,7 +59,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
   const markReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const markReadInFlightRef = useRef(false);
-  const { loading: sending, run: runSend } = usePreventDoubleSubmit();
+  const { run: runSend } = usePreventDoubleSubmit();
   const mediaPipelineLoading = useLoadingState(`chat-media:${thread.chatId}`);
 
   const requestMarkAsRead = useCallback(() => {
@@ -74,17 +80,11 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   }, [markChatAsRead, thread.chatId]);
 
   useLayoutEffect(() => {
-    navigation.setOptions({
-      headerTitle: '',
-      headerTransparent: true,
-      headerTintColor: theme.colors.primary,
-      // Call buttons live INSIDE the floating header pill row in the body of
-      // this screen, not in the navigation header — keeps them visually
-      // grouped with the chat title and avoids the iOS native header
-      // squashing them when the back-title gets long.
-      headerRight: undefined,
-    });
-  }, [navigation, theme.colors.primary]);
+    // The chat screen renders its own glass back button + title pill + call
+    // actions in a single floating row, so suppress the native header to
+    // avoid the back button overlapping the pill.
+    navigation.setOptions({ headerShown: false });
+  }, [navigation]);
 
   const placeAudioCall = useCallback(() => {
     lightHaptic();
@@ -95,12 +95,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     lightHaptic();
     startCallSession({ chatId: thread.chatId, groupId: thread.groupId, type: 'video' });
   }, [startCallSession, thread.chatId, thread.groupId]);
-
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 40],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
 
   useEffect(() => {
     console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
@@ -172,6 +166,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       if (markReadTimerRef.current) {
         clearTimeout(markReadTimerRef.current);
       }
+      if (highlightTimerRef.current) {
+        clearTimeout(highlightTimerRef.current);
+      }
     };
   }, [requestMarkAsRead, subscribeToMessages, thread.chatId]);
 
@@ -203,42 +200,43 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     requestMarkAsRead();
   }, [messages, requestMarkAsRead, user]);
 
-  const handleSend = async () => {
+  const handleSend = useCallback(() => {
     const trimmed = text.trim();
-    if (!trimmed) {
-      return;
+    if (!trimmed) return;
+
+    lightHaptic();
+
+    let replyData = undefined;
+    if (replyingTo) {
+      const participant = thread.participants.find(p => p.userId === replyingTo.senderId);
+      replyData = {
+        messageId: replyingTo.messageId,
+        senderId: replyingTo.senderId,
+        senderName: participant?.displayName || 'Unknown',
+        content: replyingTo.content,
+      };
     }
-    try {
-      await runSend(async (requestId) => {
-        lightHaptic();
 
-        let replyData = undefined;
-        if (replyingTo) {
-          const participant = thread.participants.find(p => p.userId === replyingTo.senderId);
-          replyData = {
-            messageId: replyingTo.messageId,
-            senderId: replyingTo.senderId,
-            senderName: participant?.displayName || 'Unknown',
-            content: replyingTo.content,
-          };
-        }
+    // Clear UI immediately — don't block on network
+    setText('');
+    setReplyingTo(null);
 
-        await sendMessage({
-          chatId: thread.chatId,
-          requestId,
-          content: trimmed,
-          groupId: thread.groupId,
-          replyTo: replyData,
-        });
-        successHaptic();
-        setText('');
-        setReplyingTo(null);
-      }, { key: `chat-send-${thread.chatId}` });
-    } catch (error) {
+    void runSend(async (requestId) => {
+      await sendMessage({
+        chatId: thread.chatId,
+        requestId,
+        content: trimmed,
+        groupId: thread.groupId,
+        replyTo: replyData,
+      });
+      successHaptic();
+    }, { key: `chat-send-${thread.chatId}` }).catch((error) => {
       console.error('Failed to send message:', error);
+      // Restore the text so the user can retry
+      setText(trimmed);
       alert(error instanceof Error ? error.message : 'Failed to send message');
-    }
-  };
+    });
+  }, [text, replyingTo, thread.participants, thread.chatId, thread.groupId, runSend, sendMessage]);
 
   // Handle swipe reply from message bubble
   const handleSwipeReply = (message: ChatMessage) => {
@@ -252,6 +250,21 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     // @ts-ignore - navigation route typing is intentionally loose in this app
     navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread, initialTitle: 'Message Info', backTitle: title });
   };
+
+  const handleReplyPress = useCallback((messageId: string) => {
+    const index = messages.findIndex(
+      (m) => (m.messageId || m.id) === messageId
+    );
+    if (index === -1) return;
+
+    listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    setHighlightedMessageId(messageId);
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightedMessageId(null);
+    }, 1400);
+  }, [messages]);
 
   const handleMediaSelected = async (media: SelectedMedia) => {
     if (media.type === 'location') {
@@ -428,6 +441,15 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
   };
 
+  // Pre-compute participant lookup so renderItem doesn't do O(n) find per bubble
+  const participantMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of thread.participants) {
+      map.set(p.userId, p.displayName || 'Unknown');
+    }
+    return map;
+  }, [thread.participants]);
+
   // Get proper group name if this is a group chat
   const groupName = useMemo(() => {
     if (thread.type === 'group' && thread.groupId) {
@@ -492,6 +514,29 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
   }, []);
 
+  const totalRecipients = thread.participants.length - 1;
+  const isGroupChat = thread.type === 'group';
+
+  const renderItem = useCallback(({ item, index }: { item: ChatMessage; index: number }) => {
+    const prevMessage = messages[index + 1]; // inverted list
+    const isFirstInSequence = !prevMessage || prevMessage.senderId !== item.senderId || prevMessage.type === 'system';
+    const senderName = participantMap.get(item.senderId) ?? 'Unknown';
+    const itemId = item.messageId || item.id;
+    return (
+      <MemoizedMessageBubble
+        message={item}
+        showSenderInfo={isGroupChat ? isFirstInSequence : undefined}
+        senderName={senderName}
+        onSwipeReply={handleSwipeReply}
+        onSwipeInfo={isGroupChat ? handleSwipeInfo : undefined}
+        onReplyPress={handleReplyPress}
+        isGroupChat={isGroupChat}
+        totalRecipients={totalRecipients}
+        highlighted={highlightedMessageId === itemId}
+      />
+    );
+  }, [messages, participantMap, isGroupChat, handleSwipeReply, handleSwipeInfo, handleReplyPress, totalRecipients, highlightedMessageId]);
+
   return (
     <LiquidBackground>
       <KeyboardAvoidingView
@@ -500,49 +545,63 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       // smaller offset so composer hugs the keyboard more closely
       //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
       >
-        <View style={styles.headerContainer}>
-          <TouchableOpacity
-            onPress={handleHeaderPress}
-            activeOpacity={0.7}
-            style={styles.headerPillTouchable}
-          >
-            <GlassView style={styles.headerPill} intensity={40}>
-              <View style={styles.headerPillContent}>
-                {thread.type === 'direct' && directParticipant?.photoURL ? (
-                  <Avatar.Image
-                    size={40}
-                    source={{ uri: directParticipant.photoURL }}
-                    style={{ marginRight: 10 }}
-                  />
-                ) : (
-                  <Avatar.Text
-                    size={40}
-                    label={groupInitials}
-                    style={{ backgroundColor: theme.colors.primary, marginRight: 10 }}
-                    color={theme.colors.onPrimary}
-                  />
-                )}
-                <Text
-                  variant="titleLarge"
-                  style={[styles.headerTitle, { color: theme.colors.onSurface }]}
-                  numberOfLines={1}
-                >
-                  {title}
-                </Text>
-              </View>
-            </GlassView>
-          </TouchableOpacity>
-          <View style={styles.headerCallActions}>
-            <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
-              <GlassView style={styles.headerCallButtonGlass} intensity={40}>
-                <Icon source="phone" size={20} color={theme.colors.primary} />
+        <View style={[styles.headerContainer, { paddingTop: insets.top + 6 }]}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              activeOpacity={0.7}
+              style={styles.headerBackButton}
+              accessibilityLabel="Go back"
+              accessibilityRole="button"
+              hitSlop={8}
+            >
+              <GlassView style={styles.headerBackButtonGlass} intensity={40}>
+                <Icon source="chevron-left" size={26} color={theme.colors.primary} />
               </GlassView>
             </TouchableOpacity>
-            <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Video call">
-              <GlassView style={styles.headerCallButtonGlass} intensity={40}>
-                <Icon source="video" size={20} color={theme.colors.primary} />
+            <TouchableOpacity
+              onPress={handleHeaderPress}
+              activeOpacity={0.7}
+              style={styles.headerPillTouchable}
+            >
+              <GlassView style={styles.headerPill} intensity={40}>
+                <View style={styles.headerPillContent}>
+                  {thread.type === 'direct' && directParticipant?.photoURL ? (
+                    <Avatar.Image
+                      size={36}
+                      source={{ uri: directParticipant.photoURL }}
+                      style={{ marginRight: 10 }}
+                    />
+                  ) : (
+                    <Avatar.Text
+                      size={36}
+                      label={groupInitials}
+                      style={{ backgroundColor: theme.colors.primary, marginRight: 10 }}
+                      color={theme.colors.onPrimary}
+                    />
+                  )}
+                  <Text
+                    variant="titleMedium"
+                    style={[styles.headerTitle, { color: theme.colors.onSurface }]}
+                    numberOfLines={1}
+                  >
+                    {title}
+                  </Text>
+                </View>
               </GlassView>
             </TouchableOpacity>
+            <View style={styles.headerCallActions}>
+              <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
+                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                  <Icon source="phone" size={18} color={theme.colors.primary} />
+                </GlassView>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Video call">
+                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                  <Icon source="video" size={18} color={theme.colors.primary} />
+                </GlassView>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 
@@ -550,29 +609,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           ref={listRef}
           data={messages}
           keyExtractor={(item) => item.messageId || item.id || `${item.createdAt}_${item.senderId}`}
-          renderItem={({ item, index }) => {
-            // Show sender info for first message in a sequence (group chats)
-            const prevMessage = messages[index + 1]; // +1 because inverted
-            const isFirstInSequence = !prevMessage || prevMessage.senderId !== item.senderId || prevMessage.type === 'system';
-            const participant = thread.participants.find(p => p.userId === item.senderId);
-            const senderName = participant?.displayName || 'Unknown';
-            // Calculate total recipients for group chat receipt display (excluding sender)
-            const totalRecipients = thread.participants.length - 1;
-
-            return (
-              <MessageBubble
-                message={item}
-                showSenderInfo={thread.type === 'group' ? isFirstInSequence : undefined}
-                senderName={senderName}
-                onSwipeReply={handleSwipeReply}
-                onSwipeInfo={thread.type === 'group' ? handleSwipeInfo : undefined}
-                isGroupChat={thread.type === 'group'}
-                totalRecipients={totalRecipients}
-              />
-            );
-          }}
+          renderItem={renderItem}
           style={styles.list}
-          contentContainerStyle={[styles.listContent, messages.length === 0 && { flex: 1, justifyContent: 'center' }]}
+          contentContainerStyle={[
+            styles.listContent,
+            // Inverted FlatList: contentContainer paddingBottom lands at the
+            // VISUAL TOP after the scaleY(-1) flip. Reserve space equal to the
+            // expanded floating-header height so the oldest message can scroll
+            // fully clear of the glass overlay; in normal scroll the messages
+            // pass UNDER the header by design.
+            { paddingBottom: insets.top + 70 },
+            messages.length === 0 && { flex: 1, justifyContent: 'center' },
+          ]}
           inverted={messages.length > 0}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', justifyContent: 'center', padding: 20 }}>
@@ -582,9 +630,20 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           }
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-            { useNativeDriver: true }
+            { useNativeDriver: true },
           )}
           scrollEventThrottle={16}
+          removeClippedSubviews={Platform.OS === 'android'}
+          maxToRenderPerBatch={10}
+          windowSize={10}
+          initialNumToRender={15}
+          onScrollToIndexFailed={({ index }) => {
+            // Message not yet rendered — scroll to approximate offset then retry
+            listRef.current?.scrollToOffset({
+              offset: index * 80,
+              animated: true,
+            });
+          }}
         />
 
         <GlassView style={styles.composerWrapper}>
@@ -662,40 +721,32 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                     }
                   }}
                   returnKeyType="send"
-                  onSubmitEditing={() => {
-                    void handleSend();
-                  }}
+                  onSubmitEditing={handleSend}
                   blurOnSubmit={false}
                   keyboardAppearance={isDark ? 'dark' : 'light'}
                 />
               </GlassView>
             </View>
             <TouchableOpacity
-              onPress={() => {
-                void handleSend();
-              }}
-              disabled={!text.trim() || sending || mediaPipelineLoading.loading}
+              onPress={handleSend}
+              disabled={!text.trim() || mediaPipelineLoading.loading}
               activeOpacity={0.8}
               style={[
                 styles.sendButtonTouchable,
                 {
                   backgroundColor:
-                    !text.trim() || sending || mediaPipelineLoading.loading
+                    !text.trim() || mediaPipelineLoading.loading
                       ? (isDark ? '#555' : '#ccc')
                       : theme.colors.primary,
                 },
               ]}
               accessibilityLabel="Send message"
               accessibilityState={{
-                disabled: !text.trim() || sending || mediaPipelineLoading.loading,
-                busy: sending || mediaPipelineLoading.loading,
+                disabled: !text.trim() || mediaPipelineLoading.loading,
+                busy: mediaPipelineLoading.loading,
               }}
             >
-              {sending ? (
-                <ActivityIndicator animating size="small" color={theme.colors.onPrimary} />
-              ) : (
-                <Icon source="send" size={24} color={theme.colors.onPrimary} />
-              )}
+              <Icon source="send" size={24} color={theme.colors.onPrimary} />
             </TouchableOpacity>
           </View>
         </GlassView>
@@ -736,7 +787,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 60,
   },
   headerActions: {
     flexDirection: 'row',
@@ -837,27 +887,40 @@ const styles = StyleSheet.create({
   stickyHeaderTitle: {
     fontWeight: 'bold',
   },
+  headerContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    zIndex: 100,
+    elevation: 10,
+  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
   },
-  headerContainer: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 12,
-    flexDirection: 'row',
+  headerBackButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  headerBackButtonGlass: {
+    flex: 1,
+    borderRadius: 20,
     alignItems: 'center',
-    gap: 8,
-    zIndex: 100,
-    elevation: 10,
+    justifyContent: 'center',
   },
   headerPillTouchable: {
     flex: 1,
     minWidth: 0,
   },
   headerPill: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     borderRadius: 50,
   },
   headerPillContent: {
@@ -866,8 +929,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   headerTitle: {
-    fontWeight: 'bold',
-    fontSize: 22,
+    fontWeight: '700',
+    fontSize: 17,
     flexShrink: 1,
     textAlign: 'center',
   },

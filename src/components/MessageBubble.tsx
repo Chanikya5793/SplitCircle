@@ -26,8 +26,10 @@ interface MessageBubbleProps {
   senderName?: string;
   onSwipeReply?: (message: ChatMessage) => void;
   onSwipeInfo?: (message: ChatMessage) => void;
+  onReplyPress?: (messageId: string) => void;
   isGroupChat?: boolean;
   totalRecipients?: number;
+  highlighted?: boolean;
 }
 
 const AVATAR_COLORS = [
@@ -35,6 +37,9 @@ const AVATAR_COLORS = [
   '#64B5F6', '#4FC3F7', '#4DD0E1', '#4DB6AC', '#81C784',
   '#AED581', '#FF8A65', '#D4E157', '#FFD54F', '#FFB74D'
 ];
+
+// Pre-compute stable waveform heights so Math.random() doesn't run on every render
+const WAVEFORM_HEIGHTS = Array.from({ length: 16 }, () => Math.random() * 16 + 4);
 
 const getSenderColor = (id: string) => {
   let hash = 0;
@@ -153,12 +158,22 @@ const VideoPlayerComponent = ({ uri, style, showControls = true, showOverlay = f
   );
 };
 
-export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, isGroupChat, totalRecipients }: MessageBubbleProps) => {
+export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, onReplyPress, isGroupChat, totalRecipients, highlighted }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
   const [imageLoading, setImageLoading] = useState(true);
   const [fullScreenVisible, setFullScreenVisible] = useState(false);
+  const highlightAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!highlighted) return;
+    Animated.sequence([
+      Animated.timing(highlightAnim, { toValue: 1, duration: 200, useNativeDriver: false }),
+      Animated.delay(600),
+      Animated.timing(highlightAnim, { toValue: 0, duration: 400, useNativeDriver: false }),
+    ]).start();
+  }, [highlighted, highlightAnim]);
 
   // Audio playback state
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
@@ -313,10 +328,14 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     const isMediaReply = message.replyTo.type && message.replyTo.type !== 'text';
 
     return (
-      <View style={[styles.replyContainer, {
-        borderLeftColor: replyColor,
-        backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
-      }]}>
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={() => onReplyPress?.(message.replyTo!.messageId)}
+        style={[styles.replyContainer, {
+          borderLeftColor: replyColor,
+          backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
+        }]}
+      >
         <Text style={[styles.replySender, { color: isMine ? 'rgba(255,255,255,0.9)' : replyColor }]}>{message.replyTo.senderName}</Text>
         <View style={styles.replyContentRow}>
           {isMediaReply && (
@@ -333,7 +352,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
             {message.replyTo.content}
           </Text>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -651,7 +670,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
               style={[
                 styles.audioBar,
                 {
-                  height: isPlaying ? Math.random() * 16 + 4 : 4, // Animate height if playing (simple effect)
+                  height: isPlaying ? WAVEFORM_HEIGHTS[i] : 4,
                   backgroundColor: isMine ? 'rgba(255,255,255,0.5)' : theme.colors.primary
                 }
               ]}
@@ -817,37 +836,44 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     !message.content.startsWith('📍') &&
     !message.content.startsWith('📎');
 
+  const highlightBg = highlightAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['transparent', 'rgba(255, 220, 50, 0.35)'],
+  });
+
   // My message (right side)
   if (isMine) {
     return (
       <>
-        <Swipeable
-          ref={swipeableRef}
-          renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
-          renderRightActions={isGroupChat && onSwipeInfo ? renderRightActions : undefined}
-          onSwipeableOpen={onSwipeableOpen}
-          friction={2}
-          overshootLeft={false}
-          overshootRight={false}
-        >
-          <View style={[styles.container, styles.mine, { backgroundColor: theme.colors.primary }]}>
-            {renderReplyContent()}
-            {renderMedia()}
-            {hasTextContent && (
-              <Text style={[styles.text, { color: theme.colors.onPrimary }]}>{message.content}</Text>
-            )}
-            <View style={styles.timestampRow}>
-              <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
-              <MessageStatusIndicator
-                status={message.status}
-                isGroupChat={isGroupChat}
-                totalRecipients={totalRecipients}
-                deliveredCount={message.deliveredTo?.length || 0}
-                readCount={message.readBy?.length || 0}
-              />
+        <Animated.View style={{ backgroundColor: highlightBg, borderRadius: 16 }}>
+          <Swipeable
+            ref={swipeableRef}
+            renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
+            renderRightActions={isGroupChat && onSwipeInfo ? renderRightActions : undefined}
+            onSwipeableOpen={onSwipeableOpen}
+            friction={2}
+            overshootLeft={false}
+            overshootRight={false}
+          >
+            <View style={[styles.container, styles.mine, { backgroundColor: theme.colors.primary }]}>
+              {renderReplyContent()}
+              {renderMedia()}
+              {hasTextContent && (
+                <Text style={[styles.text, { color: theme.colors.onPrimary }]}>{message.content}</Text>
+              )}
+              <View style={styles.timestampRow}>
+                <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
+                <MessageStatusIndicator
+                  status={message.status}
+                  isGroupChat={isGroupChat}
+                  totalRecipients={totalRecipients}
+                  deliveredCount={message.deliveredTo?.length || 0}
+                  readCount={message.readBy?.length || 0}
+                />
+              </View>
             </View>
-          </View>
-        </Swipeable>
+          </Swipeable>
+        </Animated.View>
         {renderFullScreenImage()}
       </>
     );
@@ -856,41 +882,43 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   // Other's message (left side with optional avatar)
   return (
     <>
-      <Swipeable
-        ref={swipeableRef}
-        renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
-        onSwipeableOpen={onSwipeableOpen}
-        friction={2}
-        overshootLeft={false}
-        overshootRight={false}
-      >
-        <View style={styles.otherRow}>
-          {showSenderInfo !== undefined && (
-            <View style={styles.avatarContainer}>
-              {showSenderInfo && (
-                <Avatar.Text
-                  size={28}
-                  label={initials}
-                  style={{ backgroundColor: senderColor }}
-                  color="#FFF"
-                  labelStyle={{ fontSize: 12, lineHeight: 28 }}
-                />
+      <Animated.View style={{ backgroundColor: highlightBg, borderRadius: 16 }}>
+        <Swipeable
+          ref={swipeableRef}
+          renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
+          onSwipeableOpen={onSwipeableOpen}
+          friction={2}
+          overshootLeft={false}
+          overshootRight={false}
+        >
+          <View style={styles.otherRow}>
+            {showSenderInfo !== undefined && (
+              <View style={styles.avatarContainer}>
+                {showSenderInfo && (
+                  <Avatar.Text
+                    size={28}
+                    label={initials}
+                    style={{ backgroundColor: senderColor }}
+                    color="#FFF"
+                    labelStyle={{ fontSize: 12, lineHeight: 28 }}
+                  />
+                )}
+              </View>
+            )}
+            <View style={[styles.container, styles.other, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' }]}>
+              {renderReplyContent()}
+              {showSenderInfo && senderName && (
+                <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
               )}
+              {renderMedia()}
+              {hasTextContent && (
+                <Text style={[styles.text, { color: theme.colors.onSurface }]}>{message.content}</Text>
+              )}
+              <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
             </View>
-          )}
-          <View style={[styles.container, styles.other, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' }]}>
-            {renderReplyContent()}
-            {showSenderInfo && senderName && (
-              <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
-            )}
-            {renderMedia()}
-            {hasTextContent && (
-              <Text style={[styles.text, { color: theme.colors.onSurface }]}>{message.content}</Text>
-            )}
-            <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
           </View>
-        </View>
-      </Swipeable>
+        </Swipeable>
+      </Animated.View>
       {renderFullScreenImage()}
     </>
   );

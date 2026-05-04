@@ -70,7 +70,15 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   const [showImageModal, setShowImageModal] = useState(false);
 
   const memberMap = useMemo(
-    () => (group ? Object.fromEntries(group.members.map((m) => [m.userId, m.displayName])) : {}),
+    () =>
+      group
+        ? Object.fromEntries(
+            [...(group.members ?? []), ...(group.archivedMembers ?? [])].map((m) => [
+              m.userId,
+              m.displayName,
+            ]),
+          )
+        : {},
     [group],
   );
 

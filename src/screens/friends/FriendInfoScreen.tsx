@@ -228,10 +228,16 @@ export const FriendInfoScreen = () => {
                     left={(props) => <List.Icon {...props} icon="account-group" />}
                     onPress={() => {
                       lightHaptic();
-                      navigation.navigate(ROUTES.APP.GROUP_DETAILS, {
-                        groupId: group.groupId,
-                        initialTitle: group.name,
-                        backTitle: displayName,
+                      navigation.navigate(ROUTES.APP.ROOT, {
+                        screen: ROUTES.APP.GROUPS_TAB,
+                        params: {
+                          screen: ROUTES.APP.GROUP_DETAILS,
+                          params: {
+                            groupId: group.groupId,
+                            initialTitle: group.name,
+                            backTitle: displayName,
+                          },
+                        },
                       });
                     }}
                   />

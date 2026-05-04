@@ -59,6 +59,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
 
   const callIdRef = useRef<string | null>(null);
   const callStartedAtRef = useRef<number | null>(null);
+  const connectedAtRef = useRef<number | null>(null);
   const otherParticipantRef = useRef<{ userId: string; displayName: string; photoURL?: string } | null>(null);
   const isInitiatorRef = useRef<boolean>(false);
   const hasSessionToCleanupRef = useRef(false);
@@ -214,6 +215,9 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
 
         if (session.status === 'connected') {
           debugLog('useCallManager call connected');
+          if (!connectedAtRef.current) {
+            connectedAtRef.current = Date.now();
+          }
           setStatus('connected');
 
           if (!hasReportedConnectedNativeRef.current) {
@@ -356,6 +360,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         cameraEnabled: session.type === 'video',
       });
       debugLog('useCallManager joined call');
+      connectedAtRef.current = Date.now();
       setStatus('connected'); // Immediately set to connected since we just joined
       hasReportedConnectedNativeRef.current = true;
       await nativeCallService.markCallConnected(existingCallId, nativeDirectionRef.current);
@@ -402,6 +407,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       cleanupSubscriptions();
       const endingCallId = callIdRef.current;
       const endingStartedAt = callStartedAtRef.current;
+      const endingConnectedAt = connectedAtRef.current;
       const endingParticipant = otherParticipantRef.current;
 
       setStatus('ended');
@@ -410,7 +416,11 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       // Save call history locally before deleting from Realtime DB
       if (endingCallId && user && endingStartedAt && chatId) {
         const endedAt = Date.now();
-        const duration = Math.floor((endedAt - endingStartedAt) / 1000);
+        // Duration counts only connected time, not ring time. If the other
+        // participant never joined (missed/no-answer), connectedAt is null → duration 0.
+        const duration = endingConnectedAt
+          ? Math.floor((endedAt - endingConnectedAt) / 1000)
+          : 0;
 
         // Last-resort: resolve from thread if ref was somehow never set
         let participant = endingParticipant;
@@ -451,9 +461,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
               ? `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
               : '';
             const callIcon = callType === 'video' ? '📹' : '📞';
-            const directionLabel = duration === 0
-              ? (isInitiatorRef.current ? 'No answer' : 'Missed call')
-              : (isInitiatorRef.current ? 'Outgoing call' : 'Incoming call');
+            // duration === 0 means the other side never connected (missed/no answer)
+            const directionLabel = duration === 0 ? 'No answer' : 'Outgoing call';
             const summary = duration > 0
               ? `${callIcon} ${directionLabel} · ${durationLabel}`
               : `${callIcon} ${directionLabel}`;
@@ -481,6 +490,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
 
       callIdRef.current = null;
       callStartedAtRef.current = null;
+      connectedAtRef.current = null;
       otherParticipantRef.current = null;
       hasSessionToCleanupRef.current = false;
       hasReportedConnectedNativeRef.current = false;

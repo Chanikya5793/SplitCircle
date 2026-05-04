@@ -435,7 +435,16 @@ const GroupsStackNavigator = () => {
                     nativeLabel: label,
                     fallbackLabel: (route.params as any)?.backTitle,
                   })}
-                  onPress={() => navigation.goBack()}
+                  onPress={() => {
+                    // Guard against the GO_BACK race that fires when the
+                    // user taps just as a screen is being popped from
+                    // underneath them — RN logs a noisy "GO_BACK was not
+                    // handled" warning otherwise.
+                    if (typeof navigation.canGoBack === 'function' && !navigation.canGoBack()) {
+                      return;
+                    }
+                    navigation.goBack();
+                  }}
                   tintColor={tintColor ?? theme.colors.primary}
                 />
               ) : null
@@ -848,7 +857,16 @@ const AppStackNavigator = () => {
                       nativeLabel: label,
                       fallbackLabel: (route.params as any)?.backTitle,
                     })}
-                    onPress={() => navigation.goBack()}
+                    onPress={() => {
+                    // Guard against the GO_BACK race that fires when the
+                    // user taps just as a screen is being popped from
+                    // underneath them — RN logs a noisy "GO_BACK was not
+                    // handled" warning otherwise.
+                    if (typeof navigation.canGoBack === 'function' && !navigation.canGoBack()) {
+                      return;
+                    }
+                    navigation.goBack();
+                  }}
                     tintColor={tintColor ?? theme.colors.primary}
                   />
                 ) : null

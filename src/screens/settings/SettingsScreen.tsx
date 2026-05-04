@@ -248,5 +248,7 @@ const styles = StyleSheet.create({
   settingsListContent: {
     borderRadius: 24,
     overflow: 'hidden',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
 });

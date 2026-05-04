@@ -14,6 +14,7 @@ import {
   removeFriend,
   setFriendPinned,
   subscribeToFriends,
+  updateFriendSnapshot,
   type Friend,
 } from '@/services/friendsService';
 import { computeFriendBalances, type CurrencyAmount } from '@/utils/friendBalances';
@@ -78,11 +79,22 @@ export const FriendsScreen = () => {
     return unsubscribe;
   }, [user?.userId]);
 
-  // Lookup name + photo for each friend from any group they share with us.
+  // Lookup name + photo for each friend across ALL groups, including
+  // groups where they're now an archived (former) member. Without falling
+  // back to archivedMembers, someone removed from your last shared group
+  // would render as the literal string "Friend" with their balance still
+  // intact — exactly the inconsistency we're closing.
   const memberLookup = useMemo(() => {
     const map = new Map<string, GroupMember>();
     for (const group of groups) {
       for (const member of group.members ?? []) {
+        if (!map.has(member.userId)) map.set(member.userId, member);
+      }
+    }
+    // Archived members are a fallback only — never overwrite an active
+    // membership which has fresher displayName/photo.
+    for (const group of groups) {
+      for (const member of group.archivedMembers ?? []) {
         if (!map.has(member.userId)) map.set(member.userId, member);
       }
     }
@@ -97,14 +109,51 @@ export const FriendsScreen = () => {
   const rows = useMemo<FriendRow[]>(() => {
     return friends.map((friend) => {
       const member = memberLookup.get(friend.userId);
+      // Resolution order: live group member > archived group member (already
+      // folded into memberLookup) > the snapshot stored on the friend record
+      // itself > a final last-resort label so we never render the literal
+      // string "Friend" as a name.
+      const displayName =
+        member?.displayName?.trim() ||
+        friend.displayName?.trim() ||
+        'Removed user';
+      const photoURL = member?.photoURL || friend.photoURL;
       return {
         friend,
-        displayName: member?.displayName ?? 'Friend',
-        photoURL: member?.photoURL,
+        displayName,
+        photoURL,
         balances: balanceMap[friend.userId] ?? [],
       };
     });
   }, [friends, memberLookup, balanceMap]);
+
+  // Opportunistically refresh the denormalized snapshot on the friend record
+  // whenever we see fresher info from a current group. Runs at most once per
+  // (friendUid, name, photo) tuple to keep RTDB writes minimal.
+  const lastSnapshotRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (!user?.userId) return;
+    for (const row of rows) {
+      const live = memberLookup.get(row.friend.userId);
+      const liveName = live?.displayName?.trim();
+      const livePhoto = live?.photoURL?.trim();
+      if (!liveName) continue; // Nothing better than what's already stored.
+      const fingerprint = `${liveName}|${livePhoto ?? ''}`;
+      const last = lastSnapshotRef.current.get(row.friend.userId);
+      if (last === fingerprint) continue;
+      const stored = `${row.friend.displayName ?? ''}|${row.friend.photoURL ?? ''}`;
+      if (stored === fingerprint) {
+        // Already in sync — record so we don't re-check next render.
+        lastSnapshotRef.current.set(row.friend.userId, fingerprint);
+        continue;
+      }
+      lastSnapshotRef.current.set(row.friend.userId, fingerprint);
+      void updateFriendSnapshot(user.userId, row.friend.userId, {
+        displayName: liveName,
+        photoURL: livePhoto,
+      });
+    }
+  }, [rows, memberLookup, user?.userId]);
 
   const sections = useMemo(() => {
     const pinned: FriendRow[] = [];

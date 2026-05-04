@@ -19,16 +19,21 @@ export const DebtsList = ({ group }: DebtsListProps) => {
     const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
     const [isCollapsed, setIsCollapsed] = useState(false);
 
-    // Use the optimized debt minimization algorithm
+    // Use the optimized debt minimization algorithm. Include archived members
+    // so removed/left users still appear in the "who owes whom" graph as long
+    // as they have a non-zero balance against historical expenses.
     const debts = useMemo(() => {
-        const balances = group.members.reduce(
+        const allMembers = [...(group.members ?? []), ...(group.archivedMembers ?? [])];
+        const balances = allMembers.reduce(
             (acc, m) => ({ ...acc, [m.userId]: m.balance }),
             {} as Record<string, number>
         );
         return minimizeDebts(balances);
-    }, [group.members]);
+    }, [group.members, group.archivedMembers]);
 
-    const memberMap = Object.fromEntries(group.members.map(m => [m.userId, m]));
+    const memberMap = Object.fromEntries(
+        [...(group.members ?? []), ...(group.archivedMembers ?? [])].map((m) => [m.userId, m]),
+    );
 
 
     const getBreakdown = (debt: Debt) => {

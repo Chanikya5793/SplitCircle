@@ -1,5 +1,5 @@
 import { db } from '@/firebase';
-import type { ChatMessage, ChatParticipant, Expense, Group, ParticipantShare, Settlement } from '@/models';
+import type { ChatMessage, ChatParticipant, Expense, Group, GroupMember, ParticipantShare, Settlement } from '@/models';
 import { queueMessage } from '@/services/messageQueueService';
 import { deleteFile, uploadFile } from '@/services/storageService';
 import {
@@ -32,6 +32,11 @@ interface GroupContextValue {
   settleUp: (groupId: string, settlement: Omit<Settlement, 'settlementId' | 'createdAt' | 'status'>, requestId?: string) => Promise<void>;
   updateSettlement: (groupId: string, settlement: Settlement, requestId?: string) => Promise<void>;
   deleteSettlement: (groupId: string, settlementId: string) => Promise<void>;
+  updateGroup: (groupId: string, updates: { name?: string; description?: string }) => Promise<void>;
+  updateMemberRole: (groupId: string, userId: string, role: 'admin' | 'member') => Promise<void>;
+  removeMember: (groupId: string, userId: string) => Promise<void>;
+  leaveGroup: (groupId: string) => Promise<void>;
+  deleteGroup: (groupId: string) => Promise<void>;
 }
 
 const GroupContext = createContext<GroupContextValue | undefined>(undefined);
@@ -78,36 +83,40 @@ const adaptGroup = (data: Group): Group => {
     updatedAt: normalizeTimestamp((expense as Expense).updatedAt),
   }));
 
-  // Calculate balances dynamically based on expenses
+  // Calculate balances dynamically. Seed the balance map with BOTH active
+  // members and archived members so removed/left users still get a balance
+  // entry. Without this, archived users would have zeroed balances even if
+  // they still owe or are owed money on historical expenses.
   const memberBalances: Record<string, number> = {};
-  data.members.forEach(m => memberBalances[m.userId] = 0);
+  (data.members ?? []).forEach((m) => (memberBalances[m.userId] = 0));
+  (data.archivedMembers ?? []).forEach((m) => {
+    if (memberBalances[m.userId] === undefined) memberBalances[m.userId] = 0;
+  });
 
-  expenses.forEach(expense => {
-    // Payer gets positive balance (they are owed money)
+  expenses.forEach((expense) => {
     const paidAmount = expense.amount;
-    memberBalances[expense.paidBy] = (memberBalances[expense.paidBy] || 0) + paidAmount;
-
-    // Participants get negative balance (they owe money)
-    expense.participants.forEach(p => {
-      memberBalances[p.userId] = (memberBalances[p.userId] || 0) - p.share;
+    memberBalances[expense.paidBy] = (memberBalances[expense.paidBy] ?? 0) + paidAmount;
+    expense.participants.forEach((p) => {
+      memberBalances[p.userId] = (memberBalances[p.userId] ?? 0) - p.share;
     });
   });
 
-  // Apply settlements to balances
-  (data.settlements || []).forEach(settlement => {
-    // Payer (fromUserId) pays money, so their balance increases (debt reduces)
-    memberBalances[settlement.fromUserId] = (memberBalances[settlement.fromUserId] || 0) + settlement.amount;
-
-    // Receiver (toUserId) receives money, so their balance decreases (amount owed to them reduces)
-    memberBalances[settlement.toUserId] = (memberBalances[settlement.toUserId] || 0) - settlement.amount;
+  (data.settlements ?? []).forEach((settlement) => {
+    memberBalances[settlement.fromUserId] = (memberBalances[settlement.fromUserId] ?? 0) + settlement.amount;
+    memberBalances[settlement.toUserId] = (memberBalances[settlement.toUserId] ?? 0) - settlement.amount;
   });
 
   return {
     ...data,
     expenses,
-    members: data.members.map(m => ({
+    members: (data.members ?? []).map((m) => ({
       ...m,
-      balance: memberBalances[m.userId] || 0
+      balance: memberBalances[m.userId] ?? 0,
+    })),
+    archivedMembers: (data.archivedMembers ?? []).map((m) => ({
+      ...m,
+      archived: true,
+      balance: memberBalances[m.userId] ?? 0,
     })),
     settlements: (data.settlements ?? []).map((settlement) => ({
       ...settlement,
@@ -189,7 +198,12 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     const chatSnapshot = await getDocs(chatQ);
     const batch = writeBatch(db);
 
-    batch.update(groupDoc.ref, {
+    // If the user previously left or was removed, drop them from
+    // archivedMembers so we don't have a duplicate identity record.
+    const purgedArchive = (groupData.archivedMembers ?? []).filter(
+      (member) => member.userId !== user.userId,
+    );
+    batch.update(groupDoc.ref, stripUndefinedDeep({
       memberIds: arrayUnion(user.userId),
       members: arrayUnion({
         userId: user.userId,
@@ -198,8 +212,9 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         role: 'member',
         balance: 0,
       }),
+      archivedMembers: purgedArchive,
       updatedAt: serverTimestamp(),
-    });
+    }));
 
     let systemMessage: ChatMessage | null = null;
     let recipients: string[] = [];
@@ -546,8 +561,380 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     }
   };
 
+  // ──────────────────────────────────────────────────────────────────────
+  // Group admin operations
+  //
+  // All of the following enforce role-based authorization client-side AND
+  // emit a system message into the linked chat thread so chat groups stay
+  // in sync. Real authorization MUST be enforced by Firestore Security Rules
+  // — these client checks only protect the UX, not the data.
+  // ──────────────────────────────────────────────────────────────────────
+
+  const writeGroupSystemMessage = async (
+    groupId: string,
+    content: string,
+    options: { participantsOverride?: ChatParticipant[]; participantIdsOverride?: string[] } = {},
+  ) => {
+    if (!user) return;
+    try {
+      const chatsRef = collection(db, 'chats');
+      const chatQ = query(chatsRef, where('groupId', '==', groupId));
+      const chatSnap = await getDocs(chatQ);
+      if (chatSnap.empty) return;
+
+      const chatDoc = chatSnap.docs[0];
+      const chatId = chatDoc.id;
+      const chatData = chatDoc.data() as Record<string, unknown>;
+
+      const baseParticipants =
+        options.participantsOverride ?? ((chatData.participants as ChatParticipant[] | undefined) ?? []);
+      const baseParticipantIds =
+        options.participantIdsOverride ?? ((chatData.participantIds as string[] | undefined) ?? []);
+
+      const msgId = uuid();
+      const now = Date.now();
+      const systemMessage: ChatMessage = {
+        id: msgId,
+        messageId: msgId,
+        requestId: msgId,
+        chatId,
+        senderId: user.userId,
+        type: 'system',
+        content,
+        status: 'sent',
+        createdAt: now,
+        timestamp: now,
+        isFromMe: false,
+        deliveredTo: [],
+        readBy: [],
+      };
+
+      const updatePayload: Record<string, unknown> = {
+        lastMessage: { ...systemMessage, createdAt: serverTimestamp() },
+        updatedAt: serverTimestamp(),
+      };
+
+      if (options.participantsOverride !== undefined) {
+        updatePayload.participants = baseParticipants;
+      }
+      if (options.participantIdsOverride !== undefined) {
+        updatePayload.participantIds = baseParticipantIds;
+      }
+
+      await updateDoc(chatDoc.ref, updatePayload);
+
+      for (const recipientId of baseParticipantIds) {
+        try {
+          await queueMessage(recipientId, systemMessage, true);
+        } catch (error) {
+          console.error(`Failed to queue system message for ${recipientId}:`, error);
+        }
+      }
+    } catch (error) {
+      // Group admin actions must never fail because of a chat sync error —
+      // the source of truth is the group doc; the chat is best-effort.
+      console.warn('writeGroupSystemMessage failed', error);
+    }
+  };
+
+  const updateGroup = async (
+    groupId: string,
+    updates: { name?: string; description?: string },
+  ) => {
+    if (!user) throw new Error('You must be signed in to edit a group.');
+    const group = groups.find((g) => g.groupId === groupId);
+    if (!group) throw new Error('Group not found.');
+
+    const me = group.members.find((m) => m.userId === user.userId);
+    if (!me || (me.role !== 'owner' && me.role !== 'admin')) {
+      throw new Error('Only group admins can edit group details.');
+    }
+
+    const trimmedName = updates.name?.trim();
+    const hasName = updates.name !== undefined;
+    if (hasName && !trimmedName) {
+      throw new Error('Group name cannot be empty.');
+    }
+
+    const trimmedDescription = updates.description?.trim();
+    const hasDescription = updates.description !== undefined;
+
+    const writePayload: Record<string, unknown> = { updatedAt: serverTimestamp() };
+    if (hasName && trimmedName) writePayload.name = trimmedName;
+    if (hasDescription) writePayload.description = trimmedDescription ?? '';
+
+    if (Object.keys(writePayload).length === 1) {
+      // Only updatedAt would change — skip the write.
+      return;
+    }
+
+    await updateDoc(doc(db, 'groups', groupId), writePayload);
+
+    if (hasName && trimmedName && trimmedName !== group.name) {
+      await writeGroupSystemMessage(
+        groupId,
+        `${user.displayName} renamed the group to "${trimmedName}"`,
+      );
+    }
+  };
+
+  const updateMemberRole = async (
+    groupId: string,
+    userId: string,
+    role: 'admin' | 'member',
+  ) => {
+    if (!user) throw new Error('You must be signed in.');
+    const group = groups.find((g) => g.groupId === groupId);
+    if (!group) throw new Error('Group not found.');
+
+    const actor = group.members.find((m) => m.userId === user.userId);
+    if (!actor || actor.role !== 'owner') {
+      throw new Error('Only the group owner can change member roles.');
+    }
+
+    const target = group.members.find((m) => m.userId === userId);
+    if (!target) throw new Error('Member not found.');
+    if (target.role === 'owner') {
+      throw new Error("You can't change the owner's role.");
+    }
+    if (target.role === role) return;
+
+    await runTransaction(db, async (txn) => {
+      const ref = doc(db, 'groups', groupId);
+      const snap = await txn.get(ref);
+      if (!snap.exists()) throw new Error('Group not found.');
+      const data = snap.data() as Group;
+      const newMembers = (data.members ?? []).map((member) =>
+        member.userId === userId ? { ...member, role } : member,
+      );
+      txn.update(ref, { members: newMembers, updatedAt: serverTimestamp() });
+    });
+
+    await writeGroupSystemMessage(
+      groupId,
+      role === 'admin'
+        ? `${target.displayName} is now an admin`
+        : `${target.displayName} is no longer an admin`,
+    );
+  };
+
+  const removeMember = async (groupId: string, userId: string) => {
+    if (!user) throw new Error('You must be signed in.');
+    if (userId === user.userId) {
+      throw new Error('Use leave group to remove yourself.');
+    }
+    const group = groups.find((g) => g.groupId === groupId);
+    if (!group) throw new Error('Group not found.');
+
+    const actor = group.members.find((m) => m.userId === user.userId);
+    const target = group.members.find((m) => m.userId === userId);
+    if (!actor) throw new Error('You are not a member of this group.');
+    if (!target) throw new Error('Member not found.');
+
+    if (actor.role !== 'owner' && actor.role !== 'admin') {
+      throw new Error('Only group admins can remove members.');
+    }
+    if (target.role === 'owner') {
+      throw new Error("You can't remove the owner.");
+    }
+    if (actor.role === 'admin' && target.role === 'admin') {
+      throw new Error('Admins can only remove regular members. Ask the owner.');
+    }
+
+    let nextParticipants: ChatParticipant[] | undefined;
+    let nextParticipantIds: string[] | undefined;
+
+    await runTransaction(db, async (txn) => {
+      const ref = doc(db, 'groups', groupId);
+      const snap = await txn.get(ref);
+      if (!snap.exists()) throw new Error('Group not found.');
+      const data = snap.data() as Group;
+
+      const removed = (data.members ?? []).find((member) => member.userId === userId);
+      const newMembers = (data.members ?? []).filter((member) => member.userId !== userId);
+      const newMemberIds = (data.memberIds ?? []).filter((id) => id !== userId);
+
+      // Archive instead of drop: keeps displayName/photo resolvable forever
+      // so historical balances/debts don't render as "Unknown".
+      const existingArchive = (data.archivedMembers ?? []).filter(
+        (member) => member.userId !== userId,
+      );
+      const archivedEntry: GroupMember = removed
+        ? {
+            ...removed,
+            role: 'member',
+            balance: 0,
+            archived: true,
+            archivedAt: Date.now(),
+            archivedReason: 'removed',
+          }
+        : {
+            userId,
+            displayName: target.displayName,
+            ...(target.photoURL ? { photoURL: target.photoURL } : {}),
+            role: 'member',
+            balance: 0,
+            archived: true,
+            archivedAt: Date.now(),
+            archivedReason: 'removed',
+          };
+
+      txn.update(ref, stripUndefinedDeep({
+        members: newMembers,
+        memberIds: newMemberIds,
+        archivedMembers: [...existingArchive, archivedEntry],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    // Mirror removal in the chat thread (best effort).
+    try {
+      const chatsRef = collection(db, 'chats');
+      const chatQ = query(chatsRef, where('groupId', '==', groupId));
+      const chatSnap = await getDocs(chatQ);
+      if (!chatSnap.empty) {
+        const chatDoc = chatSnap.docs[0];
+        const chatData = chatDoc.data() as Record<string, unknown>;
+        const currentParticipants = (chatData.participants as ChatParticipant[] | undefined) ?? [];
+        const currentParticipantIds = (chatData.participantIds as string[] | undefined) ?? [];
+        nextParticipants = currentParticipants.filter((p) => p.userId !== userId);
+        nextParticipantIds = currentParticipantIds.filter((id) => id !== userId);
+      }
+    } catch (error) {
+      console.warn('removeMember chat sync prefetch failed', error);
+    }
+
+    await writeGroupSystemMessage(
+      groupId,
+      `${target.displayName} was removed from the group`,
+      {
+        participantsOverride: nextParticipants,
+        participantIdsOverride: nextParticipantIds,
+      },
+    );
+  };
+
+  const leaveGroup = async (groupId: string) => {
+    if (!user) throw new Error('You must be signed in.');
+    const group = groups.find((g) => g.groupId === groupId);
+    if (!group) throw new Error('Group not found.');
+
+    const me = group.members.find((m) => m.userId === user.userId);
+    if (!me) throw new Error('You are not a member of this group.');
+    if (me.role === 'owner') {
+      throw new Error('Owners must promote another member to owner before leaving.');
+    }
+
+    let nextParticipants: ChatParticipant[] | undefined;
+    let nextParticipantIds: string[] | undefined;
+
+    await runTransaction(db, async (txn) => {
+      const ref = doc(db, 'groups', groupId);
+      const snap = await txn.get(ref);
+      if (!snap.exists()) throw new Error('Group not found.');
+      const data = snap.data() as Group;
+      const meRecord = (data.members ?? []).find((member) => member.userId === user.userId);
+      const newMembers = (data.members ?? []).filter((member) => member.userId !== user.userId);
+      const newMemberIds = (data.memberIds ?? []).filter((id) => id !== user.userId);
+
+      const existingArchive = (data.archivedMembers ?? []).filter(
+        (member) => member.userId !== user.userId,
+      );
+      const archivedEntry: GroupMember = {
+        userId: user.userId,
+        displayName: meRecord?.displayName ?? me.displayName,
+        ...(meRecord?.photoURL ? { photoURL: meRecord.photoURL } : me.photoURL ? { photoURL: me.photoURL } : {}),
+        role: 'member',
+        balance: 0,
+        archived: true,
+        archivedAt: Date.now(),
+        archivedReason: 'left',
+      };
+
+      txn.update(ref, stripUndefinedDeep({
+        members: newMembers,
+        memberIds: newMemberIds,
+        archivedMembers: [...existingArchive, archivedEntry],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    try {
+      const chatsRef = collection(db, 'chats');
+      const chatQ = query(chatsRef, where('groupId', '==', groupId));
+      const chatSnap = await getDocs(chatQ);
+      if (!chatSnap.empty) {
+        const chatDoc = chatSnap.docs[0];
+        const chatData = chatDoc.data() as Record<string, unknown>;
+        const currentParticipants = (chatData.participants as ChatParticipant[] | undefined) ?? [];
+        const currentParticipantIds = (chatData.participantIds as string[] | undefined) ?? [];
+        nextParticipants = currentParticipants.filter((p) => p.userId !== user.userId);
+        nextParticipantIds = currentParticipantIds.filter((id) => id !== user.userId);
+      }
+    } catch (error) {
+      console.warn('leaveGroup chat sync prefetch failed', error);
+    }
+
+    await writeGroupSystemMessage(groupId, `${me.displayName} left the group`, {
+      participantsOverride: nextParticipants,
+      participantIdsOverride: nextParticipantIds,
+    });
+  };
+
+  const deleteGroup = async (groupId: string) => {
+    if (!user) throw new Error('You must be signed in.');
+    const group = groups.find((g) => g.groupId === groupId);
+    if (!group) throw new Error('Group not found.');
+
+    const me = group.members.find((m) => m.userId === user.userId);
+    if (!me || me.role !== 'owner') {
+      throw new Error('Only the group owner can delete the group.');
+    }
+
+    // Firestore writeBatch caps at 500 operations. For groups with that many
+    // top-level expense docs the cleanup must page; for now we surface a
+    // clear error rather than silently leaking docs.
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'groups', groupId));
+
+    const chatsRef = collection(db, 'chats');
+    const chatQ = query(chatsRef, where('groupId', '==', groupId));
+    const chatSnap = await getDocs(chatQ);
+    chatSnap.forEach((chatDoc) => batch.delete(chatDoc.ref));
+
+    const expensesRef = collection(db, 'expenses');
+    const expQ = query(expensesRef, where('groupId', '==', groupId));
+    const expSnap = await getDocs(expQ);
+    expSnap.forEach((expDoc) => batch.delete(expDoc.ref));
+
+    const opCount = 1 + chatSnap.size + expSnap.size;
+    if (opCount > 450) {
+      throw new Error(
+        'This group has too many linked records to delete in a single operation. Contact support.',
+      );
+    }
+
+    await batch.commit();
+  };
+
   const value = useMemo(
-    () => ({ groups, loading, createGroup, joinGroup, addExpense, updateExpense, deleteExpense, settleUp, updateSettlement, deleteSettlement }),
+    () => ({
+      groups,
+      loading,
+      createGroup,
+      joinGroup,
+      addExpense,
+      updateExpense,
+      deleteExpense,
+      settleUp,
+      updateSettlement,
+      deleteSettlement,
+      updateGroup,
+      updateMemberRole,
+      removeMember,
+      leaveGroup,
+      deleteGroup,
+    }),
     [groups, loading],
   );
 

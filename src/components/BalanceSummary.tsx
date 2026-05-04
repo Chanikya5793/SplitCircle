@@ -1,10 +1,10 @@
 import { GlassView } from '@/components/GlassView';
 import { colors } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
-import type { Group } from '@/models';
+import type { Group, GroupMember } from '@/models';
 import { formatCurrency } from '@/utils/currency';
 import { StyleSheet, View } from 'react-native';
-import { Avatar, Text } from 'react-native-paper';
+import { Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 
@@ -15,7 +15,12 @@ interface BalanceSummaryProps {
 export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
   const { theme } = useTheme();
 
-  const allSettled = group.members.every(m => Math.abs(m.balance) < 0.005);
+  const activeMembers = group.members ?? [];
+  const archivedMembers = (group.archivedMembers ?? []).filter(
+    (m) => Math.abs(m.balance) >= 0.005,
+  );
+  const allSettled =
+    activeMembers.every((m) => Math.abs(m.balance) < 0.005) && archivedMembers.length === 0;
 
   if (allSettled) {
     return (
@@ -37,24 +42,41 @@ export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
     );
   }
 
+  const renderRow = (member: GroupMember, archived: boolean) => {
+    const isSettled = Math.abs(member.balance) < 0.005;
+    const amountColor = isSettled
+      ? colors.success
+      : member.balance > 0
+        ? colors.success
+        : theme.colors.error;
+    const labelColor = archived ? theme.colors.onSurfaceVariant : theme.colors.onSurface;
+
+    return (
+      <View key={member.userId} style={styles.row}>
+        <View style={styles.nameWrap}>
+          <Text style={[styles.name, { color: labelColor }]} numberOfLines={1}>
+            {member.displayName}
+          </Text>
+          {archived ? (
+            <Text variant="labelSmall" style={[styles.formerTag, { color: theme.colors.onSurfaceVariant }]}>
+              former member
+            </Text>
+          ) : null}
+        </View>
+        <Text style={[styles.amount, { color: amountColor }]}>
+          {formatCurrency(member.balance, group.currency)}
+        </Text>
+      </View>
+    );
+  };
+
   return (
     <GlassView style={styles.container}>
       <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
         Balances
       </Text>
-      {group.members.map((member) => {
-        const isSettled = Math.abs(member.balance) < 0.005;
-        const color = isSettled ? colors.success : (member.balance > 0 ? colors.success : theme.colors.error);
-
-        return (
-          <View key={member.userId} style={styles.row}>
-            <Text style={[styles.name, { color: theme.colors.onSurface }]}>{member.displayName}</Text>
-            <Text style={[styles.amount, { color }]}>
-              {formatCurrency(member.balance, group.currency)}
-            </Text>
-          </View>
-        );
-      })}
+      {activeMembers.map((m) => renderRow(m, false))}
+      {archivedMembers.map((m) => renderRow(m, true))}
     </GlassView>
   );
 };
@@ -72,9 +94,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 12,
+  },
+  nameWrap: {
+    flex: 1,
+    minWidth: 0,
   },
   name: {
     fontWeight: '500',
+  },
+  formerTag: {
+    fontStyle: 'italic',
+    marginTop: 2,
   },
   amount: {
     fontWeight: '600',

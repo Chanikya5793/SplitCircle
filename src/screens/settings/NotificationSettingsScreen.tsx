@@ -3,8 +3,8 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { useNotificationContext } from '@/context/NotificationContext';
 import { useTheme } from '@/context/ThemeContext';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
-import { useLayoutEffect, useMemo, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, View } from 'react-native';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, StyleSheet, View } from 'react-native';
 import { Button, Divider, List, Switch, Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
@@ -110,12 +110,21 @@ export const NotificationSettingsScreen = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSendingRemoteTest, setIsSendingRemoteTest] = useState(false);
   const [isSendingLocalTest, setIsSendingLocalTest] = useState(false);
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   useLayoutEffect(() => {
     navigation.setOptions({
       title: SCREEN_TITLES.notifications,
+      headerTitle: '',
+      headerTransparent: true,
     });
   }, [navigation]);
+
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [0, 40],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
 
   const osStatusLabel = useMemo(() => {
     switch (permission.state) {
@@ -343,14 +352,39 @@ export const NotificationSettingsScreen = () => {
 
   return (
     <LiquidBackground>
-      <ScrollView
+      <Animated.View
+        style={[
+          styles.stickyHeader,
+          { opacity: headerOpacity, paddingTop: insets.top + 8 },
+        ]}
+        pointerEvents="none"
+      >
+        <GlassView style={styles.stickyHeaderGlass}>
+          <Text variant="titleMedium" style={{ fontWeight: 'bold', color: primaryTextColor }}>
+            {SCREEN_TITLES.notifications}
+          </Text>
+        </GlassView>
+      </Animated.View>
+
+      <Animated.ScrollView
         contentContainerStyle={[
           styles.container,
           {
+            paddingTop: insets.top + 24,
             paddingBottom: insets.bottom + 32,
           },
         ]}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true },
+        )}
+        scrollEventThrottle={16}
       >
+        <View style={styles.titleContainer}>
+          <Text variant="displaySmall" style={[styles.screenTitle, { color: primaryTextColor }]}>
+            {SCREEN_TITLES.notifications}
+          </Text>
+        </View>
         <GlassView
           style={[
             styles.heroCard,
@@ -668,7 +702,7 @@ export const NotificationSettingsScreen = () => {
             </>
           ) : null}
         </GlassView>
-      </ScrollView>
+      </Animated.ScrollView>
     </LiquidBackground>
   );
 };
@@ -676,8 +710,29 @@ export const NotificationSettingsScreen = () => {
 const styles = StyleSheet.create({
   container: {
     padding: 16,
-    paddingTop: 20,
     gap: 16,
+  },
+  stickyHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stickyHeaderGlass: {
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+  },
+  titleContainer: {
+    paddingBottom: 8,
+  },
+  screenTitle: {
+    fontWeight: 'bold',
   },
   heroCard: {
     borderRadius: 28,

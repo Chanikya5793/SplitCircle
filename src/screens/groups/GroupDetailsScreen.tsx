@@ -7,6 +7,7 @@ import { SettlementCard } from '@/components/SettlementCard';
 import { ExpenseCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableExpenseCard } from '@/components/SwipeableExpenseCard';
 import { ROUTES } from '@/constants';
+import { SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense, Group, Settlement } from '@/models';
@@ -141,8 +142,25 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
       headerTitle: '',
       headerTransparent: true,
       headerTintColor: theme.colors.primary,
+      headerRight: () => (
+        <IconButton
+          icon="information-outline"
+          iconColor={theme.colors.primary}
+          size={22}
+          onPress={() => {
+            lightHaptic();
+            navigation.navigate(ROUTES.APP.GROUP_INFO, {
+              groupId: group.groupId,
+              initialTitle: SCREEN_TITLES.groupInfo,
+              backTitle: group.name,
+            });
+          }}
+          accessibilityLabel="Group info and admin"
+          style={{ margin: 0 }}
+        />
+      ),
     });
-  }, [navigation, theme.colors.primary]);
+  }, [navigation, theme.colors.primary, group?.groupId, group?.name]);
 
   // Defer the recurring bill sync until the navigation transition finishes.
   // This avoids heavy Firestore I/O on the JS thread during the slide-in animation.
@@ -155,9 +173,17 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
     return () => task.cancel();
   }, [group.groupId]);
 
+  // Include archived members so removed/left users still resolve to their
+  // real displayName in expense/settlement cards (instead of "Unknown").
   const memberMap = useMemo(
-    () => Object.fromEntries(group.members.map((m) => [m.userId, m.displayName])),
-    [group.members]
+    () =>
+      Object.fromEntries(
+        [...(group.members ?? []), ...(group.archivedMembers ?? [])].map((m) => [
+          m.userId,
+          m.displayName,
+        ]),
+      ),
+    [group.members, group.archivedMembers]
   );
 
   const headerOpacity = scrollY.interpolate({
