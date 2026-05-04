@@ -31,5 +31,6 @@ export const ROUTES = {
     SETTINGS: 'Settings',
     NOTIFICATION_SETTINGS: 'NotificationSettings',
     PROFILE: 'Profile',
+    CHAT_MEDIA_GALLERY: 'ChatMediaGallery',
   },
 } as const;

@@ -592,6 +592,25 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               </GlassView>
             </TouchableOpacity>
             <View style={styles.headerCallActions}>
+              <TouchableOpacity
+                onPress={() => {
+                  lightHaptic();
+                  // @ts-ignore
+                  navigation.navigate(ROUTES.APP.CHAT_MEDIA_GALLERY, {
+                    chatId: thread.chatId,
+                    title: 'Media',
+                    backTitle: title,
+                    participants: thread.participants,
+                  });
+                }}
+                style={styles.headerCallButton}
+                activeOpacity={0.7}
+                accessibilityLabel="Chat media gallery"
+              >
+                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                  <Icon source="image-multiple-outline" size={18} color={theme.colors.primary} />
+                </GlassView>
+              </TouchableOpacity>
               <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
                 <GlassView style={styles.headerCallButtonGlass} intensity={40}>
                   <Icon source="phone" size={18} color={theme.colors.primary} />

@@ -20,6 +20,7 @@ import { FriendInfoScreen } from '@/screens/friends/FriendInfoScreen';
 import { FriendsScreen } from '@/screens/friends/FriendsScreen';
 import { ChatRoomScreen } from '@/screens/chat/ChatRoomScreen';
 import { MessageInfoScreen } from '@/screens/chat/MessageInfoScreen';
+import { ChatMediaGalleryScreen } from '@/screens/chat/ChatMediaGalleryScreen';
 import { AddExpenseScreen } from '@/screens/expenses/AddExpenseScreen';
 import { ExpenseDetailsScreen } from '@/screens/expenses/ExpenseDetailsScreen';
 import { RecurringBillsScreen } from '@/screens/expenses/RecurringBillsScreen';
@@ -964,6 +965,15 @@ const AppStackNavigator = () => {
         options={{
           title: SCREEN_TITLES.notifications,
         }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.CHAT_MEDIA_GALLERY}
+        component={ChatMediaGalleryScreen}
+        options={({ route }: any) => ({
+          title: route.params?.title ?? 'Media',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        })}
       />
     </AppStack.Navigator>
   );
