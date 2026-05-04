@@ -29,6 +29,7 @@ import {
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
+  Easing,
   runOnJS,
   type SharedValue,
   useAnimatedStyle,
@@ -47,6 +48,8 @@ const GRID_GAP = 2;
 const CELL_SIZE = (SCREEN_WIDTH - GRID_GAP * (COLUMN_COUNT + 1)) / COLUMN_COUNT;
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
+// Extra top inset so native video controls clear the top chrome (close / info buttons)
+const VIDEO_TOP_INSET = 100;
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -136,7 +139,15 @@ const SWIPE_DISTANCE_THRESHOLD = SCREEN_WIDTH * 0.22;
 const SWIPE_VELOCITY_THRESHOLD = 700;
 const DISMISS_DISTANCE_THRESHOLD = 120;
 const DISMISS_VELOCITY_THRESHOLD = 900;
+const SWIPE_UP_DISTANCE_THRESHOLD = 90;
+const SWIPE_UP_VELOCITY_THRESHOLD = 700;
 const DOUBLE_TAP_SCALE = 2.5;
+
+// Tuned for a smooth, iOS-feeling spring across the viewer
+const SPRING = { damping: 24, stiffness: 180, mass: 0.6 };
+const SPRING_SNAPPY = { damping: 28, stiffness: 260, mass: 0.5 };
+const TIMING_OUT = { duration: 280, easing: Easing.out(Easing.cubic) };
+const TIMING_FAST = { duration: 220, easing: Easing.out(Easing.cubic) };
 
 interface ZoomableImageProps {
   uri: string;
@@ -144,6 +155,7 @@ interface ZoomableImageProps {
   onSwipePrev: () => void;
   onDismiss: () => void;
   onSingleTap: () => void;
+  onSwipeUp: () => void;
   hasNext: boolean;
   hasPrev: boolean;
   backdropOpacity: SharedValue<number>;
@@ -155,6 +167,7 @@ const ZoomableImage = React.memo(({
   onSwipePrev,
   onDismiss,
   onSingleTap,
+  onSwipeUp,
   hasNext,
   hasPrev,
   backdropOpacity,
@@ -196,21 +209,19 @@ const ZoomableImage = React.memo(({
     .onEnd(() => {
       'worklet';
       if (scale.value < MIN_SCALE) {
-        // Rubber-band snap-back
-        scale.value = withSpring(MIN_SCALE, { damping: 18, stiffness: 200 });
-        translateX.value = withSpring(0, { damping: 18, stiffness: 200 });
-        translateY.value = withSpring(0, { damping: 18, stiffness: 200 });
+        scale.value = withSpring(MIN_SCALE, SPRING);
+        translateX.value = withSpring(0, SPRING);
+        translateY.value = withSpring(0, SPRING);
         savedScale.value = MIN_SCALE;
         savedTranslateX.value = 0;
         savedTranslateY.value = 0;
       } else {
-        // Clamp translation to keep image edges within screen bounds
         const maxX = ((scale.value - 1) * SCREEN_WIDTH) / 2;
         const maxY = ((scale.value - 1) * SCREEN_HEIGHT) / 2;
         const clampedX = Math.max(-maxX, Math.min(maxX, translateX.value));
         const clampedY = Math.max(-maxY, Math.min(maxY, translateY.value));
-        translateX.value = withSpring(clampedX, { damping: 22, stiffness: 220 });
-        translateY.value = withSpring(clampedY, { damping: 22, stiffness: 220 });
+        translateX.value = withSpring(clampedX, SPRING);
+        translateY.value = withSpring(clampedY, SPRING);
         savedScale.value = scale.value;
         savedTranslateX.value = clampedX;
         savedTranslateY.value = clampedY;
@@ -235,14 +246,17 @@ const ZoomableImage = React.memo(({
           Math.min(maxY, savedTranslateY.value + e.translationY),
         );
       } else {
-        // Not zoomed: drive image with finger for swipe-nav / swipe-dismiss preview
+        // Not zoomed: drive image with finger for swipe-nav, swipe-dismiss, swipe-up-info
         translateX.value = e.translationX;
-        translateY.value = Math.max(0, e.translationY); // only allow pulling down
         if (e.translationY > 0) {
+          // Pull down: full follow + dim backdrop + slight shrink (dismiss preview)
+          translateY.value = e.translationY;
           const dragProgress = Math.min(1, e.translationY / 380);
           backdropOpacity.value = 1 - dragProgress * 0.85;
           scale.value = 1 - dragProgress * 0.18;
         } else {
+          // Pull up: rubber-banded translation as a hint that info is reachable
+          translateY.value = e.translationY * 0.4;
           backdropOpacity.value = 1;
           scale.value = 1;
         }
@@ -260,6 +274,10 @@ const ZoomableImage = React.memo(({
         !horizDominant &&
         (e.translationY > DISMISS_DISTANCE_THRESHOLD ||
           e.velocityY > DISMISS_VELOCITY_THRESHOLD);
+      const verticalInfo =
+        !horizDominant &&
+        (e.translationY < -SWIPE_UP_DISTANCE_THRESHOLD ||
+          e.velocityY < -SWIPE_UP_VELOCITY_THRESHOLD);
       const swipeNext =
         horizDominant &&
         hasNext &&
@@ -272,24 +290,31 @@ const ZoomableImage = React.memo(({
           e.velocityX > SWIPE_VELOCITY_THRESHOLD);
 
       if (verticalDismiss) {
-        translateY.value = withTiming(SCREEN_HEIGHT, { duration: 220 });
-        opacity.value = withTiming(0, { duration: 220 });
-        backdropOpacity.value = withTiming(0, { duration: 220 });
+        translateY.value = withTiming(SCREEN_HEIGHT, TIMING_OUT);
+        opacity.value = withTiming(0, TIMING_OUT);
+        backdropOpacity.value = withTiming(0, TIMING_OUT);
         runOnJS(onDismiss)();
+      } else if (verticalInfo) {
+        // Snap back image, then reveal info panel
+        translateX.value = withSpring(0, SPRING_SNAPPY);
+        translateY.value = withSpring(0, SPRING_SNAPPY);
+        scale.value = withSpring(1, SPRING_SNAPPY);
+        backdropOpacity.value = withSpring(1, SPRING_SNAPPY);
+        runOnJS(onSwipeUp)();
       } else if (swipeNext) {
-        translateX.value = withTiming(-SCREEN_WIDTH, { duration: 200 }, () => {
+        translateX.value = withTiming(-SCREEN_WIDTH, TIMING_FAST, () => {
           runOnJS(onSwipeNext)();
         });
       } else if (swipePrev) {
-        translateX.value = withTiming(SCREEN_WIDTH, { duration: 200 }, () => {
+        translateX.value = withTiming(SCREEN_WIDTH, TIMING_FAST, () => {
           runOnJS(onSwipePrev)();
         });
       } else {
-        // Snap back to neutral
-        translateX.value = withSpring(0, { damping: 22, stiffness: 220 });
-        translateY.value = withSpring(0, { damping: 22, stiffness: 220 });
-        scale.value = withSpring(1, { damping: 22, stiffness: 220 });
-        backdropOpacity.value = withSpring(1, { damping: 22, stiffness: 220 });
+        // Snap everything back to neutral together (same SPRING → arrives in sync)
+        translateX.value = withSpring(0, SPRING);
+        translateY.value = withSpring(0, SPRING);
+        scale.value = withSpring(1, SPRING);
+        backdropOpacity.value = withSpring(1, SPRING);
       }
     });
 
@@ -299,9 +324,9 @@ const ZoomableImage = React.memo(({
     .onEnd((e) => {
       'worklet';
       if (scale.value > 1.05) {
-        scale.value = withSpring(1, { damping: 18, stiffness: 200 });
-        translateX.value = withSpring(0, { damping: 18, stiffness: 200 });
-        translateY.value = withSpring(0, { damping: 18, stiffness: 200 });
+        scale.value = withSpring(1, SPRING);
+        translateX.value = withSpring(0, SPRING);
+        translateY.value = withSpring(0, SPRING);
         savedScale.value = 1;
         savedTranslateX.value = 0;
         savedTranslateY.value = 0;
@@ -314,9 +339,9 @@ const ZoomableImage = React.memo(({
         const maxY = ((DOUBLE_TAP_SCALE - 1) * SCREEN_HEIGHT) / 2;
         const clampedX = Math.max(-maxX, Math.min(maxX, newTx));
         const clampedY = Math.max(-maxY, Math.min(maxY, newTy));
-        scale.value = withSpring(DOUBLE_TAP_SCALE, { damping: 18, stiffness: 200 });
-        translateX.value = withSpring(clampedX, { damping: 18, stiffness: 200 });
-        translateY.value = withSpring(clampedY, { damping: 18, stiffness: 200 });
+        scale.value = withSpring(DOUBLE_TAP_SCALE, SPRING);
+        translateX.value = withSpring(clampedX, SPRING);
+        translateY.value = withSpring(clampedY, SPRING);
         savedScale.value = DOUBLE_TAP_SCALE;
         savedTranslateX.value = clampedX;
         savedTranslateY.value = clampedY;
@@ -369,12 +394,152 @@ const FullScreenVideoPlayer = ({ uri }: { uri: string }) => {
   return (
     <VideoView
       player={player}
-      style={styles.zoomableImage}
+      style={styles.videoPlayer}
       contentFit="contain"
       nativeControls
     />
   );
 };
+
+// ─── VideoSwipeContainer ─────────────────────────────────────────────────────
+//
+// Wraps the video player with full swipe support: vertical (dismiss / info)
+// and horizontal (prev / next navigation). Uses `activeOffsetY` + `failOffsetX`
+// so the native video scrubber keeps working — the swipe gesture only takes
+// over once the user commits to a clear directional drag.
+
+interface VideoSwipeContainerProps {
+  uri: string;
+  onDismiss: () => void;
+  onSwipeUp: () => void;
+  onSwipeNext: () => void;
+  onSwipePrev: () => void;
+  onSingleTap: () => void;
+  hasNext: boolean;
+  hasPrev: boolean;
+  backdropOpacity: SharedValue<number>;
+}
+
+const VideoSwipeContainer = React.memo(({
+  uri,
+  onDismiss,
+  onSwipeUp,
+  onSwipeNext,
+  onSwipePrev,
+  onSingleTap,
+  hasNext,
+  hasPrev,
+  backdropOpacity,
+}: VideoSwipeContainerProps) => {
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const opacity = useSharedValue(1);
+  const scaleVal = useSharedValue(1);
+
+  const pan = Gesture.Pan()
+    .activeOffsetY([-18, 18])
+    .activeOffsetX([-18, 18])
+    .onUpdate((e) => {
+      'worklet';
+      const isHoriz = Math.abs(e.translationX) > Math.abs(e.translationY);
+      if (isHoriz) {
+        translateX.value = e.translationX;
+        translateY.value = 0;
+        scaleVal.value = 1;
+        backdropOpacity.value = 1;
+      } else if (e.translationY > 0) {
+        translateX.value = 0;
+        translateY.value = e.translationY;
+        const dragProgress = Math.min(1, e.translationY / 380);
+        backdropOpacity.value = 1 - dragProgress * 0.85;
+        scaleVal.value = 1 - dragProgress * 0.15;
+      } else {
+        translateX.value = 0;
+        translateY.value = e.translationY * 0.4;
+        backdropOpacity.value = 1;
+        scaleVal.value = 1;
+      }
+    })
+    .onEnd((e) => {
+      'worklet';
+      const horizDominant = Math.abs(e.translationX) > Math.abs(e.translationY);
+      const dismiss =
+        !horizDominant &&
+        (e.translationY > DISMISS_DISTANCE_THRESHOLD ||
+          e.velocityY > DISMISS_VELOCITY_THRESHOLD);
+      const swipeUp =
+        !horizDominant &&
+        (e.translationY < -SWIPE_UP_DISTANCE_THRESHOLD ||
+          e.velocityY < -SWIPE_UP_VELOCITY_THRESHOLD);
+      const swipeNext =
+        horizDominant &&
+        hasNext &&
+        (e.translationX < -SWIPE_DISTANCE_THRESHOLD ||
+          e.velocityX < -SWIPE_VELOCITY_THRESHOLD);
+      const swipePrev =
+        horizDominant &&
+        hasPrev &&
+        (e.translationX > SWIPE_DISTANCE_THRESHOLD ||
+          e.velocityX > SWIPE_VELOCITY_THRESHOLD);
+
+      if (dismiss) {
+        translateY.value = withTiming(SCREEN_HEIGHT, TIMING_OUT);
+        opacity.value = withTiming(0, TIMING_OUT);
+        backdropOpacity.value = withTiming(0, TIMING_OUT);
+        runOnJS(onDismiss)();
+      } else if (swipeUp) {
+        translateX.value = withSpring(0, SPRING_SNAPPY);
+        translateY.value = withSpring(0, SPRING_SNAPPY);
+        scaleVal.value = withSpring(1, SPRING_SNAPPY);
+        backdropOpacity.value = withSpring(1, SPRING_SNAPPY);
+        runOnJS(onSwipeUp)();
+      } else if (swipeNext) {
+        translateX.value = withTiming(-SCREEN_WIDTH, TIMING_FAST, () => {
+          runOnJS(onSwipeNext)();
+        });
+      } else if (swipePrev) {
+        translateX.value = withTiming(SCREEN_WIDTH, TIMING_FAST, () => {
+          runOnJS(onSwipePrev)();
+        });
+      } else {
+        translateX.value = withSpring(0, SPRING);
+        translateY.value = withSpring(0, SPRING);
+        scaleVal.value = withSpring(1, SPRING);
+        backdropOpacity.value = withSpring(1, SPRING);
+      }
+    });
+
+  // Long-press / single-tap to toggle chrome — short, low-priority so it does
+  // not steal taps that should reach the native player chrome.
+  const tap = Gesture.Tap()
+    .numberOfTaps(1)
+    .maxDuration(220)
+    .onEnd(() => {
+      'worklet';
+      runOnJS(onSingleTap)();
+    });
+
+  // Pan and tap don't conflict (different shapes) — race so whichever resolves first wins.
+  const composed = Gesture.Race(pan, tap);
+
+  const animStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scaleVal.value },
+    ],
+  }));
+
+  return (
+    <GestureDetector gesture={composed}>
+      <Reanimated.View style={[styles.zoomableContainer, animStyle]}>
+        <FullScreenVideoPlayer uri={uri} />
+      </Reanimated.View>
+    </GestureDetector>
+  );
+});
+VideoSwipeContainer.displayName = 'VideoSwipeContainer';
 
 // ─── MediaInfoPanel ───────────────────────────────────────────────────────────
 
@@ -399,8 +564,9 @@ const MediaInfoPanel = ({ message, senderName, visible, onClose }: MediaInfoPane
     Animated.spring(slideAnim, {
       toValue: visible ? 0 : 500,
       useNativeDriver: true,
-      damping: 22,
-      stiffness: 190,
+      damping: 28,
+      stiffness: 220,
+      mass: 0.8,
     }).start();
   }, [visible, slideAnim]);
 
@@ -590,13 +756,18 @@ const FullScreenViewer = ({
         <View style={styles.viewerMedia}>
           {mediaUri ? (
             isVideo ? (
-              <TouchableOpacity
-                style={styles.zoomableContainer}
-                activeOpacity={1}
-                onPress={toggleChrome}
-              >
-                <FullScreenVideoPlayer uri={mediaUri} />
-              </TouchableOpacity>
+              <VideoSwipeContainer
+                key={`${msg.messageId || msg.id}_${mediaUri}`}
+                uri={mediaUri}
+                onSwipeNext={goNext}
+                onSwipePrev={goPrev}
+                onDismiss={handleDismiss}
+                onSingleTap={toggleChrome}
+                onSwipeUp={() => setShowInfo(true)}
+                hasNext={currentIndex < messages.length - 1}
+                hasPrev={currentIndex > 0}
+                backdropOpacity={backdropOpacity}
+              />
             ) : (
               <ZoomableImage
                 key={`${msg.messageId || msg.id}_${mediaUri}`}
@@ -605,20 +776,17 @@ const FullScreenViewer = ({
                 onSwipePrev={goPrev}
                 onDismiss={handleDismiss}
                 onSingleTap={toggleChrome}
+                onSwipeUp={() => setShowInfo(true)}
                 hasNext={currentIndex < messages.length - 1}
                 hasPrev={currentIndex > 0}
                 backdropOpacity={backdropOpacity}
               />
             )
           ) : (
-            <TouchableOpacity
-              style={styles.viewerPlaceholder}
-              activeOpacity={1}
-              onPress={toggleChrome}
-            >
+            <View style={styles.viewerPlaceholder}>
               <Ionicons name="cloud-offline-outline" size={48} color="#666" />
               <Text style={{ color: '#666', marginTop: 8 }}>Media unavailable</Text>
-            </TouchableOpacity>
+            </View>
           )}
         </View>
 
@@ -1253,6 +1421,12 @@ const styles = StyleSheet.create({
   zoomableImage: {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
+  },
+  // Video player — inset from top so native controls don't overlap close/info buttons
+  videoPlayer: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT - VIDEO_TOP_INSET,
+    marginTop: VIDEO_TOP_INSET,
   },
   // Full-screen viewer
   viewerRoot: {

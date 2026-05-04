@@ -206,7 +206,10 @@ export const FriendInfoScreen = () => {
             {displayName}
           </Text>
           {profile?.email ? (
-            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+            <Text
+              variant="bodyMedium"
+              style={[styles.heroEmail, { color: theme.colors.onSurfaceVariant }]}
+            >
               {profile.email}
             </Text>
           ) : null}
@@ -350,6 +353,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginTop: 12,
     textAlign: 'center',
+  },
+  heroEmail: {
+    textAlign: 'center',
+    alignSelf: 'stretch',
+    marginTop: 2,
   },
   heroBio: {
     marginTop: 8,
