@@ -461,6 +461,11 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       );
     }
 
+    const meta = message.mediaMetadata;
+    const resolutionLabel = meta?.width && meta?.height
+      ? `${meta.width} × ${meta.height}`
+      : null;
+
     return (
       <TouchableOpacity
         activeOpacity={0.9}
@@ -479,6 +484,11 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           onLoadStart={() => setImageLoading(true)}
           onLoadEnd={() => setImageLoading(false)}
         />
+        {resolutionLabel && !imageLoading && (
+          <View style={styles.resolutionBadge}>
+            <Text style={styles.resolutionText}>{resolutionLabel}</Text>
+          </View>
+        )}
       </TouchableOpacity>
     );
   };
@@ -1068,6 +1078,20 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  resolutionBadge: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  resolutionText: {
+    color: '#fff',
+    fontSize: 9,
+    fontVariant: ['tabular-nums'],
   },
   videoDuration: {
     position: 'absolute',

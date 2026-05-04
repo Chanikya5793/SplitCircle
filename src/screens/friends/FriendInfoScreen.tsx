@@ -10,9 +10,10 @@ import { db } from '@/firebase';
 import { computeFriendBalances } from '@/utils/friendBalances';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Avatar, Button, Divider, IconButton, List, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -50,6 +51,11 @@ export const FriendInfoScreen = () => {
   const { startCallSession } = useCallContext();
   const insets = useSafeAreaInsets();
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [note, setNote] = useState('');
+  const [noteEditing, setNoteEditing] = useState(false);
+  const [navigatingGroupId, setNavigatingGroupId] = useState<string | null>(null);
+  const noteInputRef = useRef<any>(null);
+  const noteKey = `friend_note_${params.userId}`;
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -87,6 +93,37 @@ export const FriendInfoScreen = () => {
     );
     return unsubscribe;
   }, [params.userId, params.displayName, params.photoURL]);
+
+  useEffect(() => {
+    AsyncStorage.getItem(noteKey).then((saved) => {
+      if (saved !== null) setNote(saved);
+    }).catch(() => {});
+  }, [noteKey]);
+
+  const saveNote = useCallback((value: string) => {
+    setNote(value);
+    AsyncStorage.setItem(noteKey, value).catch(() => {});
+  }, [noteKey]);
+
+  const handleGroupPress = useCallback((group: { groupId: string; name: string }) => {
+    lightHaptic();
+    setNavigatingGroupId(group.groupId);
+    const backTitle = profile?.displayName ?? params.displayName ?? 'Friend';
+    setTimeout(() => {
+      navigation.navigate(ROUTES.APP.ROOT, {
+        screen: ROUTES.APP.GROUPS_TAB,
+        params: {
+          screen: ROUTES.APP.GROUP_DETAILS,
+          params: {
+            groupId: group.groupId,
+            initialTitle: group.name,
+            backTitle,
+          },
+        },
+      });
+      setNavigatingGroupId(null);
+    }, 80);
+  }, [navigation, profile?.displayName, params.displayName]);
 
   const sharedGroups = useMemo(
     () => groups.filter((group) => group.members?.some((m) => m.userId === params.userId)),
@@ -151,17 +188,20 @@ export const FriendInfoScreen = () => {
       <ScrollView
         contentContainerStyle={[styles.container, { paddingTop: insets.top + 64, paddingBottom: insets.bottom + 32 }]}
       >
+        {/* Hero card — avatar centered, name, bio, action row */}
         <GlassView style={styles.heroCard}>
-          {profile?.photoURL ? (
-            <Avatar.Image size={112} source={{ uri: profile.photoURL }} />
-          ) : (
-            <Avatar.Text
-              size={112}
-              label={initials}
-              style={{ backgroundColor: theme.colors.primary }}
-              color={theme.colors.onPrimary}
-            />
-          )}
+          <View style={styles.avatarWrapper}>
+            {profile?.photoURL ? (
+              <Avatar.Image size={112} source={{ uri: profile.photoURL }} />
+            ) : (
+              <Avatar.Text
+                size={112}
+                label={initials}
+                style={{ backgroundColor: theme.colors.primary }}
+                color={theme.colors.onPrimary}
+              />
+            )}
+          </View>
           <Text variant="headlineSmall" style={[styles.heroName, { color: theme.colors.onSurface }]}>
             {displayName}
           </Text>
@@ -200,6 +240,7 @@ export const FriendInfoScreen = () => {
           </View>
         </GlassView>
 
+        {/* Balance section */}
         <GlassView style={styles.sectionCard}>
           <List.Section>
             <List.Subheader>Balance</List.Subheader>
@@ -215,6 +256,52 @@ export const FriendInfoScreen = () => {
           </List.Section>
         </GlassView>
 
+        {/* Private notes — only visible to you, stored locally */}
+        <GlassView style={styles.sectionCard}>
+          <List.Section>
+            <List.Subheader>Private Note</List.Subheader>
+            <View style={styles.noteContainer}>
+              {noteEditing ? (
+                <TextInput
+                  ref={noteInputRef}
+                  value={note}
+                  onChangeText={saveNote}
+                  onBlur={() => setNoteEditing(false)}
+                  multiline
+                  placeholder="Add a private note about this friend…"
+                  placeholderTextColor={theme.colors.onSurfaceVariant}
+                  style={[styles.noteInput, { color: theme.colors.onSurface }]}
+                  autoFocus
+                />
+              ) : (
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    setNoteEditing(true);
+                    setTimeout(() => noteInputRef.current?.focus(), 50);
+                  }}
+                  style={styles.noteTouchable}
+                >
+                  <Text
+                    style={[
+                      styles.noteText,
+                      { color: note ? theme.colors.onSurface : theme.colors.onSurfaceVariant },
+                    ]}
+                    numberOfLines={4}
+                  >
+                    {note || 'Tap to add a private note…'}
+                  </Text>
+                  <IconButton icon="pencil-outline" size={16} iconColor={theme.colors.onSurfaceVariant} style={styles.noteEditIcon} />
+                </TouchableOpacity>
+              )}
+              <Text style={[styles.noteHint, { color: theme.colors.onSurfaceVariant }]}>
+                Only visible to you · not shared
+              </Text>
+            </View>
+          </List.Section>
+        </GlassView>
+
+        {/* Groups in common */}
         {sharedGroups.length > 0 && (
           <GlassView style={styles.sectionCard}>
             <List.Section>
@@ -226,20 +313,12 @@ export const FriendInfoScreen = () => {
                     title={group.name}
                     description={`${group.members?.length ?? 0} members`}
                     left={(props) => <List.Icon {...props} icon="account-group" />}
-                    onPress={() => {
-                      lightHaptic();
-                      navigation.navigate(ROUTES.APP.ROOT, {
-                        screen: ROUTES.APP.GROUPS_TAB,
-                        params: {
-                          screen: ROUTES.APP.GROUP_DETAILS,
-                          params: {
-                            groupId: group.groupId,
-                            initialTitle: group.name,
-                            backTitle: displayName,
-                          },
-                        },
-                      });
-                    }}
+                    right={() =>
+                      navigatingGroupId === group.groupId ? (
+                        <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginRight: 12, alignSelf: 'center' }} />
+                      ) : null
+                    }
+                    onPress={() => handleGroupPress(group)}
                   />
                 </View>
               ))}
@@ -263,9 +342,14 @@ const styles = StyleSheet.create({
     gap: 8,
     overflow: 'hidden',
   },
+  avatarWrapper: {
+    alignSelf: 'center',
+    marginBottom: 4,
+  },
   heroName: {
     fontWeight: '700',
     marginTop: 12,
+    textAlign: 'center',
   },
   heroBio: {
     marginTop: 8,
@@ -281,5 +365,35 @@ const styles = StyleSheet.create({
   sectionCard: {
     borderRadius: 20,
     overflow: 'hidden',
+  },
+  noteContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  noteTouchable: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    minHeight: 44,
+  },
+  noteText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    paddingTop: 2,
+  },
+  noteEditIcon: {
+    margin: 0,
+    marginLeft: 4,
+  },
+  noteInput: {
+    fontSize: 14,
+    lineHeight: 20,
+    minHeight: 60,
+    textAlignVertical: 'top',
+    paddingTop: 2,
+  },
+  noteHint: {
+    fontSize: 11,
+    marginTop: 6,
   },
 });

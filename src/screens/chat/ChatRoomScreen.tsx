@@ -44,6 +44,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
+  const [showScrollDown, setShowScrollDown] = useState(false);
   // Track focus state of the composer input so we can highlight the
   // outer container (`GlassView`) with a border that matches the app color.
   const [composerFocused, setComposerFocused] = useState(false);
@@ -630,7 +631,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           }
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-            { useNativeDriver: true },
+            {
+              useNativeDriver: true,
+              listener: (event: any) => {
+                const offsetY = event.nativeEvent.contentOffset.y;
+                setShowScrollDown(offsetY > 120);
+              },
+            },
           )}
           scrollEventThrottle={16}
           removeClippedSubviews={Platform.OS === 'android'}
@@ -779,6 +786,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
       {/* Media Processing Overlay — driven by keyed loading state */}
       <LoadingOverlay visible={mediaPipelineLoading.loading} message={mediaPipelineLoading.message ?? 'Processing media…'} />
+
+      {/* Scroll-to-bottom FAB */}
+      {showScrollDown && (
+        <TouchableOpacity
+          style={[styles.scrollDownButton, { backgroundColor: theme.colors.primary }]}
+          onPress={() => listRef.current?.scrollToOffset({ offset: 0, animated: true })}
+          activeOpacity={0.8}
+          accessibilityLabel="Scroll to latest message"
+        >
+          <Icon source="chevron-down" size={22} color={theme.colors.onPrimary} />
+        </TouchableOpacity>
+      )}
 
     </LiquidBackground>
   );
@@ -990,6 +1009,21 @@ const styles = StyleSheet.create({
     padding: 24,
     borderRadius: 16,
     backgroundColor: 'rgba(0,0,0,0.8)',
+  },
+  scrollDownButton: {
+    position: 'absolute',
+    right: 16,
+    bottom: 90,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
   },
 });
 

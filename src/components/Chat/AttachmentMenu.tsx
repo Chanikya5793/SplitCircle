@@ -381,7 +381,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           mimeType: asset.mimeType || 'video/mp4',
           width: asset.width,
           height: asset.height,
-          duration: asset.duration ? asset.duration * 1000 : undefined,
+          duration: asset.duration ?? undefined,
         }));
       } else {
         setStatus(null);
