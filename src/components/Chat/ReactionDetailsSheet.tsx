@@ -1,8 +1,10 @@
 import { useTheme } from '@/context/ThemeContext';
 import type { ReactionMap } from '@/models';
+import { BlurView } from 'expo-blur';
 import React from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Text } from 'react-native-paper';
+import Animated, { SlideInDown } from 'react-native-reanimated';
 
 interface ReactionDetailsSheetProps {
   visible: boolean;
@@ -42,13 +44,17 @@ export const ReactionDetailsSheet = ({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType="fade"
       onRequestClose={onClose}
     >
       <Pressable style={styles.overlay} onPress={onClose}>
-        <View />
+        <BlurView
+          intensity={15}
+          tint={isDark ? 'dark' : 'light'}
+          style={StyleSheet.absoluteFill}
+        />
       </Pressable>
-      <View style={styles.sheetAnchor}>
+      <Animated.View style={styles.sheetAnchor} entering={SlideInDown.duration(300)}>
         <View style={[styles.sheet, {
           backgroundColor: isDark ? '#1c1c2e' : '#fff',
         }]}>
@@ -116,7 +122,7 @@ export const ReactionDetailsSheet = ({
             )}
           </ScrollView>
         </View>
-      </View>
+      </Animated.View>
     </Modal>
   );
 };
@@ -124,7 +130,7 @@ export const ReactionDetailsSheet = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: 'rgba(0,0,0,0.1)', // Light fallback
   },
   sheetAnchor: {
     position: 'absolute',
