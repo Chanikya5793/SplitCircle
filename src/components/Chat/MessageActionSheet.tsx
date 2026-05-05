@@ -17,8 +17,6 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 
@@ -71,43 +69,38 @@ export const MessageActionSheet = ({
 }: MessageActionSheetProps) => {
   const { theme, isDark } = useTheme();
 
-  const slide = useSharedValue(40);
+  // Minimal animation: a single fade + tiny lift. No spring, no reaction-strip
+  // delay, no scale on the strip. Snappy and predictable on every device.
   const fade = useSharedValue(0);
-  const reactionScale = useSharedValue(0);
+  const lift = useSharedValue(8);
 
   useEffect(() => {
     if (visible) {
-      fade.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.quad) });
-      slide.value = withSpring(0, { damping: 22, stiffness: 220 });
-      reactionScale.value = withDelay(
-        80,
-        withSpring(1, { damping: 14, stiffness: 200 }),
-      );
+      fade.value = withTiming(1, { duration: 130, easing: Easing.out(Easing.quad) });
+      lift.value = withTiming(0, { duration: 130, easing: Easing.out(Easing.quad) });
     } else {
-      reactionScale.value = withTiming(0, { duration: 120 });
-      slide.value = withTiming(40, { duration: 160 });
-      fade.value = withTiming(0, { duration: 160 });
+      fade.value = withTiming(0, { duration: 110, easing: Easing.in(Easing.quad) });
+      lift.value = withTiming(8, { duration: 110, easing: Easing.in(Easing.quad) });
     }
-  }, [visible, fade, slide, reactionScale]);
+  }, [visible, fade, lift]);
 
   const backdropStyle = useAnimatedStyle(() => ({ opacity: fade.value }));
   const sheetStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: slide.value }],
+    transform: [{ translateY: lift.value }],
     opacity: fade.value,
   }));
   const reactionStripStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: reactionScale.value }],
-    opacity: reactionScale.value,
+    opacity: fade.value,
+    transform: [{ translateY: lift.value }],
   }));
 
   if (!message) return null;
 
   const handleClose = () => {
-    fade.value = withTiming(0, { duration: 140 }, (finished) => {
+    fade.value = withTiming(0, { duration: 110, easing: Easing.in(Easing.quad) }, (finished) => {
       if (finished) runOnJS(onClose)();
     });
-    slide.value = withTiming(40, { duration: 140 });
-    reactionScale.value = withTiming(0, { duration: 100 });
+    lift.value = withTiming(8, { duration: 110 });
   };
 
   const handleReact = (emoji: string) => {

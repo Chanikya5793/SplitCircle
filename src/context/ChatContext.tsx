@@ -16,6 +16,7 @@ import {
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { v4 as uuid } from 'uuid';
 import {
+  applyRemoteMessageState,
   getChatMessages,
   initMessageDB,
   markMessagesRead,
@@ -24,6 +25,7 @@ import {
   updateMessageStatus,
   waitForChatWrites,
 } from '@/services/localMessageStorage';
+import { subscribeToMessageStates } from '@/services/messageStateService';
 import {
   copyToLocalStorage,
   initMediaDirectory,
@@ -236,10 +238,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const payload = snapshot.docs.map((docSnap) => {
-        const data = docSnap.data() as ChatThread & {
-          lastMessage?: ChatMessage;
-          deletedMessageIds?: string[];
-        };
+        const data = docSnap.data() as ChatThread & { lastMessage?: ChatMessage };
         return {
           ...data,
           participantIds: data.participantIds ?? data.participants.map((participant) => participant.userId),
@@ -252,23 +251,6 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
       setThreads(payload);
       setLoading(false);
-
-      // Reconcile remote delete-for-everyone announcements into local store.
-      void (async () => {
-        const { getChatMessages, saveMessageLocally } = await import('@/services/localMessageStorage');
-        for (const docSnap of snapshot.docs) {
-          const data = docSnap.data() as { chatId?: string; deletedMessageIds?: string[] };
-          const ids = data.deletedMessageIds ?? [];
-          if (ids.length === 0 || !data.chatId) continue;
-          const local = await getChatMessages(data.chatId);
-          for (const id of ids) {
-            const target = local.find((m) => m.id === id || m.messageId === id);
-            if (target && !target.deletedForEveryone) {
-              await saveMessageLocally({ ...target, deletedForEveryone: true, content: '' });
-            }
-          }
-        }
-      })();
     });
 
     return () => unsubscribe();
@@ -345,10 +327,13 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         return;
       }
 
+      // 16ms ≈ one display frame: fast enough that local mutations
+      // (reaction toggle, star, edit) feel instant, while still coalescing
+      // bursts so we don't reload AsyncStorage per char on rapid typing.
       pendingLoadTimer = setTimeout(() => {
         pendingLoadTimer = null;
         void loadLocalMessages();
-      }, 75);
+      }, 16);
     };
 
     const clearReceiptRetryTimer = () => {
@@ -429,6 +414,24 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     scheduleLocalLoad(true);
     void startReceiptListener();
 
+    // Cross-device mutation sync — reactions, edits, delete-for-everyone all
+    // flow through chats/{chatId}/messageState. Each event is applied locally
+    // (which fires notifyMessageListeners → schedules a UI reload).
+    const unsubscribeMessageStates = subscribeToMessageStates(
+      chatId,
+      ({ messageId, state }) => {
+        void applyRemoteMessageState(chatId, messageId, {
+          reactions: state.reactions,
+          deletedForEveryone: state.deletedForEveryone,
+          editedContent: state.editedContent,
+          editedAt: state.editedAt,
+        });
+      },
+      (error) => {
+        console.warn('⚠️ messageState listener error', error);
+      },
+    );
+
     const unsubscribeLocal = subscribeToLocalMessages(chatId, () => {
       scheduleLocalLoad(false);
     });
@@ -446,6 +449,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         unsubscribeReceipts();
         unsubscribeReceipts = null;
       }
+      unsubscribeMessageStates();
       unsubscribeLocal();
     };
   }, [getRecipientCount, getThreadByChatId]);
@@ -674,8 +678,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const deleteMessageForEveryone = useCallback(
     async (chatId: string, messageId: string) => {
       if (!user) return;
-      // Mark locally; cross-device propagation lives on the chat thread doc
-      // as a simple deletedMessageIds array — recipients reconcile on next subscribe.
+      // Local fast path — UI updates as soon as this returns.
       const { saveMessageLocally, getChatMessages } = await import('@/services/localMessageStorage');
       const messages = await getChatMessages(chatId);
       const target = messages.find((m) => m.id === messageId || m.messageId === messageId);
@@ -687,17 +690,33 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         content: '',
       });
 
-      try {
-        await updateDoc(doc(db, 'chats', chatId), {
-          deletedMessageIds: arrayUnion(messageId),
-        });
-      } catch (error) {
-        // The chat doc field is opportunistic — if the write fails we still
-        // have the local mark, and the next foreground send will fan out.
-        console.warn('deleteMessageForEveryone: chat doc broadcast failed', error);
+      // Realtime broadcast via messageState sub-collection — every other open
+      // chat session will pick this up via its onSnapshot listener.
+      const { publishMessageState } = await import('@/services/messageStateService');
+      await publishMessageState(chatId, messageId, { deletedForEveryone: true });
+
+      // Also push via the message queue so recipients who are offline (and thus
+      // not subscribed to the messageState onSnapshot) will see the deletion
+      // when they come back online and process their queue.
+      const thread = getThreadByChatId(chatId);
+      if (thread) {
+        const recipientIds = thread.participants
+          .map((p) => p.userId)
+          .filter((id) => id !== user.userId);
+
+        const tombstone: ChatMessage = {
+          ...target,
+          deletedForEveryone: true,
+          content: '',
+        };
+
+        const isGroupChat = thread.type === 'group';
+        for (const recipientId of recipientIds) {
+          await queueMessage(recipientId, tombstone, isGroupChat);
+        }
       }
     },
-    [user],
+    [getThreadByChatId, user],
   );
 
   const setTyping = useCallback(

@@ -6,12 +6,13 @@ import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { ChatThread } from '@/models';
+import type { ChatMessage, ChatThread } from '@/models';
 import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
+import { getChatMessages, subscribeToLocalMessages } from '@/services/localMessageStorage';
 import { lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, RefreshControl, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
@@ -70,6 +71,59 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     return (otherParticipant?.displayName || 'SC').slice(0, 2).toUpperCase();
   }, [groups, user?.userId]);
 
+  // Per-chat *visible* last message — derived from local storage so a deleted
+  // or edited message is reflected immediately. The Firestore-side
+  // `thread.lastMessage` is only used as a fallback when local storage hasn't
+  // hydrated yet.
+  const [localLastMessages, setLocalLastMessages] = useState<Record<string, ChatMessage | null>>({});
+
+  useEffect(() => {
+    if (!user) return;
+    const unsubs: Array<() => void> = [];
+
+    const recompute = async (chatId: string) => {
+      const msgs = await getChatMessages(chatId);
+      // Walk newest-first; first item not deleted-for-me and not deleted-for-everyone wins.
+      const visible = [...msgs]
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .find(
+          (m) =>
+            !m.deletedForEveryone &&
+            !(m.deletedFor ?? []).includes(user.userId),
+        ) ?? null;
+      setLocalLastMessages((prev) => {
+        const prevId = prev[chatId]?.messageId ?? prev[chatId]?.id ?? null;
+        const nextId = visible?.messageId ?? visible?.id ?? null;
+        const sameContent = (prev[chatId]?.content ?? '') === (visible?.content ?? '');
+        if (prevId === nextId && sameContent) return prev;
+        return { ...prev, [chatId]: visible };
+      });
+    };
+
+    for (const t of threads) {
+      void recompute(t.chatId);
+      unsubs.push(subscribeToLocalMessages(t.chatId, () => void recompute(t.chatId)));
+    }
+    return () => {
+      for (const u of unsubs) u();
+    };
+  }, [threads, user]);
+
+  const lastPreviewFor = (thread: ChatThread): string => {
+    const msg = localLastMessages[thread.chatId] ?? thread.lastMessage ?? null;
+    if (!msg) return 'No messages yet';
+    if (msg.deletedForEveryone) return '🚫 This message was deleted';
+    if (user && (msg.deletedFor ?? []).includes(user.userId)) return 'No messages yet';
+    return msg.content || (
+      msg.type === 'image' ? '📷 Photo'
+        : msg.type === 'video' ? '🎥 Video'
+        : msg.type === 'audio' ? '🎵 Audio'
+        : msg.type === 'file' ? '📄 Document'
+        : msg.type === 'location' ? '📍 Location'
+        : ''
+    );
+  };
+
   // Sort Logic
   const processedThreads = useMemo(() => {
     let result = [...threads];
@@ -124,7 +178,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
             <GlassView style={styles.chatItem} contentStyle={styles.chatItemContent}>
               <List.Item
                 title={getChatTitle(item)}
-                description={item.lastMessage?.content ?? 'No messages yet'}
+                description={lastPreviewFor(item)}
                 left={() => (
                   <View>
                     <Avatar.Text

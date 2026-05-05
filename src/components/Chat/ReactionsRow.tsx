@@ -1,5 +1,6 @@
 import { useTheme } from '@/context/ThemeContext';
 import type { ReactionMap } from '@/models';
+import React from 'react';
 import { StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Text } from 'react-native-paper';
 
@@ -10,7 +11,12 @@ interface ReactionsRowProps {
   onPress?: () => void;
 }
 
-export const ReactionsRow = ({ reactions, currentUserId, align = 'left', onPress }: ReactionsRowProps) => {
+export const ReactionsRow = ({
+  reactions,
+  currentUserId,
+  align = 'left',
+  onPress,
+}: ReactionsRowProps) => {
   const { theme, isDark } = useTheme();
 
   if (!reactions) return null;
@@ -21,8 +27,8 @@ export const ReactionsRow = ({ reactions, currentUserId, align = 'left', onPress
   const minePresent = currentUserId && entries.some(([, users]) => users.includes(currentUserId));
 
   const bg = minePresent
-    ? (isDark ? 'rgba(53,198,255,0.18)' : 'rgba(31,111,235,0.12)')
-    : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)');
+    ? (isDark ? 'rgba(53,198,255,0.22)' : 'rgba(31,111,235,0.14)')
+    : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)');
   const border = minePresent
     ? theme.colors.primary
     : (isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.08)');
@@ -48,17 +54,17 @@ export const ReactionsRow = ({ reactions, currentUserId, align = 'left', onPress
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    marginTop: -4,
-    marginBottom: 4,
+    marginTop: -10,
+    zIndex: 1,
   },
-  alignLeft: { justifyContent: 'flex-start', paddingLeft: 8 },
-  alignRight: { justifyContent: 'flex-end', paddingRight: 8 },
+  alignLeft: { justifyContent: 'flex-start', paddingLeft: 4 },
+  alignRight: { justifyContent: 'flex-end', paddingRight: 4 },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 3,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
     gap: 2,
   },
@@ -68,7 +74,7 @@ const styles = StyleSheet.create({
   count: {
     fontSize: 11,
     fontWeight: '600',
-    marginLeft: 3,
+    marginLeft: 2,
   },
 });
 

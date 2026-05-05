@@ -313,13 +313,15 @@ export const markMessagesRead = async (
 // Toggle a single emoji reaction for a user on a message.
 // If the user already reacted with that emoji it is removed; otherwise the
 // user's prior reaction (if any) is replaced with the new emoji — WhatsApp
-// allows only one reaction per user per message.
+// allows only one reaction per user per message. Returns the next reactions
+// map so the caller can broadcast it via messageState.
 export const toggleMessageReaction = async (
   chatId: string,
   messageId: string,
   userId: string,
   emoji: string
-): Promise<void> => {
+): Promise<import('@/models').ReactionMap | undefined> => {
+  let result: import('@/models').ReactionMap | undefined;
   try {
     await withSerializedChatWrite(chatId, async () => {
       const key = getChatStorageKey(chatId);
@@ -348,12 +350,14 @@ export const toggleMessageReaction = async (
       }
 
       messages[idx] = { ...message, reactions };
+      result = reactions;
       await AsyncStorage.setItem(key, JSON.stringify(messages));
       notifyMessageListeners(chatId);
     });
   } catch (error) {
     console.error('❌ Error toggling reaction:', error);
   }
+  return result;
 };
 
 export const toggleMessageStar = async (
@@ -407,6 +411,67 @@ export const markMessageDeletedForUser = async (
   } catch (error) {
     console.error('❌ Error marking message deleted for user:', error);
   }
+};
+
+// Merge a remote messageState payload into the locally-cached message.
+// Returns true if the local copy was changed (used to skip needless writes).
+export const applyRemoteMessageState = async (
+  chatId: string,
+  messageId: string,
+  state: {
+    reactions?: import('@/models').ReactionMap;
+    deletedForEveryone?: boolean;
+    editedContent?: string;
+    editedAt?: number;
+  }
+): Promise<boolean> => {
+  let changed = false;
+  try {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      const idx = messages.findIndex((m) => m.id === messageId || m.messageId === messageId);
+      if (idx < 0) return;
+
+      const existing = messages[idx];
+      const next = { ...existing };
+
+      if (state.reactions) {
+        // Replace whole map — sender is the source of truth for their own emoji.
+        const beforeHash = JSON.stringify(existing.reactions ?? {});
+        const afterHash = JSON.stringify(state.reactions);
+        if (beforeHash !== afterHash) {
+          next.reactions = state.reactions;
+          changed = true;
+        }
+      }
+
+      if (state.deletedForEveryone && !existing.deletedForEveryone) {
+        next.deletedForEveryone = true;
+        next.content = '';
+        changed = true;
+      }
+
+      if (
+        typeof state.editedContent === 'string' &&
+        state.editedContent !== existing.content &&
+        (!existing.editedAt || (state.editedAt ?? 0) >= existing.editedAt)
+      ) {
+        next.content = state.editedContent;
+        next.editedAt = state.editedAt ?? Date.now();
+        changed = true;
+      }
+
+      if (!changed) return;
+
+      messages[idx] = next;
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      notifyMessageListeners(chatId);
+    });
+  } catch (error) {
+    console.error('❌ Error applying remote message state:', error);
+  }
+  return changed;
 };
 
 export const updateMessageContent = async (

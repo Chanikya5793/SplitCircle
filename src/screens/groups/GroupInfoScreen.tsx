@@ -2,6 +2,7 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
+import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { GroupMember } from '@/models';
@@ -26,6 +27,7 @@ export const GroupInfoScreen = () => {
     const { groupId } = route.params as { groupId: string };
     const { user } = useAuth();
     const { groups, updateGroup, updateMemberRole, removeMember, leaveGroup, deleteGroup } = useGroups();
+    const { ensureGroupThread } = useChat();
     const { theme } = useTheme();
     const [isEditingName, setIsEditingName] = useState(false);
     const [editedName, setEditedName] = useState('');
@@ -488,6 +490,35 @@ export const GroupInfoScreen = () => {
                                 <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>View Splits</Text>
                             </TouchableOpacity>
                         </View>
+                    </GlassView>
+
+                    {/* Starred messages — quick access to per-group starred items */}
+                    <GlassView style={styles.section}>
+                        <List.Item
+                            title="Starred messages"
+                            description="Messages you've starred in this group"
+                            left={(props) => <List.Icon {...props} icon="star-outline" color={theme.colors.primary} />}
+                            right={(props) => <List.Icon {...props} icon="chevron-right" />}
+                            onPress={async () => {
+                                if (!group) return;
+                                lightHaptic();
+                                try {
+                                    const participants = group.members.map((m) => ({
+                                        userId: m.userId,
+                                        displayName: m.displayName,
+                                        photoURL: m.photoURL,
+                                        status: 'online' as const,
+                                    }));
+                                    const chatId = await ensureGroupThread(group.groupId, participants);
+                                    navigation.navigate(ROUTES.APP.STARRED_MESSAGES, {
+                                        chatId,
+                                        title: group.name,
+                                    });
+                                } catch (error) {
+                                    console.warn('GroupInfoScreen starred-open failed', error);
+                                }
+                            }}
+                        />
                     </GlassView>
 
                     <GlassView style={styles.section}>

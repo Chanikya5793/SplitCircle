@@ -12,3 +12,5 @@ export { PinnedMessagesBar } from './PinnedMessagesBar';
 export { MentionAutocomplete } from './MentionAutocomplete';
 export { ChatSearchBar } from './ChatSearchBar';
 export { SelectionToolbar } from './SelectionToolbar';
+export { HeaderMenu } from './HeaderMenu';
+export type { HeaderMenuItem } from './HeaderMenu';

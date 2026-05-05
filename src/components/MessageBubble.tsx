@@ -284,6 +284,35 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   const [fullScreenVisible, setFullScreenVisible] = useState(false);
   const highlightAnim = useRef(new Animated.Value(0)).current;
 
+  // ── All hook declarations MUST come before any conditional return ──────────
+  // React requires the same number of hooks on every render. The tombstone /
+  // system returns below must be *after* every useState / useEffect / etc.
+
+  // Audio playback state
+  const audioPlayerRef = useRef<AudioPlayer | null>(null);
+  const audioStatusListenerRef = useRef<{ remove: () => void } | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  // Get the media URI - prefer local path over remote URL
+  // Also handles automatic downloading for received media
+  const [mediaUri, setMediaUri] = useState<string | undefined>(
+    message.localMediaPath || message.mediaUrl
+  );
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState(false);
+
+  // Link preview
+  const detectedUrl = useMemo(
+    () => (message.type === 'text' || !message.type ? extractFirstUrl(message.content) : null),
+    [message.type, message.content],
+  );
+  const [livePreview, setLivePreview] = useState<UrlPreview | undefined>(message.urlPreview);
+
+  // Track tap timestamps for double-tap detection
+  const lastTapRef = useRef<number>(0);
+
+  // ── Effects ────────────────────────────────────────────────────────────────
+
   useEffect(() => {
     if (!highlighted) return;
     Animated.sequence([
@@ -292,11 +321,6 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       Animated.timing(highlightAnim, { toValue: 0, duration: 400, useNativeDriver: false }),
     ]).start();
   }, [highlighted, highlightAnim]);
-
-  // Audio playback state
-  const audioPlayerRef = useRef<AudioPlayer | null>(null);
-  const audioStatusListenerRef = useRef<{ remove: () => void } | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
 
   // Release player resources on unmount
   useEffect(() => {
@@ -307,6 +331,87 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       audioPlayerRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    // Replace player when message/media source changes.
+    return () => {
+      resetAudioPlayer();
+    };
+  }, [mediaUri]);
+
+  // Check and download media if needed
+  useEffect(() => {
+    const checkAndDownloadMedia = async () => {
+      if (message.type === 'text' || message.type === 'system' || message.type === 'call') {
+        return;
+      }
+      if (message.localMediaPath) {
+        const exists = await mediaExistsLocally(message.localMediaPath);
+        if (exists) {
+          setMediaUri(message.localMediaPath);
+          return;
+        }
+      }
+      if (message.mediaUrl && !message.isFromMe) {
+        setIsDownloading(true);
+        setDownloadError(false);
+        try {
+          const fileName = message.mediaMetadata?.fileName || `${message.type}_${message.messageId}`;
+          const result = await downloadMedia(
+            message.mediaUrl,
+            message.chatId,
+            message.messageId || message.id,
+            fileName
+          );
+          setMediaUri(result.localPath);
+        } catch (error) {
+          console.error('❌ Failed to download media:', error);
+          setDownloadError(true);
+          setMediaUri(message.mediaUrl);
+        } finally {
+          setIsDownloading(false);
+        }
+      } else if (message.mediaUrl) {
+        setMediaUri(message.mediaUrl);
+      }
+    };
+    checkAndDownloadMedia();
+  }, [message.localMediaPath, message.mediaUrl, message.type, message.isFromMe, message.chatId, message.messageId, message.id, message.mediaMetadata?.fileName]);
+
+  useEffect(() => {
+    setLivePreview(message.urlPreview);
+  }, [message.urlPreview]);
+
+  useEffect(() => {
+    if (!detectedUrl) return;
+    if (livePreview && livePreview.url === detectedUrl) return;
+    let cancelled = false;
+    (async () => {
+      const preview = await fetchLinkPreview(detectedUrl);
+      if (cancelled) return;
+      setLivePreview(preview);
+      const messageId = message.messageId || message.id;
+      if (messageId) {
+        void updateMessageUrlPreview(message.chatId, messageId, preview);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [detectedUrl, livePreview, message.chatId, message.messageId, message.id]);
+
+  // ── Helpers (not hooks — safe anywhere) ────────────────────────────────────
+
+  const resetAudioPlayer = () => {
+    if (!audioPlayerRef.current) {
+      return;
+    }
+    audioStatusListenerRef.current?.remove();
+    audioStatusListenerRef.current = null;
+    audioPlayerRef.current.remove();
+    audioPlayerRef.current = null;
+    setIsPlaying(false);
+  };
 
   const handlePlayPause = async () => {
     if (!mediaUri) return;
@@ -353,16 +458,14 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     }
   };
 
-  const resetAudioPlayer = () => {
-    if (!audioPlayerRef.current) {
-      return;
-    }
-    audioStatusListenerRef.current?.remove();
-    audioStatusListenerRef.current = null;
-    audioPlayerRef.current.remove();
-    audioPlayerRef.current = null;
-    setIsPlaying(false);
-  };
+  // ── Derived values (safe after hooks) ──────────────────────────────────────
+
+  const isMine = user?.userId === message.senderId;
+  const senderColor = !isMine && message.senderId ? getSenderColor(message.senderId) : theme.colors.primary;
+  const initials = senderName ? senderName.slice(0, 2).toUpperCase() : '??';
+
+  // ── Early returns for tombstone / system messages ──────────────────────────
+  // These come AFTER all hooks so React always sees the same hook count.
 
   if (message.type === 'system') {
     return (
@@ -374,8 +477,6 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     );
   }
 
-  // If the user "deleted for me", swap the bubble for a tombstone — keeps the
-  // ordering stable so reply jumps still land in the right place.
   if (user && message.deletedFor?.includes(user.userId)) {
     return (
       <View style={styles.systemContainer}>
@@ -387,9 +488,6 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     );
   }
 
-  // Delete-for-everyone tombstone — visible to all participants once the
-  // sender's mark propagates. We keep the bubble layout (mine / other) so the
-  // chat keeps its rhythm.
   if (message.deletedForEveryone) {
     const youDeleted = user?.userId === message.senderId;
     return (
@@ -403,10 +501,6 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       </View>
     );
   }
-
-  const isMine = user?.userId === message.senderId;
-  const senderColor = !isMine && message.senderId ? getSenderColor(message.senderId) : theme.colors.primary;
-  const initials = senderName ? senderName.slice(0, 2).toUpperCase() : '??';
 
   // Calculate image dimensions maintaining aspect ratio
   const getImageDimensions = useCallback(() => {
@@ -504,99 +598,8 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     );
   };
 
-  // Get the media URI - prefer local path over remote URL
-  // Also handles automatic downloading for received media
-  const [mediaUri, setMediaUri] = useState<string | undefined>(
-    message.localMediaPath || message.mediaUrl
-  );
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadError, setDownloadError] = useState(false);
-
-  useEffect(() => {
-    // Replace player when message/media source changes.
-    return () => {
-      resetAudioPlayer();
-    };
-  }, [mediaUri]);
-
-  // Check and download media if needed
-  useEffect(() => {
-    const checkAndDownloadMedia = async () => {
-      // Skip if no media or already have local path
-      if (message.type === 'text' || message.type === 'system' || message.type === 'call') {
-        return;
-      }
-
-      // If we already have a local path, check if it exists
-      if (message.localMediaPath) {
-        const exists = await mediaExistsLocally(message.localMediaPath);
-        if (exists) {
-          setMediaUri(message.localMediaPath);
-          return;
-        }
-      }
-
-      // If we have a remote URL but no local file, download it
-      if (message.mediaUrl && !message.isFromMe) {
-        setIsDownloading(true);
-        setDownloadError(false);
-        try {
-          const fileName = message.mediaMetadata?.fileName || `${message.type}_${message.messageId}`;
-          const result = await downloadMedia(
-            message.mediaUrl,
-            message.chatId,
-            message.messageId || message.id,
-            fileName
-          );
-          setMediaUri(result.localPath);
-          console.log('✅ Media downloaded for message:', message.messageId);
-        } catch (error) {
-          console.error('❌ Failed to download media:', error);
-          setDownloadError(true);
-          // Fall back to remote URL
-          setMediaUri(message.mediaUrl);
-        } finally {
-          setIsDownloading(false);
-        }
-      } else if (message.mediaUrl) {
-        // For sender's messages, use mediaUrl if local path doesn't exist
-        setMediaUri(message.mediaUrl);
-      }
-    };
-
-    checkAndDownloadMedia();
-  }, [message.localMediaPath, message.mediaUrl, message.type, message.isFromMe, message.chatId, message.messageId, message.id, message.mediaMetadata?.fileName]);
-
-  // Link preview — fire once per message when text contains a URL and we
-  // don't already have a preview in storage. Persists via storage helper so
-  // reopening the chat doesn't refetch.
-  const detectedUrl = useMemo(
-    () => (message.type === 'text' || !message.type ? extractFirstUrl(message.content) : null),
-    [message.type, message.content],
-  );
-  const [livePreview, setLivePreview] = useState<UrlPreview | undefined>(message.urlPreview);
-
-  useEffect(() => {
-    setLivePreview(message.urlPreview);
-  }, [message.urlPreview]);
-
-  useEffect(() => {
-    if (!detectedUrl) return;
-    if (livePreview && livePreview.url === detectedUrl) return;
-    let cancelled = false;
-    (async () => {
-      const preview = await fetchLinkPreview(detectedUrl);
-      if (cancelled) return;
-      setLivePreview(preview);
-      const messageId = message.messageId || message.id;
-      if (messageId) {
-        void updateMessageUrlPreview(message.chatId, messageId, preview);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [detectedUrl, livePreview, message.chatId, message.messageId, message.id]);
+  // (mediaUri, isDownloading, downloadError, detectedUrl, livePreview, lastTapRef
+  //  are all declared at the top of the component, before early returns)
 
   // Image content with loading state
   const renderImageContent = () => {
@@ -980,8 +983,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   const dimStyle = dimmed ? { opacity: 0.35 } : undefined;
   const isMentioned = !!user && !!message.mentions?.includes(user.userId);
 
-  // Track tap timestamps for double-tap detection without needing a gesture-handler graph rewrite.
-  const lastTapRef = useRef<number>(0);
+  // Double-tap detection (lastTapRef declared at top with other hooks)
   const handlePress = () => {
     if (selectionMode) {
       onToggleSelect?.(message);
@@ -1082,12 +1084,16 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   };
   const handleReactionsPress = () => onReactionsPress?.(message);
 
-  const renderSelectionMarker = (align: 'left' | 'right') => {
+  // WhatsApp-style inline checkbox — sits in a fixed column to the left of
+  // every bubble (own and others') while selection mode is active. Bubble
+  // content stays inside its normal max-width and just shifts in by the column
+  // width, so nothing overlaps and the row reads clearly.
+  const renderSelectionCheckbox = () => {
     if (!selectionMode) return null;
     const color = selected ? theme.colors.primary : (isDark ? '#666' : '#bbb');
     return (
-      <View style={[styles.selectionMarker, align === 'right' ? styles.selectionMarkerRight : styles.selectionMarkerLeft]}>
-        <View style={[styles.selectionTick, { borderColor: color, backgroundColor: selected ? color : 'transparent' }]}>
+      <View style={styles.selectionCheckboxColumn}>
+        <View style={[styles.selectionCheckbox, { borderColor: color, backgroundColor: selected ? color : 'transparent' }]}>
           {selected && <Ionicons name="checkmark" size={12} color="#fff" />}
         </View>
       </View>
@@ -1100,15 +1106,18 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       <>
         <Animated.View
           style={[
+            styles.rowOuter,
             { backgroundColor: highlightBg, borderRadius: 16 },
             isMentioned && { backgroundColor: 'rgba(255, 193, 7, 0.18)' },
             selected && { backgroundColor: isDark ? 'rgba(53,198,255,0.15)' : 'rgba(31,111,235,0.10)' },
             dimStyle,
           ]}
         >
+          {renderSelectionCheckbox()}
           <Swipeable
             ref={swipeableRef}
             enabled={!selectionMode}
+            containerStyle={{ flex: 1 }}
             renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
             renderRightActions={isGroupChat && onSwipeInfo ? renderRightActions : undefined}
             onSwipeableOpen={onSwipeableOpen}
@@ -1116,55 +1125,57 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
             overshootLeft={false}
             overshootRight={false}
           >
-            {renderSelectionMarker('right')}
-            <Pressable
-              onPress={handlePress}
-              onLongPress={handleLongPress}
-              delayLongPress={280}
-              android_ripple={undefined}
-              style={({ pressed }) => [
-                styles.container,
-                styles.mine,
-                { backgroundColor: theme.colors.primary },
-                pressed && (onLongPress || selectionMode) && { opacity: 0.85 },
-              ]}
-            >
-              {renderForwardedTag()}
-              {renderReplyContent()}
-              {renderMedia()}
-              {livePreview && hasTextContent && (
-                <LinkPreview preview={livePreview} isMine />
-              )}
-              {renderRichText(theme.colors.onPrimary, true)}
-              <View style={styles.timestampRow}>
-                {isStarredByMe && (
-                  <Ionicons
-                    name="star"
-                    size={11}
-                    color="rgba(255,255,255,0.85)"
-                    style={{ marginRight: 4 }}
+            <View style={styles.bubbleReactionsWrapper}>
+              <Pressable
+                onPress={handlePress}
+                onLongPress={handleLongPress}
+                delayLongPress={280}
+                android_ripple={undefined}
+                style={({ pressed }) => [
+                  styles.container,
+                  styles.mine,
+                  { backgroundColor: theme.colors.primary },
+                  message.reactions && Object.keys(message.reactions).length > 0 && styles.bubbleWithReactions,
+                  pressed && (onLongPress || selectionMode) && { opacity: 0.85 },
+                ]}
+              >
+                {renderForwardedTag()}
+                {renderReplyContent()}
+                {renderMedia()}
+                {livePreview && hasTextContent && (
+                  <LinkPreview preview={livePreview} isMine />
+                )}
+                {renderRichText(theme.colors.onPrimary, true)}
+                <View style={styles.timestampRow}>
+                  {isStarredByMe && (
+                    <Ionicons
+                      name="star"
+                      size={11}
+                      color="rgba(255,255,255,0.85)"
+                      style={{ marginRight: 4 }}
+                    />
+                  )}
+                  {message.editedAt && (
+                    <Text style={[styles.editedTag, { color: 'rgba(255,255,255,0.65)' }]}>edited</Text>
+                  )}
+                  <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
+                  <MessageStatusIndicator
+                    status={message.status}
+                    isGroupChat={isGroupChat}
+                    totalRecipients={totalRecipients}
+                    deliveredCount={message.deliveredTo?.length || 0}
+                    readCount={message.readBy?.length || 0}
                   />
-                )}
-                {message.editedAt && (
-                  <Text style={[styles.editedTag, { color: 'rgba(255,255,255,0.65)' }]}>edited</Text>
-                )}
-                <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
-                <MessageStatusIndicator
-                  status={message.status}
-                  isGroupChat={isGroupChat}
-                  totalRecipients={totalRecipients}
-                  deliveredCount={message.deliveredTo?.length || 0}
-                  readCount={message.readBy?.length || 0}
-                />
-              </View>
-            </Pressable>
+                </View>
+              </Pressable>
+              <ReactionsRow
+                reactions={message.reactions}
+                currentUserId={user?.userId}
+                align="right"
+                onPress={handleReactionsPress}
+              />
+            </View>
           </Swipeable>
-          <ReactionsRow
-            reactions={message.reactions}
-            currentUserId={user?.userId}
-            align="right"
-            onPress={handleReactionsPress}
-          />
         </Animated.View>
         {renderFullScreenImage()}
       </>
@@ -1176,15 +1187,18 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     <>
       <Animated.View
         style={[
+          styles.rowOuter,
           { backgroundColor: highlightBg, borderRadius: 16 },
           isMentioned && { backgroundColor: 'rgba(255, 193, 7, 0.18)' },
           selected && { backgroundColor: isDark ? 'rgba(53,198,255,0.15)' : 'rgba(31,111,235,0.10)' },
           dimStyle,
         ]}
       >
+        {renderSelectionCheckbox()}
         <Swipeable
           ref={swipeableRef}
           enabled={!selectionMode}
+          containerStyle={{ flex: 1 }}
           renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
           onSwipeableOpen={onSwipeableOpen}
           friction={2}
@@ -1192,7 +1206,6 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           overshootRight={false}
         >
           <View style={styles.otherRow}>
-            {renderSelectionMarker('left')}
             {showSenderInfo !== undefined && (
               <View style={styles.avatarContainer}>
                 {showSenderInfo && (
@@ -1206,50 +1219,53 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
                 )}
               </View>
             )}
-            <Pressable
-              onPress={handlePress}
-              onLongPress={handleLongPress}
-              delayLongPress={280}
-              style={({ pressed }) => [
-                styles.container,
-                styles.other,
-                { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' },
-                pressed && (onLongPress || selectionMode) && { opacity: 0.85 },
-              ]}
-            >
-              {renderForwardedTag()}
-              {renderReplyContent()}
-              {showSenderInfo && senderName && (
-                <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
-              )}
-              {renderMedia()}
-              {livePreview && hasTextContent && (
-                <LinkPreview preview={livePreview} isMine={false} />
-              )}
-              {renderRichText(theme.colors.onSurface)}
-              <View style={styles.timestampRow}>
-                {isStarredByMe && (
-                  <Ionicons
-                    name="star"
-                    size={11}
-                    color={theme.colors.onSurfaceVariant}
-                    style={{ marginRight: 4 }}
-                  />
+            <View style={styles.bubbleReactionsWrapper}>
+              <Pressable
+                onPress={handlePress}
+                onLongPress={handleLongPress}
+                delayLongPress={280}
+                style={({ pressed }) => [
+                  styles.container,
+                  styles.other,
+                  { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' },
+                  message.reactions && Object.keys(message.reactions).length > 0 && styles.bubbleWithReactions,
+                  pressed && (onLongPress || selectionMode) && { opacity: 0.85 },
+                ]}
+              >
+                {renderForwardedTag()}
+                {renderReplyContent()}
+                {showSenderInfo && senderName && (
+                  <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
                 )}
-                {message.editedAt && (
-                  <Text style={[styles.editedTag, { color: theme.colors.onSurfaceVariant }]}>edited</Text>
+                {renderMedia()}
+                {livePreview && hasTextContent && (
+                  <LinkPreview preview={livePreview} isMine={false} />
                 )}
-                <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
-              </View>
-            </Pressable>
+                {renderRichText(theme.colors.onSurface)}
+                <View style={styles.timestampRow}>
+                  {isStarredByMe && (
+                    <Ionicons
+                      name="star"
+                      size={11}
+                      color={theme.colors.onSurfaceVariant}
+                      style={{ marginRight: 4 }}
+                    />
+                  )}
+                  {message.editedAt && (
+                    <Text style={[styles.editedTag, { color: theme.colors.onSurfaceVariant }]}>edited</Text>
+                  )}
+                  <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
+                </View>
+              </Pressable>
+              <ReactionsRow
+                reactions={message.reactions}
+                currentUserId={user?.userId}
+                align="left"
+                onPress={handleReactionsPress}
+              />
+            </View>
           </View>
         </Swipeable>
-        <ReactionsRow
-          reactions={message.reactions}
-          currentUserId={user?.userId}
-          align="left"
-          onPress={handleReactionsPress}
-        />
       </Animated.View>
       {renderFullScreenImage()}
     </>
@@ -1291,22 +1307,27 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginRight: 4,
   },
-  selectionMarker: {
-    position: 'absolute',
-    top: '50%',
-    transform: [{ translateY: -10 }],
-    zIndex: 5,
+  rowOuter: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
   },
-  selectionMarkerLeft: {
-    left: -22,
+  bubbleReactionsWrapper: {
+    // Allows ReactionsRow to be absolutely positioned at the bottom edge of the bubble
+    flex: 1,
   },
-  selectionMarkerRight: {
-    right: -22,
+  bubbleWithReactions: {
+    // Extra bottom padding so the reactions chip doesn't obscure content
+    marginBottom: 14,
   },
-  selectionTick: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+  selectionCheckboxColumn: {
+    width: 30,
+    paddingTop: 12,
+    alignItems: 'center',
+  },
+  selectionCheckbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',

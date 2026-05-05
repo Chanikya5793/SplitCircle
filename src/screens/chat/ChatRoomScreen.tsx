@@ -2,6 +2,7 @@ import {
   AttachmentMenu,
   ChatSearchBar,
   ForwardPickerSheet,
+  HeaderMenu,
   LocationPicker,
   MediaPreview,
   MentionAutocomplete,
@@ -9,6 +10,8 @@ import {
   PinnedMessagesBar,
   SelectionToolbar,
 } from '@/components/Chat';
+import { ReactionDetailsSheet } from '@/components/Chat/ReactionDetailsSheet';
+import type { HeaderMenuItem } from '@/components/Chat';
 import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
 import type { QualityLevel } from '@/components/Chat/MediaPreview';
 import type { MessageAction } from '@/components/Chat/MessageActionSheet';
@@ -33,6 +36,7 @@ import {
   toggleMessageStar,
   updateMessageContent,
 } from '@/services/localMessageStorage';
+import { publishMessageState } from '@/services/messageStateService';
 import { lightHaptic, mediumHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
@@ -90,6 +94,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const inputRef = useRef<any>(null);
   // Long-press action sheet state
   const [actionTarget, setActionTarget] = useState<ChatMessage | null>(null);
+  // Header overflow menu (search, gallery, starred)
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   // Forward picker state — separate from the action sheet so it can stay open while the picker animates in.
   const [forwardSource, setForwardSource] = useState<ChatMessage[] | null>(null);
   // Multi-select state
@@ -114,6 +120,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
   // Location picker state
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
+  // Reaction details sheet state
+  const [reactionTarget, setReactionTarget] = useState<ChatMessage | null>(null);
   const markReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const markReadInFlightRef = useRef(false);
   const { run: runSend } = usePreventDoubleSubmit();
@@ -175,17 +183,32 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
       const countChanged = items.length !== prevCountBefore;
       const lastIdChanged = lastId !== prevLastIdBefore;
+      // Fingerprint covers every UI-relevant mutation, not just delivery/read.
+      // Without reactions/star/edit/delete in here, mutations to those fields
+      // would silently fail to re-render the bubble until the user left and
+      // re-entered the chat.
       const statusFingerprint = items
         .map((item) => {
           const id = item.messageId || item.id;
           const deliveredCount = item.deliveredTo?.length ?? 0;
           const readCount = item.readBy?.length ?? 0;
-          return `${id}:${item.status}:${deliveredCount}:${readCount}`;
+          const reactionsHash = item.reactions
+            ? Object.entries(item.reactions)
+                .map(([emoji, ids]) => `${emoji}:${ids.length}`)
+                .sort()
+                .join(',')
+            : '';
+          const starredCount = item.starredBy?.length ?? 0;
+          const deletedForCount = item.deletedFor?.length ?? 0;
+          const deletedAll = item.deletedForEveryone ? 1 : 0;
+          const editedAt = item.editedAt ?? 0;
+          const contentLength = item.content?.length ?? 0;
+          return `${id}:${item.status}:${deliveredCount}:${readCount}:${reactionsHash}:${starredCount}:${deletedForCount}:${deletedAll}:${editedAt}:${contentLength}`;
         })
         .join('|');
       const statusChanged = statusFingerprint !== prevStatusFingerprint;
 
-      // Update when list composition or delivery/read status changes.
+      // Update when list composition or any tracked mutation changes.
       if (countChanged || lastIdChanged || statusChanged) {
         setMessages(items);
         prevCount = items.length;
@@ -266,19 +289,37 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     // Edit path — keeps the same messageId, only updates content + editedAt.
     if (editingMessage) {
       const targetId = editingMessage.messageId || editingMessage.id;
+      const editedAt = Date.now();
       setText('');
       const editTarget = editingMessage;
       setEditingMessage(null);
 
-      void updateMessageContent(thread.chatId, targetId, trimmed)
-        .then(() => successHaptic())
-        .catch((error) => {
+      // Optimistic UI: patch the local in-memory list immediately so the user
+      // sees the change without waiting for AsyncStorage or Firestore.
+      setMessages((prev) =>
+        prev.map((m) =>
+          (m.messageId || m.id) === targetId
+            ? { ...m, content: trimmed, editedAt }
+            : m,
+        ),
+      );
+
+      // Persist + broadcast in the background.
+      void (async () => {
+        try {
+          await updateMessageContent(thread.chatId, targetId, trimmed, editedAt);
+          await publishMessageState(thread.chatId, targetId, {
+            editedContent: trimmed,
+            editedAt,
+          });
+          successHaptic();
+        } catch (error) {
           console.error('Failed to edit message:', error);
-          // Restore the buffer so the user can retry.
           setText(trimmed);
           setEditingMessage(editTarget);
           alert(error instanceof Error ? error.message : 'Failed to edit message');
-        });
+        }
+      })();
       return;
     }
 
@@ -378,21 +419,19 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     });
   }, [navigation]);
 
-  const handleReact = useCallback((emoji: string) => {
+  const handleReact = useCallback(async (emoji: string) => {
     if (!user || !actionTarget) return;
     const targetId = actionTarget.messageId || actionTarget.id;
-    if (emoji === '+') {
-      // Placeholder for the full picker — until we ship one, fall back to ❤️.
-      void toggleMessageReaction(thread.chatId, targetId, user.userId, '❤️');
-      return;
+    const finalEmoji = emoji === '+' ? '❤️' : emoji;
+    const next = await toggleMessageReaction(thread.chatId, targetId, user.userId, finalEmoji);
+    if (next !== undefined) {
+      void publishMessageState(thread.chatId, targetId, { reactions: next });
     }
-    void toggleMessageReaction(thread.chatId, targetId, user.userId, emoji);
   }, [actionTarget, thread.chatId, user]);
 
   const handleReactionsPress = useCallback((message: ChatMessage) => {
-    // For now reuse the action sheet so the user can change/remove their reaction.
-    // A dedicated "who reacted" sheet is a Phase 2 enhancement.
-    setActionTarget(message);
+    // Open the reaction details sheet (not the action sheet).
+    setReactionTarget(message);
   }, []);
 
   const handleAction = useCallback(async (action: MessageAction) => {
@@ -419,6 +458,17 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       }
       case 'star':
       case 'unstar': {
+        // Optimistic star toggle.
+        setMessages((prev) =>
+          prev.map((m) => {
+            if ((m.messageId || m.id) !== targetId) return m;
+            const has = m.starredBy?.includes(user.userId);
+            const next = has
+              ? (m.starredBy ?? []).filter((id) => id !== user.userId)
+              : [...(m.starredBy ?? []), user.userId];
+            return { ...m, starredBy: next };
+          }),
+        );
         await toggleMessageStar(thread.chatId, targetId, user.userId);
         break;
       }
@@ -455,6 +505,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               style: 'destructive',
               onPress: async () => {
                 warningHaptic();
+                // Optimistic flip — bubble becomes a tombstone immediately.
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    (m.messageId || m.id) === targetId
+                      ? { ...m, deletedForEveryone: true, content: '' }
+                      : m,
+                  ),
+                );
                 await deleteMessageForEveryone(thread.chatId, targetId);
               },
             },
@@ -473,6 +531,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               style: 'destructive',
               onPress: async () => {
                 warningHaptic();
+                // Optimistic local delete — the bubble flips to "You deleted this" tombstone.
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    (m.messageId || m.id) === targetId
+                      ? { ...m, deletedFor: Array.from(new Set([...(m.deletedFor ?? []), user.userId])) }
+                      : m,
+                  ),
+                );
                 await markMessageDeletedForUser(thread.chatId, targetId, user.userId);
               },
             },
@@ -484,10 +550,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   }, [actionTarget, thread.chatId, user, togglePinMessage, deleteMessageForEveryone]);
 
   // Double-tap on a bubble adds (or removes) a ❤️ reaction.
-  const handleDoubleTap = useCallback((message: ChatMessage) => {
+  const handleDoubleTap = useCallback(async (message: ChatMessage) => {
     if (!user) return;
     mediumHaptic();
-    void toggleMessageReaction(thread.chatId, message.messageId || message.id, user.userId, '❤️');
+    const targetId = message.messageId || message.id;
+    const next = await toggleMessageReaction(thread.chatId, targetId, user.userId, '❤️');
+    if (next !== undefined) {
+      void publishMessageState(thread.chatId, targetId, { reactions: next });
+    }
   }, [thread.chatId, user]);
 
   // ──────────────────────────── Selection mode ────────────────────────────
@@ -542,6 +612,19 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
 
     if (action === 'star') {
+      const selectedSet = new Set(selectedMessages.map((m) => m.messageId || m.id));
+      // Optimistic star — toggle all at once.
+      setMessages((prev) =>
+        prev.map((m) => {
+          const id = m.messageId || m.id;
+          if (!selectedSet.has(id)) return m;
+          const has = m.starredBy?.includes(user.userId);
+          const next = has
+            ? (m.starredBy ?? []).filter((u) => u !== user.userId)
+            : [...(m.starredBy ?? []), user.userId];
+          return { ...m, starredBy: next };
+        }),
+      );
       for (const m of selectedMessages) {
         await toggleMessageStar(thread.chatId, m.messageId || m.id, user.userId);
       }
@@ -560,6 +643,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             style: 'destructive',
             onPress: async () => {
               warningHaptic();
+              const selectedSet = new Set(selectedMessages.map((m) => m.messageId || m.id));
+              setMessages((prev) =>
+                prev.map((m) =>
+                  selectedSet.has(m.messageId || m.id)
+                    ? { ...m, deletedFor: Array.from(new Set([...(m.deletedFor ?? []), user.userId])) }
+                    : m,
+                ),
+              );
               for (const m of selectedMessages) {
                 await markMessageDeletedForUser(thread.chatId, m.messageId || m.id, user.userId);
               }
@@ -582,6 +673,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             style: 'destructive',
             onPress: async () => {
               warningHaptic();
+              const selectedSet = new Set(selectedMessages.map((m) => m.messageId || m.id));
+              setMessages((prev) =>
+                prev.map((m) =>
+                  selectedSet.has(m.messageId || m.id)
+                    ? { ...m, deletedForEveryone: true, content: '' }
+                    : m,
+                ),
+              );
               for (const m of selectedMessages) {
                 await deleteMessageForEveryone(thread.chatId, m.messageId || m.id);
               }
@@ -945,6 +1044,15 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     return map;
   }, [thread.participants, user?.userId]);
 
+  // Full participant name map including the current user — used by ReactionDetailsSheet.
+  const allParticipantNames = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of thread.participants) {
+      map.set(p.userId, p.displayName || 'User');
+    }
+    return map;
+  }, [thread.participants]);
+
   const handleComposerSelectionChange = useCallback((event: { nativeEvent: { selection: { start: number; end: number } } }) => {
     composerSelectionRef.current = event.nativeEvent.selection;
   }, []);
@@ -1188,39 +1296,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               </GlassView>
             </TouchableOpacity>
             <View style={styles.headerCallActions}>
-              <TouchableOpacity
-                onPress={() => {
-                  lightHaptic();
-                  setSearchOpen(true);
-                  setSearchQuery('');
-                }}
-                style={styles.headerCallButton}
-                activeOpacity={0.7}
-                accessibilityLabel="Search in chat"
-              >
-                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
-                  <Icon source="magnify" size={18} color={theme.colors.primary} />
-                </GlassView>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                  lightHaptic();
-                  // @ts-ignore
-                  navigation.navigate(ROUTES.APP.CHAT_MEDIA_GALLERY, {
-                    chatId: thread.chatId,
-                    title: 'Media',
-                    backTitle: title,
-                    participants: thread.participants,
-                  });
-                }}
-                style={styles.headerCallButton}
-                activeOpacity={0.7}
-                accessibilityLabel="Chat media gallery"
-              >
-                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
-                  <Icon source="image-multiple-outline" size={18} color={theme.colors.primary} />
-                </GlassView>
-              </TouchableOpacity>
               <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
                 <GlassView style={styles.headerCallButtonGlass} intensity={40}>
                   <Icon source="phone" size={18} color={theme.colors.primary} />
@@ -1229,6 +1304,19 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Video call">
                 <GlassView style={styles.headerCallButtonGlass} intensity={40}>
                   <Icon source="video" size={18} color={theme.colors.primary} />
+                </GlassView>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  lightHaptic();
+                  setHeaderMenuOpen(true);
+                }}
+                style={styles.headerCallButton}
+                activeOpacity={0.7}
+                accessibilityLabel="More options"
+              >
+                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                  <Icon source="dots-vertical" size={18} color={theme.colors.primary} />
                 </GlassView>
               </TouchableOpacity>
             </View>
@@ -1458,6 +1546,50 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         onSendLocation={handleSendLocation}
       />
 
+      {/* Header overflow menu */}
+      <HeaderMenu
+        visible={headerMenuOpen}
+        topInset={insets.top}
+        onClose={() => setHeaderMenuOpen(false)}
+        items={[
+          {
+            key: 'search',
+            label: 'Search',
+            icon: 'search',
+            onPress: () => {
+              setSearchOpen(true);
+              setSearchQuery('');
+            },
+          },
+          {
+            key: 'media',
+            label: 'Media, links & docs',
+            icon: 'images-outline',
+            onPress: () => {
+              // @ts-ignore
+              navigation.navigate(ROUTES.APP.CHAT_MEDIA_GALLERY, {
+                chatId: thread.chatId,
+                title: 'Media',
+                backTitle: title,
+                participants: thread.participants,
+              });
+            },
+          },
+          {
+            key: 'starred',
+            label: 'Starred messages',
+            icon: 'star-outline',
+            onPress: () => {
+              // @ts-ignore
+              navigation.navigate(ROUTES.APP.STARRED_MESSAGES, {
+                chatId: thread.chatId,
+                title: title,
+              });
+            },
+          },
+        ] satisfies HeaderMenuItem[]}
+      />
+
       {/* Pinned messages bar — anchored under the header pill, above the message list */}
       {(thread.pinnedMessages?.length ?? 0) > 0 && !searchOpen && !selectionMode && (
         <PinnedMessagesBar
@@ -1556,6 +1688,23 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         onSelect={handleForwardSelect}
       />
 
+      {/* Reaction details sheet */}
+      <ReactionDetailsSheet
+        visible={!!reactionTarget}
+        reactions={reactionTarget?.reactions}
+        currentUserId={user?.userId}
+        participantNames={allParticipantNames}
+        onRemoveReaction={async (emoji) => {
+          if (!reactionTarget || !user) return;
+          const targetId = reactionTarget.messageId || reactionTarget.id;
+          const next = await toggleMessageReaction(thread.chatId, targetId, user.userId, emoji);
+          if (next !== undefined) {
+            void publishMessageState(thread.chatId, targetId, { reactions: next });
+          }
+        }}
+        onClose={() => setReactionTarget(null)}
+      />
+
       {/* Media Processing Overlay — driven by keyed loading state */}
       <LoadingOverlay visible={mediaPipelineLoading.loading} message={mediaPipelineLoading.message ?? 'Processing media…'} />
 
@@ -1591,6 +1740,7 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 8,
     paddingBottom: 10,
+    paddingTop: 24,
   },
   composerWrapper: {
     marginTop: -20,
@@ -1711,19 +1861,19 @@ const styles = StyleSheet.create({
   },
   headerPill: {
     paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
+    paddingRight: 14,
     borderRadius: 50,
   },
   headerPillContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
   },
   headerTitle: {
     fontWeight: '700',
-    fontSize: 17,
+    fontSize: 16,
     flexShrink: 1,
-    textAlign: 'center',
   },
   headerTypingText: {
     fontSize: 11,
