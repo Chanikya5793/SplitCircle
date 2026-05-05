@@ -869,8 +869,8 @@ const FullScreenViewer = ({
 
         {/* Hidden preloaders — keep adjacent images decoded in the RN image
             cache so the swipe-to-next animation lands on a fully rendered
-            frame, not a 1–3s black gap. Tiny size so they don't waste memory
-            but still trigger a network/disk fetch. */}
+            frame, not a 1–3s black gap. Render size must match the visible
+            image size for the RN cache hit to bypass decoding. */}
         {prevPreloadUri ? (
           <Image
             source={{ uri: prevPreloadUri }}
@@ -1451,7 +1451,12 @@ export const ChatMediaGalleryScreen = () => {
         initialIndex={viewerIndex}
         senderMap={senderMap}
         visible={viewerVisible}
-        onClose={() => setViewerVisible(false)}
+        onClose={() => {
+          setViewerVisible(false);
+          if (params.initialMessageId) {
+            navigation.goBack();
+          }
+        }}
       />
     </LiquidBackground>
   );
@@ -1602,10 +1607,10 @@ const styles = StyleSheet.create({
   // the prev/next item without it being seen by the user.
   preloadImage: {
     position: 'absolute',
-    top: -10,
-    left: -10,
-    width: 1,
-    height: 1,
+    top: 0,
+    left: 0,
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
     opacity: 0,
   },
   viewerTopBar: {
