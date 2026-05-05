@@ -552,12 +552,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
         console.log(`✅ ${type} message sent and queued`);
 
-        const threadMessage = { ...message };
-        delete (threadMessage as { localMediaPath?: string }).localMediaPath;
-        const cleanMessage = removeUndefined({ ...threadMessage, createdAt: serverTimestamp() });
-
         await updateDoc(doc(db, 'chats', chatId), {
-          lastMessage: cleanMessage,
           groupId: groupId ?? null,
           updatedAt: Date.now(),
         });
@@ -664,7 +659,6 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         messageId: message.messageId,
         pinnedBy: user.userId,
         pinnedAt: Date.now(),
-        contentPreview: message.content?.slice(0, 140),
         type: message.type,
         senderId: message.senderId,
       };
