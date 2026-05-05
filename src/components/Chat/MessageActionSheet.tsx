@@ -43,7 +43,8 @@ interface MessageActionSheetProps {
   isGroupChat: boolean;
   isStarred: boolean;
   isPinned: boolean;
-  currentUserReaction?: string;
+  /** Emojis the current user has already reacted with — all are highlighted in the strip. */
+  currentUserReactions?: string[];
   /** Whether the message is editable — only own text messages within an edit window. */
   canEdit: boolean;
   /** Whether the message can be deleted for everyone (own message within window). */
@@ -60,7 +61,7 @@ export const MessageActionSheet = ({
   isGroupChat,
   isStarred,
   isPinned,
-  currentUserReaction,
+  currentUserReactions,
   canEdit,
   canDeleteForEveryone,
   onClose,
@@ -115,8 +116,8 @@ export const MessageActionSheet = ({
     handleClose();
   };
 
-  const surface = isDark ? 'rgba(28,28,32,0.98)' : 'rgba(255,255,255,0.98)';
-  const divider = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  const surface = (theme.colors as any).elevation?.level3 ?? theme.colors.surface;
+  const divider = theme.colors.outlineVariant ?? (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)');
 
   const items: Array<{
     key: MessageAction;
@@ -170,7 +171,7 @@ export const MessageActionSheet = ({
           {/* Reaction row */}
           <Animated.View style={[styles.reactionRow, { backgroundColor: surface }, reactionStripStyle]}>
             {QUICK_REACTIONS.map((emoji) => {
-              const active = currentUserReaction === emoji;
+              const active = currentUserReactions?.includes(emoji) ?? false;
               return (
                 <TouchableOpacity
                   key={emoji}
@@ -178,11 +179,15 @@ export const MessageActionSheet = ({
                   style={[
                     styles.reactionButton,
                     active && {
-                      backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
+                      backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.1)',
+                      borderWidth: 1.5,
+                      borderColor: theme.colors.primary,
                     },
                   ]}
                   activeOpacity={0.7}
                   hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel={active ? `Remove ${emoji} reaction` : `React with ${emoji}`}
                 >
                   <Text style={styles.reactionEmoji}>{emoji}</Text>
                 </TouchableOpacity>

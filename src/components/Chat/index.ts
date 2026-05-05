@@ -7,6 +7,7 @@ export { MessageActionSheet } from './MessageActionSheet';
 export type { MessageAction } from './MessageActionSheet';
 export { LinkPreview } from './LinkPreview';
 export { ReactionsRow } from './ReactionsRow';
+export { EmojiPickerSheet } from './EmojiPickerSheet';
 export { ForwardPickerSheet } from './ForwardPickerSheet';
 export { PinnedMessagesBar } from './PinnedMessagesBar';
 export { MentionAutocomplete } from './MentionAutocomplete';

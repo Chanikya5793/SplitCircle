@@ -42,7 +42,8 @@ export interface SelectedMedia {
 interface AttachmentMenuProps {
   visible: boolean;
   onClose: () => void;
-  onMediaSelected: (media: SelectedMedia) => void | Promise<void>;
+  /** Receives a single selection (camera/document/audio/location) or an ordered batch (gallery photos+videos). */
+  onMediaSelected: (media: SelectedMedia | SelectedMedia[]) => void | Promise<void>;
 }
 
 interface AttachmentOption {
@@ -106,16 +107,9 @@ const ATTACHMENT_OPTIONS: AttachmentOption[] = [
   {
     id: 'image',
     icon: 'images',
-    label: 'Gallery',
+    label: 'Photos & Videos',
     color: '#FFFFFF',
     backgroundColor: '#9C27B0',
-  },
-  {
-    id: 'video',
-    icon: 'videocam',
-    label: 'Video',
-    color: '#FFFFFF',
-    backgroundColor: '#FF5722',
   },
   {
     id: 'document',
@@ -163,9 +157,8 @@ const getProcessingMessage = (type: AttachmentType): string => {
 const getSelectionMessage = (type: AttachmentType): string => {
   switch (type) {
     case 'video':
-      return 'Opening video library…';
     case 'image':
-      return 'Opening photo library…';
+      return 'Opening media library…';
     case 'camera':
       return 'Opening camera…';
     case 'document':
@@ -232,8 +225,9 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       }
     });
 
+  const menuSurface = (theme.colors as any).elevation?.level3 ?? theme.colors.surface;
   const menuStyle = useAnimatedStyle(() => ({
-    backgroundColor: isDark ? 'rgba(30, 30, 30, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+    backgroundColor: menuSurface,
     transform: [{ translateY: slideAnim.value }],
   }));
 
@@ -307,7 +301,9 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     }
   }, [onMediaSelected]);
 
-  const handleGalleryImage = useCallback(async () => {
+  // Batch picker — photos and videos, mixed order, up to 10 items in one tap.
+  // Each item ships as its own message, in pick order.
+  const handleGalleryMedia = useCallback(async () => {
     const hasPermission = await requestMediaLibraryPermission();
     if (!hasPermission) {
       setStatus(null);
@@ -316,80 +312,66 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: 'images',
+        mediaTypes: ['images', 'videos'],
         quality: 0.8,
-        allowsMultipleSelection: false,
+        allowsMultipleSelection: true,
+        selectionLimit: 10,
+        orderedSelection: true,
         allowsEditing: false,
         exif: false,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        const asset = result.assets[0];
-        setStatus({ type: 'image', message: getProcessingMessage('image') });
-        await new Promise<void>((resolve) => {
-          requestAnimationFrame(() => resolve());
-        });
-        await Promise.resolve(onMediaSelected({
-          type: 'image',
-          uri: asset.uri,
-          fileName: asset.fileName || `IMG_${Date.now()}.jpg`,
-          fileSize: asset.fileSize,
-          mimeType: asset.mimeType || 'image/jpeg',
-          width: asset.width,
-          height: asset.height,
-        }));
-      } else {
-        setStatus(null);
-      }
-    } catch (error) {
-      console.error('Gallery image error:', error);
-      setStatus(null);
-      Alert.alert('Selection Error', 'Failed to select image. Please try again.');
-    }
-  }, [onMediaSelected]);
-
-  const handleGalleryVideo = useCallback(async () => {
-    const hasPermission = await requestMediaLibraryPermission();
-    if (!hasPermission) {
-      setStatus(null);
-      return;
-    }
-
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: 'videos',
-        allowsMultipleSelection: false,
-        exif: false,
-        // Use medium quality preset to avoid PHPhotosErrorDomain error 3164 on iOS
-        // This ensures proper video transcoding for iCloud-stored videos
         videoExportPreset: ImagePicker.VideoExportPreset.MediumQuality,
-        // Video quality setting (0-1)
         videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       });
 
-      if (!result.canceled && result.assets[0]) {
-        const asset = result.assets[0];
-        setStatus({ type: 'video', message: getProcessingMessage('video') });
-        await new Promise<void>((resolve) => {
-          requestAnimationFrame(() => resolve());
-        });
-        await Promise.resolve(onMediaSelected({
-          type: 'video',
-          uri: asset.uri,
-          fileName: asset.fileName || `VID_${Date.now()}.mp4`,
-          fileSize: asset.fileSize,
-          mimeType: asset.mimeType || 'video/mp4',
-          width: asset.width,
-          height: asset.height,
-          duration: asset.duration ?? undefined,
-        }));
-      } else {
+      if (result.canceled || !result.assets?.length) {
         setStatus(null);
+        return;
       }
+
+      const assets = result.assets;
+      const hasVideo = assets.some((a) => a.type === 'video');
+      setStatus({
+        type: hasVideo ? 'video' : 'image',
+        message:
+          assets.length > 1
+            ? `Preparing ${assets.length} items…`
+            : getProcessingMessage(hasVideo ? 'video' : 'image'),
+      });
+
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+
+      const batch: SelectedMedia[] = assets.map((asset) => {
+        const isVideo = asset.type === 'video';
+        const stamp = Date.now();
+        return isVideo
+          ? {
+              type: 'video',
+              uri: asset.uri,
+              fileName: asset.fileName || `VID_${stamp}.mp4`,
+              fileSize: asset.fileSize,
+              mimeType: asset.mimeType || 'video/mp4',
+              width: asset.width,
+              height: asset.height,
+              duration: asset.duration ?? undefined,
+            }
+          : {
+              type: 'image',
+              uri: asset.uri,
+              fileName: asset.fileName || `IMG_${stamp}.jpg`,
+              fileSize: asset.fileSize,
+              mimeType: asset.mimeType || 'image/jpeg',
+              width: asset.width,
+              height: asset.height,
+            };
+      });
+
+      await Promise.resolve(onMediaSelected(batch.length === 1 ? batch[0] : batch));
     } catch (error) {
-      console.error('Gallery video error:', error);
+      console.error('Gallery media error:', error);
       setStatus(null);
-      Alert.alert('Selection Error', 'Failed to select video. Please try again.');
+      Alert.alert('Selection Error', 'Failed to select media. Please try again.');
     }
   }, [onMediaSelected]);
 
@@ -480,10 +462,8 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           await handleCamera();
           break;
         case 'image':
-          await handleGalleryImage();
-          break;
         case 'video':
-          await handleGalleryVideo();
+          await handleGalleryMedia();
           break;
         case 'document':
           await handleDocument();
@@ -505,8 +485,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     handleAudio,
     handleCamera,
     handleDocument,
-    handleGalleryImage,
-    handleGalleryVideo,
+    handleGalleryMedia,
     handleLocation,
     runAttachmentSelection,
   ]);
@@ -563,7 +542,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           >
             {/* Handle */}
             <View style={styles.handleContainer}>
-              <View style={[styles.handle, { backgroundColor: isDark ? '#555' : '#ccc' }]} />
+              <View style={[styles.handle, { backgroundColor: theme.colors.outlineVariant ?? (isDark ? '#555' : '#ccc') }]} />
             </View>
 
             {/* Processing indicator — shown after native picker returns */}
@@ -588,7 +567,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
                 <TouchableOpacity
                   style={[
                     styles.cancelButton,
-                    { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' },
+                    { backgroundColor: theme.colors.surfaceVariant ?? (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)') },
                     selectingAttachment && { opacity: 0.5 },
                   ]}
                   onPress={selectingAttachment ? undefined : onClose}

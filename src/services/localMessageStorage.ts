@@ -310,11 +310,11 @@ export const markMessagesRead = async (
   }
 };
 
-// Toggle a single emoji reaction for a user on a message.
-// If the user already reacted with that emoji it is removed; otherwise the
-// user's prior reaction (if any) is replaced with the new emoji — WhatsApp
-// allows only one reaction per user per message. Returns the next reactions
-// map so the caller can broadcast it via messageState.
+// Toggle a single emoji reaction for a user on a message. Slack/Discord-style:
+// each user can stack multiple distinct emoji on the same message. Toggling
+// only affects the target emoji entry — other reactions by this user are
+// untouched. Returns the next reactions map so the caller can broadcast it
+// via messageState.
 export const toggleMessageReaction = async (
   chatId: string,
   messageId: string,
@@ -332,21 +332,16 @@ export const toggleMessageReaction = async (
       const message = messages[idx];
       const reactions: Record<string, string[]> = { ...(message.reactions ?? {}) };
 
-      let alreadyReactedSameEmoji = false;
-      for (const key of Object.keys(reactions)) {
-        const users = reactions[key].filter((u) => u !== userId);
-        if (key === emoji && reactions[key].includes(userId)) {
-          alreadyReactedSameEmoji = true;
-        }
-        if (users.length === 0) {
-          delete reactions[key];
-        } else {
-          reactions[key] = users;
-        }
+      const usersForEmoji = new Set(reactions[emoji] ?? []);
+      if (usersForEmoji.has(userId)) {
+        usersForEmoji.delete(userId);
+      } else {
+        usersForEmoji.add(userId);
       }
-
-      if (!alreadyReactedSameEmoji) {
-        reactions[emoji] = [...(reactions[emoji] ?? []), userId];
+      if (usersForEmoji.size === 0) {
+        delete reactions[emoji];
+      } else {
+        reactions[emoji] = Array.from(usersForEmoji);
       }
 
       messages[idx] = { ...message, reactions };
@@ -356,6 +351,47 @@ export const toggleMessageReaction = async (
     });
   } catch (error) {
     console.error('❌ Error toggling reaction:', error);
+  }
+  return result;
+};
+
+// Strip all of a user's reactions from a message (used by the "Remove all"
+// affordance in the reaction details sheet). Returns the next reactions map.
+export const removeAllReactionsForUser = async (
+  chatId: string,
+  messageId: string,
+  userId: string
+): Promise<import('@/models').ReactionMap | undefined> => {
+  let result: import('@/models').ReactionMap | undefined;
+  try {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      const idx = messages.findIndex((m) => m.id === messageId || m.messageId === messageId);
+      if (idx < 0) return;
+
+      const message = messages[idx];
+      const reactions: Record<string, string[]> = { ...(message.reactions ?? {}) };
+
+      let mutated = false;
+      for (const emoji of Object.keys(reactions)) {
+        const users = reactions[emoji].filter((u) => u !== userId);
+        if (users.length !== reactions[emoji].length) mutated = true;
+        if (users.length === 0) delete reactions[emoji];
+        else reactions[emoji] = users;
+      }
+      if (!mutated) {
+        result = message.reactions;
+        return;
+      }
+
+      messages[idx] = { ...message, reactions };
+      result = reactions;
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      notifyMessageListeners(chatId);
+    });
+  } catch (error) {
+    console.error('❌ Error removing all reactions:', error);
   }
   return result;
 };

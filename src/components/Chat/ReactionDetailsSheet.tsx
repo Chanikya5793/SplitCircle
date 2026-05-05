@@ -1,7 +1,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import type { ReactionMap } from '@/models';
 import { BlurView } from 'expo-blur';
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Text } from 'react-native-paper';
 import Animated, { SlideInDown } from 'react-native-reanimated';
@@ -13,22 +13,31 @@ interface ReactionDetailsSheetProps {
   /** Map of userId → displayName */
   participantNames?: Map<string, string>;
   onRemoveReaction?: (emoji: string) => void;
+  /** Strip every reaction by the current user from this message. */
+  onRemoveAll?: () => void;
   onClose: () => void;
 }
 
-export const ReactionDetailsSheet = ({
+export const ReactionDetailsSheet = memo(({
   visible,
   reactions,
   currentUserId,
   participantNames,
   onRemoveReaction,
+  onRemoveAll,
   onClose,
 }: ReactionDetailsSheetProps) => {
   const { theme, isDark } = useTheme();
 
-  const entries = reactions
-    ? Object.entries(reactions).filter(([, users]) => users.length > 0)
-    : [];
+  const entries = useMemo(
+    () => (reactions ? Object.entries(reactions).filter(([, users]) => users.length > 0) : []),
+    [reactions]
+  );
+
+  const myReactionCount = useMemo(() => {
+    if (!currentUserId) return 0;
+    return entries.reduce((acc, [, users]) => acc + (users.includes(currentUserId) ? 1 : 0), 0);
+  }, [entries, currentUserId]);
 
   const getUserName = (userId: string): string => {
     if (userId === currentUserId) return 'You';
@@ -39,6 +48,15 @@ export const ReactionDetailsSheet = ({
     onClose();
     onRemoveReaction?.(emoji);
   };
+
+  const handleRemoveAll = () => {
+    onClose();
+    onRemoveAll?.();
+  };
+
+  const surface = (theme.colors as any).elevation?.level3 ?? theme.colors.surface;
+  const myRowBg = `${theme.colors.primary}1A`; // ~10% primary
+  const avatarBg = theme.colors.surfaceVariant ?? (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)');
 
   return (
     <Modal
@@ -55,9 +73,7 @@ export const ReactionDetailsSheet = ({
         />
       </Pressable>
       <Animated.View style={styles.sheetAnchor} entering={SlideInDown.duration(300)}>
-        <View style={[styles.sheet, {
-          backgroundColor: isDark ? '#1c1c2e' : '#fff',
-        }]}>
+        <View style={[styles.sheet, { backgroundColor: surface }]}>
           <View style={styles.sheetHandle} />
           <Text
             variant="titleSmall"
@@ -65,6 +81,21 @@ export const ReactionDetailsSheet = ({
           >
             Reactions
           </Text>
+
+          {myReactionCount >= 2 && (
+            <TouchableOpacity
+              onPress={handleRemoveAll}
+              style={[styles.removeAllButton, { borderColor: theme.colors.error }]}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Remove all my reactions from this message"
+            >
+              <Text style={[styles.removeAllText, { color: theme.colors.error }]}>
+                Remove all my reactions
+              </Text>
+            </TouchableOpacity>
+          )}
+
           <ScrollView
             bounces={false}
             showsVerticalScrollIndicator={false}
@@ -85,19 +116,17 @@ export const ReactionDetailsSheet = ({
                       key={userId}
                       style={[
                         styles.reactorRow,
-                        {
-                          backgroundColor: isMe
-                            ? (isDark ? 'rgba(53,198,255,0.1)' : 'rgba(31,111,235,0.06)')
-                            : 'transparent',
-                        },
+                        { backgroundColor: isMe ? myRowBg : 'transparent' },
                       ]}
                       activeOpacity={isMe ? 0.6 : 1}
                       onPress={isMe ? () => handleRemove(emoji) : undefined}
                       disabled={!isMe}
+                      accessibilityRole={isMe ? 'button' : undefined}
+                      accessibilityLabel={isMe ? `Remove your ${emoji} reaction` : `${getUserName(userId)} reacted with ${emoji}`}
                     >
                       <View style={styles.reactorInfo}>
-                        <View style={[styles.reactorAvatar, { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)' }]}>
-                          <Text style={styles.reactorInitial}>
+                        <View style={[styles.reactorAvatar, { backgroundColor: avatarBg }]}>
+                          <Text style={[styles.reactorInitial, { color: theme.colors.onSurface }]}>
                             {getUserName(userId).charAt(0).toUpperCase()}
                           </Text>
                         </View>
@@ -125,12 +154,14 @@ export const ReactionDetailsSheet = ({
       </Animated.View>
     </Modal>
   );
-};
+});
+
+ReactionDetailsSheet.displayName = 'ReactionDetailsSheet';
 
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.1)', // Light fallback
+    backgroundColor: 'rgba(0,0,0,0.1)',
   },
   sheetAnchor: {
     position: 'absolute',
@@ -143,7 +174,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 22,
     paddingBottom: 40,
     paddingTop: 12,
-    maxHeight: 400,
+    maxHeight: 460,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.18,
@@ -161,8 +192,21 @@ const styles = StyleSheet.create({
   sheetTitle: {
     fontWeight: '700',
     textAlign: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
     fontSize: 16,
+  },
+  removeAllButton: {
+    alignSelf: 'center',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+  },
+  removeAllText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   sheetScroll: {
     paddingHorizontal: 16,

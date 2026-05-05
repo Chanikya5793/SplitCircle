@@ -276,7 +276,7 @@ const VideoPlayerComponent = ({ uri, style, showControls = true, showOverlay = f
   );
 };
 
-export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, onReplyPress, onMediaPress, onLongPress, onReactionsPress, onFilePress, onDoubleTap, selectionMode, selected, onToggleSelect, onMentionPress, searchQuery, mentionLabels, isGroupChat, totalRecipients, highlighted, dimmed }: MessageBubbleProps) => {
+const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, onReplyPress, onMediaPress, onLongPress, onReactionsPress, onFilePress, onDoubleTap, selectionMode, selected, onToggleSelect, onMentionPress, searchQuery, mentionLabels, isGroupChat, totalRecipients, highlighted, dimmed }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
@@ -1271,6 +1271,50 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     </>
   );
 };
+
+// Custom equality — re-render only when fields the bubble actually renders
+// from change. Handlers from the parent (onLongPress, onMediaPress, etc.) are
+// stable refs from useCallback, so identity comparison is enough.
+const messagesEqual = (a: ChatMessage, b: ChatMessage) =>
+  a.id === b.id &&
+  a.messageId === b.messageId &&
+  a.content === b.content &&
+  a.status === b.status &&
+  a.editedAt === b.editedAt &&
+  a.deletedForEveryone === b.deletedForEveryone &&
+  a.localMediaPath === b.localMediaPath &&
+  a.mediaUrl === b.mediaUrl &&
+  a.urlPreview === b.urlPreview &&
+  a.reactions === b.reactions &&
+  a.starredBy === b.starredBy &&
+  a.readBy === b.readBy &&
+  a.deliveredTo === b.deliveredTo;
+
+export const MessageBubble = React.memo(MessageBubbleInner, (prev, next) => {
+  return (
+    messagesEqual(prev.message, next.message) &&
+    prev.showSenderInfo === next.showSenderInfo &&
+    prev.senderName === next.senderName &&
+    prev.selectionMode === next.selectionMode &&
+    prev.selected === next.selected &&
+    prev.searchQuery === next.searchQuery &&
+    prev.mentionLabels === next.mentionLabels &&
+    prev.isGroupChat === next.isGroupChat &&
+    prev.totalRecipients === next.totalRecipients &&
+    prev.highlighted === next.highlighted &&
+    prev.dimmed === next.dimmed &&
+    prev.onSwipeReply === next.onSwipeReply &&
+    prev.onSwipeInfo === next.onSwipeInfo &&
+    prev.onReplyPress === next.onReplyPress &&
+    prev.onMediaPress === next.onMediaPress &&
+    prev.onLongPress === next.onLongPress &&
+    prev.onReactionsPress === next.onReactionsPress &&
+    prev.onFilePress === next.onFilePress &&
+    prev.onDoubleTap === next.onDoubleTap &&
+    prev.onToggleSelect === next.onToggleSelect &&
+    prev.onMentionPress === next.onMentionPress
+  );
+});
 
 const styles = StyleSheet.create({
   systemContainer: {
