@@ -300,6 +300,11 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
   );
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState(false);
+  // Tracks whether the current `mediaUri` has failed to load so we can fall
+  // back to the remote URL — covers the case where `localMediaPath` is stale
+  // (file evicted from cache, app reinstalled, etc.) and the on-disk check
+  // hasn't yet caught up before render.
+  const [mediaLoadFailed, setMediaLoadFailed] = useState(false);
 
   // Link preview
   const detectedUrl = useMemo(
@@ -341,17 +346,21 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
 
   // Check and download media if needed
   useEffect(() => {
+    let cancelled = false;
     const checkAndDownloadMedia = async () => {
       if (message.type === 'text' || message.type === 'system' || message.type === 'call') {
         return;
       }
       if (message.localMediaPath) {
         const exists = await mediaExistsLocally(message.localMediaPath);
+        if (cancelled) return;
         if (exists) {
           setMediaUri(message.localMediaPath);
+          setMediaLoadFailed(false);
           return;
         }
       }
+      // Local path is missing or stale — try the remote URL.
       if (message.mediaUrl && !message.isFromMe) {
         setIsDownloading(true);
         setDownloadError(false);
@@ -363,20 +372,43 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
             message.messageId || message.id,
             fileName
           );
+          if (cancelled) return;
           setMediaUri(result.localPath);
+          setMediaLoadFailed(false);
         } catch (error) {
+          if (cancelled) return;
           console.error('❌ Failed to download media:', error);
           setDownloadError(true);
+          // Fall back to streaming the remote URL directly so the user can at
+          // least see the image even if persistent caching failed.
           setMediaUri(message.mediaUrl);
+          setMediaLoadFailed(false);
         } finally {
-          setIsDownloading(false);
+          if (!cancelled) setIsDownloading(false);
         }
       } else if (message.mediaUrl) {
+        // Sender side, or no permission to download — point at the remote URL.
         setMediaUri(message.mediaUrl);
+        setMediaLoadFailed(false);
       }
     };
     checkAndDownloadMedia();
+    return () => {
+      cancelled = true;
+    };
   }, [message.localMediaPath, message.mediaUrl, message.type, message.isFromMe, message.chatId, message.messageId, message.id, message.mediaMetadata?.fileName]);
+
+  // If the displayed URI fails to load (stale local file, expired token,
+  // network blip), fall back to the remote URL once. Without this, a broken
+  // local path leaves the bubble stuck on its loading spinner forever.
+  const handleMediaLoadError = useCallback(() => {
+    setImageLoading(false);
+    if (mediaLoadFailed) return;
+    setMediaLoadFailed(true);
+    if (message.mediaUrl && mediaUri !== message.mediaUrl) {
+      setMediaUri(message.mediaUrl);
+    }
+  }, [mediaLoadFailed, mediaUri, message.mediaUrl]);
 
   useEffect(() => {
     setLivePreview(message.urlPreview);
@@ -613,6 +645,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
             source={{ uri: mediaUri }}
             style={[styles.mediaImage, imageDimensions]}
             resizeMode="cover"
+            onError={handleMediaLoadError}
           />
           <View style={styles.uploadingOverlay}>
             <ActivityIndicator color="#fff" size="large" />
@@ -631,13 +664,14 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
       );
     }
 
-    // Show error state
-    if (downloadError && !mediaUri) {
+    // Show error state — both a download failure with no usable URI and the
+    // case where every URI we tried (local + remote) failed to render.
+    if ((downloadError && !mediaUri) || (mediaLoadFailed && !message.mediaUrl)) {
       return (
         <View style={[styles.mediaContainer, imageDimensions, styles.downloadingContainer]}>
           <Ionicons name="cloud-offline-outline" size={40} color={theme.colors.error} />
           <Text style={[styles.downloadingText, { color: theme.colors.error }]}>
-            Failed to download
+            Failed to load
           </Text>
         </View>
       );
@@ -671,6 +705,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
           resizeMode="cover"
           onLoadStart={() => setImageLoading(true)}
           onLoadEnd={() => setImageLoading(false)}
+          onError={handleMediaLoadError}
         />
         {resolutionLabel && !imageLoading && (
           <View style={styles.resolutionBadge}>

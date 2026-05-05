@@ -6,7 +6,8 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { getContentUriAsync, getInfoAsync, readAsStringAsync } from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
-import { useEffect, useState } from 'react';
+import * as WebBrowser from 'expo-web-browser';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -26,10 +27,45 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface FilePreviewParams {
   uri: string;
+  /**
+   * Optional public/Firebase URL. Used as the source for the in-app browser
+   * preview (PDFs render natively in SFSafariViewController / Chrome Custom
+   * Tabs; office docs route through the Google Docs viewer).
+   */
+  remoteUri?: string;
   fileName?: string;
   mimeType?: string;
   fileSize?: number;
 }
+
+type PreviewKind = 'image' | 'pdf' | 'text' | 'video' | 'audio' | 'unsupported';
+
+const HTTP_URL = /^https?:\/\//i;
+const OFFICE_DOC_PATTERN = /\.(docx?|xlsx?|pptx?)$/i;
+const OFFICE_MIME_PATTERN = /(msword|wordprocessingml|spreadsheetml|presentationml|ms-excel|ms-powerpoint)/i;
+
+const isOfficeDoc = (mimeType?: string, fileName?: string): boolean => {
+  if (mimeType && OFFICE_MIME_PATTERN.test(mimeType)) return true;
+  if (fileName && OFFICE_DOC_PATTERN.test(fileName)) return true;
+  return false;
+};
+
+const buildBrowserPreviewUrl = (
+  remoteUri: string,
+  kind: PreviewKind,
+  mimeType?: string,
+  fileName?: string,
+): string | null => {
+  if (!HTTP_URL.test(remoteUri)) return null;
+  // PDFs render natively in the system in-app browser on both platforms.
+  if (kind === 'pdf') return remoteUri;
+  // Office docs need an external renderer — the Google Docs viewer handles
+  // .doc/.docx/.xls/.xlsx/.ppt/.pptx without us shipping a native viewer.
+  if (isOfficeDoc(mimeType, fileName)) {
+    return `https://docs.google.com/viewer?url=${encodeURIComponent(remoteUri)}&embedded=true`;
+  }
+  return null;
+};
 
 const formatFileSize = (bytes?: number): string => {
   if (!bytes) return '';
@@ -37,8 +73,6 @@ const formatFileSize = (bytes?: number): string => {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
-
-type PreviewKind = 'image' | 'pdf' | 'text' | 'video' | 'audio' | 'unsupported';
 
 const detectKind = (mimeType?: string, fileName?: string): PreviewKind => {
   const mt = (mimeType ?? '').toLowerCase();
@@ -68,10 +102,13 @@ export const FilePreviewScreen = () => {
   const [textContent, setTextContent] = useState<string | null>(null);
   const [textLoading, setTextLoading] = useState(false);
   const [textError, setTextError] = useState<string | null>(null);
-
-  const [pdfPageInfo] = useState<{ current: number; total: number } | null>(null);
+  const [browserOpening, setBrowserOpening] = useState(false);
 
   const kind = detectKind(params.mimeType, params.fileName);
+  const browserPreviewUrl = params.remoteUri
+    ? buildBrowserPreviewUrl(params.remoteUri, kind, params.mimeType, params.fileName)
+    : null;
+  const hasInAppBrowserPreview = !!browserPreviewUrl;
 
   useEffect(() => {
     navigation.setOptions({ headerShown: false });
@@ -104,6 +141,26 @@ export const FilePreviewScreen = () => {
       cancelled = true;
     };
   }, [kind, params.uri]);
+
+  const handleOpenInBrowser = useCallback(async () => {
+    if (!browserPreviewUrl) return;
+    lightHaptic();
+    setBrowserOpening(true);
+    try {
+      await WebBrowser.openBrowserAsync(browserPreviewUrl, {
+        // Match the chat surface so the transition doesn't flash white.
+        toolbarColor: theme.colors.surface,
+        controlsColor: theme.colors.primary,
+        dismissButtonStyle: 'close',
+        showTitle: true,
+        enableBarCollapsing: true,
+      });
+    } catch (e) {
+      Alert.alert('Cannot Open', 'Unable to open the in-app preview.');
+    } finally {
+      setBrowserOpening(false);
+    }
+  }, [browserPreviewUrl, theme.colors.primary, theme.colors.surface]);
 
   const handleOpenExternally = async () => {
     lightHaptic();
@@ -163,17 +220,10 @@ export const FilePreviewScreen = () => {
         <Text numberOfLines={1} style={[styles.headerTitle, { color: theme.colors.onSurface }]}>
           {params.fileName || 'File'}
         </Text>
-        {kind === 'pdf' && pdfPageInfo ? (
+        {!!params.fileSize && (
           <Text style={[styles.headerSub, { color: theme.colors.onSurfaceVariant }]}>
-            Page {pdfPageInfo.current} of {pdfPageInfo.total}
-            {params.fileSize ? ` · ${formatFileSize(params.fileSize)}` : ''}
+            {formatFileSize(params.fileSize)}
           </Text>
-        ) : (
-          !!params.fileSize && (
-            <Text style={[styles.headerSub, { color: theme.colors.onSurfaceVariant }]}>
-              {formatFileSize(params.fileSize)}
-            </Text>
-          )
         )}
       </View>
       <TouchableOpacity
@@ -216,18 +266,52 @@ export const FilePreviewScreen = () => {
             PDF Document
           </Text>
           <Text style={[styles.unsupportedSub, { color: theme.colors.onSurfaceVariant }]}>
-            Open this PDF in your preferred app to view it.
+            {hasInAppBrowserPreview
+              ? 'Tap below to read this PDF without leaving the app.'
+              : 'Open this PDF in your preferred app to view it.'}
           </Text>
+          {hasInAppBrowserPreview && (
+            <TouchableOpacity
+              onPress={handleOpenInBrowser}
+              style={[styles.openButton, { backgroundColor: theme.colors.primary }]}
+              activeOpacity={0.85}
+              disabled={browserOpening}
+              accessibilityRole="button"
+              accessibilityLabel="Preview PDF in app"
+            >
+              {browserOpening ? (
+                <ActivityIndicator color={theme.colors.onPrimary} size="small" />
+              ) : (
+                <Ionicons name="eye-outline" size={18} color={theme.colors.onPrimary} />
+              )}
+              <Text style={[styles.openButtonText, { color: theme.colors.onPrimary }]}>
+                Preview in app
+              </Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             onPress={handleOpenExternally}
-            style={[styles.openButton, { backgroundColor: theme.colors.primary }]}
+            style={[
+              styles.openButton,
+              hasInAppBrowserPreview ? styles.openButtonSecondary : { backgroundColor: theme.colors.primary },
+              hasInAppBrowserPreview && { borderColor: theme.colors.primary },
+            ]}
             activeOpacity={0.85}
             accessibilityRole="button"
             accessibilityLabel="Open PDF with another app"
           >
-            <Ionicons name="open-outline" size={18} color={theme.colors.onPrimary} />
-            <Text style={[styles.openButtonText, { color: theme.colors.onPrimary }]}>
-              Open PDF
+            <Ionicons
+              name="open-outline"
+              size={18}
+              color={hasInAppBrowserPreview ? theme.colors.primary : theme.colors.onPrimary}
+            />
+            <Text
+              style={[
+                styles.openButtonText,
+                { color: hasInAppBrowserPreview ? theme.colors.primary : theme.colors.onPrimary },
+              ]}
+            >
+              {hasInAppBrowserPreview ? 'Open in another app' : 'Open PDF'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -271,8 +355,9 @@ export const FilePreviewScreen = () => {
     }
 
     // video / audio / unsupported — defer to the system. No native viewer
-    // bundled for these types; we open the share sheet so the user has a
-    // route forward instead of getting stuck on a blank screen.
+    // bundled for these types; we open the share sheet (or, when we have a
+    // remote URL for an Office doc, the in-app Google Docs viewer) so the
+    // user has a route forward instead of getting stuck on a blank screen.
     return (
       <View style={styles.center}>
         <Ionicons
@@ -287,20 +372,60 @@ export const FilePreviewScreen = () => {
           color={theme.colors.primary}
         />
         <Text style={[styles.unsupportedTitle, { color: theme.colors.onSurface }]}>
-          {kind === 'unsupported' ? 'Preview not available' : 'Open with system player'}
+          {hasInAppBrowserPreview
+            ? 'Preview document'
+            : kind === 'unsupported'
+              ? 'Preview not available'
+              : 'Open with system player'}
         </Text>
         <Text style={[styles.unsupportedSub, { color: theme.colors.onSurfaceVariant }]}>
-          This file type opens best in another app on your device.
+          {hasInAppBrowserPreview
+            ? 'Read this document inline without leaving the app.'
+            : 'This file type opens best in another app on your device.'}
         </Text>
+        {hasInAppBrowserPreview && (
+          <TouchableOpacity
+            onPress={handleOpenInBrowser}
+            style={[styles.openButton, { backgroundColor: theme.colors.primary }]}
+            activeOpacity={0.85}
+            disabled={browserOpening}
+            accessibilityRole="button"
+            accessibilityLabel="Preview document in app"
+          >
+            {browserOpening ? (
+              <ActivityIndicator color={theme.colors.onPrimary} size="small" />
+            ) : (
+              <Ionicons name="eye-outline" size={18} color={theme.colors.onPrimary} />
+            )}
+            <Text style={[styles.openButtonText, { color: theme.colors.onPrimary }]}>
+              Preview in app
+            </Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           onPress={handleOpenExternally}
-          style={[styles.openButton, { backgroundColor: theme.colors.primary }]}
+          style={[
+            styles.openButton,
+            hasInAppBrowserPreview ? styles.openButtonSecondary : { backgroundColor: theme.colors.primary },
+            hasInAppBrowserPreview && { borderColor: theme.colors.primary },
+          ]}
           activeOpacity={0.85}
           accessibilityRole="button"
           accessibilityLabel="Open with another app"
         >
-          <Ionicons name="open-outline" size={18} color={theme.colors.onPrimary} />
-          <Text style={[styles.openButtonText, { color: theme.colors.onPrimary }]}>Open</Text>
+          <Ionicons
+            name="open-outline"
+            size={18}
+            color={hasInAppBrowserPreview ? theme.colors.primary : theme.colors.onPrimary}
+          />
+          <Text
+            style={[
+              styles.openButtonText,
+              { color: hasInAppBrowserPreview ? theme.colors.primary : theme.colors.onPrimary },
+            ]}
+          >
+            {hasInAppBrowserPreview ? 'Open in another app' : 'Open'}
+          </Text>
         </TouchableOpacity>
       </View>
     );
@@ -330,15 +455,6 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 16, fontWeight: '700' },
   headerSub: { fontSize: 11, marginTop: 1 },
   imageWrap: { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
-  pdfContainer: { flex: 1 },
-  pdf: { flex: 1, width: SCREEN_WIDTH },
-  pdfLoadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-  },
-  pdfLoadingText: { fontSize: 13 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
   errorText: { fontSize: 14, textAlign: 'center' },
   textContent: { padding: 16 },
@@ -353,6 +469,10 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     gap: 8,
     marginTop: 6,
+  },
+  openButtonSecondary: {
+    backgroundColor: 'transparent',
+    borderWidth: StyleSheet.hairlineWidth,
   },
   openButtonText: { fontSize: 15, fontWeight: '600' },
 });

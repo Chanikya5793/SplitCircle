@@ -1,4 +1,3 @@
-import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -84,33 +83,44 @@ export const StarredMessagesScreen = () => {
 
   const surface = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
 
+  // Header sits below the status bar with extra breathing room so the title
+  // never crowds the back button or the device notch.
+  const HEADER_TOP_PAD = insets.top + 18;
+  const HEADER_HEIGHT = HEADER_TOP_PAD + 44 + 12; // top pad + button row + bottom pad
+
   return (
     <LiquidBackground>
-      <View style={[styles.headerRow, { paddingTop: insets.top + 6 }]}>
+      <View
+        style={[
+          styles.headerRow,
+          {
+            paddingTop: HEADER_TOP_PAD,
+            borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+          },
+        ]}
+      >
         <TouchableOpacity
           onPress={() => navigation.goBack()}
-          style={styles.backWrap}
-          hitSlop={8}
+          style={styles.headerBtn}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
-          <GlassView style={styles.backGlass} intensity={40}>
-            <Ionicons name="chevron-back" size={22} color={theme.colors.primary} />
-          </GlassView>
+          <Ionicons name="chevron-back" size={26} color={theme.colors.onSurface} />
         </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <GlassView style={styles.titlePill} intensity={40}>
-            <Ionicons name="star" size={16} color={theme.colors.primary} />
-            <Text style={[styles.titleText, { color: theme.colors.onSurface }]}>
-              Starred messages
-            </Text>
-          </GlassView>
-        </View>
-        <View style={{ width: 40 }} />
+        <Text
+          numberOfLines={1}
+          style={[styles.titleText, { color: theme.colors.onSurface }]}
+        >
+          Starred messages
+        </Text>
+        <View style={styles.headerBtn} />
       </View>
 
       <FlatList
         data={items}
         keyExtractor={(item) => `${item.message.chatId}_${item.message.messageId || item.message.id}`}
-        contentContainerStyle={[styles.list, { paddingTop: insets.top + 64 }]}
+        contentContainerStyle={[styles.list, { paddingTop: HEADER_HEIGHT + 12 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={theme.colors.primary} />}
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -161,22 +171,12 @@ const styles = StyleSheet.create({
     zIndex: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingBottom: 10,
-    gap: 6,
+    paddingHorizontal: 8,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backWrap: { width: 40, height: 40, borderRadius: 20, overflow: 'hidden' },
-  backGlass: { flex: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 20 },
-  titlePill: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 50,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    justifyContent: 'center',
-  },
-  titleText: { fontSize: 15, fontWeight: '700' },
+  headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  titleText: { flex: 1, fontSize: 18, fontWeight: '700', textAlign: 'center' },
   list: { padding: 16, gap: 10 },
   empty: { alignItems: 'center', justifyContent: 'center', paddingTop: 64, paddingHorizontal: 32, gap: 8 },
   emptyTitle: { fontSize: 16, fontWeight: '700' },

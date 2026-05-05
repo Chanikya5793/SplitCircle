@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatParticipant, MediaMetadata } from '@/models';
+import { mediaExistsLocally } from '@/services/mediaService';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -113,6 +114,61 @@ const getFileExt = (meta?: MediaMetadata): string => {
 
 const URL_REGEX = /(https?:\/\/[^\s]+)/g;
 
+// ─── media URI resolver ──────────────────────────────────────────────────────
+//
+// `localMediaPath` is preferred for offline/perf, but the saved path can be
+// stale (file evicted, app reinstalled → Documents UUID changed). When the
+// local file is missing we fall back to the remote URL so the gallery and
+// full-screen viewer don't render a broken `<Image>` / dead `<VideoView>`.
+//
+// Returns:
+//   - uri:      the URI to feed `<Image>` / `useVideoPlayer`
+//   - markFailed: call from `onError` to switch to the remote URL after a
+//     load failure (covers expired Firebase tokens etc.)
+
+const useResolvedMediaUri = (message: ChatMessage | undefined) => {
+  const localPath = message?.localMediaPath;
+  const remoteUrl = message?.mediaUrl;
+  const messageId = message?.messageId || message?.id;
+
+  const [uri, setUri] = useState<string | undefined>(localPath ?? remoteUrl);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    setUri(localPath ?? remoteUrl);
+    (async () => {
+      if (localPath) {
+        const exists = await mediaExistsLocally(localPath);
+        if (cancelled) return;
+        if (exists) {
+          setUri(localPath);
+          return;
+        }
+      }
+      if (remoteUrl) {
+        setUri(remoteUrl);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [messageId, localPath, remoteUrl]);
+
+  const markFailed = useCallback(() => {
+    setFailed((prev) => {
+      if (prev) return prev;
+      if (remoteUrl && uri !== remoteUrl) {
+        setUri(remoteUrl);
+      }
+      return true;
+    });
+  }, [remoteUrl, uri]);
+
+  return { uri, markFailed, failed };
+};
+
 // ─── tab config ───────────────────────────────────────────────────────────────
 
 type TabId = 'media' | 'docs' | 'links';
@@ -156,6 +212,8 @@ interface ZoomableImageProps {
   onDismiss: () => void;
   onSingleTap: () => void;
   onSwipeUp: () => void;
+  /** Called when the underlying `<Image>` fails to load — used to swap to the remote URL. */
+  onError?: () => void;
   hasNext: boolean;
   hasPrev: boolean;
   backdropOpacity: SharedValue<number>;
@@ -168,6 +226,7 @@ const ZoomableImage = React.memo(({
   onDismiss,
   onSingleTap,
   onSwipeUp,
+  onError,
   hasNext,
   hasPrev,
   backdropOpacity,
@@ -377,6 +436,7 @@ const ZoomableImage = React.memo(({
           source={{ uri }}
           style={styles.zoomableImage}
           resizeMode="contain"
+          onError={onError}
         />
       </Reanimated.View>
     </GestureDetector>
@@ -386,10 +446,31 @@ ZoomableImage.displayName = 'ZoomableImage';
 
 // ─── FullScreenVideoPlayer ────────────────────────────────────────────────────
 
-const FullScreenVideoPlayer = ({ uri }: { uri: string }) => {
+interface FullScreenVideoPlayerProps {
+  uri: string;
+  /** Fired when the player reports a fatal error (e.g. stale file path, unreachable URL). */
+  onError?: () => void;
+}
+
+const FullScreenVideoPlayer = ({ uri, onError }: FullScreenVideoPlayerProps) => {
   const player = useVideoPlayer(uri, (p) => {
     p.loop = false;
   });
+
+  // expo-video surfaces playback errors via the `statusChange` event. When the
+  // player's status flips to `error` we let the caller know so it can swap the
+  // URI (e.g. fall back from a stale local path to the remote URL).
+  useEffect(() => {
+    if (!onError) return;
+    const sub = player.addListener('statusChange', ({ status, error }) => {
+      if (status === 'error' || error) {
+        onError();
+      }
+    });
+    return () => {
+      sub.remove();
+    };
+  }, [player, onError]);
 
   return (
     <VideoView
@@ -415,6 +496,8 @@ interface VideoSwipeContainerProps {
   onSwipeNext: () => void;
   onSwipePrev: () => void;
   onSingleTap: () => void;
+  /** Forwarded to the underlying expo-video player. Fires on playback failure. */
+  onError?: () => void;
   hasNext: boolean;
   hasPrev: boolean;
   backdropOpacity: SharedValue<number>;
@@ -427,6 +510,7 @@ const VideoSwipeContainer = React.memo(({
   onSwipeNext,
   onSwipePrev,
   onSingleTap,
+  onError,
   hasNext,
   hasPrev,
   backdropOpacity,
@@ -534,7 +618,7 @@ const VideoSwipeContainer = React.memo(({
   return (
     <GestureDetector gesture={composed}>
       <Reanimated.View style={[styles.zoomableContainer, animStyle]}>
-        <FullScreenVideoPlayer uri={uri} />
+        <FullScreenVideoPlayer uri={uri} onError={onError} />
       </Reanimated.View>
     </GestureDetector>
   );
@@ -734,14 +818,45 @@ const FullScreenViewer = ({
     opacity: backdropOpacity.value,
   }));
 
+  // Resolve the URI for the currently-visible item with local→remote fallback.
+  // Hook must run unconditionally on every render (no early-returning above it).
+  const currentMessage = messages[currentIndex];
+  const { uri: mediaUri, markFailed } = useResolvedMediaUri(currentMessage);
+
+  // Adjacent items — used to prefetch their media so the next/prev swipe
+  // resolves to a cached image instantly instead of flashing black for 1–3s
+  // while a fresh load runs. Only image items share a cache with `<Image>`;
+  // videos use a separate decoder pipeline so we leave them alone here.
+  const prevMessage = currentIndex > 0 ? messages[currentIndex - 1] : undefined;
+  const nextMessage =
+    currentIndex < messages.length - 1 ? messages[currentIndex + 1] : undefined;
+  const prevPreloadUri =
+    prevMessage?.type === 'image'
+      ? (prevMessage.localMediaPath ?? prevMessage.mediaUrl)
+      : undefined;
+  const nextPreloadUri =
+    nextMessage?.type === 'image'
+      ? (nextMessage.localMediaPath ?? nextMessage.mediaUrl)
+      : undefined;
+
+  // Kick the platform image cache for any adjacent remote URLs. `Image.prefetch`
+  // ignores `file://` paths (and rejects), so we swallow errors — the hidden
+  // `<Image>` preloaders below cover the local-file case.
+  useEffect(() => {
+    [prevPreloadUri, nextPreloadUri].forEach((u) => {
+      if (u && /^https?:\/\//i.test(u)) {
+        Image.prefetch(u).catch(() => undefined);
+      }
+    });
+  }, [prevPreloadUri, nextPreloadUri]);
+
   if (!visible || messages.length === 0) return null;
+  if (!currentMessage) return null;
 
-  const msg = messages[currentIndex];
-  if (!msg) return null;
-
+  const msg = currentMessage;
   const senderName = senderMap.get(msg.senderId) ?? 'Unknown';
   const isVideo = msg.type === 'video';
-  const mediaUri = msg.localMediaPath ?? msg.mediaUrl;
+  const itemKey = msg.messageId || msg.id;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -752,31 +867,59 @@ const FullScreenViewer = ({
           pointerEvents="none"
         />
 
+        {/* Hidden preloaders — keep adjacent images decoded in the RN image
+            cache so the swipe-to-next animation lands on a fully rendered
+            frame, not a 1–3s black gap. Tiny size so they don't waste memory
+            but still trigger a network/disk fetch. */}
+        {prevPreloadUri ? (
+          <Image
+            source={{ uri: prevPreloadUri }}
+            style={styles.preloadImage}
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          />
+        ) : null}
+        {nextPreloadUri ? (
+          <Image
+            source={{ uri: nextPreloadUri }}
+            style={styles.preloadImage}
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          />
+        ) : null}
+
         {/* Media area */}
         <View style={styles.viewerMedia}>
           {mediaUri ? (
             isVideo ? (
               <VideoSwipeContainer
-                key={`${msg.messageId || msg.id}_${mediaUri}`}
+                // Re-mount only on item change, not on a same-item URI fallback
+                // (local→remote). Without this, the async hook flips would
+                // unmount the player mid-load and cause a second black flash.
+                key={itemKey}
                 uri={mediaUri}
                 onSwipeNext={goNext}
                 onSwipePrev={goPrev}
                 onDismiss={handleDismiss}
                 onSingleTap={toggleChrome}
                 onSwipeUp={() => setShowInfo(true)}
+                onError={markFailed}
                 hasNext={currentIndex < messages.length - 1}
                 hasPrev={currentIndex > 0}
                 backdropOpacity={backdropOpacity}
               />
             ) : (
               <ZoomableImage
-                key={`${msg.messageId || msg.id}_${mediaUri}`}
+                key={itemKey}
                 uri={mediaUri}
                 onSwipeNext={goNext}
                 onSwipePrev={goPrev}
                 onDismiss={handleDismiss}
                 onSingleTap={toggleChrome}
                 onSwipeUp={() => setShowInfo(true)}
+                onError={markFailed}
                 hasNext={currentIndex < messages.length - 1}
                 hasPrev={currentIndex > 0}
                 backdropOpacity={backdropOpacity}
@@ -865,7 +1008,7 @@ interface MediaCellProps {
 
 const MediaCell = React.memo(({ message, onPress }: MediaCellProps) => {
   const { theme } = useTheme();
-  const uri = message.localMediaPath ?? message.mediaUrl;
+  const { uri, markFailed } = useResolvedMediaUri(message);
   const isVideo = message.type === 'video';
   const duration = message.mediaMetadata?.duration;
 
@@ -876,7 +1019,12 @@ const MediaCell = React.memo(({ message, onPress }: MediaCellProps) => {
       activeOpacity={0.82}
     >
       {uri ? (
-        <Image source={{ uri }} style={styles.cellImage} resizeMode="cover" />
+        <Image
+          source={{ uri }}
+          style={styles.cellImage}
+          resizeMode="cover"
+          onError={markFailed}
+        />
       ) : (
         <View style={[styles.cellPlaceholder, { backgroundColor: theme.colors.surfaceVariant }]}>
           <Ionicons
@@ -1449,6 +1597,16 @@ const styles = StyleSheet.create({
   viewerPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Off-screen, zero-opacity preloader — lets us warm the RN image cache for
+  // the prev/next item without it being seen by the user.
+  preloadImage: {
+    position: 'absolute',
+    top: -10,
+    left: -10,
+    width: 1,
+    height: 1,
+    opacity: 0,
   },
   viewerTopBar: {
     position: 'absolute',

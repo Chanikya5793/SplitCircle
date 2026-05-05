@@ -1,3 +1,4 @@
+import type { HeaderMenuItem } from '@/components/Chat';
 import {
   AttachmentMenu,
   ChatSearchBar,
@@ -10,12 +11,10 @@ import {
   PinnedMessagesBar,
   SelectionToolbar,
 } from '@/components/Chat';
-import { ReactionDetailsSheet } from '@/components/Chat/ReactionDetailsSheet';
-import { EmojiPickerSheet } from '@/components/Chat/EmojiPickerSheet';
-import type { HeaderMenuItem } from '@/components/Chat';
 import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
 import type { QualityLevel } from '@/components/Chat/MediaPreview';
 import type { MessageAction } from '@/components/Chat/MessageActionSheet';
+import { ReactionDetailsSheet } from '@/components/Chat/ReactionDetailsSheet';
 import type { SelectionAction } from '@/components/Chat/SelectionToolbar';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
@@ -30,14 +29,13 @@ import { useLoadingState } from '@/context/LoadingContext';
 import { useTheme } from '@/context/ThemeContext';
 import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import type { ChatMessage, ChatParticipant, ChatThread, MessageType, PinnedMessageRef } from '@/models';
-import { processImage, processVideo } from '@/services/mediaProcessingService';
 import {
   markMessageDeletedForUser,
-  removeAllReactionsForUser,
   toggleMessageReaction,
   toggleMessageStar,
   updateMessageContent,
 } from '@/services/localMessageStorage';
+import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { publishMessageState } from '@/services/messageStateService';
 import { lightHaptic, mediumHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
@@ -55,6 +53,8 @@ const DELETE_FOR_EVERYONE_WINDOW_MS = 60 * 60 * 1000;
 const TYPING_STALE_MS = 6_000;
 // Throttle typing pings — never write to Firestore more than once per interval.
 const TYPING_PING_THROTTLE_MS = 2_500;
+
+const MemoizedMessageBubble = React.memo(MessageBubble);
 
 interface ChatRoomScreenProps {
   thread: ChatThread;
@@ -122,8 +122,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
   // Reaction details sheet state
   const [reactionTarget, setReactionTarget] = useState<ChatMessage | null>(null);
-  // Custom emoji picker (opened from + button on the action sheet's reaction strip)
-  const [emojiPickerTarget, setEmojiPickerTarget] = useState<ChatMessage | null>(null);
   const markReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const markReadInFlightRef = useRef(false);
   const { run: runSend } = usePreventDoubleSubmit();
@@ -164,7 +162,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   }, [startCallSession, thread.chatId, thread.groupId]);
 
   useEffect(() => {
-    if (__DEV__) console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
+    console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
 
     // Reduce noisy logging and unnecessary state updates:
     // - Update messages when list composition or delivery/read state changes.
@@ -196,9 +194,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           const readCount = item.readBy?.length ?? 0;
           const reactionsHash = item.reactions
             ? Object.entries(item.reactions)
-                .map(([emoji, ids]) => `${emoji}:${ids.length}`)
-                .sort()
-                .join(',')
+              .map(([emoji, ids]) => `${emoji}:${ids.length}`)
+              .sort()
+              .join(',')
             : '';
           const starredCount = item.starredBy?.length ?? 0;
           const deletedForCount = item.deletedFor?.length ?? 0;
@@ -220,14 +218,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
       // Throttled logging to avoid spamming the console
       const now = Date.now();
-      if (__DEV__) {
-        if (now - lastLogAt > LOG_INTERVAL) {
-          console.log(`📨 Received ${items.length} messages in ChatRoomScreen`);
-          lastLogAt = now;
-        } else if (countChanged && items.length > prevCountBefore) {
-          console.log(`📨 New message(s) — total: ${items.length}`);
-          lastLogAt = now;
-        }
+      if (now - lastLogAt > LOG_INTERVAL) {
+        console.log(`📨 Received ${items.length} messages in ChatRoomScreen`);
+        lastLogAt = now;
+      } else if (countChanged && items.length > prevCountBefore) {
+        // If new messages arrived and we are within the throttle window,
+        // log a concise "new messages" note.
+        console.log(`📨 New message(s) — total: ${items.length}`);
+        lastLogAt = now;
       }
     });
 
@@ -242,7 +240,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     });
 
     return () => {
-      if (__DEV__) console.log('👋 ChatRoomScreen unmounting');
+      console.log('👋 ChatRoomScreen unmounting');
       unsubscribe();
       subscription.remove();
       if (markReadTimerRef.current) {
@@ -421,35 +419,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     });
   }, [navigation]);
 
-  const applyReactionToggle = useCallback(async (message: ChatMessage, emoji: string) => {
-    if (!user) return;
-    const targetId = message.messageId || message.id;
-    const next = await toggleMessageReaction(thread.chatId, targetId, user.userId, emoji);
+  const handleReact = useCallback(async (emoji: string) => {
+    if (!user || !actionTarget) return;
+    const targetId = actionTarget.messageId || actionTarget.id;
+    const finalEmoji = emoji === '+' ? '❤️' : emoji;
+    const next = await toggleMessageReaction(thread.chatId, targetId, user.userId, finalEmoji);
     if (next !== undefined) {
       void publishMessageState(thread.chatId, targetId, { reactions: next });
     }
-  }, [thread.chatId, user]);
-
-  const handleReact = useCallback(async (emoji: string) => {
-    if (!user || !actionTarget) return;
-    if (emoji === '+') {
-      // Open the full emoji picker; do not toggle anything yet.
-      setEmojiPickerTarget(actionTarget);
-      return;
-    }
-    await applyReactionToggle(actionTarget, emoji);
-  }, [actionTarget, applyReactionToggle, user]);
-
-  const handleEmojiPicked = useCallback(async (emoji: string) => {
-    if (!emojiPickerTarget) return;
-    await applyReactionToggle(emojiPickerTarget, emoji);
-    setEmojiPickerTarget(null);
-  }, [emojiPickerTarget, applyReactionToggle]);
+  }, [actionTarget, thread.chatId, user]);
 
   const handleReactionsPress = useCallback((message: ChatMessage) => {
-    // Don't open the empty-state sheet — just guard at the call site.
-    const hasAny = !!message.reactions && Object.values(message.reactions).some((u) => u.length > 0);
-    if (!hasAny) return;
+    // Open the reaction details sheet (not the action sheet).
     setReactionTarget(message);
   }, []);
 
@@ -795,16 +776,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }, 1400);
   }, [messages]);
 
-  const handleMediaSelected = async (media: SelectedMedia | SelectedMedia[]) => {
-    // Batch from the gallery picker — skip the per-item preview and send
-    // each item sequentially in pick order. Single-item flows (camera,
-    // document, audio, location) keep the preview/confirmation step.
-    if (Array.isArray(media)) {
-      setAttachmentMenuVisible(false);
-      await sendBatchMedia(media);
-      return;
-    }
-
+  const handleMediaSelected = async (media: SelectedMedia) => {
     if (media.type === 'location') {
       setAttachmentMenuVisible(false);
       setLocationPickerVisible(true);
@@ -818,153 +790,120 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     });
   };
 
-  // Core send pipeline for a single media item — called by both the preview
-  // confirm flow and the batch picker. No state mutations here; the callers
-  // own their UI state.
-  const sendMediaItem = async (
-    mediaToSend: SelectedMedia,
-    caption: string,
-    quality: QualityLevel,
-    reply: ChatMessage | null,
-    progressMessage?: (msg: string) => void,
-  ) => {
-    let processedUri = mediaToSend.uri;
-    let processedWidth = mediaToSend.width;
-    let processedHeight = mediaToSend.height;
-    let processedSize = mediaToSend.fileSize;
-
-    if (mediaToSend.type === 'image' || mediaToSend.type === 'camera') {
-      const result = await processImage(mediaToSend.uri, quality);
-      processedUri = result.uri;
-      processedWidth = result.width;
-      processedHeight = result.height;
-      processedSize = result.size;
-    } else if (mediaToSend.type === 'video') {
-      const result = await processVideo(mediaToSend.uri, quality);
-      processedUri = result.uri;
-      if (result.width > 0) processedWidth = result.width;
-      if (result.height > 0) processedHeight = result.height;
-      processedSize = result.size;
-    }
-
-    let messageType: MessageType;
-    switch (mediaToSend.type) {
-      case 'camera':
-      case 'image':
-        messageType = 'image';
-        break;
-      case 'video':
-        messageType = 'video';
-        break;
-      case 'audio':
-        messageType = 'audio';
-        break;
-      case 'document':
-        messageType = 'file';
-        break;
-      case 'location':
-        messageType = 'location';
-        break;
-      default:
-        messageType = 'file';
-    }
-
-    let replyData = undefined;
-    if (reply) {
-      const participant = thread.participants.find((p) => p.userId === reply.senderId);
-      replyData = {
-        messageId: reply.messageId,
-        senderId: reply.senderId,
-        senderName: participant?.displayName || 'Unknown',
-        content: reply.content,
-        type: reply.type,
-      };
-    }
-
-    const mediaMetadata: Record<string, unknown> = {};
-    if (mediaToSend.fileName) mediaMetadata.fileName = mediaToSend.fileName;
-    if (processedSize) mediaMetadata.fileSize = processedSize;
-    if (mediaToSend.mimeType) mediaMetadata.mimeType = mediaToSend.mimeType;
-    if (processedWidth) mediaMetadata.width = processedWidth;
-    if (processedHeight) mediaMetadata.height = processedHeight;
-    if (mediaToSend.duration) mediaMetadata.duration = mediaToSend.duration;
-    if (processedWidth && processedHeight) {
-      mediaMetadata.aspectRatio = processedWidth / processedHeight;
-    }
-
-    progressMessage?.(`Uploading ${mediaToSend.type === 'video' ? 'video' : 'attachment'}…`);
-
-    await runSend(async (requestId) => {
-      await sendMessage({
-        chatId: thread.chatId,
-        requestId,
-        content: caption || getMediaPlaceholder(messageType),
-        type: messageType,
-        mediaUri: processedUri,
-        groupId: thread.groupId,
-        replyTo: replyData,
-        mediaMetadata: Object.keys(mediaMetadata).length > 0 ? (mediaMetadata as any) : undefined,
-        onStageChange: (stage, details) => {
-          if (stage === 'complete') return;
-          if (details?.message) progressMessage?.(details.message);
-        },
-      });
-    }, { key: `chat-media-${thread.chatId}-${Date.now()}` });
-  };
-
-  // Single-item flow from MediaPreview confirmation.
+  // Handle sending media with optional caption
   const handleSendMedia = async (caption: string, quality: QualityLevel) => {
     if (!selectedMedia) return;
     const mediaToSend = selectedMedia;
 
+    // Show processing overlay FIRST, then close preview — this avoids
+    // a blank flash between preview dismissal and overlay appearance.
     mediaPipelineLoading.start(getProcessingLoadingMessage(mediaToSend.type));
     setMediaPreviewVisible(false);
 
     try {
-      await sendMediaItem(mediaToSend, caption, quality, replyingTo, mediaPipelineLoading.setMessage);
+      // Process media based on quality selection
+      let processedUri = mediaToSend.uri;
+      let processedWidth = mediaToSend.width;
+      let processedHeight = mediaToSend.height;
+      let processedSize = mediaToSend.fileSize;
+
+      if (mediaToSend.type === 'image' || mediaToSend.type === 'camera') {
+        const result = await processImage(mediaToSend.uri, quality);
+        processedUri = result.uri;
+        processedWidth = result.width;
+        processedHeight = result.height;
+        processedSize = result.size;
+      } else if (mediaToSend.type === 'video') {
+        const result = await processVideo(mediaToSend.uri, quality);
+        processedUri = result.uri;
+        if (result.width > 0) processedWidth = result.width;
+        if (result.height > 0) processedHeight = result.height;
+        processedSize = result.size;
+      }
+
+      // Map attachment type to message type
+      let messageType: MessageType;
+      switch (mediaToSend.type) {
+        case 'camera':
+        case 'image':
+          messageType = 'image';
+          break;
+        case 'video':
+          messageType = 'video';
+          break;
+        case 'audio':
+          messageType = 'audio';
+          break;
+        case 'document':
+          messageType = 'file';
+          break;
+        case 'location':
+          messageType = 'location';
+          break;
+        default:
+          messageType = 'file';
+      }
+
+      // Build replyTo data if replying
+      let replyData = undefined;
+      if (replyingTo) {
+        const participant = thread.participants.find(p => p.userId === replyingTo.senderId);
+        replyData = {
+          messageId: replyingTo.messageId,
+          senderId: replyingTo.senderId,
+          senderName: participant?.displayName || 'Unknown',
+          content: replyingTo.content,
+          type: replyingTo.type,
+        };
+      }
+
+      // Build mediaMetadata with only defined values
+      const mediaMetadata: Record<string, unknown> = {};
+      if (mediaToSend.fileName) mediaMetadata.fileName = mediaToSend.fileName;
+      if (processedSize) mediaMetadata.fileSize = processedSize;
+      if (mediaToSend.mimeType) mediaMetadata.mimeType = mediaToSend.mimeType;
+      if (processedWidth) mediaMetadata.width = processedWidth;
+      if (processedHeight) mediaMetadata.height = processedHeight;
+      if (mediaToSend.duration) mediaMetadata.duration = mediaToSend.duration;
+      if (processedWidth && processedHeight) {
+        mediaMetadata.aspectRatio = processedWidth / processedHeight;
+      }
+
+      // Update overlay message to uploading phase
+      mediaPipelineLoading.setMessage(
+        `Uploading ${mediaToSend.type === 'video' ? 'video' : 'attachment'}…`,
+      );
+
+      // Send the message directly - ChatContext handles upload
+      await runSend(async (requestId) => {
+        await sendMessage({
+          chatId: thread.chatId,
+          requestId,
+          content: caption || getMediaPlaceholder(messageType),
+          type: messageType,
+          mediaUri: processedUri,
+          groupId: thread.groupId,
+          replyTo: replyData,
+          mediaMetadata: Object.keys(mediaMetadata).length > 0 ? mediaMetadata as any : undefined,
+          onStageChange: (stage, details) => {
+            if (stage === 'complete') {
+              return;
+            }
+
+            if (details?.message) {
+              mediaPipelineLoading.setMessage(details.message);
+            }
+          },
+        });
+      }, { key: `chat-media-${thread.chatId}` });
+
       setSelectedMedia(null);
       setReplyingTo(null);
     } catch (error) {
       console.error('Failed to send media:', error);
-      Alert.alert('Send failed', error instanceof Error ? error.message : 'Failed to send media');
+      alert(error instanceof Error ? error.message : 'Failed to send media');
     } finally {
       mediaPipelineLoading.stop();
-    }
-  };
-
-  // Batch flow — fire each item sequentially. Reply context attaches only to
-  // the first item; subsequent items are independent. Failures don't block
-  // the rest; surface a single summary alert at the end.
-  const sendBatchMedia = async (items: SelectedMedia[]) => {
-    if (items.length === 0) return;
-
-    mediaPipelineLoading.start(`Sending 1 of ${items.length}…`);
-    const initialReply = replyingTo;
-    setReplyingTo(null);
-
-    let failures = 0;
-    for (let i = 0; i < items.length; i++) {
-      mediaPipelineLoading.setMessage(`Sending ${i + 1} of ${items.length}…`);
-      try {
-        await sendMediaItem(
-          items[i],
-          '',
-          'HD',
-          i === 0 ? initialReply : null,
-          mediaPipelineLoading.setMessage,
-        );
-      } catch (error) {
-        failures++;
-        console.error(`Batch item ${i + 1}/${items.length} failed:`, error);
-      }
-    }
-    mediaPipelineLoading.stop();
-
-    if (failures > 0) {
-      Alert.alert(
-        'Some items failed to send',
-        `${failures} of ${items.length} item${failures === 1 ? '' : 's'} couldn't be sent. They're queued — retry from the failed bubbles.`,
-      );
     }
   };
 
@@ -1148,7 +1087,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
     // Throttled typing ping.
     void maybePingTyping();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread.chatId]);
 
   const handleMentionSelect = useCallback((participant: ChatParticipant) => {
@@ -1241,7 +1180,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     const senderName = participantMap.get(item.senderId) ?? 'Unknown';
     const itemId = item.messageId || item.id;
     return (
-      <MessageBubble
+      <MemoizedMessageBubble
         message={item}
         showSenderInfo={isGroupChat ? isFirstInSequence : undefined}
         senderName={senderName}
@@ -1710,11 +1649,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         isGroupChat={isGroupChat}
         isStarred={!!user && !!actionTarget?.starredBy?.includes(user.userId)}
         isPinned={!!actionTarget && pinnedSet.has(actionTarget.messageId)}
-        currentUserReactions={
+        currentUserReaction={
           user && actionTarget?.reactions
-            ? Object.entries(actionTarget.reactions)
-                .filter(([, ids]) => ids.includes(user.userId))
-                .map(([emoji]) => emoji)
+            ? Object.entries(actionTarget.reactions).find(([, ids]) => ids.includes(user.userId))?.[0]
             : undefined
         }
         canEdit={
@@ -1759,31 +1696,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         participantNames={allParticipantNames}
         onRemoveReaction={async (emoji) => {
           if (!reactionTarget || !user) return;
-          await applyReactionToggle(reactionTarget, emoji);
-        }}
-        onRemoveAll={async () => {
-          if (!reactionTarget || !user) return;
           const targetId = reactionTarget.messageId || reactionTarget.id;
-          const next = await removeAllReactionsForUser(thread.chatId, targetId, user.userId);
+          const next = await toggleMessageReaction(thread.chatId, targetId, user.userId, emoji);
           if (next !== undefined) {
             void publishMessageState(thread.chatId, targetId, { reactions: next });
           }
         }}
         onClose={() => setReactionTarget(null)}
-      />
-
-      {/* Emoji picker sheet — opened from the + button on the reaction strip */}
-      <EmojiPickerSheet
-        visible={!!emojiPickerTarget}
-        selectedEmojis={
-          user && emojiPickerTarget?.reactions
-            ? Object.entries(emojiPickerTarget.reactions)
-                .filter(([, ids]) => ids.includes(user.userId))
-                .map(([emoji]) => emoji)
-            : undefined
-        }
-        onPick={handleEmojiPicked}
-        onClose={() => setEmojiPickerTarget(null)}
       />
 
       {/* Media Processing Overlay — driven by keyed loading state */}
@@ -1821,7 +1740,6 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 8,
     paddingBottom: 10,
-    paddingTop: 24,
   },
   composerWrapper: {
     marginTop: -20,

@@ -985,11 +985,7 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.STARRED_MESSAGES}
         component={StarredMessagesScreen}
-        options={({ route }: any) => ({
-          title: route.params?.title ?? 'Starred messages',
-          headerTransparent: true,
-          headerTintColor: theme.colors.primary,
-        })}
+        options={{ headerShown: false }}
       />
     </AppStack.Navigator>
   );
