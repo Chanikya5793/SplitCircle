@@ -310,6 +310,155 @@ export const markMessagesRead = async (
   }
 };
 
+// Toggle a single emoji reaction for a user on a message.
+// If the user already reacted with that emoji it is removed; otherwise the
+// user's prior reaction (if any) is replaced with the new emoji — WhatsApp
+// allows only one reaction per user per message.
+export const toggleMessageReaction = async (
+  chatId: string,
+  messageId: string,
+  userId: string,
+  emoji: string
+): Promise<void> => {
+  try {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      const idx = messages.findIndex((m) => m.id === messageId || m.messageId === messageId);
+      if (idx < 0) return;
+
+      const message = messages[idx];
+      const reactions: Record<string, string[]> = { ...(message.reactions ?? {}) };
+
+      let alreadyReactedSameEmoji = false;
+      for (const key of Object.keys(reactions)) {
+        const users = reactions[key].filter((u) => u !== userId);
+        if (key === emoji && reactions[key].includes(userId)) {
+          alreadyReactedSameEmoji = true;
+        }
+        if (users.length === 0) {
+          delete reactions[key];
+        } else {
+          reactions[key] = users;
+        }
+      }
+
+      if (!alreadyReactedSameEmoji) {
+        reactions[emoji] = [...(reactions[emoji] ?? []), userId];
+      }
+
+      messages[idx] = { ...message, reactions };
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      notifyMessageListeners(chatId);
+    });
+  } catch (error) {
+    console.error('❌ Error toggling reaction:', error);
+  }
+};
+
+export const toggleMessageStar = async (
+  chatId: string,
+  messageId: string,
+  userId: string
+): Promise<void> => {
+  try {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      const idx = messages.findIndex((m) => m.id === messageId || m.messageId === messageId);
+      if (idx < 0) return;
+
+      const message = messages[idx];
+      const starredBy = new Set(message.starredBy ?? []);
+      if (starredBy.has(userId)) {
+        starredBy.delete(userId);
+      } else {
+        starredBy.add(userId);
+      }
+
+      messages[idx] = { ...message, starredBy: Array.from(starredBy) };
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      notifyMessageListeners(chatId);
+    });
+  } catch (error) {
+    console.error('❌ Error toggling star:', error);
+  }
+};
+
+export const markMessageDeletedForUser = async (
+  chatId: string,
+  messageId: string,
+  userId: string
+): Promise<void> => {
+  try {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      const idx = messages.findIndex((m) => m.id === messageId || m.messageId === messageId);
+      if (idx < 0) return;
+
+      const message = messages[idx];
+      const deletedFor = mergeUniqueIds(message.deletedFor, [userId]);
+      messages[idx] = { ...message, deletedFor };
+
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      notifyMessageListeners(chatId);
+    });
+  } catch (error) {
+    console.error('❌ Error marking message deleted for user:', error);
+  }
+};
+
+export const updateMessageContent = async (
+  chatId: string,
+  messageId: string,
+  content: string,
+  editedAt: number = Date.now()
+): Promise<void> => {
+  try {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      const idx = messages.findIndex((m) => m.id === messageId || m.messageId === messageId);
+      if (idx < 0) return;
+
+      messages[idx] = { ...messages[idx], content, editedAt };
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      notifyMessageListeners(chatId);
+    });
+  } catch (error) {
+    console.error('❌ Error updating message content:', error);
+  }
+};
+
+export const updateMessageUrlPreview = async (
+  chatId: string,
+  messageId: string,
+  urlPreview: import('@/models').UrlPreview
+): Promise<void> => {
+  try {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      const idx = messages.findIndex((m) => m.id === messageId || m.messageId === messageId);
+      if (idx < 0) return;
+
+      // Only update if not already set with the same URL — avoids re-rendering
+      // when the same payload is rehydrated from cache.
+      const existing = messages[idx].urlPreview;
+      if (existing && existing.url === urlPreview.url && existing.failed === urlPreview.failed) {
+        return;
+      }
+
+      messages[idx] = { ...messages[idx], urlPreview };
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      notifyMessageListeners(chatId);
+    });
+  } catch (error) {
+    console.error('❌ Error updating url preview:', error);
+  }
+};
+
 // Update a message's local media path (after downloading media)
 export const updateMessageLocalPath = async (
   chatId: string,

@@ -1061,25 +1061,30 @@ export const ChatMediaGalleryScreen = () => {
     return unsubscribe;
   }, [params.chatId, subscribeToMessages]);
 
-  // Derived lists
+  // Derived lists — exclude messages the current user has hidden via "Delete for me".
+  const visibleMessages = useMemo(
+    () => (user ? messages.filter((m) => !m.deletedFor?.includes(user.userId)) : messages),
+    [messages, user],
+  );
+
   const mediaMessages = useMemo(
     () =>
-      messages.filter(
+      visibleMessages.filter(
         (m) =>
           (m.type === 'image' || m.type === 'video') &&
           (m.localMediaPath || m.mediaUrl),
       ),
-    [messages],
+    [visibleMessages],
   );
 
   const docMessages = useMemo(
-    () => messages.filter((m) => m.type === 'file' || m.type === 'audio'),
-    [messages],
+    () => visibleMessages.filter((m) => m.type === 'file' || m.type === 'audio'),
+    [visibleMessages],
   );
 
   const linkMessages = useMemo(
-    () => messages.filter((m) => m.type === 'text' && URL_REGEX.test(m.content)),
-    [messages],
+    () => visibleMessages.filter((m) => m.type === 'text' && URL_REGEX.test(m.content)),
+    [visibleMessages],
   );
 
   // Build sender name map from passed participants

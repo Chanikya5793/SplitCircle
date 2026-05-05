@@ -1,17 +1,18 @@
+import { LinkPreview } from '@/components/Chat/LinkPreview';
 import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
+import { ReactionsRow } from '@/components/Chat/ReactionsRow';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { ChatMessage, MessageStatus, MessageType } from '@/models';
+import type { ChatMessage, MessageStatus, MessageType, UrlPreview } from '@/models';
+import { extractFirstUrl, fetchLinkPreview } from '@/services/linkPreviewService';
+import { updateMessageUrlPreview } from '@/services/localMessageStorage';
 import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { formatRelativeTime } from '@/utils/format';
 import { hasGoogleMapsApiKey } from '@/utils/hasGoogleMapsApiKey';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer, type AudioStatus } from 'expo-audio';
-import { getContentUriAsync, getInfoAsync } from 'expo-file-system/legacy';
-import * as IntentLauncher from 'expo-intent-launcher';
-import * as Sharing from 'expo-sharing';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View, ViewStyle } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
@@ -29,9 +30,29 @@ interface MessageBubbleProps {
   onReplyPress?: (messageId: string) => void;
   /** When provided, tapping an image bubble defers to this handler instead of opening the local fullscreen modal. Used to route into the chat media gallery. */
   onMediaPress?: (message: ChatMessage) => void;
+  /** Long-press anywhere on the bubble. Opens the action sheet in ChatRoomScreen. */
+  onLongPress?: (message: ChatMessage) => void;
+  /** Tap on an existing reactions chip to open the reaction details / picker. */
+  onReactionsPress?: (message: ChatMessage) => void;
+  /** Tap on a document bubble — opens the in-app FilePreviewScreen. */
+  onFilePress?: (message: ChatMessage) => void;
+  /** Double-tap on the bubble — used for quick ❤️ reaction. */
+  onDoubleTap?: (message: ChatMessage) => void;
+  /** When in selection mode, every tap toggles selection instead of doing the default action. */
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (message: ChatMessage) => void;
+  /** Tap a mention in this bubble — opens that user's profile. */
+  onMentionPress?: (userId: string) => void;
+  /** Search query to highlight inside the message text. */
+  searchQuery?: string;
+  /** Map of userId → display name; used to render mentions as @Name. */
+  mentionLabels?: Map<string, string>;
   isGroupChat?: boolean;
   totalRecipients?: number;
   highlighted?: boolean;
+  /** Used to dim the row when an action sheet is anchored to a different message — gives the focused-bubble feel. */
+  dimmed?: boolean;
 }
 
 const AVATAR_COLORS = [
@@ -54,6 +75,101 @@ const getSenderColor = (id: string) => {
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const MAX_IMAGE_WIDTH = SCREEN_WIDTH * 0.65;
 const MAX_IMAGE_HEIGHT = 300;
+
+// Tokenize a chat message body into mention / link / search-match / text spans.
+type Span =
+  | { kind: 'text'; text: string }
+  | { kind: 'mention'; text: string; userId: string }
+  | { kind: 'link'; text: string; url: string }
+  | { kind: 'highlight'; text: string };
+
+const URL_PATTERN = /(\bhttps?:\/\/[^\s<>"']+)/gi;
+const MENTION_PATTERN = /@([a-zA-Z0-9_-]{1,40})/g;
+
+const splitMentions = (text: string, mentionLabels?: Map<string, string>): Span[] => {
+  if (!text) return [];
+  if (!mentionLabels || mentionLabels.size === 0) {
+    return [{ kind: 'text', text }];
+  }
+  // Build a lookup keyed by lowercased display-name (without spaces) → userId
+  // so "@alice" and "@AliceJones" both resolve.
+  const byLabel = new Map<string, string>();
+  mentionLabels.forEach((name, userId) => {
+    byLabel.set(name.replace(/\s+/g, '').toLowerCase(), userId);
+    byLabel.set(userId.toLowerCase(), userId);
+  });
+
+  const spans: Span[] = [];
+  let lastIndex = 0;
+  for (const match of text.matchAll(MENTION_PATTERN)) {
+    const candidate = match[1].toLowerCase();
+    const userId = byLabel.get(candidate);
+    if (!userId) continue;
+    if (match.index === undefined) continue;
+    if (match.index > lastIndex) {
+      spans.push({ kind: 'text', text: text.slice(lastIndex, match.index) });
+    }
+    spans.push({ kind: 'mention', text: match[0], userId });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    spans.push({ kind: 'text', text: text.slice(lastIndex) });
+  }
+  return spans.length ? spans : [{ kind: 'text', text }];
+};
+
+const splitLinks = (spans: Span[]): Span[] => {
+  const out: Span[] = [];
+  for (const span of spans) {
+    if (span.kind !== 'text') {
+      out.push(span);
+      continue;
+    }
+    let lastIndex = 0;
+    for (const match of span.text.matchAll(URL_PATTERN)) {
+      if (match.index === undefined) continue;
+      if (match.index > lastIndex) {
+        out.push({ kind: 'text', text: span.text.slice(lastIndex, match.index) });
+      }
+      out.push({ kind: 'link', text: match[0], url: match[0] });
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < span.text.length) {
+      out.push({ kind: 'text', text: span.text.slice(lastIndex) });
+    }
+  }
+  return out;
+};
+
+const splitHighlights = (spans: Span[], query?: string): Span[] => {
+  const q = (query ?? '').trim();
+  if (!q) return spans;
+  const lower = q.toLowerCase();
+  const out: Span[] = [];
+  for (const span of spans) {
+    if (span.kind !== 'text') {
+      out.push(span);
+      continue;
+    }
+    const text = span.text;
+    let cursor = 0;
+    let idx = text.toLowerCase().indexOf(lower);
+    while (idx !== -1) {
+      if (idx > cursor) out.push({ kind: 'text', text: text.slice(cursor, idx) });
+      out.push({ kind: 'highlight', text: text.slice(idx, idx + q.length) });
+      cursor = idx + q.length;
+      idx = text.toLowerCase().indexOf(lower, cursor);
+    }
+    if (cursor < text.length) out.push({ kind: 'text', text: text.slice(cursor) });
+  }
+  return out;
+};
+
+const tokenizeContent = (
+  text: string,
+  mentionLabels?: Map<string, string>,
+  searchQuery?: string,
+): Span[] => splitHighlights(splitLinks(splitMentions(text, mentionLabels)), searchQuery);
 
 // Helper to format file size
 const formatFileSize = (bytes?: number): string => {
@@ -160,7 +276,7 @@ const VideoPlayerComponent = ({ uri, style, showControls = true, showOverlay = f
   );
 };
 
-export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, onReplyPress, onMediaPress, isGroupChat, totalRecipients, highlighted }: MessageBubbleProps) => {
+export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, onReplyPress, onMediaPress, onLongPress, onReactionsPress, onFilePress, onDoubleTap, selectionMode, selected, onToggleSelect, onMentionPress, searchQuery, mentionLabels, isGroupChat, totalRecipients, highlighted, dimmed }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
@@ -253,6 +369,36 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       <View style={styles.systemContainer}>
         <View style={[styles.systemBubble, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }]}>
           <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>{message.content}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // If the user "deleted for me", swap the bubble for a tombstone — keeps the
+  // ordering stable so reply jumps still land in the right place.
+  if (user && message.deletedFor?.includes(user.userId)) {
+    return (
+      <View style={styles.systemContainer}>
+        <View style={[styles.systemBubble, styles.tombstoneBubble, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)' }]}>
+          <Ionicons name="trash-outline" size={11} color={theme.colors.onSurfaceVariant} />
+          <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>You deleted this message</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Delete-for-everyone tombstone — visible to all participants once the
+  // sender's mark propagates. We keep the bubble layout (mine / other) so the
+  // chat keeps its rhythm.
+  if (message.deletedForEveryone) {
+    const youDeleted = user?.userId === message.senderId;
+    return (
+      <View style={styles.systemContainer}>
+        <View style={[styles.systemBubble, styles.tombstoneBubble, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)' }]}>
+          <Ionicons name="ban-outline" size={11} color={theme.colors.onSurfaceVariant} />
+          <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>
+            {youDeleted ? 'You deleted this message' : 'This message was deleted'}
+          </Text>
         </View>
       </View>
     );
@@ -421,6 +567,37 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     checkAndDownloadMedia();
   }, [message.localMediaPath, message.mediaUrl, message.type, message.isFromMe, message.chatId, message.messageId, message.id, message.mediaMetadata?.fileName]);
 
+  // Link preview — fire once per message when text contains a URL and we
+  // don't already have a preview in storage. Persists via storage helper so
+  // reopening the chat doesn't refetch.
+  const detectedUrl = useMemo(
+    () => (message.type === 'text' || !message.type ? extractFirstUrl(message.content) : null),
+    [message.type, message.content],
+  );
+  const [livePreview, setLivePreview] = useState<UrlPreview | undefined>(message.urlPreview);
+
+  useEffect(() => {
+    setLivePreview(message.urlPreview);
+  }, [message.urlPreview]);
+
+  useEffect(() => {
+    if (!detectedUrl) return;
+    if (livePreview && livePreview.url === detectedUrl) return;
+    let cancelled = false;
+    (async () => {
+      const preview = await fetchLinkPreview(detectedUrl);
+      if (cancelled) return;
+      setLivePreview(preview);
+      const messageId = message.messageId || message.id;
+      if (messageId) {
+        void updateMessageUrlPreview(message.chatId, messageId, preview);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [detectedUrl, livePreview, message.chatId, message.messageId, message.id]);
+
   // Image content with loading state
   const renderImageContent = () => {
     if (!mediaUri && !isDownloading) return null;
@@ -549,72 +726,12 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     );
   };
 
-  // Handle opening/downloading document
-  const handleOpenDocument = async () => {
+  const handleOpenDocument = () => {
     if (!mediaUri) {
       Alert.alert('File Not Available', 'The file has not been downloaded yet.');
       return;
     }
-
-    const mimeType = message.mediaMetadata?.mimeType || 'application/octet-stream';
-    const fileName = message.mediaMetadata?.fileName || 'Document';
-
-    try {
-      // Check if file exists
-      const fileInfo = await getInfoAsync(mediaUri);
-      if (!fileInfo.exists) {
-        Alert.alert('File Not Found', 'The file could not be found on this device.');
-        return;
-      }
-
-      // Check if sharing is available
-      const isAvailable = await Sharing.isAvailableAsync();
-
-      if (isAvailable) {
-        // Use sharing to open the file with the system's default app
-        await Sharing.shareAsync(mediaUri, {
-          mimeType,
-          dialogTitle: `Open ${fileName}`,
-          UTI: mimeType, // iOS specific
-        });
-      } else if (Platform.OS === 'android') {
-        // On Android, try to open with intent
-        try {
-          const contentUri = await getContentUriAsync(mediaUri);
-          await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-            data: contentUri,
-            type: mimeType,
-            flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
-          });
-        } catch (intentError) {
-          console.error('Intent error:', intentError);
-          Alert.alert(
-            'Cannot Open File',
-            'No app is available to open this file type.',
-            [{ text: 'OK' }]
-          );
-        }
-      } else {
-        // Fallback for iOS if sharing isn't available
-        const canOpen = await Linking.canOpenURL(mediaUri);
-        if (canOpen) {
-          await Linking.openURL(mediaUri);
-        } else {
-          Alert.alert(
-            'Cannot Open File',
-            'No app is available to open this file type.',
-            [{ text: 'OK' }]
-          );
-        }
-      }
-    } catch (error) {
-      console.error('Error opening document:', error);
-      Alert.alert(
-        'Cannot Open Document',
-        `Unable to open "${fileName}". The file may not be accessible or the format is not supported.`,
-        [{ text: 'OK' }]
-      );
-    }
+    onFilePress?.(message);
   };
 
   // Document attachment
@@ -859,13 +976,139 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     outputRange: ['transparent', 'rgba(255, 220, 50, 0.35)'],
   });
 
+  const isStarredByMe = !!user && !!message.starredBy?.includes(user.userId);
+  const dimStyle = dimmed ? { opacity: 0.35 } : undefined;
+  const isMentioned = !!user && !!message.mentions?.includes(user.userId);
+
+  // Track tap timestamps for double-tap detection without needing a gesture-handler graph rewrite.
+  const lastTapRef = useRef<number>(0);
+  const handlePress = () => {
+    if (selectionMode) {
+      onToggleSelect?.(message);
+      return;
+    }
+    const now = Date.now();
+    if (onDoubleTap && now - lastTapRef.current < 280) {
+      lastTapRef.current = 0;
+      onDoubleTap(message);
+      return;
+    }
+    lastTapRef.current = now;
+  };
+
+  const renderRichText = (color: string, mineLink?: boolean) => {
+    if (!hasTextContent) return null;
+    const spans = tokenizeContent(message.content, mentionLabels, searchQuery);
+    return (
+      <Text style={[styles.text, { color }]}>
+        {spans.map((span, i) => {
+          if (span.kind === 'mention') {
+            return (
+              <Text
+                key={i}
+                onPress={() => onMentionPress?.(span.userId)}
+                style={{
+                  color: mineLink ? '#ffffff' : theme.colors.primary,
+                  fontWeight: '600',
+                  textDecorationLine: 'underline',
+                }}
+              >
+                {span.text}
+              </Text>
+            );
+          }
+          if (span.kind === 'link') {
+            return (
+              <Text
+                key={i}
+                onPress={() => Linking.openURL(span.url).catch(() => undefined)}
+                style={{
+                  color: mineLink ? '#ffffff' : theme.colors.primary,
+                  textDecorationLine: 'underline',
+                }}
+              >
+                {span.text}
+              </Text>
+            );
+          }
+          if (span.kind === 'highlight') {
+            return (
+              <Text
+                key={i}
+                style={{
+                  backgroundColor: 'rgba(255, 213, 79, 0.55)',
+                  color: theme.colors.onSurface,
+                  fontWeight: '600',
+                }}
+              >
+                {span.text}
+              </Text>
+            );
+          }
+          return <Text key={i}>{span.text}</Text>;
+        })}
+      </Text>
+    );
+  };
+
+  const renderForwardedTag = () => {
+    if (!message.forwardedFrom) return null;
+    const manyTimes = message.forwardedFrom.hopCount >= 4;
+    return (
+      <View style={styles.forwardedRow}>
+        <Ionicons
+          name={manyTimes ? 'arrow-redo' : 'arrow-redo-outline'}
+          size={11}
+          color={isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant}
+        />
+        <Text
+          style={[
+            styles.forwardedText,
+            { color: isMine ? 'rgba(255,255,255,0.75)' : theme.colors.onSurfaceVariant },
+          ]}
+        >
+          {manyTimes ? 'Forwarded many times' : 'Forwarded'}
+        </Text>
+      </View>
+    );
+  };
+
+  const handleLongPress = () => {
+    if (selectionMode) {
+      onToggleSelect?.(message);
+      return;
+    }
+    onLongPress?.(message);
+  };
+  const handleReactionsPress = () => onReactionsPress?.(message);
+
+  const renderSelectionMarker = (align: 'left' | 'right') => {
+    if (!selectionMode) return null;
+    const color = selected ? theme.colors.primary : (isDark ? '#666' : '#bbb');
+    return (
+      <View style={[styles.selectionMarker, align === 'right' ? styles.selectionMarkerRight : styles.selectionMarkerLeft]}>
+        <View style={[styles.selectionTick, { borderColor: color, backgroundColor: selected ? color : 'transparent' }]}>
+          {selected && <Ionicons name="checkmark" size={12} color="#fff" />}
+        </View>
+      </View>
+    );
+  };
+
   // My message (right side)
   if (isMine) {
     return (
       <>
-        <Animated.View style={{ backgroundColor: highlightBg, borderRadius: 16 }}>
+        <Animated.View
+          style={[
+            { backgroundColor: highlightBg, borderRadius: 16 },
+            isMentioned && { backgroundColor: 'rgba(255, 193, 7, 0.18)' },
+            selected && { backgroundColor: isDark ? 'rgba(53,198,255,0.15)' : 'rgba(31,111,235,0.10)' },
+            dimStyle,
+          ]}
+        >
           <Swipeable
             ref={swipeableRef}
+            enabled={!selectionMode}
             renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
             renderRightActions={isGroupChat && onSwipeInfo ? renderRightActions : undefined}
             onSwipeableOpen={onSwipeableOpen}
@@ -873,13 +1116,38 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
             overshootLeft={false}
             overshootRight={false}
           >
-            <View style={[styles.container, styles.mine, { backgroundColor: theme.colors.primary }]}>
+            {renderSelectionMarker('right')}
+            <Pressable
+              onPress={handlePress}
+              onLongPress={handleLongPress}
+              delayLongPress={280}
+              android_ripple={undefined}
+              style={({ pressed }) => [
+                styles.container,
+                styles.mine,
+                { backgroundColor: theme.colors.primary },
+                pressed && (onLongPress || selectionMode) && { opacity: 0.85 },
+              ]}
+            >
+              {renderForwardedTag()}
               {renderReplyContent()}
               {renderMedia()}
-              {hasTextContent && (
-                <Text style={[styles.text, { color: theme.colors.onPrimary }]}>{message.content}</Text>
+              {livePreview && hasTextContent && (
+                <LinkPreview preview={livePreview} isMine />
               )}
+              {renderRichText(theme.colors.onPrimary, true)}
               <View style={styles.timestampRow}>
+                {isStarredByMe && (
+                  <Ionicons
+                    name="star"
+                    size={11}
+                    color="rgba(255,255,255,0.85)"
+                    style={{ marginRight: 4 }}
+                  />
+                )}
+                {message.editedAt && (
+                  <Text style={[styles.editedTag, { color: 'rgba(255,255,255,0.65)' }]}>edited</Text>
+                )}
                 <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
                 <MessageStatusIndicator
                   status={message.status}
@@ -889,8 +1157,14 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
                   readCount={message.readBy?.length || 0}
                 />
               </View>
-            </View>
+            </Pressable>
           </Swipeable>
+          <ReactionsRow
+            reactions={message.reactions}
+            currentUserId={user?.userId}
+            align="right"
+            onPress={handleReactionsPress}
+          />
         </Animated.View>
         {renderFullScreenImage()}
       </>
@@ -900,9 +1174,17 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   // Other's message (left side with optional avatar)
   return (
     <>
-      <Animated.View style={{ backgroundColor: highlightBg, borderRadius: 16 }}>
+      <Animated.View
+        style={[
+          { backgroundColor: highlightBg, borderRadius: 16 },
+          isMentioned && { backgroundColor: 'rgba(255, 193, 7, 0.18)' },
+          selected && { backgroundColor: isDark ? 'rgba(53,198,255,0.15)' : 'rgba(31,111,235,0.10)' },
+          dimStyle,
+        ]}
+      >
         <Swipeable
           ref={swipeableRef}
+          enabled={!selectionMode}
           renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
           onSwipeableOpen={onSwipeableOpen}
           friction={2}
@@ -910,6 +1192,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           overshootRight={false}
         >
           <View style={styles.otherRow}>
+            {renderSelectionMarker('left')}
             {showSenderInfo !== undefined && (
               <View style={styles.avatarContainer}>
                 {showSenderInfo && (
@@ -923,19 +1206,50 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
                 )}
               </View>
             )}
-            <View style={[styles.container, styles.other, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' }]}>
+            <Pressable
+              onPress={handlePress}
+              onLongPress={handleLongPress}
+              delayLongPress={280}
+              style={({ pressed }) => [
+                styles.container,
+                styles.other,
+                { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' },
+                pressed && (onLongPress || selectionMode) && { opacity: 0.85 },
+              ]}
+            >
+              {renderForwardedTag()}
               {renderReplyContent()}
               {showSenderInfo && senderName && (
                 <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
               )}
               {renderMedia()}
-              {hasTextContent && (
-                <Text style={[styles.text, { color: theme.colors.onSurface }]}>{message.content}</Text>
+              {livePreview && hasTextContent && (
+                <LinkPreview preview={livePreview} isMine={false} />
               )}
-              <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
-            </View>
+              {renderRichText(theme.colors.onSurface)}
+              <View style={styles.timestampRow}>
+                {isStarredByMe && (
+                  <Ionicons
+                    name="star"
+                    size={11}
+                    color={theme.colors.onSurfaceVariant}
+                    style={{ marginRight: 4 }}
+                  />
+                )}
+                {message.editedAt && (
+                  <Text style={[styles.editedTag, { color: theme.colors.onSurfaceVariant }]}>edited</Text>
+                )}
+                <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
+              </View>
+            </Pressable>
           </View>
         </Swipeable>
+        <ReactionsRow
+          reactions={message.reactions}
+          currentUserId={user?.userId}
+          align="left"
+          onPress={handleReactionsPress}
+        />
       </Animated.View>
       {renderFullScreenImage()}
     </>
@@ -953,9 +1267,49 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 12,
   },
+  tombstoneBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   systemText: {
     fontSize: 12,
     textAlign: 'center',
+  },
+  forwardedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginBottom: 4,
+  },
+  forwardedText: {
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+  editedTag: {
+    fontSize: 10,
+    fontStyle: 'italic',
+    marginRight: 4,
+  },
+  selectionMarker: {
+    position: 'absolute',
+    top: '50%',
+    transform: [{ translateY: -10 }],
+    zIndex: 5,
+  },
+  selectionMarkerLeft: {
+    left: -22,
+  },
+  selectionMarkerRight: {
+    right: -22,
+  },
+  selectionTick: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   otherRow: {
     flexDirection: 'row',

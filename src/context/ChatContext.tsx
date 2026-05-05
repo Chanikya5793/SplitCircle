@@ -1,7 +1,10 @@
 import { db } from '@/firebase';
-import type { ChatMessage, ChatParticipant, ChatThread, MediaMetadata, MessageType } from '@/models';
+import type { ChatMessage, ChatParticipant, ChatThread, ForwardedFrom, MediaMetadata, MessageType, PinnedMessageRef } from '@/models';
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
+  deleteField,
   doc,
   onSnapshot,
   query,
@@ -55,6 +58,8 @@ interface SendMessagePayload {
     longitude: number;
     address?: string;
   };
+  forwardedFrom?: ForwardedFrom;
+  mentions?: string[];
   onStageChange?: (
     stage: 'preparing' | 'uploading' | 'sending' | 'complete' | 'failed',
     details?: { progress?: number; message?: string },
@@ -69,6 +74,9 @@ interface ChatContextValue {
   ensureGroupThread: (groupId: string, participants: ChatParticipant[]) => Promise<string>;
   ensureDirectThread: (otherParticipant: ChatParticipant) => Promise<string>;
   markChatAsRead: (chatId: string) => Promise<void>;
+  togglePinMessage: (chatId: string, message: ChatMessage) => Promise<void>;
+  deleteMessageForEveryone: (chatId: string, messageId: string) => Promise<void>;
+  setTyping: (chatId: string, isTyping: boolean) => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextValue | undefined>(undefined);
@@ -228,7 +236,10 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const payload = snapshot.docs.map((docSnap) => {
-        const data = docSnap.data() as ChatThread & { lastMessage?: ChatMessage };
+        const data = docSnap.data() as ChatThread & {
+          lastMessage?: ChatMessage;
+          deletedMessageIds?: string[];
+        };
         return {
           ...data,
           participantIds: data.participantIds ?? data.participants.map((participant) => participant.userId),
@@ -241,6 +252,23 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
       setThreads(payload);
       setLoading(false);
+
+      // Reconcile remote delete-for-everyone announcements into local store.
+      void (async () => {
+        const { getChatMessages, saveMessageLocally } = await import('@/services/localMessageStorage');
+        for (const docSnap of snapshot.docs) {
+          const data = docSnap.data() as { chatId?: string; deletedMessageIds?: string[] };
+          const ids = data.deletedMessageIds ?? [];
+          if (ids.length === 0 || !data.chatId) continue;
+          const local = await getChatMessages(data.chatId);
+          for (const id of ids) {
+            const target = local.find((m) => m.id === id || m.messageId === id);
+            if (target && !target.deletedForEveryone) {
+              await saveMessageLocally({ ...target, deletedForEveryone: true, content: '' });
+            }
+          }
+        }
+      })();
     });
 
     return () => unsubscribe();
@@ -423,7 +451,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   }, [getRecipientCount, getThreadByChatId]);
 
   const sendMessage = useCallback(
-    async ({ chatId, requestId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo, location, onStageChange }: SendMessagePayload) => {
+    async ({ chatId, requestId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo, location, forwardedFrom, mentions, onStageChange }: SendMessagePayload) => {
       if (!user) {
         throw new Error('Missing user for chat send');
       }
@@ -454,6 +482,8 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         ...(mediaMetadata ? { mediaMetadata } : {}),
         ...(replyTo ? { replyTo } : {}),
         ...(location ? { location } : {}),
+        ...(forwardedFrom ? { forwardedFrom } : {}),
+        ...(mentions && mentions.length ? { mentions } : {}),
         status: 'sending',
         createdAt: now,
         timestamp: now,
@@ -612,9 +642,111 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     [threads, user],
   );
 
+  const togglePinMessage = useCallback(
+    async (chatId: string, message: ChatMessage) => {
+      if (!user) return;
+      const chatDoc = doc(db, 'chats', chatId);
+      const thread = getThreadByChatId(chatId);
+      const existing = thread?.pinnedMessages?.find((p) => p.messageId === message.messageId);
+
+      if (existing) {
+        await updateDoc(chatDoc, {
+          pinnedMessages: arrayRemove(existing),
+        });
+        return;
+      }
+
+      const ref: PinnedMessageRef = {
+        messageId: message.messageId,
+        pinnedBy: user.userId,
+        pinnedAt: Date.now(),
+        contentPreview: message.content?.slice(0, 140),
+        type: message.type,
+        senderId: message.senderId,
+      };
+      await updateDoc(chatDoc, {
+        pinnedMessages: arrayUnion(ref),
+      });
+    },
+    [getThreadByChatId, user],
+  );
+
+  const deleteMessageForEveryone = useCallback(
+    async (chatId: string, messageId: string) => {
+      if (!user) return;
+      // Mark locally; cross-device propagation lives on the chat thread doc
+      // as a simple deletedMessageIds array — recipients reconcile on next subscribe.
+      const { saveMessageLocally, getChatMessages } = await import('@/services/localMessageStorage');
+      const messages = await getChatMessages(chatId);
+      const target = messages.find((m) => m.id === messageId || m.messageId === messageId);
+      if (!target) return;
+
+      await saveMessageLocally({
+        ...target,
+        deletedForEveryone: true,
+        content: '',
+      });
+
+      try {
+        await updateDoc(doc(db, 'chats', chatId), {
+          deletedMessageIds: arrayUnion(messageId),
+        });
+      } catch (error) {
+        // The chat doc field is opportunistic — if the write fails we still
+        // have the local mark, and the next foreground send will fan out.
+        console.warn('deleteMessageForEveryone: chat doc broadcast failed', error);
+      }
+    },
+    [user],
+  );
+
+  const setTyping = useCallback(
+    async (chatId: string, isTyping: boolean) => {
+      if (!user) return;
+      const chatDoc = doc(db, 'chats', chatId);
+      try {
+        if (isTyping) {
+          await updateDoc(chatDoc, {
+            [`typing.${user.userId}`]: Date.now(),
+          });
+        } else {
+          await updateDoc(chatDoc, {
+            [`typing.${user.userId}`]: deleteField(),
+          });
+        }
+      } catch (error) {
+        // Typing presence is best-effort — non-blocking.
+        console.warn('setTyping failed', error);
+      }
+    },
+    [user],
+  );
+
   const value = useMemo(
-    () => ({ threads, loading, sendMessage, subscribeToMessages, ensureGroupThread, ensureDirectThread, markChatAsRead }),
-    [ensureGroupThread, ensureDirectThread, loading, markChatAsRead, sendMessage, subscribeToMessages, threads],
+    () => ({
+      threads,
+      loading,
+      sendMessage,
+      subscribeToMessages,
+      ensureGroupThread,
+      ensureDirectThread,
+      markChatAsRead,
+      togglePinMessage,
+      deleteMessageForEveryone,
+      setTyping,
+    }),
+    [
+      ensureGroupThread,
+      ensureDirectThread,
+      loading,
+      markChatAsRead,
+      sendMessage,
+      subscribeToMessages,
+      threads,
+      togglePinMessage,
+      deleteMessageForEveryone,
+      setTyping,
+    ],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
