@@ -5,6 +5,6 @@
 #import <React/RCTBridgeModule.h>
 #import <React/RCTEventEmitter.h>
 
-// CallKit / VoIP push bridging (ObjC libs consumed from AppDelegate.swift)
-#import "RNCallKeep.h"
-#import "RNVoipPushNotificationManager.h"
+// CallKit / VoIP push bridging (ObjC pods consumed from AppDelegate.swift)
+#import <RNCallKeep/RNCallKeep.h>
+#import <RNVoipPushNotification/RNVoipPushNotificationManager.h>
