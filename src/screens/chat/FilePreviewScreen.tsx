@@ -20,7 +20,6 @@ import {
   View,
 } from 'react-native';
 import { Text } from 'react-native-paper';
-import Pdf from 'react-native-pdf';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -70,9 +69,7 @@ export const FilePreviewScreen = () => {
   const [textLoading, setTextLoading] = useState(false);
   const [textError, setTextError] = useState<string | null>(null);
 
-  const [pdfLoading, setPdfLoading] = useState(true);
-  const [pdfError, setPdfError] = useState<string | null>(null);
-  const [pdfPageInfo, setPdfPageInfo] = useState<{ current: number; total: number } | null>(null);
+  const [pdfPageInfo] = useState<{ current: number; total: number } | null>(null);
 
   const kind = detectKind(params.mimeType, params.fileName);
 
@@ -212,66 +209,27 @@ export const FilePreviewScreen = () => {
     }
 
     if (kind === 'pdf') {
-      if (pdfError) {
-        return (
-          <View style={styles.center}>
-            <Ionicons name="alert-circle" size={48} color={theme.colors.error} />
-            <Text style={[styles.unsupportedTitle, { color: theme.colors.onSurface }]}>
-              Could not display PDF
-            </Text>
-            <Text style={[styles.unsupportedSub, { color: theme.colors.onSurfaceVariant }]}>
-              {pdfError}
-            </Text>
-            <TouchableOpacity
-              onPress={handleOpenExternally}
-              style={[styles.openButton, { backgroundColor: theme.colors.primary }]}
-              activeOpacity={0.85}
-              accessibilityRole="button"
-              accessibilityLabel="Open with another app"
-            >
-              <Ionicons name="open-outline" size={18} color={theme.colors.onPrimary} />
-              <Text style={[styles.openButtonText, { color: theme.colors.onPrimary }]}>
-                Open with another app
-              </Text>
-            </TouchableOpacity>
-          </View>
-        );
-      }
-
-      const pdfSource = Platform.OS === 'android' && !params.uri.startsWith('content://') && !params.uri.startsWith('file://')
-        ? { uri: `file://${params.uri}`, cache: true }
-        : { uri: params.uri, cache: true };
-
       return (
-        <View style={[styles.pdfContainer, { backgroundColor: theme.colors.background }]}>
-          <Pdf
-            source={pdfSource}
-            trustAllCerts={false}
-            style={styles.pdf}
-            onLoadComplete={(numberOfPages) => {
-              setPdfLoading(false);
-              setPdfPageInfo({ current: 1, total: numberOfPages });
-            }}
-            onPageChanged={(page, numberOfPages) => {
-              setPdfPageInfo({ current: page, total: numberOfPages });
-            }}
-            onError={(err) => {
-              setPdfLoading(false);
-              setPdfError(err instanceof Error ? err.message : 'Failed to render PDF');
-            }}
-            enablePaging
-            renderActivityIndicator={() => (
-              <ActivityIndicator color={theme.colors.primary} size="large" />
-            )}
-          />
-          {pdfLoading && (
-            <View style={styles.pdfLoadingOverlay} pointerEvents="none">
-              <ActivityIndicator color={theme.colors.primary} size="large" />
-              <Text style={[styles.pdfLoadingText, { color: theme.colors.onSurfaceVariant }]}>
-                Loading PDF…
-              </Text>
-            </View>
-          )}
+        <View style={styles.center}>
+          <Ionicons name="document-text-outline" size={64} color={theme.colors.primary} />
+          <Text style={[styles.unsupportedTitle, { color: theme.colors.onSurface }]}>
+            PDF Document
+          </Text>
+          <Text style={[styles.unsupportedSub, { color: theme.colors.onSurfaceVariant }]}>
+            Open this PDF in your preferred app to view it.
+          </Text>
+          <TouchableOpacity
+            onPress={handleOpenExternally}
+            style={[styles.openButton, { backgroundColor: theme.colors.primary }]}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Open PDF with another app"
+          >
+            <Ionicons name="open-outline" size={18} color={theme.colors.onPrimary} />
+            <Text style={[styles.openButtonText, { color: theme.colors.onPrimary }]}>
+              Open PDF
+            </Text>
+          </TouchableOpacity>
         </View>
       );
     }

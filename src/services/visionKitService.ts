@@ -49,7 +49,13 @@ const VisionKitNative = Platform.OS === 'ios'
 
 console.log('[VisionKit] Native module available:', !!VisionKitNative, 'Platform:', Platform.OS);
 
-const VisionKitEventEmitter = VisionKitNative
+// NativeEventEmitter requires the module to implement addListener/removeListeners.
+// Guard against a module stub that lacks those methods to avoid a fatal crash at load time.
+const canEmit = VisionKitNative
+  && typeof VisionKitNative.addListener === 'function'
+  && typeof VisionKitNative.removeListeners === 'function';
+
+const VisionKitEventEmitter = canEmit
   ? new NativeEventEmitter(VisionKitNative)
   : null;
 
