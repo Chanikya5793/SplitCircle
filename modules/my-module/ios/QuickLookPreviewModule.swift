@@ -7,12 +7,19 @@ public class QuickLookPreviewModule: Module {
     Name("QuickLookPreview")
 
     AsyncFunction("previewFile") { (uri: String, promise: Promise) in
-      guard let url = URL(string: uri) else {
-        promise.reject("INVALID_URI", "Invalid URI provided")
-        return
+      let localURL: URL
+      if uri.starts(with: "file://") {
+        if let url = URL(string: uri) {
+          localURL = url
+        } else if let encoded = uri.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed), let url = URL(string: encoded) {
+          localURL = url
+        } else {
+          promise.reject("INVALID_URI", "Invalid URI provided: \(uri)")
+          return
+        }
+      } else {
+        localURL = URL(fileURLWithPath: uri)
       }
-      
-      let localURL = url.isFileURL ? url : URL(fileURLWithPath: url.path)
       
       DispatchQueue.main.async {
         let previewController = QLPreviewController()

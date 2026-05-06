@@ -115,6 +115,9 @@
           "react-native-vector-icons"
         ]
       }
+    },
+    "autolinking": {
+      "nativeModulesDir": "modules"
     }
   },
   "private": true
