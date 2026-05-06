@@ -1,7 +1,10 @@
-import { requireNativeModule } from 'expo-modules-core';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 
-const QuickLookPreview = requireNativeModule('QuickLookPreview');
+const QuickLookPreview = requireOptionalNativeModule('QuickLookPreview');
 
 export async function previewFile(uri: string): Promise<boolean> {
+  if (!QuickLookPreview) {
+    throw new Error('QuickLookPreview native module not available — rebuild the app with npx expo run:ios');
+  }
   return await QuickLookPreview.previewFile(uri);
 }
