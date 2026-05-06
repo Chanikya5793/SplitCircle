@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.generateLiveKitToken = exports.triggerRecurringBillsForGroup = exports.processNotificationReceipts = exports.runRecurringBillsScheduler = exports.registerVoipPushToken = exports.onCallCreated = exports.onGroupUpdated = exports.onChatUpdated = exports.sendTestPushNotification = exports.unregisterNotificationDevice = exports.syncNotificationDevice = exports.parseReceiptWithLLM = void 0;
+exports.generateLiveKitToken = exports.triggerRecurringBillsForGroup = exports.processNotificationReceipts = exports.runRecurringBillsScheduler = exports.registerVoipPushToken = exports.onCallCreated = exports.onGroupUpdated = exports.onChatUpdated = exports.sendTestPushNotification = exports.unregisterNotificationDevice = exports.syncNotificationDevice = exports.cleanupOldRtdbData = exports.parseReceiptWithLLM = void 0;
 const app_1 = require("firebase-admin/app");
 const auth_1 = require("firebase-admin/auth");
 const database_1 = require("firebase-admin/database");
@@ -51,6 +51,8 @@ const voipPush_1 = require("./voipPush");
 const friends_1 = require("./friends");
 var parseReceiptWithLLM_1 = require("./parseReceiptWithLLM");
 Object.defineProperty(exports, "parseReceiptWithLLM", { enumerable: true, get: function () { return parseReceiptWithLLM_1.parseReceiptWithLLM; } });
+var cleanup_1 = require("./cleanup");
+Object.defineProperty(exports, "cleanupOldRtdbData", { enumerable: true, get: function () { return cleanup_1.cleanupOldRtdbData; } });
 (0, app_1.initializeApp)();
 const livekitUrlSecret = (0, params_1.defineSecret)("LIVEKIT_URL");
 const livekitApiKeySecret = (0, params_1.defineSecret)("LIVEKIT_API_KEY");

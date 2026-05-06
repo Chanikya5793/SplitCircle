@@ -4,7 +4,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatParticipant, MediaMetadata } from '@/models';
-import { mediaExistsLocally } from '@/services/mediaService';
+import { ROUTES } from '@/constants';
+import { mediaExistsLocally, getOrDownloadMedia } from '@/services/mediaService';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -17,6 +18,7 @@ import React, {
   useState,
 } from 'react';
 import {
+  Alert,
   Animated,
   Dimensions,
   FlatList,
@@ -1314,6 +1316,39 @@ export const ChatMediaGalleryScreen = () => {
     );
   };
 
+  const handleDocPress = useCallback(async (message: ChatMessage) => {
+    let localPath = message.localMediaPath;
+    
+    if (!localPath && message.mediaUrl) {
+      try {
+        const fileName = message.mediaMetadata?.fileName || 'document';
+        const dlPath = await getOrDownloadMedia(
+          message.mediaUrl,
+          message.localMediaPath,
+          params.chatId,
+          message.messageId || message.id,
+          fileName
+        );
+        if (dlPath) localPath = dlPath;
+      } catch (error) {
+        console.error('Failed to download doc:', error);
+      }
+    }
+
+    if (!localPath) {
+      Alert.alert('File Not Available', 'The file could not be downloaded.');
+      return;
+    }
+
+    // @ts-ignore
+    navigation.navigate(ROUTES.APP.FILE_PREVIEW, {
+      uri: localPath,
+      fileName: message.mediaMetadata?.fileName,
+      mimeType: message.mediaMetadata?.mimeType,
+      fileSize: message.mediaMetadata?.fileSize,
+    });
+  }, [navigation, params.chatId]);
+
   const renderDocs = () => {
     if (docMessages.length === 0) {
       return <EmptyState icon="document-outline" label="No documents" topPad={TAB_BAR_HEIGHT + 40} />;
@@ -1333,6 +1368,7 @@ export const ChatMediaGalleryScreen = () => {
               key={m.messageId || m.id}
               message={m}
               senderName={senderMap.get(m.senderId) ?? 'Member'}
+              onPress={() => handleDocPress(m)}
             />
           ))}
         </GlassView>

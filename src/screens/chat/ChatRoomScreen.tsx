@@ -36,6 +36,7 @@ import {
   updateMessageContent,
 } from '@/services/localMessageStorage';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
+import { getOrDownloadMedia } from '@/services/mediaService';
 import { publishMessageState } from '@/services/messageStateService';
 import { lightHaptic, mediumHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
@@ -403,13 +404,37 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     setActionTarget(message);
   }, []);
 
-  const handleFilePress = useCallback((message: ChatMessage) => {
-    const localPath = message.localMediaPath || message.mediaUrl;
+  const handleFilePress = useCallback(async (message: ChatMessage) => {
+    lightHaptic();
+    
+    let localPath = message.localMediaPath;
+    
+    if (!localPath && message.mediaUrl) {
+      mediaPipelineLoading.start('Downloading document...');
+      try {
+        const fileName = message.mediaMetadata?.fileName || 'document';
+        const dlPath = await getOrDownloadMedia(
+          message.mediaUrl,
+          message.localMediaPath,
+          thread.chatId,
+          message.messageId || message.id,
+          fileName
+        );
+        if (dlPath) {
+          localPath = dlPath;
+        }
+      } catch (error) {
+        console.error('Failed to download file:', error);
+      } finally {
+        mediaPipelineLoading.stop();
+      }
+    }
+
     if (!localPath) {
-      Alert.alert('File Not Available', 'The file has not been downloaded yet.');
+      Alert.alert('File Not Available', 'The file could not be downloaded.');
       return;
     }
-    lightHaptic();
+
     // @ts-ignore — navigation route typing is intentionally loose in this app
     navigation.navigate(ROUTES.APP.FILE_PREVIEW, {
       uri: localPath,
@@ -417,7 +442,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       mimeType: message.mediaMetadata?.mimeType,
       fileSize: message.mediaMetadata?.fileSize,
     });
-  }, [navigation]);
+  }, [navigation, thread.chatId, mediaPipelineLoading]);
 
   const handleReact = useCallback(async (emoji: string) => {
     if (!user || !actionTarget) return;

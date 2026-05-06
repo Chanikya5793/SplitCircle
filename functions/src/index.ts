@@ -28,6 +28,7 @@ import {
     touchFriendInteraction,
 } from "./friends";
 export { parseReceiptWithLLM } from "./parseReceiptWithLLM";
+export { cleanupOldRtdbData } from "./cleanup";
 
 initializeApp();
 
