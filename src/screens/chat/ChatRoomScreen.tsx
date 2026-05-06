@@ -435,6 +435,23 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       return;
     }
 
+    if (Platform.OS === 'ios') {
+      const { NativeModules } = require('react-native');
+      if (NativeModules.QuickLookPreview) {
+        NativeModules.QuickLookPreview.previewFile(localPath).catch((err: any) => {
+          console.error('Failed to preview file with QuickLook:', err);
+          // @ts-ignore — navigation route typing is intentionally loose in this app
+          navigation.navigate(ROUTES.APP.FILE_PREVIEW, {
+            uri: localPath,
+            fileName: message.mediaMetadata?.fileName,
+            mimeType: message.mediaMetadata?.mimeType,
+            fileSize: message.mediaMetadata?.fileSize,
+          });
+        });
+        return;
+      }
+    }
+
     // @ts-ignore — navigation route typing is intentionally loose in this app
     navigation.navigate(ROUTES.APP.FILE_PREVIEW, {
       uri: localPath,
