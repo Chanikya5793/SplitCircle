@@ -449,6 +449,33 @@ export const markMessageDeletedForUser = async (
   }
 };
 
+// Inverse of markMessageDeletedForUser — used by the "Undo" snackbar after a
+// delete-for-me. Drops `userId` from `deletedFor` so the bubble reappears.
+export const unmarkMessageDeletedForUser = async (
+  chatId: string,
+  messageId: string,
+  userId: string
+): Promise<void> => {
+  try {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      const idx = messages.findIndex((m) => m.id === messageId || m.messageId === messageId);
+      if (idx < 0) return;
+
+      const message = messages[idx];
+      if (!message.deletedFor?.includes(userId)) return;
+      const deletedFor = message.deletedFor.filter((id) => id !== userId);
+      messages[idx] = { ...message, deletedFor };
+
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      notifyMessageListeners(chatId);
+    });
+  } catch (error) {
+    console.error('❌ Error unmarking message deleted for user:', error);
+  }
+};
+
 // Merge a remote messageState payload into the locally-cached message.
 // Returns true if the local copy was changed (used to skip needless writes).
 export const applyRemoteMessageState = async (

@@ -51,8 +51,12 @@ const GRID_GAP = 2;
 const CELL_SIZE = (SCREEN_WIDTH - GRID_GAP * (COLUMN_COUNT + 1)) / COLUMN_COUNT;
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
-// Extra top inset so native video controls clear the top chrome (close / info buttons)
-const VIDEO_TOP_INSET = 100;
+// Reserve a little space at the top so native player chrome doesn't get hidden under
+// the close/info buttons. Smaller than before — the chrome bar fades out automatically.
+const VIDEO_TOP_INSET = 0;
+// Bottom thumbnail strip sizing — keeps the strip dense without crowding controls.
+const STRIP_THUMB_SIZE = 44;
+const STRIP_THUMB_GAP = 4;
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -339,16 +343,18 @@ const ZoomableImage = React.memo(({
         !horizDominant &&
         (e.translationY < -SWIPE_UP_DISTANCE_THRESHOLD ||
           e.velocityY < -SWIPE_UP_VELOCITY_THRESHOLD);
+      // Swipe mapping is intentionally inverted vs. the typical iOS photo
+      // viewer: drag-right advances to the next item, drag-left goes back.
       const swipeNext =
         horizDominant &&
         hasNext &&
-        (e.translationX < -SWIPE_DISTANCE_THRESHOLD ||
-          e.velocityX < -SWIPE_VELOCITY_THRESHOLD);
+        (e.translationX > SWIPE_DISTANCE_THRESHOLD ||
+          e.velocityX > SWIPE_VELOCITY_THRESHOLD);
       const swipePrev =
         horizDominant &&
         hasPrev &&
-        (e.translationX > SWIPE_DISTANCE_THRESHOLD ||
-          e.velocityX > SWIPE_VELOCITY_THRESHOLD);
+        (e.translationX < -SWIPE_DISTANCE_THRESHOLD ||
+          e.velocityX < -SWIPE_VELOCITY_THRESHOLD);
 
       if (verticalDismiss) {
         translateY.value = withTiming(SCREEN_HEIGHT, TIMING_OUT);
@@ -363,11 +369,11 @@ const ZoomableImage = React.memo(({
         backdropOpacity.value = withSpring(1, SPRING_SNAPPY);
         runOnJS(onSwipeUp)();
       } else if (swipeNext) {
-        translateX.value = withTiming(-SCREEN_WIDTH, TIMING_FAST, () => {
+        translateX.value = withTiming(SCREEN_WIDTH, TIMING_FAST, () => {
           runOnJS(onSwipeNext)();
         });
       } else if (swipePrev) {
-        translateX.value = withTiming(SCREEN_WIDTH, TIMING_FAST, () => {
+        translateX.value = withTiming(-SCREEN_WIDTH, TIMING_FAST, () => {
           runOnJS(onSwipePrev)();
         });
       } else {
@@ -439,6 +445,10 @@ const ZoomableImage = React.memo(({
           style={styles.zoomableImage}
           resizeMode="contain"
           onError={onError}
+          // Drop the default 300ms cross-fade so cached images appear instantly
+          // instead of flashing black when the viewer mounts or the user swipes.
+          fadeDuration={0}
+          progressiveRenderingEnabled
         />
       </Reanimated.View>
     </GestureDetector>
@@ -511,7 +521,6 @@ const VideoSwipeContainer = React.memo(({
   onSwipeUp,
   onSwipeNext,
   onSwipePrev,
-  onSingleTap,
   onError,
   hasNext,
   hasPrev,
@@ -557,16 +566,17 @@ const VideoSwipeContainer = React.memo(({
         !horizDominant &&
         (e.translationY < -SWIPE_UP_DISTANCE_THRESHOLD ||
           e.velocityY < -SWIPE_UP_VELOCITY_THRESHOLD);
+      // Match ZoomableImage: drag-right → next, drag-left → previous.
       const swipeNext =
         horizDominant &&
         hasNext &&
-        (e.translationX < -SWIPE_DISTANCE_THRESHOLD ||
-          e.velocityX < -SWIPE_VELOCITY_THRESHOLD);
+        (e.translationX > SWIPE_DISTANCE_THRESHOLD ||
+          e.velocityX > SWIPE_VELOCITY_THRESHOLD);
       const swipePrev =
         horizDominant &&
         hasPrev &&
-        (e.translationX > SWIPE_DISTANCE_THRESHOLD ||
-          e.velocityX > SWIPE_VELOCITY_THRESHOLD);
+        (e.translationX < -SWIPE_DISTANCE_THRESHOLD ||
+          e.velocityX < -SWIPE_VELOCITY_THRESHOLD);
 
       if (dismiss) {
         translateY.value = withTiming(SCREEN_HEIGHT, TIMING_OUT);
@@ -580,11 +590,11 @@ const VideoSwipeContainer = React.memo(({
         backdropOpacity.value = withSpring(1, SPRING_SNAPPY);
         runOnJS(onSwipeUp)();
       } else if (swipeNext) {
-        translateX.value = withTiming(-SCREEN_WIDTH, TIMING_FAST, () => {
+        translateX.value = withTiming(SCREEN_WIDTH, TIMING_FAST, () => {
           runOnJS(onSwipeNext)();
         });
       } else if (swipePrev) {
-        translateX.value = withTiming(SCREEN_WIDTH, TIMING_FAST, () => {
+        translateX.value = withTiming(-SCREEN_WIDTH, TIMING_FAST, () => {
           runOnJS(onSwipePrev)();
         });
       } else {
@@ -595,18 +605,10 @@ const VideoSwipeContainer = React.memo(({
       }
     });
 
-  // Long-press / single-tap to toggle chrome — short, low-priority so it does
-  // not steal taps that should reach the native player chrome.
-  const tap = Gesture.Tap()
-    .numberOfTaps(1)
-    .maxDuration(220)
-    .onEnd(() => {
-      'worklet';
-      runOnJS(onSingleTap)();
-    });
-
-  // Pan and tap don't conflict (different shapes) — race so whichever resolves first wins.
-  const composed = Gesture.Race(pan, tap);
+  // Pan-only on video — any tap gesture here would race the native player's
+  // play/pause/scrub touch handling and make controls feel laggy. The user can
+  // close via the always-visible top bar; swipe-up still opens info.
+  const composed = pan;
 
   const animStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
@@ -811,6 +813,22 @@ const FullScreenViewer = ({
     setShowInfo(false);
   }, []);
 
+  // Thumbnail strip — keep the active thumb centred when the user navigates.
+  const stripRef = useRef<FlatList<ChatMessage>>(null);
+  useEffect(() => {
+    if (!visible) return;
+    stripRef.current?.scrollToIndex({
+      index: currentIndex,
+      viewPosition: 0.5,
+      animated: true,
+    });
+  }, [currentIndex, visible]);
+
+  const handleThumbPress = useCallback((idx: number) => {
+    setCurrentIndex(idx);
+    setShowInfo(false);
+  }, []);
+
   const handleDismiss = useCallback(() => {
     // Allow the dismiss animation to play before closing the modal
     setTimeout(onClose, 230);
@@ -861,7 +879,7 @@ const FullScreenViewer = ({
   const itemKey = msg.messageId || msg.id;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <View style={styles.viewerRoot}>
         {/* Animated black backdrop — fades during drag-to-dismiss */}
         <Reanimated.View
@@ -880,6 +898,7 @@ const FullScreenViewer = ({
             pointerEvents="none"
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
+            fadeDuration={0}
           />
         ) : null}
         {nextPreloadUri ? (
@@ -889,6 +908,7 @@ const FullScreenViewer = ({
             pointerEvents="none"
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
+            fadeDuration={0}
           />
         ) : null}
 
@@ -960,8 +980,41 @@ const FullScreenViewer = ({
         {/* Bottom bar */}
         <Animated.View
           style={[styles.viewerBottomBar, { paddingBottom: insets.bottom + 8, opacity: fadeAnim }]}
-          pointerEvents="none"
+          pointerEvents={showChrome ? 'box-none' : 'none'}
         >
+          {messages.length > 1 && (
+            <FlatList
+              ref={stripRef}
+              data={messages}
+              keyExtractor={(item) => item.messageId || item.id}
+              horizontal
+              // `inverted` reverses item order so index 0 sits on the right and
+              // higher indices flow leftward. This matches the swipe mapping
+              // (drag-right → next): the upcoming item is visually to the left
+              // of the active thumb, mirroring how the next image enters.
+              inverted
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.thumbStripContent}
+              getItemLayout={(_, idx) => ({
+                length: STRIP_THUMB_SIZE + STRIP_THUMB_GAP,
+                offset: (STRIP_THUMB_SIZE + STRIP_THUMB_GAP) * idx,
+                index: idx,
+              })}
+              onScrollToIndexFailed={({ index }) => {
+                stripRef.current?.scrollToOffset({
+                  offset: index * (STRIP_THUMB_SIZE + STRIP_THUMB_GAP),
+                  animated: false,
+                });
+              }}
+              renderItem={({ item, index }) => (
+                <StripThumb
+                  message={item}
+                  active={index === currentIndex}
+                  onPress={() => handleThumbPress(index)}
+                />
+              )}
+            />
+          )}
           <Text style={styles.viewerCounter}>
             {currentIndex + 1} / {messages.length}
           </Text>
@@ -1026,6 +1079,8 @@ const MediaCell = React.memo(({ message, onPress }: MediaCellProps) => {
           style={styles.cellImage}
           resizeMode="cover"
           onError={markFailed}
+          fadeDuration={0}
+          progressiveRenderingEnabled
         />
       ) : (
         <View style={[styles.cellPlaceholder, { backgroundColor: theme.colors.surfaceVariant }]}>
@@ -1047,6 +1102,59 @@ const MediaCell = React.memo(({ message, onPress }: MediaCellProps) => {
     </TouchableOpacity>
   );
 });
+
+// ─── StripThumb (bottom carousel item) ───────────────────────────────────────
+
+interface StripThumbProps {
+  message: ChatMessage;
+  active: boolean;
+  onPress: () => void;
+}
+
+const StripThumb = React.memo(({ message, active, onPress }: StripThumbProps) => {
+  const { theme } = useTheme();
+  const { uri, markFailed } = useResolvedMediaUri(message);
+  const isVideo = message.type === 'video';
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.85}
+      style={[
+        styles.stripThumb,
+        {
+          borderColor: active ? theme.colors.primary : 'rgba(255,255,255,0.18)',
+          borderWidth: active ? 2 : StyleSheet.hairlineWidth,
+        },
+      ]}
+    >
+      {uri ? (
+        <Image
+          source={{ uri }}
+          style={styles.stripThumbImage}
+          resizeMode="cover"
+          onError={markFailed}
+          fadeDuration={0}
+          progressiveRenderingEnabled
+        />
+      ) : (
+        <View style={styles.stripThumbFallback}>
+          <Ionicons
+            name={isVideo ? 'videocam-outline' : 'image-outline'}
+            size={16}
+            color="#aaa"
+          />
+        </View>
+      )}
+      {isVideo && (
+        <View style={styles.stripThumbVideoBadge}>
+          <Ionicons name="play" size={10} color="#fff" />
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+});
+StripThumb.displayName = 'StripThumb';
 
 // ─── DocRow ───────────────────────────────────────────────────────────────────
 
@@ -1626,11 +1734,12 @@ const styles = StyleSheet.create({
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
   },
-  // Video player — inset from top so native controls don't overlap close/info buttons
+  // Full-screen video — fills the viewport so portrait videos use vertical space
+  // properly. Native controls overlay above the video; the chat chrome
+  // (close/info) sits in its own bar with `pointerEvents="auto"` so it stays tappable.
   videoPlayer: {
     width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT - VIDEO_TOP_INSET,
-    marginTop: VIDEO_TOP_INSET,
+    height: SCREEN_HEIGHT,
   },
   // Full-screen viewer
   viewerRoot: {
@@ -1716,6 +1825,39 @@ const styles = StyleSheet.create({
   },
   viewerArrowLeft: { left: 12 },
   viewerArrowRight: { right: 12 },
+  // Bottom thumb strip
+  thumbStripContent: {
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    gap: STRIP_THUMB_GAP,
+  },
+  stripThumb: {
+    width: STRIP_THUMB_SIZE,
+    height: STRIP_THUMB_SIZE,
+    borderRadius: 6,
+    overflow: 'hidden',
+    backgroundColor: '#1a1a1a',
+  },
+  stripThumbImage: {
+    width: '100%',
+    height: '100%',
+  },
+  stripThumbFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stripThumbVideoBadge: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   // Info panel
   infoPanel: {
     position: 'absolute',

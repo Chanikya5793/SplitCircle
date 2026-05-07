@@ -3,16 +3,17 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import QuickLookPreviewView from '../../../modules/my-module/src/QuickLookPreviewView';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Dimensions,
+    FlatList,
     Image,
     KeyboardAvoidingView,
     Modal,
     Platform,
     StyleSheet,
     TouchableOpacity,
-    View
+    View,
 } from 'react-native';
 import { ActivityIndicator, IconButton, Text, TextInput } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,15 +23,24 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export type QualityLevel = 'HD' | 'SD';
 
+export interface MediaPreviewSendItem {
+  media: SelectedMedia;
+  caption: string;
+}
+
 interface MediaPreviewProps {
-  media: SelectedMedia | null;
+  /** Items in pick order. Empty when the preview is closed. */
+  items: SelectedMedia[];
   visible: boolean;
   onClose: () => void;
-  onSend: (caption: string, quality: QualityLevel) => void;
+  /** Fires once when the user taps Send — receives all items with their per-item captions. */
+  onSend: (results: MediaPreviewSendItem[], quality: QualityLevel) => void;
   onPreviewReady?: () => void;
 }
 
-// Helper to format file size
+const STRIP_THUMB_SIZE = 56;
+const STRIP_THUMB_GAP = 6;
+
 const formatFileSize = (bytes?: number): string => {
   if (!bytes) return '';
   if (bytes < 1024) return `${bytes} B`;
@@ -38,7 +48,6 @@ const formatFileSize = (bytes?: number): string => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-// Helper to format duration
 const formatDuration = (ms?: number): string => {
   if (!ms) return '';
   const seconds = Math.floor(ms / 1000);
@@ -54,7 +63,6 @@ const formatSeconds = (seconds: number): string => {
   return `${m}:${s.toString().padStart(2, '0')}`;
 };
 
-// Get icon for document type
 const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
   if (!mimeType) return 'document';
   if (mimeType.startsWith('application/pdf')) return 'document-text';
@@ -65,69 +73,132 @@ const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
   return 'document';
 };
 
-export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }: MediaPreviewProps) => {
+interface StripThumbProps {
+  item: SelectedMedia;
+  active: boolean;
+  onPress: () => void;
+  onRemove: () => void;
+  showRemove: boolean;
+  primaryColor: string;
+}
+
+const StripThumb = ({ item, active, onPress, onRemove, showRemove, primaryColor }: StripThumbProps) => {
+  const isVideo = item.type === 'video';
+  const isImage = item.type === 'image' || item.type === 'camera';
+  return (
+    <View style={styles.stripCell}>
+      <TouchableOpacity
+        onPress={onPress}
+        activeOpacity={0.85}
+        style={[
+          styles.stripThumb,
+          {
+            borderColor: active ? primaryColor : 'rgba(255,255,255,0.18)',
+            borderWidth: active ? 2 : StyleSheet.hairlineWidth,
+          },
+        ]}
+      >
+        {isImage || isVideo ? (
+          <Image source={{ uri: item.uri }} style={styles.stripThumbImage} resizeMode="cover" fadeDuration={0} />
+        ) : (
+          <View style={styles.stripThumbFallback}>
+            <Ionicons
+              name={item.type === 'audio' ? 'musical-notes' : getDocumentIcon(item.mimeType)}
+              size={18}
+              color="#aaa"
+            />
+          </View>
+        )}
+        {isVideo && (
+          <View style={styles.stripVideoBadge}>
+            <Ionicons name="play" size={10} color="#fff" />
+          </View>
+        )}
+      </TouchableOpacity>
+      {showRemove && (
+        <TouchableOpacity style={styles.stripRemove} onPress={onRemove} hitSlop={6}>
+          <Ionicons name="close" size={12} color="#fff" />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+};
+
+export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }: MediaPreviewProps) => {
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  const [caption, setCaption] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [captions, setCaptions] = useState<string[]>([]);
   const [quality, setQuality] = useState<QualityLevel>('HD');
   const [videoError, setVideoError] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const readyNotifiedRef = useRef(false);
+  const stripRef = useRef<FlatList<SelectedMedia>>(null);
 
-  // Audio player — source is set only when visible and media is audio
+  // Keep an internal copy of items so the user can remove individual entries
+  // (via the strip's X button) without forcing the parent to manage that state.
+  const [internalItems, setInternalItems] = useState<SelectedMedia[]>([]);
+
+  // Reset internal state whenever a NEW batch is opened. Identity-compare on
+  // length + first uri keeps the reset cheap and avoids wiping captions on
+  // unrelated re-renders.
+  const itemsKey = items.length > 0 ? `${items.length}:${items[0].uri}` : '';
+  useEffect(() => {
+    if (!visible) return;
+    setInternalItems(items);
+    setCaptions(items.map(() => ''));
+    setActiveIndex(0);
+    setQuality('HD');
+    setVideoError(false);
+    setPreviewReady(false);
+    readyNotifiedRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, itemsKey]);
+
+  const safeIndex = Math.min(activeIndex, Math.max(0, internalItems.length - 1));
+  const media = internalItems[safeIndex];
+
+  // Audio player — source only when the active item is audio.
   const audioSource = (visible && media?.type === 'audio') ? (media.uri ?? null) : null;
   const audioPlayer = useAudioPlayer(audioSource, { updateInterval: 250 });
   const audioStatus = useAudioPlayerStatus(audioPlayer);
   const progressFraction = audioStatus.duration > 0 ? audioStatus.currentTime / audioStatus.duration : 0;
 
-  // Create video player for video media
+  // Video player — source only when the active item is a video.
   const videoSource = media?.type === 'video' ? media.uri : null;
-  const player = useVideoPlayer(videoSource, (player) => {
-    player.loop = false;
+  const player = useVideoPlayer(videoSource, (p) => {
+    p.loop = false;
   });
 
   const markPreviewReady = useCallback(() => {
     setPreviewReady(true);
-
-    if (readyNotifiedRef.current) {
-      return;
-    }
-
+    if (readyNotifiedRef.current) return;
     readyNotifiedRef.current = true;
     onPreviewReady?.();
   }, [onPreviewReady]);
 
+  // Reset preview-ready state whenever the active item changes so the loading
+  // overlay shows for each new video instead of leaking from the previous one.
   useEffect(() => {
-    readyNotifiedRef.current = false;
     setVideoError(false);
+    setPreviewReady(false);
+    readyNotifiedRef.current = false;
 
-    if (!visible || !media) {
-      setPreviewReady(false);
-      return;
-    }
+    if (!visible || !media) return;
 
     if (media.type !== 'video') {
-      const frame = requestAnimationFrame(() => {
-        markPreviewReady();
-      });
-
+      const frame = requestAnimationFrame(() => markPreviewReady());
       return () => cancelAnimationFrame(frame);
     }
+  }, [markPreviewReady, media, visible, safeIndex]);
 
-    setPreviewReady(false);
-  }, [markPreviewReady, media, visible]);
-
-  // Handle player status changes
   useEffect(() => {
     if (!player || !visible || media?.type !== 'video') return;
-
     const subscription = player.addListener('statusChange', (status) => {
       if (status.error) {
-        console.log('Video preview error:', status.error);
         setVideoError(true);
         markPreviewReady();
       }
-
       if (status.status === 'readyToPlay') {
         markPreviewReady();
       }
@@ -136,46 +207,66 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
   }, [markPreviewReady, media?.type, player, visible]);
 
   useEffect(() => {
-    if (!visible || !media || media.type !== 'video' || previewReady || videoError) {
-      return;
-    }
-
-    // Some videos never emit a ready event reliably. Fall back to the
-    // metadata card so the user can still review and send the attachment.
+    if (!visible || !media || media.type !== 'video' || previewReady || videoError) return;
     const timeout = setTimeout(() => {
       setVideoError(true);
       markPreviewReady();
     }, 5000);
-
     return () => clearTimeout(timeout);
   }, [markPreviewReady, media, previewReady, videoError, visible]);
 
+  // Keep the active thumb in view inside the strip when navigating.
+  useEffect(() => {
+    if (!visible || internalItems.length <= 1) return;
+    stripRef.current?.scrollToIndex({
+      index: Math.min(safeIndex, internalItems.length - 1),
+      viewPosition: 0.5,
+      animated: true,
+    });
+  }, [safeIndex, visible, internalItems.length]);
+
   const handleSend = () => {
-    if (!previewReady && media?.type === 'video' && !videoError) {
-      return;
-    }
+    if (internalItems.length === 0) return;
+    if (!previewReady && media?.type === 'video' && !videoError) return;
     if (audioStatus.playing) audioPlayer.pause();
-    const captionToSend = caption;
-    setCaption('');
-    onSend(captionToSend, quality);
+    const results: MediaPreviewSendItem[] = internalItems.map((m, i) => ({
+      media: m,
+      caption: captions[i] ?? '',
+    }));
+    setCaptions(internalItems.map(() => ''));
+    onSend(results, quality);
   };
 
   const handleClose = () => {
-    setCaption('');
+    setCaptions([]);
     setVideoError(false);
     setPreviewReady(false);
     if (audioStatus.playing) audioPlayer.pause();
     onClose();
   };
 
+  const handleRemoveAt = (idx: number) => {
+    setInternalItems((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      if (next.length === 0) {
+        // Closing in a microtask so state writes settle first.
+        setTimeout(() => handleClose(), 0);
+      }
+      return next;
+    });
+    setCaptions((prev) => prev.filter((_, i) => i !== idx));
+    setActiveIndex((prev) => {
+      if (idx < prev) return prev - 1;
+      if (idx === prev) return Math.max(0, prev - (prev > 0 ? 1 : 0));
+      return prev;
+    });
+  };
+
   const toggleAudio = useCallback(async () => {
     try {
       await setAudioModeAsync({ playsInSilentMode: true });
-      if (audioStatus.playing) {
-        audioPlayer.pause();
-      } else {
-        audioPlayer.play();
-      }
+      if (audioStatus.playing) audioPlayer.pause();
+      else audioPlayer.play();
     } catch (err) {
       console.error('Audio toggle error:', err);
     }
@@ -187,7 +278,34 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
     }
   }, [audioStatus.didJustFinish, audioPlayer]);
 
-  if (!visible || !media) return null;
+  const updateActiveCaption = (next: string) => {
+    setCaptions((prev) => {
+      const out = prev.length === internalItems.length ? [...prev] : internalItems.map((_, i) => prev[i] ?? '');
+      out[safeIndex] = next;
+      return out;
+    });
+  };
+
+  const activeCaption = captions[safeIndex] ?? '';
+
+  const headerLabel = useMemo(() => {
+    if (!media) return 'Media';
+    switch (media.type) {
+      case 'image':
+      case 'camera':
+        return 'Photo';
+      case 'video':
+        return 'Video';
+      case 'document':
+        return 'Document';
+      case 'audio':
+        return 'Audio';
+      default:
+        return 'Media';
+    }
+  }, [media]);
+
+  if (!visible || internalItems.length === 0 || !media) return null;
 
   const renderMediaContent = () => {
     switch (media.type) {
@@ -198,12 +316,13 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
             source={{ uri: media.uri }}
             style={styles.imagePreview}
             resizeMode="contain"
+            fadeDuration={0}
+            progressiveRenderingEnabled
           />
         );
 
       case 'video':
         if (videoError) {
-          // Show fallback if video fails to load
           return (
             <View style={styles.videoFallback}>
               <Ionicons name="videocam" size={80} color={theme.colors.primary} />
@@ -221,12 +340,7 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
         }
         return (
           <View style={styles.videoContainer}>
-            <VideoView
-              player={player}
-              style={styles.videoPreview}
-              contentFit="contain"
-              nativeControls
-            />
+            <VideoView player={player} style={styles.videoPreview} contentFit="contain" nativeControls />
           </View>
         );
 
@@ -243,11 +357,7 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
         return (
           <View style={styles.documentPreview}>
             <View style={[styles.documentIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}>
-              <Ionicons
-                name={getDocumentIcon(media.mimeType)}
-                size={80}
-                color={theme.colors.primary}
-              />
+              <Ionicons name={getDocumentIcon(media.mimeType)} size={80} color={theme.colors.primary} />
             </View>
             <Text style={[styles.documentName, { color: '#fff' }]} numberOfLines={2}>
               {media.fileName || 'Document'}
@@ -301,6 +411,8 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
   const showCaptionInput = media.type === 'image' || media.type === 'video' || media.type === 'camera';
   const showQualityControl = media.type === 'image' || media.type === 'video' || media.type === 'camera';
   const isPreviewLoading = media.type === 'video' && !previewReady && !videoError;
+  const showStrip = internalItems.length > 1;
+  const sendCount = internalItems.length;
 
   return (
     <Modal
@@ -311,106 +423,135 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
       onRequestClose={handleClose}
     >
       <View style={[styles.container, { backgroundColor: '#000' }]}>
-        <KeyboardAvoidingView 
+        <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{ flex: 1 }}
         >
-        {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
-          <IconButton
-            icon="close"
-            iconColor="#fff"
-            size={28}
-            onPress={handleClose}
-          />
-          <View style={styles.headerInfo}>
-            <Text style={styles.headerTitle}>
-              {media.type === 'image' || media.type === 'camera' ? 'Photo' : 
-               media.type === 'video' ? 'Video' : 
-               media.type === 'document' ? 'Document' :
-               media.type === 'audio' ? 'Audio' : 'Media'}
-            </Text>
-            {(media.type === 'image' || media.type === 'video' || media.type === 'camera') && media.width && media.height && (
-              <Text style={styles.headerSubtitle}>
-                {media.width} × {media.height}
-                {media.duration ? ` • ${formatDuration(media.duration)}` : ''}
+          {/* Header */}
+          <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+            <IconButton icon="close" iconColor="#fff" size={28} onPress={handleClose} />
+            <View style={styles.headerInfo}>
+              <Text style={styles.headerTitle}>
+                {showStrip ? `${safeIndex + 1} / ${internalItems.length}` : headerLabel}
               </Text>
-            )}
-          </View>
-          
-          {/* Quality Toggle */}
-          {showQualityControl && (
-            <View style={styles.qualityContainer}>
-              <TouchableOpacity 
-                style={[
-                  styles.qualityButton,
-                  quality === 'HD' && styles.qualityButtonActive,
-                  isPreviewLoading && styles.qualityButtonDisabled,
-                ]}
-                onPress={isPreviewLoading ? undefined : () => setQuality(quality === 'HD' ? 'SD' : 'HD')}
-                activeOpacity={isPreviewLoading ? 1 : 0.7}
-              >
-                <Text style={[styles.qualityText, quality === 'HD' && styles.qualityTextActive]}>
-                  {quality}
+              {(media.type === 'image' || media.type === 'video' || media.type === 'camera') && media.width && media.height && (
+                <Text style={styles.headerSubtitle}>
+                  {media.width} × {media.height}
+                  {media.duration ? ` • ${formatDuration(media.duration)}` : ''}
                 </Text>
-              </TouchableOpacity>
+              )}
             </View>
-          )}
-          
-          <View style={{ width: showQualityControl ? 0 : 48 }} />
-        </View>
 
-        {/* Media Content */}
-        <View style={styles.mediaContainer}>
-          {renderMediaContent()}
-          {isPreviewLoading ? (
-            <View style={styles.previewLoadingOverlay}>
-              <View style={styles.previewLoadingCard}>
-                <ActivityIndicator animating size="large" color={theme.colors.primary} />
-                <Text style={styles.previewLoadingTitle}>Loading video preview…</Text>
-                <Text style={styles.previewLoadingSubtitle}>
-                  Large videos can take a moment to prepare.
-                </Text>
+            {showQualityControl && (
+              <View style={styles.qualityContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.qualityButton,
+                    quality === 'HD' && styles.qualityButtonActive,
+                    isPreviewLoading && styles.qualityButtonDisabled,
+                  ]}
+                  onPress={isPreviewLoading ? undefined : () => setQuality(quality === 'HD' ? 'SD' : 'HD')}
+                  activeOpacity={isPreviewLoading ? 1 : 0.7}
+                >
+                  <Text style={[styles.qualityText, quality === 'HD' && styles.qualityTextActive]}>{quality}</Text>
+                </TouchableOpacity>
               </View>
-            </View>
-          ) : null}
-        </View>
-
-        {/* Caption Input & Send */}
-        <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>
-          {showCaptionInput && (
-            <TextInput
-              mode="flat"
-              placeholder="Add a caption..."
-              placeholderTextColor="rgba(255,255,255,0.5)"
-              value={caption}
-              onChangeText={setCaption}
-              style={styles.captionInput}
-              contentStyle={styles.captionInputContent}
-              underlineColor="transparent"
-              activeUnderlineColor="transparent"
-              textColor="#fff"
-              maxLength={500}
-              multiline
-              numberOfLines={2}
-            />
-          )}
-          <TouchableOpacity
-            style={[
-              styles.sendButton,
-              { backgroundColor: isPreviewLoading ? 'rgba(255,255,255,0.3)' : theme.colors.primary },
-            ]}
-            onPress={isPreviewLoading ? undefined : handleSend}
-            activeOpacity={isPreviewLoading ? 1 : 0.8}
-            accessibilityState={{ disabled: isPreviewLoading, busy: isPreviewLoading }}
-          >
-            {isPreviewLoading ? (
-              <ActivityIndicator animating size="small" color="#fff" />
-            ) : (
-              <Ionicons name="send" size={24} color="#fff" />
             )}
-          </TouchableOpacity>
-        </View>
+
+            <View style={{ width: showQualityControl ? 0 : 48 }} />
+          </View>
+
+          {/* Media Content */}
+          <View style={styles.mediaContainer}>
+            {renderMediaContent()}
+            {isPreviewLoading ? (
+              <View style={styles.previewLoadingOverlay}>
+                <View style={styles.previewLoadingCard}>
+                  <ActivityIndicator animating size="large" color={theme.colors.primary} />
+                  <Text style={styles.previewLoadingTitle}>Loading video preview…</Text>
+                  <Text style={styles.previewLoadingSubtitle}>
+                    Large videos can take a moment to prepare.
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+          </View>
+
+          {/* Thumbnail strip — only when multiple items are pending */}
+          {showStrip && (
+            <View style={styles.stripWrap}>
+              <FlatList
+                ref={stripRef}
+                data={internalItems}
+                keyExtractor={(item, idx) => `${idx}:${item.uri}`}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.stripContent}
+                getItemLayout={(_, idx) => ({
+                  length: STRIP_THUMB_SIZE + STRIP_THUMB_GAP + 8,
+                  offset: (STRIP_THUMB_SIZE + STRIP_THUMB_GAP + 8) * idx,
+                  index: idx,
+                })}
+                onScrollToIndexFailed={({ index }) => {
+                  stripRef.current?.scrollToOffset({
+                    offset: index * (STRIP_THUMB_SIZE + STRIP_THUMB_GAP + 8),
+                    animated: false,
+                  });
+                }}
+                renderItem={({ item, index }) => (
+                  <StripThumb
+                    item={item}
+                    active={index === safeIndex}
+                    onPress={() => setActiveIndex(index)}
+                    onRemove={() => handleRemoveAt(index)}
+                    showRemove={internalItems.length > 1}
+                    primaryColor={theme.colors.primary}
+                  />
+                )}
+              />
+            </View>
+          )}
+
+          {/* Caption Input & Send */}
+          <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>
+            {showCaptionInput && (
+              <TextInput
+                mode="flat"
+                placeholder={showStrip ? `Caption for ${safeIndex + 1} / ${internalItems.length}…` : 'Add a caption...'}
+                placeholderTextColor="rgba(255,255,255,0.5)"
+                value={activeCaption}
+                onChangeText={updateActiveCaption}
+                style={styles.captionInput}
+                contentStyle={styles.captionInputContent}
+                underlineColor="transparent"
+                activeUnderlineColor="transparent"
+                textColor="#fff"
+                maxLength={500}
+                multiline
+                numberOfLines={2}
+              />
+            )}
+            <TouchableOpacity
+              style={[
+                styles.sendButton,
+                { backgroundColor: isPreviewLoading ? 'rgba(255,255,255,0.3)' : theme.colors.primary },
+              ]}
+              onPress={isPreviewLoading ? undefined : handleSend}
+              activeOpacity={isPreviewLoading ? 1 : 0.8}
+              accessibilityState={{ disabled: isPreviewLoading, busy: isPreviewLoading }}
+            >
+              {isPreviewLoading ? (
+                <ActivityIndicator animating size="small" color="#fff" />
+              ) : (
+                <View style={styles.sendButtonContent}>
+                  <Ionicons name="send" size={22} color="#fff" />
+                  {sendCount > 1 && (
+                    <Text style={styles.sendButtonCount}>{sendCount}</Text>
+                  )}
+                </View>
+              )}
+            </TouchableOpacity>
+          </View>
         </KeyboardAvoidingView>
       </View>
     </Modal>
@@ -521,11 +662,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     color: 'rgba(255,255,255,0.6)',
   },
-  documentTapHint: {
-    fontSize: 12,
-    marginTop: 12,
-    color: 'rgba(255,255,255,0.45)',
-  },
   audioPreview: {
     alignItems: 'center',
     padding: 40,
@@ -537,10 +673,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
-  },
-  audioInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
   },
   audioProgressContainer: {
     width: '80%',
@@ -569,6 +701,61 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 16,
   },
+  // Bottom thumbnail strip (multi-pick batch)
+  stripWrap: {
+    paddingTop: 10,
+    paddingBottom: 4,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  stripContent: {
+    paddingHorizontal: 12,
+    gap: STRIP_THUMB_GAP,
+  },
+  stripCell: {
+    paddingTop: 8,
+    paddingRight: 8,
+  },
+  stripThumb: {
+    width: STRIP_THUMB_SIZE,
+    height: STRIP_THUMB_SIZE,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#1a1a1a',
+  },
+  stripThumbImage: {
+    width: '100%',
+    height: '100%',
+  },
+  stripThumbFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stripVideoBadge: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stripRemove: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.6)',
+  },
+  // Caption + send
   footer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -588,12 +775,25 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   sendButton: {
-    width: 52,
+    minWidth: 56,
     height: 52,
     borderRadius: 26,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 14,
     marginBottom: 4,
+  },
+  sendButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  sendButtonCount: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 14,
+    minWidth: 14,
+    textAlign: 'center',
   },
   qualityContainer: {
     marginRight: 8,

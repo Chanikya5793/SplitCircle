@@ -27,6 +27,12 @@ export interface MediaMetadata {
   duration?: number; // for audio/video in ms
   aspectRatio?: number; // width/height
   thumbnailUri?: string; // for video thumbnails
+  /** Stable id shared by all messages from the same multi-pick batch. Used by the chat list to render an album bubble grouping siblings into one grid. */
+  albumId?: string;
+  /** 0-based position of this item within its album (in pick / send order). */
+  albumIndex?: number;
+  /** Total number of items in this album. */
+  albumSize?: number;
 }
 
 export interface LocationData {

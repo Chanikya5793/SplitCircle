@@ -12,10 +12,11 @@ import {
   SelectionToolbar,
 } from '@/components/Chat';
 import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
-import type { QualityLevel } from '@/components/Chat/MediaPreview';
+import type { MediaPreviewSendItem, QualityLevel } from '@/components/Chat/MediaPreview';
 import type { MessageAction } from '@/components/Chat/MessageActionSheet';
 import { ReactionDetailsSheet } from '@/components/Chat/ReactionDetailsSheet';
 import type { SelectionAction } from '@/components/Chat/SelectionToolbar';
+import { AlbumBubble } from '@/components/AlbumBubble';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { LoadingOverlay } from '@/components/LoadingOverlay';
@@ -33,6 +34,7 @@ import {
   markMessageDeletedForUser,
   toggleMessageReaction,
   toggleMessageStar,
+  unmarkMessageDeletedForUser,
   updateMessageContent,
 } from '@/services/localMessageStorage';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
@@ -43,19 +45,68 @@ import { useNavigation } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, AppState, FlatList, InteractionManager, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Avatar, Icon, IconButton, Text, TextInput } from 'react-native-paper';
+import { Avatar, Icon, IconButton, Snackbar, Text, TextInput } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Edit window — WhatsApp allows edits up to 15 minutes after sending.
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
-// Delete-for-everyone window — WhatsApp uses ~1 hour.
-const DELETE_FOR_EVERYONE_WINDOW_MS = 60 * 60 * 1000;
+// Delete-for-everyone window — 24 hours.
+const DELETE_FOR_EVERYONE_WINDOW_MS = 24 * 60 * 60 * 1000;
+// After delete-for-me, surface a snackbar with Undo for this many ms.
+const DELETE_UNDO_WINDOW_MS = 5_000;
 // How long a typing presence ping stays "alive" before clients consider it stale.
 const TYPING_STALE_MS = 6_000;
 // Throttle typing pings — never write to Firestore more than once per interval.
 const TYPING_PING_THROTTLE_MS = 2_500;
 
 const MemoizedMessageBubble = React.memo(MessageBubble);
+const MemoizedAlbumBubble = React.memo(AlbumBubble);
+
+// One row in the inverted chat list — either a single message (existing
+// MessageBubble path) or a multi-image/video album from a multi-pick batch
+// (new AlbumBubble path).
+type ChatRow =
+  | { kind: 'single'; message: ChatMessage }
+  | { kind: 'album'; albumId: string; messages: ChatMessage[]; anchor: ChatMessage };
+
+const buildChatRows = (messages: ChatMessage[]): ChatRow[] => {
+  const rows: ChatRow[] = [];
+  let i = 0;
+  while (i < messages.length) {
+    const m = messages[i];
+    const albumId = m.mediaMetadata?.albumId;
+    const gridable = m.type === 'image' || m.type === 'video';
+    if (!albumId || !gridable) {
+      rows.push({ kind: 'single', message: m });
+      i++;
+      continue;
+    }
+    let j = i;
+    while (
+      j < messages.length &&
+      messages[j].mediaMetadata?.albumId === albumId &&
+      messages[j].senderId === m.senderId &&
+      (messages[j].type === 'image' || messages[j].type === 'video')
+    ) {
+      j++;
+    }
+    if (j - i === 1) {
+      rows.push({ kind: 'single', message: m });
+    } else {
+      // Inverted list runs newest→oldest; reverse the slice so the album
+      // bubble's grid flows oldest→newest (top-left → bottom-right).
+      const albumMessages = messages.slice(i, j).slice().reverse();
+      rows.push({
+        kind: 'album',
+        albumId,
+        messages: albumMessages,
+        anchor: m, // newest member — used for status / time
+      });
+    }
+    i = j;
+  }
+  return rows;
+};
 
 interface ChatRoomScreenProps {
   thread: ChatThread;
@@ -78,6 +129,26 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const insets = useSafeAreaInsets();
   // Messages for this chat (inverted list - newest first)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Group consecutive same-album image/video messages into one "album" row so
+  // a multi-pick batch renders as a single grid bubble. Singles fall through
+  // unchanged. Defined up here so search / reply / pin handlers below can use
+  // `messageIdToRowIndex` for scroll-to-row jumps.
+  const rows = useMemo(() => buildChatRows(messages), [messages]);
+  const messageIdToRowIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    rows.forEach((row, idx) => {
+      if (row.kind === 'single') {
+        const id = row.message.messageId || row.message.id;
+        if (id) map.set(id, idx);
+      } else {
+        for (const m of row.messages) {
+          const id = m.messageId || m.id;
+          if (id) map.set(id, idx);
+        }
+      }
+    });
+    return map;
+  }, [rows]);
   // Text input state for composer
   const [text, setText] = useState('');
   const listRef = useRef<FlatList<ChatMessage>>(null);
@@ -116,14 +187,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const typingClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Attachment menu state
   const [attachmentMenuVisible, setAttachmentMenuVisible] = useState(false);
-  // Media preview state
-  const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
+  // Media preview state — `selectedMediaBatch` is the full set of items the user
+  // picked in one go; the preview lets them switch between items, add per-item
+  // captions, and send all at once with a single tap.
+  const [selectedMediaBatch, setSelectedMediaBatch] = useState<SelectedMedia[]>([]);
   const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
-  const mediaQueueRef = useRef<SelectedMedia[]>([]);
   // Location picker state
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
   // Reaction details sheet state
   const [reactionTarget, setReactionTarget] = useState<ChatMessage | null>(null);
+  // Undo-delete-for-me snackbar — holds the most recent set of messageIds the
+  // user just hid, so they can recover within DELETE_UNDO_WINDOW_MS.
+  const [undoDelete, setUndoDelete] = useState<{ messageIds: string[] } | null>(null);
   const markReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const markReadInFlightRef = useRef(false);
   const { run: runSend } = usePreventDoubleSubmit();
@@ -561,29 +636,20 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         break;
       }
       case 'delete': {
-        Alert.alert(
-          'Delete message',
-          'This message will be removed for you. Other people in the chat will still see it.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Delete for me',
-              style: 'destructive',
-              onPress: async () => {
-                warningHaptic();
-                // Optimistic local delete — the bubble flips to "You deleted this" tombstone.
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    (m.messageId || m.id) === targetId
-                      ? { ...m, deletedFor: Array.from(new Set([...(m.deletedFor ?? []), user.userId])) }
-                      : m,
-                  ),
-                );
-                await markMessageDeletedForUser(thread.chatId, targetId, user.userId);
-              },
-            },
-          ],
+        // Optimistic local delete — flip to "You deleted this" immediately
+        // and surface an Undo snackbar. If the user mistakenly picked
+        // delete-for-me when they wanted delete-for-everyone, this gives them
+        // a few seconds to recover and pick the right action.
+        warningHaptic();
+        setMessages((prev) =>
+          prev.map((m) =>
+            (m.messageId || m.id) === targetId
+              ? { ...m, deletedFor: Array.from(new Set([...(m.deletedFor ?? []), user.userId])) }
+              : m,
+          ),
         );
+        await markMessageDeletedForUser(thread.chatId, targetId, user.userId);
+        setUndoDelete({ messageIds: [targetId] });
         break;
       }
     }
@@ -673,32 +739,21 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
 
     if (action === 'delete') {
-      Alert.alert(
-        `Delete ${selectedMessages.length} message${selectedMessages.length === 1 ? '' : 's'}`,
-        'These messages will be removed for you only.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete for me',
-            style: 'destructive',
-            onPress: async () => {
-              warningHaptic();
-              const selectedSet = new Set(selectedMessages.map((m) => m.messageId || m.id));
-              setMessages((prev) =>
-                prev.map((m) =>
-                  selectedSet.has(m.messageId || m.id)
-                    ? { ...m, deletedFor: Array.from(new Set([...(m.deletedFor ?? []), user.userId])) }
-                    : m,
-                ),
-              );
-              for (const m of selectedMessages) {
-                await markMessageDeletedForUser(thread.chatId, m.messageId || m.id, user.userId);
-              }
-              exitSelectionMode();
-            },
-          },
-        ],
+      warningHaptic();
+      const ids = selectedMessages.map((m) => m.messageId || m.id);
+      const selectedSet = new Set(ids);
+      setMessages((prev) =>
+        prev.map((m) =>
+          selectedSet.has(m.messageId || m.id)
+            ? { ...m, deletedFor: Array.from(new Set([...(m.deletedFor ?? []), user.userId])) }
+            : m,
+        ),
       );
+      for (const id of ids) {
+        await markMessageDeletedForUser(thread.chatId, id, user.userId);
+      }
+      exitSelectionMode();
+      setUndoDelete({ messageIds: ids });
       return;
     }
 
@@ -753,13 +808,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     const safe = ((index % searchMatches.length) + searchMatches.length) % searchMatches.length;
     setSearchIndex(safe);
     const id = searchMatches[safe];
-    const messageIdx = messages.findIndex((m) => (m.messageId || m.id) === id);
-    if (messageIdx === -1) return;
-    listRef.current?.scrollToIndex({ index: messageIdx, animated: true, viewPosition: 0.5 });
+    const rowIdx = messageIdToRowIndex.get(id);
+    if (rowIdx === undefined) return;
+    listRef.current?.scrollToIndex({ index: rowIdx, animated: true, viewPosition: 0.5 });
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     setHighlightedMessageId(id);
     highlightTimerRef.current = setTimeout(() => setHighlightedMessageId(null), 1400);
-  }, [messages, searchMatches]);
+  }, [messageIdToRowIndex, searchMatches]);
 
   useEffect(() => {
     if (searchMatches.length > 0 && searchOpen) {
@@ -802,19 +857,17 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   }, [forwardSource, runSend, sendMessage, thread.participants]);
 
   const handleReplyPress = useCallback((messageId: string) => {
-    const index = messages.findIndex(
-      (m) => (m.messageId || m.id) === messageId
-    );
-    if (index === -1) return;
+    const rowIdx = messageIdToRowIndex.get(messageId);
+    if (rowIdx === undefined) return;
 
-    listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+    listRef.current?.scrollToIndex({ index: rowIdx, animated: true, viewPosition: 0.5 });
 
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     setHighlightedMessageId(messageId);
     highlightTimerRef.current = setTimeout(() => {
       setHighlightedMessageId(null);
     }, 1400);
-  }, [messages]);
+  }, [messageIdToRowIndex]);
 
   const handleMediaSelected = async (media: SelectedMedia | SelectedMedia[]) => {
     const items = Array.isArray(media) ? media : [media];
@@ -827,134 +880,157 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       return;
     }
 
-    mediaQueueRef.current = items.slice(1);
     setAttachmentMenuVisible(false);
-    setSelectedMedia(first);
+    setSelectedMediaBatch(items);
     InteractionManager.runAfterInteractions(() => {
       setMediaPreviewVisible(true);
     });
   };
 
-  // Handle sending media with optional caption
-  const handleSendMedia = async (caption: string, quality: QualityLevel) => {
-    if (!selectedMedia) return;
-    const mediaToSend = selectedMedia;
+  // Send a batch of media items in pick order. The preview is dismissed
+  // immediately so the user can keep using the chat; each item streams its own
+  // progress through the keyed loading overlay.
+  const handleSendMedia = async (results: MediaPreviewSendItem[], quality: QualityLevel) => {
+    if (results.length === 0) return;
 
-    // Show processing overlay FIRST, then close preview — this avoids
-    // a blank flash between preview dismissal and overlay appearance.
-    mediaPipelineLoading.start(getProcessingLoadingMessage(mediaToSend.type));
+    // Snapshot reply target — apply it only to the first item so a follow-up
+    // album doesn't re-quote the same message N times.
+    const replySource = replyingTo;
+
     setMediaPreviewVisible(false);
+    setSelectedMediaBatch([]);
+    setReplyingTo(null);
+
+    mediaPipelineLoading.start(
+      results.length > 1
+        ? `Preparing 1 of ${results.length}…`
+        : getProcessingLoadingMessage(results[0].media.type),
+    );
+
+    // Pick a stable albumId for batches >1 with grid-friendly types so the
+    // chat list can render them as one album bubble. Mixed batches (e.g.
+    // image+document) opt out — albums are image/video-only by design.
+    const isAlbum =
+      results.length > 1 &&
+      results.every(({ media }) =>
+        media.type === 'image' ||
+        media.type === 'camera' ||
+        media.type === 'video',
+      );
+    const albumId = isAlbum ? `album_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` : undefined;
 
     try {
-      // Process media based on quality selection
-      let processedUri = mediaToSend.uri;
-      let processedWidth = mediaToSend.width;
-      let processedHeight = mediaToSend.height;
-      let processedSize = mediaToSend.fileSize;
+      for (let i = 0; i < results.length; i++) {
+        const { media: mediaToSend, caption } = results[i];
 
-      if (mediaToSend.type === 'image' || mediaToSend.type === 'camera') {
-        const result = await processImage(mediaToSend.uri, quality);
-        processedUri = result.uri;
-        processedWidth = result.width;
-        processedHeight = result.height;
-        processedSize = result.size;
-      } else if (mediaToSend.type === 'video') {
-        const result = await processVideo(mediaToSend.uri, quality);
-        processedUri = result.uri;
-        if (result.width > 0) processedWidth = result.width;
-        if (result.height > 0) processedHeight = result.height;
-        processedSize = result.size;
+        if (results.length > 1) {
+          mediaPipelineLoading.setMessage(`Preparing ${i + 1} of ${results.length}…`);
+        } else {
+          mediaPipelineLoading.setMessage(getProcessingLoadingMessage(mediaToSend.type));
+        }
+
+        let processedUri = mediaToSend.uri;
+        let processedWidth = mediaToSend.width;
+        let processedHeight = mediaToSend.height;
+        let processedSize = mediaToSend.fileSize;
+
+        if (mediaToSend.type === 'image' || mediaToSend.type === 'camera') {
+          const r = await processImage(mediaToSend.uri, quality);
+          processedUri = r.uri;
+          processedWidth = r.width;
+          processedHeight = r.height;
+          processedSize = r.size;
+        } else if (mediaToSend.type === 'video') {
+          const r = await processVideo(mediaToSend.uri, quality);
+          processedUri = r.uri;
+          if (r.width > 0) processedWidth = r.width;
+          if (r.height > 0) processedHeight = r.height;
+          processedSize = r.size;
+        }
+
+        let messageType: MessageType;
+        switch (mediaToSend.type) {
+          case 'camera':
+          case 'image':
+            messageType = 'image';
+            break;
+          case 'video':
+            messageType = 'video';
+            break;
+          case 'audio':
+            messageType = 'audio';
+            break;
+          case 'document':
+            messageType = 'file';
+            break;
+          case 'location':
+            messageType = 'location';
+            break;
+          default:
+            messageType = 'file';
+        }
+
+        let replyData: any = undefined;
+        if (i === 0 && replySource) {
+          const participant = thread.participants.find((p) => p.userId === replySource.senderId);
+          replyData = {
+            messageId: replySource.messageId,
+            senderId: replySource.senderId,
+            senderName: participant?.displayName || 'Unknown',
+            content: replySource.content,
+            type: replySource.type,
+          };
+        }
+
+        const mediaMetadata: Record<string, unknown> = {};
+        if (mediaToSend.fileName) mediaMetadata.fileName = mediaToSend.fileName;
+        if (processedSize) mediaMetadata.fileSize = processedSize;
+        if (mediaToSend.mimeType) mediaMetadata.mimeType = mediaToSend.mimeType;
+        if (processedWidth) mediaMetadata.width = processedWidth;
+        if (processedHeight) mediaMetadata.height = processedHeight;
+        if (mediaToSend.duration) mediaMetadata.duration = mediaToSend.duration;
+        if (processedWidth && processedHeight) {
+          mediaMetadata.aspectRatio = processedWidth / processedHeight;
+        }
+        if (albumId) {
+          mediaMetadata.albumId = albumId;
+          mediaMetadata.albumIndex = i;
+          mediaMetadata.albumSize = results.length;
+        }
+
+        mediaPipelineLoading.setMessage(
+          results.length > 1
+            ? `Uploading ${i + 1} of ${results.length}…`
+            : `Uploading ${mediaToSend.type === 'video' ? 'video' : 'attachment'}…`,
+        );
+
+        // Each item gets its own runSend key so retries don't collide with
+        // siblings still in the queue.
+        await runSend(async (requestId) => {
+          await sendMessage({
+            chatId: thread.chatId,
+            requestId,
+            content: caption || getMediaPlaceholder(messageType),
+            type: messageType,
+            mediaUri: processedUri,
+            groupId: thread.groupId,
+            replyTo: replyData,
+            mediaMetadata: Object.keys(mediaMetadata).length > 0 ? (mediaMetadata as any) : undefined,
+            onStageChange: (stage, details) => {
+              if (stage === 'complete') return;
+              if (details?.message) {
+                mediaPipelineLoading.setMessage(
+                  results.length > 1
+                    ? `${i + 1} of ${results.length} — ${details.message}`
+                    : details.message,
+                );
+              }
+            },
+          });
+        }, { key: `chat-media-${thread.chatId}-${i}-${Date.now()}` });
       }
-
-      // Map attachment type to message type
-      let messageType: MessageType;
-      switch (mediaToSend.type) {
-        case 'camera':
-        case 'image':
-          messageType = 'image';
-          break;
-        case 'video':
-          messageType = 'video';
-          break;
-        case 'audio':
-          messageType = 'audio';
-          break;
-        case 'document':
-          messageType = 'file';
-          break;
-        case 'location':
-          messageType = 'location';
-          break;
-        default:
-          messageType = 'file';
-      }
-
-      // Build replyTo data if replying
-      let replyData = undefined;
-      if (replyingTo) {
-        const participant = thread.participants.find(p => p.userId === replyingTo.senderId);
-        replyData = {
-          messageId: replyingTo.messageId,
-          senderId: replyingTo.senderId,
-          senderName: participant?.displayName || 'Unknown',
-          content: replyingTo.content,
-          type: replyingTo.type,
-        };
-      }
-
-      // Build mediaMetadata with only defined values
-      const mediaMetadata: Record<string, unknown> = {};
-      if (mediaToSend.fileName) mediaMetadata.fileName = mediaToSend.fileName;
-      if (processedSize) mediaMetadata.fileSize = processedSize;
-      if (mediaToSend.mimeType) mediaMetadata.mimeType = mediaToSend.mimeType;
-      if (processedWidth) mediaMetadata.width = processedWidth;
-      if (processedHeight) mediaMetadata.height = processedHeight;
-      if (mediaToSend.duration) mediaMetadata.duration = mediaToSend.duration;
-      if (processedWidth && processedHeight) {
-        mediaMetadata.aspectRatio = processedWidth / processedHeight;
-      }
-
-      // Update overlay message to uploading phase
-      mediaPipelineLoading.setMessage(
-        `Uploading ${mediaToSend.type === 'video' ? 'video' : 'attachment'}…`,
-      );
-
-      // Send the message directly - ChatContext handles upload
-      await runSend(async (requestId) => {
-        await sendMessage({
-          chatId: thread.chatId,
-          requestId,
-          content: caption || getMediaPlaceholder(messageType),
-          type: messageType,
-          mediaUri: processedUri,
-          groupId: thread.groupId,
-          replyTo: replyData,
-          mediaMetadata: Object.keys(mediaMetadata).length > 0 ? mediaMetadata as any : undefined,
-          onStageChange: (stage, details) => {
-            if (stage === 'complete') {
-              return;
-            }
-
-            if (details?.message) {
-              mediaPipelineLoading.setMessage(details.message);
-            }
-          },
-        });
-      }, { key: `chat-media-${thread.chatId}` });
-
-      const nextMedia = mediaQueueRef.current.shift();
-      if (nextMedia) {
-        setSelectedMedia(nextMedia);
-        InteractionManager.runAfterInteractions(() => {
-          setMediaPreviewVisible(true);
-        });
-      } else {
-        setSelectedMedia(null);
-      }
-      setReplyingTo(null);
     } catch (error) {
-      mediaQueueRef.current = [];
-      console.error('Failed to send media:', error);
+      console.error('Failed to send media batch:', error);
       alert(error instanceof Error ? error.message : 'Failed to send media');
     } finally {
       mediaPipelineLoading.stop();
@@ -1201,18 +1277,37 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
   // ──────────────────────────── Pinned messages ────────────────────────────
   const handlePinnedTap = useCallback((ref: PinnedMessageRef) => {
-    const idx = messages.findIndex((m) => (m.messageId || m.id) === ref.messageId);
-    if (idx === -1) return;
-    listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
+    const rowIdx = messageIdToRowIndex.get(ref.messageId);
+    if (rowIdx === undefined) return;
+    listRef.current?.scrollToIndex({ index: rowIdx, animated: true, viewPosition: 0.5 });
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     setHighlightedMessageId(ref.messageId);
     highlightTimerRef.current = setTimeout(() => setHighlightedMessageId(null), 1400);
-  }, [messages]);
+  }, [messageIdToRowIndex]);
 
   const pinnedSet = useMemo(
     () => new Set(thread.pinnedMessages?.map((p) => p.messageId) ?? []),
     [thread.pinnedMessages],
   );
+
+  const handleUndoDelete = useCallback(async () => {
+    if (!undoDelete || !user) return;
+    const ids = undoDelete.messageIds;
+    setUndoDelete(null);
+    setMessages((prev) =>
+      prev.map((m) => {
+        const id = m.messageId || m.id;
+        if (!ids.includes(id)) return m;
+        return {
+          ...m,
+          deletedFor: (m.deletedFor ?? []).filter((u) => u !== user.userId),
+        };
+      }),
+    );
+    for (const id of ids) {
+      await unmarkMessageDeletedForUser(thread.chatId, id, user.userId);
+    }
+  }, [undoDelete, user, thread.chatId]);
 
   const handleMentionPress = useCallback((userId: string) => {
     const participant = thread.participants.find((p) => p.userId === userId);
@@ -1228,14 +1323,49 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     });
   }, [navigation, thread.participants, thread.type]);
 
-  const renderItem = useCallback(({ item, index }: { item: ChatMessage; index: number }) => {
-    const prevMessage = messages[index + 1]; // inverted list
-    const isFirstInSequence = !prevMessage || prevMessage.senderId !== item.senderId || prevMessage.type === 'system';
-    const senderName = participantMap.get(item.senderId) ?? 'Unknown';
-    const itemId = item.messageId || item.id;
+
+  const rowSenderId = useCallback((row: ChatRow): string => (
+    row.kind === 'single' ? row.message.senderId : row.anchor.senderId
+  ), []);
+
+  const renderItem = useCallback(({ item, index }: { item: ChatRow; index: number }) => {
+    const prevRow = rows[index + 1]; // inverted list — the previous *visual* row is later in the array
+    const itemSenderId = rowSenderId(item);
+    const prevSenderId = prevRow ? rowSenderId(prevRow) : undefined;
+    const prevWasSystem =
+      prevRow?.kind === 'single' && prevRow.message.type === 'system';
+    const isFirstInSequence = !prevRow || prevSenderId !== itemSenderId || prevWasSystem;
+    const senderName = participantMap.get(itemSenderId) ?? 'Unknown';
+
+    if (item.kind === 'album') {
+      const anyId = item.anchor.messageId || item.anchor.id;
+      const memberHighlighted = item.messages.some(
+        (m) => (m.messageId || m.id) === highlightedMessageId,
+      );
+      const memberDimmed =
+        !!dimmedMessageId &&
+        !item.messages.some((m) => (m.messageId || m.id) === dimmedMessageId);
+      return (
+        <MemoizedAlbumBubble
+          messages={item.messages}
+          showSenderInfo={isGroupChat ? isFirstInSequence : undefined}
+          senderName={senderName}
+          isGroupChat={isGroupChat}
+          onMediaPress={selectionMode ? undefined : handleMediaPress}
+          onLongPress={selectionMode ? undefined : handleLongPressMessage}
+          onDoubleTap={selectionMode ? undefined : handleDoubleTap}
+          onReplyPress={handleReplyPress}
+          highlighted={memberHighlighted}
+          dimmed={memberDimmed && (dimmedMessageId !== anyId)}
+        />
+      );
+    }
+
+    const message = item.message;
+    const itemId = message.messageId || message.id;
     return (
       <MemoizedMessageBubble
-        message={item}
+        message={message}
         showSenderInfo={isGroupChat ? isFirstInSequence : undefined}
         senderName={senderName}
         onSwipeReply={selectionMode ? undefined : handleSwipeReply}
@@ -1259,7 +1389,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       />
     );
   }, [
-    messages,
+    rows,
+    rowSenderId,
     participantMap,
     isGroupChat,
     handleSwipeReply,
@@ -1290,6 +1421,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       // smaller offset so composer hugs the keyboard more closely
       //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
       >
+        {!searchOpen && (
         <View style={[styles.headerContainer, { paddingTop: insets.top + 6 }]}>
           <View style={styles.headerRow}>
             <TouchableOpacity
@@ -1376,12 +1508,17 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             </View>
           </View>
         </View>
+        )}
 
         <Animated.FlatList
-          ref={listRef}
-          data={messages}
-          keyExtractor={(item) => item.messageId || item.id || `${item.createdAt}_${item.senderId}`}
-          renderItem={renderItem}
+          ref={listRef as any}
+          data={rows as readonly ChatRow[] as any}
+          keyExtractor={(row: ChatRow) =>
+            row.kind === 'album'
+              ? `album:${row.albumId}`
+              : row.message.messageId || row.message.id || `${row.message.createdAt}_${row.message.senderId}`
+          }
+          renderItem={renderItem as any}
           style={styles.list}
           contentContainerStyle={[
             styles.listContent,
@@ -1391,9 +1528,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             // fully clear of the glass overlay; in normal scroll the messages
             // pass UNDER the header by design.
             { paddingBottom: insets.top + 70 },
-            messages.length === 0 && { flex: 1, justifyContent: 'center' },
+            rows.length === 0 && { flex: 1, justifyContent: 'center' },
           ]}
-          inverted={messages.length > 0}
+          inverted={rows.length > 0}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', justifyContent: 'center', padding: 20 }}>
               <Text style={{ color: theme.colors.secondary }}>No messages yet</Text>
@@ -1582,14 +1719,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         onMediaSelected={handleMediaSelected}
       />
 
-      {/* Media Preview Modal */}
+      {/* Media Preview Modal — supports multi-pick batch with per-item captions */}
       <MediaPreview
-        media={selectedMedia}
+        items={selectedMediaBatch}
         visible={mediaPreviewVisible}
         onClose={() => {
-          mediaQueueRef.current = [];
           setMediaPreviewVisible(false);
-          setSelectedMedia(null);
+          setSelectedMediaBatch([]);
         }}
         onSend={handleSendMedia}
       />
@@ -1759,6 +1895,24 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         }}
         onClose={() => setReactionTarget(null)}
       />
+
+      {/* Undo delete-for-me snackbar — auto-dismisses after the undo window. */}
+      <Snackbar
+        visible={!!undoDelete}
+        onDismiss={() => setUndoDelete(null)}
+        duration={DELETE_UNDO_WINDOW_MS}
+        action={{
+          label: 'Undo',
+          onPress: () => {
+            void handleUndoDelete();
+          },
+        }}
+        wrapperStyle={{ bottom: insets.bottom + 90 }}
+      >
+        {undoDelete && undoDelete.messageIds.length > 1
+          ? `${undoDelete.messageIds.length} messages deleted for you`
+          : 'Message deleted for you'}
+      </Snackbar>
 
       {/* Media Processing Overlay — driven by keyed loading state */}
       <LoadingOverlay visible={mediaPipelineLoading.loading} message={mediaPipelineLoading.message ?? 'Processing media…'} />
