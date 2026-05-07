@@ -1,8 +1,6 @@
 import ExpoModulesCore
 import WebKit
 
-// This view will be used as a native component. Make sure to inherit from `ExpoView`
-// to apply the proper styling (e.g. border radius and shadows).
 class QuickLookPreviewView: ExpoView {
   let webView = WKWebView()
   let onLoad = EventDispatcher()
@@ -20,6 +18,23 @@ class QuickLookPreviewView: ExpoView {
 
   override func layoutSubviews() {
     webView.frame = bounds
+  }
+
+  func loadFileURL(_ urlString: String) {
+    let url: URL
+    if urlString.starts(with: "file://") {
+      if let parsed = URL(string: urlString) {
+        url = parsed
+      } else if let encoded = urlString.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+                let parsed = URL(string: encoded) {
+        url = parsed
+      } else {
+        return
+      }
+    } else {
+      url = URL(fileURLWithPath: urlString)
+    }
+    webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
   }
 }
 

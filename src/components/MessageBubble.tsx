@@ -306,6 +306,22 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
   // hasn't yet caught up before render.
   const [mediaLoadFailed, setMediaLoadFailed] = useState(false);
 
+  // Image dimensions (must be before early returns — it's a hook)
+  const imageDimensions = useMemo(() => {
+    const metadata = message.mediaMetadata;
+    if (metadata?.width && metadata?.height) {
+      const aspectRatio = metadata.width / metadata.height;
+      let width = Math.min(metadata.width, MAX_IMAGE_WIDTH);
+      let height = width / aspectRatio;
+      if (height > MAX_IMAGE_HEIGHT) {
+        height = MAX_IMAGE_HEIGHT;
+        width = height * aspectRatio;
+      }
+      return { width, height };
+    }
+    return { width: MAX_IMAGE_WIDTH, height: 200 };
+  }, [message.mediaMetadata]);
+
   // Link preview
   const detectedUrl = useMemo(
     () => (message.type === 'text' || !message.type ? extractFirstUrl(message.content) : null),
@@ -534,26 +550,6 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
     );
   }
 
-  // Calculate image dimensions maintaining aspect ratio
-  const getImageDimensions = useCallback(() => {
-    const metadata = message.mediaMetadata;
-    if (metadata?.width && metadata?.height) {
-      const aspectRatio = metadata.width / metadata.height;
-      let width = Math.min(metadata.width, MAX_IMAGE_WIDTH);
-      let height = width / aspectRatio;
-
-      if (height > MAX_IMAGE_HEIGHT) {
-        height = MAX_IMAGE_HEIGHT;
-        width = height * aspectRatio;
-      }
-
-      return { width, height };
-    }
-    return { width: MAX_IMAGE_WIDTH, height: 200 };
-  }, [message.mediaMetadata]);
-
-  const imageDimensions = getImageDimensions();
-
   const renderLeftActions = (_progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
     const scale = dragX.interpolate({
       inputRange: [0, 50],
@@ -781,12 +777,14 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
 
     return (
       <TouchableOpacity
-        style={[styles.documentContainer, {
-          backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
-        }]}
+        style={[
+          styles.documentContainer,
+          isMine && styles.documentContainerSender,
+          { backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)') },
+        ]}
         activeOpacity={0.7}
         onPress={handleOpenDocument}
-        disabled={isDownloading || isSending}
+        disabled={isDownloading}
       >
         <View style={[styles.documentIconContainer, { backgroundColor: theme.colors.primary }]}>
           {isDownloading || isSending ? (
@@ -801,14 +799,16 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
         </View>
         <View style={styles.documentInfo}>
           <Text
-            numberOfLines={1}
+            numberOfLines={isMine ? 2 : 1}
             style={[styles.documentName, { color: isMine ? '#fff' : theme.colors.onSurface }]}
           >
             {metadata?.fileName || 'Document'}
           </Text>
-          <Text style={[styles.documentSize, { color: isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant }]}>
-            {isDownloading ? 'Downloading...' : (metadata?.fileSize ? formatFileSize(metadata.fileSize) : '')}
-          </Text>
+          {!isMine && (
+            <Text style={[styles.documentSize, { color: theme.colors.onSurfaceVariant }]}>
+              {isDownloading ? 'Downloading...' : (metadata?.fileSize ? formatFileSize(metadata.fileSize) : '')}
+            </Text>
+          )}
         </View>
         <Ionicons
           name={isDownloaded ? "open-outline" : "cloud-download-outline"}
@@ -1317,6 +1317,7 @@ const messagesEqual = (a: ChatMessage, b: ChatMessage) =>
   a.status === b.status &&
   a.editedAt === b.editedAt &&
   a.deletedForEveryone === b.deletedForEveryone &&
+  (a.deletedFor?.length ?? 0) === (b.deletedFor?.length ?? 0) &&
   a.localMediaPath === b.localMediaPath &&
   a.mediaUrl === b.mediaUrl &&
   a.urlPreview === b.urlPreview &&
@@ -1578,6 +1579,9 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
     marginBottom: 4,
+  },
+  documentContainerSender: {
+    minWidth: SCREEN_WIDTH * 0.55,
   },
   documentIconContainer: {
     width: 40,

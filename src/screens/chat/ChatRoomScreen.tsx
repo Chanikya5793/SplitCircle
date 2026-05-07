@@ -36,7 +36,7 @@ import {
   updateMessageContent,
 } from '@/services/localMessageStorage';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
-import { getOrDownloadMedia } from '@/services/mediaService';
+import { getOrDownloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { publishMessageState } from '@/services/messageStateService';
 import { lightHaptic, mediumHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
@@ -119,6 +119,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Media preview state
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
+  const mediaQueueRef = useRef<SelectedMedia[]>([]);
   // Location picker state
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
   // Reaction details sheet state
@@ -406,23 +407,27 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
   const handleFilePress = useCallback(async (message: ChatMessage) => {
     lightHaptic();
-    
+
+    const originalFileName = message.mediaMetadata?.fileName || 'document';
     let localPath = message.localMediaPath;
-    
+
+    // Verify the stored local path actually exists (can become stale after reinstall)
+    if (localPath) {
+      const exists = await mediaExistsLocally(localPath);
+      if (!exists) localPath = undefined;
+    }
+
     if (!localPath && message.mediaUrl) {
       mediaPipelineLoading.start('Downloading document...');
       try {
-        const fileName = message.mediaMetadata?.fileName || 'document';
         const dlPath = await getOrDownloadMedia(
           message.mediaUrl,
-          message.localMediaPath,
+          undefined,
           thread.chatId,
           message.messageId || message.id,
-          fileName
+          originalFileName,
         );
-        if (dlPath) {
-          localPath = dlPath;
-        }
+        if (dlPath) localPath = dlPath;
       } catch (error) {
         console.error('Failed to download file:', error);
       } finally {
@@ -438,7 +443,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     if (Platform.OS === 'ios') {
       try {
         const QuickLookPreview = require('../../../modules/my-module');
-        await QuickLookPreview.previewFile(localPath);
+        await QuickLookPreview.previewFile(localPath, originalFileName);
         return;
       } catch (err) {
         console.error('Failed to preview file with QuickLook Expo Module:', err);
@@ -448,7 +453,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     // @ts-ignore — navigation route typing is intentionally loose in this app
     navigation.navigate(ROUTES.APP.FILE_PREVIEW, {
       uri: localPath,
-      fileName: message.mediaMetadata?.fileName,
+      fileName: originalFileName,
       mimeType: message.mediaMetadata?.mimeType,
       fileSize: message.mediaMetadata?.fileSize,
     });
@@ -811,15 +816,20 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }, 1400);
   }, [messages]);
 
-  const handleMediaSelected = async (media: SelectedMedia) => {
-    if (media.type === 'location') {
+  const handleMediaSelected = async (media: SelectedMedia | SelectedMedia[]) => {
+    const items = Array.isArray(media) ? media : [media];
+    const first = items[0];
+    if (!first) return;
+
+    if (first.type === 'location') {
       setAttachmentMenuVisible(false);
       setLocationPickerVisible(true);
       return;
     }
 
+    mediaQueueRef.current = items.slice(1);
     setAttachmentMenuVisible(false);
-    setSelectedMedia(media);
+    setSelectedMedia(first);
     InteractionManager.runAfterInteractions(() => {
       setMediaPreviewVisible(true);
     });
@@ -932,9 +942,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         });
       }, { key: `chat-media-${thread.chatId}` });
 
-      setSelectedMedia(null);
+      const nextMedia = mediaQueueRef.current.shift();
+      if (nextMedia) {
+        setSelectedMedia(nextMedia);
+        InteractionManager.runAfterInteractions(() => {
+          setMediaPreviewVisible(true);
+        });
+      } else {
+        setSelectedMedia(null);
+      }
       setReplyingTo(null);
     } catch (error) {
+      mediaQueueRef.current = [];
       console.error('Failed to send media:', error);
       alert(error instanceof Error ? error.message : 'Failed to send media');
     } finally {
@@ -1568,6 +1587,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         media={selectedMedia}
         visible={mediaPreviewVisible}
         onClose={() => {
+          mediaQueueRef.current = [];
           setMediaPreviewVisible(false);
           setSelectedMedia(null);
         }}

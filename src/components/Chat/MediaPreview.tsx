@@ -1,5 +1,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import QuickLookPreviewView from '../../../modules/my-module/src/QuickLookPreviewView';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -45,6 +47,13 @@ const formatDuration = (ms?: number): string => {
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 };
 
+const formatSeconds = (seconds: number): string => {
+  if (!seconds || !isFinite(seconds)) return '0:00';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+};
+
 // Get icon for document type
 const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
   if (!mimeType) return 'document';
@@ -64,6 +73,12 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
   const [videoError, setVideoError] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const readyNotifiedRef = useRef(false);
+
+  // Audio player — source is set only when visible and media is audio
+  const audioSource = (visible && media?.type === 'audio') ? (media.uri ?? null) : null;
+  const audioPlayer = useAudioPlayer(audioSource, { updateInterval: 250 });
+  const audioStatus = useAudioPlayerStatus(audioPlayer);
+  const progressFraction = audioStatus.duration > 0 ? audioStatus.currentTime / audioStatus.duration : 0;
 
   // Create video player for video media
   const videoSource = media?.type === 'video' ? media.uri : null;
@@ -139,7 +154,7 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
     if (!previewReady && media?.type === 'video' && !videoError) {
       return;
     }
-
+    if (audioStatus.playing) audioPlayer.pause();
     const captionToSend = caption;
     setCaption('');
     onSend(captionToSend, quality);
@@ -149,8 +164,28 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
     setCaption('');
     setVideoError(false);
     setPreviewReady(false);
+    if (audioStatus.playing) audioPlayer.pause();
     onClose();
   };
+
+  const toggleAudio = useCallback(async () => {
+    try {
+      await setAudioModeAsync({ playsInSilentMode: true });
+      if (audioStatus.playing) {
+        audioPlayer.pause();
+      } else {
+        audioPlayer.play();
+      }
+    } catch (err) {
+      console.error('Audio toggle error:', err);
+    }
+  }, [audioPlayer, audioStatus.playing]);
+
+  useEffect(() => {
+    if (audioStatus.didJustFinish) {
+      audioPlayer.seekTo(0).catch(() => {});
+    }
+  }, [audioStatus.didJustFinish, audioPlayer]);
 
   if (!visible || !media) return null;
 
@@ -196,6 +231,15 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
         );
 
       case 'document':
+        if (Platform.OS === 'ios') {
+          return (
+            <QuickLookPreviewView
+              url={media.uri}
+              onLoad={() => {}}
+              style={styles.documentEmbedView}
+            />
+          );
+        }
         return (
           <View style={styles.documentPreview}>
             <View style={[styles.documentIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}>
@@ -209,9 +253,7 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
               {media.fileName || 'Document'}
             </Text>
             {media.fileSize && (
-              <Text style={styles.documentSize}>
-                {formatFileSize(media.fileSize)}
-              </Text>
+              <Text style={styles.documentSize}>{formatFileSize(media.fileSize)}</Text>
             )}
           </View>
         );
@@ -225,18 +267,29 @@ export const MediaPreview = ({ media, visible, onClose, onSend, onPreviewReady }
             <Text style={[styles.documentName, { color: '#fff' }]} numberOfLines={2}>
               {media.fileName || 'Audio'}
             </Text>
-            <View style={styles.audioInfo}>
-              {media.duration && (
-                <Text style={styles.documentSize}>
-                  {formatDuration(media.duration)}
-                </Text>
-              )}
-              {media.fileSize && (
-                <Text style={styles.documentSize}>
-                  {media.duration ? ' • ' : ''}{formatFileSize(media.fileSize)}
-                </Text>
-              )}
+            <View style={styles.audioProgressContainer}>
+              <View style={[styles.audioProgressTrack, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
+                <View
+                  style={{
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor: theme.colors.primary,
+                    width: `${Math.min(progressFraction * 100, 100)}%`,
+                  }}
+                />
+              </View>
+              <View style={styles.audioTimeRow}>
+                <Text style={styles.audioTimeText}>{formatSeconds(audioStatus.currentTime)}</Text>
+                <Text style={styles.audioTimeText}>{formatSeconds(audioStatus.duration)}</Text>
+              </View>
             </View>
+            <TouchableOpacity
+              style={[styles.audioPlayButton, { backgroundColor: theme.colors.primary }]}
+              onPress={toggleAudio}
+              activeOpacity={0.8}
+            >
+              <Ionicons name={audioStatus.playing ? 'pause' : 'play'} size={32} color="#fff" />
+            </TouchableOpacity>
           </View>
         );
 
@@ -440,6 +493,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 40,
   },
+  documentEmbedView: {
+    flex: 1,
+    width: SCREEN_WIDTH,
+    backgroundColor: '#fff',
+  },
   documentPreview: {
     alignItems: 'center',
     padding: 40,
@@ -463,6 +521,11 @@ const styles = StyleSheet.create({
     marginTop: 8,
     color: 'rgba(255,255,255,0.6)',
   },
+  documentTapHint: {
+    fontSize: 12,
+    marginTop: 12,
+    color: 'rgba(255,255,255,0.45)',
+  },
   audioPreview: {
     alignItems: 'center',
     padding: 40,
@@ -478,6 +541,33 @@ const styles = StyleSheet.create({
   audioInfo: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  audioProgressContainer: {
+    width: '80%',
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  audioProgressTrack: {
+    height: 4,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  audioTimeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
+  audioTimeText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.6)',
+  },
+  audioPlayButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 16,
   },
   footer: {
     flexDirection: 'row',
