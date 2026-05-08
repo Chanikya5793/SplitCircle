@@ -41,6 +41,11 @@ interface AlbumBubbleProps {
   onReplyPress?: (messageId: string) => void;
   highlighted?: boolean;
   dimmed?: boolean;
+  /** When true, taps toggle selection on the tapped cell (long-press still works). */
+  selectionMode?: boolean;
+  /** Set of selected messageIds (or .id) so each cell can show its checkbox state. */
+  selectedIds?: Set<string>;
+  onToggleSelect?: (message: ChatMessage) => void;
 }
 
 interface AlbumCellProps {
@@ -50,9 +55,22 @@ interface AlbumCellProps {
   onLongPress: () => void;
   showOverflow: boolean;
   overflowCount: number;
+  selected?: boolean;
+  selectionMode?: boolean;
+  primaryColor: string;
 }
 
-const AlbumCell = ({ message, style, onPress, onLongPress, showOverflow, overflowCount }: AlbumCellProps) => {
+const AlbumCell = ({
+  message,
+  style,
+  onPress,
+  onLongPress,
+  showOverflow,
+  overflowCount,
+  selected,
+  selectionMode,
+  primaryColor,
+}: AlbumCellProps) => {
   const uri = message.localMediaPath ?? message.mediaUrl;
   const isVideo = message.type === 'video';
   const isUploading = message.status === 'sending';
@@ -62,7 +80,15 @@ const AlbumCell = ({ message, style, onPress, onLongPress, showOverflow, overflo
       onPress={onPress}
       onLongPress={onLongPress}
       activeOpacity={0.85}
-      style={[styles.cell, style]}
+      style={[
+        styles.cell,
+        style,
+        selected && {
+          // Slight inset look so selected cells stand out without changing layout.
+          borderWidth: 3,
+          borderColor: primaryColor,
+        },
+      ]}
     >
       {uri ? (
         <Image
@@ -81,7 +107,7 @@ const AlbumCell = ({ message, style, onPress, onLongPress, showOverflow, overflo
           />
         </View>
       )}
-      {isVideo && !showOverflow && (
+      {isVideo && !showOverflow && !selectionMode && (
         <View style={styles.playBadge}>
           <Ionicons name="play" size={18} color="#fff" />
         </View>
@@ -91,9 +117,19 @@ const AlbumCell = ({ message, style, onPress, onLongPress, showOverflow, overflo
           <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
         </View>
       )}
-      {showOverflow && (
+      {showOverflow && !selectionMode && (
         <View style={styles.overflow}>
           <Text style={styles.overflowText}>+{overflowCount}</Text>
+        </View>
+      )}
+      {selectionMode && (
+        <View
+          style={[
+            styles.selectCheckbox,
+            { borderColor: selected ? primaryColor : 'rgba(255,255,255,0.85)', backgroundColor: selected ? primaryColor : 'rgba(0,0,0,0.4)' },
+          ]}
+        >
+          {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
         </View>
       )}
     </TouchableOpacity>
@@ -110,6 +146,9 @@ export const AlbumBubble = ({
   onReplyPress,
   highlighted,
   dimmed,
+  selectionMode,
+  selectedIds,
+  onToggleSelect,
 }: AlbumBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
@@ -183,48 +222,75 @@ export const AlbumBubble = ({
         )}
 
         <View style={[styles.grid, { width: ALBUM_WIDTH }]}>
-          {tiles.length === 3 ? (
-            <>
-              <AlbumCell
-                message={tiles[0]}
-                style={layout[0]}
-                onPress={() => onMediaPress?.(tiles[0])}
-                onLongPress={() => onLongPress?.(tiles[0])}
-                showOverflow={false}
-                overflowCount={0}
-              />
-              <View style={{ gap: GAP }}>
-                <AlbumCell
-                  message={tiles[1]}
-                  style={layout[1]}
-                  onPress={() => onMediaPress?.(tiles[1])}
-                  onLongPress={() => onLongPress?.(tiles[1])}
-                  showOverflow={false}
-                  overflowCount={0}
-                />
-                <AlbumCell
-                  message={tiles[2]}
-                  style={layout[2]}
-                  onPress={() => onMediaPress?.(tiles[2])}
-                  onLongPress={() => onLongPress?.(tiles[2])}
-                  showOverflow={false}
-                  overflowCount={0}
-                />
-              </View>
-            </>
-          ) : (
-            tiles.map((m, idx) => (
+          {(() => {
+            // In selection mode tap toggles selection; otherwise tap opens
+            // the gallery viewer for that specific cell.
+            const tapHandler = (m: ChatMessage) => {
+              if (selectionMode) onToggleSelect?.(m);
+              else onMediaPress?.(m);
+            };
+            const longHandler = (m: ChatMessage) => onLongPress?.(m);
+            const isSelected = (m: ChatMessage) => {
+              if (!selectedIds) return false;
+              return selectedIds.has(m.messageId) || selectedIds.has(m.id);
+            };
+
+            if (tiles.length === 3) {
+              return (
+                <>
+                  <AlbumCell
+                    message={tiles[0]}
+                    style={layout[0]}
+                    onPress={() => tapHandler(tiles[0])}
+                    onLongPress={() => longHandler(tiles[0])}
+                    showOverflow={false}
+                    overflowCount={0}
+                    selected={isSelected(tiles[0])}
+                    selectionMode={selectionMode}
+                    primaryColor={theme.colors.primary}
+                  />
+                  <View style={{ gap: GAP }}>
+                    <AlbumCell
+                      message={tiles[1]}
+                      style={layout[1]}
+                      onPress={() => tapHandler(tiles[1])}
+                      onLongPress={() => longHandler(tiles[1])}
+                      showOverflow={false}
+                      overflowCount={0}
+                      selected={isSelected(tiles[1])}
+                      selectionMode={selectionMode}
+                      primaryColor={theme.colors.primary}
+                    />
+                    <AlbumCell
+                      message={tiles[2]}
+                      style={layout[2]}
+                      onPress={() => tapHandler(tiles[2])}
+                      onLongPress={() => longHandler(tiles[2])}
+                      showOverflow={false}
+                      overflowCount={0}
+                      selected={isSelected(tiles[2])}
+                      selectionMode={selectionMode}
+                      primaryColor={theme.colors.primary}
+                    />
+                  </View>
+                </>
+              );
+            }
+            return tiles.map((m, idx) => (
               <AlbumCell
                 key={m.messageId || m.id}
                 message={m}
                 style={layout[idx]}
-                onPress={() => onMediaPress?.(m)}
-                onLongPress={() => onLongPress?.(m)}
+                onPress={() => tapHandler(m)}
+                onLongPress={() => longHandler(m)}
                 showOverflow={idx === tiles.length - 1 && overflow > 0}
                 overflowCount={overflow}
+                selected={isSelected(m)}
+                selectionMode={selectionMode}
+                primaryColor={theme.colors.primary}
               />
-            ))
-          )}
+            ));
+          })()}
         </View>
 
         {caption ? (
@@ -367,6 +433,17 @@ const styles = StyleSheet.create({
   overflow: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectCheckbox: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
   },

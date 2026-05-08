@@ -6,6 +6,8 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatParticipant, MediaMetadata } from '@/models';
 import { ROUTES } from '@/constants';
 import { mediaExistsLocally, getOrDownloadMedia } from '@/services/mediaService';
+import { markMessageDeletedForUser, unmarkMessageDeletedForUser } from '@/services/localMessageStorage';
+import { warningHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -40,7 +42,7 @@ import Reanimated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { Text } from 'react-native-paper';
+import { Snackbar, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ─── constants ───────────────────────────────────────────────────────────────
@@ -892,24 +894,26 @@ const FullScreenViewer = ({
             frame, not a 1–3s black gap. Render size must match the visible
             image size for the RN cache hit to bypass decoding. */}
         {prevPreloadUri ? (
-          <Image
-            source={{ uri: prevPreloadUri }}
-            style={styles.preloadImage}
-            pointerEvents="none"
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            fadeDuration={0}
-          />
+          <View style={styles.preloadImage} pointerEvents="none">
+            <Image
+              source={{ uri: prevPreloadUri }}
+              style={StyleSheet.absoluteFill}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              fadeDuration={0}
+            />
+          </View>
         ) : null}
         {nextPreloadUri ? (
-          <Image
-            source={{ uri: nextPreloadUri }}
-            style={styles.preloadImage}
-            pointerEvents="none"
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            fadeDuration={0}
-          />
+          <View style={styles.preloadImage} pointerEvents="none">
+            <Image
+              source={{ uri: nextPreloadUri }}
+              style={StyleSheet.absoluteFill}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              fadeDuration={0}
+            />
+          </View>
         ) : null}
 
         {/* Media area */}
@@ -1059,9 +1063,12 @@ const FullScreenViewer = ({
 interface MediaCellProps {
   message: ChatMessage;
   onPress: () => void;
+  onLongPress?: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
 }
 
-const MediaCell = React.memo(({ message, onPress }: MediaCellProps) => {
+const MediaCell = React.memo(({ message, onPress, onLongPress, selectionMode, selected }: MediaCellProps) => {
   const { theme } = useTheme();
   const { uri, markFailed } = useResolvedMediaUri(message);
   const isVideo = message.type === 'video';
@@ -1069,8 +1076,13 @@ const MediaCell = React.memo(({ message, onPress }: MediaCellProps) => {
 
   return (
     <TouchableOpacity
-      style={[styles.cell, { width: CELL_SIZE, height: CELL_SIZE }]}
+      style={[
+        styles.cell,
+        { width: CELL_SIZE, height: CELL_SIZE },
+        selected && { borderWidth: 3, borderColor: theme.colors.primary },
+      ]}
       onPress={onPress}
+      onLongPress={onLongPress}
       activeOpacity={0.82}
     >
       {uri ? (
@@ -1091,12 +1103,25 @@ const MediaCell = React.memo(({ message, onPress }: MediaCellProps) => {
           />
         </View>
       )}
-      {isVideo && (
+      {isVideo && !selectionMode && (
         <View style={styles.cellVideoOverlay}>
           <Ionicons name="play" size={12} color="#fff" />
           {duration ? (
             <Text style={styles.cellDuration}>{formatDuration(duration)}</Text>
           ) : null}
+        </View>
+      )}
+      {selectionMode && (
+        <View
+          style={[
+            styles.cellSelectCheckbox,
+            {
+              backgroundColor: selected ? theme.colors.primary : 'rgba(0,0,0,0.4)',
+              borderColor: selected ? theme.colors.primary : 'rgba(255,255,255,0.85)',
+            },
+          ]}
+        >
+          {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
         </View>
       )}
     </TouchableOpacity>
@@ -1162,9 +1187,12 @@ interface DocRowProps {
   message: ChatMessage;
   senderName: string;
   onPress?: () => void;
+  onLongPress?: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
 }
 
-const DocRow = React.memo(({ message, senderName, onPress }: DocRowProps) => {
+const DocRow = React.memo(({ message, senderName, onPress, onLongPress, selectionMode, selected }: DocRowProps) => {
   const { theme, isDark } = useTheme();
   const meta = message.mediaMetadata;
   const ext = getFileExt(meta);
@@ -1180,10 +1208,25 @@ const DocRow = React.memo(({ message, senderName, onPress }: DocRowProps) => {
             ? 'rgba(255,255,255,0.06)'
             : 'rgba(0,0,0,0.06)',
         },
+        selected && { backgroundColor: isDark ? 'rgba(53,198,255,0.15)' : 'rgba(31,111,235,0.10)' },
       ]}
       onPress={onPress}
+      onLongPress={onLongPress}
       activeOpacity={0.7}
     >
+      {selectionMode ? (
+        <View
+          style={[
+            styles.rowSelectCheckbox,
+            {
+              backgroundColor: selected ? theme.colors.primary : 'transparent',
+              borderColor: selected ? theme.colors.primary : (isDark ? '#666' : '#bbb'),
+            },
+          ]}
+        >
+          {selected && <Ionicons name="checkmark" size={12} color="#fff" />}
+        </View>
+      ) : null}
       <View
         style={[
           styles.docIconWrap,
@@ -1210,7 +1253,9 @@ const DocRow = React.memo(({ message, senderName, onPress }: DocRowProps) => {
             .join(' · ')}
         </Text>
       </View>
-      <Ionicons name="chevron-forward" size={16} color={theme.colors.onSurfaceVariant} />
+      {!selectionMode && (
+        <Ionicons name="chevron-forward" size={16} color={theme.colors.onSurfaceVariant} />
+      )}
     </TouchableOpacity>
   );
 });
@@ -1220,17 +1265,24 @@ const DocRow = React.memo(({ message, senderName, onPress }: DocRowProps) => {
 interface LinkRowProps {
   message: ChatMessage;
   senderName: string;
+  onPress?: () => void;
+  onLongPress?: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
 }
 
-const LinkRow = React.memo(({ message, senderName }: LinkRowProps) => {
+const LinkRow = React.memo(({ message, senderName, onPress, onLongPress, selectionMode, selected }: LinkRowProps) => {
   const { theme, isDark } = useTheme();
   const matches = message.content.match(URL_REGEX) ?? [];
 
   return (
     <>
       {matches.map((url, i) => (
-        <View
+        <TouchableOpacity
           key={`${message.messageId}_${i}`}
+          onPress={onPress}
+          onLongPress={onLongPress}
+          activeOpacity={selectionMode ? 0.7 : 1}
           style={[
             styles.docRow,
             {
@@ -1238,8 +1290,22 @@ const LinkRow = React.memo(({ message, senderName }: LinkRowProps) => {
                 ? 'rgba(255,255,255,0.06)'
                 : 'rgba(0,0,0,0.06)',
             },
+            selected && { backgroundColor: isDark ? 'rgba(53,198,255,0.15)' : 'rgba(31,111,235,0.10)' },
           ]}
         >
+          {selectionMode ? (
+            <View
+              style={[
+                styles.rowSelectCheckbox,
+                {
+                  backgroundColor: selected ? theme.colors.primary : 'transparent',
+                  borderColor: selected ? theme.colors.primary : (isDark ? '#666' : '#bbb'),
+                },
+              ]}
+            >
+              {selected && <Ionicons name="checkmark" size={12} color="#fff" />}
+            </View>
+          ) : null}
           <View style={[styles.docIconWrap, { backgroundColor: theme.colors.secondaryContainer }]}>
             <Ionicons name="link-outline" size={22} color={theme.colors.secondary} />
           </View>
@@ -1251,7 +1317,7 @@ const LinkRow = React.memo(({ message, senderName }: LinkRowProps) => {
               {formatDate(message.createdAt)} · {senderName}
             </Text>
           </View>
-        </View>
+        </TouchableOpacity>
       ))}
     </>
   );
@@ -1292,7 +1358,7 @@ export const ChatMediaGalleryScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
   const params = route.params as ChatMediaGalleryParams;
-  const { subscribeToMessages } = useChat();
+  const { subscribeToMessages, deleteMessageForEveryone } = useChat();
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
@@ -1302,6 +1368,18 @@ export const ChatMediaGalleryScreen = () => {
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
   const autoOpenedRef = useRef(false);
+
+  // Multi-select state — used for bulk delete-for-me / delete-for-everyone in
+  // each tab. Switching tabs resets the selection so the toolbar's actions
+  // never apply across tab boundaries.
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [undoSnapshot, setUndoSnapshot] = useState<{ messageIds: string[] } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Delete-for-everyone window — keep parity with ChatRoomScreen (24h).
+  const DELETE_FOR_EVERYONE_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const DELETE_UNDO_WINDOW_MS = 5_000;
 
   // Animated tab indicator
   const tabIndicatorX = useRef(new Animated.Value(0)).current;
@@ -1319,9 +1397,16 @@ export const ChatMediaGalleryScreen = () => {
     return unsubscribe;
   }, [params.chatId, subscribeToMessages]);
 
-  // Derived lists — exclude messages the current user has hidden via "Delete for me".
+  // Derived lists — exclude messages the user has hidden via "Delete for me"
+  // *or* that were deleted for everyone (no point listing a tombstone in
+  // Media / Docs / Links — the chat itself still shows the tombstone bubble).
   const visibleMessages = useMemo(
-    () => (user ? messages.filter((m) => !m.deletedFor?.includes(user.userId)) : messages),
+    () =>
+      messages.filter((m) => {
+        if (m.deletedForEveryone) return false;
+        if (user && m.deletedFor?.includes(user.userId)) return false;
+        return true;
+      }),
     [messages, user],
   );
 
@@ -1356,8 +1441,15 @@ export const ChatMediaGalleryScreen = () => {
 
   const TAB_INDEX: Record<TabId, number> = { media: 0, docs: 1, links: 2 };
 
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
   const handleTabPress = useCallback(
     (tab: TabId) => {
+      // Switching tabs always resets selection — bulk actions are tab-scoped.
+      if (selectionMode) exitSelectionMode();
       setActiveTab(tab);
       Animated.spring(tabIndicatorX, {
         toValue: TAB_INDEX[tab] * tabWidth,
@@ -1366,8 +1458,115 @@ export const ChatMediaGalleryScreen = () => {
         stiffness: 200,
       }).start();
     },
-    [tabIndicatorX, tabWidth],
+    [tabIndicatorX, tabWidth, selectionMode, exitSelectionMode],
   );
+
+  const toggleSelected = useCallback((messageId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) next.delete(messageId);
+      else next.add(messageId);
+      return next;
+    });
+  }, []);
+
+  const enterSelectionWith = useCallback((messageId: string) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([messageId]));
+  }, []);
+
+  // The set of messages eligible for the current tab's selection — used by the
+  // toolbar to compute `canDeleteForEveryone` and to drive bulk action dispatch.
+  const selectedMessages = useMemo(() => {
+    if (!selectionMode || selectedIds.size === 0) return [] as ChatMessage[];
+    return messages.filter((m) => selectedIds.has(m.messageId) || selectedIds.has(m.id));
+  }, [messages, selectedIds, selectionMode]);
+
+  const canDeleteForEveryone = useMemo(() => {
+    if (!user || selectedMessages.length === 0) return false;
+    return selectedMessages.every(
+      (m) =>
+        m.senderId === user.userId &&
+        Date.now() - m.createdAt < DELETE_FOR_EVERYONE_WINDOW_MS &&
+        !m.deletedForEveryone,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMessages, user]);
+
+  // Schedule the undo snackbar dismiss timer.
+  useEffect(() => {
+    if (!undoSnapshot) {
+      if (undoTimerRef.current) {
+        clearTimeout(undoTimerRef.current);
+        undoTimerRef.current = null;
+      }
+      return;
+    }
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = setTimeout(() => {
+      setUndoSnapshot(null);
+    }, DELETE_UNDO_WINDOW_MS);
+    return () => {
+      if (undoTimerRef.current) {
+        clearTimeout(undoTimerRef.current);
+        undoTimerRef.current = null;
+      }
+    };
+  }, [undoSnapshot, DELETE_UNDO_WINDOW_MS]);
+
+  const handleBulkDeleteForMe = useCallback(async () => {
+    if (!user || selectedMessages.length === 0) return;
+    const ids = selectedMessages.map((m) => m.messageId || m.id);
+    warningHaptic();
+    for (const id of ids) {
+      await markMessageDeletedForUser(params.chatId, id, user.userId);
+    }
+    exitSelectionMode();
+    setUndoSnapshot({ messageIds: ids });
+  }, [selectedMessages, user, params.chatId, exitSelectionMode]);
+
+  const handleBulkDeleteForEveryone = useCallback(async () => {
+    if (!user || selectedMessages.length === 0) return;
+    const ids = selectedMessages.map((m) => m.messageId || m.id);
+    warningHaptic();
+    for (const id of ids) {
+      await deleteMessageForEveryone(params.chatId, id);
+    }
+    exitSelectionMode();
+  }, [selectedMessages, user, params.chatId, deleteMessageForEveryone, exitSelectionMode]);
+
+  const handleUndoBulkDelete = useCallback(async () => {
+    if (!undoSnapshot || !user) return;
+    const ids = undoSnapshot.messageIds;
+    setUndoSnapshot(null);
+    for (const id of ids) {
+      await unmarkMessageDeletedForUser(params.chatId, id, user.userId);
+    }
+  }, [undoSnapshot, user, params.chatId]);
+
+  const promptBulkDeleteForMe = useCallback(() => {
+    if (selectedMessages.length === 0) return;
+    Alert.alert(
+      `Delete ${selectedMessages.length} item${selectedMessages.length === 1 ? '' : 's'} for me`,
+      'These items will be removed from your chat. Other people will still see them.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete for me', style: 'destructive', onPress: () => { void handleBulkDeleteForMe(); } },
+      ],
+    );
+  }, [selectedMessages, handleBulkDeleteForMe]);
+
+  const promptBulkDeleteForEveryone = useCallback(() => {
+    if (selectedMessages.length === 0) return;
+    Alert.alert(
+      `Delete ${selectedMessages.length} item${selectedMessages.length === 1 ? '' : 's'} for everyone`,
+      'These items will be removed for everyone in this chat. They may have already seen them.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete for everyone', style: 'destructive', onPress: () => { void handleBulkDeleteForEveryone(); } },
+      ],
+    );
+  }, [selectedMessages, handleBulkDeleteForEveryone]);
 
   const openViewer = useCallback((index: number) => {
     setViewerIndex(index);
@@ -1406,12 +1605,27 @@ export const ChatMediaGalleryScreen = () => {
         data={mediaMessages}
         numColumns={COLUMN_COUNT}
         keyExtractor={(item) => item.messageId || item.id}
-        renderItem={({ item, index }) => (
-          <MediaCell message={item} onPress={() => openViewer(index)} />
-        )}
+        renderItem={({ item, index }) => {
+          const id = item.messageId || item.id;
+          const isSelected = selectedIds.has(id);
+          return (
+            <MediaCell
+              message={item}
+              selectionMode={selectionMode}
+              selected={isSelected}
+              onPress={() => {
+                if (selectionMode) toggleSelected(id);
+                else openViewer(index);
+              }}
+              onLongPress={() => {
+                if (!selectionMode) enterSelectionWith(id);
+              }}
+            />
+          );
+        }}
         contentContainerStyle={{
           paddingTop: TAB_BAR_HEIGHT + GRID_GAP,
-          paddingBottom: insets.bottom + 32,
+          paddingBottom: insets.bottom + (selectionMode ? 100 : 32),
           paddingHorizontal: GRID_GAP,
           gap: GRID_GAP,
         }}
@@ -1476,19 +1690,31 @@ export const ChatMediaGalleryScreen = () => {
         contentContainerStyle={{
           paddingTop: TAB_BAR_HEIGHT + 16,
           paddingHorizontal: 16,
-          paddingBottom: insets.bottom + 32,
+          paddingBottom: insets.bottom + (selectionMode ? 100 : 32),
         }}
         showsVerticalScrollIndicator={false}
       >
         <GlassView style={styles.listCard}>
-          {docMessages.map((m) => (
-            <DocRow
-              key={m.messageId || m.id}
-              message={m}
-              senderName={senderMap.get(m.senderId) ?? 'Member'}
-              onPress={() => handleDocPress(m)}
-            />
-          ))}
+          {docMessages.map((m) => {
+            const id = m.messageId || m.id;
+            const isSelected = selectedIds.has(id);
+            return (
+              <DocRow
+                key={id}
+                message={m}
+                senderName={senderMap.get(m.senderId) ?? 'Member'}
+                selectionMode={selectionMode}
+                selected={isSelected}
+                onPress={() => {
+                  if (selectionMode) toggleSelected(id);
+                  else handleDocPress(m);
+                }}
+                onLongPress={() => {
+                  if (!selectionMode) enterSelectionWith(id);
+                }}
+              />
+            );
+          })}
         </GlassView>
       </ScrollView>
     );
@@ -1503,18 +1729,30 @@ export const ChatMediaGalleryScreen = () => {
         contentContainerStyle={{
           paddingTop: TAB_BAR_HEIGHT + 16,
           paddingHorizontal: 16,
-          paddingBottom: insets.bottom + 32,
+          paddingBottom: insets.bottom + (selectionMode ? 100 : 32),
         }}
         showsVerticalScrollIndicator={false}
       >
         <GlassView style={styles.listCard}>
-          {linkMessages.map((m) => (
-            <LinkRow
-              key={m.messageId || m.id}
-              message={m}
-              senderName={senderMap.get(m.senderId) ?? 'Member'}
-            />
-          ))}
+          {linkMessages.map((m) => {
+            const id = m.messageId || m.id;
+            const isSelected = selectedIds.has(id);
+            return (
+              <LinkRow
+                key={id}
+                message={m}
+                senderName={senderMap.get(m.senderId) ?? 'Member'}
+                selectionMode={selectionMode}
+                selected={isSelected}
+                onPress={() => {
+                  if (selectionMode) toggleSelected(id);
+                }}
+                onLongPress={() => {
+                  if (!selectionMode) enterSelectionWith(id);
+                }}
+              />
+            );
+          })}
         </GlassView>
       </ScrollView>
     );
@@ -1596,7 +1834,71 @@ export const ChatMediaGalleryScreen = () => {
               ]}
             />
           </View>
+
+          {/* Trailing select / cancel button — sits in the top bar so it stays
+              reachable while the user scrolls a tab. */}
+          <View style={[styles.selectToggleWrap, { top: insets.top + 8 }]}>
+            {selectionMode ? (
+              <TouchableOpacity onPress={exitSelectionMode} hitSlop={8} style={styles.selectToggle}>
+                <Text style={[styles.selectToggleText, { color: theme.colors.primary }]}>Cancel</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                onPress={() => {
+                  setSelectionMode(true);
+                  setSelectedIds(new Set());
+                }}
+                hitSlop={8}
+                style={styles.selectToggle}
+              >
+                <Ionicons name="checkmark-circle-outline" size={20} color={theme.colors.primary} />
+                <Text style={[styles.selectToggleText, { color: theme.colors.primary, marginLeft: 4 }]}>Select</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
+
+        {/* Selection action bar — appears at the bottom while in selection mode. */}
+        {selectionMode && (
+          <View
+            style={[
+              styles.selectionBar,
+              {
+                paddingBottom: insets.bottom + 8,
+                backgroundColor: isDark ? 'rgba(18,18,18,0.96)' : 'rgba(253,251,251,0.96)',
+                borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+              },
+            ]}
+          >
+            <View style={styles.selectionBarRow}>
+              <Text style={[styles.selectionCount, { color: theme.colors.onSurface }]}>
+                {selectedIds.size} selected
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {canDeleteForEveryone && (
+                  <TouchableOpacity
+                    onPress={promptBulkDeleteForEveryone}
+                    style={[styles.selectionBarButton, { backgroundColor: theme.colors.errorContainer ?? 'rgba(255,82,82,0.18)' }]}
+                  >
+                    <Ionicons name="trash-bin-outline" size={18} color={theme.colors.error} />
+                    <Text style={[styles.selectionBarButtonText, { color: theme.colors.error }]}>For everyone</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  onPress={selectedIds.size === 0 ? undefined : promptBulkDeleteForMe}
+                  style={[
+                    styles.selectionBarButton,
+                    { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', opacity: selectedIds.size === 0 ? 0.4 : 1 },
+                  ]}
+                  disabled={selectedIds.size === 0}
+                >
+                  <Ionicons name="trash-outline" size={18} color={theme.colors.error} />
+                  <Text style={[styles.selectionBarButtonText, { color: theme.colors.error }]}>For me</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Full-screen viewer modal */}
@@ -1612,6 +1914,25 @@ export const ChatMediaGalleryScreen = () => {
           }
         }}
       />
+
+      {/* Undo snackbar — surfaces after delete-for-me bulk action so the user
+          can recover within the undo window if they hit the wrong action. */}
+      <Snackbar
+        visible={!!undoSnapshot}
+        onDismiss={() => setUndoSnapshot(null)}
+        duration={DELETE_UNDO_WINDOW_MS}
+        action={{
+          label: 'Undo',
+          onPress: () => {
+            void handleUndoBulkDelete();
+          },
+        }}
+        wrapperStyle={{ bottom: insets.bottom + 90 }}
+      >
+        {undoSnapshot && undoSnapshot.messageIds.length > 1
+          ? `${undoSnapshot.messageIds.length} items deleted for you`
+          : 'Item deleted for you'}
+      </Snackbar>
     </LiquidBackground>
   );
 };
@@ -1680,6 +2001,72 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 10,
     fontVariant: ['tabular-nums'],
+  },
+  cellSelectCheckbox: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowSelectCheckbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+  },
+  selectToggleWrap: {
+    position: 'absolute',
+    right: 12,
+  },
+  selectToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  selectToggleText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  selectionBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingTop: 8,
+    paddingHorizontal: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  selectionBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  selectionCount: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  selectionBarButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  selectionBarButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
   // Doc / link list
   listCard: {

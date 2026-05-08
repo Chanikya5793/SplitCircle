@@ -1351,12 +1351,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           showSenderInfo={isGroupChat ? isFirstInSequence : undefined}
           senderName={senderName}
           isGroupChat={isGroupChat}
-          onMediaPress={selectionMode ? undefined : handleMediaPress}
-          onLongPress={selectionMode ? undefined : handleLongPressMessage}
+          // Tap behaviour depends on selectionMode — handled inside AlbumBubble.
+          onMediaPress={handleMediaPress}
+          // Long-press always opens the action sheet for that specific cell;
+          // selection mode is reachable from there too via the "Select" action.
+          onLongPress={handleLongPressMessage}
           onDoubleTap={selectionMode ? undefined : handleDoubleTap}
           onReplyPress={handleReplyPress}
           highlighted={memberHighlighted}
           dimmed={memberDimmed && (dimmedMessageId !== anyId)}
+          selectionMode={selectionMode}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelected}
         />
       );
     }
@@ -1840,9 +1846,11 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         isGroupChat={isGroupChat}
         isStarred={!!user && !!actionTarget?.starredBy?.includes(user.userId)}
         isPinned={!!actionTarget && pinnedSet.has(actionTarget.messageId)}
-        currentUserReaction={
+        currentUserReactions={
           user && actionTarget?.reactions
-            ? Object.entries(actionTarget.reactions).find(([, ids]) => ids.includes(user.userId))?.[0]
+            ? Object.entries(actionTarget.reactions)
+                .filter(([, ids]) => ids.includes(user.userId))
+                .map(([emoji]) => emoji)
             : undefined
         }
         canEdit={

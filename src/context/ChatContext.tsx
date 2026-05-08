@@ -684,33 +684,25 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         content: '',
       });
 
-      // Realtime broadcast via messageState sub-collection — every other open
-      // chat session will pick this up via its onSnapshot listener.
+      // Cross-device broadcast via Firestore messageState. Every chat client
+      // subscribes to messageStates on chat open and applies the flag locally,
+      // so recipients see the deletion the next time they're online with this
+      // chat — both for currently-open sessions and for sessions that opened
+      // the chat after the deletion happened.
+      //
+      // We intentionally do NOT also push a tombstone via the RTDB
+      // messageQueue: queueMessage's payload schema has no deletedForEveryone
+      // field (and the RTDB rules wouldn't accept an arbitrary tombstone
+      // overwrite), which used to ship the recipient an empty-content
+      // "normal" message and trigger PERMISSION_DENIED for queue overwrites.
       const { publishMessageState } = await import('@/services/messageStateService');
-      await publishMessageState(chatId, messageId, { deletedForEveryone: true });
-
-      // Also push via the message queue so recipients who are offline (and thus
-      // not subscribed to the messageState onSnapshot) will see the deletion
-      // when they come back online and process their queue.
-      const thread = getThreadByChatId(chatId);
-      if (thread) {
-        const recipientIds = thread.participants
-          .map((p) => p.userId)
-          .filter((id) => id !== user.userId);
-
-        const tombstone: ChatMessage = {
-          ...target,
-          deletedForEveryone: true,
-          content: '',
-        };
-
-        const isGroupChat = thread.type === 'group';
-        for (const recipientId of recipientIds) {
-          await queueMessage(recipientId, tombstone, isGroupChat);
-        }
+      try {
+        await publishMessageState(chatId, messageId, { deletedForEveryone: true });
+      } catch (error) {
+        console.warn('⚠️ Failed to broadcast delete-for-everyone state; local copy already updated.', error);
       }
     },
-    [getThreadByChatId, user],
+    [user],
   );
 
   const setTyping = useCallback(
