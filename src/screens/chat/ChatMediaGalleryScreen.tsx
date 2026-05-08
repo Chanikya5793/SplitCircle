@@ -1385,9 +1385,6 @@ export const ChatMediaGalleryScreen = () => {
   const tabIndicatorX = useRef(new Animated.Value(0)).current;
   const tabWidth = SCREEN_WIDTH / TABS.length;
 
-  useLayoutEffect(() => {
-    navigation.setOptions({ title: params.title ?? 'Media', headerTransparent: true });
-  }, [navigation, params.title]);
 
   useEffect(() => {
     if (!params.chatId) return;
@@ -1445,6 +1442,49 @@ export const ChatMediaGalleryScreen = () => {
     setSelectionMode(false);
     setSelectedIds(new Set());
   }, []);
+
+  // Native nav header — title + a contextual right button. Renders the Select
+  // toggle in the actual header (not the inline tab strip) so touches don't
+  // get intercepted by the transparent React Navigation header overlay.
+  useLayoutEffect(() => {
+    const headerRight = () =>
+      selectionMode ? (
+        <TouchableOpacity
+          onPress={exitSelectionMode}
+          hitSlop={10}
+          style={{ paddingHorizontal: 12, paddingVertical: 6 }}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel selection"
+        >
+          <Text style={{ color: theme.colors.primary, fontSize: 16, fontWeight: '600' }}>Cancel</Text>
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity
+          onPress={() => {
+            setSelectionMode(true);
+            setSelectedIds(new Set());
+          }}
+          hitSlop={10}
+          style={{ paddingHorizontal: 12, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 4 }}
+          accessibilityRole="button"
+          accessibilityLabel="Select items"
+        >
+          <Ionicons name="checkmark-circle-outline" size={20} color={theme.colors.primary} />
+          <Text style={{ color: theme.colors.primary, fontSize: 15, fontWeight: '600' }}>Select</Text>
+        </TouchableOpacity>
+      );
+
+    const headerTitle =
+      selectionMode && selectedIds.size > 0
+        ? `${selectedIds.size} selected`
+        : params.title ?? 'Media';
+
+    navigation.setOptions({
+      title: headerTitle,
+      headerTransparent: true,
+      headerRight,
+    });
+  }, [navigation, params.title, selectionMode, selectedIds.size, theme.colors.primary, exitSelectionMode]);
 
   const handleTabPress = useCallback(
     (tab: TabId) => {
@@ -1834,28 +1874,6 @@ export const ChatMediaGalleryScreen = () => {
               ]}
             />
           </View>
-
-          {/* Trailing select / cancel button — sits in the top bar so it stays
-              reachable while the user scrolls a tab. */}
-          <View style={[styles.selectToggleWrap, { top: insets.top + 8 }]}>
-            {selectionMode ? (
-              <TouchableOpacity onPress={exitSelectionMode} hitSlop={8} style={styles.selectToggle}>
-                <Text style={[styles.selectToggleText, { color: theme.colors.primary }]}>Cancel</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                onPress={() => {
-                  setSelectionMode(true);
-                  setSelectedIds(new Set());
-                }}
-                hitSlop={8}
-                style={styles.selectToggle}
-              >
-                <Ionicons name="checkmark-circle-outline" size={20} color={theme.colors.primary} />
-                <Text style={[styles.selectToggleText, { color: theme.colors.primary, marginLeft: 4 }]}>Select</Text>
-              </TouchableOpacity>
-            )}
-          </View>
         </View>
 
         {/* Selection action bar — appears at the bottom while in selection mode. */}
@@ -2021,21 +2039,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 4,
-  },
-  selectToggleWrap: {
-    position: 'absolute',
-    right: 12,
-  },
-  selectToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  selectToggleText: {
-    fontSize: 14,
-    fontWeight: '600',
   },
   selectionBar: {
     position: 'absolute',

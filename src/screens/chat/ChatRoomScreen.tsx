@@ -1784,6 +1784,16 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               });
             },
           },
+          // Direct entry into multi-select mode — same flow as action sheet's
+          // Select option, but reachable without going through long-press first.
+          {
+            key: 'select',
+            label: 'Select messages',
+            icon: 'checkbox-outline',
+            onPress: () => {
+              enterSelectionMode();
+            },
+          },
         ] satisfies HeaderMenuItem[]}
       />
 
