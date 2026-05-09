@@ -8,6 +8,7 @@ import { ROUTES } from '@/constants';
 import { mediaExistsLocally, getOrDownloadMedia } from '@/services/mediaService';
 import { markMessageDeletedForUser, unmarkMessageDeletedForUser } from '@/services/localMessageStorage';
 import { warningHaptic } from '@/utils/haptics';
+import { useVideoThumbnail } from '@/utils/videoThumbnail';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -26,6 +27,7 @@ import {
   FlatList,
   Image,
   Modal,
+  PanResponder,
   Platform,
   ScrollView,
   StyleSheet,
@@ -1072,6 +1074,8 @@ const MediaCell = React.memo(({ message, onPress, onLongPress, selectionMode, se
   const { theme } = useTheme();
   const { uri, markFailed } = useResolvedMediaUri(message);
   const isVideo = message.type === 'video';
+  const videoThumb = useVideoThumbnail(isVideo ? uri : undefined);
+  const displayUri = isVideo ? videoThumb : uri;
   const duration = message.mediaMetadata?.duration;
 
   return (
@@ -1085,9 +1089,9 @@ const MediaCell = React.memo(({ message, onPress, onLongPress, selectionMode, se
       onLongPress={onLongPress}
       activeOpacity={0.82}
     >
-      {uri ? (
+      {displayUri ? (
         <Image
-          source={{ uri }}
+          source={{ uri: displayUri }}
           style={styles.cellImage}
           resizeMode="cover"
           onError={markFailed}
@@ -1140,6 +1144,8 @@ const StripThumb = React.memo(({ message, active, onPress }: StripThumbProps) =>
   const { theme } = useTheme();
   const { uri, markFailed } = useResolvedMediaUri(message);
   const isVideo = message.type === 'video';
+  const videoThumb = useVideoThumbnail(isVideo ? uri : undefined);
+  const displayUri = isVideo ? videoThumb : uri;
 
   return (
     <TouchableOpacity
@@ -1153,9 +1159,9 @@ const StripThumb = React.memo(({ message, active, onPress }: StripThumbProps) =>
         },
       ]}
     >
-      {uri ? (
+      {displayUri ? (
         <Image
-          source={{ uri }}
+          source={{ uri: displayUri }}
           style={styles.stripThumbImage}
           resizeMode="cover"
           onError={markFailed}
@@ -1632,6 +1638,96 @@ export const ChatMediaGalleryScreen = () => {
   // Chrome heights for content padding
   const TAB_BAR_HEIGHT = insets.top + 52 + 44; // header + tabs
 
+  // ── swipe-to-select (media grid) ────────────────────────────────────────────
+  // While in selection mode, dragging a finger across thumbnails toggles each
+  // cell the finger crosses (Photos.app parity). Vertical/diagonal flicks
+  // beyond the threshold steal the gesture from the FlatList scroll so the
+  // drag selects rather than scrolls — quick taps still toggle individual
+  // cells, and out of selection mode the FlatList behaves normally.
+  const gridScrollYRef = useRef(0);
+  const swipeVisitedRef = useRef<Set<string>>(new Set());
+  const swipeAddRef = useRef<boolean>(true);
+
+  const indexAtGridPoint = useCallback(
+    (pageX: number, pageY: number): number => {
+      const yInList = pageY - TAB_BAR_HEIGHT + gridScrollYRef.current - GRID_GAP;
+      const xInList = pageX - GRID_GAP;
+      const stride = CELL_SIZE + GRID_GAP;
+      const col = Math.floor(xInList / stride);
+      const row = Math.floor(yInList / stride);
+      if (col < 0 || col >= COLUMN_COUNT || row < 0) return -1;
+      const cellLocalX = xInList - col * stride;
+      const cellLocalY = yInList - row * stride;
+      if (
+        cellLocalX < 0 ||
+        cellLocalX > CELL_SIZE ||
+        cellLocalY < 0 ||
+        cellLocalY > CELL_SIZE
+      ) {
+        return -1;
+      }
+      const idx = row * COLUMN_COUNT + col;
+      if (idx >= mediaMessages.length) return -1;
+      return idx;
+    },
+    [mediaMessages.length, TAB_BAR_HEIGHT],
+  );
+
+  const swipeVisit = useCallback(
+    (pageX: number, pageY: number) => {
+      const idx = indexAtGridPoint(pageX, pageY);
+      if (idx < 0) return;
+      const item = mediaMessages[idx];
+      const id = item.messageId || item.id;
+      if (swipeVisitedRef.current.has(id)) return;
+      swipeVisitedRef.current.add(id);
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (swipeAddRef.current) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+    },
+    [indexAtGridPoint, mediaMessages],
+  );
+
+  const gridPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
+        onMoveShouldSetPanResponder: (_, gs) =>
+          selectionMode && (Math.abs(gs.dx) > 6 || Math.abs(gs.dy) > 6),
+        onMoveShouldSetPanResponderCapture: (_, gs) =>
+          selectionMode && (Math.abs(gs.dx) > 6 || Math.abs(gs.dy) > 6),
+        onPanResponderGrant: (e) => {
+          swipeVisitedRef.current = new Set();
+          // Decide add vs remove based on the cell under the start point —
+          // if it's already selected, this drag deselects; otherwise selects.
+          const startIdx = indexAtGridPoint(e.nativeEvent.pageX, e.nativeEvent.pageY);
+          if (startIdx >= 0) {
+            const startItem = mediaMessages[startIdx];
+            const startId = startItem.messageId || startItem.id;
+            swipeAddRef.current = !selectedIds.has(startId);
+          } else {
+            swipeAddRef.current = true;
+          }
+          swipeVisit(e.nativeEvent.pageX, e.nativeEvent.pageY);
+        },
+        onPanResponderMove: (e) => {
+          swipeVisit(e.nativeEvent.pageX, e.nativeEvent.pageY);
+        },
+        onPanResponderRelease: () => {
+          swipeVisitedRef.current = new Set();
+        },
+        onPanResponderTerminate: () => {
+          swipeVisitedRef.current = new Set();
+        },
+        onPanResponderTerminationRequest: () => false,
+      }),
+    [selectionMode, indexAtGridPoint, mediaMessages, selectedIds, swipeVisit],
+  );
+
   // ── render helpers ──────────────────────────────────────────────────────────
 
   const renderMediaGrid = () => {
@@ -1641,40 +1737,46 @@ export const ChatMediaGalleryScreen = () => {
       );
     }
     return (
-      <FlatList
-        data={mediaMessages}
-        numColumns={COLUMN_COUNT}
-        keyExtractor={(item) => item.messageId || item.id}
-        renderItem={({ item, index }) => {
-          const id = item.messageId || item.id;
-          const isSelected = selectedIds.has(id);
-          return (
-            <MediaCell
-              message={item}
-              selectionMode={selectionMode}
-              selected={isSelected}
-              onPress={() => {
-                if (selectionMode) toggleSelected(id);
-                else openViewer(index);
-              }}
-              onLongPress={() => {
-                if (!selectionMode) enterSelectionWith(id);
-              }}
-            />
-          );
-        }}
-        contentContainerStyle={{
-          paddingTop: TAB_BAR_HEIGHT + GRID_GAP,
-          paddingBottom: insets.bottom + (selectionMode ? 100 : 32),
-          paddingHorizontal: GRID_GAP,
-          gap: GRID_GAP,
-        }}
-        columnWrapperStyle={{ gap: GRID_GAP }}
-        showsVerticalScrollIndicator={false}
-        removeClippedSubviews
-        windowSize={10}
-        initialNumToRender={18}
-      />
+      <View style={{ flex: 1 }} {...gridPanResponder.panHandlers}>
+        <FlatList
+          data={mediaMessages}
+          numColumns={COLUMN_COUNT}
+          keyExtractor={(item) => item.messageId || item.id}
+          onScroll={(e) => {
+            gridScrollYRef.current = e.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
+          renderItem={({ item, index }) => {
+            const id = item.messageId || item.id;
+            const isSelected = selectedIds.has(id);
+            return (
+              <MediaCell
+                message={item}
+                selectionMode={selectionMode}
+                selected={isSelected}
+                onPress={() => {
+                  if (selectionMode) toggleSelected(id);
+                  else openViewer(index);
+                }}
+                onLongPress={() => {
+                  if (!selectionMode) enterSelectionWith(id);
+                }}
+              />
+            );
+          }}
+          contentContainerStyle={{
+            paddingTop: TAB_BAR_HEIGHT + GRID_GAP,
+            paddingBottom: insets.bottom + (selectionMode ? 100 : 32),
+            paddingHorizontal: GRID_GAP,
+            gap: GRID_GAP,
+          }}
+          columnWrapperStyle={{ gap: GRID_GAP }}
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews
+          windowSize={10}
+          initialNumToRender={18}
+        />
+      </View>
     );
   };
 

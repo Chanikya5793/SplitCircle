@@ -2,6 +2,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
+import { useVideoThumbnail } from '@/utils/videoThumbnail';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo } from 'react';
 import {
@@ -74,6 +75,8 @@ const AlbumCell = ({
   const uri = message.localMediaPath ?? message.mediaUrl;
   const isVideo = message.type === 'video';
   const isUploading = message.status === 'sending';
+  const videoThumb = useVideoThumbnail(isVideo ? uri : undefined);
+  const displayUri = isVideo ? videoThumb : uri;
 
   return (
     <TouchableOpacity
@@ -90,9 +93,9 @@ const AlbumCell = ({
         },
       ]}
     >
-      {uri ? (
+      {displayUri ? (
         <Image
-          source={{ uri }}
+          source={{ uri: displayUri }}
           style={StyleSheet.absoluteFill}
           resizeMode="cover"
           fadeDuration={0}
