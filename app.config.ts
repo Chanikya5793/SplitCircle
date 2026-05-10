@@ -157,6 +157,7 @@ const config = {
     ],
     ['expo-build-properties', { android: { minSdkVersion: 24 } }],
     '@livekit/react-native-expo-plugin',
+    'react-native-compressor',
   ],
   extra: {
     eas: {

@@ -1,4 +1,5 @@
 import { useTheme } from '@/context/ThemeContext';
+import { useVideoThumbnail } from '@/utils/videoThumbnail';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import QuickLookPreviewView from '../../../modules/my-module/src/QuickLookPreviewView';
@@ -85,6 +86,8 @@ interface StripThumbProps {
 const StripThumb = ({ item, active, onPress, onRemove, showRemove, primaryColor }: StripThumbProps) => {
   const isVideo = item.type === 'video';
   const isImage = item.type === 'image' || item.type === 'camera';
+  const videoThumb = useVideoThumbnail(isVideo ? item.uri : undefined);
+  const displayUri = isVideo ? videoThumb : item.uri;
   return (
     <View style={styles.stripCell}>
       <TouchableOpacity
@@ -98,12 +101,18 @@ const StripThumb = ({ item, active, onPress, onRemove, showRemove, primaryColor 
           },
         ]}
       >
-        {isImage || isVideo ? (
-          <Image source={{ uri: item.uri }} style={styles.stripThumbImage} resizeMode="cover" fadeDuration={0} />
+        {(isImage && item.uri) || (isVideo && displayUri) ? (
+          <Image source={{ uri: displayUri }} style={styles.stripThumbImage} resizeMode="cover" fadeDuration={0} />
         ) : (
           <View style={styles.stripThumbFallback}>
             <Ionicons
-              name={item.type === 'audio' ? 'musical-notes' : getDocumentIcon(item.mimeType)}
+              name={
+                isVideo
+                  ? 'videocam'
+                  : item.type === 'audio'
+                  ? 'musical-notes'
+                  : getDocumentIcon(item.mimeType)
+              }
               size={18}
               color="#aaa"
             />
@@ -130,6 +139,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   const [activeIndex, setActiveIndex] = useState(0);
   const [captions, setCaptions] = useState<string[]>([]);
   const [quality, setQuality] = useState<QualityLevel>('HD');
+  const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const readyNotifiedRef = useRef(false);
@@ -434,10 +444,11 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
               <Text style={styles.headerTitle}>
                 {showStrip ? `${safeIndex + 1} / ${internalItems.length}` : headerLabel}
               </Text>
-              {(media.type === 'image' || media.type === 'video' || media.type === 'camera') && media.width && media.height && (
+              {(media.type === 'image' || media.type === 'video' || media.type === 'camera') && (
                 <Text style={styles.headerSubtitle}>
-                  {media.width} × {media.height}
-                  {media.duration ? ` • ${formatDuration(media.duration)}` : ''}
+                  {media.width && media.height ? `${media.width} × ${media.height}` : ''}
+                  {media.duration ? `${media.width && media.height ? ' • ' : ''}${formatDuration(media.duration)}` : ''}
+                  {media.fileSize ? `${(media.width && media.height) || media.duration ? ' • ' : ''}${formatFileSize(media.fileSize)}` : ''}
                 </Text>
               )}
             </View>
@@ -450,8 +461,10 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                     quality === 'HD' && styles.qualityButtonActive,
                     isPreviewLoading && styles.qualityButtonDisabled,
                   ]}
-                  onPress={isPreviewLoading ? undefined : () => setQuality(quality === 'HD' ? 'SD' : 'HD')}
+                  onPress={isPreviewLoading ? undefined : () => setQualityMenuOpen(true)}
                   activeOpacity={isPreviewLoading ? 1 : 0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Quality: ${quality}. Tap to change.`}
                 >
                   <Text style={[styles.qualityText, quality === 'HD' && styles.qualityTextActive]}>{quality}</Text>
                 </TouchableOpacity>
@@ -553,6 +566,55 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+
+        {/* Quality picker — WhatsApp-style sheet. Tapping outside dismisses.
+            Per-batch (not per-item) — applies to every photo / video in the
+            send. Photos: HD = 1920px, SD = 1280px. Videos: HD ≈ 720p, SD ≈
+            480p. Already-tiny media is sent unchanged regardless. */}
+        {qualityMenuOpen && (
+          <TouchableOpacity
+            activeOpacity={1}
+            style={styles.qualitySheetBackdrop}
+            onPress={() => setQualityMenuOpen(false)}
+          >
+            <TouchableOpacity activeOpacity={1} style={styles.qualitySheetCard}>
+              <Text style={styles.qualitySheetTitle}>Send media as</Text>
+              <Text style={styles.qualitySheetSubtitle}>
+                Applies to every item in this batch
+              </Text>
+              {(['HD', 'SD'] as QualityLevel[]).map((opt) => {
+                const isActive = quality === opt;
+                return (
+                  <TouchableOpacity
+                    key={opt}
+                    style={[
+                      styles.qualitySheetRow,
+                      isActive && { backgroundColor: 'rgba(53,198,255,0.12)' },
+                    ]}
+                    onPress={() => {
+                      setQuality(opt);
+                      setQualityMenuOpen(false);
+                    }}
+                  >
+                    <View style={styles.qualitySheetRowText}>
+                      <Text style={styles.qualitySheetRowLabel}>
+                        {opt === 'HD' ? 'HD quality' : 'Standard quality'}
+                      </Text>
+                      <Text style={styles.qualitySheetRowDescription}>
+                        {opt === 'HD'
+                          ? 'Photos up to 1920px • Videos up to 720p'
+                          : 'Smaller files, faster upload — 1280px / 480p'}
+                      </Text>
+                    </View>
+                    {isActive && (
+                      <Ionicons name="checkmark" size={22} color={theme.colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </TouchableOpacity>
+          </TouchableOpacity>
+        )}
       </View>
     </Modal>
   );
@@ -820,6 +882,56 @@ const styles = StyleSheet.create({
   },
   qualityButtonDisabled: {
     opacity: 0.5,
+  },
+  qualitySheetBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  qualitySheetCard: {
+    backgroundColor: '#1a1a1a',
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 28,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+  },
+  qualitySheetTitle: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  qualitySheetSubtitle: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+    marginBottom: 14,
+  },
+  qualitySheetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 4,
+  },
+  qualitySheetRowText: {
+    flex: 1,
+    marginRight: 8,
+  },
+  qualitySheetRowLabel: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  qualitySheetRowDescription: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 12,
+    marginTop: 2,
   },
 });
 

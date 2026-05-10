@@ -70,6 +70,7 @@
     "react-native": "0.83.2",
     "react-native-callkeep": "^4.3.16",
     "react-native-chart-kit": "^6.12.0",
+    "react-native-compressor": "^1.18.2",
     "react-native-gesture-handler": "~2.30.0",
     "react-native-get-random-values": "~1.11.0",
     "react-native-gifted-chat": "^2.8.2-alpha.1",

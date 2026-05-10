@@ -69,8 +69,10 @@ type ChatRow =
   | { kind: 'single'; message: ChatMessage }
   | { kind: 'album'; albumId: string; messages: ChatMessage[]; anchor: ChatMessage };
 
-const buildChatRows = (messages: ChatMessage[]): ChatRow[] => {
+const buildChatRows = (messages: ChatMessage[], userId?: string): ChatRow[] => {
   const rows: ChatRow[] = [];
+  const isHidden = (msg: ChatMessage): boolean =>
+    !!msg.deletedForEveryone || !!(userId && msg.deletedFor?.includes(userId));
   let i = 0;
   while (i < messages.length) {
     const m = messages[i];
@@ -90,17 +92,31 @@ const buildChatRows = (messages: ChatMessage[]): ChatRow[] => {
     ) {
       j++;
     }
-    if (j - i === 1) {
-      rows.push({ kind: 'single', message: m });
+    // Drop members that have been deleted-for-everyone or hidden by the
+    // current user. Without this, an album bubble keeps showing thumbnails
+    // for items the user already deleted (and tapping them deep-links into
+    // an empty gallery).
+    const slice = messages.slice(i, j);
+    const visible = slice.filter((msg) => !isHidden(msg));
+    if (visible.length === 0) {
+      // All members deleted — emit a single tombstone row so the user still
+      // sees "you deleted these" instead of the bubble silently vanishing.
+      // The MessageBubble tombstone branch handles deletedForEveryone /
+      // deletedFor on the first member.
+      rows.push({ kind: 'single', message: slice[0] });
+    } else if (visible.length === 1) {
+      // Only one survivor — render as a normal single bubble (cleaner than a
+      // 1-tile album).
+      rows.push({ kind: 'single', message: visible[0] });
     } else {
       // Inverted list runs newest→oldest; reverse the slice so the album
       // bubble's grid flows oldest→newest (top-left → bottom-right).
-      const albumMessages = messages.slice(i, j).slice().reverse();
+      const albumMessages = visible.slice().reverse();
       rows.push({
         kind: 'album',
         albumId,
         messages: albumMessages,
-        anchor: m, // newest member — used for status / time
+        anchor: visible[0], // newest visible member — drives status / time
       });
     }
     i = j;
@@ -133,7 +149,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // a multi-pick batch renders as a single grid bubble. Singles fall through
   // unchanged. Defined up here so search / reply / pin handlers below can use
   // `messageIdToRowIndex` for scroll-to-row jumps.
-  const rows = useMemo(() => buildChatRows(messages), [messages]);
+  const rows = useMemo(() => buildChatRows(messages, user?.userId), [messages, user?.userId]);
   const messageIdToRowIndex = useMemo(() => {
     const map = new Map<string, number>();
     rows.forEach((row, idx) => {
@@ -549,10 +565,33 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     setReactionTarget(message);
   }, []);
 
+  // Resolve "the messages the action applies to" for a given action target.
+  // For an album anchor, we widen to every visible album sibling so a single
+  // forward / star / delete-for-me operates on the whole bubble. Reactions
+  // and edit/info still operate only on the anchor itself.
+  const resolveAlbumGroup = useCallback(
+    (msg: ChatMessage): ChatMessage[] => {
+      const albumId = msg.mediaMetadata?.albumId;
+      if (!albumId) return [msg];
+      const siblings = messages.filter(
+        (m) =>
+          m.mediaMetadata?.albumId === albumId &&
+          m.senderId === msg.senderId &&
+          !m.deletedForEveryone &&
+          !(user && m.deletedFor?.includes(user.userId)),
+      );
+      return siblings.length > 0 ? siblings : [msg];
+    },
+    [messages, user],
+  );
+
   const handleAction = useCallback(async (action: MessageAction) => {
     if (!actionTarget || !user) return;
     const target = actionTarget;
     const targetId = target.messageId || target.id;
+    const group = resolveAlbumGroup(target);
+    const groupIds = group.map((m) => m.messageId || m.id);
+    const groupIdSet = new Set(groupIds);
 
     switch (action) {
       case 'reply': {
@@ -568,15 +607,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         break;
       }
       case 'forward': {
-        setForwardSource([target]);
+        // Album anchor → forward all siblings; otherwise just the target.
+        setForwardSource(group);
         break;
       }
       case 'star':
       case 'unstar': {
-        // Optimistic star toggle.
+        // Optimistic star toggle — applies to every album sibling so the
+        // whole bubble's star state stays in sync.
         setMessages((prev) =>
           prev.map((m) => {
-            if ((m.messageId || m.id) !== targetId) return m;
+            const id = m.messageId || m.id;
+            if (!groupIdSet.has(id)) return m;
             const has = m.starredBy?.includes(user.userId);
             const next = has
               ? (m.starredBy ?? []).filter((id) => id !== user.userId)
@@ -584,7 +626,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             return { ...m, starredBy: next };
           }),
         );
-        await toggleMessageStar(thread.chatId, targetId, user.userId);
+        for (const id of groupIds) {
+          await toggleMessageStar(thread.chatId, id, user.userId);
+        }
         break;
       }
       case 'edit': {
@@ -600,8 +644,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         break;
       }
       case 'select': {
-        // Multi-select mode is Phase 2 — for now, alert so the user knows it's coming.
-        Alert.alert('Select messages', 'Multi-select is coming soon.');
+        // Handled at the call-site (the "select" action seeds selection
+        // mode with the target — and with the rest of the album if the
+        // target is an anchor). Reaching this branch is a no-op fallback.
         break;
       }
       case 'pin':
@@ -610,9 +655,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         break;
       }
       case 'deleteForEveryone': {
+        const isAlbum = group.length > 1;
         Alert.alert(
-          'Delete for everyone?',
-          'This message will be removed for everyone in the chat. They may have already seen it.',
+          isAlbum ? `Delete ${group.length} items for everyone?` : 'Delete for everyone?',
+          isAlbum
+            ? 'These items will be removed for everyone in the chat. They may have already seen them.'
+            : 'This message will be removed for everyone in the chat. They may have already seen it.',
           [
             { text: 'Cancel', style: 'cancel' },
             {
@@ -620,15 +668,17 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               style: 'destructive',
               onPress: async () => {
                 warningHaptic();
-                // Optimistic flip — bubble becomes a tombstone immediately.
+                // Optimistic flip — every sibling becomes a tombstone immediately.
                 setMessages((prev) =>
                   prev.map((m) =>
-                    (m.messageId || m.id) === targetId
+                    groupIdSet.has(m.messageId || m.id)
                       ? { ...m, deletedForEveryone: true, content: '' }
                       : m,
                   ),
                 );
-                await deleteMessageForEveryone(thread.chatId, targetId);
+                for (const id of groupIds) {
+                  await deleteMessageForEveryone(thread.chatId, id);
+                }
               },
             },
           ],
@@ -636,24 +686,29 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         break;
       }
       case 'delete': {
-        // Optimistic local delete — flip to "You deleted this" immediately
-        // and surface an Undo snackbar. If the user mistakenly picked
-        // delete-for-me when they wanted delete-for-everyone, this gives them
-        // a few seconds to recover and pick the right action.
+        // Optimistic local delete — flip every album sibling to "deleted for
+        // me" immediately and surface a single Undo snackbar covering them
+        // all. Without the bulk path, deleting an album cell would only
+        // hide one tile from the bubble.
         warningHaptic();
         setMessages((prev) =>
-          prev.map((m) =>
-            (m.messageId || m.id) === targetId
-              ? { ...m, deletedFor: Array.from(new Set([...(m.deletedFor ?? []), user.userId])) }
-              : m,
-          ),
+          prev.map((m) => {
+            const id = m.messageId || m.id;
+            if (!groupIdSet.has(id)) return m;
+            return {
+              ...m,
+              deletedFor: Array.from(new Set([...(m.deletedFor ?? []), user.userId])),
+            };
+          }),
         );
-        await markMessageDeletedForUser(thread.chatId, targetId, user.userId);
-        setUndoDelete({ messageIds: [targetId] });
+        for (const id of groupIds) {
+          await markMessageDeletedForUser(thread.chatId, id, user.userId);
+        }
+        setUndoDelete({ messageIds: groupIds });
         break;
       }
     }
-  }, [actionTarget, thread.chatId, user, togglePinMessage, deleteMessageForEveryone]);
+  }, [actionTarget, thread.chatId, user, togglePinMessage, deleteMessageForEveryone, resolveAlbumGroup]);
 
   // Double-tap on a bubble adds (or removes) a ❤️ reaction.
   const handleDoubleTap = useCallback(async (message: ChatMessage) => {
@@ -941,7 +996,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           processedHeight = r.height;
           processedSize = r.size;
         } else if (mediaToSend.type === 'video') {
-          const r = await processVideo(mediaToSend.uri, quality);
+          const r = await processVideo(mediaToSend.uri, quality, (p) => {
+            const pct = Math.max(0, Math.min(100, Math.round(p * 100)));
+            mediaPipelineLoading.setMessage(
+              results.length > 1
+                ? `Compressing ${i + 1} of ${results.length} — ${pct}%`
+                : `Compressing video — ${pct}%`,
+            );
+          });
           processedUri = r.uri;
           if (r.width > 0) processedWidth = r.width;
           if (r.height > 0) processedHeight = r.height;
@@ -1353,10 +1415,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           isGroupChat={isGroupChat}
           // Tap behaviour depends on selectionMode — handled inside AlbumBubble.
           onMediaPress={handleMediaPress}
-          // Long-press always opens the action sheet for that specific cell;
-          // selection mode is reachable from there too via the "Select" action.
-          onLongPress={handleLongPressMessage}
-          onDoubleTap={selectionMode ? undefined : handleDoubleTap}
+          // AlbumBubble routes long-press / reactions through the album
+          // anchor so the action sheet and reactions strip operate on the
+          // bubble as a whole. Double-tap reactions on cells would conflict
+          // with single-tap-to-open — long-press is the album reaction path.
+          onLongPress={selectionMode ? undefined : handleLongPressMessage}
+          onReactionsPress={handleReactionsPress}
           onReplyPress={handleReplyPress}
           highlighted={memberHighlighted}
           dimmed={memberDimmed && (dimmedMessageId !== anyId)}
@@ -1879,10 +1943,19 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         onReact={handleReact}
         onAction={async (action) => {
           if (action === 'select' && actionTarget) {
-            // Replace the placeholder alert from Phase 1 with real entry into selection mode.
-            const seed = actionTarget;
+            // For an album anchor, seed selection with every visible sibling
+            // so the user can immediately bulk-act on the whole bubble.
+            const group = resolveAlbumGroup(actionTarget);
             setActionTarget(null);
-            setTimeout(() => enterSelectionMode(seed), 80);
+            setTimeout(() => {
+              if (group.length > 1) {
+                const ids = group.map((m) => m.messageId || m.id);
+                enterSelectionMode();
+                setSelectedIds(new Set(ids));
+              } else {
+                enterSelectionMode(actionTarget);
+              }
+            }, 80);
             return;
           }
           await handleAction(action);

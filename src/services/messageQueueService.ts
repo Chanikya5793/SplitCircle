@@ -178,6 +178,14 @@ export const queueMessage = async (
         ...(message.mediaMetadata.height && { height: message.mediaMetadata.height }),
         ...(message.mediaMetadata.duration && { duration: message.mediaMetadata.duration }),
         ...(message.mediaMetadata.aspectRatio && { aspectRatio: message.mediaMetadata.aspectRatio }),
+        ...(message.mediaMetadata.thumbnailUri && { thumbnailUri: message.mediaMetadata.thumbnailUri }),
+        // Album fields — without these the receiver renders each item as a
+        // separate bubble instead of grouping the multi-pick batch into one
+        // album bubble. `albumIndex` can legitimately be 0, so guard on
+        // `!== undefined` rather than truthiness.
+        ...(message.mediaMetadata.albumId && { albumId: message.mediaMetadata.albumId }),
+        ...(message.mediaMetadata.albumIndex !== undefined && { albumIndex: message.mediaMetadata.albumIndex }),
+        ...(message.mediaMetadata.albumSize && { albumSize: message.mediaMetadata.albumSize }),
       };
       console.log('📎 Queuing message with mediaMetadata:', message.mediaMetadata.fileName || message.type);
     }

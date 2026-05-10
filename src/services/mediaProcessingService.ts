@@ -1,8 +1,13 @@
 import { getInfoAsync } from 'expo-file-system/legacy';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { Image } from 'react-native';
+import { Video as VideoCompressor, getVideoMetaData } from 'react-native-compressor';
 
-export type QualityLevel = 'HD' | 'SD'; // HD = 1080p, SD = 720p
+export type QualityLevel = 'HD' | 'SD';
+// Image targets: HD = 1920px max edge, SD = 1280px.
+// Video targets: HD = 1280px max edge (720p), SD = 854px (~480p).
+// These mirror WhatsApp's "HD photos / videos" toggle behavior — `auto`
+// compression in the native module picks an appropriate bitrate per platform.
 
 interface ProcessedMedia {
   uri: string;
@@ -99,21 +104,80 @@ export const processImage = async (
 };
 
 /**
- * Process a video: resize and compress to MP4
- * Currently a pass-through as we lack native transcoding libraries in this environment.
+ * Process a video: transcode to MP4 with a quality-appropriate cap on the
+ * longest edge. Uses `react-native-compressor`'s `auto` mode so the native
+ * module picks a sensible bitrate per platform; we just bound the resolution.
+ *
+ * Falls back to the original URI if compression fails or yields a larger
+ * file than the source — never makes the user wait on a transcode that
+ * would actively hurt them.
  */
 export const processVideo = async (
   uri: string,
-  quality: QualityLevel
+  quality: QualityLevel,
+  onProgress?: (fraction: number) => void,
 ): Promise<ProcessedMedia> => {
-  // We can check file info
-  const fileInfo = await getInfoAsync(uri);
-  const size = fileInfo.exists && 'size' in fileInfo ? fileInfo.size : 0;
-  
-  return {
-    uri: uri,
-    width: 0, // Unknown without extra tools
-    height: 0,
-    size,
-  };
+  const maxEdge = quality === 'HD' ? 1280 : 854;
+
+  // Read the source dimensions / size up front so we can populate the result
+  // even if compression bails. `getVideoMetaData` requires a real path, so
+  // best-effort and don't block on errors.
+  let srcWidth = 0;
+  let srcHeight = 0;
+  let srcSize = 0;
+  try {
+    const meta = await getVideoMetaData(uri);
+    srcWidth = meta.width ?? 0;
+    srcHeight = meta.height ?? 0;
+    srcSize = meta.size ?? 0;
+  } catch {
+    const fileInfo = await getInfoAsync(uri);
+    srcSize = fileInfo.exists && 'size' in fileInfo ? fileInfo.size : 0;
+  }
+
+  // If the video is already smaller than our cap, skip transcoding entirely.
+  // The native module would still re-encode and likely make the file *larger*
+  // for already-tiny clips (the screenshot's 360×480 case).
+  const longestEdge = Math.max(srcWidth, srcHeight);
+  if (longestEdge > 0 && longestEdge <= maxEdge) {
+    return { uri, width: srcWidth, height: srcHeight, size: srcSize };
+  }
+
+  try {
+    const compressedUri = await VideoCompressor.compress(
+      uri,
+      {
+        compressionMethod: 'auto',
+        maxSize: maxEdge,
+        // Skip compression entirely for already-tiny clips so we don't
+        // bloat 100KB videos to 500KB by re-encoding them.
+        minimumFileSizeForCompress: 1, // MB
+      },
+      onProgress,
+    );
+
+    let outWidth = srcWidth;
+    let outHeight = srcHeight;
+    let outSize = srcSize;
+    try {
+      const meta = await getVideoMetaData(compressedUri);
+      outWidth = meta.width ?? srcWidth;
+      outHeight = meta.height ?? srcHeight;
+      outSize = meta.size ?? srcSize;
+    } catch {
+      const info = await getInfoAsync(compressedUri);
+      outSize = info.exists && 'size' in info ? info.size : srcSize;
+    }
+
+    // If the "compressed" file ended up larger than the source (can happen
+    // for short clips that were already efficient), keep the original.
+    if (srcSize > 0 && outSize > srcSize) {
+      return { uri, width: srcWidth, height: srcHeight, size: srcSize };
+    }
+
+    return { uri: compressedUri, width: outWidth, height: outHeight, size: outSize };
+  } catch (err) {
+    console.warn('Video compression failed, sending original:', err);
+    return { uri, width: srcWidth, height: srcHeight, size: srcSize };
+  }
 };

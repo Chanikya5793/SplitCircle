@@ -1,3 +1,4 @@
+import { ReactionsRow } from '@/components/Chat/ReactionsRow';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage } from '@/models';
@@ -37,8 +38,10 @@ interface AlbumBubbleProps {
   senderName?: string;
   isGroupChat?: boolean;
   onMediaPress?: (message: ChatMessage) => void;
-  onLongPress?: (message: ChatMessage) => void;
-  onDoubleTap?: (message: ChatMessage) => void;
+  /** Long-press on any cell — passes the album anchor so action-sheet ops apply album-wide. */
+  onLongPress?: (anchor: ChatMessage) => void;
+  /** Tap on the existing reactions chip — opens the reactions detail sheet for the anchor. */
+  onReactionsPress?: (anchor: ChatMessage) => void;
   onReplyPress?: (messageId: string) => void;
   highlighted?: boolean;
   dimmed?: boolean;
@@ -146,6 +149,7 @@ export const AlbumBubble = ({
   isGroupChat,
   onMediaPress,
   onLongPress,
+  onReactionsPress,
   onReplyPress,
   highlighted,
   dimmed,
@@ -157,7 +161,10 @@ export const AlbumBubble = ({
   const { theme, isDark } = useTheme();
 
   const visible = useMemo(
-    () => (user ? messages.filter((m) => !m.deletedFor?.includes(user.userId)) : messages),
+    () =>
+      messages.filter(
+        (m) => !m.deletedForEveryone && !(user && m.deletedFor?.includes(user.userId)),
+      ),
     [messages, user],
   );
 
@@ -227,12 +234,21 @@ export const AlbumBubble = ({
         <View style={[styles.grid, { width: ALBUM_WIDTH }]}>
           {(() => {
             // In selection mode tap toggles selection; otherwise tap opens
-            // the gallery viewer for that specific cell.
+            // the gallery viewer for the tapped cell. Album-wide reactions
+            // are reached via long-press → action sheet (same path as
+            // single messages); we don't try to double-tap-detect here
+            // because doing so would force a 280ms delay on viewer open.
             const tapHandler = (m: ChatMessage) => {
-              if (selectionMode) onToggleSelect?.(m);
-              else onMediaPress?.(m);
+              if (selectionMode) {
+                onToggleSelect?.(m);
+                return;
+              }
+              onMediaPress?.(m);
             };
-            const longHandler = (m: ChatMessage) => onLongPress?.(m);
+            // Album actions are anchor-scoped — long-pressing any cell opens
+            // the action sheet for the album as a whole. Per-cell delete /
+            // forward live in the gallery (or bulk selection mode).
+            const longHandler = (_m: ChatMessage) => onLongPress?.(anchor);
             const isSelected = (m: ChatMessage) => {
               if (!selectedIds) return false;
               return selectedIds.has(m.messageId) || selectedIds.has(m.id);
@@ -322,6 +338,14 @@ export const AlbumBubble = ({
           )}
         </View>
       </View>
+      {/* Reactions belong to the album as a whole — stored on the anchor and
+          rendered just outside the bubble like a regular MessageBubble. */}
+      <ReactionsRow
+        reactions={anchor.reactions}
+        currentUserId={user?.userId}
+        align={isMine ? 'right' : 'left'}
+        onPress={onReactionsPress ? () => onReactionsPress(anchor) : undefined}
+      />
     </View>
   );
 };
