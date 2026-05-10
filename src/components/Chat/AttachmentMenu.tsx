@@ -311,6 +311,16 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     }
 
     try {
+      // Use `Passthrough` (no re-encode) + `shouldDownloadFromNetwork` so
+      // iCloud-only assets get pulled down but we don't pay for a second
+      // transcoding pass — our `processVideo` (react-native-compressor) is
+      // the single source of compression with per-item HD/SD + progress.
+      //
+      // Anything heavier than Passthrough makes iOS transcode every video
+      // synchronously inside `launchImageLibraryAsync` (measured ~75s of
+      // dead time for a 10-item batch with two videos). Anything lighter
+      // and iCloud-only videos throw PHPhotosErrorDomain 3164 ("asset not
+      // available, network access required").
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images', 'videos'],
         quality: 0.8,
@@ -319,8 +329,8 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
         orderedSelection: true,
         allowsEditing: false,
         exif: false,
-        videoExportPreset: ImagePicker.VideoExportPreset.MediumQuality,
-        videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+        videoExportPreset: ImagePicker.VideoExportPreset.Passthrough,
+        shouldDownloadFromNetwork: true,
       });
 
       if (result.canceled || !result.assets?.length) {

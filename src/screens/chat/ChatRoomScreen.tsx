@@ -12,7 +12,7 @@ import {
   SelectionToolbar,
 } from '@/components/Chat';
 import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
-import type { MediaPreviewSendItem, QualityLevel } from '@/components/Chat/MediaPreview';
+import type { MediaPreviewSendItem } from '@/components/Chat/MediaPreview';
 import type { MessageAction } from '@/components/Chat/MessageActionSheet';
 import { ReactionDetailsSheet } from '@/components/Chat/ReactionDetailsSheet';
 import type { SelectionAction } from '@/components/Chat/SelectionToolbar';
@@ -936,6 +936,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
 
     setAttachmentMenuVisible(false);
+    // Bridge the menu→preview gap with a global loading message so the user
+    // isn't stuck looking at the AttachmentMenu's "Opening media library…"
+    // text after they've already confirmed their picks. MediaPreview's
+    // `onPreviewReady` clears this once the preview is mounted.
+    mediaPipelineLoading.start(
+      items.length > 1 ? `Preparing ${items.length} items…` : 'Preparing media…',
+    );
     setSelectedMediaBatch(items);
     InteractionManager.runAfterInteractions(() => {
       setMediaPreviewVisible(true);
@@ -945,7 +952,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Send a batch of media items in pick order. The preview is dismissed
   // immediately so the user can keep using the chat; each item streams its own
   // progress through the keyed loading overlay.
-  const handleSendMedia = async (results: MediaPreviewSendItem[], quality: QualityLevel) => {
+  const handleSendMedia = async (results: MediaPreviewSendItem[]) => {
     if (results.length === 0) return;
 
     // Snapshot reply target — apply it only to the first item so a follow-up
@@ -974,9 +981,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       );
     const albumId = isAlbum ? `album_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` : undefined;
 
+    // Track per-item failures so one bad item doesn't kill the rest of the
+    // batch. We surface a single summary at the end instead of bailing on
+    // the first throw — picking 10 items and getting 3 sent because item 4
+    // hit a flaky upload was the original "broken" symptom.
+    const failures: { index: number; error: unknown }[] = [];
     try {
       for (let i = 0; i < results.length; i++) {
-        const { media: mediaToSend, caption } = results[i];
+        const { media: mediaToSend, caption, quality: itemQuality } = results[i];
 
         if (results.length > 1) {
           mediaPipelineLoading.setMessage(`Preparing ${i + 1} of ${results.length}…`);
@@ -984,19 +996,35 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           mediaPipelineLoading.setMessage(getProcessingLoadingMessage(mediaToSend.type));
         }
 
+        try {
         let processedUri = mediaToSend.uri;
         let processedWidth = mediaToSend.width;
         let processedHeight = mediaToSend.height;
         let processedSize = mediaToSend.fileSize;
+        // Source (pre-process) details captured natively. We surface these
+        // unchanged in the receiver's info panel so resolution / file size
+        // numbers match what the user saw at preview-time.
+        let sourceWidth: number | undefined;
+        let sourceHeight: number | undefined;
+        let sourceFileSize: number | undefined;
+        let cameraMake: string | undefined;
+        let cameraModel: string | undefined;
+        let takenAt: number | undefined;
 
         if (mediaToSend.type === 'image' || mediaToSend.type === 'camera') {
-          const r = await processImage(mediaToSend.uri, quality);
+          const r = await processImage(mediaToSend.uri, itemQuality);
           processedUri = r.uri;
           processedWidth = r.width;
           processedHeight = r.height;
           processedSize = r.size;
+          sourceWidth = r.sourceWidth;
+          sourceHeight = r.sourceHeight;
+          sourceFileSize = r.sourceFileSize;
+          cameraMake = r.cameraMake;
+          cameraModel = r.cameraModel;
+          takenAt = r.takenAt;
         } else if (mediaToSend.type === 'video') {
-          const r = await processVideo(mediaToSend.uri, quality, (p) => {
+          const r = await processVideo(mediaToSend.uri, itemQuality, (p) => {
             const pct = Math.max(0, Math.min(100, Math.round(p * 100)));
             mediaPipelineLoading.setMessage(
               results.length > 1
@@ -1008,6 +1036,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           if (r.width > 0) processedWidth = r.width;
           if (r.height > 0) processedHeight = r.height;
           processedSize = r.size;
+          sourceWidth = r.sourceWidth || undefined;
+          sourceHeight = r.sourceHeight || undefined;
+          sourceFileSize = r.sourceFileSize || undefined;
         }
 
         let messageType: MessageType;
@@ -1059,6 +1090,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           mediaMetadata.albumIndex = i;
           mediaMetadata.albumSize = results.length;
         }
+        // Source (pre-process) details — let the info panel show what the
+        // user actually picked, plus EXIF for richer "captured by" info.
+        if (sourceWidth) mediaMetadata.sourceWidth = sourceWidth;
+        if (sourceHeight) mediaMetadata.sourceHeight = sourceHeight;
+        if (sourceFileSize) mediaMetadata.sourceFileSize = sourceFileSize;
+        if (cameraMake) mediaMetadata.cameraMake = cameraMake;
+        if (cameraModel) mediaMetadata.cameraModel = cameraModel;
+        if (takenAt) mediaMetadata.takenAt = takenAt;
 
         mediaPipelineLoading.setMessage(
           results.length > 1
@@ -1090,12 +1129,25 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             },
           });
         }, { key: `chat-media-${thread.chatId}-${i}-${Date.now()}` });
+        } catch (itemError) {
+          // Keep going on per-item failures. Without this, item N throwing
+          // (typically a flaky upload or a corrupt source) aborts the loop
+          // and items N+1..end never get sent — and the loading flag stayed
+          // on long enough that the input felt frozen until the user
+          // navigated away and back.
+          console.error(`Failed to send batch item ${i}:`, itemError);
+          failures.push({ index: i, error: itemError });
+        }
       }
-    } catch (error) {
-      console.error('Failed to send media batch:', error);
-      alert(error instanceof Error ? error.message : 'Failed to send media');
     } finally {
       mediaPipelineLoading.stop();
+    }
+
+    if (failures.length === results.length) {
+      const first = failures[0].error;
+      alert(first instanceof Error ? first.message : 'Failed to send media');
+    } else if (failures.length > 0) {
+      alert(`${failures.length} of ${results.length} items failed to send.`);
     }
   };
 
@@ -1759,21 +1811,19 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             </View>
             <TouchableOpacity
               onPress={handleSend}
-              disabled={!text.trim() || mediaPipelineLoading.loading}
+              disabled={!text.trim()}
               activeOpacity={0.8}
               style={[
                 styles.sendButtonTouchable,
                 {
-                  backgroundColor:
-                    !text.trim() || mediaPipelineLoading.loading
-                      ? (isDark ? '#555' : '#ccc')
-                      : theme.colors.primary,
+                  backgroundColor: !text.trim()
+                    ? (isDark ? '#555' : '#ccc')
+                    : theme.colors.primary,
                 },
               ]}
               accessibilityLabel="Send message"
               accessibilityState={{
-                disabled: !text.trim() || mediaPipelineLoading.loading,
-                busy: mediaPipelineLoading.loading,
+                disabled: !text.trim(),
               }}
             >
               <Icon source="send" size={24} color={theme.colors.onPrimary} />
@@ -1796,8 +1846,15 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         onClose={() => {
           setMediaPreviewVisible(false);
           setSelectedMediaBatch([]);
+          // Clear the bridge toast if onPreviewReady never fired (e.g. user
+          // dismissed before the preview finished mounting).
+          mediaPipelineLoading.stop();
         }}
         onSend={handleSendMedia}
+        // Clears the picker→preview bridge toast as soon as the preview is
+        // mounted and interactive. handleSendMedia later starts a fresh
+        // toast for the upload pipeline.
+        onPreviewReady={() => mediaPipelineLoading.stop()}
       />
 
       {/* Location Picker Modal */}

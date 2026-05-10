@@ -27,6 +27,8 @@ export type QualityLevel = 'HD' | 'SD';
 export interface MediaPreviewSendItem {
   media: SelectedMedia;
   caption: string;
+  /** Per-item quality — each photo / video can be sent HD or SD independently. */
+  quality: QualityLevel;
 }
 
 interface MediaPreviewProps {
@@ -34,10 +36,50 @@ interface MediaPreviewProps {
   items: SelectedMedia[];
   visible: boolean;
   onClose: () => void;
-  /** Fires once when the user taps Send — receives all items with their per-item captions. */
-  onSend: (results: MediaPreviewSendItem[], quality: QualityLevel) => void;
+  /** Fires once when the user taps Send — each item carries its own quality + caption. */
+  onSend: (results: MediaPreviewSendItem[]) => void;
   onPreviewReady?: () => void;
 }
+
+/**
+ * Compute the resolution we'd actually send for a given item + quality.
+ * Mirrors the caps in mediaProcessingService:
+ *  - Images: HD = 1920px max edge, SD = 1280px
+ *  - Videos: HD = 1280px (~720p), SD = 854px (~480p)
+ * Returns `null` for items without dimensions or non-resizable types.
+ */
+const targetResolution = (
+  item: SelectedMedia,
+  quality: QualityLevel,
+): { width: number; height: number; unchanged: boolean } | null => {
+  if (!item.width || !item.height) return null;
+  const isVideo = item.type === 'video';
+  const isImage = item.type === 'image' || item.type === 'camera';
+  if (!isVideo && !isImage) return null;
+
+  const maxEdge = isVideo
+    ? quality === 'HD' ? 1280 : 854
+    : quality === 'HD' ? 1920 : 1280;
+
+  const longest = Math.max(item.width, item.height);
+  if (longest <= maxEdge) {
+    return { width: item.width, height: item.height, unchanged: true };
+  }
+  const ratio = maxEdge / longest;
+  return {
+    width: Math.round(item.width * ratio),
+    height: Math.round(item.height * ratio),
+    unchanged: false,
+  };
+};
+
+const formatResolution = (item: SelectedMedia, quality: QualityLevel): string => {
+  const t = targetResolution(item, quality);
+  if (!t) return quality === 'HD' ? 'Original quality' : 'Smaller files';
+  return t.unchanged
+    ? `${t.width} × ${t.height} (no change)`
+    : `${t.width} × ${t.height}`;
+};
 
 const STRIP_THUMB_SIZE = 56;
 const STRIP_THUMB_GAP = 6;
@@ -76,6 +118,7 @@ const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
 
 interface StripThumbProps {
   item: SelectedMedia;
+  quality: QualityLevel;
   active: boolean;
   onPress: () => void;
   onRemove: () => void;
@@ -83,7 +126,7 @@ interface StripThumbProps {
   primaryColor: string;
 }
 
-const StripThumb = ({ item, active, onPress, onRemove, showRemove, primaryColor }: StripThumbProps) => {
+const StripThumb = ({ item, quality, active, onPress, onRemove, showRemove, primaryColor }: StripThumbProps) => {
   const isVideo = item.type === 'video';
   const isImage = item.type === 'image' || item.type === 'camera';
   const videoThumb = useVideoThumbnail(isVideo ? item.uri : undefined);
@@ -123,6 +166,16 @@ const StripThumb = ({ item, active, onPress, onRemove, showRemove, primaryColor 
             <Ionicons name="play" size={10} color="#fff" />
           </View>
         )}
+        {(isImage || isVideo) && (
+          <View
+            style={[
+              styles.stripQualityBadge,
+              quality === 'SD' && { backgroundColor: 'rgba(255,170,0,0.85)' },
+            ]}
+          >
+            <Text style={styles.stripQualityBadgeText}>{quality}</Text>
+          </View>
+        )}
       </TouchableOpacity>
       {showRemove && (
         <TouchableOpacity style={styles.stripRemove} onPress={onRemove} hitSlop={6}>
@@ -138,7 +191,9 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   const insets = useSafeAreaInsets();
   const [activeIndex, setActiveIndex] = useState(0);
   const [captions, setCaptions] = useState<string[]>([]);
-  const [quality, setQuality] = useState<QualityLevel>('HD');
+  // Per-item quality. Default each new item to HD; the quality sheet edits
+  // the active item by default and exposes "Apply to all" for batch flips.
+  const [qualities, setQualities] = useState<QualityLevel[]>([]);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
@@ -157,8 +212,8 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
     if (!visible) return;
     setInternalItems(items);
     setCaptions(items.map(() => ''));
+    setQualities(items.map(() => 'HD' as QualityLevel));
     setActiveIndex(0);
-    setQuality('HD');
     setVideoError(false);
     setPreviewReady(false);
     readyNotifiedRef.current = false;
@@ -167,6 +222,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
 
   const safeIndex = Math.min(activeIndex, Math.max(0, internalItems.length - 1));
   const media = internalItems[safeIndex];
+  const activeQuality: QualityLevel = qualities[safeIndex] ?? 'HD';
 
   // Audio player — source only when the active item is audio.
   const audioSource = (visible && media?.type === 'audio') ? (media.uri ?? null) : null;
@@ -242,9 +298,10 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
     const results: MediaPreviewSendItem[] = internalItems.map((m, i) => ({
       media: m,
       caption: captions[i] ?? '',
+      quality: qualities[i] ?? 'HD',
     }));
     setCaptions(internalItems.map(() => ''));
-    onSend(results, quality);
+    onSend(results);
   };
 
   const handleClose = () => {
@@ -265,6 +322,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
       return next;
     });
     setCaptions((prev) => prev.filter((_, i) => i !== idx));
+    setQualities((prev) => prev.filter((_, i) => i !== idx));
     setActiveIndex((prev) => {
       if (idx < prev) return prev - 1;
       if (idx === prev) return Math.max(0, prev - (prev > 0 ? 1 : 0));
@@ -458,15 +516,15 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                 <TouchableOpacity
                   style={[
                     styles.qualityButton,
-                    quality === 'HD' && styles.qualityButtonActive,
+                    activeQuality === 'HD' && styles.qualityButtonActive,
                     isPreviewLoading && styles.qualityButtonDisabled,
                   ]}
                   onPress={isPreviewLoading ? undefined : () => setQualityMenuOpen(true)}
                   activeOpacity={isPreviewLoading ? 1 : 0.7}
                   accessibilityRole="button"
-                  accessibilityLabel={`Quality: ${quality}. Tap to change.`}
+                  accessibilityLabel={`Quality: ${activeQuality}. Tap to change.`}
                 >
-                  <Text style={[styles.qualityText, quality === 'HD' && styles.qualityTextActive]}>{quality}</Text>
+                  <Text style={[styles.qualityText, activeQuality === 'HD' && styles.qualityTextActive]}>{activeQuality}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -514,6 +572,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                 renderItem={({ item, index }) => (
                   <StripThumb
                     item={item}
+                    quality={qualities[index] ?? 'HD'}
                     active={index === safeIndex}
                     onPress={() => setActiveIndex(index)}
                     onRemove={() => handleRemoveAt(index)}
@@ -567,23 +626,31 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
           </View>
         </KeyboardAvoidingView>
 
-        {/* Quality picker — WhatsApp-style sheet. Tapping outside dismisses.
-            Per-batch (not per-item) — applies to every photo / video in the
-            send. Photos: HD = 1920px, SD = 1280px. Videos: HD ≈ 720p, SD ≈
-            480p. Already-tiny media is sent unchanged regardless. */}
-        {qualityMenuOpen && (
+        {/* Quality picker — WhatsApp-style sheet, but per-item. Tapping a
+            row sets the active item's quality; the "Apply to all" button
+            below propagates that choice to every other item in the batch.
+            Photos: HD = 1920px, SD = 1280px. Videos: HD ≈ 720p, SD ≈ 480p.
+            Already-tiny media is sent unchanged regardless. */}
+        {qualityMenuOpen && media && (
           <TouchableOpacity
             activeOpacity={1}
             style={styles.qualitySheetBackdrop}
             onPress={() => setQualityMenuOpen(false)}
           >
             <TouchableOpacity activeOpacity={1} style={styles.qualitySheetCard}>
-              <Text style={styles.qualitySheetTitle}>Send media as</Text>
+              <Text style={styles.qualitySheetTitle}>
+                {internalItems.length > 1
+                  ? `Send item ${safeIndex + 1} of ${internalItems.length} as`
+                  : 'Send media as'}
+              </Text>
               <Text style={styles.qualitySheetSubtitle}>
-                Applies to every item in this batch
+                {media.width && media.height
+                  ? `Source: ${media.width} × ${media.height}${media.fileSize ? ` • ${formatFileSize(media.fileSize)}` : ''}`
+                  : 'Choose a quality for this item'}
               </Text>
               {(['HD', 'SD'] as QualityLevel[]).map((opt) => {
-                const isActive = quality === opt;
+                const isActive = activeQuality === opt;
+                const resolutionLabel = formatResolution(media, opt);
                 return (
                   <TouchableOpacity
                     key={opt}
@@ -592,7 +659,11 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                       isActive && { backgroundColor: 'rgba(53,198,255,0.12)' },
                     ]}
                     onPress={() => {
-                      setQuality(opt);
+                      setQualities((prev) => {
+                        const next = prev.length === internalItems.length ? [...prev] : internalItems.map((_, i) => prev[i] ?? 'HD');
+                        next[safeIndex] = opt;
+                        return next;
+                      });
                       setQualityMenuOpen(false);
                     }}
                   >
@@ -601,9 +672,8 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                         {opt === 'HD' ? 'HD quality' : 'Standard quality'}
                       </Text>
                       <Text style={styles.qualitySheetRowDescription}>
-                        {opt === 'HD'
-                          ? 'Photos up to 1920px • Videos up to 720p'
-                          : 'Smaller files, faster upload — 1280px / 480p'}
+                        {resolutionLabel}
+                        {opt === 'HD' ? ' • larger file' : ' • smaller, faster upload'}
                       </Text>
                     </View>
                     {isActive && (
@@ -612,6 +682,20 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                   </TouchableOpacity>
                 );
               })}
+              {internalItems.length > 1 && (
+                <TouchableOpacity
+                  style={styles.qualitySheetApplyAll}
+                  onPress={() => {
+                    setQualities(internalItems.map(() => activeQuality));
+                    setQualityMenuOpen(false);
+                  }}
+                >
+                  <Ionicons name="copy-outline" size={16} color={theme.colors.primary} />
+                  <Text style={[styles.qualitySheetApplyAllText, { color: theme.colors.primary }]}>
+                    Apply {activeQuality} to all {internalItems.length} items
+                  </Text>
+                </TouchableOpacity>
+              )}
             </TouchableOpacity>
           </TouchableOpacity>
         )}
@@ -804,6 +888,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  stripQualityBadge: {
+    position: 'absolute',
+    top: 2,
+    left: 2,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+  },
+  stripQualityBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#000',
+    letterSpacing: 0.3,
+  },
   stripRemove: {
     position: 'absolute',
     top: 0,
@@ -932,6 +1031,20 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.6)',
     fontSize: 12,
     marginTop: 2,
+  },
+  qualitySheetApplyAll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    marginTop: 6,
+    borderRadius: 12,
+    backgroundColor: 'rgba(53,198,255,0.08)',
+  },
+  qualitySheetApplyAllText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
 

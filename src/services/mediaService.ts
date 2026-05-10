@@ -24,8 +24,12 @@ const storage = getStorage();
 // Directory for storing downloaded chat media
 export const MEDIA_DIRECTORY = `${documentDirectory}chat_media/`;
 
-// Maximum file size for upload (50MB)
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+// Maximum file size for upload (100MB).
+// Matches WhatsApp's video cap. Firebase Storage itself supports far larger
+// files; this is purely a client-side guard so we don't try to upload a
+// gigabyte over a phone connection. Raise carefully — also bump the matching
+// resolution/bitrate skip-conditions in `processVideo`.
+const MAX_FILE_SIZE = 100 * 1024 * 1024;
 const TRUSTED_MEDIA_HOSTS = ['firebasestorage.googleapis.com', 'storage.googleapis.com'];
 
 const ALLOWED_MIME_TYPES = new Set([

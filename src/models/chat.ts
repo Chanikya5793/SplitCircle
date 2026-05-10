@@ -20,10 +20,10 @@ export interface ReplyTo {
 
 export interface MediaMetadata {
   fileName?: string;
-  fileSize?: number; // in bytes
+  fileSize?: number; // in bytes — the *sent* file's size after processing
   mimeType?: string;
-  width?: number; // for images/videos
-  height?: number; // for images/videos
+  width?: number; // sent (post-process) width in display space
+  height?: number; // sent (post-process) height in display space
   duration?: number; // for audio/video in ms
   aspectRatio?: number; // width/height
   thumbnailUri?: string; // for video thumbnails
@@ -33,6 +33,23 @@ export interface MediaMetadata {
   albumIndex?: number;
   /** Total number of items in this album. */
   albumSize?: number;
+  // ── Source (pre-process) metadata ─────────────────────────────────────────
+  // Captured natively from the source file before resize/transcode so the
+  // info panel can report the exact dimensions / size the user picked,
+  // independently of the compressed wire representation. Populated on the
+  // sender; forwarded verbatim to receivers.
+  /** Orientation-corrected pixel width of the original source file. */
+  sourceWidth?: number;
+  /** Orientation-corrected pixel height of the original source file. */
+  sourceHeight?: number;
+  /** Original file size in bytes before processing. */
+  sourceFileSize?: number;
+  /** EXIF-reported camera maker, e.g. "Apple" or "Samsung". */
+  cameraMake?: string;
+  /** EXIF-reported camera model, e.g. "iPhone 15 Pro". */
+  cameraModel?: string;
+  /** Unix ms when the image was captured (parsed from EXIF DateTimeOriginal). */
+  takenAt?: number;
 }
 
 export interface LocationData {

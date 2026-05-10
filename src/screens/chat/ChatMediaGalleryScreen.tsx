@@ -648,13 +648,26 @@ interface MediaInfoPanelProps {
   onClose: () => void;
 }
 
+const PANEL_TRAVEL = 600; // px — enough to clear the panel even on tall screens
+const PANEL_DISMISS_DY = 80;
+const PANEL_DISMISS_VY = 0.5;
+
+const formatMegapixels = (w?: number, h?: number): string | null => {
+  if (!w || !h) return null;
+  const mp = (w * h) / 1_000_000;
+  return mp >= 10 ? `${mp.toFixed(0)} MP` : `${mp.toFixed(1)} MP`;
+};
+
 const MediaInfoPanel = ({ message, senderName, visible, onClose }: MediaInfoPanelProps) => {
   const { theme, isDark } = useTheme();
-  const slideAnim = useRef(new Animated.Value(500)).current;
+  // `slideAnim` drives both the spring-in/out animation and finger-following
+  // during the swipe-down dismiss gesture, so it has to live in JS state.
+  const slideAnim = useRef(new Animated.Value(PANEL_TRAVEL)).current;
+  const dragStartRef = useRef(0);
 
   useEffect(() => {
     Animated.spring(slideAnim, {
-      toValue: visible ? 0 : 500,
+      toValue: visible ? 0 : PANEL_TRAVEL,
       useNativeDriver: true,
       damping: 28,
       stiffness: 220,
@@ -662,7 +675,73 @@ const MediaInfoPanel = ({ message, senderName, visible, onClose }: MediaInfoPane
     }).start();
   }, [visible, slideAnim]);
 
+  // Swipe-down dismiss. Drag follows the finger 1:1; release past the
+  // threshold (or with a downward fling) animates the panel off-screen and
+  // calls `onClose`. Releases below the threshold spring back to 0.
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        // Only claim moves that are clearly downward — let horizontal/vertical
+        // ScrollView gestures inside the panel pass through.
+        onMoveShouldSetPanResponder: (_, gs) =>
+          Math.abs(gs.dy) > 8 && gs.dy > Math.abs(gs.dx),
+        onPanResponderGrant: () => {
+          dragStartRef.current = 0;
+          slideAnim.stopAnimation((value) => {
+            dragStartRef.current = value;
+          });
+        },
+        onPanResponderMove: (_, gs) => {
+          // Clamp at 0 so the panel can't be dragged *up* past its docked
+          // position; downward drag follows the finger.
+          const next = Math.max(0, dragStartRef.current + gs.dy);
+          slideAnim.setValue(next);
+        },
+        onPanResponderRelease: (_, gs) => {
+          const fastFlick = gs.vy > PANEL_DISMISS_VY;
+          if (gs.dy > PANEL_DISMISS_DY || fastFlick) {
+            Animated.timing(slideAnim, {
+              toValue: PANEL_TRAVEL,
+              duration: 180,
+              useNativeDriver: true,
+            }).start(() => onClose());
+          } else {
+            Animated.spring(slideAnim, {
+              toValue: 0,
+              useNativeDriver: true,
+              damping: 28,
+              stiffness: 220,
+              mass: 0.8,
+            }).start();
+          }
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(slideAnim, {
+            toValue: 0,
+            useNativeDriver: true,
+            damping: 28,
+            stiffness: 220,
+            mass: 0.8,
+          }).start();
+        },
+        onPanResponderTerminationRequest: () => false,
+      }),
+    [onClose, slideAnim],
+  );
+
   const meta = message.mediaMetadata;
+
+  // Prefer source dimensions / size when we captured them at send-time —
+  // they match what the user saw at preview and what their OS reports for
+  // the original file. Fall back to the post-process numbers otherwise.
+  const displayWidth = meta?.sourceWidth ?? meta?.width;
+  const displayHeight = meta?.sourceHeight ?? meta?.height;
+  const displaySize = meta?.sourceFileSize ?? meta?.fileSize;
+  const sentDifferentResolution =
+    !!meta?.sourceWidth && !!meta?.width && meta.sourceWidth !== meta.width;
+  const sentDifferentSize =
+    !!meta?.sourceFileSize && !!meta?.fileSize && meta.sourceFileSize !== meta.fileSize;
 
   const rows: InfoRow[] = [];
 
@@ -682,81 +761,117 @@ const MediaInfoPanel = ({ message, senderName, visible, onClose }: MediaInfoPane
   const ext = getFileExt(meta);
   if (ext) rows.push({ label: 'Extension', icon: 'code-slash-outline', value: ext });
 
-  if (meta?.width && meta?.height) {
-    rows.push({
-      label: 'Resolution',
-      icon: 'resize-outline',
-      value: `${meta.width} × ${meta.height} px`,
-    });
+  if (displayWidth && displayHeight) {
+    const mp = formatMegapixels(displayWidth, displayHeight);
+    let value = `${displayWidth} × ${displayHeight} px`;
+    if (mp && message.type === 'image') value += `  •  ${mp}`;
+    if (sentDifferentResolution && meta?.width && meta?.height) {
+      value += `\nSent at ${meta.width} × ${meta.height}`;
+    }
+    rows.push({ label: 'Resolution', icon: 'resize-outline', value });
   }
 
   if (meta?.duration) {
     rows.push({ label: 'Duration', icon: 'time-outline', value: formatDuration(meta.duration) });
   }
 
-  if (meta?.fileSize) {
-    rows.push({ label: 'File size', icon: 'server-outline', value: formatFileSize(meta.fileSize) });
+  if (displaySize) {
+    let value = formatFileSize(displaySize);
+    if (sentDifferentSize && meta?.fileSize) {
+      value += `\nSent as ${formatFileSize(meta.fileSize)}`;
+    }
+    rows.push({ label: 'File size', icon: 'server-outline', value });
   }
 
   if (meta?.fileName) {
     rows.push({ label: 'File name', icon: 'document-text-outline', value: meta.fileName });
   }
 
+  if (meta?.cameraMake || meta?.cameraModel) {
+    const value = [meta?.cameraMake, meta?.cameraModel].filter(Boolean).join(' ').trim();
+    if (value) rows.push({ label: 'Camera', icon: 'camera-outline', value });
+  }
+
+  if (meta?.takenAt) {
+    rows.push({ label: 'Captured', icon: 'time-outline', value: formatDate(meta.takenAt) });
+  }
+
   rows.push({ label: 'Sent', icon: 'calendar-outline', value: formatDate(message.createdAt) });
   rows.push({ label: 'From', icon: 'person-outline', value: senderName });
 
+  // Backdrop opacity tracks the slide so a partial drag dims accordingly —
+  // gives the same feedback you get from any iOS-style sheet.
+  const backdropOpacity = slideAnim.interpolate({
+    inputRange: [0, PANEL_TRAVEL],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+
   return (
-    <Animated.View
-      style={[
-        styles.infoPanel,
-        {
-          backgroundColor: isDark ? 'rgba(20,20,28,0.97)' : 'rgba(255,255,255,0.97)',
-          transform: [{ translateY: slideAnim }],
-        },
-      ]}
+    <View
+      style={StyleSheet.absoluteFill}
       pointerEvents={visible ? 'auto' : 'none'}
     >
-      <View style={styles.infoPanelHandle} />
-      <View style={styles.infoPanelHeader}>
-        <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-          File Info
-        </Text>
-        <TouchableOpacity onPress={onClose} hitSlop={12}>
-          <Ionicons name="close" size={22} color={theme.colors.onSurface} />
-        </TouchableOpacity>
-      </View>
-      <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
-        {rows.map((row, i) => (
-          <View
-            key={row.label}
-            style={[
-              styles.infoRow,
-              i < rows.length - 1 && {
-                borderBottomWidth: StyleSheet.hairlineWidth,
-                borderBottomColor: isDark
-                  ? 'rgba(255,255,255,0.08)'
-                  : 'rgba(0,0,0,0.08)',
-              },
-            ]}
-          >
-            <View style={[styles.infoIconWrap, { backgroundColor: theme.colors.primaryContainer }]}>
-              <Ionicons name={row.icon} size={16} color={theme.colors.primary} />
+      {/* Tap-outside dismiss — fades with the slide so it doesn't pop. */}
+      <Animated.View
+        style={[StyleSheet.absoluteFill, { opacity: backdropOpacity }]}
+        pointerEvents={visible ? 'auto' : 'none'}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }]}
+          onPress={onClose}
+        />
+      </Animated.View>
+      <Animated.View
+        style={[
+          styles.infoPanel,
+          {
+            backgroundColor: isDark ? 'rgba(20,20,28,0.97)' : 'rgba(255,255,255,0.97)',
+            transform: [{ translateY: slideAnim }],
+          },
+        ]}
+        {...panResponder.panHandlers}
+      >
+        <View style={styles.infoPanelHandle} />
+        <View style={styles.infoPanelHeader}>
+          <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+            File Info
+          </Text>
+          <TouchableOpacity onPress={onClose} hitSlop={12}>
+            <Ionicons name="close" size={22} color={theme.colors.onSurface} />
+          </TouchableOpacity>
+        </View>
+        <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
+          {rows.map((row, i) => (
+            <View
+              key={row.label}
+              style={[
+                styles.infoRow,
+                i < rows.length - 1 && {
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: isDark
+                    ? 'rgba(255,255,255,0.08)'
+                    : 'rgba(0,0,0,0.08)',
+                },
+              ]}
+            >
+              <View style={[styles.infoIconWrap, { backgroundColor: theme.colors.primaryContainer }]}>
+                <Ionicons name={row.icon} size={16} color={theme.colors.primary} />
+              </View>
+              <View style={styles.infoRowContent}>
+                <Text style={[styles.infoLabel, { color: theme.colors.onSurfaceVariant }]}>
+                  {row.label}
+                </Text>
+                <Text style={[styles.infoValue, { color: theme.colors.onSurface }]}>
+                  {row.value}
+                </Text>
+              </View>
             </View>
-            <View style={styles.infoRowContent}>
-              <Text style={[styles.infoLabel, { color: theme.colors.onSurfaceVariant }]}>
-                {row.label}
-              </Text>
-              <Text
-                style={[styles.infoValue, { color: theme.colors.onSurface }]}
-                numberOfLines={2}
-              >
-                {row.value}
-              </Text>
-            </View>
-          </View>
-        ))}
-      </ScrollView>
-    </Animated.View>
+          ))}
+        </ScrollView>
+      </Animated.View>
+    </View>
   );
 };
 
