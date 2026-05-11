@@ -1,11 +1,20 @@
 import { useTheme } from '@/context/ThemeContext';
+import {
+  classifyFit,
+  estimateProcessedSize,
+  UPLOAD_SIZE_LIMIT_BYTES,
+  type FitStatus,
+} from '@/services/mediaProcessingService';
+import { useInteractiveVideoTrim } from '@/services/videoTrimService';
 import { useVideoThumbnail } from '@/utils/videoThumbnail';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { getInfoAsync } from 'expo-file-system/legacy';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import QuickLookPreviewView from '../../../modules/my-module/src/QuickLookPreviewView';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+    Alert,
     Dimensions,
     FlatList,
     Image,
@@ -119,6 +128,7 @@ const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
 interface StripThumbProps {
   item: SelectedMedia;
   quality: QualityLevel;
+  fitStatus: FitStatus;
   active: boolean;
   onPress: () => void;
   onRemove: () => void;
@@ -126,11 +136,32 @@ interface StripThumbProps {
   primaryColor: string;
 }
 
-const StripThumb = ({ item, quality, active, onPress, onRemove, showRemove, primaryColor }: StripThumbProps) => {
+/** Maps preflight fit status to a strip-thumb border + dot indicator.
+ *  `unknown` deliberately renders nothing — we don't want a yellow "warning"
+ *  on items where we just can't estimate (e.g. videos with no duration). */
+const fitIndicator = (status: FitStatus): { color?: string; icon?: keyof typeof Ionicons.glyphMap } => {
+  switch (status) {
+    case 'sd_only':
+      return { color: '#F0A53A', icon: 'warning' };
+    case 'oversize':
+      return { color: '#E45353', icon: 'alert-circle' };
+    default:
+      return {};
+  }
+};
+
+const StripThumb = ({ item, quality, fitStatus, active, onPress, onRemove, showRemove, primaryColor }: StripThumbProps) => {
   const isVideo = item.type === 'video';
   const isImage = item.type === 'image' || item.type === 'camera';
   const videoThumb = useVideoThumbnail(isVideo ? item.uri : undefined);
   const displayUri = isVideo ? videoThumb : item.uri;
+  const indicator = fitIndicator(fitStatus);
+  // When the active item is also flagged, prefer the active blue border so
+  // the "you're editing this one" cue still wins. Inactive flagged items
+  // get the warning color directly.
+  const borderColor = active
+    ? primaryColor
+    : indicator.color ?? 'rgba(255,255,255,0.18)';
   return (
     <View style={styles.stripCell}>
       <TouchableOpacity
@@ -139,8 +170,8 @@ const StripThumb = ({ item, quality, active, onPress, onRemove, showRemove, prim
         style={[
           styles.stripThumb,
           {
-            borderColor: active ? primaryColor : 'rgba(255,255,255,0.18)',
-            borderWidth: active ? 2 : StyleSheet.hairlineWidth,
+            borderColor,
+            borderWidth: active || indicator.color ? 2 : StyleSheet.hairlineWidth,
           },
         ]}
       >
@@ -174,6 +205,11 @@ const StripThumb = ({ item, quality, active, onPress, onRemove, showRemove, prim
             ]}
           >
             <Text style={styles.stripQualityBadgeText}>{quality}</Text>
+          </View>
+        )}
+        {indicator.icon && indicator.color && (
+          <View style={[styles.stripFitDot, { backgroundColor: indicator.color }]}>
+            <Ionicons name={indicator.icon} size={10} color="#fff" />
           </View>
         )}
       </TouchableOpacity>
@@ -223,6 +259,33 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   const safeIndex = Math.min(activeIndex, Math.max(0, internalItems.length - 1));
   const media = internalItems[safeIndex];
   const activeQuality: QualityLevel = qualities[safeIndex] ?? 'HD';
+
+  // Preflight: classify each item as fits / sd_only / oversize / unknown so
+  // we can flag oversize content *before* the user commits to compression+
+  // upload. The classification only depends on the SelectedMedia metadata
+  // (duration, dims, fileSize), so it's cheap to recompute on any change.
+  const fitStatuses = useMemo<FitStatus[]>(
+    () => internalItems.map((m) => classifyFit(m)),
+    [internalItems],
+  );
+
+  // Whether the *current quality choice* fits — different from the raw fit
+  // classification because a user might leave an `sd_only` item on HD by
+  // accident. The Send button uses this; the strip badges use fitStatuses.
+  const currentChoiceFits = useMemo<boolean[]>(
+    () => internalItems.map((m, i) => {
+      const projected = estimateProcessedSize(m, qualities[i] ?? 'HD');
+      if (projected === null) return true; // can't estimate → trust the cap
+      return projected <= UPLOAD_SIZE_LIMIT_BYTES;
+    }),
+    [internalItems, qualities],
+  );
+
+  // First item that doesn't fit at its current quality — drives the Send-
+  // button gate copy + the inline banner pointing the user at the offender.
+  const blockingIndex = currentChoiceFits.findIndex((ok) => !ok);
+  const allItemsFit = blockingIndex === -1;
+  const triggerTrim = useInteractiveVideoTrim();
 
   // Audio player — source only when the active item is audio.
   const audioSource = (visible && media?.type === 'audio') ? (media.uri ?? null) : null;
@@ -294,6 +357,11 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   const handleSend = () => {
     if (internalItems.length === 0) return;
     if (!previewReady && media?.type === 'video' && !videoError) return;
+    // Preflight: refuse to send while any item is projected over the upload
+    // cap at its chosen quality. The user has already been pointed at it
+    // through the strip badge + warning banner; this is the final guard so
+    // we don't waste minutes of compression on something destined to fail.
+    if (!allItemsFit) return;
     if (audioStatus.playing) audioPlayer.pause();
     const results: MediaPreviewSendItem[] = internalItems.map((m, i) => ({
       media: m,
@@ -303,6 +371,53 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
     setCaptions(internalItems.map(() => ''));
     onSend(results);
   };
+
+  /** Open the native trim editor for the active item (must be a video) and
+   *  swap its URI / duration / file size in place when the user confirms.
+   *  Recomputes preflight automatically since `internalItems` changes. */
+  const handleTrimActiveVideo = useCallback(async () => {
+    if (!media || media.type !== 'video') return;
+    const idx = safeIndex;
+    try {
+      // Cap the trim at the longest duration that *would* fit at the user's
+      // current quality, so they can't drag past a length we know will be
+      // rejected anyway. Falls back to no cap if we can't estimate.
+      const choice = qualities[idx] ?? 'HD';
+      const bitrate = choice === 'HD' ? 2_500_000 : 1_100_000; // matches mediaProcessingService
+      const maxBytes = UPLOAD_SIZE_LIMIT_BYTES;
+      const maxDurationMs = bitrate > 0 ? Math.floor((maxBytes * 8 / bitrate) * 1000) : -1;
+
+      const result = await triggerTrim(media.uri, {
+        maxDurationMs,
+        headerText: 'Trim to fit',
+      });
+      if (!result) return; // user cancelled
+
+      let newSize = 0;
+      try {
+        const info = await getInfoAsync(result.outputPath);
+        newSize = info.exists && 'size' in info ? info.size : 0;
+      } catch {
+        /* swallow — we'll fall back to estimating from duration */
+      }
+
+      setInternalItems((prev) => {
+        const next = [...prev];
+        const original = next[idx];
+        if (!original) return prev;
+        next[idx] = {
+          ...original,
+          uri: result.outputPath,
+          duration: result.durationMs,
+          fileSize: newSize > 0 ? newSize : original.fileSize,
+        };
+        return next;
+      });
+    } catch (err) {
+      console.error('Trim failed:', err);
+      Alert.alert('Couldn’t trim video', err instanceof Error ? err.message : 'Please try again.');
+    }
+  }, [media, safeIndex, qualities, triggerTrim]);
 
   const handleClose = () => {
     setCaptions([]);
@@ -573,6 +688,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                   <StripThumb
                     item={item}
                     quality={qualities[index] ?? 'HD'}
+                    fitStatus={fitStatuses[index] ?? 'unknown'}
                     active={index === safeIndex}
                     onPress={() => setActiveIndex(index)}
                     onRemove={() => handleRemoveAt(index)}
@@ -583,6 +699,34 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
               />
             </View>
           )}
+
+          {/* Preflight banner — appears only when at least one item won't
+              fit at its current quality. Names the offending item and offers
+              a one-tap fix (switch to SD, or trim if even SD won't fit). */}
+          {!allItemsFit && blockingIndex >= 0 && (() => {
+            const offending = internalItems[blockingIndex];
+            const offendingStatus = fitStatuses[blockingIndex] ?? 'unknown';
+            const isVideo = offending?.type === 'video';
+            const banner = offendingStatus === 'sd_only'
+              ? `Item ${blockingIndex + 1} of ${internalItems.length} is too large at HD. Switch to SD to fit.`
+              : `Item ${blockingIndex + 1} of ${internalItems.length} won't fit (over ${UPLOAD_SIZE_LIMIT_BYTES / 1024 / 1024}MB).${isVideo ? ' Trim it to send.' : ''}`;
+            return (
+              <View style={styles.preflightBanner}>
+                <Ionicons
+                  name={offendingStatus === 'oversize' ? 'alert-circle' : 'warning'}
+                  size={18}
+                  color="#fff"
+                />
+                <Text style={styles.preflightBannerText} numberOfLines={2}>{banner}</Text>
+                <TouchableOpacity
+                  style={styles.preflightBannerCta}
+                  onPress={() => setActiveIndex(blockingIndex)}
+                >
+                  <Text style={styles.preflightBannerCtaText}>Show</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })()}
 
           {/* Caption Input & Send */}
           <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>
@@ -606,11 +750,19 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
             <TouchableOpacity
               style={[
                 styles.sendButton,
-                { backgroundColor: isPreviewLoading ? 'rgba(255,255,255,0.3)' : theme.colors.primary },
+                {
+                  backgroundColor: isPreviewLoading || !allItemsFit
+                    ? 'rgba(255,255,255,0.3)'
+                    : theme.colors.primary,
+                },
               ]}
-              onPress={isPreviewLoading ? undefined : handleSend}
-              activeOpacity={isPreviewLoading ? 1 : 0.8}
-              accessibilityState={{ disabled: isPreviewLoading, busy: isPreviewLoading }}
+              onPress={isPreviewLoading || !allItemsFit ? undefined : handleSend}
+              activeOpacity={isPreviewLoading || !allItemsFit ? 1 : 0.8}
+              accessibilityState={{
+                disabled: isPreviewLoading || !allItemsFit,
+                busy: isPreviewLoading,
+              }}
+              accessibilityLabel={!allItemsFit ? 'Send blocked — resolve oversize item' : 'Send'}
             >
               {isPreviewLoading ? (
                 <ActivityIndicator animating size="small" color="#fff" />
@@ -651,14 +803,24 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
               {(['HD', 'SD'] as QualityLevel[]).map((opt) => {
                 const isActive = activeQuality === opt;
                 const resolutionLabel = formatResolution(media, opt);
+                const projected = estimateProcessedSize(media, opt);
+                const willFit = projected === null || projected <= UPLOAD_SIZE_LIMIT_BYTES;
+                const sizeHint = projected !== null
+                  ? willFit
+                    ? `≈ ${formatFileSize(projected)}`
+                    : `≈ ${formatFileSize(projected)} • exceeds ${UPLOAD_SIZE_LIMIT_BYTES / 1024 / 1024}MB`
+                  : null;
                 return (
                   <TouchableOpacity
                     key={opt}
+                    disabled={!willFit}
                     style={[
                       styles.qualitySheetRow,
                       isActive && { backgroundColor: 'rgba(53,198,255,0.12)' },
+                      !willFit && { opacity: 0.55 },
                     ]}
                     onPress={() => {
+                      if (!willFit) return;
                       setQualities((prev) => {
                         const next = prev.length === internalItems.length ? [...prev] : internalItems.map((_, i) => prev[i] ?? 'HD');
                         next[safeIndex] = opt;
@@ -673,15 +835,36 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                       </Text>
                       <Text style={styles.qualitySheetRowDescription}>
                         {resolutionLabel}
-                        {opt === 'HD' ? ' • larger file' : ' • smaller, faster upload'}
+                        {sizeHint ? ` • ${sizeHint}` : opt === 'HD' ? ' • larger file' : ' • smaller, faster upload'}
                       </Text>
                     </View>
-                    {isActive && (
+                    {!willFit ? (
+                      <Ionicons name="alert-circle" size={20} color="#E45353" />
+                    ) : isActive ? (
                       <Ionicons name="checkmark" size={22} color={theme.colors.primary} />
-                    )}
+                    ) : null}
                   </TouchableOpacity>
                 );
               })}
+
+              {/* Trim CTA — shown when the item is a video and even SD won't
+                  fit, OR when the user just wants to shorten a clip that
+                  fits. Hidden for non-video types (we have no trim path). */}
+              {media.type === 'video' && (
+                <TouchableOpacity
+                  style={[styles.qualitySheetApplyAll, { backgroundColor: 'rgba(228,83,83,0.12)' }]}
+                  onPress={() => {
+                    setQualityMenuOpen(false);
+                    void handleTrimActiveVideo();
+                  }}
+                >
+                  <Ionicons name="cut-outline" size={16} color="#E45353" />
+                  <Text style={[styles.qualitySheetApplyAllText, { color: '#E45353' }]}>
+                    Trim this video
+                  </Text>
+                </TouchableOpacity>
+              )}
+
               {internalItems.length > 1 && (
                 <TouchableOpacity
                   style={styles.qualitySheetApplyAll}
@@ -902,6 +1085,46 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#000',
     letterSpacing: 0.3,
+  },
+  stripFitDot: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(0,0,0,0.6)',
+  },
+  preflightBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginHorizontal: 12,
+    marginBottom: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(228,83,83,0.85)',
+  },
+  preflightBannerText: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 12.5,
+    lineHeight: 16,
+  },
+  preflightBannerCta: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  preflightBannerCtaText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 12,
   },
   stripRemove: {
     position: 'absolute',

@@ -289,6 +289,13 @@ export const uploadMedia = async (
   }
 };
 
+// In-flight download de-duplication. Keyed by the destination `localPath`:
+// when several bubbles/album cells mount at the same time for the same
+// message (FlatList recycling during fast scroll, or a single → album reflow
+// after a sibling arrives), they all converge on one downloadAsync call
+// instead of racing to write the same file in parallel.
+const inflightDownloads = new Map<string, Promise<MediaDownloadResult>>();
+
 /**
  * Download media from URL to local storage
  */
@@ -298,43 +305,47 @@ export const downloadMedia = async (
   messageId: string,
   fileName: string
 ): Promise<MediaDownloadResult> => {
-  try {
-    if (!isTrustedMediaUrl(downloadUrl)) {
-      throw new Error('Blocked media download from untrusted URL.');
-    }
-
-    const safeChatId = sanitizePathSegment(chatId, 'chat');
-    const localPath = getLocalMediaPath(safeChatId, messageId, fileName);
-    
-    // Check if already downloaded
-    const exists = await mediaExistsLocally(localPath);
-    if (exists) {
-      console.log('📦 Media already exists locally:', localPath);
-      return { localPath, fileExists: true };
-    }
-    
-    // Ensure chat directory exists
-    const chatDir = `${MEDIA_DIRECTORY}${safeChatId}/`;
-    const chatDirInfo = await getInfoAsync(chatDir);
-    if (!chatDirInfo.exists) {
-      await makeDirectoryAsync(chatDir, { intermediates: true });
-    }
-    
-    console.log('📥 Downloading media to:', localPath);
-    
-    // Download the file
-    const downloadResult = await downloadAsync(downloadUrl, localPath);
-    
-    if (downloadResult.status !== 200) {
-      throw new Error(`Download failed with status ${downloadResult.status}`);
-    }
-    
-    console.log('✅ Media downloaded:', localPath);
-    return { localPath, fileExists: true };
-  } catch (error) {
-    console.error('❌ Media download error:', error);
-    throw error;
+  if (!isTrustedMediaUrl(downloadUrl)) {
+    throw new Error('Blocked media download from untrusted URL.');
   }
+
+  const safeChatId = sanitizePathSegment(chatId, 'chat');
+  const localPath = getLocalMediaPath(safeChatId, messageId, fileName);
+
+  // Fast path: already on disk. No download, no inflight bookkeeping.
+  const exists = await mediaExistsLocally(localPath);
+  if (exists) {
+    return { localPath, fileExists: true };
+  }
+
+  const ongoing = inflightDownloads.get(localPath);
+  if (ongoing) return ongoing;
+
+  const task = (async (): Promise<MediaDownloadResult> => {
+    try {
+      const chatDir = `${MEDIA_DIRECTORY}${safeChatId}/`;
+      const chatDirInfo = await getInfoAsync(chatDir);
+      if (!chatDirInfo.exists) {
+        await makeDirectoryAsync(chatDir, { intermediates: true });
+      }
+
+      console.log('📥 Downloading media to:', localPath);
+      const downloadResult = await downloadAsync(downloadUrl, localPath);
+      if (downloadResult.status !== 200) {
+        throw new Error(`Download failed with status ${downloadResult.status}`);
+      }
+      console.log('✅ Media downloaded:', localPath);
+      return { localPath, fileExists: true };
+    } catch (error) {
+      console.error('❌ Media download error:', error);
+      throw error;
+    } finally {
+      inflightDownloads.delete(localPath);
+    }
+  })();
+
+  inflightDownloads.set(localPath, task);
+  return task;
 };
 
 /**

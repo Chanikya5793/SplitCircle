@@ -3,10 +3,12 @@ import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
+import { useResolvedMediaUri } from '@/utils/useResolvedMediaUri';
 import { useVideoThumbnail } from '@/utils/videoThumbnail';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo } from 'react';
 import {
+  ActivityIndicator,
   Dimensions,
   Image,
   StyleSheet,
@@ -75,11 +77,30 @@ const AlbumCell = ({
   selectionMode,
   primaryColor,
 }: AlbumCellProps) => {
-  const uri = message.localMediaPath ?? message.mediaUrl;
   const isVideo = message.type === 'video';
   const isUploading = message.status === 'sending';
-  const videoThumb = useVideoThumbnail(isVideo ? uri : undefined);
-  const displayUri = isVideo ? videoThumb : uri;
+
+  // Resolve the URI through the shared hook so missing/stale local files
+  // automatically fall back to the remote URL (and trigger a background
+  // download for next time). Previously this used `localMediaPath ?? mediaUrl`
+  // which left cells silently dark when the local file was gone.
+  const resolved = useResolvedMediaUri({
+    type: message.type,
+    localMediaPath: message.localMediaPath,
+    mediaUrl: message.mediaUrl,
+    isFromMe: message.isFromMe,
+    chatId: message.chatId,
+    messageId: message.messageId || message.id,
+    fileName: message.mediaMetadata?.fileName,
+  });
+
+  // Videos render a generated frame as their thumbnail; the resolver still
+  // gives us the underlying file we should pull that frame from.
+  const videoThumb = useVideoThumbnail(isVideo ? resolved.uri : undefined);
+  const displayUri = isVideo ? videoThumb : resolved.uri;
+  // While the video thumbnail is being generated, surface the same spinner
+  // we use during downloads so the cell isn't silently dark.
+  const showSpinner = resolved.isDownloading || (isVideo && !displayUri && !resolved.errored && !!resolved.uri);
 
   return (
     <TouchableOpacity
@@ -103,14 +124,24 @@ const AlbumCell = ({
           resizeMode="cover"
           fadeDuration={0}
           progressiveRenderingEnabled
+          onError={resolved.handleLoadError}
         />
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.cellPlaceholder]}>
-          <Ionicons
-            name={isVideo ? 'videocam-outline' : 'image-outline'}
-            size={28}
-            color="#aaa"
-          />
+          {resolved.errored ? (
+            <Ionicons name="alert-circle-outline" size={26} color="#E45353" />
+          ) : (
+            <Ionicons
+              name={isVideo ? 'videocam-outline' : 'image-outline'}
+              size={28}
+              color="#aaa"
+            />
+          )}
+        </View>
+      )}
+      {showSpinner && (
+        <View style={[StyleSheet.absoluteFill, styles.cellSpinnerOverlay]}>
+          <ActivityIndicator size="small" color="#fff" />
         </View>
       )}
       {isVideo && !showOverflow && !selectionMode && (
@@ -433,6 +464,11 @@ const styles = StyleSheet.create({
   cellPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  cellSpinnerOverlay: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
   playBadge: {
     position: 'absolute',

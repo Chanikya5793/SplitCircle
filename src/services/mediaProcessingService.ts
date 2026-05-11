@@ -291,3 +291,104 @@ export const processVideo = async (
     return { uri, width: srcWidth, height: srcHeight, size: srcSize, ...sourceMeta };
   }
 };
+
+// ─── Preflight size estimation ───────────────────────────────────────────────
+//
+// These approximate the post-process file size *before* we burn time on the
+// actual compression. They feed the MediaPreview's per-item "fits / SD-only /
+// won't fit" badges so the user can fix oversize items (switch quality or
+// trim) up front instead of waiting through compression+upload to see a
+// "File too large" error.
+//
+// Bitrate targets are conservative — the goal is to *not* falsely promise
+// that an item fits. If the real compressor undershoots, the user just gets a
+// smaller file than estimated; if we underestimate, they get a wasted upload.
+
+/** Target video bitrate (bits/sec) for our two quality levels.
+ *  Numbers reflect what `react-native-compressor`'s `auto` mode tends to
+ *  produce on iOS/Android for the given resolution caps, plus ~128 kbps audio. */
+const VIDEO_BITRATE_BPS: Record<QualityLevel, number> = {
+  HD: 2_500_000, // 720p H.264 ≈ 2.4 Mbps + 128 kbps audio
+  SD: 1_100_000, // 480p H.264 ≈ 1.0 Mbps + 128 kbps audio
+};
+
+/** Approximate the post-compression size in bytes for an image. We resize the
+ *  longest edge to `maxEdge` and JPEG-encode at a quality factor; bytes per
+ *  pixel for a typical JPEG-quality-0.6/0.8 photo is roughly 0.25–0.4. */
+const IMAGE_BYTES_PER_PIXEL: Record<QualityLevel, number> = {
+  HD: 0.40,
+  SD: 0.25,
+};
+
+interface EstimateInput {
+  type: 'image' | 'video' | 'camera' | string;
+  /** Source dims in display space (post-EXIF orientation). */
+  width?: number;
+  height?: number;
+  /** Source file size in bytes. */
+  fileSize?: number;
+  /** For videos: duration in milliseconds (matches expo-image-picker's `duration`). */
+  duration?: number;
+}
+
+/**
+ * Project the size we'd actually upload for `item` at `quality`. Returns
+ * `null` when we don't have enough metadata to guess (e.g. unknown duration
+ * for a video) — callers should treat null as "can't tell, let it through."
+ */
+export const estimateProcessedSize = (
+  item: EstimateInput,
+  quality: QualityLevel,
+): number | null => {
+  const isVideo = item.type === 'video';
+  const isImage = item.type === 'image' || item.type === 'camera';
+
+  if (isVideo) {
+    if (!item.duration || item.duration <= 0) return null;
+    const durationSec = item.duration / 1000;
+    const projected = Math.round(VIDEO_BITRATE_BPS[quality] * durationSec / 8);
+    // Compression can only ever make things smaller in our pipeline (we
+    // fall back to the source when the encoder produces a larger file).
+    if (item.fileSize && projected > item.fileSize) return item.fileSize;
+    return projected;
+  }
+
+  if (isImage) {
+    if (!item.width || !item.height) {
+      return item.fileSize ?? null;
+    }
+    const maxEdge = quality === 'HD' ? 1920 : 1280;
+    const longest = Math.max(item.width, item.height);
+    const ratio = longest > maxEdge ? maxEdge / longest : 1;
+    const targetW = item.width * ratio;
+    const targetH = item.height * ratio;
+    const projected = Math.round(targetW * targetH * IMAGE_BYTES_PER_PIXEL[quality]);
+    if (item.fileSize && projected > item.fileSize) return item.fileSize;
+    return projected;
+  }
+
+  // Documents / audio: no processing, source size is what gets uploaded.
+  return item.fileSize ?? null;
+};
+
+/** Bytes cap that mirrors `MAX_FILE_SIZE` in mediaService. Kept here so the
+ *  estimator and the upload-time guard agree. Update both together. */
+export const UPLOAD_SIZE_LIMIT_BYTES = 100 * 1024 * 1024;
+
+export type FitStatus = 'fits' | 'sd_only' | 'oversize' | 'unknown';
+
+/**
+ * Classify an item's preflight status across both qualities. `unknown` means
+ * we couldn't estimate (missing duration on a video, etc.) and the upload
+ * cap will be the only enforcement.
+ */
+export const classifyFit = (item: EstimateInput): FitStatus => {
+  const hd = estimateProcessedSize(item, 'HD');
+  const sd = estimateProcessedSize(item, 'SD');
+  if (hd === null && sd === null) return 'unknown';
+  const hdFits = hd !== null && hd <= UPLOAD_SIZE_LIMIT_BYTES;
+  const sdFits = sd !== null && sd <= UPLOAD_SIZE_LIMIT_BYTES;
+  if (hdFits) return 'fits';
+  if (sdFits) return 'sd_only';
+  return 'oversize';
+};

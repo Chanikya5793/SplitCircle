@@ -3,6 +3,8 @@ export type { AttachmentType, SelectedMedia } from './AttachmentMenu';
 export { LocationPicker } from './LocationPicker';
 export { MapErrorBoundary } from './MapErrorBoundary';
 export { MediaPreview } from './MediaPreview';
+export { FailedItemsSheet } from './FailedItemsSheet';
+export type { FailedSendItem } from './FailedItemsSheet';
 export { MessageActionSheet } from './MessageActionSheet';
 export type { MessageAction } from './MessageActionSheet';
 export { LinkPreview } from './LinkPreview';

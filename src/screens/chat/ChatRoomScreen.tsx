@@ -1,7 +1,8 @@
-import type { HeaderMenuItem } from '@/components/Chat';
+import type { FailedSendItem, HeaderMenuItem } from '@/components/Chat';
 import {
   AttachmentMenu,
   ChatSearchBar,
+  FailedItemsSheet,
   ForwardPickerSheet,
   HeaderMenu,
   LocationPicker,
@@ -39,6 +40,9 @@ import {
 } from '@/services/localMessageStorage';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { getOrDownloadMedia, mediaExistsLocally } from '@/services/mediaService';
+import { trimVideoInteractive } from '@/services/videoTrimService';
+import { getInfoAsync } from 'expo-file-system/legacy';
+import { v4 as uuid } from 'uuid';
 import { publishMessageState } from '@/services/messageStateService';
 import { lightHaptic, mediumHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
@@ -208,6 +212,11 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // captions, and send all at once with a single tap.
   const [selectedMediaBatch, setSelectedMediaBatch] = useState<SelectedMedia[]>([]);
   const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
+  // Failed-batch tracking — populated by `handleSendMedia` whenever any item
+  // in a batch fails. The sheet renders these so the user can retry per-item
+  // (or trim oversize videos and retry) without re-picking from the gallery.
+  const [failedItems, setFailedItems] = useState<FailedSendItem[]>([]);
+  const [failedSheetVisible, setFailedSheetVisible] = useState(false);
   // Location picker state
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
   // Reaction details sheet state
@@ -949,6 +958,189 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     });
   };
 
+  const getProcessingLoadingMessage = useCallback((type: SelectedMedia['type']) => {
+    switch (type) {
+      case 'video':
+        return 'Preparing video for upload…';
+      case 'image':
+      case 'camera':
+        return 'Optimizing photo…';
+      case 'document':
+        return 'Preparing document…';
+      case 'audio':
+        return 'Preparing audio…';
+      default:
+        return 'Preparing attachment…';
+    }
+  }, []);
+
+  // ─── Single-item send pipeline ───────────────────────────────────────────
+  // Process + upload one media item. Throws on failure so callers can
+  // accumulate failures (initial batch loop, retry handlers) without
+  // duplicating the pipeline. `albumId` is `undefined` on retries — a single
+  // failed item doesn't get re-grouped; its retry just sends as one bubble.
+  type SendContext = {
+    indexLabel: { current: number; total: number };
+    albumId?: string;
+    replyTarget?: ChatMessage | null;
+    /** Stable id for the message this send creates / retries. Reusing the
+     *  same id across retries upserts the local bubble so a successful
+     *  retry replaces the prior `failed` bubble in place instead of leaving
+     *  it next to a fresh `sent` bubble. */
+    requestId: string;
+  };
+
+  const sendOneMedia = useCallback(async (item: MediaPreviewSendItem, ctx: SendContext) => {
+    const { media: mediaToSend, caption, quality: itemQuality } = item;
+    const { current, total } = ctx.indexLabel;
+    const positional = total > 1 ? `${current} of ${total}` : null;
+
+    let processedUri = mediaToSend.uri;
+    let processedWidth = mediaToSend.width;
+    let processedHeight = mediaToSend.height;
+    let processedSize = mediaToSend.fileSize;
+    let sourceWidth: number | undefined;
+    let sourceHeight: number | undefined;
+    let sourceFileSize: number | undefined;
+    let cameraMake: string | undefined;
+    let cameraModel: string | undefined;
+    let takenAt: number | undefined;
+
+    if (mediaToSend.type === 'image' || mediaToSend.type === 'camera') {
+      const r = await processImage(mediaToSend.uri, itemQuality);
+      processedUri = r.uri;
+      processedWidth = r.width;
+      processedHeight = r.height;
+      processedSize = r.size;
+      sourceWidth = r.sourceWidth;
+      sourceHeight = r.sourceHeight;
+      sourceFileSize = r.sourceFileSize;
+      cameraMake = r.cameraMake;
+      cameraModel = r.cameraModel;
+      takenAt = r.takenAt;
+    } else if (mediaToSend.type === 'video') {
+      const r = await processVideo(mediaToSend.uri, itemQuality, (p) => {
+        const pct = Math.max(0, Math.min(100, Math.round(p * 100)));
+        mediaPipelineLoading.setMessage(
+          positional
+            ? `Compressing ${positional} — ${pct}%`
+            : `Compressing video — ${pct}%`,
+        );
+      });
+      processedUri = r.uri;
+      if (r.width > 0) processedWidth = r.width;
+      if (r.height > 0) processedHeight = r.height;
+      processedSize = r.size;
+      sourceWidth = r.sourceWidth || undefined;
+      sourceHeight = r.sourceHeight || undefined;
+      sourceFileSize = r.sourceFileSize || undefined;
+    }
+
+    let messageType: MessageType;
+    switch (mediaToSend.type) {
+      case 'camera':
+      case 'image':
+        messageType = 'image';
+        break;
+      case 'video':
+        messageType = 'video';
+        break;
+      case 'audio':
+        messageType = 'audio';
+        break;
+      case 'document':
+        messageType = 'file';
+        break;
+      case 'location':
+        messageType = 'location';
+        break;
+      default:
+        messageType = 'file';
+    }
+
+    let replyData: any = undefined;
+    if (ctx.replyTarget) {
+      const replySource = ctx.replyTarget;
+      const participant = thread.participants.find((p) => p.userId === replySource.senderId);
+      replyData = {
+        messageId: replySource.messageId,
+        senderId: replySource.senderId,
+        senderName: participant?.displayName || 'Unknown',
+        content: replySource.content,
+        type: replySource.type,
+      };
+    }
+
+    const mediaMetadata: Record<string, unknown> = {};
+    if (mediaToSend.fileName) mediaMetadata.fileName = mediaToSend.fileName;
+    if (processedSize) mediaMetadata.fileSize = processedSize;
+    if (mediaToSend.mimeType) mediaMetadata.mimeType = mediaToSend.mimeType;
+    if (processedWidth) mediaMetadata.width = processedWidth;
+    if (processedHeight) mediaMetadata.height = processedHeight;
+    if (mediaToSend.duration) mediaMetadata.duration = mediaToSend.duration;
+    if (processedWidth && processedHeight) {
+      mediaMetadata.aspectRatio = processedWidth / processedHeight;
+    }
+    if (ctx.albumId) {
+      mediaMetadata.albumId = ctx.albumId;
+      mediaMetadata.albumIndex = current - 1;
+      mediaMetadata.albumSize = total;
+    }
+    if (sourceWidth) mediaMetadata.sourceWidth = sourceWidth;
+    if (sourceHeight) mediaMetadata.sourceHeight = sourceHeight;
+    if (sourceFileSize) mediaMetadata.sourceFileSize = sourceFileSize;
+    if (cameraMake) mediaMetadata.cameraMake = cameraMake;
+    if (cameraModel) mediaMetadata.cameraModel = cameraModel;
+    if (takenAt) mediaMetadata.takenAt = takenAt;
+
+    mediaPipelineLoading.setMessage(
+      positional
+        ? `Uploading ${positional}…`
+        : `Uploading ${mediaToSend.type === 'video' ? 'video' : 'attachment'}…`,
+    );
+
+    await runSend(async () => {
+      await sendMessage({
+        chatId: thread.chatId,
+        // Use the caller-provided id, not runSend's generated one, so retries
+        // upsert the original (failed) local row.
+        requestId: ctx.requestId,
+        content: caption || getMediaPlaceholder(messageType),
+        type: messageType,
+        mediaUri: processedUri,
+        groupId: thread.groupId,
+        replyTo: replyData,
+        mediaMetadata: Object.keys(mediaMetadata).length > 0 ? (mediaMetadata as any) : undefined,
+        onStageChange: (stage, details) => {
+          if (stage === 'complete') return;
+          if (details?.message) {
+            mediaPipelineLoading.setMessage(
+              positional ? `${positional} — ${details.message}` : details.message,
+            );
+          }
+        },
+      });
+    }, { key: `chat-media-${thread.chatId}-${ctx.requestId}` });
+  }, [thread.chatId, thread.groupId, thread.participants, mediaPipelineLoading, runSend, sendMessage]);
+
+  /** Map a thrown error from the pipeline to a `FailedSendItem` with a
+   *  human reason and an oversize flag the sheet uses to expose the Trim
+   *  CTA on videos. */
+  const buildFailedItem = useCallback((
+    payload: MediaPreviewSendItem,
+    batchIndex: number,
+    batchSize: number,
+    requestId: string,
+    error: unknown,
+  ): FailedSendItem => {
+    const raw = error instanceof Error ? error.message : 'Failed to send';
+    const isOversize = /too large|maximum size|exceeds/i.test(raw);
+    let reason = raw;
+    if (isOversize) reason = 'File too large after compression — trim or switch to SD.';
+    else if (/network|offline|timeout/i.test(raw)) reason = 'Network error — try again.';
+    return { batchIndex, batchSize, payload, reason, isOversize, requestId };
+  }, []);
+
   // Send a batch of media items in pick order. The preview is dismissed
   // immediately so the user can keep using the chat; each item streams its own
   // progress through the keyed loading overlay.
@@ -969,9 +1161,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         : getProcessingLoadingMessage(results[0].media.type),
     );
 
-    // Pick a stable albumId for batches >1 with grid-friendly types so the
-    // chat list can render them as one album bubble. Mixed batches (e.g.
-    // image+document) opt out — albums are image/video-only by design.
     const isAlbum =
       results.length > 1 &&
       results.every(({ media }) =>
@@ -981,175 +1170,134 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       );
     const albumId = isAlbum ? `album_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` : undefined;
 
-    // Track per-item failures so one bad item doesn't kill the rest of the
-    // batch. We surface a single summary at the end instead of bailing on
-    // the first throw — picking 10 items and getting 3 sent because item 4
-    // hit a flaky upload was the original "broken" symptom.
-    const failures: { index: number; error: unknown }[] = [];
+    const failures: FailedSendItem[] = [];
     try {
       for (let i = 0; i < results.length; i++) {
-        const { media: mediaToSend, caption, quality: itemQuality } = results[i];
-
         if (results.length > 1) {
           mediaPipelineLoading.setMessage(`Preparing ${i + 1} of ${results.length}…`);
         } else {
-          mediaPipelineLoading.setMessage(getProcessingLoadingMessage(mediaToSend.type));
+          mediaPipelineLoading.setMessage(getProcessingLoadingMessage(results[i].media.type));
         }
 
+        // Generate the message id up front so a failure can carry it forward
+        // into the FailedItemsSheet — retries then upsert the same bubble.
+        const requestId = uuid();
         try {
-        let processedUri = mediaToSend.uri;
-        let processedWidth = mediaToSend.width;
-        let processedHeight = mediaToSend.height;
-        let processedSize = mediaToSend.fileSize;
-        // Source (pre-process) details captured natively. We surface these
-        // unchanged in the receiver's info panel so resolution / file size
-        // numbers match what the user saw at preview-time.
-        let sourceWidth: number | undefined;
-        let sourceHeight: number | undefined;
-        let sourceFileSize: number | undefined;
-        let cameraMake: string | undefined;
-        let cameraModel: string | undefined;
-        let takenAt: number | undefined;
-
-        if (mediaToSend.type === 'image' || mediaToSend.type === 'camera') {
-          const r = await processImage(mediaToSend.uri, itemQuality);
-          processedUri = r.uri;
-          processedWidth = r.width;
-          processedHeight = r.height;
-          processedSize = r.size;
-          sourceWidth = r.sourceWidth;
-          sourceHeight = r.sourceHeight;
-          sourceFileSize = r.sourceFileSize;
-          cameraMake = r.cameraMake;
-          cameraModel = r.cameraModel;
-          takenAt = r.takenAt;
-        } else if (mediaToSend.type === 'video') {
-          const r = await processVideo(mediaToSend.uri, itemQuality, (p) => {
-            const pct = Math.max(0, Math.min(100, Math.round(p * 100)));
-            mediaPipelineLoading.setMessage(
-              results.length > 1
-                ? `Compressing ${i + 1} of ${results.length} — ${pct}%`
-                : `Compressing video — ${pct}%`,
-            );
-          });
-          processedUri = r.uri;
-          if (r.width > 0) processedWidth = r.width;
-          if (r.height > 0) processedHeight = r.height;
-          processedSize = r.size;
-          sourceWidth = r.sourceWidth || undefined;
-          sourceHeight = r.sourceHeight || undefined;
-          sourceFileSize = r.sourceFileSize || undefined;
-        }
-
-        let messageType: MessageType;
-        switch (mediaToSend.type) {
-          case 'camera':
-          case 'image':
-            messageType = 'image';
-            break;
-          case 'video':
-            messageType = 'video';
-            break;
-          case 'audio':
-            messageType = 'audio';
-            break;
-          case 'document':
-            messageType = 'file';
-            break;
-          case 'location':
-            messageType = 'location';
-            break;
-          default:
-            messageType = 'file';
-        }
-
-        let replyData: any = undefined;
-        if (i === 0 && replySource) {
-          const participant = thread.participants.find((p) => p.userId === replySource.senderId);
-          replyData = {
-            messageId: replySource.messageId,
-            senderId: replySource.senderId,
-            senderName: participant?.displayName || 'Unknown',
-            content: replySource.content,
-            type: replySource.type,
-          };
-        }
-
-        const mediaMetadata: Record<string, unknown> = {};
-        if (mediaToSend.fileName) mediaMetadata.fileName = mediaToSend.fileName;
-        if (processedSize) mediaMetadata.fileSize = processedSize;
-        if (mediaToSend.mimeType) mediaMetadata.mimeType = mediaToSend.mimeType;
-        if (processedWidth) mediaMetadata.width = processedWidth;
-        if (processedHeight) mediaMetadata.height = processedHeight;
-        if (mediaToSend.duration) mediaMetadata.duration = mediaToSend.duration;
-        if (processedWidth && processedHeight) {
-          mediaMetadata.aspectRatio = processedWidth / processedHeight;
-        }
-        if (albumId) {
-          mediaMetadata.albumId = albumId;
-          mediaMetadata.albumIndex = i;
-          mediaMetadata.albumSize = results.length;
-        }
-        // Source (pre-process) details — let the info panel show what the
-        // user actually picked, plus EXIF for richer "captured by" info.
-        if (sourceWidth) mediaMetadata.sourceWidth = sourceWidth;
-        if (sourceHeight) mediaMetadata.sourceHeight = sourceHeight;
-        if (sourceFileSize) mediaMetadata.sourceFileSize = sourceFileSize;
-        if (cameraMake) mediaMetadata.cameraMake = cameraMake;
-        if (cameraModel) mediaMetadata.cameraModel = cameraModel;
-        if (takenAt) mediaMetadata.takenAt = takenAt;
-
-        mediaPipelineLoading.setMessage(
-          results.length > 1
-            ? `Uploading ${i + 1} of ${results.length}…`
-            : `Uploading ${mediaToSend.type === 'video' ? 'video' : 'attachment'}…`,
-        );
-
-        // Each item gets its own runSend key so retries don't collide with
-        // siblings still in the queue.
-        await runSend(async (requestId) => {
-          await sendMessage({
-            chatId: thread.chatId,
+          await sendOneMedia(results[i], {
+            indexLabel: { current: i + 1, total: results.length },
+            albumId,
+            // Apply reply only to the first item — see comment on `replySource` above.
+            replyTarget: i === 0 ? replySource : null,
             requestId,
-            content: caption || getMediaPlaceholder(messageType),
-            type: messageType,
-            mediaUri: processedUri,
-            groupId: thread.groupId,
-            replyTo: replyData,
-            mediaMetadata: Object.keys(mediaMetadata).length > 0 ? (mediaMetadata as any) : undefined,
-            onStageChange: (stage, details) => {
-              if (stage === 'complete') return;
-              if (details?.message) {
-                mediaPipelineLoading.setMessage(
-                  results.length > 1
-                    ? `${i + 1} of ${results.length} — ${details.message}`
-                    : details.message,
-                );
-              }
-            },
           });
-        }, { key: `chat-media-${thread.chatId}-${i}-${Date.now()}` });
         } catch (itemError) {
-          // Keep going on per-item failures. Without this, item N throwing
-          // (typically a flaky upload or a corrupt source) aborts the loop
-          // and items N+1..end never get sent — and the loading flag stayed
-          // on long enough that the input felt frozen until the user
-          // navigated away and back.
           console.error(`Failed to send batch item ${i}:`, itemError);
-          failures.push({ index: i, error: itemError });
+          failures.push(buildFailedItem(results[i], i, results.length, requestId, itemError));
         }
       }
     } finally {
       mediaPipelineLoading.stop();
     }
 
-    if (failures.length === results.length) {
-      const first = failures[0].error;
-      alert(first instanceof Error ? first.message : 'Failed to send media');
-    } else if (failures.length > 0) {
-      alert(`${failures.length} of ${results.length} items failed to send.`);
+    if (failures.length > 0) {
+      setFailedItems(failures);
+      setFailedSheetVisible(true);
+      warningHaptic();
     }
   };
+
+  // ─── Failure recovery handlers ───────────────────────────────────────────
+  const removeFailedItem = useCallback((batchIndex: number, mediaUri: string) => {
+    setFailedItems((prev) => prev.filter((f) => !(f.batchIndex === batchIndex && f.payload.media.uri === mediaUri)));
+  }, []);
+
+  const retrySingleFailedItem = useCallback(async (item: FailedSendItem) => {
+    mediaPipelineLoading.start(getProcessingLoadingMessage(item.payload.media.type));
+    try {
+      await sendOneMedia(item.payload, {
+        indexLabel: { current: 1, total: 1 },
+        // Don't re-album single retries — they're standalone bubbles now.
+        // Reuse the original requestId so the failed bubble in chat is
+        // upserted to the new sent message instead of duplicated.
+        requestId: item.requestId,
+      });
+      removeFailedItem(item.batchIndex, item.payload.media.uri);
+    } catch (err) {
+      console.error('Retry failed:', err);
+      // Replace the existing entry with a fresh one so the user sees the
+      // updated reason (e.g. compression succeeded but upload still timed out).
+      setFailedItems((prev) =>
+        prev.map((f) =>
+          f.batchIndex === item.batchIndex && f.payload.media.uri === item.payload.media.uri
+            ? buildFailedItem(item.payload, item.batchIndex, item.batchSize, item.requestId, err)
+            : f,
+        ),
+      );
+    } finally {
+      mediaPipelineLoading.stop();
+    }
+  }, [sendOneMedia, mediaPipelineLoading, removeFailedItem, buildFailedItem, getProcessingLoadingMessage]);
+
+  const handleRetryAllFailedItems = useCallback(async () => {
+    const snapshot = [...failedItems];
+    if (snapshot.length === 0) return;
+    setFailedSheetVisible(false);
+    for (const item of snapshot) {
+      // Bail out as soon as the user navigates away — we'd otherwise keep
+      // hammering retries against an unmounted screen.
+      // (sendOneMedia uses thread.chatId from closure, but other guards live
+      // inside the chat context.)
+      await retrySingleFailedItem(item);
+    }
+    // Re-open the sheet only if some retries still failed.
+    setFailedItems((current) => {
+      if (current.length > 0) setFailedSheetVisible(true);
+      return current;
+    });
+  }, [failedItems, retrySingleFailedItem]);
+
+  const handleTrimAndRetryFailedItem = useCallback(async (item: FailedSendItem) => {
+    if (item.payload.media.type !== 'video') return;
+    setFailedSheetVisible(false);
+    try {
+      const trimmed = await trimVideoInteractive(item.payload.media.uri, {
+        headerText: 'Trim to fit',
+      });
+      if (!trimmed) {
+        // User cancelled — leave the item in the failed list and re-open the sheet.
+        setFailedSheetVisible(true);
+        return;
+      }
+      let newSize = 0;
+      try {
+        const info = await getInfoAsync(trimmed.outputPath);
+        newSize = info.exists && 'size' in info ? info.size : 0;
+      } catch {
+        /* swallow — size will be filled in by processVideo's read */
+      }
+      const updated: FailedSendItem = {
+        ...item,
+        payload: {
+          ...item.payload,
+          media: {
+            ...item.payload.media,
+            uri: trimmed.outputPath,
+            duration: trimmed.durationMs,
+            fileSize: newSize > 0 ? newSize : item.payload.media.fileSize,
+          },
+        },
+      };
+      await retrySingleFailedItem(updated);
+      setFailedItems((current) => {
+        if (current.length > 0) setFailedSheetVisible(true);
+        return current;
+      });
+    } catch (err) {
+      console.error('Trim & retry failed:', err);
+      Alert.alert('Couldn’t trim video', err instanceof Error ? err.message : 'Please try again.');
+      setFailedSheetVisible(true);
+    }
+  }, [retrySingleFailedItem]);
 
   // Handle sending location
   const handleSendLocation = async (location: { latitude: number; longitude: number; address?: string }) => {
@@ -1252,22 +1400,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
     return 'SC';
   }, [thread.type, groupName, directParticipant?.displayName]);
-
-  const getProcessingLoadingMessage = useCallback((type: SelectedMedia['type']) => {
-    switch (type) {
-      case 'video':
-        return 'Preparing video for upload…';
-      case 'image':
-      case 'camera':
-        return 'Optimizing photo…';
-      case 'document':
-        return 'Preparing document…';
-      case 'audio':
-        return 'Preparing audio…';
-      default:
-        return 'Preparing attachment…';
-    }
-  }, []);
 
   const totalRecipients = thread.participants.length - 1;
   const isGroupChat = thread.type === 'group';
@@ -1862,6 +1994,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         visible={locationPickerVisible}
         onClose={() => setLocationPickerVisible(false)}
         onSendLocation={handleSendLocation}
+      />
+
+      {/* Failed-items recovery sheet — appears after a batch finishes if any
+          item didn't make it. Per-item retry / trim & retry; closes itself
+          when there are no more failures to surface. */}
+      <FailedItemsSheet
+        visible={failedSheetVisible && failedItems.length > 0}
+        items={failedItems}
+        onClose={() => setFailedSheetVisible(false)}
+        onRetry={(item) => { void retrySingleFailedItem(item); }}
+        onTrimAndRetry={(item) => { void handleTrimAndRetryFailedItem(item); }}
+        onRetryAll={() => { void handleRetryAllFailedItems(); }}
       />
 
       {/* Header overflow menu */}
