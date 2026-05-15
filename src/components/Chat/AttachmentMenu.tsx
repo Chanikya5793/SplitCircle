@@ -183,9 +183,12 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
   const fadeAnim = useSharedValue(0);
   const context = useSharedValue({ y: 0 });
 
-  // Reset processing state when menu becomes hidden
+  // Reset processing state only when the menu is *re-opened*, not on the
+  // visible→false transition. Clearing on hide caused the "Preparing N items…"
+  // copy to vanish for a frame while the sheet slid down, which read as a
+  // flicker just before the media preview took over.
   useEffect(() => {
-    if (!visible) {
+    if (visible) {
       setStatus(null);
     }
   }, [visible]);

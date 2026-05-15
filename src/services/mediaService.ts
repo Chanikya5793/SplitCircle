@@ -155,6 +155,28 @@ export const mediaExistsLocally = async (localPath: string): Promise<boolean> =>
 };
 
 /**
+ * Sentinel thrown when the source URI can't be materialized into a local
+ * file — most commonly an iCloud-only photo whose download was never
+ * completed, or a cache entry that was purged between picker and send.
+ * Mirrors `MediaSourceUnavailableError` from `mediaProcessingService` so the
+ * failed-items sheet can show a single, actionable reason regardless of
+ * which stage tripped. */
+export class MediaCopyFailedError extends Error {
+  constructor(message = 'Could not access the picked media.') {
+    super(message);
+    this.name = 'MediaCopyFailedError';
+  }
+}
+
+const looksLikeICloudUnavailable = (err: unknown): boolean => {
+  const message = err instanceof Error ? err.message : String(err ?? '');
+  // PhotoKit's "asset not available, network access required" surfaces as
+  // PHPhotosErrorDomain 3164 on iOS; the underlying file copy throws an
+  // ENOENT/EACCES on both platforms when iCloud refuses to deliver.
+  return /3164|asset not available|network access|ENOENT|ENOTFOUND|EACCES/i.test(message);
+};
+
+/**
  * Copy a file to local media storage (for sender's own media)
  */
 export const copyToLocalStorage = async (
@@ -163,39 +185,61 @@ export const copyToLocalStorage = async (
   messageId: string,
   fileName: string
 ): Promise<string> => {
+  if (!isAllowedUploadUri(sourceUri)) {
+    throw new MediaCopyFailedError('Unsupported media source URI.');
+  }
+
+  const safeChatId = sanitizePathSegment(chatId, 'chat');
+  // Ensure chat directory exists
+  const chatDir = `${MEDIA_DIRECTORY}${safeChatId}/`;
+  const chatDirInfo = await getInfoAsync(chatDir);
+  if (!chatDirInfo.exists) {
+    await makeDirectoryAsync(chatDir, { intermediates: true });
+  }
+
+  const localPath = getLocalMediaPath(chatId, messageId, fileName);
+
+  // If source is already the destination, just return
+  if (sourceUri === localPath) {
+    console.log('✅ Media already in local storage:', localPath);
+    return localPath;
+  }
+
   try {
-    if (!isAllowedUploadUri(sourceUri)) {
-      throw new Error('Unsupported media source URI.');
-    }
-
-    const safeChatId = sanitizePathSegment(chatId, 'chat');
-    // Ensure chat directory exists
-    const chatDir = `${MEDIA_DIRECTORY}${safeChatId}/`;
-    const chatDirInfo = await getInfoAsync(chatDir);
-    if (!chatDirInfo.exists) {
-      await makeDirectoryAsync(chatDir, { intermediates: true });
-    }
-    
-    const localPath = getLocalMediaPath(chatId, messageId, fileName);
-    
-    // If source is already the destination, just return
-    if (sourceUri === localPath) {
-      console.log('✅ Media already in local storage:', localPath);
-      return localPath;
-    }
-
-    // Copy file from source to local storage
     await copyAsync({
       from: sourceUri,
       to: localPath,
     });
-    
-    console.log('✅ Media copied to local storage:', localPath);
-    return localPath;
   } catch (error) {
     console.error('❌ Error copying to local storage:', error);
-    throw error;
+    if (looksLikeICloudUnavailable(error)) {
+      throw new MediaCopyFailedError(
+        'Couldn’t download this item from iCloud. Open it once in Photos to make it available, then try again.',
+      );
+    }
+    throw new MediaCopyFailedError(
+      error instanceof Error ? error.message : 'Could not access the picked media.',
+    );
   }
+
+  // Defensive: if the copy succeeded but produced an empty / missing file
+  // (rare but seen on iOS when iCloud thumbnails ship without the full asset),
+  // surface the same actionable error instead of uploading a zero-byte blob.
+  try {
+    const info = await getInfoAsync(localPath);
+    if (!info.exists || ('size' in info && info.size === 0)) {
+      throw new MediaCopyFailedError(
+        'The selected media is still downloading from iCloud. Try again in a moment.',
+      );
+    }
+  } catch (error) {
+    if (error instanceof MediaCopyFailedError) throw error;
+    // getInfoAsync failure here is unusual — fall through and let the
+    // upload step report whatever it sees.
+  }
+
+  console.log('✅ Media copied to local storage:', localPath);
+  return localPath;
 };
 
 /**

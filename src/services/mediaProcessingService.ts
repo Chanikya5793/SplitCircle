@@ -7,6 +7,59 @@ import {
   getImageMetaData,
 } from 'react-native-compressor';
 
+/**
+ * Sentinel thrown when a picked asset's underlying file isn't actually
+ * readable — iCloud download failed silently, the cache was purged, or the
+ * picker handed back a stale `ph://` reference. Callers can map this to a
+ * friendlier message in the failed-items sheet instead of the raw native
+ * exception. */
+export class MediaSourceUnavailableError extends Error {
+  constructor(message = 'Media file is not available.') {
+    super(message);
+    this.name = 'MediaSourceUnavailableError';
+  }
+}
+
+/**
+ * Verify a picked asset is actually readable before we burn time on
+ * compression. Only meaningful for `file://` URIs — for `ph://` /
+ * `assets-library://` we trust the picker's `shouldDownloadFromNetwork`
+ * option and let the downstream `copyAsync` raise if iCloud bailed.
+ *
+ * Throws `MediaSourceUnavailableError` so the chat send pipeline can show a
+ * clear, user-facing reason instead of a stack trace from the native
+ * compressor. */
+export const ensureMediaSourceAvailable = async (uri: string): Promise<void> => {
+  if (!uri) {
+    throw new MediaSourceUnavailableError('Missing media path.');
+  }
+  // Photos-framework URIs are virtual — getInfoAsync doesn't apply. The
+  // picker has already (best-effort) materialized them via
+  // shouldDownloadFromNetwork. If iCloud still can't deliver, the next
+  // file operation (copy/compress) raises naturally.
+  if (uri.startsWith('ph://') || uri.startsWith('assets-library://')) {
+    return;
+  }
+  try {
+    const info = await getInfoAsync(uri);
+    if (!info.exists) {
+      throw new MediaSourceUnavailableError(
+        'Source file is no longer available on this device. Pick it again.',
+      );
+    }
+    if ('size' in info && info.size === 0) {
+      throw new MediaSourceUnavailableError(
+        'Source file is empty — the iCloud download may have failed. Try again on a stronger connection.',
+      );
+    }
+  } catch (err) {
+    if (err instanceof MediaSourceUnavailableError) throw err;
+    throw new MediaSourceUnavailableError(
+      'Could not read the source file. Pick it again or check your network.',
+    );
+  }
+};
+
 export type QualityLevel = 'HD' | 'SD';
 // Image targets: HD = 1920px max edge, SD = 1280px.
 // Video targets: HD = 1280px max edge (720p), SD = 854px (~480p).
@@ -150,6 +203,8 @@ export const processImage = async (
   uri: string,
   quality: QualityLevel,
 ): Promise<ProcessedImage> => {
+  await ensureMediaSourceAvailable(uri);
+
   const maxDimension = quality === 'HD' ? 1920 : 1280;
   const compressQuality = quality === 'HD' ? 0.8 : 0.6;
 
@@ -209,6 +264,8 @@ export const processVideo = async (
   quality: QualityLevel,
   onProgress?: (fraction: number) => void,
 ): Promise<ProcessedVideo> => {
+  await ensureMediaSourceAvailable(uri);
+
   const maxEdge = quality === 'HD' ? 1280 : 854;
 
   // Read the source dimensions / size up front so we can populate the result

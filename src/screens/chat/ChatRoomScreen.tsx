@@ -6,6 +6,7 @@ import {
   ForwardPickerSheet,
   HeaderMenu,
   LocationPicker,
+  MediaPipelineBanner,
   MediaPreview,
   MentionAutocomplete,
   MessageActionSheet,
@@ -20,7 +21,6 @@ import type { SelectionAction } from '@/components/Chat/SelectionToolbar';
 import { AlbumBubble } from '@/components/AlbumBubble';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { LoadingOverlay } from '@/components/LoadingOverlay';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -41,6 +41,10 @@ import {
 import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { getOrDownloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { trimVideoInteractive } from '@/services/videoTrimService';
+import {
+  flushAllPendingRenderCaches,
+  hydrateChatRenderCache,
+} from '@/services/messageRenderCache';
 import { getInfoAsync } from 'expo-file-system/legacy';
 import { v4 as uuid } from 'uuid';
 import { publishMessageState } from '@/services/messageStateService';
@@ -266,6 +270,13 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   useEffect(() => {
     console.log(`📺 ChatRoomScreen mounted for chat: ${thread.chatId}`);
 
+    // Pull the render-cache for this chat off disk as early as possible so
+    // first-frame bubbles read cached media URIs / video thumbnails instead
+    // of paying the fs.stat / thumbnail-generation cost again. Fire-and-
+    // forget — bubbles fall through to live resolution when the hydration
+    // hasn't landed yet, and pick up cached values on subsequent renders.
+    void hydrateChatRenderCache(thread.chatId);
+
     // Reduce noisy logging and unnecessary state updates:
     // - Update messages when list composition or delivery/read state changes.
     // - Throttle console logging to once per LOG_INTERVAL, otherwise only log new messages.
@@ -338,6 +349,10 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
         requestMarkAsRead();
+      } else if (nextAppState === 'background' || nextAppState === 'inactive') {
+        // Force-flush pending render-cache writes on the way out so a kill
+        // doesn't lose entries written within the last FLUSH_DEBOUNCE_MS.
+        void flushAllPendingRenderCaches();
       }
     });
 
@@ -945,14 +960,11 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
 
     setAttachmentMenuVisible(false);
-    // Bridge the menu→preview gap with a global loading message so the user
-    // isn't stuck looking at the AttachmentMenu's "Opening media library…"
-    // text after they've already confirmed their picks. MediaPreview's
-    // `onPreviewReady` clears this once the preview is mounted.
-    mediaPipelineLoading.start(
-      items.length > 1 ? `Preparing ${items.length} items…` : 'Preparing media…',
-    );
     setSelectedMediaBatch(items);
+    // Mount the preview right after the attachment menu finishes dismissing.
+    // MediaPreview shows its own per-item loading state for videos, so we
+    // don't bridge with a separate global overlay (the previous bridge
+    // flickered visibly as it raced the preview's mount).
     InteractionManager.runAfterInteractions(() => {
       setMediaPreviewVisible(true);
     });
@@ -1133,11 +1145,29 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     requestId: string,
     error: unknown,
   ): FailedSendItem => {
+    const name = error instanceof Error ? error.name : '';
     const raw = error instanceof Error ? error.message : 'Failed to send';
     const isOversize = /too large|maximum size|exceeds/i.test(raw);
     let reason = raw;
-    if (isOversize) reason = 'File too large after compression — trim or switch to SD.';
-    else if (/network|offline|timeout/i.test(raw)) reason = 'Network error — try again.';
+    if (isOversize) {
+      reason = 'File too large after compression — trim or switch to SD.';
+    } else if (name === 'MediaSourceUnavailableError' || name === 'MediaCopyFailedError') {
+      // Surface the already-formatted, user-facing message verbatim — these
+      // sentinels are built to be shown.
+      reason = raw;
+    } else if (/iCloud|PHPhotosErrorDomain|3164|asset not available|network access/i.test(raw)) {
+      reason = 'Couldn’t download this item from iCloud. Open it once in Photos, then retry.';
+    } else if (/ENOENT|no such file/i.test(raw)) {
+      reason = 'Source file is no longer available. Pick it again.';
+    } else if (/permission|denied|EACCES/i.test(raw)) {
+      reason = 'Permission denied while reading the file. Check Photos / Files access.';
+    } else if (/Not authenticated/i.test(raw)) {
+      reason = 'You’re signed out. Sign in and try again.';
+    } else if (/network|offline|timeout|Network request failed/i.test(raw)) {
+      reason = 'Network error — check your connection and retry.';
+    } else if (/Unsupported media type/i.test(raw)) {
+      reason = 'This file type isn’t supported.';
+    }
     return { batchIndex, batchSize, payload, reason, isOversize, requestId };
   }, []);
 
@@ -1978,15 +2008,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         onClose={() => {
           setMediaPreviewVisible(false);
           setSelectedMediaBatch([]);
-          // Clear the bridge toast if onPreviewReady never fired (e.g. user
-          // dismissed before the preview finished mounting).
-          mediaPipelineLoading.stop();
         }}
         onSend={handleSendMedia}
-        // Clears the picker→preview bridge toast as soon as the preview is
-        // mounted and interactive. handleSendMedia later starts a fresh
-        // toast for the upload pipeline.
-        onPreviewReady={() => mediaPipelineLoading.stop()}
       />
 
       {/* Location Picker Modal */}
@@ -2206,8 +2229,14 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           : 'Message deleted for you'}
       </Snackbar>
 
-      {/* Media Processing Overlay — driven by keyed loading state */}
-      <LoadingOverlay visible={mediaPipelineLoading.loading} message={mediaPipelineLoading.message ?? 'Processing media…'} />
+      {/* Non-blocking media pipeline status — floats above the composer so the
+          user can keep scrolling/typing/navigating while compression and
+          upload run. Per-message bubbles still show their own send spinner. */}
+      <MediaPipelineBanner
+        visible={mediaPipelineLoading.loading}
+        message={mediaPipelineLoading.message ?? 'Sending media…'}
+        bottomOffset={insets.bottom + 72}
+      />
 
       {/* Scroll-to-bottom FAB */}
       {showScrollDown && (

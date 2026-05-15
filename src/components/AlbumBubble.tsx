@@ -4,7 +4,8 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
 import { useResolvedMediaUri } from '@/utils/useResolvedMediaUri';
-import { useVideoThumbnail } from '@/utils/videoThumbnail';
+import { useCachedVideoThumbnail } from '@/utils/videoThumbnail';
+import { buildStamp } from '@/services/messageRenderCache';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo } from 'react';
 import {
@@ -92,11 +93,32 @@ const AlbumCell = ({
     chatId: message.chatId,
     messageId: message.messageId || message.id,
     fileName: message.mediaMetadata?.fileName,
+    // Cache version stamp — passing the mutable fields lets the render
+    // cache automatically invalidate when the message is edited / its
+    // status changes / it's marked deleted-for-everyone.
+    createdAt: message.createdAt,
+    timestamp: typeof message.timestamp === 'number' ? message.timestamp : message.timestamp?.getTime(),
+    editedAt: message.editedAt,
+    status: message.status,
+    deletedForEveryone: message.deletedForEveryone,
   });
 
   // Videos render a generated frame as their thumbnail; the resolver still
-  // gives us the underlying file we should pull that frame from.
-  const videoThumb = useVideoThumbnail(isVideo ? resolved.uri : undefined);
+  // gives us the underlying file we should pull that frame from. The
+  // persistent variant survives app launches so we don't regenerate the
+  // frame on every cold start.
+  const videoThumb = useCachedVideoThumbnail({
+    videoUri: isVideo ? resolved.uri : undefined,
+    chatId: message.chatId,
+    messageId: message.messageId || message.id,
+    stamp: buildStamp({
+      createdAt: message.createdAt,
+      timestamp: typeof message.timestamp === 'number' ? message.timestamp : message.timestamp?.getTime(),
+      editedAt: message.editedAt,
+      status: message.status,
+      deletedForEveryone: message.deletedForEveryone,
+    }),
+  });
   const displayUri = isVideo ? videoThumb : resolved.uri;
   // While the video thumbnail is being generated, surface the same spinner
   // we use during downloads so the cell isn't silently dark.

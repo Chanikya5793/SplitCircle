@@ -21,6 +21,11 @@
 // path exists, so 10 cells in one album hitting it in parallel is cheap.
 
 import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
+import {
+  buildStamp,
+  getCachedRender,
+  updateCachedRender,
+} from '@/services/messageRenderCache';
 import { useCallback, useEffect, useState } from 'react';
 
 export interface ResolvedMediaState {
@@ -46,15 +51,27 @@ interface ResolveInput {
   chatId: string;
   messageId: string;
   fileName?: string;
+  /** Mutable-field timestamps used to version the render cache. Pass the
+   *  message's updatedAt/createdAt/status straight through — the hook
+   *  derives a stamp so edits and status changes auto-invalidate. */
+  updatedAt?: number;
+  createdAt?: number;
+  timestamp?: number;
+  editedAt?: number;
+  status?: string;
+  deletedForEveryone?: boolean;
 }
 
 const NON_MEDIA = new Set(['text', 'system', 'call', 'location']);
 
 export const useResolvedMediaUri = (input: ResolveInput): ResolvedMediaState => {
-  // Seed with what the message claims. The effect immediately verifies and
-  // corrects if needed; rendering with the optimistic value first means
-  // cached/local images flash in without a "resolving" blank state.
-  const initial = input.localMediaPath ?? input.mediaUrl;
+  const stamp = buildStamp(input);
+  // Seed with the cache if we have a hit — that's the whole point of this
+  // hook talking to the render cache. Falls back to the optimistic value
+  // from the message otherwise so first-render-after-fresh-load still
+  // flashes something instead of a blank cell.
+  const cached = getCachedRender(input.chatId, input.messageId, stamp);
+  const initial = cached?.mediaUri ?? input.localMediaPath ?? input.mediaUrl;
   const [uri, setUri] = useState<string | undefined>(initial);
   const [isDownloading, setIsDownloading] = useState(false);
   const [errored, setErrored] = useState(false);
@@ -67,6 +84,16 @@ export const useResolvedMediaUri = (input: ResolveInput): ResolvedMediaState => 
     let cancelled = false;
     setRetriedFromError(false);
 
+    // Cache fast path — if we already resolved this exact message version,
+    // skip the filesystem round-trip entirely. The onError handler still
+    // covers the rare case where the file disappeared since we cached it.
+    const hit = getCachedRender(input.chatId, input.messageId, stamp);
+    if (hit?.mediaUri) {
+      setUri(hit.mediaUri);
+      setErrored(false);
+      return;
+    }
+
     (async () => {
       // 1. Prefer local if we can confirm the file exists.
       if (input.localMediaPath) {
@@ -75,6 +102,9 @@ export const useResolvedMediaUri = (input: ResolveInput): ResolvedMediaState => 
         if (exists) {
           setUri(input.localMediaPath);
           setErrored(false);
+          updateCachedRender(input.chatId, input.messageId, stamp, {
+            mediaUri: input.localMediaPath,
+          });
           return;
         }
       }
@@ -89,6 +119,9 @@ export const useResolvedMediaUri = (input: ResolveInput): ResolvedMediaState => 
           if (cancelled) return;
           setUri(result.localPath);
           setErrored(false);
+          updateCachedRender(input.chatId, input.messageId, stamp, {
+            mediaUri: result.localPath,
+          });
         } catch (err) {
           if (cancelled) return;
           console.warn('Media resolve: download failed, streaming remote', err);
@@ -123,6 +156,7 @@ export const useResolvedMediaUri = (input: ResolveInput): ResolvedMediaState => 
     input.chatId,
     input.messageId,
     input.fileName,
+    stamp,
   ]);
 
   const handleLoadError = useCallback(() => {

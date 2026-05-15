@@ -2,6 +2,7 @@ export { AttachmentMenu } from './AttachmentMenu';
 export type { AttachmentType, SelectedMedia } from './AttachmentMenu';
 export { LocationPicker } from './LocationPicker';
 export { MapErrorBoundary } from './MapErrorBoundary';
+export { MediaPipelineBanner } from './MediaPipelineBanner';
 export { MediaPreview } from './MediaPreview';
 export { FailedItemsSheet } from './FailedItemsSheet';
 export type { FailedSendItem } from './FailedItemsSheet';

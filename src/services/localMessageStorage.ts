@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { ChatMessage } from '@/models';
+import { invalidateMessageRender } from '@/services/messageRenderCache';
 
 const MESSAGES_KEY_PREFIX = 'chat_messages_';
 const messageListeners = new Map<string, Set<() => void>>();
@@ -442,6 +443,10 @@ export const markMessageDeletedForUser = async (
       messages[idx] = { ...message, deletedFor };
 
       await AsyncStorage.setItem(key, JSON.stringify(messages));
+      // Render cache: drop the entry — the message disappears from the
+      // current user's view, freeing the cache slot. (Other users on this
+      // device, if there were any, would just regenerate on first view.)
+      invalidateMessageRender(chatId, messageId);
       notifyMessageListeners(chatId);
     });
   } catch (error) {
@@ -529,6 +534,13 @@ export const applyRemoteMessageState = async (
 
       messages[idx] = next;
       await AsyncStorage.setItem(key, JSON.stringify(messages));
+      // Belt-and-braces invalidation. The cache stamp already includes
+      // `editedAt` and `deletedForEveryone`, so a stamp-driven miss is
+      // automatic — but explicitly dropping the entry on delete-for-everyone
+      // also reclaims the persisted bytes immediately.
+      if (state.deletedForEveryone) {
+        invalidateMessageRender(chatId, messageId);
+      }
       notifyMessageListeners(chatId);
     });
   } catch (error) {
