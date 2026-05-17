@@ -1171,7 +1171,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
                   styles.mine,
                   { backgroundColor: theme.colors.primary },
                   message.reactions && Object.keys(message.reactions).length > 0 && styles.bubbleWithReactions,
-                  pressed && (onLongPress || selectionMode) && { opacity: 0.85 },
+                  pressed && !selectionMode && (onLongPress) && { opacity: 0.85 },
                 ]}
               >
                 {renderForwardedTag()}
@@ -1211,6 +1211,12 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
               />
             </View>
           </Swipeable>
+          {selectionMode && (
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => onToggleSelect?.(message)}
+            />
+          )}
         </Animated.View>
         {renderFullScreenImage()}
       </>
@@ -1264,7 +1270,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
                   styles.other,
                   { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' },
                   message.reactions && Object.keys(message.reactions).length > 0 && styles.bubbleWithReactions,
-                  pressed && (onLongPress || selectionMode) && { opacity: 0.85 },
+                  pressed && !selectionMode && (onLongPress) && { opacity: 0.85 },
                 ]}
               >
                 {renderForwardedTag()}
@@ -1301,6 +1307,12 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
             </View>
           </View>
         </Swipeable>
+          {selectionMode && (
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => onToggleSelect?.(message)}
+            />
+          )}
       </Animated.View>
       {renderFullScreenImage()}
     </>
