@@ -4,12 +4,11 @@ import { formatRelativeTime } from '@/utils/format';
 import { lightHaptic, mediumHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { BlurView } from 'expo-blur';
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   TouchableOpacity,
   View,
@@ -174,6 +173,18 @@ export const MessageActionSheet = ({
     transform: [{ scale: scale.value }],
   }));
 
+  const [hoveredAction, setHoveredAction] = useState<number | null>(null);
+  const hoveredActionRef = useRef<number | null>(null);
+  const actionCardHeightRef = useRef(0);
+
+  const updateActionHover = useCallback((idx: number | null) => {
+    if (hoveredActionRef.current !== idx) {
+      hoveredActionRef.current = idx;
+      setHoveredAction(idx);
+      if (idx !== null) lightHaptic();
+    }
+  }, []);
+
   if (!message) return null;
 
   const handleClose = () => {
@@ -235,6 +246,13 @@ export const MessageActionSheet = ({
 
   const visibleItems = items.filter((i) => i.show);
 
+  const getActionIndex = (locationY: number): number | null => {
+    if (actionCardHeightRef.current <= 0) return null;
+    const itemH = actionCardHeightRef.current / visibleItems.length;
+    const idx = Math.floor(locationY / itemH);
+    return idx >= 0 && idx < visibleItems.length ? idx : null;
+  };
+
   return (
     <Modal
       visible={visible}
@@ -244,25 +262,25 @@ export const MessageActionSheet = ({
       onRequestClose={handleClose}
     >
       <View style={styles.root}>
-        {/* Blur backdrop */}
-        <Pressable style={StyleSheet.absoluteFill} onPress={handleClose}>
-          <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]}>
-            <BlurView
-              intensity={60}
-              tint={isDark ? 'dark' : 'default'}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} />
-          </Animated.View>
-        </Pressable>
+        {/* Blur visual layer */}
+        <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
+          <BlurView
+            intensity={60}
+            tint={isDark ? 'dark' : 'default'}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} />
+        </Animated.View>
 
-        {/* Content: reactions → bubble → actions */}
-        <Animated.View style={[styles.contentWrap, contentStyle, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 }]}>
-          <ScrollView
-            bounces={false}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.scrollContent}
-          >
+        {/* Dismiss layer — receives taps that pass through content */}
+        <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
+
+        {/* Content: reactions → bubble → actions (passes through empty-area taps) */}
+        <Animated.View
+          style={[styles.contentWrap, contentStyle, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 }]}
+          pointerEvents="box-none"
+        >
+          <View style={styles.scrollContent} pointerEvents="box-none">
             {/* Reaction strip */}
             <View style={[styles.reactionRow, { backgroundColor: cardBg }]}>
               {QUICK_REACTIONS.map((emoji) => {
@@ -305,8 +323,32 @@ export const MessageActionSheet = ({
               />
             </View>
 
-            {/* Action list */}
-            <View style={[styles.actionCard, { backgroundColor: cardBg }]}>
+            {/* Action list — supports slide-to-select */}
+            <View
+              style={[styles.actionCard, { backgroundColor: cardBg }]}
+              onLayout={(e) => {
+                actionCardHeightRef.current = e.nativeEvent.layout.height;
+              }}
+              onStartShouldSetResponder={() => false}
+              onMoveShouldSetResponder={() => true}
+              onResponderGrant={(e) => {
+                updateActionHover(getActionIndex(e.nativeEvent.locationY));
+              }}
+              onResponderMove={(e) => {
+                updateActionHover(getActionIndex(e.nativeEvent.locationY));
+              }}
+              onResponderRelease={() => {
+                if (hoveredActionRef.current !== null) {
+                  handleAction(visibleItems[hoveredActionRef.current].key);
+                }
+                hoveredActionRef.current = null;
+                setHoveredAction(null);
+              }}
+              onResponderTerminate={() => {
+                hoveredActionRef.current = null;
+                setHoveredAction(null);
+              }}
+            >
               <BlurView
                 intensity={isDark ? 30 : 50}
                 tint={isDark ? 'dark' : 'light'}
@@ -317,6 +359,11 @@ export const MessageActionSheet = ({
                   key={item.key}
                   style={[
                     styles.actionRow,
+                    hoveredAction === idx && {
+                      backgroundColor: item.destructive
+                        ? (isDark ? 'rgba(255,80,80,0.2)' : 'rgba(255,0,0,0.08)')
+                        : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.08)'),
+                    },
                     idx < visibleItems.length - 1 && { borderBottomColor: divider, borderBottomWidth: StyleSheet.hairlineWidth },
                   ]}
                   onPress={() => handleAction(item.key)}
@@ -338,7 +385,7 @@ export const MessageActionSheet = ({
                 </TouchableOpacity>
               ))}
             </View>
-          </ScrollView>
+          </View>
         </Animated.View>
       </View>
     </Modal>
@@ -355,7 +402,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   scrollContent: {
-    flexGrow: 1,
+    flex: 1,
     justifyContent: 'center',
     gap: 12,
   },

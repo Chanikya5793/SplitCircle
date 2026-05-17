@@ -1,14 +1,24 @@
 import { useTheme } from '@/context/ThemeContext';
 import type { ReactionMap } from '@/models';
-import React from 'react';
+import { lightHaptic } from '@/utils/haptics';
+import { BlurView } from 'expo-blur';
+import React, { useEffect } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Text } from 'react-native-paper';
+import Animated, {
+  Easing,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface ReactionDetailsSheetProps {
   visible: boolean;
   reactions?: ReactionMap;
   currentUserId?: string;
-  /** Map of userId → displayName */
   participantNames?: Map<string, string>;
   onRemoveReaction?: (emoji: string) => void;
   onClose: () => void;
@@ -23,6 +33,26 @@ export const ReactionDetailsSheet = ({
   onClose,
 }: ReactionDetailsSheetProps) => {
   const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+
+  const fade = useSharedValue(0);
+  const translateY = useSharedValue(300);
+
+  useEffect(() => {
+    if (visible) {
+      fade.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.quad) });
+      translateY.value = withSpring(0, { damping: 25, stiffness: 300, mass: 0.8 });
+    } else {
+      fade.value = withTiming(0, { duration: 150 });
+      translateY.value = withTiming(300, { duration: 150 });
+    }
+  }, [visible, fade, translateY]);
+
+  const backdropStyle = useAnimatedStyle(() => ({ opacity: fade.value }));
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+    opacity: fade.value,
+  }));
 
   const entries = reactions
     ? Object.entries(reactions).filter(([, users]) => users.length > 0)
@@ -33,88 +63,115 @@ export const ReactionDetailsSheet = ({
     return participantNames?.get(userId) ?? 'User';
   };
 
+  const handleClose = () => {
+    fade.value = withTiming(0, { duration: 150, easing: Easing.in(Easing.quad) });
+    translateY.value = withTiming(300, { duration: 200, easing: Easing.in(Easing.quad) }, (finished) => {
+      if (finished) runOnJS(onClose)();
+    });
+  };
+
   const handleRemove = (emoji: string) => {
-    onClose();
+    lightHaptic();
+    handleClose();
     onRemoveReaction?.(emoji);
   };
+
+  const cardBg = isDark ? 'rgba(45,45,48,0.88)' : 'rgba(255,255,255,0.82)';
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
-      onRequestClose={onClose}
+      statusBarTranslucent
+      animationType="none"
+      onRequestClose={handleClose}
     >
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <View />
-      </Pressable>
-      <View style={styles.sheetAnchor}>
-        <View style={[styles.sheet, {
-          backgroundColor: isDark ? '#1c1c2e' : '#fff',
-        }]}>
-          <View style={styles.sheetHandle} />
-          <Text
-            variant="titleSmall"
-            style={[styles.sheetTitle, { color: theme.colors.onSurface }]}
-          >
-            Reactions
-          </Text>
-          <ScrollView
-            bounces={false}
-            showsVerticalScrollIndicator={false}
-            style={styles.sheetScroll}
-          >
-            {entries.map(([emoji, users]) => (
-              <View key={emoji} style={styles.emojiGroup}>
-                <View style={styles.emojiHeaderRow}>
-                  <Text style={styles.emojiHeader}>{emoji}</Text>
-                  <Text style={[styles.emojiCount, { color: theme.colors.onSurfaceVariant }]}>
-                    {users.length}
-                  </Text>
-                </View>
-                {users.map((userId) => {
-                  const isMe = userId === currentUserId;
-                  return (
-                    <TouchableOpacity
-                      key={userId}
-                      style={[
-                        styles.reactorRow,
-                        {
-                          backgroundColor: isMe
-                            ? (isDark ? 'rgba(53,198,255,0.1)' : 'rgba(31,111,235,0.06)')
-                            : 'transparent',
-                        },
-                      ]}
-                      activeOpacity={isMe ? 0.6 : 1}
-                      onPress={isMe ? () => handleRemove(emoji) : undefined}
-                      disabled={!isMe}
-                    >
-                      <View style={styles.reactorInfo}>
-                        <View style={[styles.reactorAvatar, { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)' }]}>
-                          <Text style={styles.reactorInitial}>
-                            {getUserName(userId).charAt(0).toUpperCase()}
+      <View style={styles.root}>
+        {/* Blur backdrop */}
+        <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
+          <BlurView
+            intensity={40}
+            tint={isDark ? 'dark' : 'default'}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} />
+        </Animated.View>
+
+        {/* Dismiss layer */}
+        <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
+
+        {/* Sheet — anchored to bottom, passes through touches above */}
+        <View style={styles.sheetContainer} pointerEvents="box-none">
+          <Animated.View style={[styles.sheet, { backgroundColor: cardBg, paddingBottom: insets.bottom + 16 }, sheetStyle]}>
+            <BlurView
+              intensity={isDark ? 30 : 50}
+              tint={isDark ? 'dark' : 'light'}
+              style={[StyleSheet.absoluteFill, { borderTopLeftRadius: 22, borderTopRightRadius: 22, overflow: 'hidden' }]}
+            />
+            <View style={styles.handle} />
+            <Text
+              variant="titleSmall"
+              style={[styles.title, { color: theme.colors.onSurface }]}
+            >
+              Reactions
+            </Text>
+            <ScrollView
+              bounces={false}
+              showsVerticalScrollIndicator={false}
+              style={styles.scroll}
+            >
+              {entries.map(([emoji, users]) => (
+                <View key={emoji} style={styles.emojiGroup}>
+                  <View style={styles.emojiHeaderRow}>
+                    <Text style={styles.emojiIcon}>{emoji}</Text>
+                    <Text style={[styles.emojiCount, { color: theme.colors.onSurfaceVariant }]}>
+                      {users.length}
+                    </Text>
+                  </View>
+                  {users.map((userId) => {
+                    const isMe = userId === currentUserId;
+                    return (
+                      <TouchableOpacity
+                        key={userId}
+                        style={[
+                          styles.reactorRow,
+                          {
+                            backgroundColor: isMe
+                              ? (isDark ? 'rgba(53,198,255,0.1)' : 'rgba(31,111,235,0.06)')
+                              : 'transparent',
+                          },
+                        ]}
+                        activeOpacity={isMe ? 0.6 : 1}
+                        onPress={isMe ? () => handleRemove(emoji) : undefined}
+                        disabled={!isMe}
+                      >
+                        <View style={styles.reactorInfo}>
+                          <View style={[styles.reactorAvatar, { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)' }]}>
+                            <Text style={styles.reactorInitial}>
+                              {getUserName(userId).charAt(0).toUpperCase()}
+                            </Text>
+                          </View>
+                          <Text style={[styles.reactorName, { color: theme.colors.onSurface }]}>
+                            {getUserName(userId)}
                           </Text>
                         </View>
-                        <Text style={[styles.reactorName, { color: theme.colors.onSurface }]}>
-                          {getUserName(userId)}
-                        </Text>
-                      </View>
-                      {isMe && (
-                        <Text style={[styles.tapToRemove, { color: theme.colors.primary }]}>
-                          Tap to remove
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            ))}
-            {entries.length === 0 && (
-              <Text style={[styles.emptyText, { color: theme.colors.onSurfaceVariant }]}>
-                No reactions yet
-              </Text>
-            )}
-          </ScrollView>
+                        {isMe && (
+                          <Text style={[styles.tapToRemove, { color: theme.colors.primary }]}>
+                            Tap to remove
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ))}
+              {entries.length === 0 && (
+                <Text style={[styles.emptyText, { color: theme.colors.onSurfaceVariant }]}>
+                  No reactions yet
+                </Text>
+              )}
+            </ScrollView>
+          </Animated.View>
         </View>
       </View>
     </Modal>
@@ -122,43 +179,40 @@ export const ReactionDetailsSheet = ({
 };
 
 const styles = StyleSheet.create({
-  overlay: {
+  root: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
   },
-  sheetAnchor: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+  sheetContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
   },
   sheet: {
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
-    paddingBottom: 40,
     paddingTop: 12,
-    maxHeight: 400,
+    maxHeight: 420,
+    overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
     elevation: 20,
   },
-  sheetHandle: {
+  handle: {
     width: 36,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(128,128,128,0.3)',
+    backgroundColor: 'rgba(128,128,128,0.4)',
     alignSelf: 'center',
     marginBottom: 14,
   },
-  sheetTitle: {
+  title: {
     fontWeight: '700',
     textAlign: 'center',
     marginBottom: 16,
     fontSize: 16,
   },
-  sheetScroll: {
+  scroll: {
     paddingHorizontal: 16,
   },
   emojiGroup: {
@@ -171,7 +225,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     paddingHorizontal: 4,
   },
-  emojiHeader: {
+  emojiIcon: {
     fontSize: 24,
   },
   emojiCount: {

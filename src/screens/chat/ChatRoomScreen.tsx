@@ -53,7 +53,7 @@ import { lightHaptic, mediumHaptic, successHaptic, warningHaptic } from '@/utils
 import { useNavigation } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, AppState, FlatList, InteractionManager, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, AppState, FlatList, InteractionManager, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, Icon, IconButton, Snackbar, Text, TextInput } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -1352,13 +1352,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           style={styles.list}
           contentContainerStyle={[
             styles.listContent,
-            // Inverted FlatList: contentContainer paddingBottom lands at the
-            // VISUAL TOP after the scaleY(-1) flip. Reserve space equal to the
-            // expanded floating-header height so the oldest message can scroll
-            // fully clear of the glass overlay; in normal scroll the messages
-            // pass UNDER the header by design.
             { paddingBottom: insets.top + 70 },
             rows.length === 0 && { flex: 1, justifyContent: 'center' },
+            selectionMode && rows.length > 0 && { flexGrow: 1 },
           ]}
           inverted={rows.length > 0}
           ListEmptyComponent={
@@ -1382,6 +1378,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           maxToRenderPerBatch={10}
           windowSize={10}
           initialNumToRender={15}
+          ListFooterComponent={selectionMode ? (
+            <Pressable style={{ flex: 1, minHeight: 40 }} onPress={exitSelectionMode} />
+          ) : undefined}
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.3}
           onScrollToIndexFailed={({ index }) => {
