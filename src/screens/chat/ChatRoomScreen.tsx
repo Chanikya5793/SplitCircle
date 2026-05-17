@@ -29,7 +29,12 @@ import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useLoadingState } from '@/context/LoadingContext';
 import { useTheme } from '@/context/ThemeContext';
+import { useChatSearch } from '@/hooks/useChatSearch';
+import { useMediaSendPipeline } from '@/hooks/useMediaSendPipeline';
+import { useMentionAutocomplete } from '@/hooks/useMentionAutocomplete';
 import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
+import { useSelectionMode } from '@/hooks/useSelectionMode';
+import { useTypingPresence } from '@/hooks/useTypingPresence';
 import type { ChatMessage, ChatParticipant, ChatThread, MessageType, PinnedMessageRef } from '@/models';
 import {
   markMessageDeletedForUser,
@@ -38,15 +43,11 @@ import {
   unmarkMessageDeletedForUser,
   updateMessageContent,
 } from '@/services/localMessageStorage';
-import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { getOrDownloadMedia, mediaExistsLocally } from '@/services/mediaService';
-import { trimVideoInteractive } from '@/services/videoTrimService';
 import {
   flushAllPendingRenderCaches,
   hydrateChatRenderCache,
 } from '@/services/messageRenderCache';
-import { getInfoAsync } from 'expo-file-system/legacy';
-import { v4 as uuid } from 'uuid';
 import { publishMessageState } from '@/services/messageStateService';
 import { lightHaptic, mediumHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
@@ -62,10 +63,6 @@ const EDIT_WINDOW_MS = 15 * 60 * 1000;
 const DELETE_FOR_EVERYONE_WINDOW_MS = 24 * 60 * 60 * 1000;
 // After delete-for-me, surface a snackbar with Undo for this many ms.
 const DELETE_UNDO_WINDOW_MS = 5_000;
-// How long a typing presence ping stays "alive" before clients consider it stale.
-const TYPING_STALE_MS = 6_000;
-// Throttle typing pings — never write to Firestore more than once per interval.
-const TYPING_PING_THROTTLE_MS = 2_500;
 
 const MemoizedMessageBubble = React.memo(MessageBubble);
 const MemoizedAlbumBubble = React.memo(AlbumBubble);
@@ -140,6 +137,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const navigation = useNavigation();
   const {
     subscribeToMessages,
+    loadMoreMessages,
     sendMessage,
     markChatAsRead,
     togglePinMessage,
@@ -153,6 +151,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const insets = useSafeAreaInsets();
   // Messages for this chat (inverted list - newest first)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   // Group consecutive same-album image/video messages into one "album" row so
   // a multi-pick batch renders as a single grid bubble. Singles fall through
   // unchanged. Defined up here so search / reply / pin handlers below can use
@@ -176,8 +176,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Text input state for composer
   const [text, setText] = useState('');
   const listRef = useRef<FlatList<ChatMessage>>(null);
-  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
-  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
   const [showScrollDown, setShowScrollDown] = useState(false);
   // Track focus state of the composer input so we can highlight the
@@ -194,21 +192,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   // Forward picker state — separate from the action sheet so it can stay open while the picker animates in.
   const [forwardSource, setForwardSource] = useState<ChatMessage[] | null>(null);
-  // Multi-select state
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  // Search state
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchIndex, setSearchIndex] = useState(0);
-  // Mention autocomplete state
-  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
-  const [mentionAnchor, setMentionAnchor] = useState<{ start: number; end: number } | null>(null);
-  const [pendingMentionUserIds, setPendingMentionUserIds] = useState<string[]>([]);
-  const composerSelectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
-  // Typing presence
-  const lastTypingPingRef = useRef(0);
-  const typingClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Attachment menu state
   const [attachmentMenuVisible, setAttachmentMenuVisible] = useState(false);
   // Media preview state — `selectedMediaBatch` is the full set of items the user
@@ -216,11 +199,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // captions, and send all at once with a single tap.
   const [selectedMediaBatch, setSelectedMediaBatch] = useState<SelectedMedia[]>([]);
   const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
-  // Failed-batch tracking — populated by `handleSendMedia` whenever any item
-  // in a batch fails. The sheet renders these so the user can retry per-item
-  // (or trim oversize videos and retry) without re-picking from the gallery.
-  const [failedItems, setFailedItems] = useState<FailedSendItem[]>([]);
-  const [failedSheetVisible, setFailedSheetVisible] = useState(false);
   // Location picker state
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
   // Reaction details sheet state
@@ -232,6 +210,71 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const markReadInFlightRef = useRef(false);
   const { run: runSend } = usePreventDoubleSubmit();
   const mediaPipelineLoading = useLoadingState(`chat-media:${thread.chatId}`);
+
+  const participantMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of thread.participants) {
+      map.set(p.userId, p.displayName || 'Unknown');
+    }
+    return map;
+  }, [thread.participants]);
+
+  const {
+    selectionMode,
+    selectedIds,
+    selectedMessages,
+    enterSelectionMode,
+    enterSelectionModeMulti,
+    exitSelectionMode,
+    toggleSelected,
+  } = useSelectionMode(messages);
+
+  const {
+    searchOpen,
+    setSearchOpen,
+    searchQuery,
+    setSearchQuery,
+    searchIndex,
+    searchMatches,
+    jumpToSearchMatch,
+    highlightedMessageId,
+    setHighlightedMessageId,
+    highlightTimerRef,
+  } = useChatSearch({ messages, userId: user?.userId, messageIdToRowIndex, listRef });
+
+  const {
+    mentionQuery,
+    pendingMentionUserIds,
+    setPendingMentionUserIds,
+    handleComposerSelectionChange,
+    detectMention,
+    handleMentionSelect: mentionSelect,
+    resetMention,
+  } = useMentionAutocomplete({ participants: thread.participants, inputRef });
+
+  const { maybePingTyping, typingNames } = useTypingPresence({
+    chatId: thread.chatId,
+    userId: user?.userId,
+    participantMap,
+    setTyping,
+  });
+
+  const {
+    failedItems,
+    failedSheetVisible,
+    setFailedSheetVisible,
+    handleSendMedia: sendMediaBatch,
+    retrySingleFailedItem,
+    handleRetryAllFailedItems,
+    handleTrimAndRetryFailedItem,
+  } = useMediaSendPipeline({
+    chatId: thread.chatId,
+    groupId: thread.groupId,
+    participants: thread.participants,
+    mediaPipelineLoading,
+    runSend,
+    sendMessage,
+  });
 
   const requestMarkAsRead = useCallback(() => {
     if (markReadTimerRef.current) {
@@ -249,6 +292,25 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       });
     }, 100);
   }, [markChatAsRead, thread.chatId]);
+
+  const handleLoadMore = useCallback(async () => {
+    if (!hasMoreMessages || loadingMore || messages.length === 0) return;
+    const oldest = messages[messages.length - 1];
+    const before = oldest?.createdAt;
+    if (!before) return;
+    setLoadingMore(true);
+    try {
+      const result = await loadMoreMessages(thread.chatId, before);
+      if (result.messages.length > 0) {
+        setMessages((prev) => [...prev, ...result.messages]);
+      }
+      setHasMoreMessages(result.hasMore);
+    } catch (error) {
+      console.error('Failed to load more messages:', error);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [hasMoreMessages, loadingMore, messages, loadMoreMessages, thread.chatId]);
 
   useLayoutEffect(() => {
     // The chat screen renders its own glass back button + title pill + call
@@ -284,7 +346,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     const LOG_INTERVAL = 30_000; // 30s
     let prevCount = 0;
     let prevLastMessageId: string | null = null;
-    let prevStatusFingerprint = '';
+    let prevStatusFingerprint = 0;
 
     const unsubscribe = subscribeToMessages(thread.chatId, (items) => {
       // Keep the previous count/last id for comparisons
@@ -296,29 +358,31 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
       const countChanged = items.length !== prevCountBefore;
       const lastIdChanged = lastId !== prevLastIdBefore;
-      // Fingerprint covers every UI-relevant mutation, not just delivery/read.
-      // Without reactions/star/edit/delete in here, mutations to those fields
-      // would silently fail to re-render the bubble until the user left and
-      // re-entered the chat.
-      const statusFingerprint = items
-        .map((item) => {
-          const id = item.messageId || item.id;
-          const deliveredCount = item.deliveredTo?.length ?? 0;
-          const readCount = item.readBy?.length ?? 0;
-          const reactionsHash = item.reactions
-            ? Object.entries(item.reactions)
-              .map(([emoji, ids]) => `${emoji}:${ids.length}`)
-              .sort()
-              .join(',')
-            : '';
-          const starredCount = item.starredBy?.length ?? 0;
-          const deletedForCount = item.deletedFor?.length ?? 0;
-          const deletedAll = item.deletedForEveryone ? 1 : 0;
-          const editedAt = item.editedAt ?? 0;
-          const contentLength = item.content?.length ?? 0;
-          return `${id}:${item.status}:${deliveredCount}:${readCount}:${reactionsHash}:${starredCount}:${deletedForCount}:${deletedAll}:${editedAt}:${contentLength}`;
-        })
-        .join('|');
+      // Numeric hash covers every UI-relevant mutation. Avoids the O(n) string
+      // allocation of the previous approach (~25KB for 500 messages).
+      let statusFingerprint = 0;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const deliveredCount = item.deliveredTo?.length ?? 0;
+        const readCount = item.readBy?.length ?? 0;
+        const starredCount = item.starredBy?.length ?? 0;
+        const deletedForCount = item.deletedFor?.length ?? 0;
+        const deletedAll = item.deletedForEveryone ? 1 : 0;
+        const editedAt = item.editedAt ?? 0;
+        const contentLen = item.content?.length ?? 0;
+        const statusCode = item.status === 'read' ? 4 : item.status === 'delivered' ? 3 : item.status === 'sent' ? 2 : item.status === 'failed' ? 5 : 1;
+        let reactionsCount = 0;
+        if (item.reactions) {
+          for (const ids of Object.values(item.reactions)) {
+            reactionsCount += ids.length;
+          }
+        }
+        // djb2-inspired rolling hash
+        statusFingerprint = ((statusFingerprint << 5) - statusFingerprint +
+          i * 31 + deliveredCount * 7 + readCount * 13 + starredCount * 17 +
+          deletedForCount * 23 + deletedAll * 37 + (editedAt & 0xFFFF) +
+          contentLen * 3 + statusCode * 41 + reactionsCount * 53) | 0;
+      }
       const statusChanged = statusFingerprint !== prevStatusFingerprint;
 
       // Update when list composition or any tracked mutation changes.
@@ -467,8 +531,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     setText('');
     setReplyingTo(null);
     setPendingMentionUserIds([]);
-    setMentionAnchor(null);
-    setMentionQuery(null);
+    resetMention();
     void setTyping(thread.chatId, false);
 
     void runSend(async (requestId) => {
@@ -746,37 +809,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   }, [thread.chatId, user]);
 
   // ──────────────────────────── Selection mode ────────────────────────────
-  const enterSelectionMode = useCallback((seed?: ChatMessage) => {
-    setSelectionMode(true);
-    if (seed) {
-      const id = seed.messageId || seed.id;
-      setSelectedIds(new Set([id]));
-    } else {
-      setSelectedIds(new Set());
-    }
-    mediumHaptic();
-  }, []);
-
-  const exitSelectionMode = useCallback(() => {
-    setSelectionMode(false);
-    setSelectedIds(new Set());
-  }, []);
-
-  const toggleSelected = useCallback((message: ChatMessage) => {
-    const id = message.messageId || message.id;
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const selectedMessages = useMemo(
-    () => messages.filter((m) => selectedIds.has(m.messageId || m.id)),
-    [messages, selectedIds],
-  );
-
   const handleBulkAction = useCallback(async (action: SelectionAction) => {
     if (!user || selectedMessages.length === 0) return;
 
@@ -867,42 +899,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
   }, [selectedMessages, thread.chatId, user, exitSelectionMode, deleteMessageForEveryone]);
 
-  // ──────────────────────────── Search ────────────────────────────
-  const searchMatches = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return [] as string[];
-    return messages
-      .filter((m) => m.content && !m.deletedForEveryone && !m.deletedFor?.includes(user?.userId ?? ''))
-      .filter((m) => m.content.toLowerCase().includes(q))
-      .map((m) => m.messageId || m.id);
-  }, [messages, searchQuery, user?.userId]);
-
-  // Reset index whenever the matches change.
-  useEffect(() => {
-    setSearchIndex(0);
-  }, [searchQuery]);
-
-  const jumpToSearchMatch = useCallback((index: number) => {
-    if (searchMatches.length === 0) return;
-    const safe = ((index % searchMatches.length) + searchMatches.length) % searchMatches.length;
-    setSearchIndex(safe);
-    const id = searchMatches[safe];
-    const rowIdx = messageIdToRowIndex.get(id);
-    if (rowIdx === undefined) return;
-    listRef.current?.scrollToIndex({ index: rowIdx, animated: true, viewPosition: 0.5 });
-    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
-    setHighlightedMessageId(id);
-    highlightTimerRef.current = setTimeout(() => setHighlightedMessageId(null), 1400);
-  }, [messageIdToRowIndex, searchMatches]);
-
-  useEffect(() => {
-    if (searchMatches.length > 0 && searchOpen) {
-      jumpToSearchMatch(0);
-    }
-    // We intentionally only respond to changes in the matches array, not jumpToSearchMatch identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchMatches.length, searchOpen]);
-
   const handleForwardSelect = useCallback(async (targetThreads: ChatThread[]) => {
     if (!forwardSource || forwardSource.length === 0) return;
     const sources = forwardSource;
@@ -970,366 +966,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     });
   };
 
-  const getProcessingLoadingMessage = useCallback((type: SelectedMedia['type']) => {
-    switch (type) {
-      case 'video':
-        return 'Preparing video for upload…';
-      case 'image':
-      case 'camera':
-        return 'Optimizing photo…';
-      case 'document':
-        return 'Preparing document…';
-      case 'audio':
-        return 'Preparing audio…';
-      default:
-        return 'Preparing attachment…';
-    }
-  }, []);
 
-  // ─── Single-item send pipeline ───────────────────────────────────────────
-  // Process + upload one media item. Throws on failure so callers can
-  // accumulate failures (initial batch loop, retry handlers) without
-  // duplicating the pipeline. `albumId` is `undefined` on retries — a single
-  // failed item doesn't get re-grouped; its retry just sends as one bubble.
-  type SendContext = {
-    indexLabel: { current: number; total: number };
-    albumId?: string;
-    replyTarget?: ChatMessage | null;
-    /** Stable id for the message this send creates / retries. Reusing the
-     *  same id across retries upserts the local bubble so a successful
-     *  retry replaces the prior `failed` bubble in place instead of leaving
-     *  it next to a fresh `sent` bubble. */
-    requestId: string;
-  };
+  // Media pipeline (sendOneMedia, buildFailedItem, handleSendMedia, etc.)
+  // moved to useMediaSendPipeline hook.
 
-  const sendOneMedia = useCallback(async (item: MediaPreviewSendItem, ctx: SendContext) => {
-    const { media: mediaToSend, caption, quality: itemQuality } = item;
-    const { current, total } = ctx.indexLabel;
-    const positional = total > 1 ? `${current} of ${total}` : null;
-
-    let processedUri = mediaToSend.uri;
-    let processedWidth = mediaToSend.width;
-    let processedHeight = mediaToSend.height;
-    let processedSize = mediaToSend.fileSize;
-    let sourceWidth: number | undefined;
-    let sourceHeight: number | undefined;
-    let sourceFileSize: number | undefined;
-    let cameraMake: string | undefined;
-    let cameraModel: string | undefined;
-    let takenAt: number | undefined;
-
-    if (mediaToSend.type === 'image' || mediaToSend.type === 'camera') {
-      const r = await processImage(mediaToSend.uri, itemQuality);
-      processedUri = r.uri;
-      processedWidth = r.width;
-      processedHeight = r.height;
-      processedSize = r.size;
-      sourceWidth = r.sourceWidth;
-      sourceHeight = r.sourceHeight;
-      sourceFileSize = r.sourceFileSize;
-      cameraMake = r.cameraMake;
-      cameraModel = r.cameraModel;
-      takenAt = r.takenAt;
-    } else if (mediaToSend.type === 'video') {
-      const r = await processVideo(mediaToSend.uri, itemQuality, (p) => {
-        const pct = Math.max(0, Math.min(100, Math.round(p * 100)));
-        mediaPipelineLoading.setMessage(
-          positional
-            ? `Compressing ${positional} — ${pct}%`
-            : `Compressing video — ${pct}%`,
-        );
-      });
-      processedUri = r.uri;
-      if (r.width > 0) processedWidth = r.width;
-      if (r.height > 0) processedHeight = r.height;
-      processedSize = r.size;
-      sourceWidth = r.sourceWidth || undefined;
-      sourceHeight = r.sourceHeight || undefined;
-      sourceFileSize = r.sourceFileSize || undefined;
-    }
-
-    let messageType: MessageType;
-    switch (mediaToSend.type) {
-      case 'camera':
-      case 'image':
-        messageType = 'image';
-        break;
-      case 'video':
-        messageType = 'video';
-        break;
-      case 'audio':
-        messageType = 'audio';
-        break;
-      case 'document':
-        messageType = 'file';
-        break;
-      case 'location':
-        messageType = 'location';
-        break;
-      default:
-        messageType = 'file';
-    }
-
-    let replyData: any = undefined;
-    if (ctx.replyTarget) {
-      const replySource = ctx.replyTarget;
-      const participant = thread.participants.find((p) => p.userId === replySource.senderId);
-      replyData = {
-        messageId: replySource.messageId,
-        senderId: replySource.senderId,
-        senderName: participant?.displayName || 'Unknown',
-        content: replySource.content,
-        type: replySource.type,
-      };
-    }
-
-    const mediaMetadata: Record<string, unknown> = {};
-    if (mediaToSend.fileName) mediaMetadata.fileName = mediaToSend.fileName;
-    if (processedSize) mediaMetadata.fileSize = processedSize;
-    if (mediaToSend.mimeType) mediaMetadata.mimeType = mediaToSend.mimeType;
-    if (processedWidth) mediaMetadata.width = processedWidth;
-    if (processedHeight) mediaMetadata.height = processedHeight;
-    if (mediaToSend.duration) mediaMetadata.duration = mediaToSend.duration;
-    if (processedWidth && processedHeight) {
-      mediaMetadata.aspectRatio = processedWidth / processedHeight;
-    }
-    if (ctx.albumId) {
-      mediaMetadata.albumId = ctx.albumId;
-      mediaMetadata.albumIndex = current - 1;
-      mediaMetadata.albumSize = total;
-    }
-    if (sourceWidth) mediaMetadata.sourceWidth = sourceWidth;
-    if (sourceHeight) mediaMetadata.sourceHeight = sourceHeight;
-    if (sourceFileSize) mediaMetadata.sourceFileSize = sourceFileSize;
-    if (cameraMake) mediaMetadata.cameraMake = cameraMake;
-    if (cameraModel) mediaMetadata.cameraModel = cameraModel;
-    if (takenAt) mediaMetadata.takenAt = takenAt;
-
-    mediaPipelineLoading.setMessage(
-      positional
-        ? `Uploading ${positional}…`
-        : `Uploading ${mediaToSend.type === 'video' ? 'video' : 'attachment'}…`,
-    );
-
-    await runSend(async () => {
-      await sendMessage({
-        chatId: thread.chatId,
-        // Use the caller-provided id, not runSend's generated one, so retries
-        // upsert the original (failed) local row.
-        requestId: ctx.requestId,
-        content: caption || getMediaPlaceholder(messageType),
-        type: messageType,
-        mediaUri: processedUri,
-        groupId: thread.groupId,
-        replyTo: replyData,
-        mediaMetadata: Object.keys(mediaMetadata).length > 0 ? (mediaMetadata as any) : undefined,
-        onStageChange: (stage, details) => {
-          if (stage === 'complete') return;
-          if (details?.message) {
-            mediaPipelineLoading.setMessage(
-              positional ? `${positional} — ${details.message}` : details.message,
-            );
-          }
-        },
-      });
-    }, { key: `chat-media-${thread.chatId}-${ctx.requestId}` });
-  }, [thread.chatId, thread.groupId, thread.participants, mediaPipelineLoading, runSend, sendMessage]);
-
-  /** Map a thrown error from the pipeline to a `FailedSendItem` with a
-   *  human reason and an oversize flag the sheet uses to expose the Trim
-   *  CTA on videos. */
-  const buildFailedItem = useCallback((
-    payload: MediaPreviewSendItem,
-    batchIndex: number,
-    batchSize: number,
-    requestId: string,
-    error: unknown,
-  ): FailedSendItem => {
-    const name = error instanceof Error ? error.name : '';
-    const raw = error instanceof Error ? error.message : 'Failed to send';
-    const isOversize = /too large|maximum size|exceeds/i.test(raw);
-    let reason = raw;
-    if (isOversize) {
-      reason = 'File too large after compression — trim or switch to SD.';
-    } else if (name === 'MediaSourceUnavailableError' || name === 'MediaCopyFailedError') {
-      // Surface the already-formatted, user-facing message verbatim — these
-      // sentinels are built to be shown.
-      reason = raw;
-    } else if (/iCloud|PHPhotosErrorDomain|3164|asset not available|network access/i.test(raw)) {
-      reason = 'Couldn’t download this item from iCloud. Open it once in Photos, then retry.';
-    } else if (/ENOENT|no such file/i.test(raw)) {
-      reason = 'Source file is no longer available. Pick it again.';
-    } else if (/permission|denied|EACCES/i.test(raw)) {
-      reason = 'Permission denied while reading the file. Check Photos / Files access.';
-    } else if (/Not authenticated/i.test(raw)) {
-      reason = 'You’re signed out. Sign in and try again.';
-    } else if (/network|offline|timeout|Network request failed/i.test(raw)) {
-      reason = 'Network error — check your connection and retry.';
-    } else if (/Unsupported media type/i.test(raw)) {
-      reason = 'This file type isn’t supported.';
-    }
-    return { batchIndex, batchSize, payload, reason, isOversize, requestId };
-  }, []);
-
-  // Send a batch of media items in pick order. The preview is dismissed
-  // immediately so the user can keep using the chat; each item streams its own
-  // progress through the keyed loading overlay.
-  const handleSendMedia = async (results: MediaPreviewSendItem[]) => {
-    if (results.length === 0) return;
-
-    // Snapshot reply target — apply it only to the first item so a follow-up
-    // album doesn't re-quote the same message N times.
+  const handleSendMedia = useCallback((results: MediaPreviewSendItem[]) => {
     const replySource = replyingTo;
-
     setMediaPreviewVisible(false);
     setSelectedMediaBatch([]);
     setReplyingTo(null);
+    void sendMediaBatch(results, replySource, () => {});
+  }, [replyingTo, sendMediaBatch]);
 
-    mediaPipelineLoading.start(
-      results.length > 1
-        ? `Preparing 1 of ${results.length}…`
-        : getProcessingLoadingMessage(results[0].media.type),
-    );
-
-    const isAlbum =
-      results.length > 1 &&
-      results.every(({ media }) =>
-        media.type === 'image' ||
-        media.type === 'camera' ||
-        media.type === 'video',
-      );
-    const albumId = isAlbum ? `album_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` : undefined;
-
-    const failures: FailedSendItem[] = [];
-    try {
-      for (let i = 0; i < results.length; i++) {
-        if (results.length > 1) {
-          mediaPipelineLoading.setMessage(`Preparing ${i + 1} of ${results.length}…`);
-        } else {
-          mediaPipelineLoading.setMessage(getProcessingLoadingMessage(results[i].media.type));
-        }
-
-        // Generate the message id up front so a failure can carry it forward
-        // into the FailedItemsSheet — retries then upsert the same bubble.
-        const requestId = uuid();
-        try {
-          await sendOneMedia(results[i], {
-            indexLabel: { current: i + 1, total: results.length },
-            albumId,
-            // Apply reply only to the first item — see comment on `replySource` above.
-            replyTarget: i === 0 ? replySource : null,
-            requestId,
-          });
-        } catch (itemError) {
-          console.error(`Failed to send batch item ${i}:`, itemError);
-          failures.push(buildFailedItem(results[i], i, results.length, requestId, itemError));
-        }
-      }
-    } finally {
-      mediaPipelineLoading.stop();
-    }
-
-    if (failures.length > 0) {
-      setFailedItems(failures);
-      setFailedSheetVisible(true);
-      warningHaptic();
-    }
-  };
-
-  // ─── Failure recovery handlers ───────────────────────────────────────────
-  const removeFailedItem = useCallback((batchIndex: number, mediaUri: string) => {
-    setFailedItems((prev) => prev.filter((f) => !(f.batchIndex === batchIndex && f.payload.media.uri === mediaUri)));
-  }, []);
-
-  const retrySingleFailedItem = useCallback(async (item: FailedSendItem) => {
-    mediaPipelineLoading.start(getProcessingLoadingMessage(item.payload.media.type));
-    try {
-      await sendOneMedia(item.payload, {
-        indexLabel: { current: 1, total: 1 },
-        // Don't re-album single retries — they're standalone bubbles now.
-        // Reuse the original requestId so the failed bubble in chat is
-        // upserted to the new sent message instead of duplicated.
-        requestId: item.requestId,
-      });
-      removeFailedItem(item.batchIndex, item.payload.media.uri);
-    } catch (err) {
-      console.error('Retry failed:', err);
-      // Replace the existing entry with a fresh one so the user sees the
-      // updated reason (e.g. compression succeeded but upload still timed out).
-      setFailedItems((prev) =>
-        prev.map((f) =>
-          f.batchIndex === item.batchIndex && f.payload.media.uri === item.payload.media.uri
-            ? buildFailedItem(item.payload, item.batchIndex, item.batchSize, item.requestId, err)
-            : f,
-        ),
-      );
-    } finally {
-      mediaPipelineLoading.stop();
-    }
-  }, [sendOneMedia, mediaPipelineLoading, removeFailedItem, buildFailedItem, getProcessingLoadingMessage]);
-
-  const handleRetryAllFailedItems = useCallback(async () => {
-    const snapshot = [...failedItems];
-    if (snapshot.length === 0) return;
-    setFailedSheetVisible(false);
-    for (const item of snapshot) {
-      // Bail out as soon as the user navigates away — we'd otherwise keep
-      // hammering retries against an unmounted screen.
-      // (sendOneMedia uses thread.chatId from closure, but other guards live
-      // inside the chat context.)
-      await retrySingleFailedItem(item);
-    }
-    // Re-open the sheet only if some retries still failed.
-    setFailedItems((current) => {
-      if (current.length > 0) setFailedSheetVisible(true);
-      return current;
-    });
-  }, [failedItems, retrySingleFailedItem]);
-
-  const handleTrimAndRetryFailedItem = useCallback(async (item: FailedSendItem) => {
-    if (item.payload.media.type !== 'video') return;
-    setFailedSheetVisible(false);
-    try {
-      const trimmed = await trimVideoInteractive(item.payload.media.uri, {
-        headerText: 'Trim to fit',
-      });
-      if (!trimmed) {
-        // User cancelled — leave the item in the failed list and re-open the sheet.
-        setFailedSheetVisible(true);
-        return;
-      }
-      let newSize = 0;
-      try {
-        const info = await getInfoAsync(trimmed.outputPath);
-        newSize = info.exists && 'size' in info ? info.size : 0;
-      } catch {
-        /* swallow — size will be filled in by processVideo's read */
-      }
-      const updated: FailedSendItem = {
-        ...item,
-        payload: {
-          ...item.payload,
-          media: {
-            ...item.payload.media,
-            uri: trimmed.outputPath,
-            duration: trimmed.durationMs,
-            fileSize: newSize > 0 ? newSize : item.payload.media.fileSize,
-          },
-        },
-      };
-      await retrySingleFailedItem(updated);
-      setFailedItems((current) => {
-        if (current.length > 0) setFailedSheetVisible(true);
-        return current;
-      });
-    } catch (err) {
-      console.error('Trim & retry failed:', err);
-      Alert.alert('Couldn’t trim video', err instanceof Error ? err.message : 'Please try again.');
-      setFailedSheetVisible(true);
-    }
-  }, [retrySingleFailedItem]);
-
-  // Handle sending location
   const handleSendLocation = async (location: { latitude: number; longitude: number; address?: string }) => {
     try {
       await runSend(async (requestId) => {
@@ -1348,18 +996,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     }
   };
 
-  // Get placeholder text for media messages
-  const getMediaPlaceholder = (type: MessageType): string => {
-    switch (type) {
-      case 'image': return '📷 Photo';
-      case 'video': return '🎥 Video';
-      case 'audio': return '🎵 Audio';
-      case 'file': return '📄 Document';
-      case 'location': return '📍 Location';
-      default: return '📎 Attachment';
-    }
-  };
-
   // Get sender color for reply preview
   const getSenderColor = (id: string) => {
     const AVATAR_COLORS = [
@@ -1373,14 +1009,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
   };
 
-  // Pre-compute participant lookup so renderItem doesn't do O(n) find per bubble
-  const participantMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const p of thread.participants) {
-      map.set(p.userId, p.displayName || 'Unknown');
-    }
-    return map;
-  }, [thread.participants]);
 
   // Get proper group name if this is a group chat
   const groupName = useMemo(() => {
@@ -1459,97 +1087,15 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     return map;
   }, [thread.participants]);
 
-  const handleComposerSelectionChange = useCallback((event: { nativeEvent: { selection: { start: number; end: number } } }) => {
-    composerSelectionRef.current = event.nativeEvent.selection;
-  }, []);
-
   const handleComposerTextChange = useCallback((next: string) => {
     setText(next);
-
-    // Detect a partial @mention immediately to the left of the caret.
-    const caret = composerSelectionRef.current.start ?? next.length;
-    const upToCaret = next.slice(0, caret);
-    const atIdx = upToCaret.lastIndexOf('@');
-    if (atIdx === -1) {
-      setMentionQuery(null);
-      setMentionAnchor(null);
-      return;
-    }
-    const before = atIdx === 0 ? '' : upToCaret[atIdx - 1];
-    const isWordBoundary = atIdx === 0 || /\s/.test(before);
-    if (!isWordBoundary) {
-      setMentionQuery(null);
-      setMentionAnchor(null);
-      return;
-    }
-    const candidate = upToCaret.slice(atIdx + 1);
-    if (/[\s\n]/.test(candidate)) {
-      setMentionQuery(null);
-      setMentionAnchor(null);
-      return;
-    }
-    setMentionQuery(candidate);
-    setMentionAnchor({ start: atIdx, end: caret });
-
-    // Throttled typing ping.
+    detectMention(next);
     void maybePingTyping();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thread.chatId]);
+  }, [detectMention, maybePingTyping]);
 
   const handleMentionSelect = useCallback((participant: ChatParticipant) => {
-    if (!mentionAnchor) return;
-    const handle = participant.displayName.replace(/\s+/g, '');
-    const before = text.slice(0, mentionAnchor.start);
-    const after = text.slice(mentionAnchor.end);
-    const insertion = `@${handle} `;
-    const next = `${before}${insertion}${after}`;
-    setText(next);
-    setMentionAnchor(null);
-    setMentionQuery(null);
-    setPendingMentionUserIds((prev) => Array.from(new Set([...prev, participant.userId])));
-    // Move caret past the inserted handle on next render.
-    setTimeout(() => {
-      const newCaret = (before + insertion).length;
-      inputRef.current?.setNativeProps?.({
-        selection: { start: newCaret, end: newCaret },
-      });
-    }, 0);
-  }, [mentionAnchor, text]);
-
-  // ──────────────────────────── Typing presence ────────────────────────────
-  const maybePingTyping = useCallback(async () => {
-    const now = Date.now();
-    if (now - lastTypingPingRef.current < TYPING_PING_THROTTLE_MS) return;
-    lastTypingPingRef.current = now;
-    try {
-      await setTyping(thread.chatId, true);
-    } catch {
-      // Best-effort
-    }
-    if (typingClearTimerRef.current) clearTimeout(typingClearTimerRef.current);
-    typingClearTimerRef.current = setTimeout(() => {
-      void setTyping(thread.chatId, false);
-      lastTypingPingRef.current = 0;
-    }, TYPING_STALE_MS);
-  }, [setTyping, thread.chatId]);
-
-  useEffect(() => {
-    return () => {
-      if (typingClearTimerRef.current) clearTimeout(typingClearTimerRef.current);
-      // Clear typing presence on screen unmount so we don't leave a ghost ping.
-      void setTyping(thread.chatId, false);
-    };
-  }, [setTyping, thread.chatId]);
-
-  // Other participants who are currently typing (non-stale).
-  const typingNames = useMemo(() => {
-    if (!thread.typing) return [] as string[];
-    const now = Date.now();
-    const ids = Object.entries(thread.typing)
-      .filter(([userId, ts]) => userId !== user?.userId && now - (ts ?? 0) < TYPING_STALE_MS)
-      .map(([userId]) => userId);
-    return ids.map((id) => participantMap.get(id) ?? 'Someone');
-  }, [thread.typing, user?.userId, participantMap]);
+    mentionSelect(participant, text, setText);
+  }, [mentionSelect, text]);
 
   // ──────────────────────────── Pinned messages ────────────────────────────
   const handlePinnedTap = useCallback((ref: PinnedMessageRef) => {
@@ -1836,8 +1382,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           maxToRenderPerBatch={10}
           windowSize={10}
           initialNumToRender={15}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.3}
           onScrollToIndexFailed={({ index }) => {
-            // Message not yet rendered — scroll to approximate offset then retry
             listRef.current?.scrollToOffset({
               offset: index * 80,
               animated: true,
@@ -2107,7 +1654,6 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           onClose={() => {
             setSearchOpen(false);
             setSearchQuery('');
-            setSearchIndex(0);
             setHighlightedMessageId(null);
           }}
           topInset={insets.top}
@@ -2174,8 +1720,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             setTimeout(() => {
               if (group.length > 1) {
                 const ids = group.map((m) => m.messageId || m.id);
-                enterSelectionMode();
-                setSelectedIds(new Set(ids));
+                enterSelectionModeMulti(ids);
               } else {
                 enterSelectionMode(actionTarget);
               }

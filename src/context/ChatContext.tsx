@@ -18,6 +18,7 @@ import { v4 as uuid } from 'uuid';
 import {
   applyRemoteMessageState,
   getChatMessages,
+  getChatMessagesPaginated,
   initMessageDB,
   markMessagesRead,
   saveMessageLocally,
@@ -73,6 +74,7 @@ interface ChatContextValue {
   loading: boolean;
   sendMessage: (payload: SendMessagePayload) => Promise<void>;
   subscribeToMessages: (chatId: string, onData: (messages: ChatMessage[]) => void) => () => void;
+  loadMoreMessages: (chatId: string, before: number) => Promise<{ messages: ChatMessage[]; hasMore: boolean }>;
   ensureGroupThread: (groupId: string, participants: ChatParticipant[]) => Promise<string>;
   ensureDirectThread: (otherParticipant: ChatParticipant) => Promise<string>;
   markChatAsRead: (chatId: string) => Promise<void>;
@@ -217,12 +219,29 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         await initMessageDB();
         await initMediaDirectory();
         console.log('✅ Message and media storage initialized');
+        // Drain any pending message state mutations from prior offline sessions
+        const { drain } = await import('@/services/pendingStateQueue');
+        await drain();
       } catch (error) {
         console.error('❌ Failed to initialize database:', error);
       }
     };
 
     void initDB();
+  }, []);
+
+  // Drain pending state queue on network reconnect
+  useEffect(() => {
+    let wasOffline = false;
+    const NetInfo = require('@react-native-community/netinfo').default;
+    const unsubscribe = NetInfo.addEventListener((state: { isConnected: boolean | null; isInternetReachable: boolean | null }) => {
+      const online = Boolean(state.isConnected && state.isInternetReachable);
+      if (online && wasOffline) {
+        void import('@/services/pendingStateQueue').then(({ drain }) => drain());
+      }
+      wasOffline = !online;
+    });
+    return () => unsubscribe();
   }, []);
 
   // Firestore chat thread subscription
@@ -454,6 +473,14 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     };
   }, [getRecipientCount, getThreadByChatId]);
 
+  const loadMoreMessages = useCallback(
+    async (chatId: string, before: number) => {
+      await waitForChatWrites(chatId);
+      return getChatMessagesPaginated(chatId, { limit: 30, before });
+    },
+    [],
+  );
+
   const sendMessage = useCallback(
     async ({ chatId, requestId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo, location, forwardedFrom, mentions, onStageChange }: SendMessagePayload) => {
       if (!user) {
@@ -555,6 +582,13 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         await updateDoc(doc(db, 'chats', chatId), {
           groupId: groupId ?? null,
           updatedAt: Date.now(),
+          lastMessage: {
+            messageId: message.messageId,
+            senderId: message.senderId,
+            type: message.type,
+            content: type !== 'text' ? getMessageTypeLabel(type) : content,
+            createdAt: message.createdAt,
+          },
         });
 
         onStageChange?.('complete');
@@ -708,19 +742,16 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const setTyping = useCallback(
     async (chatId: string, isTyping: boolean) => {
       if (!user) return;
-      const chatDoc = doc(db, 'chats', chatId);
+      const { getDatabase, ref, set, remove } = await import('firebase/database');
+      const rtdb = getDatabase();
+      const typingRef = ref(rtdb, `typing/${chatId}/${user.userId}`);
       try {
         if (isTyping) {
-          await updateDoc(chatDoc, {
-            [`typing.${user.userId}`]: Date.now(),
-          });
+          await set(typingRef, Date.now());
         } else {
-          await updateDoc(chatDoc, {
-            [`typing.${user.userId}`]: deleteField(),
-          });
+          await remove(typingRef);
         }
       } catch (error) {
-        // Typing presence is best-effort — non-blocking.
         console.warn('setTyping failed', error);
       }
     },
@@ -733,6 +764,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       loading,
       sendMessage,
       subscribeToMessages,
+      loadMoreMessages,
       ensureGroupThread,
       ensureDirectThread,
       markChatAsRead,
@@ -744,6 +776,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       ensureGroupThread,
       ensureDirectThread,
       loading,
+      loadMoreMessages,
       markChatAsRead,
       sendMessage,
       subscribeToMessages,

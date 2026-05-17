@@ -171,6 +171,33 @@ export const getChatMessages = async (chatId: string): Promise<ChatMessage[]> =>
   }
 };
 
+export interface PaginatedResult {
+  messages: ChatMessage[];
+  hasMore: boolean;
+}
+
+// Get paginated messages for a chat (newest first)
+export const getChatMessagesPaginated = async (
+  chatId: string,
+  options: { limit: number; before?: number },
+): Promise<PaginatedResult> => {
+  try {
+    const all = await readMessages(chatId);
+    // Sort newest first
+    const sorted = [...all].sort((a, b) => b.createdAt - a.createdAt);
+    let filtered = sorted;
+    if (options.before !== undefined) {
+      filtered = sorted.filter((m) => m.createdAt < options.before!);
+    }
+    const messages = filtered.slice(0, options.limit);
+    const hasMore = filtered.length > options.limit;
+    return { messages, hasMore };
+  } catch (error) {
+    console.error('❌ Error getting paginated messages:', error);
+    return { messages: [], hasMore: false };
+  }
+};
+
 // Update a message's status in local storage
 export const updateMessageStatus = async (
   chatId: string,

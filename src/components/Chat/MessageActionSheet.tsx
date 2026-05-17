@@ -2,6 +2,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage } from '@/models';
 import { lightHaptic, mediumHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { BlurView } from 'expo-blur';
 import { useEffect } from 'react';
 import {
   Modal,

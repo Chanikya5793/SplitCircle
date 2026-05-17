@@ -76,6 +76,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   // `thread.lastMessage` is only used as a fallback when local storage hasn't
   // hydrated yet.
   const [localLastMessages, setLocalLastMessages] = useState<Record<string, ChatMessage | null>>({});
+  const [localUnreadCounts, setLocalUnreadCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (!user) return;
@@ -83,20 +84,33 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
 
     const recompute = async (chatId: string) => {
       const msgs = await getChatMessages(chatId);
+      const sorted = [...msgs].sort((a, b) => b.createdAt - a.createdAt);
+
       // Walk newest-first; first item not deleted-for-me and not deleted-for-everyone wins.
-      const visible = [...msgs]
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .find(
-          (m) =>
-            !m.deletedForEveryone &&
-            !(m.deletedFor ?? []).includes(user.userId),
-        ) ?? null;
+      const visible = sorted.find(
+        (m) =>
+          !m.deletedForEveryone &&
+          !(m.deletedFor ?? []).includes(user.userId),
+      ) ?? null;
       setLocalLastMessages((prev) => {
         const prevId = prev[chatId]?.messageId ?? prev[chatId]?.id ?? null;
         const nextId = visible?.messageId ?? visible?.id ?? null;
         const sameContent = (prev[chatId]?.content ?? '') === (visible?.content ?? '');
         if (prevId === nextId && sameContent) return prev;
         return { ...prev, [chatId]: visible };
+      });
+
+      // Derive unread count from local messages
+      const unread = msgs.filter(
+        (m) =>
+          m.senderId !== user.userId &&
+          !m.deletedForEveryone &&
+          !(m.deletedFor ?? []).includes(user.userId) &&
+          (!m.readBy || !m.readBy.includes(user.userId)),
+      ).length;
+      setLocalUnreadCounts((prev) => {
+        if (prev[chatId] === unread) return prev;
+        return { ...prev, [chatId]: unread };
       });
     };
 
@@ -137,7 +151,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
           comparison = nameA.localeCompare(nameB);
           break;
         case 'unread':
-          comparison = a.unreadCount - b.unreadCount;
+          comparison = (localUnreadCounts[a.chatId] ?? 0) - (localUnreadCounts[b.chatId] ?? 0);
           break;
         case 'updatedAt':
           // Use updatedAt or lastMessage.timestamp or fall back to 0
@@ -150,7 +164,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     });
 
     return result;
-  }, [threads, sortField, sortOrder, getChatTitle]);
+  }, [threads, sortField, sortOrder, getChatTitle, localUnreadCounts]);
 
   const handleOpenThread = (thread: ChatThread) => {
     lightHaptic();
@@ -187,10 +201,10 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                       style={{ backgroundColor: theme.colors.primary }}
                       color={theme.colors.onPrimary}
                     />
-                    {item.unreadCount > 0 && (
+                    {(localUnreadCounts[item.chatId] ?? 0) > 0 && (
                       <View style={[styles.unreadBadge, { backgroundColor: theme.colors.error, borderColor: theme.colors.background }]}>
                         <Text style={{ color: theme.colors.onError, fontSize: 10, fontWeight: 'bold' }}>
-                          {item.unreadCount > 9 ? '9+' : item.unreadCount}
+                          {(localUnreadCounts[item.chatId] ?? 0) > 9 ? '9+' : localUnreadCounts[item.chatId]}
                         </Text>
                       </View>
                     )}

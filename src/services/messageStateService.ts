@@ -45,9 +45,9 @@ export const publishMessageState = async (
       { merge: true },
     );
   } catch (error) {
-    // Best-effort — local write already happened, so failure here just delays
-    // cross-device convergence until the next online write.
-    console.warn('publishMessageState failed', error);
+    console.warn('publishMessageState failed, queuing for retry', error);
+    const { enqueue } = await import('@/services/pendingStateQueue');
+    await enqueue(chatId, messageId, partial);
   }
 };
 

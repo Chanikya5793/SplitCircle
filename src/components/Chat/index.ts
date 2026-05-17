@@ -1,4 +1,5 @@
 export { AttachmentMenu } from './AttachmentMenu';
+export { ChatErrorBoundary } from './ChatErrorBoundary';
 export type { AttachmentType, SelectedMedia } from './AttachmentMenu';
 export { LocationPicker } from './LocationPicker';
 export { MapErrorBoundary } from './MapErrorBoundary';

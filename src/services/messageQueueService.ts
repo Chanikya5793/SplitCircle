@@ -56,6 +56,7 @@ interface QueueMessagePayload {
   mediaMetadata?: ChatMessage['mediaMetadata'];
   replyTo?: ChatMessage['replyTo'];
   location?: ChatMessage['location'];
+  forwardedFrom?: ChatMessage['forwardedFrom'];
 }
 
 const isReceiptData = (value: unknown): value is ReceiptData => {
@@ -132,6 +133,7 @@ const parseQueuePayload = (value: unknown): QueueMessagePayload | null => {
     mediaMetadata: payload.mediaMetadata as ChatMessage['mediaMetadata'] | undefined,
     replyTo: payload.replyTo as ChatMessage['replyTo'] | undefined,
     location: payload.location as ChatMessage['location'] | undefined,
+    forwardedFrom: payload.forwardedFrom as ChatMessage['forwardedFrom'] | undefined,
   };
 };
 
@@ -216,6 +218,14 @@ export const queueMessage = async (
         address: message.location.address,
       };
       console.log('📍 Queuing message with location');
+    }
+
+    if (message.forwardedFrom) {
+      messageData.forwardedFrom = {
+        senderName: message.forwardedFrom.senderName || null,
+        hopCount: message.forwardedFrom.hopCount,
+      };
+      console.log('↪️ Queuing message with forwardedFrom');
     }
 
     await set(messageQueueRef, messageData);
@@ -330,6 +340,7 @@ export const listenForMessages = (
         mediaMetadata: payload.mediaMetadata,
         replyTo: payload.replyTo,
         location: payload.location,
+        forwardedFrom: payload.forwardedFrom,
         status: 'delivered',
         isFromMe: false,
         deliveredTo: [],

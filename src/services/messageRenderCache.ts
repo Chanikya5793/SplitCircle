@@ -134,6 +134,17 @@ export const hydrateChatRenderCache = (chatId: string): Promise<void> => {
           }
         }
       }
+      // Evict entries older than 7 days
+      const TTL_MS = 7 * 24 * 60 * 60 * 1000;
+      const cutoff = Date.now() - TTL_MS;
+      let evicted = false;
+      for (const [id, entry] of chat.entries) {
+        if (entry.ts < cutoff) {
+          chat.entries.delete(id);
+          evicted = true;
+        }
+      }
+      if (evicted) scheduleFlush(chatId);
     } catch (err) {
       console.warn('renderCache: hydrate failed', err);
     } finally {
