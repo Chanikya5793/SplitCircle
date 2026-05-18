@@ -1741,6 +1741,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       {/* Reaction details sheet */}
       <ReactionDetailsSheet
         visible={!!reactionTarget}
+        message={reactionTarget}
+        isMine={!!reactionTarget && reactionTarget.senderId === user?.userId}
         reactions={reactionTarget?.reactions}
         currentUserId={user?.userId}
         participantNames={allParticipantNames}

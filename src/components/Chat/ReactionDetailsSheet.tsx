@@ -1,10 +1,11 @@
 import { useTheme } from '@/context/ThemeContext';
-import type { ReactionMap } from '@/models';
+import type { ChatMessage, ReactionMap } from '@/models';
 import { lightHaptic } from '@/utils/haptics';
 import { BlurView } from 'expo-blur';
 import React, { useEffect } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Text } from 'react-native-paper';
+import { MessagePreviewBubble } from './MessageActionSheet';
 import Animated, {
   Easing,
   runOnJS,
@@ -17,6 +18,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface ReactionDetailsSheetProps {
   visible: boolean;
+  message?: ChatMessage | null;
+  isMine?: boolean;
   reactions?: ReactionMap;
   currentUserId?: string;
   participantNames?: Map<string, string>;
@@ -26,6 +29,8 @@ interface ReactionDetailsSheetProps {
 
 export const ReactionDetailsSheet = ({
   visible,
+  message,
+  isMine = false,
   reactions,
   currentUserId,
   participantNames,
@@ -36,22 +41,22 @@ export const ReactionDetailsSheet = ({
   const insets = useSafeAreaInsets();
 
   const fade = useSharedValue(0);
-  const translateY = useSharedValue(300);
+  const scale = useSharedValue(0.92);
 
   useEffect(() => {
     if (visible) {
-      fade.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.quad) });
-      translateY.value = withSpring(0, { damping: 25, stiffness: 300, mass: 0.8 });
+      fade.value = withTiming(1, { duration: 280, easing: Easing.out(Easing.quad) });
+      scale.value = withSpring(1, { damping: 18, stiffness: 180, mass: 0.9 });
     } else {
-      fade.value = withTiming(0, { duration: 150 });
-      translateY.value = withTiming(300, { duration: 150 });
+      fade.value = withTiming(0, { duration: 200, easing: Easing.in(Easing.quad) });
+      scale.value = withTiming(0.92, { duration: 200 });
     }
-  }, [visible, fade, translateY]);
+  }, [visible, fade, scale]);
 
   const backdropStyle = useAnimatedStyle(() => ({ opacity: fade.value }));
   const sheetStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
     opacity: fade.value,
+    transform: [{ scale: scale.value }],
   }));
 
   const entries = reactions
@@ -64,10 +69,10 @@ export const ReactionDetailsSheet = ({
   };
 
   const handleClose = () => {
-    fade.value = withTiming(0, { duration: 150, easing: Easing.in(Easing.quad) });
-    translateY.value = withTiming(300, { duration: 200, easing: Easing.in(Easing.quad) }, (finished) => {
+    fade.value = withTiming(0, { duration: 200, easing: Easing.in(Easing.quad) }, (finished) => {
       if (finished) runOnJS(onClose)();
     });
+    scale.value = withTiming(0.92, { duration: 200 });
   };
 
   const handleRemove = (emoji: string) => {
@@ -100,8 +105,18 @@ export const ReactionDetailsSheet = ({
         {/* Dismiss layer */}
         <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
 
-        {/* Sheet — anchored to bottom, passes through touches above */}
+        {/* Floating message bubble + sheet — anchored to bottom */}
         <View style={styles.sheetContainer} pointerEvents="box-none">
+          {message && (
+            <Animated.View style={[styles.bubbleWrap, sheetStyle]} pointerEvents="none">
+              <MessagePreviewBubble
+                message={message}
+                isMine={isMine}
+                theme={theme}
+                isDark={isDark}
+              />
+            </Animated.View>
+          )}
           <Animated.View style={[styles.sheet, { backgroundColor: cardBg, paddingBottom: insets.bottom + 16 }, sheetStyle]}>
             <BlurView
               intensity={isDark ? 30 : 50}
@@ -185,6 +200,10 @@ const styles = StyleSheet.create({
   sheetContainer: {
     flex: 1,
     justifyContent: 'flex-end',
+  },
+  bubbleWrap: {
+    paddingHorizontal: 24,
+    marginBottom: 12,
   },
   sheet: {
     borderTopLeftRadius: 22,

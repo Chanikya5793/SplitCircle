@@ -2,10 +2,12 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
 import { lightHaptic, mediumHaptic } from '@/utils/haptics';
+import { useVideoThumbnail } from '@/utils/videoThumbnail';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { BlurView } from 'expo-blur';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -55,7 +57,32 @@ interface MessageActionSheetProps {
   onAction: (action: MessageAction) => void;
 }
 
-const MessagePreviewBubble = React.memo(({ message, isMine, theme, isDark }: {
+const AVATAR_COLORS = [
+  '#E57373', '#F06292', '#BA68C8', '#9575CD', '#7986CB',
+  '#64B5F6', '#4FC3F7', '#4DD0E1', '#4DB6AC', '#81C784',
+  '#AED581', '#FF8A65', '#D4E157', '#FFD54F', '#FFB74D',
+];
+
+const getSenderColor = (id: string) => {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = id.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+};
+
+const getMediaIcon = (type?: string): keyof typeof Ionicons.glyphMap => {
+  switch (type) {
+    case 'image': return 'image';
+    case 'video': return 'videocam';
+    case 'audio': return 'musical-notes';
+    case 'file': return 'document';
+    case 'location': return 'location';
+    default: return 'chatbubble';
+  }
+};
+
+export const MessagePreviewBubble = React.memo(({ message, isMine, theme, isDark }: {
   message: ChatMessage;
   isMine: boolean;
   theme: any;
@@ -71,12 +98,21 @@ const MessagePreviewBubble = React.memo(({ message, isMine, theme, isDark }: {
   const hasAnyDelivered = hasAnyRead || (message.deliveredTo?.length ?? 0) > 0 || message.status === 'delivered';
   const tickColor = hasAnyRead ? '#35C6FF' : 'rgba(255,255,255,0.7)';
 
-  let previewText = message.content || '';
-  if (message.type === 'image') previewText = previewText || '📷 Photo';
-  else if (message.type === 'video') previewText = previewText || '🎥 Video';
-  else if (message.type === 'audio') previewText = previewText || '🎵 Audio';
-  else if (message.type === 'file') previewText = previewText || '📄 Document';
-  else if (message.type === 'location') previewText = previewText || '📍 Location';
+  const isVideo = message.type === 'video';
+  const videoUri = isVideo ? (message.localMediaPath || message.mediaUrl) : undefined;
+  const videoThumb = useVideoThumbnail(videoUri);
+  const displayUri = isVideo ? videoThumb : (message.localMediaPath || message.mediaUrl);
+  const hasMedia = (message.type === 'image' || message.type === 'video') && !!displayUri;
+
+  const caption = message.content || '';
+  let previewText = caption;
+  if (!previewText && !hasMedia) {
+    if (message.type === 'image') previewText = '📷 Photo';
+    else if (message.type === 'video') previewText = '🎥 Video';
+    else if (message.type === 'audio') previewText = '🎵 Audio';
+    else if (message.type === 'file') previewText = '📄 Document';
+    else if (message.type === 'location') previewText = '📍 Location';
+  }
 
   if (previewText.length > 120) previewText = previewText.slice(0, 117) + '…';
 
@@ -85,11 +121,68 @@ const MessagePreviewBubble = React.memo(({ message, isMine, theme, isDark }: {
       previewStyles.bubble,
       { backgroundColor: bubbleBg },
       isMine ? previewStyles.bubbleMine : previewStyles.bubbleOther,
+      hasMedia && previewStyles.mediaBubble,
     ]}>
-      <Text style={[previewStyles.content, { color: textColor }]} numberOfLines={4}>
-        {previewText}
-      </Text>
+      {/* Reply bar */}
+      {!!message.replyTo && (
+        <View style={[previewStyles.replyBar, {
+          borderLeftColor: getSenderColor(message.replyTo.senderId),
+          backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'),
+        }]}>
+          <Text
+            numberOfLines={1}
+            style={[previewStyles.replySender, {
+              color: isMine ? 'rgba(255,255,255,0.9)' : getSenderColor(message.replyTo.senderId),
+            }]}
+          >
+            {message.replyTo.senderName}
+          </Text>
+          <View style={previewStyles.replyContentRow}>
+            {message.replyTo.type && message.replyTo.type !== 'text' && (
+              <Ionicons
+                name={getMediaIcon(message.replyTo.type)}
+                size={12}
+                color={isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant}
+                style={{ marginRight: 3 }}
+              />
+            )}
+            <Text
+              numberOfLines={1}
+              style={[previewStyles.replyText, {
+                color: isMine ? 'rgba(255,255,255,0.8)' : theme.colors.onSurfaceVariant,
+              }]}
+            >
+              {message.replyTo.content}
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* Media thumbnail */}
+      {hasMedia && (
+        <View style={previewStyles.thumbnailWrap}>
+          <Image source={{ uri: displayUri }} style={previewStyles.thumbnail} resizeMode="cover" />
+          {message.type === 'video' && (
+            <View style={previewStyles.playBadge}>
+              <View style={previewStyles.playIcon}>
+                <Ionicons name="play" size={12} color="#fff" style={{ marginLeft: 1 }} />
+              </View>
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* Caption text — only real content, not fallback labels when thumbnail is shown */}
+      {!!previewText && (
+        <Text style={[previewStyles.content, hasMedia && previewStyles.captionText, { color: textColor }]} numberOfLines={hasMedia ? 2 : 4}>
+          {previewText}
+        </Text>
+      )}
+
       <View style={previewStyles.meta}>
+        {!!message.editedAt && (
+          <Text style={[previewStyles.edited, { color: metaColor }]}>edited</Text>
+        )}
         <Text style={[previewStyles.time, { color: metaColor }]}>
           {formatRelativeTime(message.createdAt)}
         </Text>
@@ -116,23 +209,67 @@ const previewStyles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 18,
-    maxWidth: '80%',
+    maxWidth: '75%',
     shadowColor: '#000',
     shadowOpacity: 0.12,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 4,
   },
+  mediaBubble: {
+    padding: 4,
+    paddingBottom: 6,
+  },
   bubbleMine: { alignSelf: 'flex-end', borderBottomRightRadius: 6 },
   bubbleOther: { alignSelf: 'flex-start', borderBottomLeftRadius: 6 },
+  replyBar: {
+    borderLeftWidth: 3,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginBottom: 4,
+  },
+  replySender: { fontSize: 12, fontWeight: '600', marginBottom: 1 },
+  replyContentRow: { flexDirection: 'row', alignItems: 'center' },
+  replyText: { fontSize: 13, flex: 1 },
+  thumbnailWrap: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    aspectRatio: 1.3,
+    maxHeight: 120,
+  },
+  thumbnail: {
+    width: '100%',
+    height: '100%',
+  },
+  playBadge: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   content: { fontSize: 16, lineHeight: 21 },
+  captionText: { fontSize: 14, lineHeight: 18, paddingHorizontal: 10, marginTop: 4 },
   meta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
     gap: 4,
     marginTop: 2,
+    paddingHorizontal: 6,
   },
+  edited: { fontSize: 10, fontStyle: 'italic', marginRight: 2 },
   time: { fontSize: 11 },
   doubleTick: { flexDirection: 'row', alignItems: 'center' },
 });
@@ -159,11 +296,11 @@ export const MessageActionSheet = ({
 
   useEffect(() => {
     if (visible) {
-      fade.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.quad) });
-      scale.value = withSpring(1, { damping: 22, stiffness: 320, mass: 0.8 });
+      fade.value = withTiming(1, { duration: 280, easing: Easing.out(Easing.quad) });
+      scale.value = withSpring(1, { damping: 18, stiffness: 180, mass: 0.9 });
     } else {
-      fade.value = withTiming(0, { duration: 120, easing: Easing.in(Easing.quad) });
-      scale.value = withTiming(0.92, { duration: 120 });
+      fade.value = withTiming(0, { duration: 200, easing: Easing.in(Easing.quad) });
+      scale.value = withTiming(0.92, { duration: 200 });
     }
   }, [visible, fade, scale]);
 
@@ -188,10 +325,10 @@ export const MessageActionSheet = ({
   if (!message) return null;
 
   const handleClose = () => {
-    fade.value = withTiming(0, { duration: 120, easing: Easing.in(Easing.quad) }, (finished) => {
+    fade.value = withTiming(0, { duration: 200, easing: Easing.in(Easing.quad) }, (finished) => {
       if (finished) runOnJS(onClose)();
     });
-    scale.value = withTiming(0.92, { duration: 120 });
+    scale.value = withTiming(0.92, { duration: 200 });
   };
 
   const handleReact = (emoji: string) => {
