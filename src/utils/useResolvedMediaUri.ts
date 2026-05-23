@@ -66,12 +66,12 @@ const NON_MEDIA = new Set(['text', 'system', 'call', 'location']);
 
 export const useResolvedMediaUri = (input: ResolveInput): ResolvedMediaState => {
   const stamp = buildStamp(input);
-  // Seed with the cache if we have a hit — that's the whole point of this
-  // hook talking to the render cache. Falls back to the optimistic value
-  // from the message otherwise so first-render-after-fresh-load still
-  // flashes something instead of a blank cell.
-  const cached = getCachedRender(input.chatId, input.messageId, stamp);
-  const initial = cached?.mediaUri ?? input.localMediaPath ?? input.mediaUrl;
+  // Seed optimistically from the message so the first render flashes
+  // *something*. The effect verifies the file and corrects if needed.
+  // We no longer trust the render cache for initial state because cached
+  // paths go stale after reinstalls / cache evictions, and Image doesn't
+  // reliably fire onError for missing local files on all platforms.
+  const initial = input.localMediaPath ?? input.mediaUrl;
   const [uri, setUri] = useState<string | undefined>(initial);
   const [isDownloading, setIsDownloading] = useState(false);
   const [errored, setErrored] = useState(false);
@@ -84,17 +84,22 @@ export const useResolvedMediaUri = (input: ResolveInput): ResolvedMediaState => 
     let cancelled = false;
     setRetriedFromError(false);
 
-    // Cache fast path — if we already resolved this exact message version,
-    // skip the filesystem round-trip entirely. The onError handler still
-    // covers the rare case where the file disappeared since we cached it.
-    const hit = getCachedRender(input.chatId, input.messageId, stamp);
-    if (hit?.mediaUri) {
-      setUri(hit.mediaUri);
-      setErrored(false);
-      return;
-    }
-
     (async () => {
+      // Cache fast path — verify the cached file still exists on disk before
+      // trusting it. Local paths go stale after reinstalls (documentDirectory
+      // UUID changes) or when iOS evicts caches under disk pressure.
+      const hit = getCachedRender(input.chatId, input.messageId, stamp);
+      if (hit?.mediaUri) {
+        const still = await mediaExistsLocally(hit.mediaUri);
+        if (cancelled) return;
+        if (still) {
+          setUri(hit.mediaUri);
+          setErrored(false);
+          return;
+        }
+        // Stale — fall through to full resolution below.
+      }
+
       // 1. Prefer local if we can confirm the file exists.
       if (input.localMediaPath) {
         const exists = await mediaExistsLocally(input.localMediaPath);
