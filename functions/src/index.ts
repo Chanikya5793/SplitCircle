@@ -863,7 +863,7 @@ export const registerVoipPushToken = onCall(
 // ─────────────────────────────────────────────────────────────
 
 export const runRecurringBillsScheduler = onSchedule(
-    "every 15 minutes",
+    "every 6 hours",
     async () => {
         try {
             const result = await processAllDueRecurringBills();
@@ -876,7 +876,7 @@ export const runRecurringBillsScheduler = onSchedule(
 );
 
 export const processNotificationReceipts = onSchedule(
-    "every 10 minutes",
+    "every 1 hours",
     async () => {
         try {
             const result = await processPendingNotificationReceipts();

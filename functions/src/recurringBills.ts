@@ -205,9 +205,10 @@ const queryBills = async (groupId?: string) => {
     const db = getFirestore();
     const ref = db.collection(RECURRING_BILLS_COLLECTION);
     if (groupId) {
-        return ref.where("groupId", "==", groupId).get();
+        return ref.where("groupId", "==", groupId).where("isActive", "==", true).get();
     }
-    return ref.get();
+    // Only scan active bills — inactive ones are permanently skipped anyway.
+    return ref.where("isActive", "==", true).get();
 };
 
 const processQueryResult = async (

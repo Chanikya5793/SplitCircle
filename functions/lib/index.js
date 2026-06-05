@@ -668,7 +668,7 @@ exports.registerVoipPushToken = (0, https_1.onCall)({
 // ─────────────────────────────────────────────────────────────
 // Scheduler — Recurring Bills
 // ─────────────────────────────────────────────────────────────
-exports.runRecurringBillsScheduler = (0, scheduler_1.onSchedule)("every 15 minutes", async () => {
+exports.runRecurringBillsScheduler = (0, scheduler_1.onSchedule)("every 6 hours", async () => {
     try {
         const result = await (0, recurringBills_1.processAllDueRecurringBills)();
         logger.info("Recurring bills scheduler completed", result);
@@ -678,7 +678,7 @@ exports.runRecurringBillsScheduler = (0, scheduler_1.onSchedule)("every 15 minut
         throw error;
     }
 });
-exports.processNotificationReceipts = (0, scheduler_1.onSchedule)("every 10 minutes", async () => {
+exports.processNotificationReceipts = (0, scheduler_1.onSchedule)("every 1 hours", async () => {
     try {
         const result = await (0, notifications_1.processPendingNotificationReceipts)();
         logger.info("Processed pending notification receipts", result);
