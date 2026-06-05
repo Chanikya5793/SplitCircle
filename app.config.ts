@@ -63,7 +63,7 @@ const iosPushNotificationsEnabled = true;
 const config = {
   name: 'ManaSplit',
   slug: 'SplitCircle',
-  version: '0.0.2',
+  version: '0.0.5',
   owner: 'chanikya6163',
   orientation: 'portrait',
   icon: './assets/icon.png',
@@ -157,6 +157,7 @@ const config = {
     ],
     ['expo-build-properties', { android: { minSdkVersion: 24 } }],
     '@livekit/react-native-expo-plugin',
+    'react-native-compressor',
   ],
   extra: {
     eas: {

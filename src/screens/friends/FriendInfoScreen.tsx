@@ -304,6 +304,34 @@ export const FriendInfoScreen = () => {
           </List.Section>
         </GlassView>
 
+        {/* Starred messages — opens the per-chat starred view scoped to this friend. */}
+        <GlassView style={styles.sectionCard}>
+          <List.Item
+            title="Starred messages"
+            description="Quick access to messages you've starred"
+            left={(props) => <List.Icon {...props} icon="star-outline" color={theme.colors.primary} />}
+            right={(props) => <List.Icon {...props} icon="chevron-right" />}
+            onPress={async () => {
+              if (!user || !profile) return;
+              lightHaptic();
+              try {
+                const chatId = await ensureDirectThread({
+                  userId: profile.userId,
+                  displayName: profile.displayName ?? 'Friend',
+                  photoURL: profile.photoURL,
+                  status: 'online',
+                });
+                navigation.navigate(ROUTES.APP.STARRED_MESSAGES, {
+                  chatId,
+                  title: profile.displayName ?? 'Friend',
+                });
+              } catch (error) {
+                console.warn('FriendInfoScreen starred-open failed', error);
+              }
+            }}
+          />
+        </GlassView>
+
         {/* Groups in common */}
         {sharedGroups.length > 0 && (
           <GlassView style={styles.sectionCard}>

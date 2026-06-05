@@ -24,8 +24,12 @@ const storage = getStorage();
 // Directory for storing downloaded chat media
 export const MEDIA_DIRECTORY = `${documentDirectory}chat_media/`;
 
-// Maximum file size for upload (50MB)
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+// Maximum file size for upload (100MB).
+// Matches WhatsApp's video cap. Firebase Storage itself supports far larger
+// files; this is purely a client-side guard so we don't try to upload a
+// gigabyte over a phone connection. Raise carefully — also bump the matching
+// resolution/bitrate skip-conditions in `processVideo`.
+const MAX_FILE_SIZE = 100 * 1024 * 1024;
 const TRUSTED_MEDIA_HOSTS = ['firebasestorage.googleapis.com', 'storage.googleapis.com'];
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -44,6 +48,14 @@ const ALLOWED_MIME_TYPES = new Set([
   'audio/mp4',
   'audio/wav',
   'audio/ogg',
+  'audio/x-m4a',
+  'audio/m4a',
+  'audio/aac',
+  'audio/flac',
+  'audio/x-flac',
+  'audio/x-wav',
+  'audio/3gpp',
+  'audio/amr',
   'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -143,6 +155,28 @@ export const mediaExistsLocally = async (localPath: string): Promise<boolean> =>
 };
 
 /**
+ * Sentinel thrown when the source URI can't be materialized into a local
+ * file — most commonly an iCloud-only photo whose download was never
+ * completed, or a cache entry that was purged between picker and send.
+ * Mirrors `MediaSourceUnavailableError` from `mediaProcessingService` so the
+ * failed-items sheet can show a single, actionable reason regardless of
+ * which stage tripped. */
+export class MediaCopyFailedError extends Error {
+  constructor(message = 'Could not access the picked media.') {
+    super(message);
+    this.name = 'MediaCopyFailedError';
+  }
+}
+
+const looksLikeICloudUnavailable = (err: unknown): boolean => {
+  const message = err instanceof Error ? err.message : String(err ?? '');
+  // PhotoKit's "asset not available, network access required" surfaces as
+  // PHPhotosErrorDomain 3164 on iOS; the underlying file copy throws an
+  // ENOENT/EACCES on both platforms when iCloud refuses to deliver.
+  return /3164|asset not available|network access|ENOENT|ENOTFOUND|EACCES/i.test(message);
+};
+
+/**
  * Copy a file to local media storage (for sender's own media)
  */
 export const copyToLocalStorage = async (
@@ -151,39 +185,61 @@ export const copyToLocalStorage = async (
   messageId: string,
   fileName: string
 ): Promise<string> => {
+  if (!isAllowedUploadUri(sourceUri)) {
+    throw new MediaCopyFailedError('Unsupported media source URI.');
+  }
+
+  const safeChatId = sanitizePathSegment(chatId, 'chat');
+  // Ensure chat directory exists
+  const chatDir = `${MEDIA_DIRECTORY}${safeChatId}/`;
+  const chatDirInfo = await getInfoAsync(chatDir);
+  if (!chatDirInfo.exists) {
+    await makeDirectoryAsync(chatDir, { intermediates: true });
+  }
+
+  const localPath = getLocalMediaPath(chatId, messageId, fileName);
+
+  // If source is already the destination, just return
+  if (sourceUri === localPath) {
+    console.log('✅ Media already in local storage:', localPath);
+    return localPath;
+  }
+
   try {
-    if (!isAllowedUploadUri(sourceUri)) {
-      throw new Error('Unsupported media source URI.');
-    }
-
-    const safeChatId = sanitizePathSegment(chatId, 'chat');
-    // Ensure chat directory exists
-    const chatDir = `${MEDIA_DIRECTORY}${safeChatId}/`;
-    const chatDirInfo = await getInfoAsync(chatDir);
-    if (!chatDirInfo.exists) {
-      await makeDirectoryAsync(chatDir, { intermediates: true });
-    }
-    
-    const localPath = getLocalMediaPath(chatId, messageId, fileName);
-    
-    // If source is already the destination, just return
-    if (sourceUri === localPath) {
-      console.log('✅ Media already in local storage:', localPath);
-      return localPath;
-    }
-
-    // Copy file from source to local storage
     await copyAsync({
       from: sourceUri,
       to: localPath,
     });
-    
-    console.log('✅ Media copied to local storage:', localPath);
-    return localPath;
   } catch (error) {
     console.error('❌ Error copying to local storage:', error);
-    throw error;
+    if (looksLikeICloudUnavailable(error)) {
+      throw new MediaCopyFailedError(
+        'Couldn’t download this item from iCloud. Open it once in Photos to make it available, then try again.',
+      );
+    }
+    throw new MediaCopyFailedError(
+      error instanceof Error ? error.message : 'Could not access the picked media.',
+    );
   }
+
+  // Defensive: if the copy succeeded but produced an empty / missing file
+  // (rare but seen on iOS when iCloud thumbnails ship without the full asset),
+  // surface the same actionable error instead of uploading a zero-byte blob.
+  try {
+    const info = await getInfoAsync(localPath);
+    if (!info.exists || ('size' in info && info.size === 0)) {
+      throw new MediaCopyFailedError(
+        'The selected media is still downloading from iCloud. Try again in a moment.',
+      );
+    }
+  } catch (error) {
+    if (error instanceof MediaCopyFailedError) throw error;
+    // getInfoAsync failure here is unusual — fall through and let the
+    // upload step report whatever it sees.
+  }
+
+  console.log('✅ Media copied to local storage:', localPath);
+  return localPath;
 };
 
 /**
@@ -277,6 +333,13 @@ export const uploadMedia = async (
   }
 };
 
+// In-flight download de-duplication. Keyed by the destination `localPath`:
+// when several bubbles/album cells mount at the same time for the same
+// message (FlatList recycling during fast scroll, or a single → album reflow
+// after a sibling arrives), they all converge on one downloadAsync call
+// instead of racing to write the same file in parallel.
+const inflightDownloads = new Map<string, Promise<MediaDownloadResult>>();
+
 /**
  * Download media from URL to local storage
  */
@@ -286,43 +349,47 @@ export const downloadMedia = async (
   messageId: string,
   fileName: string
 ): Promise<MediaDownloadResult> => {
-  try {
-    if (!isTrustedMediaUrl(downloadUrl)) {
-      throw new Error('Blocked media download from untrusted URL.');
-    }
-
-    const safeChatId = sanitizePathSegment(chatId, 'chat');
-    const localPath = getLocalMediaPath(safeChatId, messageId, fileName);
-    
-    // Check if already downloaded
-    const exists = await mediaExistsLocally(localPath);
-    if (exists) {
-      console.log('📦 Media already exists locally:', localPath);
-      return { localPath, fileExists: true };
-    }
-    
-    // Ensure chat directory exists
-    const chatDir = `${MEDIA_DIRECTORY}${safeChatId}/`;
-    const chatDirInfo = await getInfoAsync(chatDir);
-    if (!chatDirInfo.exists) {
-      await makeDirectoryAsync(chatDir, { intermediates: true });
-    }
-    
-    console.log('📥 Downloading media to:', localPath);
-    
-    // Download the file
-    const downloadResult = await downloadAsync(downloadUrl, localPath);
-    
-    if (downloadResult.status !== 200) {
-      throw new Error(`Download failed with status ${downloadResult.status}`);
-    }
-    
-    console.log('✅ Media downloaded:', localPath);
-    return { localPath, fileExists: true };
-  } catch (error) {
-    console.error('❌ Media download error:', error);
-    throw error;
+  if (!isTrustedMediaUrl(downloadUrl)) {
+    throw new Error('Blocked media download from untrusted URL.');
   }
+
+  const safeChatId = sanitizePathSegment(chatId, 'chat');
+  const localPath = getLocalMediaPath(safeChatId, messageId, fileName);
+
+  // Fast path: already on disk. No download, no inflight bookkeeping.
+  const exists = await mediaExistsLocally(localPath);
+  if (exists) {
+    return { localPath, fileExists: true };
+  }
+
+  const ongoing = inflightDownloads.get(localPath);
+  if (ongoing) return ongoing;
+
+  const task = (async (): Promise<MediaDownloadResult> => {
+    try {
+      const chatDir = `${MEDIA_DIRECTORY}${safeChatId}/`;
+      const chatDirInfo = await getInfoAsync(chatDir);
+      if (!chatDirInfo.exists) {
+        await makeDirectoryAsync(chatDir, { intermediates: true });
+      }
+
+      console.log('📥 Downloading media to:', localPath);
+      const downloadResult = await downloadAsync(downloadUrl, localPath);
+      if (downloadResult.status !== 200) {
+        throw new Error(`Download failed with status ${downloadResult.status}`);
+      }
+      console.log('✅ Media downloaded:', localPath);
+      return { localPath, fileExists: true };
+    } catch (error) {
+      console.error('❌ Media download error:', error);
+      throw error;
+    } finally {
+      inflightDownloads.delete(localPath);
+    }
+  })();
+
+  inflightDownloads.set(localPath, task);
+  return task;
 };
 
 /**
@@ -404,6 +471,14 @@ export const getExtensionFromMimeType = (mimeType: string): string => {
     'audio/mp4': '.m4a',
     'audio/wav': '.wav',
     'audio/ogg': '.ogg',
+    'audio/x-m4a': '.m4a',
+    'audio/m4a': '.m4a',
+    'audio/aac': '.aac',
+    'audio/flac': '.flac',
+    'audio/x-flac': '.flac',
+    'audio/x-wav': '.wav',
+    'audio/3gpp': '.3gp',
+    'audio/amr': '.amr',
     'application/pdf': '.pdf',
     'application/msword': '.doc',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',

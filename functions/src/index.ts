@@ -28,6 +28,7 @@ import {
     touchFriendInteraction,
 } from "./friends";
 export { parseReceiptWithLLM } from "./parseReceiptWithLLM";
+export { cleanupOldRtdbData } from "./cleanup";
 
 initializeApp();
 
@@ -862,7 +863,7 @@ export const registerVoipPushToken = onCall(
 // ─────────────────────────────────────────────────────────────
 
 export const runRecurringBillsScheduler = onSchedule(
-    "every 15 minutes",
+    "every 6 hours",
     async () => {
         try {
             const result = await processAllDueRecurringBills();
@@ -875,7 +876,7 @@ export const runRecurringBillsScheduler = onSchedule(
 );
 
 export const processNotificationReceipts = onSchedule(
-    "every 10 minutes",
+    "every 1 hour",
     async () => {
         try {
             const result = await processPendingNotificationReceipts();

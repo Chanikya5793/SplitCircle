@@ -1,17 +1,18 @@
+import { LinkPreview } from '@/components/Chat/LinkPreview';
 import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
+import { ReactionsRow } from '@/components/Chat/ReactionsRow';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { ChatMessage, MessageStatus, MessageType } from '@/models';
+import type { ChatMessage, MessageStatus, MessageType, UrlPreview } from '@/models';
+import { extractFirstUrl, fetchLinkPreview } from '@/services/linkPreviewService';
+import { updateMessageUrlPreview } from '@/services/localMessageStorage';
 import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { formatRelativeTime } from '@/utils/format';
 import { hasGoogleMapsApiKey } from '@/utils/hasGoogleMapsApiKey';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer, type AudioStatus } from 'expo-audio';
-import { getContentUriAsync, getInfoAsync } from 'expo-file-system/legacy';
-import * as IntentLauncher from 'expo-intent-launcher';
-import * as Sharing from 'expo-sharing';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View, ViewStyle } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
@@ -29,9 +30,29 @@ interface MessageBubbleProps {
   onReplyPress?: (messageId: string) => void;
   /** When provided, tapping an image bubble defers to this handler instead of opening the local fullscreen modal. Used to route into the chat media gallery. */
   onMediaPress?: (message: ChatMessage) => void;
+  /** Long-press anywhere on the bubble. Opens the action sheet in ChatRoomScreen. */
+  onLongPress?: (message: ChatMessage) => void;
+  /** Tap on an existing reactions chip to open the reaction details / picker. */
+  onReactionsPress?: (message: ChatMessage) => void;
+  /** Tap on a document bubble — opens the in-app FilePreviewScreen. */
+  onFilePress?: (message: ChatMessage) => void;
+  /** Double-tap on the bubble — used for quick ❤️ reaction. */
+  onDoubleTap?: (message: ChatMessage) => void;
+  /** When in selection mode, every tap toggles selection instead of doing the default action. */
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (message: ChatMessage) => void;
+  /** Tap a mention in this bubble — opens that user's profile. */
+  onMentionPress?: (userId: string) => void;
+  /** Search query to highlight inside the message text. */
+  searchQuery?: string;
+  /** Map of userId → display name; used to render mentions as @Name. */
+  mentionLabels?: Map<string, string>;
   isGroupChat?: boolean;
   totalRecipients?: number;
   highlighted?: boolean;
+  /** Used to dim the row when an action sheet is anchored to a different message — gives the focused-bubble feel. */
+  dimmed?: boolean;
 }
 
 const AVATAR_COLORS = [
@@ -54,6 +75,101 @@ const getSenderColor = (id: string) => {
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const MAX_IMAGE_WIDTH = SCREEN_WIDTH * 0.65;
 const MAX_IMAGE_HEIGHT = 300;
+
+// Tokenize a chat message body into mention / link / search-match / text spans.
+type Span =
+  | { kind: 'text'; text: string }
+  | { kind: 'mention'; text: string; userId: string }
+  | { kind: 'link'; text: string; url: string }
+  | { kind: 'highlight'; text: string };
+
+const URL_PATTERN = /(\bhttps?:\/\/[^\s<>"']+)/gi;
+const MENTION_PATTERN = /@([a-zA-Z0-9_-]{1,40})/g;
+
+const splitMentions = (text: string, mentionLabels?: Map<string, string>): Span[] => {
+  if (!text) return [];
+  if (!mentionLabels || mentionLabels.size === 0) {
+    return [{ kind: 'text', text }];
+  }
+  // Build a lookup keyed by lowercased display-name (without spaces) → userId
+  // so "@alice" and "@AliceJones" both resolve.
+  const byLabel = new Map<string, string>();
+  mentionLabels.forEach((name, userId) => {
+    byLabel.set(name.replace(/\s+/g, '').toLowerCase(), userId);
+    byLabel.set(userId.toLowerCase(), userId);
+  });
+
+  const spans: Span[] = [];
+  let lastIndex = 0;
+  for (const match of text.matchAll(MENTION_PATTERN)) {
+    const candidate = match[1].toLowerCase();
+    const userId = byLabel.get(candidate);
+    if (!userId) continue;
+    if (match.index === undefined) continue;
+    if (match.index > lastIndex) {
+      spans.push({ kind: 'text', text: text.slice(lastIndex, match.index) });
+    }
+    spans.push({ kind: 'mention', text: match[0], userId });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    spans.push({ kind: 'text', text: text.slice(lastIndex) });
+  }
+  return spans.length ? spans : [{ kind: 'text', text }];
+};
+
+const splitLinks = (spans: Span[]): Span[] => {
+  const out: Span[] = [];
+  for (const span of spans) {
+    if (span.kind !== 'text') {
+      out.push(span);
+      continue;
+    }
+    let lastIndex = 0;
+    for (const match of span.text.matchAll(URL_PATTERN)) {
+      if (match.index === undefined) continue;
+      if (match.index > lastIndex) {
+        out.push({ kind: 'text', text: span.text.slice(lastIndex, match.index) });
+      }
+      out.push({ kind: 'link', text: match[0], url: match[0] });
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < span.text.length) {
+      out.push({ kind: 'text', text: span.text.slice(lastIndex) });
+    }
+  }
+  return out;
+};
+
+const splitHighlights = (spans: Span[], query?: string): Span[] => {
+  const q = (query ?? '').trim();
+  if (!q) return spans;
+  const lower = q.toLowerCase();
+  const out: Span[] = [];
+  for (const span of spans) {
+    if (span.kind !== 'text') {
+      out.push(span);
+      continue;
+    }
+    const text = span.text;
+    let cursor = 0;
+    let idx = text.toLowerCase().indexOf(lower);
+    while (idx !== -1) {
+      if (idx > cursor) out.push({ kind: 'text', text: text.slice(cursor, idx) });
+      out.push({ kind: 'highlight', text: text.slice(idx, idx + q.length) });
+      cursor = idx + q.length;
+      idx = text.toLowerCase().indexOf(lower, cursor);
+    }
+    if (cursor < text.length) out.push({ kind: 'text', text: text.slice(cursor) });
+  }
+  return out;
+};
+
+const tokenizeContent = (
+  text: string,
+  mentionLabels?: Map<string, string>,
+  searchQuery?: string,
+): Span[] => splitHighlights(splitLinks(splitMentions(text, mentionLabels)), searchQuery);
 
 // Helper to format file size
 const formatFileSize = (bytes?: number): string => {
@@ -160,13 +276,63 @@ const VideoPlayerComponent = ({ uri, style, showControls = true, showOverlay = f
   );
 };
 
-export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, onReplyPress, onMediaPress, isGroupChat, totalRecipients, highlighted }: MessageBubbleProps) => {
+const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, onReplyPress, onMediaPress, onLongPress, onReactionsPress, onFilePress, onDoubleTap, selectionMode, selected, onToggleSelect, onMentionPress, searchQuery, mentionLabels, isGroupChat, totalRecipients, highlighted, dimmed }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
   const [imageLoading, setImageLoading] = useState(true);
   const [fullScreenVisible, setFullScreenVisible] = useState(false);
   const highlightAnim = useRef(new Animated.Value(0)).current;
+
+  // ── All hook declarations MUST come before any conditional return ──────────
+  // React requires the same number of hooks on every render. The tombstone /
+  // system returns below must be *after* every useState / useEffect / etc.
+
+  // Audio playback state
+  const audioPlayerRef = useRef<AudioPlayer | null>(null);
+  const audioStatusListenerRef = useRef<{ remove: () => void } | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  // Get the media URI - prefer local path over remote URL
+  // Also handles automatic downloading for received media
+  const [mediaUri, setMediaUri] = useState<string | undefined>(
+    message.localMediaPath || message.mediaUrl
+  );
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState(false);
+  // Tracks whether the current `mediaUri` has failed to load so we can fall
+  // back to the remote URL — covers the case where `localMediaPath` is stale
+  // (file evicted from cache, app reinstalled, etc.) and the on-disk check
+  // hasn't yet caught up before render.
+  const [mediaLoadFailed, setMediaLoadFailed] = useState(false);
+
+  // Image dimensions (must be before early returns — it's a hook)
+  const imageDimensions = useMemo(() => {
+    const metadata = message.mediaMetadata;
+    if (metadata?.width && metadata?.height) {
+      const aspectRatio = metadata.width / metadata.height;
+      let width = Math.min(metadata.width, MAX_IMAGE_WIDTH);
+      let height = width / aspectRatio;
+      if (height > MAX_IMAGE_HEIGHT) {
+        height = MAX_IMAGE_HEIGHT;
+        width = height * aspectRatio;
+      }
+      return { width, height };
+    }
+    return { width: MAX_IMAGE_WIDTH, height: 200 };
+  }, [message.mediaMetadata]);
+
+  // Link preview
+  const detectedUrl = useMemo(
+    () => (message.type === 'text' || !message.type ? extractFirstUrl(message.content) : null),
+    [message.type, message.content],
+  );
+  const [livePreview, setLivePreview] = useState<UrlPreview | undefined>(message.urlPreview);
+
+  // Track tap timestamps for double-tap detection
+  const lastTapRef = useRef<number>(0);
+
+  // ── Effects ────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!highlighted) return;
@@ -177,11 +343,6 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     ]).start();
   }, [highlighted, highlightAnim]);
 
-  // Audio playback state
-  const audioPlayerRef = useRef<AudioPlayer | null>(null);
-  const audioStatusListenerRef = useRef<{ remove: () => void } | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-
   // Release player resources on unmount
   useEffect(() => {
     return () => {
@@ -191,6 +352,114 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       audioPlayerRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    // Replace player when message/media source changes.
+    return () => {
+      resetAudioPlayer();
+    };
+  }, [mediaUri]);
+
+  // Check and download media if needed
+  useEffect(() => {
+    let cancelled = false;
+    const checkAndDownloadMedia = async () => {
+      if (message.type === 'text' || message.type === 'system' || message.type === 'call') {
+        return;
+      }
+      if (message.localMediaPath) {
+        const exists = await mediaExistsLocally(message.localMediaPath);
+        if (cancelled) return;
+        if (exists) {
+          setMediaUri(message.localMediaPath);
+          setMediaLoadFailed(false);
+          return;
+        }
+      }
+      // Local path is missing or stale — try the remote URL.
+      if (message.mediaUrl && !message.isFromMe) {
+        setIsDownloading(true);
+        setDownloadError(false);
+        try {
+          const fileName = message.mediaMetadata?.fileName || `${message.type}_${message.messageId}`;
+          const result = await downloadMedia(
+            message.mediaUrl,
+            message.chatId,
+            message.messageId || message.id,
+            fileName
+          );
+          if (cancelled) return;
+          setMediaUri(result.localPath);
+          setMediaLoadFailed(false);
+        } catch (error) {
+          if (cancelled) return;
+          console.error('❌ Failed to download media:', error);
+          setDownloadError(true);
+          // Fall back to streaming the remote URL directly so the user can at
+          // least see the image even if persistent caching failed.
+          setMediaUri(message.mediaUrl);
+          setMediaLoadFailed(false);
+        } finally {
+          if (!cancelled) setIsDownloading(false);
+        }
+      } else if (message.mediaUrl) {
+        // Sender side, or no permission to download — point at the remote URL.
+        setMediaUri(message.mediaUrl);
+        setMediaLoadFailed(false);
+      }
+    };
+    checkAndDownloadMedia();
+    return () => {
+      cancelled = true;
+    };
+  }, [message.localMediaPath, message.mediaUrl, message.type, message.isFromMe, message.chatId, message.messageId, message.id, message.mediaMetadata?.fileName]);
+
+  // If the displayed URI fails to load (stale local file, expired token,
+  // network blip), fall back to the remote URL once. Without this, a broken
+  // local path leaves the bubble stuck on its loading spinner forever.
+  const handleMediaLoadError = useCallback(() => {
+    setImageLoading(false);
+    if (mediaLoadFailed) return;
+    setMediaLoadFailed(true);
+    if (message.mediaUrl && mediaUri !== message.mediaUrl) {
+      setMediaUri(message.mediaUrl);
+    }
+  }, [mediaLoadFailed, mediaUri, message.mediaUrl]);
+
+  useEffect(() => {
+    setLivePreview(message.urlPreview);
+  }, [message.urlPreview]);
+
+  useEffect(() => {
+    if (!detectedUrl) return;
+    if (livePreview && livePreview.url === detectedUrl) return;
+    let cancelled = false;
+    (async () => {
+      const preview = await fetchLinkPreview(detectedUrl);
+      if (cancelled) return;
+      setLivePreview(preview);
+      const messageId = message.messageId || message.id;
+      if (messageId) {
+        void updateMessageUrlPreview(message.chatId, messageId, preview);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [detectedUrl, livePreview, message.chatId, message.messageId, message.id]);
+
+  // ── Helpers (not hooks — safe anywhere) ────────────────────────────────────
+
+  const resetAudioPlayer = () => {
+    if (!audioPlayerRef.current) {
+      return;
+    }
+    audioStatusListenerRef.current?.remove();
+    audioStatusListenerRef.current = null;
+    audioPlayerRef.current.remove();
+    audioPlayerRef.current = null;
+    setIsPlaying(false);
+  };
 
   const handlePlayPause = async () => {
     if (!mediaUri) return;
@@ -237,16 +506,14 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     }
   };
 
-  const resetAudioPlayer = () => {
-    if (!audioPlayerRef.current) {
-      return;
-    }
-    audioStatusListenerRef.current?.remove();
-    audioStatusListenerRef.current = null;
-    audioPlayerRef.current.remove();
-    audioPlayerRef.current = null;
-    setIsPlaying(false);
-  };
+  // ── Derived values (safe after hooks) ──────────────────────────────────────
+
+  const isMine = user?.userId === message.senderId;
+  const senderColor = !isMine && message.senderId ? getSenderColor(message.senderId) : theme.colors.primary;
+  const initials = senderName ? senderName.slice(0, 2).toUpperCase() : '??';
+
+  // ── Early returns for tombstone / system messages ──────────────────────────
+  // These come AFTER all hooks so React always sees the same hook count.
 
   if (message.type === 'system') {
     return (
@@ -258,29 +525,30 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     );
   }
 
-  const isMine = user?.userId === message.senderId;
-  const senderColor = !isMine && message.senderId ? getSenderColor(message.senderId) : theme.colors.primary;
-  const initials = senderName ? senderName.slice(0, 2).toUpperCase() : '??';
+  if (user && message.deletedFor?.includes(user.userId)) {
+    return (
+      <View style={styles.systemContainer}>
+        <View style={[styles.systemBubble, styles.tombstoneBubble, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)' }]}>
+          <Ionicons name="trash-outline" size={11} color={theme.colors.onSurfaceVariant} />
+          <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>You deleted this message</Text>
+        </View>
+      </View>
+    );
+  }
 
-  // Calculate image dimensions maintaining aspect ratio
-  const getImageDimensions = useCallback(() => {
-    const metadata = message.mediaMetadata;
-    if (metadata?.width && metadata?.height) {
-      const aspectRatio = metadata.width / metadata.height;
-      let width = Math.min(metadata.width, MAX_IMAGE_WIDTH);
-      let height = width / aspectRatio;
-
-      if (height > MAX_IMAGE_HEIGHT) {
-        height = MAX_IMAGE_HEIGHT;
-        width = height * aspectRatio;
-      }
-
-      return { width, height };
-    }
-    return { width: MAX_IMAGE_WIDTH, height: 200 };
-  }, [message.mediaMetadata]);
-
-  const imageDimensions = getImageDimensions();
+  if (message.deletedForEveryone) {
+    const youDeleted = user?.userId === message.senderId;
+    return (
+      <View style={styles.systemContainer}>
+        <View style={[styles.systemBubble, styles.tombstoneBubble, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)' }]}>
+          <Ionicons name="ban-outline" size={11} color={theme.colors.onSurfaceVariant} />
+          <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>
+            {youDeleted ? 'You deleted this message' : 'This message was deleted'}
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   const renderLeftActions = (_progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
     const scale = dragX.interpolate({
@@ -358,68 +626,8 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     );
   };
 
-  // Get the media URI - prefer local path over remote URL
-  // Also handles automatic downloading for received media
-  const [mediaUri, setMediaUri] = useState<string | undefined>(
-    message.localMediaPath || message.mediaUrl
-  );
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadError, setDownloadError] = useState(false);
-
-  useEffect(() => {
-    // Replace player when message/media source changes.
-    return () => {
-      resetAudioPlayer();
-    };
-  }, [mediaUri]);
-
-  // Check and download media if needed
-  useEffect(() => {
-    const checkAndDownloadMedia = async () => {
-      // Skip if no media or already have local path
-      if (message.type === 'text' || message.type === 'system' || message.type === 'call') {
-        return;
-      }
-
-      // If we already have a local path, check if it exists
-      if (message.localMediaPath) {
-        const exists = await mediaExistsLocally(message.localMediaPath);
-        if (exists) {
-          setMediaUri(message.localMediaPath);
-          return;
-        }
-      }
-
-      // If we have a remote URL but no local file, download it
-      if (message.mediaUrl && !message.isFromMe) {
-        setIsDownloading(true);
-        setDownloadError(false);
-        try {
-          const fileName = message.mediaMetadata?.fileName || `${message.type}_${message.messageId}`;
-          const result = await downloadMedia(
-            message.mediaUrl,
-            message.chatId,
-            message.messageId || message.id,
-            fileName
-          );
-          setMediaUri(result.localPath);
-          console.log('✅ Media downloaded for message:', message.messageId);
-        } catch (error) {
-          console.error('❌ Failed to download media:', error);
-          setDownloadError(true);
-          // Fall back to remote URL
-          setMediaUri(message.mediaUrl);
-        } finally {
-          setIsDownloading(false);
-        }
-      } else if (message.mediaUrl) {
-        // For sender's messages, use mediaUrl if local path doesn't exist
-        setMediaUri(message.mediaUrl);
-      }
-    };
-
-    checkAndDownloadMedia();
-  }, [message.localMediaPath, message.mediaUrl, message.type, message.isFromMe, message.chatId, message.messageId, message.id, message.mediaMetadata?.fileName]);
+  // (mediaUri, isDownloading, downloadError, detectedUrl, livePreview, lastTapRef
+  //  are all declared at the top of the component, before early returns)
 
   // Image content with loading state
   const renderImageContent = () => {
@@ -433,6 +641,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
             source={{ uri: mediaUri }}
             style={[styles.mediaImage, imageDimensions]}
             resizeMode="cover"
+            onError={handleMediaLoadError}
           />
           <View style={styles.uploadingOverlay}>
             <ActivityIndicator color="#fff" size="large" />
@@ -451,13 +660,14 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
       );
     }
 
-    // Show error state
-    if (downloadError && !mediaUri) {
+    // Show error state — both a download failure with no usable URI and the
+    // case where every URI we tried (local + remote) failed to render.
+    if ((downloadError && !mediaUri) || (mediaLoadFailed && !message.mediaUrl)) {
       return (
         <View style={[styles.mediaContainer, imageDimensions, styles.downloadingContainer]}>
           <Ionicons name="cloud-offline-outline" size={40} color={theme.colors.error} />
           <Text style={[styles.downloadingText, { color: theme.colors.error }]}>
-            Failed to download
+            Failed to load
           </Text>
         </View>
       );
@@ -491,6 +701,7 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
           resizeMode="cover"
           onLoadStart={() => setImageLoading(true)}
           onLoadEnd={() => setImageLoading(false)}
+          onError={handleMediaLoadError}
         />
         {resolutionLabel && !imageLoading && (
           <View style={styles.resolutionBadge}>
@@ -549,72 +760,12 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     );
   };
 
-  // Handle opening/downloading document
-  const handleOpenDocument = async () => {
+  const handleOpenDocument = () => {
     if (!mediaUri) {
       Alert.alert('File Not Available', 'The file has not been downloaded yet.');
       return;
     }
-
-    const mimeType = message.mediaMetadata?.mimeType || 'application/octet-stream';
-    const fileName = message.mediaMetadata?.fileName || 'Document';
-
-    try {
-      // Check if file exists
-      const fileInfo = await getInfoAsync(mediaUri);
-      if (!fileInfo.exists) {
-        Alert.alert('File Not Found', 'The file could not be found on this device.');
-        return;
-      }
-
-      // Check if sharing is available
-      const isAvailable = await Sharing.isAvailableAsync();
-
-      if (isAvailable) {
-        // Use sharing to open the file with the system's default app
-        await Sharing.shareAsync(mediaUri, {
-          mimeType,
-          dialogTitle: `Open ${fileName}`,
-          UTI: mimeType, // iOS specific
-        });
-      } else if (Platform.OS === 'android') {
-        // On Android, try to open with intent
-        try {
-          const contentUri = await getContentUriAsync(mediaUri);
-          await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-            data: contentUri,
-            type: mimeType,
-            flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
-          });
-        } catch (intentError) {
-          console.error('Intent error:', intentError);
-          Alert.alert(
-            'Cannot Open File',
-            'No app is available to open this file type.',
-            [{ text: 'OK' }]
-          );
-        }
-      } else {
-        // Fallback for iOS if sharing isn't available
-        const canOpen = await Linking.canOpenURL(mediaUri);
-        if (canOpen) {
-          await Linking.openURL(mediaUri);
-        } else {
-          Alert.alert(
-            'Cannot Open File',
-            'No app is available to open this file type.',
-            [{ text: 'OK' }]
-          );
-        }
-      }
-    } catch (error) {
-      console.error('Error opening document:', error);
-      Alert.alert(
-        'Cannot Open Document',
-        `Unable to open "${fileName}". The file may not be accessible or the format is not supported.`,
-        [{ text: 'OK' }]
-      );
-    }
+    onFilePress?.(message);
   };
 
   // Document attachment
@@ -626,12 +777,14 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
 
     return (
       <TouchableOpacity
-        style={[styles.documentContainer, {
-          backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')
-        }]}
+        style={[
+          styles.documentContainer,
+          isMine && styles.documentContainerSender,
+          { backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)') },
+        ]}
         activeOpacity={0.7}
         onPress={handleOpenDocument}
-        disabled={isDownloading || isSending}
+        disabled={isDownloading}
       >
         <View style={[styles.documentIconContainer, { backgroundColor: theme.colors.primary }]}>
           {isDownloading || isSending ? (
@@ -646,14 +799,16 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
         </View>
         <View style={styles.documentInfo}>
           <Text
-            numberOfLines={1}
+            numberOfLines={isMine ? 2 : 1}
             style={[styles.documentName, { color: isMine ? '#fff' : theme.colors.onSurface }]}
           >
             {metadata?.fileName || 'Document'}
           </Text>
-          <Text style={[styles.documentSize, { color: isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant }]}>
-            {isDownloading ? 'Downloading...' : (metadata?.fileSize ? formatFileSize(metadata.fileSize) : '')}
-          </Text>
+          {!isMine && (
+            <Text style={[styles.documentSize, { color: theme.colors.onSurfaceVariant }]}>
+              {isDownloading ? 'Downloading...' : (metadata?.fileSize ? formatFileSize(metadata.fileSize) : '')}
+            </Text>
+          )}
         </View>
         <Ionicons
           name={isDownloaded ? "open-outline" : "cloud-download-outline"}
@@ -859,13 +1014,145 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
     outputRange: ['transparent', 'rgba(255, 220, 50, 0.35)'],
   });
 
+  const isStarredByMe = !!user && !!message.starredBy?.includes(user.userId);
+  const dimStyle = dimmed ? { opacity: 0.35 } : undefined;
+  const isMentioned = !!user && !!message.mentions?.includes(user.userId);
+
+  // Double-tap detection (lastTapRef declared at top with other hooks)
+  const handlePress = () => {
+    if (selectionMode) {
+      onToggleSelect?.(message);
+      return;
+    }
+    const now = Date.now();
+    if (onDoubleTap && now - lastTapRef.current < 280) {
+      lastTapRef.current = 0;
+      onDoubleTap(message);
+      return;
+    }
+    lastTapRef.current = now;
+  };
+
+  const renderRichText = (color: string, mineLink?: boolean) => {
+    if (!hasTextContent) return null;
+    const spans = tokenizeContent(message.content, mentionLabels, searchQuery);
+    return (
+      <Text style={[styles.text, { color }]}>
+        {spans.map((span, i) => {
+          if (span.kind === 'mention') {
+            return (
+              <Text
+                key={i}
+                onPress={() => onMentionPress?.(span.userId)}
+                style={{
+                  color: mineLink ? '#ffffff' : theme.colors.primary,
+                  fontWeight: '600',
+                  textDecorationLine: 'underline',
+                }}
+              >
+                {span.text}
+              </Text>
+            );
+          }
+          if (span.kind === 'link') {
+            return (
+              <Text
+                key={i}
+                onPress={() => Linking.openURL(span.url).catch(() => undefined)}
+                style={{
+                  color: mineLink ? '#ffffff' : theme.colors.primary,
+                  textDecorationLine: 'underline',
+                }}
+              >
+                {span.text}
+              </Text>
+            );
+          }
+          if (span.kind === 'highlight') {
+            return (
+              <Text
+                key={i}
+                style={{
+                  backgroundColor: 'rgba(255, 213, 79, 0.55)',
+                  color: theme.colors.onSurface,
+                  fontWeight: '600',
+                }}
+              >
+                {span.text}
+              </Text>
+            );
+          }
+          return <Text key={i}>{span.text}</Text>;
+        })}
+      </Text>
+    );
+  };
+
+  const renderForwardedTag = () => {
+    if (!message.forwardedFrom) return null;
+    const manyTimes = message.forwardedFrom.hopCount >= 4;
+    return (
+      <View style={styles.forwardedRow}>
+        <Ionicons
+          name={manyTimes ? 'arrow-redo' : 'arrow-redo-outline'}
+          size={11}
+          color={isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant}
+        />
+        <Text
+          style={[
+            styles.forwardedText,
+            { color: isMine ? 'rgba(255,255,255,0.75)' : theme.colors.onSurfaceVariant },
+          ]}
+        >
+          {manyTimes ? 'Forwarded many times' : 'Forwarded'}
+        </Text>
+      </View>
+    );
+  };
+
+  const handleLongPress = () => {
+    if (selectionMode) {
+      onToggleSelect?.(message);
+      return;
+    }
+    onLongPress?.(message);
+  };
+  const handleReactionsPress = () => onReactionsPress?.(message);
+
+  // WhatsApp-style inline checkbox — sits in a fixed column to the left of
+  // every bubble (own and others') while selection mode is active. Bubble
+  // content stays inside its normal max-width and just shifts in by the column
+  // width, so nothing overlaps and the row reads clearly.
+  const renderSelectionCheckbox = () => {
+    if (!selectionMode) return null;
+    const color = selected ? theme.colors.primary : (isDark ? '#666' : '#bbb');
+    return (
+      <View style={styles.selectionCheckboxColumn}>
+        <View style={[styles.selectionCheckbox, { borderColor: color, backgroundColor: selected ? color : 'transparent' }]}>
+          {selected && <Ionicons name="checkmark" size={12} color="#fff" />}
+        </View>
+      </View>
+    );
+  };
+
   // My message (right side)
   if (isMine) {
     return (
       <>
-        <Animated.View style={{ backgroundColor: highlightBg, borderRadius: 16 }}>
+        <Animated.View
+          style={[
+            styles.rowOuter,
+            { backgroundColor: highlightBg, borderRadius: 16 },
+            isMentioned && { backgroundColor: 'rgba(255, 193, 7, 0.18)' },
+            selected && { backgroundColor: isDark ? 'rgba(53,198,255,0.15)' : 'rgba(31,111,235,0.10)' },
+            dimStyle,
+          ]}
+        >
+          {renderSelectionCheckbox()}
           <Swipeable
             ref={swipeableRef}
+            enabled={!selectionMode}
+            containerStyle={{ flex: 1 }}
             renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
             renderRightActions={isGroupChat && onSwipeInfo ? renderRightActions : undefined}
             onSwipeableOpen={onSwipeableOpen}
@@ -873,24 +1160,63 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
             overshootLeft={false}
             overshootRight={false}
           >
-            <View style={[styles.container, styles.mine, { backgroundColor: theme.colors.primary }]}>
-              {renderReplyContent()}
-              {renderMedia()}
-              {hasTextContent && (
-                <Text style={[styles.text, { color: theme.colors.onPrimary }]}>{message.content}</Text>
-              )}
-              <View style={styles.timestampRow}>
-                <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
-                <MessageStatusIndicator
-                  status={message.status}
-                  isGroupChat={isGroupChat}
-                  totalRecipients={totalRecipients}
-                  deliveredCount={message.deliveredTo?.length || 0}
-                  readCount={message.readBy?.length || 0}
-                />
-              </View>
+            <View style={styles.bubbleReactionsWrapper}>
+              <Pressable
+                onPress={handlePress}
+                onLongPress={handleLongPress}
+                delayLongPress={280}
+                android_ripple={undefined}
+                style={({ pressed }) => [
+                  styles.container,
+                  styles.mine,
+                  { backgroundColor: theme.colors.primary },
+                  message.reactions && Object.keys(message.reactions).length > 0 && styles.bubbleWithReactions,
+                  pressed && !selectionMode && (onLongPress) && { opacity: 0.85 },
+                ]}
+              >
+                {renderForwardedTag()}
+                {renderReplyContent()}
+                {renderMedia()}
+                {livePreview && hasTextContent && (
+                  <LinkPreview preview={livePreview} isMine />
+                )}
+                {renderRichText(theme.colors.onPrimary, true)}
+                <View style={styles.timestampRow}>
+                  {isStarredByMe && (
+                    <Ionicons
+                      name="star"
+                      size={11}
+                      color="rgba(255,255,255,0.85)"
+                      style={{ marginRight: 4 }}
+                    />
+                  )}
+                  {message.editedAt && (
+                    <Text style={[styles.editedTag, { color: 'rgba(255,255,255,0.65)' }]}>edited</Text>
+                  )}
+                  <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
+                  <MessageStatusIndicator
+                    status={message.status}
+                    isGroupChat={isGroupChat}
+                    totalRecipients={totalRecipients}
+                    deliveredCount={message.deliveredTo?.length || 0}
+                    readCount={message.readBy?.length || 0}
+                  />
+                </View>
+              </Pressable>
+              <ReactionsRow
+                reactions={message.reactions}
+                currentUserId={user?.userId}
+                align="right"
+                onPress={handleReactionsPress}
+              />
             </View>
           </Swipeable>
+          {selectionMode && (
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => onToggleSelect?.(message)}
+            />
+          )}
         </Animated.View>
         {renderFullScreenImage()}
       </>
@@ -900,9 +1226,20 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
   // Other's message (left side with optional avatar)
   return (
     <>
-      <Animated.View style={{ backgroundColor: highlightBg, borderRadius: 16 }}>
+      <Animated.View
+        style={[
+          styles.rowOuter,
+          { backgroundColor: highlightBg, borderRadius: 16 },
+          isMentioned && { backgroundColor: 'rgba(255, 193, 7, 0.18)' },
+          selected && { backgroundColor: isDark ? 'rgba(53,198,255,0.15)' : 'rgba(31,111,235,0.10)' },
+          dimStyle,
+        ]}
+      >
+        {renderSelectionCheckbox()}
         <Swipeable
           ref={swipeableRef}
+          enabled={!selectionMode}
+          containerStyle={{ flex: 1 }}
           renderLeftActions={onSwipeReply ? renderLeftActions : undefined}
           onSwipeableOpen={onSwipeableOpen}
           friction={2}
@@ -923,24 +1260,109 @@ export const MessageBubble = ({ message, showSenderInfo, senderName, onSwipeRepl
                 )}
               </View>
             )}
-            <View style={[styles.container, styles.other, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' }]}>
-              {renderReplyContent()}
-              {showSenderInfo && senderName && (
-                <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
-              )}
-              {renderMedia()}
-              {hasTextContent && (
-                <Text style={[styles.text, { color: theme.colors.onSurface }]}>{message.content}</Text>
-              )}
-              <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
+            <View style={styles.bubbleReactionsWrapper}>
+              <Pressable
+                onPress={handlePress}
+                onLongPress={handleLongPress}
+                delayLongPress={280}
+                style={({ pressed }) => [
+                  styles.container,
+                  styles.other,
+                  { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' },
+                  message.reactions && Object.keys(message.reactions).length > 0 && styles.bubbleWithReactions,
+                  pressed && !selectionMode && (onLongPress) && { opacity: 0.85 },
+                ]}
+              >
+                {renderForwardedTag()}
+                {renderReplyContent()}
+                {showSenderInfo && senderName && (
+                  <Text style={[styles.senderName, { color: senderColor }]}>{senderName}</Text>
+                )}
+                {renderMedia()}
+                {livePreview && hasTextContent && (
+                  <LinkPreview preview={livePreview} isMine={false} />
+                )}
+                {renderRichText(theme.colors.onSurface)}
+                <View style={styles.timestampRow}>
+                  {isStarredByMe && (
+                    <Ionicons
+                      name="star"
+                      size={11}
+                      color={theme.colors.onSurfaceVariant}
+                      style={{ marginRight: 4 }}
+                    />
+                  )}
+                  {message.editedAt && (
+                    <Text style={[styles.editedTag, { color: theme.colors.onSurfaceVariant }]}>edited</Text>
+                  )}
+                  <Text style={[styles.timestamp, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(message.createdAt)}</Text>
+                </View>
+              </Pressable>
+              <ReactionsRow
+                reactions={message.reactions}
+                currentUserId={user?.userId}
+                align="left"
+                onPress={handleReactionsPress}
+              />
             </View>
           </View>
         </Swipeable>
+          {selectionMode && (
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => onToggleSelect?.(message)}
+            />
+          )}
       </Animated.View>
       {renderFullScreenImage()}
     </>
   );
 };
+
+// Custom equality — re-render only when fields the bubble actually renders
+// from change. Handlers from the parent (onLongPress, onMediaPress, etc.) are
+// stable refs from useCallback, so identity comparison is enough.
+const messagesEqual = (a: ChatMessage, b: ChatMessage) =>
+  a.id === b.id &&
+  a.messageId === b.messageId &&
+  a.content === b.content &&
+  a.status === b.status &&
+  a.editedAt === b.editedAt &&
+  a.deletedForEveryone === b.deletedForEveryone &&
+  (a.deletedFor?.length ?? 0) === (b.deletedFor?.length ?? 0) &&
+  a.localMediaPath === b.localMediaPath &&
+  a.mediaUrl === b.mediaUrl &&
+  a.urlPreview === b.urlPreview &&
+  a.reactions === b.reactions &&
+  a.starredBy === b.starredBy &&
+  a.readBy === b.readBy &&
+  a.deliveredTo === b.deliveredTo;
+
+export const MessageBubble = React.memo(MessageBubbleInner, (prev, next) => {
+  return (
+    messagesEqual(prev.message, next.message) &&
+    prev.showSenderInfo === next.showSenderInfo &&
+    prev.senderName === next.senderName &&
+    prev.selectionMode === next.selectionMode &&
+    prev.selected === next.selected &&
+    prev.searchQuery === next.searchQuery &&
+    prev.mentionLabels === next.mentionLabels &&
+    prev.isGroupChat === next.isGroupChat &&
+    prev.totalRecipients === next.totalRecipients &&
+    prev.highlighted === next.highlighted &&
+    prev.dimmed === next.dimmed &&
+    prev.onSwipeReply === next.onSwipeReply &&
+    prev.onSwipeInfo === next.onSwipeInfo &&
+    prev.onReplyPress === next.onReplyPress &&
+    prev.onMediaPress === next.onMediaPress &&
+    prev.onLongPress === next.onLongPress &&
+    prev.onReactionsPress === next.onReactionsPress &&
+    prev.onFilePress === next.onFilePress &&
+    prev.onDoubleTap === next.onDoubleTap &&
+    prev.onToggleSelect === next.onToggleSelect &&
+    prev.onMentionPress === next.onMentionPress
+  );
+});
 
 const styles = StyleSheet.create({
   systemContainer: {
@@ -953,9 +1375,54 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 12,
   },
+  tombstoneBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   systemText: {
     fontSize: 12,
     textAlign: 'center',
+  },
+  forwardedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginBottom: 4,
+  },
+  forwardedText: {
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+  editedTag: {
+    fontSize: 10,
+    fontStyle: 'italic',
+    marginRight: 4,
+  },
+  rowOuter: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  bubbleReactionsWrapper: {
+    // Allows ReactionsRow to be absolutely positioned at the bottom edge of the bubble
+    flex: 1,
+  },
+  bubbleWithReactions: {
+    // Extra bottom padding so the reactions chip doesn't obscure content
+    marginBottom: 14,
+  },
+  selectionCheckboxColumn: {
+    width: 30,
+    paddingTop: 12,
+    alignItems: 'center',
+  },
+  selectionCheckbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   otherRow: {
     flexDirection: 'row',
@@ -1124,6 +1591,9 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
     marginBottom: 4,
+  },
+  documentContainerSender: {
+    minWidth: SCREEN_WIDTH * 0.55,
   },
   documentIconContainer: {
     width: 40,

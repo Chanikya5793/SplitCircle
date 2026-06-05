@@ -1,7 +1,10 @@
 import { db } from '@/firebase';
-import type { ChatMessage, ChatParticipant, ChatThread, MediaMetadata, MessageType } from '@/models';
+import type { ChatMessage, ChatParticipant, ChatThread, ForwardedFrom, MediaMetadata, MessageType, PinnedMessageRef } from '@/models';
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
+  deleteField,
   doc,
   onSnapshot,
   query,
@@ -13,7 +16,9 @@ import {
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { v4 as uuid } from 'uuid';
 import {
+  applyRemoteMessageState,
   getChatMessages,
+  getChatMessagesPaginated,
   initMessageDB,
   markMessagesRead,
   saveMessageLocally,
@@ -21,6 +26,7 @@ import {
   updateMessageStatus,
   waitForChatWrites,
 } from '@/services/localMessageStorage';
+import { subscribeToMessageStates } from '@/services/messageStateService';
 import {
   copyToLocalStorage,
   initMediaDirectory,
@@ -55,6 +61,8 @@ interface SendMessagePayload {
     longitude: number;
     address?: string;
   };
+  forwardedFrom?: ForwardedFrom;
+  mentions?: string[];
   onStageChange?: (
     stage: 'preparing' | 'uploading' | 'sending' | 'complete' | 'failed',
     details?: { progress?: number; message?: string },
@@ -66,9 +74,13 @@ interface ChatContextValue {
   loading: boolean;
   sendMessage: (payload: SendMessagePayload) => Promise<void>;
   subscribeToMessages: (chatId: string, onData: (messages: ChatMessage[]) => void) => () => void;
+  loadMoreMessages: (chatId: string, before: number) => Promise<{ messages: ChatMessage[]; hasMore: boolean }>;
   ensureGroupThread: (groupId: string, participants: ChatParticipant[]) => Promise<string>;
   ensureDirectThread: (otherParticipant: ChatParticipant) => Promise<string>;
   markChatAsRead: (chatId: string) => Promise<void>;
+  togglePinMessage: (chatId: string, message: ChatMessage) => Promise<void>;
+  deleteMessageForEveryone: (chatId: string, messageId: string) => Promise<void>;
+  setTyping: (chatId: string, isTyping: boolean) => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextValue | undefined>(undefined);
@@ -207,12 +219,29 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         await initMessageDB();
         await initMediaDirectory();
         console.log('✅ Message and media storage initialized');
+        // Drain any pending message state mutations from prior offline sessions
+        const { drain } = await import('@/services/pendingStateQueue');
+        await drain();
       } catch (error) {
         console.error('❌ Failed to initialize database:', error);
       }
     };
 
     void initDB();
+  }, []);
+
+  // Drain pending state queue on network reconnect
+  useEffect(() => {
+    let wasOffline = false;
+    const NetInfo = require('@react-native-community/netinfo').default;
+    const unsubscribe = NetInfo.addEventListener((state: { isConnected: boolean | null; isInternetReachable: boolean | null }) => {
+      const online = Boolean(state.isConnected && state.isInternetReachable);
+      if (online && wasOffline) {
+        void import('@/services/pendingStateQueue').then(({ drain }) => drain());
+      }
+      wasOffline = !online;
+    });
+    return () => unsubscribe();
   }, []);
 
   // Firestore chat thread subscription
@@ -317,10 +346,13 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         return;
       }
 
+      // 16ms ≈ one display frame: fast enough that local mutations
+      // (reaction toggle, star, edit) feel instant, while still coalescing
+      // bursts so we don't reload AsyncStorage per char on rapid typing.
       pendingLoadTimer = setTimeout(() => {
         pendingLoadTimer = null;
         void loadLocalMessages();
-      }, 75);
+      }, 16);
     };
 
     const clearReceiptRetryTimer = () => {
@@ -401,6 +433,24 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     scheduleLocalLoad(true);
     void startReceiptListener();
 
+    // Cross-device mutation sync — reactions, edits, delete-for-everyone all
+    // flow through chats/{chatId}/messageState. Each event is applied locally
+    // (which fires notifyMessageListeners → schedules a UI reload).
+    const unsubscribeMessageStates = subscribeToMessageStates(
+      chatId,
+      ({ messageId, state }) => {
+        void applyRemoteMessageState(chatId, messageId, {
+          reactions: state.reactions,
+          deletedForEveryone: state.deletedForEveryone,
+          editedContent: state.editedContent,
+          editedAt: state.editedAt,
+        });
+      },
+      (error) => {
+        console.warn('⚠️ messageState listener error', error);
+      },
+    );
+
     const unsubscribeLocal = subscribeToLocalMessages(chatId, () => {
       scheduleLocalLoad(false);
     });
@@ -418,12 +468,21 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         unsubscribeReceipts();
         unsubscribeReceipts = null;
       }
+      unsubscribeMessageStates();
       unsubscribeLocal();
     };
   }, [getRecipientCount, getThreadByChatId]);
 
+  const loadMoreMessages = useCallback(
+    async (chatId: string, before: number) => {
+      await waitForChatWrites(chatId);
+      return getChatMessagesPaginated(chatId, { limit: 30, before });
+    },
+    [],
+  );
+
   const sendMessage = useCallback(
-    async ({ chatId, requestId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo, location, onStageChange }: SendMessagePayload) => {
+    async ({ chatId, requestId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo, location, forwardedFrom, mentions, onStageChange }: SendMessagePayload) => {
       if (!user) {
         throw new Error('Missing user for chat send');
       }
@@ -454,6 +513,8 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         ...(mediaMetadata ? { mediaMetadata } : {}),
         ...(replyTo ? { replyTo } : {}),
         ...(location ? { location } : {}),
+        ...(forwardedFrom ? { forwardedFrom } : {}),
+        ...(mentions && mentions.length ? { mentions } : {}),
         status: 'sending',
         createdAt: now,
         timestamp: now,
@@ -518,14 +579,16 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
         console.log(`✅ ${type} message sent and queued`);
 
-        const threadMessage = { ...message };
-        delete (threadMessage as { localMediaPath?: string }).localMediaPath;
-        const cleanMessage = removeUndefined({ ...threadMessage, createdAt: serverTimestamp() });
-
         await updateDoc(doc(db, 'chats', chatId), {
-          lastMessage: cleanMessage,
           groupId: groupId ?? null,
           updatedAt: Date.now(),
+          lastMessage: {
+            messageId: message.messageId,
+            senderId: message.senderId,
+            type: message.type,
+            content: type !== 'text' ? getMessageTypeLabel(type) : content,
+            createdAt: message.createdAt,
+          },
         });
 
         onStageChange?.('complete');
@@ -612,9 +675,116 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     [threads, user],
   );
 
+  const togglePinMessage = useCallback(
+    async (chatId: string, message: ChatMessage) => {
+      if (!user) return;
+      const chatDoc = doc(db, 'chats', chatId);
+      const thread = getThreadByChatId(chatId);
+      const existing = thread?.pinnedMessages?.find((p) => p.messageId === message.messageId);
+
+      if (existing) {
+        await updateDoc(chatDoc, {
+          pinnedMessages: arrayRemove(existing),
+        });
+        return;
+      }
+
+      const ref: PinnedMessageRef = {
+        messageId: message.messageId,
+        pinnedBy: user.userId,
+        pinnedAt: Date.now(),
+        type: message.type,
+        senderId: message.senderId,
+      };
+      await updateDoc(chatDoc, {
+        pinnedMessages: arrayUnion(ref),
+      });
+    },
+    [getThreadByChatId, user],
+  );
+
+  const deleteMessageForEveryone = useCallback(
+    async (chatId: string, messageId: string) => {
+      if (!user) return;
+      // Local fast path — UI updates as soon as this returns.
+      const { saveMessageLocally, getChatMessages } = await import('@/services/localMessageStorage');
+      const messages = await getChatMessages(chatId);
+      const target = messages.find((m) => m.id === messageId || m.messageId === messageId);
+      if (!target) return;
+
+      await saveMessageLocally({
+        ...target,
+        deletedForEveryone: true,
+        content: '',
+      });
+
+      // Cross-device broadcast via Firestore messageState. Every chat client
+      // subscribes to messageStates on chat open and applies the flag locally,
+      // so recipients see the deletion the next time they're online with this
+      // chat — both for currently-open sessions and for sessions that opened
+      // the chat after the deletion happened.
+      //
+      // We intentionally do NOT also push a tombstone via the RTDB
+      // messageQueue: queueMessage's payload schema has no deletedForEveryone
+      // field (and the RTDB rules wouldn't accept an arbitrary tombstone
+      // overwrite), which used to ship the recipient an empty-content
+      // "normal" message and trigger PERMISSION_DENIED for queue overwrites.
+      const { publishMessageState } = await import('@/services/messageStateService');
+      try {
+        await publishMessageState(chatId, messageId, { deletedForEveryone: true });
+      } catch (error) {
+        console.warn('⚠️ Failed to broadcast delete-for-everyone state; local copy already updated.', error);
+      }
+    },
+    [user],
+  );
+
+  const setTyping = useCallback(
+    async (chatId: string, isTyping: boolean) => {
+      if (!user) return;
+      const { getDatabase, ref, set, remove } = await import('firebase/database');
+      const rtdb = getDatabase();
+      const typingRef = ref(rtdb, `typing/${chatId}/${user.userId}`);
+      try {
+        if (isTyping) {
+          await set(typingRef, Date.now());
+        } else {
+          await remove(typingRef);
+        }
+      } catch (error) {
+        console.warn('setTyping failed', error);
+      }
+    },
+    [user],
+  );
+
   const value = useMemo(
-    () => ({ threads, loading, sendMessage, subscribeToMessages, ensureGroupThread, ensureDirectThread, markChatAsRead }),
-    [ensureGroupThread, ensureDirectThread, loading, markChatAsRead, sendMessage, subscribeToMessages, threads],
+    () => ({
+      threads,
+      loading,
+      sendMessage,
+      subscribeToMessages,
+      loadMoreMessages,
+      ensureGroupThread,
+      ensureDirectThread,
+      markChatAsRead,
+      togglePinMessage,
+      deleteMessageForEveryone,
+      setTyping,
+    }),
+    [
+      ensureGroupThread,
+      ensureDirectThread,
+      loading,
+      loadMoreMessages,
+      markChatAsRead,
+      sendMessage,
+      subscribeToMessages,
+      threads,
+      togglePinMessage,
+      deleteMessageForEveryone,
+      setTyping,
+    ],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;

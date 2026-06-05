@@ -32,5 +32,7 @@ export const ROUTES = {
     NOTIFICATION_SETTINGS: 'NotificationSettings',
     PROFILE: 'Profile',
     CHAT_MEDIA_GALLERY: 'ChatMediaGallery',
+    FILE_PREVIEW: 'FilePreview',
+    STARRED_MESSAGES: 'StarredMessages',
   },
 } as const;

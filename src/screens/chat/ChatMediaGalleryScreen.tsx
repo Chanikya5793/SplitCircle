@@ -4,6 +4,11 @@ import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatParticipant, MediaMetadata } from '@/models';
+import { ROUTES } from '@/constants';
+import { mediaExistsLocally, getOrDownloadMedia } from '@/services/mediaService';
+import { markMessageDeletedForUser, unmarkMessageDeletedForUser } from '@/services/localMessageStorage';
+import { warningHaptic } from '@/utils/haptics';
+import { useVideoThumbnail } from '@/utils/videoThumbnail';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -16,11 +21,13 @@ import React, {
   useState,
 } from 'react';
 import {
+  Alert,
   Animated,
   Dimensions,
   FlatList,
   Image,
   Modal,
+  PanResponder,
   Platform,
   ScrollView,
   StyleSheet,
@@ -37,7 +44,7 @@ import Reanimated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { Text } from 'react-native-paper';
+import { Snackbar, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ─── constants ───────────────────────────────────────────────────────────────
@@ -48,8 +55,12 @@ const GRID_GAP = 2;
 const CELL_SIZE = (SCREEN_WIDTH - GRID_GAP * (COLUMN_COUNT + 1)) / COLUMN_COUNT;
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
-// Extra top inset so native video controls clear the top chrome (close / info buttons)
-const VIDEO_TOP_INSET = 100;
+// Reserve a little space at the top so native player chrome doesn't get hidden under
+// the close/info buttons. Smaller than before — the chrome bar fades out automatically.
+const VIDEO_TOP_INSET = 0;
+// Bottom thumbnail strip sizing — keeps the strip dense without crowding controls.
+const STRIP_THUMB_SIZE = 44;
+const STRIP_THUMB_GAP = 4;
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -113,6 +124,61 @@ const getFileExt = (meta?: MediaMetadata): string => {
 
 const URL_REGEX = /(https?:\/\/[^\s]+)/g;
 
+// ─── media URI resolver ──────────────────────────────────────────────────────
+//
+// `localMediaPath` is preferred for offline/perf, but the saved path can be
+// stale (file evicted, app reinstalled → Documents UUID changed). When the
+// local file is missing we fall back to the remote URL so the gallery and
+// full-screen viewer don't render a broken `<Image>` / dead `<VideoView>`.
+//
+// Returns:
+//   - uri:      the URI to feed `<Image>` / `useVideoPlayer`
+//   - markFailed: call from `onError` to switch to the remote URL after a
+//     load failure (covers expired Firebase tokens etc.)
+
+const useResolvedMediaUri = (message: ChatMessage | undefined) => {
+  const localPath = message?.localMediaPath;
+  const remoteUrl = message?.mediaUrl;
+  const messageId = message?.messageId || message?.id;
+
+  const [uri, setUri] = useState<string | undefined>(localPath ?? remoteUrl);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    setUri(localPath ?? remoteUrl);
+    (async () => {
+      if (localPath) {
+        const exists = await mediaExistsLocally(localPath);
+        if (cancelled) return;
+        if (exists) {
+          setUri(localPath);
+          return;
+        }
+      }
+      if (remoteUrl) {
+        setUri(remoteUrl);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [messageId, localPath, remoteUrl]);
+
+  const markFailed = useCallback(() => {
+    setFailed((prev) => {
+      if (prev) return prev;
+      if (remoteUrl && uri !== remoteUrl) {
+        setUri(remoteUrl);
+      }
+      return true;
+    });
+  }, [remoteUrl, uri]);
+
+  return { uri, markFailed, failed };
+};
+
 // ─── tab config ───────────────────────────────────────────────────────────────
 
 type TabId = 'media' | 'docs' | 'links';
@@ -156,6 +222,8 @@ interface ZoomableImageProps {
   onDismiss: () => void;
   onSingleTap: () => void;
   onSwipeUp: () => void;
+  /** Called when the underlying `<Image>` fails to load — used to swap to the remote URL. */
+  onError?: () => void;
   hasNext: boolean;
   hasPrev: boolean;
   backdropOpacity: SharedValue<number>;
@@ -168,6 +236,7 @@ const ZoomableImage = React.memo(({
   onDismiss,
   onSingleTap,
   onSwipeUp,
+  onError,
   hasNext,
   hasPrev,
   backdropOpacity,
@@ -278,16 +347,18 @@ const ZoomableImage = React.memo(({
         !horizDominant &&
         (e.translationY < -SWIPE_UP_DISTANCE_THRESHOLD ||
           e.velocityY < -SWIPE_UP_VELOCITY_THRESHOLD);
+      // Swipe mapping is intentionally inverted vs. the typical iOS photo
+      // viewer: drag-right advances to the next item, drag-left goes back.
       const swipeNext =
         horizDominant &&
         hasNext &&
-        (e.translationX < -SWIPE_DISTANCE_THRESHOLD ||
-          e.velocityX < -SWIPE_VELOCITY_THRESHOLD);
+        (e.translationX > SWIPE_DISTANCE_THRESHOLD ||
+          e.velocityX > SWIPE_VELOCITY_THRESHOLD);
       const swipePrev =
         horizDominant &&
         hasPrev &&
-        (e.translationX > SWIPE_DISTANCE_THRESHOLD ||
-          e.velocityX > SWIPE_VELOCITY_THRESHOLD);
+        (e.translationX < -SWIPE_DISTANCE_THRESHOLD ||
+          e.velocityX < -SWIPE_VELOCITY_THRESHOLD);
 
       if (verticalDismiss) {
         translateY.value = withTiming(SCREEN_HEIGHT, TIMING_OUT);
@@ -302,11 +373,11 @@ const ZoomableImage = React.memo(({
         backdropOpacity.value = withSpring(1, SPRING_SNAPPY);
         runOnJS(onSwipeUp)();
       } else if (swipeNext) {
-        translateX.value = withTiming(-SCREEN_WIDTH, TIMING_FAST, () => {
+        translateX.value = withTiming(SCREEN_WIDTH, TIMING_FAST, () => {
           runOnJS(onSwipeNext)();
         });
       } else if (swipePrev) {
-        translateX.value = withTiming(SCREEN_WIDTH, TIMING_FAST, () => {
+        translateX.value = withTiming(-SCREEN_WIDTH, TIMING_FAST, () => {
           runOnJS(onSwipePrev)();
         });
       } else {
@@ -377,6 +448,11 @@ const ZoomableImage = React.memo(({
           source={{ uri }}
           style={styles.zoomableImage}
           resizeMode="contain"
+          onError={onError}
+          // Drop the default 300ms cross-fade so cached images appear instantly
+          // instead of flashing black when the viewer mounts or the user swipes.
+          fadeDuration={0}
+          progressiveRenderingEnabled
         />
       </Reanimated.View>
     </GestureDetector>
@@ -386,10 +462,31 @@ ZoomableImage.displayName = 'ZoomableImage';
 
 // ─── FullScreenVideoPlayer ────────────────────────────────────────────────────
 
-const FullScreenVideoPlayer = ({ uri }: { uri: string }) => {
+interface FullScreenVideoPlayerProps {
+  uri: string;
+  /** Fired when the player reports a fatal error (e.g. stale file path, unreachable URL). */
+  onError?: () => void;
+}
+
+const FullScreenVideoPlayer = ({ uri, onError }: FullScreenVideoPlayerProps) => {
   const player = useVideoPlayer(uri, (p) => {
     p.loop = false;
   });
+
+  // expo-video surfaces playback errors via the `statusChange` event. When the
+  // player's status flips to `error` we let the caller know so it can swap the
+  // URI (e.g. fall back from a stale local path to the remote URL).
+  useEffect(() => {
+    if (!onError) return;
+    const sub = player.addListener('statusChange', ({ status, error }) => {
+      if (status === 'error' || error) {
+        onError();
+      }
+    });
+    return () => {
+      sub.remove();
+    };
+  }, [player, onError]);
 
   return (
     <VideoView
@@ -415,6 +512,8 @@ interface VideoSwipeContainerProps {
   onSwipeNext: () => void;
   onSwipePrev: () => void;
   onSingleTap: () => void;
+  /** Forwarded to the underlying expo-video player. Fires on playback failure. */
+  onError?: () => void;
   hasNext: boolean;
   hasPrev: boolean;
   backdropOpacity: SharedValue<number>;
@@ -426,7 +525,7 @@ const VideoSwipeContainer = React.memo(({
   onSwipeUp,
   onSwipeNext,
   onSwipePrev,
-  onSingleTap,
+  onError,
   hasNext,
   hasPrev,
   backdropOpacity,
@@ -471,16 +570,17 @@ const VideoSwipeContainer = React.memo(({
         !horizDominant &&
         (e.translationY < -SWIPE_UP_DISTANCE_THRESHOLD ||
           e.velocityY < -SWIPE_UP_VELOCITY_THRESHOLD);
+      // Match ZoomableImage: drag-right → next, drag-left → previous.
       const swipeNext =
         horizDominant &&
         hasNext &&
-        (e.translationX < -SWIPE_DISTANCE_THRESHOLD ||
-          e.velocityX < -SWIPE_VELOCITY_THRESHOLD);
+        (e.translationX > SWIPE_DISTANCE_THRESHOLD ||
+          e.velocityX > SWIPE_VELOCITY_THRESHOLD);
       const swipePrev =
         horizDominant &&
         hasPrev &&
-        (e.translationX > SWIPE_DISTANCE_THRESHOLD ||
-          e.velocityX > SWIPE_VELOCITY_THRESHOLD);
+        (e.translationX < -SWIPE_DISTANCE_THRESHOLD ||
+          e.velocityX < -SWIPE_VELOCITY_THRESHOLD);
 
       if (dismiss) {
         translateY.value = withTiming(SCREEN_HEIGHT, TIMING_OUT);
@@ -494,11 +594,11 @@ const VideoSwipeContainer = React.memo(({
         backdropOpacity.value = withSpring(1, SPRING_SNAPPY);
         runOnJS(onSwipeUp)();
       } else if (swipeNext) {
-        translateX.value = withTiming(-SCREEN_WIDTH, TIMING_FAST, () => {
+        translateX.value = withTiming(SCREEN_WIDTH, TIMING_FAST, () => {
           runOnJS(onSwipeNext)();
         });
       } else if (swipePrev) {
-        translateX.value = withTiming(SCREEN_WIDTH, TIMING_FAST, () => {
+        translateX.value = withTiming(-SCREEN_WIDTH, TIMING_FAST, () => {
           runOnJS(onSwipePrev)();
         });
       } else {
@@ -509,18 +609,10 @@ const VideoSwipeContainer = React.memo(({
       }
     });
 
-  // Long-press / single-tap to toggle chrome — short, low-priority so it does
-  // not steal taps that should reach the native player chrome.
-  const tap = Gesture.Tap()
-    .numberOfTaps(1)
-    .maxDuration(220)
-    .onEnd(() => {
-      'worklet';
-      runOnJS(onSingleTap)();
-    });
-
-  // Pan and tap don't conflict (different shapes) — race so whichever resolves first wins.
-  const composed = Gesture.Race(pan, tap);
+  // Pan-only on video — any tap gesture here would race the native player's
+  // play/pause/scrub touch handling and make controls feel laggy. The user can
+  // close via the always-visible top bar; swipe-up still opens info.
+  const composed = pan;
 
   const animStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
@@ -534,7 +626,7 @@ const VideoSwipeContainer = React.memo(({
   return (
     <GestureDetector gesture={composed}>
       <Reanimated.View style={[styles.zoomableContainer, animStyle]}>
-        <FullScreenVideoPlayer uri={uri} />
+        <FullScreenVideoPlayer uri={uri} onError={onError} />
       </Reanimated.View>
     </GestureDetector>
   );
@@ -556,13 +648,26 @@ interface MediaInfoPanelProps {
   onClose: () => void;
 }
 
+const PANEL_TRAVEL = 600; // px — enough to clear the panel even on tall screens
+const PANEL_DISMISS_DY = 80;
+const PANEL_DISMISS_VY = 0.5;
+
+const formatMegapixels = (w?: number, h?: number): string | null => {
+  if (!w || !h) return null;
+  const mp = (w * h) / 1_000_000;
+  return mp >= 10 ? `${mp.toFixed(0)} MP` : `${mp.toFixed(1)} MP`;
+};
+
 const MediaInfoPanel = ({ message, senderName, visible, onClose }: MediaInfoPanelProps) => {
   const { theme, isDark } = useTheme();
-  const slideAnim = useRef(new Animated.Value(500)).current;
+  // `slideAnim` drives both the spring-in/out animation and finger-following
+  // during the swipe-down dismiss gesture, so it has to live in JS state.
+  const slideAnim = useRef(new Animated.Value(PANEL_TRAVEL)).current;
+  const dragStartRef = useRef(0);
 
   useEffect(() => {
     Animated.spring(slideAnim, {
-      toValue: visible ? 0 : 500,
+      toValue: visible ? 0 : PANEL_TRAVEL,
       useNativeDriver: true,
       damping: 28,
       stiffness: 220,
@@ -570,7 +675,73 @@ const MediaInfoPanel = ({ message, senderName, visible, onClose }: MediaInfoPane
     }).start();
   }, [visible, slideAnim]);
 
+  // Swipe-down dismiss. Drag follows the finger 1:1; release past the
+  // threshold (or with a downward fling) animates the panel off-screen and
+  // calls `onClose`. Releases below the threshold spring back to 0.
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        // Only claim moves that are clearly downward — let horizontal/vertical
+        // ScrollView gestures inside the panel pass through.
+        onMoveShouldSetPanResponder: (_, gs) =>
+          Math.abs(gs.dy) > 8 && gs.dy > Math.abs(gs.dx),
+        onPanResponderGrant: () => {
+          dragStartRef.current = 0;
+          slideAnim.stopAnimation((value) => {
+            dragStartRef.current = value;
+          });
+        },
+        onPanResponderMove: (_, gs) => {
+          // Clamp at 0 so the panel can't be dragged *up* past its docked
+          // position; downward drag follows the finger.
+          const next = Math.max(0, dragStartRef.current + gs.dy);
+          slideAnim.setValue(next);
+        },
+        onPanResponderRelease: (_, gs) => {
+          const fastFlick = gs.vy > PANEL_DISMISS_VY;
+          if (gs.dy > PANEL_DISMISS_DY || fastFlick) {
+            Animated.timing(slideAnim, {
+              toValue: PANEL_TRAVEL,
+              duration: 180,
+              useNativeDriver: true,
+            }).start(() => onClose());
+          } else {
+            Animated.spring(slideAnim, {
+              toValue: 0,
+              useNativeDriver: true,
+              damping: 28,
+              stiffness: 220,
+              mass: 0.8,
+            }).start();
+          }
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(slideAnim, {
+            toValue: 0,
+            useNativeDriver: true,
+            damping: 28,
+            stiffness: 220,
+            mass: 0.8,
+          }).start();
+        },
+        onPanResponderTerminationRequest: () => false,
+      }),
+    [onClose, slideAnim],
+  );
+
   const meta = message.mediaMetadata;
+
+  // Prefer source dimensions / size when we captured them at send-time —
+  // they match what the user saw at preview and what their OS reports for
+  // the original file. Fall back to the post-process numbers otherwise.
+  const displayWidth = meta?.sourceWidth ?? meta?.width;
+  const displayHeight = meta?.sourceHeight ?? meta?.height;
+  const displaySize = meta?.sourceFileSize ?? meta?.fileSize;
+  const sentDifferentResolution =
+    !!meta?.sourceWidth && !!meta?.width && meta.sourceWidth !== meta.width;
+  const sentDifferentSize =
+    !!meta?.sourceFileSize && !!meta?.fileSize && meta.sourceFileSize !== meta.fileSize;
 
   const rows: InfoRow[] = [];
 
@@ -590,81 +761,117 @@ const MediaInfoPanel = ({ message, senderName, visible, onClose }: MediaInfoPane
   const ext = getFileExt(meta);
   if (ext) rows.push({ label: 'Extension', icon: 'code-slash-outline', value: ext });
 
-  if (meta?.width && meta?.height) {
-    rows.push({
-      label: 'Resolution',
-      icon: 'resize-outline',
-      value: `${meta.width} × ${meta.height} px`,
-    });
+  if (displayWidth && displayHeight) {
+    const mp = formatMegapixels(displayWidth, displayHeight);
+    let value = `${displayWidth} × ${displayHeight} px`;
+    if (mp && message.type === 'image') value += `  •  ${mp}`;
+    if (sentDifferentResolution && meta?.width && meta?.height) {
+      value += `\nSent at ${meta.width} × ${meta.height}`;
+    }
+    rows.push({ label: 'Resolution', icon: 'resize-outline', value });
   }
 
   if (meta?.duration) {
     rows.push({ label: 'Duration', icon: 'time-outline', value: formatDuration(meta.duration) });
   }
 
-  if (meta?.fileSize) {
-    rows.push({ label: 'File size', icon: 'server-outline', value: formatFileSize(meta.fileSize) });
+  if (displaySize) {
+    let value = formatFileSize(displaySize);
+    if (sentDifferentSize && meta?.fileSize) {
+      value += `\nSent as ${formatFileSize(meta.fileSize)}`;
+    }
+    rows.push({ label: 'File size', icon: 'server-outline', value });
   }
 
   if (meta?.fileName) {
     rows.push({ label: 'File name', icon: 'document-text-outline', value: meta.fileName });
   }
 
+  if (meta?.cameraMake || meta?.cameraModel) {
+    const value = [meta?.cameraMake, meta?.cameraModel].filter(Boolean).join(' ').trim();
+    if (value) rows.push({ label: 'Camera', icon: 'camera-outline', value });
+  }
+
+  if (meta?.takenAt) {
+    rows.push({ label: 'Captured', icon: 'time-outline', value: formatDate(meta.takenAt) });
+  }
+
   rows.push({ label: 'Sent', icon: 'calendar-outline', value: formatDate(message.createdAt) });
   rows.push({ label: 'From', icon: 'person-outline', value: senderName });
 
+  // Backdrop opacity tracks the slide so a partial drag dims accordingly —
+  // gives the same feedback you get from any iOS-style sheet.
+  const backdropOpacity = slideAnim.interpolate({
+    inputRange: [0, PANEL_TRAVEL],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+
   return (
-    <Animated.View
-      style={[
-        styles.infoPanel,
-        {
-          backgroundColor: isDark ? 'rgba(20,20,28,0.97)' : 'rgba(255,255,255,0.97)',
-          transform: [{ translateY: slideAnim }],
-        },
-      ]}
+    <View
+      style={StyleSheet.absoluteFill}
       pointerEvents={visible ? 'auto' : 'none'}
     >
-      <View style={styles.infoPanelHandle} />
-      <View style={styles.infoPanelHeader}>
-        <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
-          File Info
-        </Text>
-        <TouchableOpacity onPress={onClose} hitSlop={12}>
-          <Ionicons name="close" size={22} color={theme.colors.onSurface} />
-        </TouchableOpacity>
-      </View>
-      <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
-        {rows.map((row, i) => (
-          <View
-            key={row.label}
-            style={[
-              styles.infoRow,
-              i < rows.length - 1 && {
-                borderBottomWidth: StyleSheet.hairlineWidth,
-                borderBottomColor: isDark
-                  ? 'rgba(255,255,255,0.08)'
-                  : 'rgba(0,0,0,0.08)',
-              },
-            ]}
-          >
-            <View style={[styles.infoIconWrap, { backgroundColor: theme.colors.primaryContainer }]}>
-              <Ionicons name={row.icon} size={16} color={theme.colors.primary} />
+      {/* Tap-outside dismiss — fades with the slide so it doesn't pop. */}
+      <Animated.View
+        style={[StyleSheet.absoluteFill, { opacity: backdropOpacity }]}
+        pointerEvents={visible ? 'auto' : 'none'}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }]}
+          onPress={onClose}
+        />
+      </Animated.View>
+      <Animated.View
+        style={[
+          styles.infoPanel,
+          {
+            backgroundColor: isDark ? 'rgba(20,20,28,0.97)' : 'rgba(255,255,255,0.97)',
+            transform: [{ translateY: slideAnim }],
+          },
+        ]}
+        {...panResponder.panHandlers}
+      >
+        <View style={styles.infoPanelHandle} />
+        <View style={styles.infoPanelHeader}>
+          <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+            File Info
+          </Text>
+          <TouchableOpacity onPress={onClose} hitSlop={12}>
+            <Ionicons name="close" size={22} color={theme.colors.onSurface} />
+          </TouchableOpacity>
+        </View>
+        <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
+          {rows.map((row, i) => (
+            <View
+              key={row.label}
+              style={[
+                styles.infoRow,
+                i < rows.length - 1 && {
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: isDark
+                    ? 'rgba(255,255,255,0.08)'
+                    : 'rgba(0,0,0,0.08)',
+                },
+              ]}
+            >
+              <View style={[styles.infoIconWrap, { backgroundColor: theme.colors.primaryContainer }]}>
+                <Ionicons name={row.icon} size={16} color={theme.colors.primary} />
+              </View>
+              <View style={styles.infoRowContent}>
+                <Text style={[styles.infoLabel, { color: theme.colors.onSurfaceVariant }]}>
+                  {row.label}
+                </Text>
+                <Text style={[styles.infoValue, { color: theme.colors.onSurface }]}>
+                  {row.value}
+                </Text>
+              </View>
             </View>
-            <View style={styles.infoRowContent}>
-              <Text style={[styles.infoLabel, { color: theme.colors.onSurfaceVariant }]}>
-                {row.label}
-              </Text>
-              <Text
-                style={[styles.infoValue, { color: theme.colors.onSurface }]}
-                numberOfLines={2}
-              >
-                {row.value}
-              </Text>
-            </View>
-          </View>
-        ))}
-      </ScrollView>
-    </Animated.View>
+          ))}
+        </ScrollView>
+      </Animated.View>
+    </View>
   );
 };
 
@@ -725,6 +932,22 @@ const FullScreenViewer = ({
     setShowInfo(false);
   }, []);
 
+  // Thumbnail strip — keep the active thumb centred when the user navigates.
+  const stripRef = useRef<FlatList<ChatMessage>>(null);
+  useEffect(() => {
+    if (!visible) return;
+    stripRef.current?.scrollToIndex({
+      index: currentIndex,
+      viewPosition: 0.5,
+      animated: true,
+    });
+  }, [currentIndex, visible]);
+
+  const handleThumbPress = useCallback((idx: number) => {
+    setCurrentIndex(idx);
+    setShowInfo(false);
+  }, []);
+
   const handleDismiss = useCallback(() => {
     // Allow the dismiss animation to play before closing the modal
     setTimeout(onClose, 230);
@@ -734,17 +957,48 @@ const FullScreenViewer = ({
     opacity: backdropOpacity.value,
   }));
 
+  // Resolve the URI for the currently-visible item with local→remote fallback.
+  // Hook must run unconditionally on every render (no early-returning above it).
+  const currentMessage = messages[currentIndex];
+  const { uri: mediaUri, markFailed } = useResolvedMediaUri(currentMessage);
+
+  // Adjacent items — used to prefetch their media so the next/prev swipe
+  // resolves to a cached image instantly instead of flashing black for 1–3s
+  // while a fresh load runs. Only image items share a cache with `<Image>`;
+  // videos use a separate decoder pipeline so we leave them alone here.
+  const prevMessage = currentIndex > 0 ? messages[currentIndex - 1] : undefined;
+  const nextMessage =
+    currentIndex < messages.length - 1 ? messages[currentIndex + 1] : undefined;
+  const prevPreloadUri =
+    prevMessage?.type === 'image'
+      ? (prevMessage.localMediaPath ?? prevMessage.mediaUrl)
+      : undefined;
+  const nextPreloadUri =
+    nextMessage?.type === 'image'
+      ? (nextMessage.localMediaPath ?? nextMessage.mediaUrl)
+      : undefined;
+
+  // Kick the platform image cache for any adjacent remote URLs. `Image.prefetch`
+  // ignores `file://` paths (and rejects), so we swallow errors — the hidden
+  // `<Image>` preloaders below cover the local-file case.
+  useEffect(() => {
+    [prevPreloadUri, nextPreloadUri].forEach((u) => {
+      if (u && /^https?:\/\//i.test(u)) {
+        Image.prefetch(u).catch(() => undefined);
+      }
+    });
+  }, [prevPreloadUri, nextPreloadUri]);
+
   if (!visible || messages.length === 0) return null;
+  if (!currentMessage) return null;
 
-  const msg = messages[currentIndex];
-  if (!msg) return null;
-
+  const msg = currentMessage;
   const senderName = senderMap.get(msg.senderId) ?? 'Unknown';
   const isVideo = msg.type === 'video';
-  const mediaUri = msg.localMediaPath ?? msg.mediaUrl;
+  const itemKey = msg.messageId || msg.id;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <View style={styles.viewerRoot}>
         {/* Animated black backdrop — fades during drag-to-dismiss */}
         <Reanimated.View
@@ -752,31 +1006,63 @@ const FullScreenViewer = ({
           pointerEvents="none"
         />
 
+        {/* Hidden preloaders — keep adjacent images decoded in the RN image
+            cache so the swipe-to-next animation lands on a fully rendered
+            frame, not a 1–3s black gap. Render size must match the visible
+            image size for the RN cache hit to bypass decoding. */}
+        {prevPreloadUri ? (
+          <View style={styles.preloadImage} pointerEvents="none">
+            <Image
+              source={{ uri: prevPreloadUri }}
+              style={StyleSheet.absoluteFill}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              fadeDuration={0}
+            />
+          </View>
+        ) : null}
+        {nextPreloadUri ? (
+          <View style={styles.preloadImage} pointerEvents="none">
+            <Image
+              source={{ uri: nextPreloadUri }}
+              style={StyleSheet.absoluteFill}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              fadeDuration={0}
+            />
+          </View>
+        ) : null}
+
         {/* Media area */}
         <View style={styles.viewerMedia}>
           {mediaUri ? (
             isVideo ? (
               <VideoSwipeContainer
-                key={`${msg.messageId || msg.id}_${mediaUri}`}
+                // Re-mount only on item change, not on a same-item URI fallback
+                // (local→remote). Without this, the async hook flips would
+                // unmount the player mid-load and cause a second black flash.
+                key={itemKey}
                 uri={mediaUri}
                 onSwipeNext={goNext}
                 onSwipePrev={goPrev}
                 onDismiss={handleDismiss}
                 onSingleTap={toggleChrome}
                 onSwipeUp={() => setShowInfo(true)}
+                onError={markFailed}
                 hasNext={currentIndex < messages.length - 1}
                 hasPrev={currentIndex > 0}
                 backdropOpacity={backdropOpacity}
               />
             ) : (
               <ZoomableImage
-                key={`${msg.messageId || msg.id}_${mediaUri}`}
+                key={itemKey}
                 uri={mediaUri}
                 onSwipeNext={goNext}
                 onSwipePrev={goPrev}
                 onDismiss={handleDismiss}
                 onSingleTap={toggleChrome}
                 onSwipeUp={() => setShowInfo(true)}
+                onError={markFailed}
                 hasNext={currentIndex < messages.length - 1}
                 hasPrev={currentIndex > 0}
                 backdropOpacity={backdropOpacity}
@@ -815,8 +1101,41 @@ const FullScreenViewer = ({
         {/* Bottom bar */}
         <Animated.View
           style={[styles.viewerBottomBar, { paddingBottom: insets.bottom + 8, opacity: fadeAnim }]}
-          pointerEvents="none"
+          pointerEvents={showChrome ? 'box-none' : 'none'}
         >
+          {messages.length > 1 && (
+            <FlatList
+              ref={stripRef}
+              data={messages}
+              keyExtractor={(item) => item.messageId || item.id}
+              horizontal
+              // `inverted` reverses item order so index 0 sits on the right and
+              // higher indices flow leftward. This matches the swipe mapping
+              // (drag-right → next): the upcoming item is visually to the left
+              // of the active thumb, mirroring how the next image enters.
+              inverted
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.thumbStripContent}
+              getItemLayout={(_, idx) => ({
+                length: STRIP_THUMB_SIZE + STRIP_THUMB_GAP,
+                offset: (STRIP_THUMB_SIZE + STRIP_THUMB_GAP) * idx,
+                index: idx,
+              })}
+              onScrollToIndexFailed={({ index }) => {
+                stripRef.current?.scrollToOffset({
+                  offset: index * (STRIP_THUMB_SIZE + STRIP_THUMB_GAP),
+                  animated: false,
+                });
+              }}
+              renderItem={({ item, index }) => (
+                <StripThumb
+                  message={item}
+                  active={index === currentIndex}
+                  onPress={() => handleThumbPress(index)}
+                />
+              )}
+            />
+          )}
           <Text style={styles.viewerCounter}>
             {currentIndex + 1} / {messages.length}
           </Text>
@@ -861,22 +1180,39 @@ const FullScreenViewer = ({
 interface MediaCellProps {
   message: ChatMessage;
   onPress: () => void;
+  onLongPress?: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
 }
 
-const MediaCell = React.memo(({ message, onPress }: MediaCellProps) => {
+const MediaCell = React.memo(({ message, onPress, onLongPress, selectionMode, selected }: MediaCellProps) => {
   const { theme } = useTheme();
-  const uri = message.localMediaPath ?? message.mediaUrl;
+  const { uri, markFailed } = useResolvedMediaUri(message);
   const isVideo = message.type === 'video';
+  const videoThumb = useVideoThumbnail(isVideo ? uri : undefined);
+  const displayUri = isVideo ? videoThumb : uri;
   const duration = message.mediaMetadata?.duration;
 
   return (
     <TouchableOpacity
-      style={[styles.cell, { width: CELL_SIZE, height: CELL_SIZE }]}
+      style={[
+        styles.cell,
+        { width: CELL_SIZE, height: CELL_SIZE },
+        selected && { borderWidth: 3, borderColor: theme.colors.primary },
+      ]}
       onPress={onPress}
+      onLongPress={onLongPress}
       activeOpacity={0.82}
     >
-      {uri ? (
-        <Image source={{ uri }} style={styles.cellImage} resizeMode="cover" />
+      {displayUri ? (
+        <Image
+          source={{ uri: displayUri }}
+          style={styles.cellImage}
+          resizeMode="cover"
+          onError={markFailed}
+          fadeDuration={0}
+          progressiveRenderingEnabled
+        />
       ) : (
         <View style={[styles.cellPlaceholder, { backgroundColor: theme.colors.surfaceVariant }]}>
           <Ionicons
@@ -886,7 +1222,7 @@ const MediaCell = React.memo(({ message, onPress }: MediaCellProps) => {
           />
         </View>
       )}
-      {isVideo && (
+      {isVideo && !selectionMode && (
         <View style={styles.cellVideoOverlay}>
           <Ionicons name="play" size={12} color="#fff" />
           {duration ? (
@@ -894,9 +1230,77 @@ const MediaCell = React.memo(({ message, onPress }: MediaCellProps) => {
           ) : null}
         </View>
       )}
+      {selectionMode && (
+        <View
+          style={[
+            styles.cellSelectCheckbox,
+            {
+              backgroundColor: selected ? theme.colors.primary : 'rgba(0,0,0,0.4)',
+              borderColor: selected ? theme.colors.primary : 'rgba(255,255,255,0.85)',
+            },
+          ]}
+        >
+          {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
+        </View>
+      )}
     </TouchableOpacity>
   );
 });
+
+// ─── StripThumb (bottom carousel item) ───────────────────────────────────────
+
+interface StripThumbProps {
+  message: ChatMessage;
+  active: boolean;
+  onPress: () => void;
+}
+
+const StripThumb = React.memo(({ message, active, onPress }: StripThumbProps) => {
+  const { theme } = useTheme();
+  const { uri, markFailed } = useResolvedMediaUri(message);
+  const isVideo = message.type === 'video';
+  const videoThumb = useVideoThumbnail(isVideo ? uri : undefined);
+  const displayUri = isVideo ? videoThumb : uri;
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.85}
+      style={[
+        styles.stripThumb,
+        {
+          borderColor: active ? theme.colors.primary : 'rgba(255,255,255,0.18)',
+          borderWidth: active ? 2 : StyleSheet.hairlineWidth,
+        },
+      ]}
+    >
+      {displayUri ? (
+        <Image
+          source={{ uri: displayUri }}
+          style={styles.stripThumbImage}
+          resizeMode="cover"
+          onError={markFailed}
+          fadeDuration={0}
+          progressiveRenderingEnabled
+        />
+      ) : (
+        <View style={styles.stripThumbFallback}>
+          <Ionicons
+            name={isVideo ? 'videocam-outline' : 'image-outline'}
+            size={16}
+            color="#aaa"
+          />
+        </View>
+      )}
+      {isVideo && (
+        <View style={styles.stripThumbVideoBadge}>
+          <Ionicons name="play" size={10} color="#fff" />
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+});
+StripThumb.displayName = 'StripThumb';
 
 // ─── DocRow ───────────────────────────────────────────────────────────────────
 
@@ -904,9 +1308,12 @@ interface DocRowProps {
   message: ChatMessage;
   senderName: string;
   onPress?: () => void;
+  onLongPress?: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
 }
 
-const DocRow = React.memo(({ message, senderName, onPress }: DocRowProps) => {
+const DocRow = React.memo(({ message, senderName, onPress, onLongPress, selectionMode, selected }: DocRowProps) => {
   const { theme, isDark } = useTheme();
   const meta = message.mediaMetadata;
   const ext = getFileExt(meta);
@@ -922,10 +1329,25 @@ const DocRow = React.memo(({ message, senderName, onPress }: DocRowProps) => {
             ? 'rgba(255,255,255,0.06)'
             : 'rgba(0,0,0,0.06)',
         },
+        selected && { backgroundColor: isDark ? 'rgba(53,198,255,0.15)' : 'rgba(31,111,235,0.10)' },
       ]}
       onPress={onPress}
+      onLongPress={onLongPress}
       activeOpacity={0.7}
     >
+      {selectionMode ? (
+        <View
+          style={[
+            styles.rowSelectCheckbox,
+            {
+              backgroundColor: selected ? theme.colors.primary : 'transparent',
+              borderColor: selected ? theme.colors.primary : (isDark ? '#666' : '#bbb'),
+            },
+          ]}
+        >
+          {selected && <Ionicons name="checkmark" size={12} color="#fff" />}
+        </View>
+      ) : null}
       <View
         style={[
           styles.docIconWrap,
@@ -952,7 +1374,9 @@ const DocRow = React.memo(({ message, senderName, onPress }: DocRowProps) => {
             .join(' · ')}
         </Text>
       </View>
-      <Ionicons name="chevron-forward" size={16} color={theme.colors.onSurfaceVariant} />
+      {!selectionMode && (
+        <Ionicons name="chevron-forward" size={16} color={theme.colors.onSurfaceVariant} />
+      )}
     </TouchableOpacity>
   );
 });
@@ -962,17 +1386,24 @@ const DocRow = React.memo(({ message, senderName, onPress }: DocRowProps) => {
 interface LinkRowProps {
   message: ChatMessage;
   senderName: string;
+  onPress?: () => void;
+  onLongPress?: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
 }
 
-const LinkRow = React.memo(({ message, senderName }: LinkRowProps) => {
+const LinkRow = React.memo(({ message, senderName, onPress, onLongPress, selectionMode, selected }: LinkRowProps) => {
   const { theme, isDark } = useTheme();
   const matches = message.content.match(URL_REGEX) ?? [];
 
   return (
     <>
       {matches.map((url, i) => (
-        <View
+        <TouchableOpacity
           key={`${message.messageId}_${i}`}
+          onPress={onPress}
+          onLongPress={onLongPress}
+          activeOpacity={selectionMode ? 0.7 : 1}
           style={[
             styles.docRow,
             {
@@ -980,8 +1411,22 @@ const LinkRow = React.memo(({ message, senderName }: LinkRowProps) => {
                 ? 'rgba(255,255,255,0.06)'
                 : 'rgba(0,0,0,0.06)',
             },
+            selected && { backgroundColor: isDark ? 'rgba(53,198,255,0.15)' : 'rgba(31,111,235,0.10)' },
           ]}
         >
+          {selectionMode ? (
+            <View
+              style={[
+                styles.rowSelectCheckbox,
+                {
+                  backgroundColor: selected ? theme.colors.primary : 'transparent',
+                  borderColor: selected ? theme.colors.primary : (isDark ? '#666' : '#bbb'),
+                },
+              ]}
+            >
+              {selected && <Ionicons name="checkmark" size={12} color="#fff" />}
+            </View>
+          ) : null}
           <View style={[styles.docIconWrap, { backgroundColor: theme.colors.secondaryContainer }]}>
             <Ionicons name="link-outline" size={22} color={theme.colors.secondary} />
           </View>
@@ -993,7 +1438,7 @@ const LinkRow = React.memo(({ message, senderName }: LinkRowProps) => {
               {formatDate(message.createdAt)} · {senderName}
             </Text>
           </View>
-        </View>
+        </TouchableOpacity>
       ))}
     </>
   );
@@ -1034,7 +1479,7 @@ export const ChatMediaGalleryScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
   const params = route.params as ChatMediaGalleryParams;
-  const { subscribeToMessages } = useChat();
+  const { subscribeToMessages, deleteMessageForEveryone } = useChat();
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
@@ -1045,13 +1490,22 @@ export const ChatMediaGalleryScreen = () => {
   const [viewerIndex, setViewerIndex] = useState(0);
   const autoOpenedRef = useRef(false);
 
+  // Multi-select state — used for bulk delete-for-me / delete-for-everyone in
+  // each tab. Switching tabs resets the selection so the toolbar's actions
+  // never apply across tab boundaries.
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [undoSnapshot, setUndoSnapshot] = useState<{ messageIds: string[] } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Delete-for-everyone window — keep parity with ChatRoomScreen (24h).
+  const DELETE_FOR_EVERYONE_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const DELETE_UNDO_WINDOW_MS = 5_000;
+
   // Animated tab indicator
   const tabIndicatorX = useRef(new Animated.Value(0)).current;
   const tabWidth = SCREEN_WIDTH / TABS.length;
 
-  useLayoutEffect(() => {
-    navigation.setOptions({ title: params.title ?? 'Media', headerTransparent: true });
-  }, [navigation, params.title]);
 
   useEffect(() => {
     if (!params.chatId) return;
@@ -1061,25 +1515,37 @@ export const ChatMediaGalleryScreen = () => {
     return unsubscribe;
   }, [params.chatId, subscribeToMessages]);
 
-  // Derived lists
+  // Derived lists — exclude messages the user has hidden via "Delete for me"
+  // *or* that were deleted for everyone (no point listing a tombstone in
+  // Media / Docs / Links — the chat itself still shows the tombstone bubble).
+  const visibleMessages = useMemo(
+    () =>
+      messages.filter((m) => {
+        if (m.deletedForEveryone) return false;
+        if (user && m.deletedFor?.includes(user.userId)) return false;
+        return true;
+      }),
+    [messages, user],
+  );
+
   const mediaMessages = useMemo(
     () =>
-      messages.filter(
+      visibleMessages.filter(
         (m) =>
           (m.type === 'image' || m.type === 'video') &&
           (m.localMediaPath || m.mediaUrl),
       ),
-    [messages],
+    [visibleMessages],
   );
 
   const docMessages = useMemo(
-    () => messages.filter((m) => m.type === 'file' || m.type === 'audio'),
-    [messages],
+    () => visibleMessages.filter((m) => m.type === 'file' || m.type === 'audio'),
+    [visibleMessages],
   );
 
   const linkMessages = useMemo(
-    () => messages.filter((m) => m.type === 'text' && URL_REGEX.test(m.content)),
-    [messages],
+    () => visibleMessages.filter((m) => m.type === 'text' && URL_REGEX.test(m.content)),
+    [visibleMessages],
   );
 
   // Build sender name map from passed participants
@@ -1093,8 +1559,58 @@ export const ChatMediaGalleryScreen = () => {
 
   const TAB_INDEX: Record<TabId, number> = { media: 0, docs: 1, links: 2 };
 
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  // Native nav header — title + a contextual right button. Renders the Select
+  // toggle in the actual header (not the inline tab strip) so touches don't
+  // get intercepted by the transparent React Navigation header overlay.
+  useLayoutEffect(() => {
+    const headerRight = () =>
+      selectionMode ? (
+        <TouchableOpacity
+          onPress={exitSelectionMode}
+          hitSlop={10}
+          style={{ paddingHorizontal: 12, paddingVertical: 6 }}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel selection"
+        >
+          <Text style={{ color: theme.colors.primary, fontSize: 16, fontWeight: '600' }}>Cancel</Text>
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity
+          onPress={() => {
+            setSelectionMode(true);
+            setSelectedIds(new Set());
+          }}
+          hitSlop={10}
+          style={{ paddingHorizontal: 12, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 4 }}
+          accessibilityRole="button"
+          accessibilityLabel="Select items"
+        >
+          <Ionicons name="checkmark-circle-outline" size={20} color={theme.colors.primary} />
+          <Text style={{ color: theme.colors.primary, fontSize: 15, fontWeight: '600' }}>Select</Text>
+        </TouchableOpacity>
+      );
+
+    const headerTitle =
+      selectionMode && selectedIds.size > 0
+        ? `${selectedIds.size} selected`
+        : params.title ?? 'Media';
+
+    navigation.setOptions({
+      title: headerTitle,
+      headerTransparent: true,
+      headerRight,
+    });
+  }, [navigation, params.title, selectionMode, selectedIds.size, theme.colors.primary, exitSelectionMode]);
+
   const handleTabPress = useCallback(
     (tab: TabId) => {
+      // Switching tabs always resets selection — bulk actions are tab-scoped.
+      if (selectionMode) exitSelectionMode();
       setActiveTab(tab);
       Animated.spring(tabIndicatorX, {
         toValue: TAB_INDEX[tab] * tabWidth,
@@ -1103,8 +1619,115 @@ export const ChatMediaGalleryScreen = () => {
         stiffness: 200,
       }).start();
     },
-    [tabIndicatorX, tabWidth],
+    [tabIndicatorX, tabWidth, selectionMode, exitSelectionMode],
   );
+
+  const toggleSelected = useCallback((messageId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) next.delete(messageId);
+      else next.add(messageId);
+      return next;
+    });
+  }, []);
+
+  const enterSelectionWith = useCallback((messageId: string) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([messageId]));
+  }, []);
+
+  // The set of messages eligible for the current tab's selection — used by the
+  // toolbar to compute `canDeleteForEveryone` and to drive bulk action dispatch.
+  const selectedMessages = useMemo(() => {
+    if (!selectionMode || selectedIds.size === 0) return [] as ChatMessage[];
+    return messages.filter((m) => selectedIds.has(m.messageId) || selectedIds.has(m.id));
+  }, [messages, selectedIds, selectionMode]);
+
+  const canDeleteForEveryone = useMemo(() => {
+    if (!user || selectedMessages.length === 0) return false;
+    return selectedMessages.every(
+      (m) =>
+        m.senderId === user.userId &&
+        Date.now() - m.createdAt < DELETE_FOR_EVERYONE_WINDOW_MS &&
+        !m.deletedForEveryone,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMessages, user]);
+
+  // Schedule the undo snackbar dismiss timer.
+  useEffect(() => {
+    if (!undoSnapshot) {
+      if (undoTimerRef.current) {
+        clearTimeout(undoTimerRef.current);
+        undoTimerRef.current = null;
+      }
+      return;
+    }
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = setTimeout(() => {
+      setUndoSnapshot(null);
+    }, DELETE_UNDO_WINDOW_MS);
+    return () => {
+      if (undoTimerRef.current) {
+        clearTimeout(undoTimerRef.current);
+        undoTimerRef.current = null;
+      }
+    };
+  }, [undoSnapshot, DELETE_UNDO_WINDOW_MS]);
+
+  const handleBulkDeleteForMe = useCallback(async () => {
+    if (!user || selectedMessages.length === 0) return;
+    const ids = selectedMessages.map((m) => m.messageId || m.id);
+    warningHaptic();
+    for (const id of ids) {
+      await markMessageDeletedForUser(params.chatId, id, user.userId);
+    }
+    exitSelectionMode();
+    setUndoSnapshot({ messageIds: ids });
+  }, [selectedMessages, user, params.chatId, exitSelectionMode]);
+
+  const handleBulkDeleteForEveryone = useCallback(async () => {
+    if (!user || selectedMessages.length === 0) return;
+    const ids = selectedMessages.map((m) => m.messageId || m.id);
+    warningHaptic();
+    for (const id of ids) {
+      await deleteMessageForEveryone(params.chatId, id);
+    }
+    exitSelectionMode();
+  }, [selectedMessages, user, params.chatId, deleteMessageForEveryone, exitSelectionMode]);
+
+  const handleUndoBulkDelete = useCallback(async () => {
+    if (!undoSnapshot || !user) return;
+    const ids = undoSnapshot.messageIds;
+    setUndoSnapshot(null);
+    for (const id of ids) {
+      await unmarkMessageDeletedForUser(params.chatId, id, user.userId);
+    }
+  }, [undoSnapshot, user, params.chatId]);
+
+  const promptBulkDeleteForMe = useCallback(() => {
+    if (selectedMessages.length === 0) return;
+    Alert.alert(
+      `Delete ${selectedMessages.length} item${selectedMessages.length === 1 ? '' : 's'} for me`,
+      'These items will be removed from your chat. Other people will still see them.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete for me', style: 'destructive', onPress: () => { void handleBulkDeleteForMe(); } },
+      ],
+    );
+  }, [selectedMessages, handleBulkDeleteForMe]);
+
+  const promptBulkDeleteForEveryone = useCallback(() => {
+    if (selectedMessages.length === 0) return;
+    Alert.alert(
+      `Delete ${selectedMessages.length} item${selectedMessages.length === 1 ? '' : 's'} for everyone`,
+      'These items will be removed for everyone in this chat. They may have already seen them.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete for everyone', style: 'destructive', onPress: () => { void handleBulkDeleteForEveryone(); } },
+      ],
+    );
+  }, [selectedMessages, handleBulkDeleteForEveryone]);
 
   const openViewer = useCallback((index: number) => {
     setViewerIndex(index);
@@ -1130,6 +1753,96 @@ export const ChatMediaGalleryScreen = () => {
   // Chrome heights for content padding
   const TAB_BAR_HEIGHT = insets.top + 52 + 44; // header + tabs
 
+  // ── swipe-to-select (media grid) ────────────────────────────────────────────
+  // While in selection mode, dragging a finger across thumbnails toggles each
+  // cell the finger crosses (Photos.app parity). Vertical/diagonal flicks
+  // beyond the threshold steal the gesture from the FlatList scroll so the
+  // drag selects rather than scrolls — quick taps still toggle individual
+  // cells, and out of selection mode the FlatList behaves normally.
+  const gridScrollYRef = useRef(0);
+  const swipeVisitedRef = useRef<Set<string>>(new Set());
+  const swipeAddRef = useRef<boolean>(true);
+
+  const indexAtGridPoint = useCallback(
+    (pageX: number, pageY: number): number => {
+      const yInList = pageY - TAB_BAR_HEIGHT + gridScrollYRef.current - GRID_GAP;
+      const xInList = pageX - GRID_GAP;
+      const stride = CELL_SIZE + GRID_GAP;
+      const col = Math.floor(xInList / stride);
+      const row = Math.floor(yInList / stride);
+      if (col < 0 || col >= COLUMN_COUNT || row < 0) return -1;
+      const cellLocalX = xInList - col * stride;
+      const cellLocalY = yInList - row * stride;
+      if (
+        cellLocalX < 0 ||
+        cellLocalX > CELL_SIZE ||
+        cellLocalY < 0 ||
+        cellLocalY > CELL_SIZE
+      ) {
+        return -1;
+      }
+      const idx = row * COLUMN_COUNT + col;
+      if (idx >= mediaMessages.length) return -1;
+      return idx;
+    },
+    [mediaMessages.length, TAB_BAR_HEIGHT],
+  );
+
+  const swipeVisit = useCallback(
+    (pageX: number, pageY: number) => {
+      const idx = indexAtGridPoint(pageX, pageY);
+      if (idx < 0) return;
+      const item = mediaMessages[idx];
+      const id = item.messageId || item.id;
+      if (swipeVisitedRef.current.has(id)) return;
+      swipeVisitedRef.current.add(id);
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (swipeAddRef.current) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+    },
+    [indexAtGridPoint, mediaMessages],
+  );
+
+  const gridPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
+        onMoveShouldSetPanResponder: (_, gs) =>
+          selectionMode && (Math.abs(gs.dx) > 6 || Math.abs(gs.dy) > 6),
+        onMoveShouldSetPanResponderCapture: (_, gs) =>
+          selectionMode && (Math.abs(gs.dx) > 6 || Math.abs(gs.dy) > 6),
+        onPanResponderGrant: (e) => {
+          swipeVisitedRef.current = new Set();
+          // Decide add vs remove based on the cell under the start point —
+          // if it's already selected, this drag deselects; otherwise selects.
+          const startIdx = indexAtGridPoint(e.nativeEvent.pageX, e.nativeEvent.pageY);
+          if (startIdx >= 0) {
+            const startItem = mediaMessages[startIdx];
+            const startId = startItem.messageId || startItem.id;
+            swipeAddRef.current = !selectedIds.has(startId);
+          } else {
+            swipeAddRef.current = true;
+          }
+          swipeVisit(e.nativeEvent.pageX, e.nativeEvent.pageY);
+        },
+        onPanResponderMove: (e) => {
+          swipeVisit(e.nativeEvent.pageX, e.nativeEvent.pageY);
+        },
+        onPanResponderRelease: () => {
+          swipeVisitedRef.current = new Set();
+        },
+        onPanResponderTerminate: () => {
+          swipeVisitedRef.current = new Set();
+        },
+        onPanResponderTerminationRequest: () => false,
+      }),
+    [selectionMode, indexAtGridPoint, mediaMessages, selectedIds, swipeVisit],
+  );
+
   // ── render helpers ──────────────────────────────────────────────────────────
 
   const renderMediaGrid = () => {
@@ -1139,27 +1852,91 @@ export const ChatMediaGalleryScreen = () => {
       );
     }
     return (
-      <FlatList
-        data={mediaMessages}
-        numColumns={COLUMN_COUNT}
-        keyExtractor={(item) => item.messageId || item.id}
-        renderItem={({ item, index }) => (
-          <MediaCell message={item} onPress={() => openViewer(index)} />
-        )}
-        contentContainerStyle={{
-          paddingTop: TAB_BAR_HEIGHT + GRID_GAP,
-          paddingBottom: insets.bottom + 32,
-          paddingHorizontal: GRID_GAP,
-          gap: GRID_GAP,
-        }}
-        columnWrapperStyle={{ gap: GRID_GAP }}
-        showsVerticalScrollIndicator={false}
-        removeClippedSubviews
-        windowSize={10}
-        initialNumToRender={18}
-      />
+      <View style={{ flex: 1 }} {...gridPanResponder.panHandlers}>
+        <FlatList
+          data={mediaMessages}
+          numColumns={COLUMN_COUNT}
+          keyExtractor={(item) => item.messageId || item.id}
+          onScroll={(e) => {
+            gridScrollYRef.current = e.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
+          renderItem={({ item, index }) => {
+            const id = item.messageId || item.id;
+            const isSelected = selectedIds.has(id);
+            return (
+              <MediaCell
+                message={item}
+                selectionMode={selectionMode}
+                selected={isSelected}
+                onPress={() => {
+                  if (selectionMode) toggleSelected(id);
+                  else openViewer(index);
+                }}
+                onLongPress={() => {
+                  if (!selectionMode) enterSelectionWith(id);
+                }}
+              />
+            );
+          }}
+          contentContainerStyle={{
+            paddingTop: TAB_BAR_HEIGHT + GRID_GAP,
+            paddingBottom: insets.bottom + (selectionMode ? 100 : 32),
+            paddingHorizontal: GRID_GAP,
+            gap: GRID_GAP,
+          }}
+          columnWrapperStyle={{ gap: GRID_GAP }}
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews
+          windowSize={10}
+          initialNumToRender={18}
+        />
+      </View>
     );
   };
+
+  const handleDocPress = useCallback(async (message: ChatMessage) => {
+    let localPath = message.localMediaPath;
+    
+    if (!localPath && message.mediaUrl) {
+      try {
+        const fileName = message.mediaMetadata?.fileName || 'document';
+        const dlPath = await getOrDownloadMedia(
+          message.mediaUrl,
+          message.localMediaPath,
+          params.chatId,
+          message.messageId || message.id,
+          fileName
+        );
+        if (dlPath) localPath = dlPath;
+      } catch (error) {
+        console.error('Failed to download doc:', error);
+      }
+    }
+
+    if (!localPath) {
+      Alert.alert('File Not Available', 'The file could not be downloaded.');
+      return;
+    }
+
+    if (Platform.OS === 'ios') {
+      try {
+        const QuickLookPreview = require('../../../modules/my-module');
+        await QuickLookPreview.previewFile(localPath);
+        return;
+      } catch (err) {
+        console.error('Failed to preview doc with QuickLook Expo Module:', err);
+      }
+    }
+
+    // @ts-ignore
+    navigation.navigate(ROUTES.APP.FILE_PREVIEW, {
+      uri: localPath,
+      fileName: message.mediaMetadata?.fileName,
+      mimeType: message.mediaMetadata?.mimeType,
+      fileSize: message.mediaMetadata?.fileSize,
+    });
+  }, [navigation, params.chatId]);
 
   const renderDocs = () => {
     if (docMessages.length === 0) {
@@ -1170,18 +1947,31 @@ export const ChatMediaGalleryScreen = () => {
         contentContainerStyle={{
           paddingTop: TAB_BAR_HEIGHT + 16,
           paddingHorizontal: 16,
-          paddingBottom: insets.bottom + 32,
+          paddingBottom: insets.bottom + (selectionMode ? 100 : 32),
         }}
         showsVerticalScrollIndicator={false}
       >
         <GlassView style={styles.listCard}>
-          {docMessages.map((m) => (
-            <DocRow
-              key={m.messageId || m.id}
-              message={m}
-              senderName={senderMap.get(m.senderId) ?? 'Member'}
-            />
-          ))}
+          {docMessages.map((m) => {
+            const id = m.messageId || m.id;
+            const isSelected = selectedIds.has(id);
+            return (
+              <DocRow
+                key={id}
+                message={m}
+                senderName={senderMap.get(m.senderId) ?? 'Member'}
+                selectionMode={selectionMode}
+                selected={isSelected}
+                onPress={() => {
+                  if (selectionMode) toggleSelected(id);
+                  else handleDocPress(m);
+                }}
+                onLongPress={() => {
+                  if (!selectionMode) enterSelectionWith(id);
+                }}
+              />
+            );
+          })}
         </GlassView>
       </ScrollView>
     );
@@ -1196,18 +1986,30 @@ export const ChatMediaGalleryScreen = () => {
         contentContainerStyle={{
           paddingTop: TAB_BAR_HEIGHT + 16,
           paddingHorizontal: 16,
-          paddingBottom: insets.bottom + 32,
+          paddingBottom: insets.bottom + (selectionMode ? 100 : 32),
         }}
         showsVerticalScrollIndicator={false}
       >
         <GlassView style={styles.listCard}>
-          {linkMessages.map((m) => (
-            <LinkRow
-              key={m.messageId || m.id}
-              message={m}
-              senderName={senderMap.get(m.senderId) ?? 'Member'}
-            />
-          ))}
+          {linkMessages.map((m) => {
+            const id = m.messageId || m.id;
+            const isSelected = selectedIds.has(id);
+            return (
+              <LinkRow
+                key={id}
+                message={m}
+                senderName={senderMap.get(m.senderId) ?? 'Member'}
+                selectionMode={selectionMode}
+                selected={isSelected}
+                onPress={() => {
+                  if (selectionMode) toggleSelected(id);
+                }}
+                onLongPress={() => {
+                  if (!selectionMode) enterSelectionWith(id);
+                }}
+              />
+            );
+          })}
         </GlassView>
       </ScrollView>
     );
@@ -1290,6 +2092,48 @@ export const ChatMediaGalleryScreen = () => {
             />
           </View>
         </View>
+
+        {/* Selection action bar — appears at the bottom while in selection mode. */}
+        {selectionMode && (
+          <View
+            style={[
+              styles.selectionBar,
+              {
+                paddingBottom: insets.bottom + 8,
+                backgroundColor: isDark ? 'rgba(18,18,18,0.96)' : 'rgba(253,251,251,0.96)',
+                borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+              },
+            ]}
+          >
+            <View style={styles.selectionBarRow}>
+              <Text style={[styles.selectionCount, { color: theme.colors.onSurface }]}>
+                {selectedIds.size} selected
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {canDeleteForEveryone && (
+                  <TouchableOpacity
+                    onPress={promptBulkDeleteForEveryone}
+                    style={[styles.selectionBarButton, { backgroundColor: theme.colors.errorContainer ?? 'rgba(255,82,82,0.18)' }]}
+                  >
+                    <Ionicons name="trash-bin-outline" size={18} color={theme.colors.error} />
+                    <Text style={[styles.selectionBarButtonText, { color: theme.colors.error }]}>For everyone</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  onPress={selectedIds.size === 0 ? undefined : promptBulkDeleteForMe}
+                  style={[
+                    styles.selectionBarButton,
+                    { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', opacity: selectedIds.size === 0 ? 0.4 : 1 },
+                  ]}
+                  disabled={selectedIds.size === 0}
+                >
+                  <Ionicons name="trash-outline" size={18} color={theme.colors.error} />
+                  <Text style={[styles.selectionBarButtonText, { color: theme.colors.error }]}>For me</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Full-screen viewer modal */}
@@ -1298,8 +2142,32 @@ export const ChatMediaGalleryScreen = () => {
         initialIndex={viewerIndex}
         senderMap={senderMap}
         visible={viewerVisible}
-        onClose={() => setViewerVisible(false)}
+        onClose={() => {
+          setViewerVisible(false);
+          if (params.initialMessageId) {
+            navigation.goBack();
+          }
+        }}
       />
+
+      {/* Undo snackbar — surfaces after delete-for-me bulk action so the user
+          can recover within the undo window if they hit the wrong action. */}
+      <Snackbar
+        visible={!!undoSnapshot}
+        onDismiss={() => setUndoSnapshot(null)}
+        duration={DELETE_UNDO_WINDOW_MS}
+        action={{
+          label: 'Undo',
+          onPress: () => {
+            void handleUndoBulkDelete();
+          },
+        }}
+        wrapperStyle={{ bottom: insets.bottom + 90 }}
+      >
+        {undoSnapshot && undoSnapshot.messageIds.length > 1
+          ? `${undoSnapshot.messageIds.length} items deleted for you`
+          : 'Item deleted for you'}
+      </Snackbar>
     </LiquidBackground>
   );
 };
@@ -1369,6 +2237,57 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontVariant: ['tabular-nums'],
   },
+  cellSelectCheckbox: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowSelectCheckbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+  },
+  selectionBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingTop: 8,
+    paddingHorizontal: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  selectionBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  selectionCount: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  selectionBarButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  selectionBarButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
   // Doc / link list
   listCard: {
     borderRadius: 16,
@@ -1422,11 +2341,12 @@ const styles = StyleSheet.create({
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
   },
-  // Video player — inset from top so native controls don't overlap close/info buttons
+  // Full-screen video — fills the viewport so portrait videos use vertical space
+  // properly. Native controls overlay above the video; the chat chrome
+  // (close/info) sits in its own bar with `pointerEvents="auto"` so it stays tappable.
   videoPlayer: {
     width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT - VIDEO_TOP_INSET,
-    marginTop: VIDEO_TOP_INSET,
+    height: SCREEN_HEIGHT,
   },
   // Full-screen viewer
   viewerRoot: {
@@ -1444,6 +2364,16 @@ const styles = StyleSheet.create({
   viewerPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Off-screen, zero-opacity preloader — lets us warm the RN image cache for
+  // the prev/next item without it being seen by the user.
+  preloadImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+    opacity: 0,
   },
   viewerTopBar: {
     position: 'absolute',
@@ -1502,6 +2432,39 @@ const styles = StyleSheet.create({
   },
   viewerArrowLeft: { left: 12 },
   viewerArrowRight: { right: 12 },
+  // Bottom thumb strip
+  thumbStripContent: {
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    gap: STRIP_THUMB_GAP,
+  },
+  stripThumb: {
+    width: STRIP_THUMB_SIZE,
+    height: STRIP_THUMB_SIZE,
+    borderRadius: 6,
+    overflow: 'hidden',
+    backgroundColor: '#1a1a1a',
+  },
+  stripThumbImage: {
+    width: '100%',
+    height: '100%',
+  },
+  stripThumbFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stripThumbVideoBadge: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   // Info panel
   infoPanel: {
     position: 'absolute',

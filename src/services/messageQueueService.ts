@@ -56,6 +56,7 @@ interface QueueMessagePayload {
   mediaMetadata?: ChatMessage['mediaMetadata'];
   replyTo?: ChatMessage['replyTo'];
   location?: ChatMessage['location'];
+  forwardedFrom?: ChatMessage['forwardedFrom'];
 }
 
 const isReceiptData = (value: unknown): value is ReceiptData => {
@@ -132,6 +133,7 @@ const parseQueuePayload = (value: unknown): QueueMessagePayload | null => {
     mediaMetadata: payload.mediaMetadata as ChatMessage['mediaMetadata'] | undefined,
     replyTo: payload.replyTo as ChatMessage['replyTo'] | undefined,
     location: payload.location as ChatMessage['location'] | undefined,
+    forwardedFrom: payload.forwardedFrom as ChatMessage['forwardedFrom'] | undefined,
   };
 };
 
@@ -170,16 +172,33 @@ export const queueMessage = async (
     };
 
     if (message.mediaMetadata) {
+      const m = message.mediaMetadata;
       messageData.mediaMetadata = {
-        ...(message.mediaMetadata.fileName && { fileName: message.mediaMetadata.fileName }),
-        ...(message.mediaMetadata.fileSize && { fileSize: message.mediaMetadata.fileSize }),
-        ...(message.mediaMetadata.mimeType && { mimeType: message.mediaMetadata.mimeType }),
-        ...(message.mediaMetadata.width && { width: message.mediaMetadata.width }),
-        ...(message.mediaMetadata.height && { height: message.mediaMetadata.height }),
-        ...(message.mediaMetadata.duration && { duration: message.mediaMetadata.duration }),
-        ...(message.mediaMetadata.aspectRatio && { aspectRatio: message.mediaMetadata.aspectRatio }),
+        ...(m.fileName && { fileName: m.fileName }),
+        ...(m.fileSize && { fileSize: m.fileSize }),
+        ...(m.mimeType && { mimeType: m.mimeType }),
+        ...(m.width && { width: m.width }),
+        ...(m.height && { height: m.height }),
+        ...(m.duration && { duration: m.duration }),
+        ...(m.aspectRatio && { aspectRatio: m.aspectRatio }),
+        ...(m.thumbnailUri && { thumbnailUri: m.thumbnailUri }),
+        // Album fields — without these the receiver renders each item as a
+        // separate bubble instead of grouping the multi-pick batch into one
+        // album bubble. `albumIndex` can legitimately be 0, so guard on
+        // `!== undefined` rather than truthiness.
+        ...(m.albumId && { albumId: m.albumId }),
+        ...(m.albumIndex !== undefined && { albumIndex: m.albumIndex }),
+        ...(m.albumSize && { albumSize: m.albumSize }),
+        // Source (pre-process) details + EXIF — surfaced on the receiver's
+        // info panel so both sides see identical, accurate numbers.
+        ...(m.sourceWidth && { sourceWidth: m.sourceWidth }),
+        ...(m.sourceHeight && { sourceHeight: m.sourceHeight }),
+        ...(m.sourceFileSize && { sourceFileSize: m.sourceFileSize }),
+        ...(m.cameraMake && { cameraMake: m.cameraMake }),
+        ...(m.cameraModel && { cameraModel: m.cameraModel }),
+        ...(m.takenAt && { takenAt: m.takenAt }),
       };
-      console.log('📎 Queuing message with mediaMetadata:', message.mediaMetadata.fileName || message.type);
+      console.log('📎 Queuing message with mediaMetadata:', m.fileName || message.type);
     }
 
     if (message.replyTo && message.replyTo.messageId) {
@@ -199,6 +218,14 @@ export const queueMessage = async (
         address: message.location.address,
       };
       console.log('📍 Queuing message with location');
+    }
+
+    if (message.forwardedFrom) {
+      messageData.forwardedFrom = {
+        senderName: message.forwardedFrom.senderName || null,
+        hopCount: message.forwardedFrom.hopCount,
+      };
+      console.log('↪️ Queuing message with forwardedFrom');
     }
 
     await set(messageQueueRef, messageData);
@@ -313,6 +340,7 @@ export const listenForMessages = (
         mediaMetadata: payload.mediaMetadata,
         replyTo: payload.replyTo,
         location: payload.location,
+        forwardedFrom: payload.forwardedFrom,
         status: 'delivered',
         isFromMe: false,
         deliveredTo: [],

@@ -21,6 +21,8 @@ import { FriendsScreen } from '@/screens/friends/FriendsScreen';
 import { ChatRoomScreen } from '@/screens/chat/ChatRoomScreen';
 import { MessageInfoScreen } from '@/screens/chat/MessageInfoScreen';
 import { ChatMediaGalleryScreen } from '@/screens/chat/ChatMediaGalleryScreen';
+import { FilePreviewScreen } from '@/screens/chat/FilePreviewScreen';
+import { StarredMessagesScreen } from '@/screens/chat/StarredMessagesScreen';
 import { AddExpenseScreen } from '@/screens/expenses/AddExpenseScreen';
 import { ExpenseDetailsScreen } from '@/screens/expenses/ExpenseDetailsScreen';
 import { RecurringBillsScreen } from '@/screens/expenses/RecurringBillsScreen';
@@ -974,6 +976,16 @@ const AppStackNavigator = () => {
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         })}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.FILE_PREVIEW}
+        component={FilePreviewScreen}
+        options={{ headerShown: false }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.STARRED_MESSAGES}
+        component={StarredMessagesScreen}
+        options={{ headerShown: false }}
       />
     </AppStack.Navigator>
   );

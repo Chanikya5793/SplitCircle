@@ -324,6 +324,7 @@ PODS:
     - ExpoModulesCore
   - fast_float (8.0.0)
   - FBLazyVector (0.83.2)
+  - ffmpeg-mobile-min (6.0.2)
   - fmt (12.1.0)
   - glog (0.3.5)
   - hermes-engine (0.14.1):
@@ -376,6 +377,8 @@ PODS:
   - LiveKitExpoPlugin (1.0.1):
     - ExpoModulesCore
     - livekit-react-native
+  - QuickLookPreview (1.0.0):
+    - ExpoModulesCore
   - RCT-Folly (2024.11.18.00):
     - boost
     - DoubleConversion
@@ -2260,6 +2263,34 @@ PODS:
     - React-RCTFBReactNativeSpec
     - ReactCommon/turbomodule/core
     - SocketRocket
+  - react-native-compressor (1.18.2):
+    - boost
+    - DoubleConversion
+    - fast_float
+    - fmt
+    - glog
+    - hermes-engine
+    - RCT-Folly
+    - RCT-Folly/Fabric
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - SocketRocket
+    - Yoga
   - react-native-get-random-values (1.11.0):
     - React-Core
   - react-native-keyboard-controller (1.20.7):
@@ -3528,6 +3559,35 @@ PODS:
   - SocketRocket (0.7.1)
   - SwiftUIIntrospect (1.3.0)
   - UMAppLoader (55.0.2)
+  - VideoTrim (8.1.0):
+    - boost
+    - DoubleConversion
+    - fast_float
+    - ffmpeg-mobile-min (~> 6.0)
+    - fmt
+    - glog
+    - hermes-engine
+    - RCT-Folly
+    - RCT-Folly/Fabric
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - SocketRocket
+    - Yoga
   - WebRTC-SDK (137.7151.04)
   - Yoga (0.0.0)
   - ZXingObjC/Core (3.6.9)
@@ -3590,6 +3650,7 @@ DEPENDENCIES:
   - "livekit-react-native (from `../node_modules/@livekit/react-native`)"
   - "livekit-react-native-webrtc (from `../node_modules/@livekit/react-native-webrtc`)"
   - "LiveKitExpoPlugin (from `../node_modules/@livekit/react-native-expo-plugin/ios`)"
+  - QuickLookPreview (from `../modules/my-module/ios`)
   - RCT-Folly (from `../node_modules/react-native/third-party-podspecs/RCT-Folly.podspec`)
   - RCTDeprecation (from `../node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation`)
   - RCTRequired (from `../node_modules/react-native/Libraries/Required`)
@@ -3627,6 +3688,7 @@ DEPENDENCIES:
   - React-logger (from `../node_modules/react-native/ReactCommon/logger`)
   - React-Mapbuffer (from `../node_modules/react-native/ReactCommon`)
   - React-microtasksnativemodule (from `../node_modules/react-native/ReactCommon/react/nativemodule/microtasks`)
+  - react-native-compressor (from `../node_modules/react-native-compressor`)
   - react-native-get-random-values (from `../node_modules/react-native-get-random-values`)
   - react-native-keyboard-controller (from `../node_modules/react-native-keyboard-controller`)
   - react-native-maps (from `../node_modules/react-native-maps`)
@@ -3678,10 +3740,12 @@ DEPENDENCIES:
   - RNWorklets (from `../node_modules/react-native-worklets`)
   - SocketRocket (~> 0.7.1)
   - UMAppLoader (from `../node_modules/unimodules-app-loader/ios`)
+  - VideoTrim (from `../node_modules/react-native-video-trim`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
 
 SPEC REPOS:
   trunk:
+    - ffmpeg-mobile-min
     - libwebp
     - SDWebImage
     - SDWebImageWebPCoder
@@ -3798,6 +3862,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/@livekit/react-native-webrtc"
   LiveKitExpoPlugin:
     :path: "../node_modules/@livekit/react-native-expo-plugin/ios"
+  QuickLookPreview:
+    :path: "../modules/my-module/ios"
   RCT-Folly:
     :podspec: "../node_modules/react-native/third-party-podspecs/RCT-Folly.podspec"
   RCTDeprecation:
@@ -3870,6 +3936,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native/ReactCommon"
   React-microtasksnativemodule:
     :path: "../node_modules/react-native/ReactCommon/react/nativemodule/microtasks"
+  react-native-compressor:
+    :path: "../node_modules/react-native-compressor"
   react-native-get-random-values:
     :path: "../node_modules/react-native-get-random-values"
   react-native-keyboard-controller:
@@ -3970,6 +4038,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native-worklets"
   UMAppLoader:
     :path: "../node_modules/unimodules-app-loader/ios"
+  VideoTrim:
+    :path: "../node_modules/react-native-video-trim"
   Yoga:
     :path: "../node_modules/react-native/ReactCommon/yoga"
 
@@ -4021,6 +4091,7 @@ SPEC CHECKSUMS:
   EXUpdatesInterface: d48f288b92900bd95a27c6cf92a7b9aff826d49a
   fast_float: b32c788ed9c6a8c584d114d0047beda9664e7cc6
   FBLazyVector: f1200e6ef6cf24885501668bdbb9eff4cf48843f
+  ffmpeg-mobile-min: a9b10d7a1b1d57245d1003ae4bd6093fe19bd877
   fmt: 530618a01105dae0fa3a2f27c81ae11fa8f67eac
   glog: 5683914934d5b6e4240e497e0f4a3b42d1854183
   hermes-engine: b127c6dd46e3fbbc648d40719cfddefcc9bd3287
@@ -4028,6 +4099,7 @@ SPEC CHECKSUMS:
   livekit-react-native: 7098d44b34b78ede49582a9ef5731c665faf43c7
   livekit-react-native-webrtc: c03e72c608fbb8284a99e095dd7835a85bdb0279
   LiveKitExpoPlugin: 8e0f4bdffa921c27c13e1504ea0e668b6f859278
+  QuickLookPreview: ddb46e7f860757d30c5293d381d750b8d985a431
   RCT-Folly: b29feb752b08042c62badaef7d453f3bb5e6ae23
   RCTDeprecation: 3b915a7b166f7d04eaeb4ae30aaf24236a016551
   RCTRequired: fcfec6ba532cfe4e53c49e0a4061b5eff87f8c64
@@ -4064,6 +4136,7 @@ SPEC CHECKSUMS:
   React-logger: 49a2029a7c055bf0ef005fec0955c2548fe88f12
   React-Mapbuffer: 2859d1e7202df918c8578db97deb5767b337dff9
   React-microtasksnativemodule: e811b68410bc71e77b91a700b527dc39661f6fc4
+  react-native-compressor: e4ba1d459b6ab9823bec3cc65fc609f14e7707fb
   react-native-get-random-values: d16467cf726c618e9c7a8c3c39c31faa2244bbba
   react-native-keyboard-controller: dbf568b5d029cdc5b26667a7c2323b160c25dc00
   react-native-maps: 48cbc77581f2ffc121a296f9abe071fe4a7ea4ee
@@ -4118,10 +4191,11 @@ SPEC CHECKSUMS:
   SocketRocket: d4aabe649be1e368d1318fdf28a022d714d65748
   SwiftUIIntrospect: fee9aa07293ee280373a591e1824e8ddc869ba5d
   UMAppLoader: 71b50bcc31d86495e52c0b4cd17e2708bf297be3
+  VideoTrim: 0ec602bce708d9f336bcf36096ed3727f0a5b96e
   WebRTC-SDK: 40d4f5ba05cadff14e4db5614aec402a633f007e
   Yoga: 3d56e80930898685da43cbf53b5843932df8e765
   ZXingObjC: 8898711ab495761b2dbbdec76d90164a6d7e14c5
 
-PODFILE CHECKSUM: ea321f0af5e6f17fdcc1193c6d4b69d398d8c227
+PODFILE CHECKSUM: ee7e3e37b64f4004cfd557fd0388d8d5a1461134
 
 COCOAPODS: 1.16.2
