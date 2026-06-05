@@ -876,7 +876,7 @@ export const runRecurringBillsScheduler = onSchedule(
 );
 
 export const processNotificationReceipts = onSchedule(
-    "every 1 hours",
+    "every 1 hour",
     async () => {
         try {
             const result = await processPendingNotificationReceipts();
