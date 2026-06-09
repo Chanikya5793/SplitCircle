@@ -23,6 +23,10 @@ export class FirestoreDataAccess implements DataAccess {
   private db = getFirestore();
   constructor(private ragSearch?: RagSearchFn) {}
 
+  private normalizeExpense(e: any): Expense {
+    return { ...e, title: e?.title ?? e?.description ?? '' } as Expense; // tolerate field drift
+  }
+
   private normalizeGroup(id: string, data: FirebaseFirestore.DocumentData): Group {
     return {
       groupId: id,
@@ -30,10 +34,7 @@ export class FirestoreDataAccess implements DataAccess {
       currency: data.currency ?? 'USD',
       members: Array.isArray(data.members) ? data.members : [],
       memberIds: Array.isArray(data.memberIds) ? data.memberIds : [],
-      expenses: (Array.isArray(data.expenses) ? data.expenses : []).map((e: any) => ({
-        ...e,
-        title: e.title ?? e.description ?? '', // tolerate field drift
-      })),
+      expenses: (Array.isArray(data.expenses) ? data.expenses : []).map((e: any) => this.normalizeExpense(e)),
       settlements: Array.isArray(data.settlements) ? data.settlements : [],
       createdBy: data.createdBy ?? '',
       createdAt: data.createdAt ?? 0,
@@ -63,10 +64,11 @@ export class FirestoreDataAccess implements DataAccess {
       if (!(Array.isArray(data.memberIds) ? data.memberIds : []).includes(uid)) {
         throw new PermissionError();
       }
-      // Idempotency: if requestId already present, return the existing expense.
+      // Idempotency: if requestId already present, return the existing expense
+      // (normalized for title/description drift so callers never see undefined).
       const existing = (Array.isArray(data.expenses) ? data.expenses : [])
         .find((e: any) => expense.requestId && e.requestId === expense.requestId);
-      if (existing) return existing as Expense;
+      if (existing) return this.normalizeExpense(existing);
 
       const now = Date.now();
       const finalized: Expense = {

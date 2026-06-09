@@ -36,9 +36,13 @@ export function mapRagResponse(json: any, limit: number): SearchHit {
   return { results, answer: typeof json?.answer === 'string' ? json.answer : '' };
 }
 
-/** Build the RAG-backed search fn, or undefined if RAG is not configured. */
+/**
+ * Build the RAG-backed search fn, or undefined if RAG is not fully configured.
+ * BOTH the URL and the shared secret are required — a URL without the secret
+ * would 401 on every call and defeat the intended substring fallback.
+ */
 export function makeRagSearch(): RagSearchFn | undefined {
-  if (!RAG_SERVICE_URL) return undefined;
+  if (!RAG_SERVICE_URL || !RAG_SHARED_SECRET) return undefined;
   return async (uid: string, query: string, groupId: string | undefined, limit: number): Promise<SearchHit> => {
     const res = await fetch(`${RAG_SERVICE_URL.replace(/\/$/, '')}/query`, {
       method: 'POST',

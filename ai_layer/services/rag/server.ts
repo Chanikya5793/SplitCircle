@@ -50,9 +50,20 @@ export function parseQueryBody(body: any): RAGQuery {
   };
 }
 
+const MAX_BODY_BYTES = 256 * 1024; // hard cap (matches the MCP servers' express limit)
+
 async function readJson(req: http.IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
-  for await (const c of req) chunks.push(c as Buffer);
+  let size = 0;
+  for await (const c of req) {
+    const chunk = c as Buffer;
+    size += chunk.length;
+    if (size > MAX_BODY_BYTES) {
+      // Reject oversized bodies before buffering more (OOM guard on an internet-facing service).
+      throw new BadRequest('request body too large');
+    }
+    chunks.push(chunk);
+  }
   const raw = Buffer.concat(chunks).toString('utf8');
   if (!raw) return {};
   try {

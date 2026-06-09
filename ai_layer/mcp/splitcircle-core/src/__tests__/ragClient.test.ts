@@ -37,8 +37,16 @@ describe('makeRagSearch', () => {
 
   it('returns undefined when RAG_SERVICE_URL is not set', async () => {
     delete process.env.RAG_SERVICE_URL;
+    delete process.env.RAG_SHARED_SECRET;
     const { makeRagSearch } = await import('../lib/ragClient.js');
     expect(makeRagSearch()).toBeUndefined();
+  });
+
+  it('returns undefined when the URL is set but the shared secret is missing', async () => {
+    process.env.RAG_SERVICE_URL = 'https://rag.example';
+    delete process.env.RAG_SHARED_SECRET;
+    const { makeRagSearch } = await import('../lib/ragClient.js');
+    expect(makeRagSearch()).toBeUndefined(); // would 401 every call; fall back to substring
   });
 
   it('returns a fn that calls the RAG service and maps the result', async () => {
