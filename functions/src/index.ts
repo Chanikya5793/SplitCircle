@@ -32,6 +32,9 @@ export { cleanupOldRtdbData } from "./cleanup";
 // Consolidated AI-layer ingestion fan-out (gated by AI_LAYER_ENABLED; no-op until
 // activated — see aiLayer.ts and ai_layer/docs/08_self_review.md).
 export { onGroupWritten } from "./aiLayer";
+// App-facing AI assistant callable (gated the same way; the app never holds the
+// RAG shared secret — this proxies with the uid from the verified token).
+export { askExpenseAi } from "./askExpenseAi";
 
 initializeApp();
 
