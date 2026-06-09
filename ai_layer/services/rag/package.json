@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "firebase-admin": "^13.6.0",
     "google-auth-library": "^9.15.0"
   },
   "devDependencies": {

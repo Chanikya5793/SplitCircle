@@ -38,7 +38,28 @@ cutoff: `text-embedding-005`, `gemini-2.5-flash`. `node_modules` confirmed **not
 - `docs/04_architecture_design.md` — hydration corrected for embedded arrays; ingestion trigger fan-out note; embedding-model i18n note.
 - `SPLITCIRCLE_AI_MASTER_PLAN.md` — Sprint 1 retrieval backend (Firestore vector search v1); Open Question #1 resolved.
 
-## Deferred (require confirmation / live GCP — unchanged by this review)
+## Follow-up shipped after the review
+
+**RAG wired end-to-end (production adapter).** The RAG service was previously DI-only with no
+concrete deps. Added:
+- `services/rag/vertex_client.ts` — query-side `embedQuery`, Vector Search `findNeighbors`
+  (with user/group `restricts`), and Gemini `generate`, over REST + ADC. Pure response mappers
+  split out and unit-tested.
+- `services/rag/rag_deps.ts` — `buildRAGDeps()` assembling the real pipeline, including the
+  concrete embedded-array `hydrate` (`expenseDocFromGroup`: reads `groups/{gid}`, pulls the
+  expense from `expenses[]`, resolves payer/participant names from `members[]` + tolerates the
+  title/description drift). This is the F1 fix made real.
+- `services/rag/server.ts` — minimal Cloud Run HTTP entry (`POST /query`, shared-secret auth);
+  pure auth/parse helpers unit-tested.
+- `mcp/splitcircle-core` — `lib/ragClient.ts` (`makeRagSearch`) calls the RAG service over HTTP
+  when `RAG_SERVICE_URL` is set, mapping `{answer, sources[]}` → `SearchHit`; otherwise the
+  existing substring fallback. Wired into `index.ts`.
+- Tests added: RAG 11→24, core 16→20 (total now **56**). Both packages typecheck clean.
+
+Still needs live GCP to *run* (Vector Search endpoint + Gemini), but the code path is complete
+and the seams are exercised by unit tests.
+
+## Deferred (require confirmation / live GCP)
 
 - ~~**Light app hook:** export the consolidated `onGroupWritten` (sync+embed+categorize) from `functions/src/index.ts`.~~ **DONE** — `functions/src/aiLayer.ts` exports a gated `onGroupWritten` that fans out to the three pure cores (`runBqSyncForGroup` / `runEmbedForGroup` / `runAutoCategorizeForGroup`, barrelled in `ai_layer/index.ts`). No-op until `AI_LAYER_ENABLED=true`; the Functions package builds green with **zero new dependencies** (cores are dynamically imported only when enabled). Activation = provision backend + set `AI_LAYER_DIST`/deps + flip the flag.
 - **Open Questions #2–#6** (title/description rename at source, activity-feed for RAG-06, multi-currency normalization in BQ, PII/DLP depth) remain product decisions — see master plan.

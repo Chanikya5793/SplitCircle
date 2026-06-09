@@ -15,9 +15,11 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { buildServer } from './server.js';
 import { FirestoreDataAccess } from './lib/firestore.js';
+import { makeRagSearch } from './lib/ragClient.js';
 import { verifyToken, AuthError } from './auth/middleware.js';
 
-const dataAccess = new FirestoreDataAccess();
+// RAG-backed semantic search when RAG_SERVICE_URL is set; substring fallback otherwise.
+const dataAccess = new FirestoreDataAccess(makeRagSearch());
 
 async function runStdio(): Promise<void> {
   const uid = process.env.DEV_UID;
