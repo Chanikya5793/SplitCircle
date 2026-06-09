@@ -1,0 +1,7 @@
+[
+  { "question": "How much did I spend on food this month?", "mustInclude": ["food"], "minSources": 1 },
+  { "question": "Did I pay for dinner the last time I was with Sam?", "mustInclude": ["dinner", "Sam"], "minSources": 1 },
+  { "question": "What did I spend at REI?", "mustInclude": ["REI"], "minSources": 1 },
+  { "question": "How much has our group spent on transport?", "mustInclude": ["transport"], "minSources": 1 },
+  { "question": "What was my biggest expense this trip?", "mustInclude": [], "minSources": 1 }
+]
