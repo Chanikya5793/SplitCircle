@@ -59,6 +59,7 @@ echo "▶ Service accounts…"
 create_sa sc-mcp      "SplitCircle MCP servers"
 create_sa sc-pipeline "SplitCircle ML pipeline"
 create_sa sc-embed    "SplitCircle embedding pipeline"
+create_sa sc-rag      "SplitCircle RAG service"
 
 # MCP: read Firestore, use Vertex + BQ read, access secrets
 for r in roles/datastore.viewer roles/aiplatform.user roles/bigquery.dataViewer \
@@ -67,6 +68,8 @@ for r in roles/datastore.viewer roles/aiplatform.user roles/bigquery.dataViewer 
 for r in roles/bigquery.dataEditor roles/bigquery.jobUser roles/aiplatform.user; do bind sc-pipeline "$r"; done
 # Embed: read Firestore, use Vertex, stage to GCS
 for r in roles/datastore.user roles/aiplatform.user roles/storage.objectAdmin; do bind sc-embed "$r"; done
+# RAG: read Firestore (hydration), Vertex (embed/search) + Gemini, read secrets
+for r in roles/datastore.viewer roles/aiplatform.user roles/secretmanager.secretAccessor; do bind sc-rag "$r"; done
 
 # ── 3. BigQuery dataset ───────────────────────────────────────────────────────
 echo "▶ BigQuery dataset…"
@@ -75,6 +78,26 @@ if ! bq --location="${REGION}" show "${PROJECT_ID}:${DATASET}" >/dev/null 2>&1; 
 else
   echo "  ✓ dataset exists"
 fi
+
+# ── 3b. BigQuery tables (from pipelines/firestore_to_bq/schema.json) ──────────
+echo "▶ BigQuery tables…"
+SCHEMA_JSON="$(cd "$(dirname "$0")/.." && pwd)/pipelines/firestore_to_bq/schema.json"
+mk_table () {  # table, [partition_field]
+  local tbl="$1" part="${2:-}"
+  if bq show "${PROJECT_ID}:${DATASET}.${tbl}" >/dev/null 2>&1; then echo "  ✓ table ${tbl} exists"; return; fi
+  local tmp; tmp="$(mktemp)"
+  python3 -c "import json; json.dump(json.load(open('${SCHEMA_JSON}'))['${tbl}'], open('${tmp}','w'))"
+  if [ -n "${part}" ]; then
+    bq mk --table --time_partitioning_field="${part}" --time_partitioning_type=DAY "${PROJECT_ID}:${DATASET}.${tbl}" "${tmp}"
+  else
+    bq mk --table "${PROJECT_ID}:${DATASET}.${tbl}" "${tmp}"
+  fi
+  rm -f "${tmp}"
+}
+mk_table expenses    created_at
+mk_table settlements created_at
+mk_table groups
+mk_table users
 
 # ── 4. Cloud Storage bucket ───────────────────────────────────────────────────
 echo "▶ Storage bucket…"
@@ -86,7 +109,7 @@ fi
 
 # ── 5. Secret Manager placeholders (NO values committed) ──────────────────────
 echo "▶ Secret placeholders…"
-for s in GEMINI_API_KEY MCP_SHARED_SECRET; do
+for s in GEMINI_API_KEY MCP_SHARED_SECRET RAG_SHARED_SECRET; do
   if ! gcloud secrets describe "$s" >/dev/null 2>&1; then
     gcloud secrets create "$s" --replication-policy=automatic
     echo "  → created empty secret $s — add a version with:"

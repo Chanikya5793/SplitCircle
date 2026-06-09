@@ -13,6 +13,7 @@
     "embedding/embed_expenses.ts",
     "embedding/embedding_client.ts",
     "firestore_to_bq/sync_function.ts",
+    "firestore_to_bq/backfill.ts",
     "__tests__/**/*.ts"
   ]
 }

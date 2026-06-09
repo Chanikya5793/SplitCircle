@@ -36,8 +36,8 @@ async function insertChunked(table: string, rows: Array<{ insertId: string; json
   for (let i = 0; i < rows.length; i += BATCH) {
     const slice = rows.slice(i, i + BATCH);
     await bq.dataset(DATASET).table(table).insert(
-      slice.map((r) => r.json),
-      { insertIds: slice.map((r) => r.insertId), skipInvalidRows: false },
+      slice.map((r) => ({ insertId: r.insertId, json: r.json })),
+      { raw: true, skipInvalidRows: false },
     );
     inserted += slice.length;
   }
