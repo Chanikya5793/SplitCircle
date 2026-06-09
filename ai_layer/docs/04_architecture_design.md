@@ -114,9 +114,12 @@ re-firing all three. To keep this bounded and cheap:
 - Every branch is **idempotent** (sync/embed keyed by `contentHash`; categorize skips
   non-blank categories), so the write-back re-fire is a guaranteed no-op — the loop
   **self-terminates after one extra fire**, it is not infinite.
-- The shipped code keeps the branches as separate modules for testability; wiring them behind
-  one trigger is the integration step (Sprint 1) and is intentionally deferred until the plan
-  is confirmed.
+- **Shipped:** the consolidated trigger is wired as `onGroupWritten` in
+  `functions/src/aiLayer.ts` (exported from `functions/src/index.ts`). Each AI-layer module now
+  exposes a pure core (`runBqSyncForGroup` / `runEmbedForGroup` / `runAutoCategorizeForGroup`,
+  re-exported from `ai_layer/index.ts`) that the orchestrator fans out to in sequence with
+  per-step isolation. It is **gated by `AI_LAYER_ENABLED` (no-op by default)** so the Functions
+  build/deploy stays lean and dependency-free until the backend is activated.
 
 ## 3. Vertex AI Model Pipeline (top 3: MODEL-07, MODEL-01, MODEL-03)
 

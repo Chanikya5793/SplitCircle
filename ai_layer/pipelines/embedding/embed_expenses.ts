@@ -43,14 +43,21 @@ function contentHash(text: string): string {
   return createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
-export const embedGroupExpenses = onDocumentWritten('groups/{groupId}', async (event) => {
-  const after = event.data?.after?.data();
-  const groupId = event.params.groupId;
-  if (!after) return; // delete handled by erasure path (Phase 4 §7)
+/**
+ * Core: embed a group's new/changed expenses and upsert them into Vector Search.
+ * Decoupled from the Functions event shape so the consolidated `onGroupWritten`
+ * orchestrator (in `functions/`) can call it directly — one trigger, not three
+ * (Phase 4 §2). Idempotent via `contentHash` (re-fires are no-ops).
+ */
+export async function runEmbedForGroup(
+  groupId: string,
+  after: Record<string, unknown> | undefined,
+): Promise<{ embedded: number; skipped: number }> {
+  if (!after) return { embedded: 0, skipped: 0 }; // delete handled by erasure path (Phase 4 §7)
 
   const currency = (after.currency as string) || 'USD';
-  const expenses: RawExpense[] = Array.isArray(after.expenses) ? after.expenses : [];
-  if (expenses.length === 0) return;
+  const expenses: RawExpense[] = Array.isArray(after.expenses) ? (after.expenses as RawExpense[]) : [];
+  if (expenses.length === 0) return { embedded: 0, skipped: 0 };
 
   // Resolve member display names once (for richer, recallable embedding text).
   const nameById: Record<string, string> = {};
@@ -118,4 +125,13 @@ export const embedGroupExpenses = onDocumentWritten('groups/{groupId}', async (e
   }
 
   logger.info('Embedded group expenses', { groupId, embedded, skipped, total: expenses.length });
+  return { embedded, skipped };
+}
+
+/**
+ * Trigger: any write to a group document (standalone deploy). Thin wrapper over
+ * `runEmbedForGroup` — prefer the consolidated `onGroupWritten` in production.
+ */
+export const embedGroupExpenses = onDocumentWritten('groups/{groupId}', async (event) => {
+  await runEmbedForGroup(event.params.groupId, event.data?.after?.data());
 });

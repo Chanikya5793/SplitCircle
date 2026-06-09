@@ -111,19 +111,22 @@ async function insertRows(table: string, rows: Array<{ insertId: string; json: o
 }
 
 /**
- * Trigger: any write to a group document. Unnests expenses + settlements + the
- * group summary row. Append-only; idempotent via deterministic insertIds.
+ * Core: unnest a group doc's expenses + settlements + summary into BigQuery rows.
+ * Decoupled from the Functions event shape so the consolidated `onGroupWritten`
+ * orchestrator (in `functions/`) can call it directly — one trigger, not three
+ * (Phase 4 §2). Append-only; idempotent via deterministic insertIds.
  */
-export const syncGroupToBigQuery = onDocumentWritten('groups/{groupId}', async (event) => {
-  const after = event.data?.after?.data();
-  const groupId = event.params.groupId;
+export async function runBqSyncForGroup(
+  groupId: string,
+  after: Record<string, unknown> | undefined,
+): Promise<{ expenses: number; settlements: number }> {
   const syncedAt = new Date().toISOString();
 
   // Deletion: a production system would also tombstone BQ rows / delete vectors
   // (right-to-erasure, Phase 4 §7). Left as a documented extension point.
   if (!after) {
     logger.info('group deleted — skipping BQ upsert (see erasure extension point)', { groupId });
-    return;
+    return { expenses: 0, settlements: 0 };
   }
 
   const currency = (after.currency as string) || 'USD';
@@ -153,7 +156,7 @@ export const syncGroupToBigQuery = onDocumentWritten('groups/{groupId}', async (
     );
 
     await insertRows('groups', [{
-      insertId: `${groupId}:${after.updatedAt ?? ''}`,
+      insertId: `${groupId}:${(after.updatedAt as number) ?? ''}`,
       json: {
         group_id: groupId,
         name: (after.name as string) ?? null,
@@ -170,6 +173,7 @@ export const syncGroupToBigQuery = onDocumentWritten('groups/{groupId}', async (
     logger.info('Synced group to BigQuery', {
       groupId, expenses: expenses.length, settlements: settlements.length,
     });
+    return { expenses: expenses.length, settlements: settlements.length };
   } catch (err) {
     // Do not log row contents (PII). Log counts + error name only.
     logger.error('BigQuery sync failed', {
@@ -178,4 +182,12 @@ export const syncGroupToBigQuery = onDocumentWritten('groups/{groupId}', async (
     });
     throw err; // let Functions retry
   }
+}
+
+/**
+ * Trigger: any write to a group document (standalone deploy). Thin wrapper over
+ * `runBqSyncForGroup` — prefer the consolidated `onGroupWritten` in production.
+ */
+export const syncGroupToBigQuery = onDocumentWritten('groups/{groupId}', async (event) => {
+  await runBqSyncForGroup(event.params.groupId, event.data?.after?.data());
 });

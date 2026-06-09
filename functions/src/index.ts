@@ -29,6 +29,9 @@ import {
 } from "./friends";
 export { parseReceiptWithLLM } from "./parseReceiptWithLLM";
 export { cleanupOldRtdbData } from "./cleanup";
+// Consolidated AI-layer ingestion fan-out (gated by AI_LAYER_ENABLED; no-op until
+// activated — see aiLayer.ts and ai_layer/docs/08_self_review.md).
+export { onGroupWritten } from "./aiLayer";
 
 initializeApp();
 

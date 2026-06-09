@@ -53,12 +53,21 @@ async function predictCategory(e: { title: string; amount: number; createdAt: nu
   return r ? { category: r.category, confidence: Number(r.confidence) } : null;
 }
 
-export const autoCategorizeExpenses = onDocumentWritten('groups/{groupId}', async (event) => {
-  const after = event.data?.after?.data();
-  if (!after || !Array.isArray(after.expenses)) return;
+/**
+ * Core: auto-categorize a group's blank-category expenses via BQML and write the
+ * predictions back to Firestore. Decoupled from the Functions event shape so the
+ * consolidated `onGroupWritten` orchestrator (in `functions/`) can call it
+ * directly — one trigger, not three (Phase 4 §2). Idempotent: only blank
+ * categories are touched, so re-fires are no-ops and the write-back self-terminates.
+ */
+export async function runAutoCategorizeForGroup(
+  groupId: string,
+  after: Record<string, unknown> | undefined,
+): Promise<{ categorized: number }> {
+  if (!after || !Array.isArray(after.expenses)) return { categorized: 0 };
 
-  const updated = [...after.expenses];
-  let changed = false;
+  const updated = [...(after.expenses as any[])];
+  let changed = 0;
 
   for (let i = 0; i < updated.length; i++) {
     const e = updated[i];
@@ -73,7 +82,7 @@ export const autoCategorizeExpenses = onDocumentWritten('groups/{groupId}', asyn
       });
       if (prediction && prediction.confidence >= CONFIDENCE_THRESHOLD) {
         updated[i] = { ...e, category: prediction.category, categorySource: 'model', updatedAt: Date.now() };
-        changed = true;
+        changed += 1;
         logger.info('Auto-categorized expense', { expenseId: e.expenseId, category: prediction.category, confidence: prediction.confidence });
       }
     } catch (err) {
@@ -81,7 +90,16 @@ export const autoCategorizeExpenses = onDocumentWritten('groups/{groupId}', asyn
     }
   }
 
-  if (changed) {
-    await db.collection('groups').doc(event.params.groupId).update({ expenses: updated });
+  if (changed > 0) {
+    await db.collection('groups').doc(groupId).update({ expenses: updated });
   }
+  return { categorized: changed };
+}
+
+/**
+ * Trigger: any write to a group document (standalone deploy). Thin wrapper over
+ * `runAutoCategorizeForGroup` — prefer the consolidated `onGroupWritten`.
+ */
+export const autoCategorizeExpenses = onDocumentWritten('groups/{groupId}', async (event) => {
+  await runAutoCategorizeForGroup(event.params.groupId, event.data?.after?.data());
 });

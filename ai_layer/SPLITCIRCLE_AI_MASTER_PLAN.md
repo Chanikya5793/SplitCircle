@@ -89,8 +89,10 @@ prompts over Streamable HTTP + OAuth 2.1; we bridge Firebase ID tokens into the 
 
 ## Technical Architecture (from Phase 4)
 
-Ingestion (Cloud Functions): `onGroupWritten` → unnest → BigQuery streaming insert **and**
-embed → Vector Search upsert (+ write back `embeddingId`/`contentHash` for idempotency).
+Ingestion (Cloud Functions): the single **`onGroupWritten`** trigger (wired in
+`functions/src/aiLayer.ts`, gated by `AI_LAYER_ENABLED`) fans out to → unnest → BigQuery
+streaming insert **and** embed → Vector Search upsert (+ write back `embeddingId`/`contentHash`
+for idempotency) **and** BQML auto-categorize.
 Serving (Cloud Run): RAG service (embed→search→hydrate-from-Firestore→Gemini-ground→cite) and
 MCP servers. Models: BQML `ML.PREDICT` in-warehouse (no endpoints). Cache: Memorystore. Target
 p95 < 1.8 s. Security: per-user `restricts` + Firestore membership re-check; PII excluded from

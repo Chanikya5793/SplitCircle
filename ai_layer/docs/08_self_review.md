@@ -40,7 +40,7 @@ cutoff: `text-embedding-005`, `gemini-2.5-flash`. `node_modules` confirmed **not
 
 ## Deferred (require confirmation / live GCP — unchanged by this review)
 
-- **Light app hook:** export the consolidated `onGroupWritten` (sync+embed+categorize) from `functions/src/index.ts`. Deferred per the plan-review gate.
+- ~~**Light app hook:** export the consolidated `onGroupWritten` (sync+embed+categorize) from `functions/src/index.ts`.~~ **DONE** — `functions/src/aiLayer.ts` exports a gated `onGroupWritten` that fans out to the three pure cores (`runBqSyncForGroup` / `runEmbedForGroup` / `runAutoCategorizeForGroup`, barrelled in `ai_layer/index.ts`). No-op until `AI_LAYER_ENABLED=true`; the Functions package builds green with **zero new dependencies** (cores are dynamically imported only when enabled). Activation = provision backend + set `AI_LAYER_DIST`/deps + flip the flag.
 - **Open Questions #2–#6** (title/description rename at source, activity-feed for RAG-06, multi-currency normalization in BQ, PII/DLP depth) remain product decisions — see master plan.
 - **Live integration tests** (Vertex/BQ/Cloud Run) still need a real GCP project; this repo ships code + unit tests + the harness in `docs/07_testing_guide.md`.
 
