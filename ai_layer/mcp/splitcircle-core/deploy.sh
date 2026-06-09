@@ -10,14 +10,20 @@ REGION="${REGION:-us-central1}"
 SERVICE="splitcircle-mcp-core"
 SA="sc-mcp@${PROJECT_ID}.iam.gserviceaccount.com"
 
+# Optional: set RAG_SERVICE_URL to the deployed RAG Cloud Run URL to enable
+# semantic search_expenses (falls back to substring scan when unset).
+RAG_SERVICE_URL="${RAG_SERVICE_URL:-}"
+
+# Gemini calls in this repo use ADC (no API-key secret needed here). The only
+# secret this service uses is the MCP→RAG shared secret.
 gcloud run deploy "${SERVICE}" \
   --project="${PROJECT_ID}" \
   --region="${REGION}" \
   --source=. \
   --service-account="${SA}" \
   --allow-unauthenticated \
-  --set-env-vars="FIREBASE_PROJECT_ID=${PROJECT_ID},GCP_PROJECT_ID=${PROJECT_ID},GCP_REGION=${REGION},BQ_DATASET=splitcircle_ml" \
-  --set-secrets="GEMINI_API_KEY=GEMINI_API_KEY:latest" \
+  --set-env-vars="FIREBASE_PROJECT_ID=${PROJECT_ID},GCP_PROJECT_ID=${PROJECT_ID},GCP_REGION=${REGION},BQ_DATASET=splitcircle_ml${RAG_SERVICE_URL:+,RAG_SERVICE_URL=${RAG_SERVICE_URL}}" \
+  --set-secrets="RAG_SHARED_SECRET=RAG_SHARED_SECRET:latest" \
   --cpu=1 --memory=512Mi --min-instances=0 --max-instances=10 --concurrency=40
 
 echo "✅ Deployed. MCP endpoint: \$(gcloud run services describe ${SERVICE} --region=${REGION} --format='value(status.url)')/mcp"

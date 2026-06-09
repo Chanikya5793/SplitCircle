@@ -54,7 +54,13 @@ async function readJson(req: http.IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
   const raw = Buffer.concat(chunks).toString('utf8');
-  return raw ? JSON.parse(raw) : {};
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Malformed input is the caller's fault — 400, not a 5xx (keeps error rates honest).
+    throw new BadRequest('invalid JSON body');
+  }
 }
 
 function send(res: http.ServerResponse, status: number, payload: object): void {

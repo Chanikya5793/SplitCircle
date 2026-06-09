@@ -19,8 +19,8 @@
   },
   "indexUpdateMethod": "STREAM_UPDATE",
   "datapointSchema": {
-    "_comment": "Shape of each upserted datapoint.",
-    "datapointId": "<expenseId>",
+    "_comment": "Shape of each upserted datapoint. The id is COMPOSITE — expenses live embedded in the group doc, so the groupId is required to hydrate them back from Firestore (see parseDatapointId in services/rag/rag_service.ts).",
+    "datapointId": "<groupId>:<expenseId>",
     "featureVector": "<768 floats>",
     "restricts": [
       { "namespace": "user", "allowList": ["<participantUid>", "..."] },

@@ -76,7 +76,10 @@ def main() -> None:
                 participant_names=participant_names,
             )
             pending.append({
-                "id": eid,
+                # Composite id `${groupId}:${expenseId}` — must match the streaming
+                # pipeline (embed_expenses.ts): the RAG service parses the groupId
+                # out of the datapoint id to hydrate the embedded expense.
+                "id": f"{gid}:{eid}",
                 "text": text,
                 "restricts": [
                     {"namespace": "user", "allow_list": uids},

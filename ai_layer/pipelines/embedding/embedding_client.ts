@@ -36,26 +36,44 @@ export interface EmbeddingTextInput {
   participantNames?: string[];
 }
 
+const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/g;
+// 9–15 digits with up to 2 separator chars between them (covers "+1 (415) 555-0199");
+// the 9-digit floor keeps dates (8 digits) and amounts out of scope.
+const PHONE_RE = /\+?(?:\d[\s\-().]{0,2}){8,14}\d/g;
+
+/**
+ * PURE: redact email addresses and phone-number-like sequences from free text.
+ * The structured PII fields (email/phone) are never passed in, but user-typed
+ * `title`/`notes` can contain them — scrub before anything leaves for Vertex
+ * (Critical Rule #3). Mirrors `redact_pii` in embedding_utils.py.
+ */
+export function redactPII(text: string): string {
+  return text.replace(EMAIL_RE, '[email]').replace(PHONE_RE, '[phone]');
+}
+
 /**
  * Build the compact, recall-friendly text embedded per expense.
- * PURE + deterministic so it can be unit tested. Excludes email/phone (PII).
+ * PURE + deterministic so it can be unit tested. Structured PII fields
+ * (email/phone) are never included, and free text (`title`/`notes`) is run
+ * through `redactPII` in case users typed contact details into it.
  */
 export function buildEmbeddingText(e: EmbeddingTextInput): string {
   const parts: string[] = [];
-  if (e.title) parts.push(e.title.trim());
+  if (e.title) parts.push(redactPII(e.title.trim()));
   if (e.category) parts.push(`category: ${e.category.trim()}`);
   if (typeof e.amount === 'number') parts.push(`amount: ${e.currency ?? ''}${e.amount.toFixed(2)}`.trim());
   if (e.createdAt) parts.push(`date: ${new Date(e.createdAt).toISOString().slice(0, 10)}`);
   if (e.participantNames && e.participantNames.length > 0) {
     parts.push(`with: ${e.participantNames.join(', ')}`);
   }
-  if (e.notes && e.notes.trim()) parts.push(`notes: ${e.notes.trim()}`);
+  if (e.notes && e.notes.trim()) parts.push(`notes: ${redactPII(e.notes.trim())}`);
   return parts.join(' · ');
 }
 
 async function vertexFetch(url: string, body: object): Promise<any> {
   const client = await auth.getClient();
   const token = (await client.getAccessToken()).token;
+  if (!token) throw new Error('No GCP access token available (check ADC / service-account credentials)');
   const res = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },

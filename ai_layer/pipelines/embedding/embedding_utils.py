@@ -4,7 +4,9 @@ Mirrors the pure logic in `embedding_client.ts` (`buildEmbeddingText`) so batch
 and streaming pipelines embed identical text for the same expense. Also provides
 text preprocessing and L2 normalization helpers.
 
-PII (Critical Rule #3): embedding text excludes email/phone. Never log raw text.
+PII (Critical Rule #3): structured email/phone fields are never included, and
+free text (title/notes) is run through `redact_pii` before embedding in case
+users typed contact details into it. Never log raw text.
 """
 
 from __future__ import annotations
@@ -13,6 +15,16 @@ import math
 import re
 from datetime import datetime, timezone
 from typing import Iterable, Optional
+
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+# 9–15 digits with up to 2 separator chars between them (covers "+1 (415) 555-0199");
+# the 9-digit floor keeps dates (8 digits) and amounts out of scope.
+_PHONE_RE = re.compile(r"\+?(?:\d[\s\-().]{0,2}){8,14}\d")
+
+
+def redact_pii(text: str) -> str:
+    """Redact emails and phone-like sequences (mirrors redactPII in TS)."""
+    return _PHONE_RE.sub("[phone]", _EMAIL_RE.sub("[email]", text))
 
 
 def clean_text(value: Optional[str]) -> str:
@@ -39,7 +51,7 @@ def build_embedding_text(
     parts: list[str] = []
     title = clean_text(title)
     if title:
-        parts.append(title)
+        parts.append(redact_pii(title))
     category = clean_text(category)
     if category:
         parts.append(f"category: {category}")
@@ -53,7 +65,7 @@ def build_embedding_text(
         parts.append("with: " + ", ".join(names))
     notes = clean_text(notes)
     if notes:
-        parts.append(f"notes: {notes}")
+        parts.append(f"notes: {redact_pii(notes)}")
     return " · ".join(parts)
 
 

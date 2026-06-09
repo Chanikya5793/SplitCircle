@@ -30,6 +30,7 @@ export interface QueryRestrict { namespace: string; allowList: string[] }
 async function vertexFetch(url: string, body: object): Promise<any> {
   const client = await auth.getClient();
   const token = (await client.getAccessToken()).token;
+  if (!token) throw new Error('No GCP access token available (check ADC / service-account credentials)');
   const res = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
