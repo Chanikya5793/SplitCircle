@@ -1,0 +1,17 @@
+{
+  "name": "splitcircle-smart-split",
+  "version": "1.0.0",
+  "description": "MODEL-05 smart split recommender (pure heuristic over split history)",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.0.0"
+  }
+}
