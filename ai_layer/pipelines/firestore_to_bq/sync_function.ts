@@ -21,9 +21,11 @@
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import * as logger from 'firebase-functions/logger';
 import { BigQuery } from '@google-cloud/bigquery';
+import { loadFxConfig, fxNormalize } from './fx';
 
 const DATASET = process.env.BQ_DATASET || 'splitcircle_ml';
 const bq = new BigQuery();
+const FX = loadFxConfig();
 
 /** Minimal shapes mirroring src/models (kept local — this deploys independently). */
 interface RawParticipant { userId?: string; share?: number }
@@ -65,13 +67,18 @@ export function mapExpenseRow(groupId: string, currency: string, e: RawExpense, 
   const participantIds = (e.participants ?? [])
     .map((p) => p.userId)
     .filter((id): id is string => typeof id === 'string');
+  const amount = typeof e.amount === 'number' ? e.amount : 0;
+  const fx = fxNormalize(amount, currency, FX);
   return {
     expense_id: e.expenseId,
     group_id: groupId,
     title: e.title ?? e.description ?? null,
     category: e.category ?? null,
-    amount: typeof e.amount === 'number' ? e.amount : 0,
+    amount,
     currency: currency || null,
+    amount_normalized: fx.amount_normalized,
+    normalized_currency: fx.normalized_currency,
+    fx_rate: fx.fx_rate,
     paid_by: e.paidBy ?? '',
     split_type: e.splitType ?? null,
     split_method: e.splitMetadata?.method ?? null,
@@ -89,13 +96,18 @@ export function mapExpenseRow(groupId: string, currency: string, e: RawExpense, 
 
 /** Map one embedded settlement to a BigQuery row. */
 export function mapSettlementRow(groupId: string, currency: string, s: RawSettlement, syncedAt: string) {
+  const amount = typeof s.amount === 'number' ? s.amount : 0;
+  const fx = fxNormalize(amount, currency, FX);
   return {
     settlement_id: s.settlementId,
     group_id: groupId,
     from_user_id: s.fromUserId ?? '',
     to_user_id: s.toUserId ?? '',
-    amount: typeof s.amount === 'number' ? s.amount : 0,
+    amount,
     currency: currency || null,
+    amount_normalized: fx.amount_normalized,
+    normalized_currency: fx.normalized_currency,
+    fx_rate: fx.fx_rate,
     status: s.status ?? null,
     created_at: toBqTimestamp(s.createdAt) ?? syncedAt,
     synced_at: syncedAt,

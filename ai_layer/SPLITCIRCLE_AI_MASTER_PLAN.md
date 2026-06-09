@@ -158,10 +158,23 @@ cost + RAGAS dashboards.
    (self-review):** v1 ships on Firestore vector search to avoid the always-on endpoint floor
    cost; `searchNeighbors` is the seam, so promotion to a dedicated Vertex endpoint is a
    config/impl swap with no change to the RAG service or MCP tools.
-2. **`title` vs `description` drift** — fix at the source (rename to one field) before backfill?
-3. **Activity feed** — RAG-06 needs a stored event log that doesn't exist yet; build it or
-   reconstruct from group-doc history?
-4. **Embedded-array scaling** — when do hot group docs approach the 1 MiB limit, forcing a
-   migration to a real `/expenses` subcollection (which would also simplify triggers)?
-5. **Multi-currency in analytics** — store native + normalized (FX) amounts in BQ, or native only?
-6. **PII redaction depth** — run DLP on `notes` before BQ, or exclude `notes` from the warehouse?
+2. ~~**`title` vs `description` drift**~~ — **RESOLVED:** keep `title` as the canonical field and
+   tolerate `description` as a read fallback everywhere (sync mapper, embed text, classifier
+   input, MCP normalize). A source-side rename is deferred to an app migration; the AI layer must
+   not depend on it. No warehouse rework needed.
+3. ~~**Activity feed (RAG-06)**~~ — **RESOLVED: reconstruct.** No stored log exists, but every
+   change flows through a `groups/{gid}` write, so `pipelines/activity/activity_log.ts`
+   (`buildActivityEvents`, pure + tested) derives add/settle/join/leave events from before→after
+   diffs with deterministic ids. Wiring it into the orchestrator (persist + embed for "catch me
+   up") needs `before` threaded through `fanOut` — a small follow-up.
+4. ~~**Embedded-array scaling**~~ — **RESOLVED (operational):** the BQ mirror already removes the
+   analytics pressure; the remaining risk is the 1 MiB group-doc limit. Decision: monitor doc
+   size and migrate to a `/groups/{id}/expenses` subcollection at ~80% of the limit (which would
+   also simplify triggers). Tracked as an app-side migration, not an AI-layer blocker.
+5. ~~**Multi-currency in analytics**~~ — **RESOLVED: store both.** `pipelines/firestore_to_bq/fx.ts`
+   adds `amount_normalized` / `normalized_currency` / `fx_rate` (config-driven rates; unknown
+   currency → NULL, never a wrong number). Native amount is preserved for display/audit.
+6. ~~**PII redaction depth**~~ — **RESOLVED: minimize, don't DLP (v1).** `notes` free text is
+   excluded from BQ (only `notes_present` boolean); embeddings already exclude email/phone. This
+   removes the need for a DLP dependency in v1; revisit DLP only if `notes` is later required in
+   the warehouse.

@@ -14,6 +14,8 @@
     "embedding/embedding_client.ts",
     "firestore_to_bq/sync_function.ts",
     "firestore_to_bq/backfill.ts",
+    "firestore_to_bq/fx.ts",
+    "activity/activity_log.ts",
     "__tests__/**/*.ts"
   ]
 }
