@@ -1,0 +1,56 @@
+{
+  "_comment": "BigQuery table schemas for the SplitCircle ML dataset (splitcircle_ml). Mirrors the embedded-array Firestore model from Phase 1: expenses/settlements are unnested from groups/{groupId} into flat, analyzable rows. Timestamps are stored as TIMESTAMP (Firestore epoch ms -> TIMESTAMP_MILLIS at load).",
+
+  "expenses": [
+    { "name": "expense_id", "type": "STRING", "mode": "REQUIRED" },
+    { "name": "group_id", "type": "STRING", "mode": "REQUIRED" },
+    { "name": "title", "type": "STRING", "mode": "NULLABLE", "description": "Expense title (model field 'title'; falls back to legacy 'description')." },
+    { "name": "category", "type": "STRING", "mode": "NULLABLE", "description": "Free-form category; label column for MODEL-01." },
+    { "name": "amount", "type": "NUMERIC", "mode": "REQUIRED" },
+    { "name": "currency", "type": "STRING", "mode": "NULLABLE" },
+    { "name": "paid_by", "type": "STRING", "mode": "REQUIRED" },
+    { "name": "split_type", "type": "STRING", "mode": "NULLABLE" },
+    { "name": "split_method", "type": "STRING", "mode": "NULLABLE", "description": "splitMetadata.method (one of 11)." },
+    { "name": "participant_ids", "type": "STRING", "mode": "REPEATED" },
+    { "name": "participant_count", "type": "INTEGER", "mode": "NULLABLE" },
+    { "name": "settled", "type": "BOOLEAN", "mode": "NULLABLE" },
+    { "name": "has_receipt", "type": "BOOLEAN", "mode": "NULLABLE" },
+    { "name": "is_recurring", "type": "BOOLEAN", "mode": "NULLABLE" },
+    { "name": "notes_present", "type": "BOOLEAN", "mode": "NULLABLE", "description": "Whether notes exist — the PII text itself is NOT exported (Critical Rule #3)." },
+    { "name": "created_at", "type": "TIMESTAMP", "mode": "REQUIRED" },
+    { "name": "updated_at", "type": "TIMESTAMP", "mode": "NULLABLE" },
+    { "name": "synced_at", "type": "TIMESTAMP", "mode": "REQUIRED" }
+  ],
+
+  "settlements": [
+    { "name": "settlement_id", "type": "STRING", "mode": "REQUIRED" },
+    { "name": "group_id", "type": "STRING", "mode": "REQUIRED" },
+    { "name": "from_user_id", "type": "STRING", "mode": "REQUIRED" },
+    { "name": "to_user_id", "type": "STRING", "mode": "REQUIRED" },
+    { "name": "amount", "type": "NUMERIC", "mode": "REQUIRED" },
+    { "name": "currency", "type": "STRING", "mode": "NULLABLE" },
+    { "name": "status", "type": "STRING", "mode": "NULLABLE" },
+    { "name": "created_at", "type": "TIMESTAMP", "mode": "REQUIRED" },
+    { "name": "synced_at", "type": "TIMESTAMP", "mode": "REQUIRED" }
+  ],
+
+  "groups": [
+    { "name": "group_id", "type": "STRING", "mode": "REQUIRED" },
+    { "name": "name", "type": "STRING", "mode": "NULLABLE" },
+    { "name": "currency", "type": "STRING", "mode": "NULLABLE" },
+    { "name": "member_ids", "type": "STRING", "mode": "REPEATED" },
+    { "name": "member_count", "type": "INTEGER", "mode": "NULLABLE" },
+    { "name": "created_by", "type": "STRING", "mode": "NULLABLE" },
+    { "name": "created_at", "type": "TIMESTAMP", "mode": "NULLABLE" },
+    { "name": "updated_at", "type": "TIMESTAMP", "mode": "NULLABLE" },
+    { "name": "synced_at", "type": "TIMESTAMP", "mode": "REQUIRED" }
+  ],
+
+  "users": [
+    { "name": "user_id", "type": "STRING", "mode": "REQUIRED" },
+    { "name": "display_name", "type": "STRING", "mode": "NULLABLE", "description": "PII — include only if analytics require it; prefer hashing." },
+    { "name": "group_count", "type": "INTEGER", "mode": "NULLABLE" },
+    { "name": "created_at", "type": "TIMESTAMP", "mode": "NULLABLE" },
+    { "name": "synced_at", "type": "TIMESTAMP", "mode": "REQUIRED" }
+  ]
+}

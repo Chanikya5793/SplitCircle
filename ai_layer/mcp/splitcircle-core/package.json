@@ -1,0 +1,32 @@
+{
+  "name": "splitcircle-core-mcp",
+  "version": "1.0.0",
+  "description": "Core CRUD + settlement MCP server for SplitCircle",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "stdio": "node dist/index.js --stdio",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.6.0",
+    "google-auth-library": "^9.15.0",
+    "zod": "^3.25.0",
+    "zod-to-json-schema": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "_comment": "Vertex AI Vector Search index configuration for SplitCircle expense memory (RAG-01/02/07). 768 dims to match text-embedding-005. Streaming updates so newly added expenses are searchable immediately. Security is enforced via per-datapoint `restricts` namespaces (user, group) — a query MUST pass the authenticated uid as an allow filter (Critical Rule #2).",
+  "displayName": "sc-expense-memory",
+  "description": "Per-user/per-group namespaced expense embeddings for RAG.",
+  "metadata": {
+    "contentsDeltaUri": "gs://REPLACE_PROJECT-splitcircle-ml-artifacts/index-staging/",
+    "config": {
+      "dimensions": 768,
+      "approximateNeighborsCount": 50,
+      "distanceMeasureType": "DOT_PRODUCT_DISTANCE",
+      "shardSize": "SHARD_SIZE_SMALL",
+      "algorithmConfig": {
+        "treeAhConfig": {
+          "leafNodeEmbeddingCount": 1000,
+          "leafNodesToSearchPercent": 10
+        }
+      }
+    }
+  },
+  "indexUpdateMethod": "STREAM_UPDATE",
+  "datapointSchema": {
+    "_comment": "Shape of each upserted datapoint.",
+    "datapointId": "<expenseId>",
+    "featureVector": "<768 floats>",
+    "restricts": [
+      { "namespace": "user", "allowList": ["<participantUid>", "..."] },
+      { "namespace": "group", "allowList": ["<groupId>"] }
+    ],
+    "numericRestricts": [
+      { "namespace": "amount", "valueFloat": 0.0 },
+      { "namespace": "created_at_ms", "valueLong": 0 }
+    ]
+  }
+}
