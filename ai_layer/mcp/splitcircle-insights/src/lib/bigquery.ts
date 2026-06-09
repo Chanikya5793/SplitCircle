@@ -15,7 +15,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { GoogleAuth } from 'google-auth-library';
 import type { Analytics, RagAnswer } from './analytics.js';
-import type { ExpenseRow, GroupExpense } from './aggregate.js';
+import type { ExpenseRow, GroupExpense, ForecastPoint } from './aggregate.js';
 
 if (getApps().length === 0) initializeApp();
 
@@ -69,6 +69,27 @@ export class BigQueryAnalytics implements Analytics {
       participants: Array.isArray(e.participants) ? e.participants : [],
     }));
     return { memberIds, expenses, currency: data.currency ?? 'USD' };
+  }
+
+  async forecastSpending(uid: string): Promise<ForecastPoint[]> {
+    // MODEL-02 (ARIMA_PLUS) is keyed by user_id (= payer); scope to this uid.
+    const query = `
+      SELECT FORMAT_TIMESTAMP('%Y-%m', forecast_timestamp) AS month,
+             forecast_value AS predicted,
+             prediction_interval_lower_bound AS lower,
+             prediction_interval_upper_bound AS upper
+      FROM ML.FORECAST(MODEL \`${PROJECT}.${DATASET}.spending_forecaster\`,
+        STRUCT(3 AS horizon, 0.8 AS confidence_level))
+      WHERE user_id = @uid
+      ORDER BY forecast_timestamp`;
+    const [rows] = await this.bq.query({ query, location: REGION, params: { uid } });
+    const round = (n: unknown) => Math.round((Number(n) || 0) * 100) / 100;
+    return rows.map((r: any) => ({
+      month: r.month ?? '',
+      predicted: Math.max(0, round(r.predicted)),
+      lower: Math.max(0, round(r.lower)),
+      upper: Math.max(0, round(r.upper)),
+    }));
   }
 
   async ask(uid: string, question: string, groupId?: string): Promise<RagAnswer> {

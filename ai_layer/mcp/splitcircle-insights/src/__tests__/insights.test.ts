@@ -6,12 +6,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   summarize, comparePeriods, findAnomalies, contributionAnalysis, periodWindow,
+  forecastHeadline,
   type ExpenseRow, type GroupExpense,
 } from '../lib/aggregate.js';
 import type { Analytics } from '../lib/analytics.js';
 import {
   getSpendingSummary, compareSpendingPeriods, findUnusualExpenses,
-  askAboutSpending, getGroupContributionAnalysis,
+  askAboutSpending, getGroupContributionAnalysis, getSpendingForecast,
 } from '../tools/index.js';
 
 function row(p: Partial<ExpenseRow> & { userShare: number; category: string; createdAtMs: number }): ExpenseRow {
@@ -78,6 +79,11 @@ describe('aggregate helpers', () => {
     const w = periodWindow('week', 1_000_000_000);
     expect(w.end - w.start).toBe(7 * 86_400_000);
   });
+
+  it('forecastHeadline summarizes the next month, or says when there is no history', () => {
+    expect(forecastHeadline([{ month: '2026-07', predicted: 120, lower: 90, upper: 150 }])).toContain('2026-07');
+    expect(forecastHeadline([])).toMatch(/not enough history/i);
+  });
 });
 
 // ── Tool-level tests with a fake Analytics ────────────────────────────────────
@@ -91,6 +97,7 @@ function fakeAnalytics(over: Partial<Analytics> = {}): Analytics {
     }),
     ask: async (_uid, q) => ({ answer: `answer to ${q}`, sources: [] }),
     generateInsight: async () => 'You spent a bit more on food.',
+    forecastSpending: async () => [{ month: '2026-07', predicted: 120, lower: 90, upper: 150 }],
     ...over,
   };
 }
@@ -123,6 +130,13 @@ describe('insights tools', () => {
   it('get_group_contribution_analysis returns members', async () => {
     const r = await getGroupContributionAnalysis.handler({ groupId: 'g1' } as any, ctx(fakeAnalytics()));
     expect((r.data as any).members).toHaveLength(2);
+  });
+
+  it('get_spending_forecast returns points + a headline', async () => {
+    const r = await getSpendingForecast.handler({} as any, ctx(fakeAnalytics()));
+    expect((r.data as any).forecast).toHaveLength(1);
+    expect(r.text).toContain('2026-07');
+    expect(r.text).toContain('120');
   });
 
   it('propagates membership errors from analytics', async () => {

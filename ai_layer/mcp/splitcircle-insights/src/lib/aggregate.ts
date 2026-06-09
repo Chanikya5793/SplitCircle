@@ -170,3 +170,19 @@ function round(n: number): number { return Math.round(n * 100) / 100; }
 function roundMap(m: Record<string, number>): Record<string, number> {
   return Object.fromEntries(Object.entries(m).map(([k, v]) => [k, round(v)]));
 }
+
+// ── Forecast (MODEL-02 surface) ───────────────────────────────────────────────
+
+export interface ForecastPoint {
+  month: string; // YYYY-MM
+  predicted: number;
+  lower: number;
+  upper: number;
+}
+
+/** PURE: a one-line, friendly headline for a spending forecast. */
+export function forecastHeadline(points: ForecastPoint[]): string {
+  if (!points || points.length === 0) return 'Not enough history yet to forecast your spending.';
+  const next = points[0];
+  return `Projected spending for ${next.month}: ~${next.predicted} (range ${next.lower}–${next.upper}).`;
+}

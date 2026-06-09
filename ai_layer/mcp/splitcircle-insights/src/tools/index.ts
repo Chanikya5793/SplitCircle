@@ -6,7 +6,8 @@
 import { z } from 'zod';
 import type { Tool } from '../lib/tool.js';
 import {
-  summarize, comparePeriods, findAnomalies, contributionAnalysis, periodWindow, type Period,
+  summarize, comparePeriods, findAnomalies, contributionAnalysis, periodWindow,
+  forecastHeadline, type Period,
 } from '../lib/aggregate.js';
 
 const periodEnum = z.enum(['week', 'month', 'quarter', 'year']);
@@ -93,10 +94,23 @@ export const getGroupContributionAnalysis: Tool = {
   },
 };
 
+export const getSpendingForecast: Tool = {
+  name: 'get_spending_forecast',
+  title: 'Get Spending Forecast',
+  description: "Forecast the user's monthly spending for the next few months (MODEL-02, ARIMA_PLUS).",
+  inputSchema: z.object({}),
+  annotations: { readOnlyHint: true },
+  async handler(_args, ctx) {
+    const points = await ctx.analytics.forecastSpending(ctx.uid);
+    return { data: { forecast: points }, text: forecastHeadline(points) };
+  },
+};
+
 export const tools: Tool<any>[] = [
   getSpendingSummary,
   compareSpendingPeriods,
   findUnusualExpenses,
   askAboutSpending,
   getGroupContributionAnalysis,
+  getSpendingForecast,
 ];
