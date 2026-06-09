@@ -31,7 +31,7 @@ const AI_LAYER_DIST = process.env.AI_LAYER_DIST || "../ai_layer";
 
 type GroupDoc = Record<string, unknown> | undefined;
 
-interface AiLayerCores {
+export interface AiLayerCores {
     runBqSyncForGroup: (groupId: string, after: GroupDoc) => Promise<unknown>;
     runEmbedForGroup: (groupId: string, after: GroupDoc) => Promise<unknown>;
     runAutoCategorizeForGroup: (groupId: string, after: GroupDoc) => Promise<unknown>;
@@ -59,7 +59,7 @@ async function loadCores(): Promise<AiLayerCores | null> {
 }
 
 /** Run one fan-out step in isolation — a failure is logged, never rethrown. */
-async function runStep(name: string, groupId: string, fn: () => Promise<unknown>): Promise<void> {
+export async function runStep(name: string, groupId: string, fn: () => Promise<unknown>): Promise<void> {
     try {
         await fn();
     } catch (err) {
@@ -70,6 +70,17 @@ async function runStep(name: string, groupId: string, fn: () => Promise<unknown>
             error: err instanceof Error ? err.message : "unknown",
         });
     }
+}
+
+/**
+ * Sequential, isolated fan-out to the three cores. Sync first (it also handles
+ * the delete/erasure path), then embed, then categorize. Each step is isolated so
+ * one failure never blocks the others. Exported for unit testing.
+ */
+export async function fanOut(cores: AiLayerCores, groupId: string, after: GroupDoc): Promise<void> {
+    await runStep("bq_sync", groupId, () => cores.runBqSyncForGroup(groupId, after));
+    await runStep("embed", groupId, () => cores.runEmbedForGroup(groupId, after));
+    await runStep("auto_categorize", groupId, () => cores.runAutoCategorizeForGroup(groupId, after));
 }
 
 /**
@@ -88,12 +99,6 @@ export const onGroupWritten = onDocumentWritten("groups/{groupId}", async (event
         return;
     }
 
-    const groupId = event.params.groupId;
     const after = event.data?.after?.data() as GroupDoc;
-
-    // Sequential + isolated. Sync first (it also handles the delete/erasure path),
-    // then embed, then categorize.
-    await runStep("bq_sync", groupId, () => cores.runBqSyncForGroup(groupId, after));
-    await runStep("embed", groupId, () => cores.runEmbedForGroup(groupId, after));
-    await runStep("auto_categorize", groupId, () => cores.runAutoCategorizeForGroup(groupId, after));
+    await fanOut(cores, event.params.groupId, after);
 });

@@ -104,9 +104,11 @@ export function mapSettlementRow(groupId: string, currency: string, s: RawSettle
 
 async function insertRows(table: string, rows: Array<{ insertId: string; json: object }>): Promise<void> {
   if (rows.length === 0) return;
+  // `raw: true` lets us supply a deterministic per-row insertId for best-effort
+  // de-dup (the BigQuery client has no `insertIds` option — the id rides on each row).
   await bq.dataset(DATASET).table(table).insert(
-    rows.map((r) => r.json),
-    { raw: false, insertIds: rows.map((r) => r.insertId), skipInvalidRows: false },
+    rows.map((r) => ({ insertId: r.insertId, json: r.json })),
+    { raw: true, skipInvalidRows: false },
   );
 }
 

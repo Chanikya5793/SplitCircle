@@ -59,6 +59,26 @@ concrete deps. Added:
 Still needs live GCP to *run* (Vector Search endpoint + Gemini), but the code path is complete
 and the seams are exercised by unit tests.
 
+## Follow-up shipped: ingestion-core test coverage (+ a real bug found)
+
+The three ingestion cores and the orchestrator had no tests. Added harnesses and suites:
+- `pipelines/` — `runBqSyncForGroup` + row mappers; `runEmbedForGroup` (composite datapoint id,
+  user/group restricts, contentHash idempotency). Firestore/BigQuery/embedding_client mocked.
+- `models/category_classifier/` — `runAutoCategorizeForGroup` (blank-only categorization,
+  confidence gating, no-write idempotency).
+- `functions/` — vitest harness (excluded from the deploy build) covering `fanOut`/`runStep`
+  isolation + sequencing.
+
+**F8 (Medium) — BigQuery insert bug, caught by the new typecheck.** `sync_function.ts` passed
+`{ insertIds: [...] }` to `table.insert()`, which is **not a valid `InsertRowsOptions` field** in
+`@google-cloud/bigquery` v7 — the deterministic insert ids were silently dropped, defeating the
+idempotency claim. **Fixed:** use `raw: true` with per-row `{ insertId, json }`. Now typechecks
+and is covered by a test asserting the per-row insertId.
+
+Suite totals: **72 passing** (RAG 24 · core 20 · insights 12 · pipelines 9 · classifier 4 ·
+functions 3). All packages `tsc --noEmit` clean (typecheck scoped to the tested cores;
+`firestore_to_bq/backfill.ts` has a separate pre-existing type error, left untouched).
+
 ## Deferred (require confirmation / live GCP)
 
 - ~~**Light app hook:** export the consolidated `onGroupWritten` (sync+embed+categorize) from `functions/src/index.ts`.~~ **DONE** — `functions/src/aiLayer.ts` exports a gated `onGroupWritten` that fans out to the three pure cores (`runBqSyncForGroup` / `runEmbedForGroup` / `runAutoCategorizeForGroup`, barrelled in `ai_layer/index.ts`). No-op until `AI_LAYER_ENABLED=true`; the Functions package builds green with **zero new dependencies** (cores are dynamically imported only when enabled). Activation = provision backend + set `AI_LAYER_DIST`/deps + flip the flag.

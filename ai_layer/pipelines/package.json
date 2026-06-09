@@ -1,0 +1,23 @@
+{
+  "name": "splitcircle-ingestion",
+  "version": "1.0.0",
+  "description": "Ingestion cores (Firestore->BQ sync, embedding, auto-categorize) + tests",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google-cloud/bigquery": "^7.9.0",
+    "firebase-admin": "^13.6.0",
+    "firebase-functions": "^7.0.5",
+    "google-auth-library": "^9.15.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.0.0"
+  }
+}
