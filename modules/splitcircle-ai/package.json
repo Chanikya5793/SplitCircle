@@ -1,0 +1,12 @@
+{
+  "name": "splitcircle-ai",
+  "version": "1.0.0",
+  "description": "On-device AI helpers for SplitCircle iOS (PII redaction, Siri donation); JS fallback elsewhere",
+  "main": "index.ts",
+  "scripts": {},
+  "keywords": [],
+  "license": "MIT",
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

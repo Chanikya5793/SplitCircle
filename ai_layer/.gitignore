@@ -1,0 +1,18 @@
+# Dependencies & build output (per-subpackage)
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local secrets / config
+.env
+.env.*
+!.env.example
+*-sa.json
+sa.json
+
+# Logs
+*.log
+
+# Python bytecode
+__pycache__/
+*.pyc

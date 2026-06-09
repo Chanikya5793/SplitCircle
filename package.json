@@ -10,7 +10,8 @@
     "android": "EXPO_UNSTABLE_BONJOUR=0 expo run:android",
     "ios": "EXPO_UNSTABLE_BONJOUR=0 expo run:ios",
     "web": "EXPO_UNSTABLE_BONJOUR=0 expo start --web",
-    "postinstall": "patch-package && node scripts/fix-expo-ngrok.js"
+    "postinstall": "patch-package && node scripts/fix-expo-ngrok.js",
+    "test:unit": "vitest run --config vitest.unit.config.ts"
   },
   "dependencies": {
     "@expo/metro-runtime": "~55.0.6",
@@ -97,7 +98,8 @@
     "babel-preset-expo": "~55.0.8",
     "dotenv": "^16.4.5",
     "patch-package": "^8.0.1",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^3.2.6"
   },
   "overrides": {
     "@firebase/auth": {

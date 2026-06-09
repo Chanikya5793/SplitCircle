@@ -1,0 +1,28 @@
+# retrain_scheduler.yaml
+# Cloud Scheduler + Cloud Run Job to retrain MODEL-01 weekly. Apply the steps with
+# the gcloud commands below (kept as a documented manifest, since Scheduler has no
+# native YAML apply). Drift is also watched by ML.EVALUATE on a fresh slice.
+
+job:
+  name: retrain-expense-category-classifier
+  schedule: "0 4 * * 1"          # Mondays 04:00
+  timeZone: "Etc/UTC"
+  description: "Weekly retrain of the expense category classifier (MODEL-01)."
+  target:
+    type: cloud_run_job
+    region: us-central1
+    job: sc-retrain-category
+    serviceAccount: sc-pipeline@PROJECT_ID.iam.gserviceaccount.com
+
+# The Cloud Run Job runs (in order):
+steps:
+  - "bq query --use_legacy_sql=false < create_training_data.sql"
+  - "bq query --use_legacy_sql=false < train_model.sql"
+  - "bq query --use_legacy_sql=false < evaluate_model.sql   # gate: accuracy >= 0.80"
+
+# Provisioning (run once):
+#   gcloud scheduler jobs create http retrain-expense-category-classifier \
+#     --schedule="0 4 * * 1" --time-zone="Etc/UTC" \
+#     --uri="https://REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/PROJECT_ID/jobs/sc-retrain-category:run" \
+#     --http-method=POST \
+#     --oauth-service-account-email="sc-pipeline@PROJECT_ID.iam.gserviceaccount.com"
