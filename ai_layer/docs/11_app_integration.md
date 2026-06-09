@@ -46,9 +46,22 @@ Follows the repo's local Expo-module pattern (`modules/my-module`,
 | `redactPII(text)` | **NSDataDetector** (phone numbers + `mailto:` links) — more accurate than regex, fully on-device | JS regex mirroring the server's `redactPII` |
 | `donateAskActivity(query?)` | `NSUserActivity("com.splitcircle.ask-ai")`, eligible for Search + Prediction (`NSUserActivityTypes` registered in `app.config.ts`) | no-op |
 
-Build note: requires a fresh `npx expo prebuild` / pod install so autolinking
-picks up the new pod. **Swift cannot be compiled in this sandbox** — the module
-mirrors the proven QuickLook module structure 1:1; verify on the next iOS build.
+Build note — **bare workflow, do NOT `expo prebuild`.** `ios/` is committed with
+hand-written native code (`AppDelegate.swift`, `VisionKitReceiptScanner`, project
+file); prebuild would regenerate it and lose that. Expo autolinking already
+discovers local modules via their `expo-module.config.json` (the existing
+`QuickLookPreview` module is wired the same way — see its `:path` entry in
+`ios/Podfile.lock`). To pick up the new pod, run **`pod install` only**:
+
+```bash
+npx pod-install ios   # or: cd ios && pod install
+```
+
+The `NSUserActivityTypes` key lives in the committed **`ios/SplitCircle/Info.plist`**
+(the source of truth here); the matching `app.config.ts` `infoPlist` entry is
+inert in a bare workflow and kept only for managed/EAS parity. **Swift cannot be
+compiled in this sandbox** — the module mirrors the proven QuickLook module 1:1;
+verify on the next iOS build.
 
 ## 4. On-device smart split: `src/utils/smartSplitRecommender.ts`
 

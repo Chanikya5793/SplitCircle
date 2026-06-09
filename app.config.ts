@@ -93,6 +93,8 @@ const config = {
       NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
       // Donated by the splitcircle-ai native module after an AI ask, so iOS can
       // surface "Ask SplitCircle" in Spotlight / Siri Suggestions.
+      // NOTE: bare workflow — the authoritative copy is ios/SplitCircle/Info.plist;
+      // this entry is inert without prebuild and kept only for managed/EAS parity.
       NSUserActivityTypes: ['com.splitcircle.ask-ai'],
       UIBackgroundModes: iosPushNotificationsEnabled
         ? ['audio', 'fetch', 'remote-notification', 'voip']
