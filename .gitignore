@@ -46,8 +46,8 @@ GoogleService-Info.plist
 
 .tmp-build-logs
  
-# Ignore docs folder
-docs/
+# Ignore the root-level docs folder (anchored so nested docs/ like ai_layer/docs/ are tracked)
+/docs/
 
 
 google-service-account.json

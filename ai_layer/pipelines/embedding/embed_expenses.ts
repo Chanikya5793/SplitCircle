@@ -92,7 +92,10 @@ export const embedGroupExpenses = onDocumentWritten('groups/{groupId}', async (e
     try {
       const vector = await embedText(text);
       await upsertDatapoint({
-        datapointId: e.expenseId,
+        // Composite id `${groupId}:${expenseId}` — expenses are EMBEDDED in the
+        // group doc (Phase 1), so the groupId is required to hydrate the expense
+        // back from Firestore. The RAG service parses it (see parseDatapointId).
+        datapointId: `${groupId}:${e.expenseId}`,
         featureVector: vector,
         restricts: [
           { namespace: 'user', allowList: allowedUids },
@@ -103,7 +106,7 @@ export const embedGroupExpenses = onDocumentWritten('groups/{groupId}', async (e
           { namespace: 'created_at_ms', valueLong: e.createdAt ?? 0 },
         ],
       });
-      await hashRef.set({ hash, embeddingId: e.expenseId, updatedAt: Date.now() });
+      await hashRef.set({ hash, embeddingId: `${groupId}:${e.expenseId}`, updatedAt: Date.now() });
       embedded += 1;
     } catch (err) {
       logger.error('Embed/upsert failed for expense', {

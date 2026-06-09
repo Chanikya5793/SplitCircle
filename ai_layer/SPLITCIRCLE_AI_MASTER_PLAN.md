@@ -101,7 +101,10 @@ embeddings/logs; region-pinned; delete-propagation for right-to-erasure.
 ## Implementation Roadmap
 
 **Sprint 1 (W1–2) Foundation:** `gcp_setup.sh` (APIs/IAM/dataset/bucket/secrets/index);
-Firestore→BQ sync (unnest + backfill); Vector Search index live.
+Firestore→BQ sync (unnest + backfill); **retrieval backend live — v1 uses Firestore vector
+search (no always-on node) to avoid the dedicated Vector Search endpoint's floor cost; promote
+to a dedicated Vertex Vector Search endpoint when query volume justifies it** (resolves Open
+Question #1 — the embedding/query code is endpoint-agnostic behind `searchNeighbors`).
 **Sprint 2 (W3–4) First RAG:** embedding pipeline (RAG-01/02); `queryExpenseRAG`; **MCP-01
 `splitcircle-core`** on Cloud Run.
 **Sprint 3 (W5–6) First ML:** MODEL-01 categorizer (BQML) + auto-categorize Function; MODEL-03
@@ -149,8 +152,10 @@ cost + RAGAS dashboards.
 
 ## Open Questions
 
-1. **Vector Search endpoint cost vs. Firestore vector extension** for v1 — defer the always-on
-   endpoint until query volume justifies it?
+1. ~~**Vector Search endpoint cost vs. Firestore vector extension** for v1~~ — **RESOLVED
+   (self-review):** v1 ships on Firestore vector search to avoid the always-on endpoint floor
+   cost; `searchNeighbors` is the seam, so promotion to a dedicated Vertex endpoint is a
+   config/impl swap with no change to the RAG service or MCP tools.
 2. **`title` vs `description` drift** — fix at the source (rename to one field) before backfill?
 3. **Activity feed** — RAG-06 needs a stored event log that doesn't exist yet; build it or
    reconstruct from group-doc history?

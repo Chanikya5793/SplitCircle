@@ -49,13 +49,32 @@ export interface RAGResult {
 
 export interface Neighbor { datapointId: string; distance: number }
 
+/** A reference to an embedded expense. groupId is needed to locate it (see below). */
+export interface ExpenseRef { groupId?: string; expenseId: string }
+
+/**
+ * Vector Search datapoint ids are `${groupId}:${expenseId}` because expenses are
+ * EMBEDDED in `groups/{groupId}.expenses[]` (Phase 1 finding) and cannot be
+ * fetched by expenseId alone. Tolerates a bare expenseId (no ':') for back-compat.
+ */
+export function parseDatapointId(id: string): ExpenseRef {
+  const i = id.indexOf(':');
+  return i === -1 ? { expenseId: id } : { groupId: id.slice(0, i), expenseId: id.slice(i + 1) };
+}
+
 /** Injectable dependencies — real impls wrap embedding_client / Firestore / Gemini. */
 export interface RAGDeps {
   embedQuery: (text: string) => Promise<number[]>;
   /** Vector Search findNeighbors, already scoped by the userId restrict. */
   searchNeighbors: (vector: number[], opts: { userId: string; groupId?: string; topK: number }) => Promise<Neighbor[]>;
-  /** Hydrate authoritative expense docs from Firestore by id. */
-  hydrate: (expenseIds: string[]) => Promise<ExpenseDocument[]>;
+  /**
+   * Hydrate authoritative expense docs from Firestore. Each ref carries the
+   * groupId (parsed from the datapoint id) so the impl can read `groups/{gid}`
+   * and pull the expense out of the embedded `expenses[]` array — Firestore stays
+   * the source of truth (vectors can lag). Refs without a groupId fall back to
+   * the flat BQ mirror / `/expenses` lookup.
+   */
+  hydrate: (refs: ExpenseRef[]) => Promise<ExpenseDocument[]>;
   /** Generate a grounded answer; returns text + token usage. */
   generate: (system: string, user: string) => Promise<{ text: string; promptTokens?: number; candidateTokens?: number }>;
   /** Optional cache (Memorystore). */
@@ -109,11 +128,12 @@ export async function queryExpenseRAG(q: RAGQuery, deps: RAGDeps): Promise<RAGRe
   const retrieved = neighbors.length;
 
   // 3. Hydrate authoritative docs (vectors can lag; Firestore is source of truth).
-  const ids = neighbors.map((n) => n.datapointId);
-  const hydrated = await deps.hydrate(ids);
+  //    Parse `${groupId}:${expenseId}` so hydrate can locate the embedded expense.
+  const refs = neighbors.map((n) => parseDatapointId(n.datapointId));
+  const hydrated = await deps.hydrate(refs);
 
-  // Preserve neighbor ranking order after hydration.
-  const order = new Map(ids.map((id, i) => [id, i]));
+  // Preserve neighbor ranking order after hydration (keyed by bare expenseId).
+  const order = new Map(refs.map((r, i) => [r.expenseId, i]));
   hydrated.sort((a, b) => (order.get(a.expenseId) ?? 0) - (order.get(b.expenseId) ?? 0));
 
   // 4. Post-retrieval filtering the index couldn't express.

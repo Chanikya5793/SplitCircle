@@ -21,10 +21,12 @@ function makeDeps(overrides: Partial<RAGDeps> = {}): RAGDeps {
   return {
     embedQuery: vi.fn(async () => new Array(768).fill(0.01)),
     searchNeighbors: vi.fn(async () => [
-      { datapointId: 'e1', distance: 0.1 },
-      { datapointId: 'e2', distance: 0.2 },
+      { datapointId: 'g1:e1', distance: 0.1 },
+      { datapointId: 'g1:e2', distance: 0.2 },
     ]),
-    hydrate: vi.fn(async (ids: string[]) => docs.filter((d) => ids.includes(d.expenseId))),
+    hydrate: vi.fn(async (refs: { groupId?: string; expenseId: string }[]) =>
+      docs.filter((d) => refs.some((r) => r.expenseId === d.expenseId)),
+    ),
     generate: vi.fn(async () => ({ text: 'You spent $40 on dinner [1].', promptTokens: 120, candidateTokens: 12 })),
     ...overrides,
   };
@@ -78,12 +80,21 @@ describe('queryExpenseRAG', () => {
   it('preserves neighbor ranking order after hydration', async () => {
     const deps = makeDeps({
       searchNeighbors: vi.fn(async () => [
-        { datapointId: 'e2', distance: 0.1 },
-        { datapointId: 'e1', distance: 0.2 },
+        { datapointId: 'g1:e2', distance: 0.1 },
+        { datapointId: 'g1:e1', distance: 0.2 },
       ]),
     });
     const res = await queryExpenseRAG({ query: 'x', userId: 'u1' }, deps);
     expect(res.sources.map((s) => s.expenseId)).toEqual(['e2', 'e1']);
+  });
+
+  it('parses the composite datapointId (groupId:expenseId) when hydrating', async () => {
+    const deps = makeDeps();
+    await queryExpenseRAG({ query: 'x', userId: 'u1' }, deps);
+    expect(deps.hydrate).toHaveBeenCalledWith([
+      { groupId: 'g1', expenseId: 'e1' },
+      { groupId: 'g1', expenseId: 'e2' },
+    ]);
   });
 });
 
