@@ -31,6 +31,7 @@ import { GroupDetailsScreen } from '@/screens/groups/GroupDetailsScreen';
 import { GroupInfoScreen } from '@/screens/groups/GroupInfoScreen';
 import { GroupListScreen } from '@/screens/groups/GroupListScreen';
 import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
+import { AskAiScreen } from '@/screens/ai/AskAiScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { NotificationSettingsScreen } from '@/screens/settings/NotificationSettingsScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
@@ -462,8 +463,25 @@ const GroupsStackNavigator = () => {
       <GroupsStack.Screen
         name={ROUTES.APP.GROUP_DETAILS}
         component={GroupDetailsRoute}
-        options={({ route }: any) => ({
+        options={({ route, navigation }: any) => ({
           title: route.params?.initialTitle ?? SCREEN_TITLES.groupDetailsFallback,
+          headerRight: () => (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Ask AI about this group"
+              activeOpacity={0.7}
+              onPress={() => {
+                lightHaptic();
+                navigation.navigate(ROUTES.APP.ASK_AI, {
+                  groupId: route.params?.groupId,
+                  backTitle: route.params?.initialTitle,
+                });
+              }}
+              style={styles.headerActionButton}
+            >
+              <Icon source="robot-happy-outline" size={22} color={theme.colors.primary} />
+            </TouchableOpacity>
+          ),
         })}
       />
     </GroupsStack.Navigator>
@@ -535,6 +553,15 @@ const GroupStatsRoute = ({ route }: any) => {
     return <LoadingScreen />;
   }
   return <GroupStatsScreen group={group} />;
+};
+
+const AskAiRoute = ({ route }: any) => {
+  const group = useGroupById(route.params.groupId);
+
+  if (!group) {
+    return <LoadingScreen />;
+  }
+  return <AskAiScreen group={group} initialQuestion={route.params?.initialQuestion} />;
 };
 
 const RecurringBillsRoute = ({ route }: any) => {
@@ -938,6 +965,11 @@ const AppStackNavigator = () => {
         options={{ title: SCREEN_TITLES.groupStats }}
       />
       <AppStack.Screen
+        name={ROUTES.APP.ASK_AI}
+        component={AskAiRoute}
+        options={{ title: SCREEN_TITLES.askAi }}
+      />
+      <AppStack.Screen
         name={ROUTES.APP.BILL_SPLIT}
         component={BillSplitScreen}
         options={{ presentation: 'modal', headerShown: false }}
@@ -1176,6 +1208,10 @@ const styles = StyleSheet.create({
   callBannerSubtitle: {
     fontSize: 12,
     marginTop: 2,
+  },
+  headerActionButton: {
+    paddingHorizontal: 6,
+    paddingVertical: 6,
   },
   iosBackButton: {
     flexDirection: 'row',

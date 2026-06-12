@@ -20,6 +20,7 @@ export const SCREEN_TITLES = {
   messageInfo: 'Message Info',
   expenseDetailsFallback: 'Expense Details',
   groupStats: 'Group Stats',
+  askAi: 'Ask AI',
   recurringBills: 'Recurring Bills',
   callDetailsFallback: 'Call Details',
   liveCall: 'Live call',
@@ -139,6 +140,8 @@ export const getRouteBackLabel = (route: RouteLike | undefined): string | undefi
       return getExpenseDetailsTitle(route.params?.expenseTitle);
     case ROUTES.APP.GROUP_STATS:
       return SCREEN_TITLES.groupStats;
+    case ROUTES.APP.ASK_AI:
+      return SCREEN_TITLES.askAi;
     case ROUTES.APP.RECURRING_BILLS:
       return SCREEN_TITLES.recurringBills;
     case ROUTES.APP.CALL_INFO:
