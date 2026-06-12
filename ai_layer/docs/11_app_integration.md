@@ -6,7 +6,34 @@
 
 ---
 
-## 1. The bridge: `askExpenseAi` callable
+## 0. PRIMARY PATH: on-device Apple Foundation Models (zero cost) — WWDC'25/'26
+
+As of June 2026 the Ask-AI feature runs **on-device first** via Apple's
+Foundation Models framework (iOS 26+, Apple Intelligence hardware: iPhone 15
+Pro or newer, all 16/16e/17/Air). **No backend, no API bill, nothing leaves
+the phone** — the group's expenses are already local (embedded array), so
+"retrieval" is a pure rank-and-trim (`src/utils/onDeviceAiContext.ts`, 40-line
+cap inside the model's 4096-token combined budget) and the ~3B on-device model
+answers with `@Generable`-structured citations
+(`modules/splitcircle-ai/ios/SplitCircleAIModule.swift` → `askOnDevice`).
+
+- `getOnDeviceAiAvailability()` surfaces the exact reason when unavailable
+  (`deviceNotEligible` / `appleIntelligenceNotEnabled` / `modelNotReady` /
+  `unsupportedOS`); `AskAiScreen` shows a tailored, friendly note per reason.
+- Ineligible devices fall back to the cloud callable below **iff** the cloud
+  AI layer has been enabled; otherwise they get the sorry note. The cloud
+  RAG stack (sections 1–2) is now **optional** — provision it only if/when
+  older-device coverage is worth the GCP cost.
+- Build note: compiling the FoundationModels code path needs **Xcode 26+ /
+  iOS 26 SDK** (EAS default images qualify). The Swift is guarded with
+  `#if canImport(FoundationModels)` + `@available(iOS 26, *)`, so older
+  toolchains/OSes degrade to `unsupportedOS` instead of breaking the build.
+- WWDC 2026 follow-ups (iOS 27, fall 2026): free Private Cloud Compute tier
+  for apps <2M downloads (would cover older devices at no cost), image input
+  (receipt understanding), and third-party model routing through the same
+  Swift API. Revisit then.
+
+## 1. The bridge: `askExpenseAi` callable (cloud fallback — optional)
 
 The RAG Cloud Run service is **internal** (shared secret + IAM); the app must
 never hold that secret. The app-facing entry point is the
