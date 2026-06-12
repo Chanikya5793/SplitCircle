@@ -54,6 +54,7 @@ export const AskAiScreen = ({ group, initialQuestion }: AskAiScreenProps) => {
     setQuestion(q);
     setLoading(true);
     setError(null);
+    setUnavailable(false);
     setAnswer(null);
     try {
       const result = await askExpenseAi(q, { groupId: group.groupId });
