@@ -27,6 +27,7 @@ export const ROUTES = {
     EXPENSE_DETAILS: 'ExpenseDetails',
     RECURRING_BILLS: 'RecurringBills',
     GROUP_STATS: 'GroupStats',
+    ASK_AI: 'AskAi',
     BILL_SPLIT: 'BillSplit',
     SETTINGS: 'Settings',
     NOTIFICATION_SETTINGS: 'NotificationSettings',

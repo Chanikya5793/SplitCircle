@@ -23,6 +23,7 @@ import {
   inferExpenseSplitMetadata,
 } from '@/utils/expenseSplit';
 import { mediumHaptic, successHaptic } from '@/utils/haptics';
+import { buildSplitHistory, recommendSplit } from '@/utils/smartSplitRecommender';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -238,6 +239,45 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
 
     setSplitMethodLabel(getExpenseSplitLabel({ splitType: result.method === 'equal' ? 'equal' : 'custom', splitMetadata: result.splitMetadata }));
     setShowBillSplit(false);
+  };
+
+  // ── Smart split suggestion (on-device AI layer MODEL-05) ─────────────────
+  // Learns this group's past split pattern for the same set of people (and
+  // category when available) and offers it as a one-tap chip. Pure/offline —
+  // no backend call. Excludes the expense being edited from its own history.
+  const splitHistory = useMemo(
+    () => buildSplitHistory(group.expenses.filter((e) => e.expenseId !== expenseId)),
+    [group.expenses, expenseId],
+  );
+
+  const splitSuggestion = useMemo(() => {
+    const numericAmount = Number(amount) || 0;
+    if (!numericAmount || selectedMembers.length < 2) return undefined;
+    const rec = recommendSplit(
+      { participants: selectedMembers, amount: numericAmount, category },
+      splitHistory,
+    );
+    // Only surface a genuinely learned, confident pattern.
+    return rec.basis === 'history' && rec.confidence >= 0.5 ? rec : undefined;
+  }, [amount, selectedMembers, category, splitHistory]);
+
+  const applySplitSuggestion = () => {
+    if (!splitSuggestion) return;
+    successHaptic();
+    setSplitMetadata(undefined);
+    if (splitSuggestion.method === 'equal') {
+      setSplitType('equal');
+      setCustomShares({});
+      setSplitMethodLabel('Equal (suggested)');
+    } else {
+      setSplitType('custom');
+      const shares: Record<string, string> = {};
+      splitSuggestion.participants.forEach((p) => {
+        shares[p.userId] = p.share.toString();
+      });
+      setCustomShares(shares);
+      setSplitMethodLabel('Suggested split');
+    }
   };
 
   const handlePickImage = async () => {
@@ -689,6 +729,36 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
               </View>
             </TouchableOpacity>
 
+            {/* Smart split suggestion (on-device) */}
+            {splitSuggestion ? (
+              <TouchableOpacity
+                onPress={applySplitSuggestion}
+                activeOpacity={0.8}
+                style={[
+                  styles.suggestionChip,
+                  {
+                    borderColor: theme.colors.primary,
+                    backgroundColor: isDark ? 'rgba(88,166,255,0.10)' : 'rgba(31,111,235,0.06)',
+                  },
+                ]}
+              >
+                <Icon source="lightbulb-on-outline" size={18} color={theme.colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                    Suggested split
+                  </Text>
+                  <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                    {splitSuggestion.method === 'equal' ? 'Split equally' : 'Match how this group usually splits'}
+                    {' · '}
+                    {Math.round(splitSuggestion.confidence * 100)}% match
+                  </Text>
+                </View>
+                <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                  Apply
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+
             {/* Split Summary Preview */}
             <View style={styles.splitPreview}>
               <View style={styles.members}>
@@ -873,6 +943,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  suggestionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 8,
   },
   splitPreview: {
     marginBottom: 8,
