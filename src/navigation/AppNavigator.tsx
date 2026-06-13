@@ -463,25 +463,8 @@ const GroupsStackNavigator = () => {
       <GroupsStack.Screen
         name={ROUTES.APP.GROUP_DETAILS}
         component={GroupDetailsRoute}
-        options={({ route, navigation }: any) => ({
+        options={({ route }: any) => ({
           title: route.params?.initialTitle ?? SCREEN_TITLES.groupDetailsFallback,
-          headerRight: () => (
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel="Ask AI about this group"
-              activeOpacity={0.7}
-              onPress={() => {
-                lightHaptic();
-                navigation.navigate(ROUTES.APP.ASK_AI, {
-                  groupId: route.params?.groupId,
-                  backTitle: route.params?.initialTitle,
-                });
-              }}
-              style={styles.headerActionButton}
-            >
-              <Icon source="robot-happy-outline" size={22} color={theme.colors.primary} />
-            </TouchableOpacity>
-          ),
         })}
       />
     </GroupsStack.Navigator>
@@ -1208,10 +1191,6 @@ const styles = StyleSheet.create({
   callBannerSubtitle: {
     fontSize: 12,
     marginTop: 2,
-  },
-  headerActionButton: {
-    paddingHorizontal: 6,
-    paddingVertical: 6,
   },
   iosBackButton: {
     flexDirection: 'row',
