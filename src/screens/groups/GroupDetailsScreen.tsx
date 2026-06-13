@@ -143,21 +143,37 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
       headerTransparent: true,
       headerTintColor: theme.colors.primary,
       headerRight: () => (
-        <IconButton
-          icon="information-outline"
-          iconColor={theme.colors.primary}
-          size={22}
-          onPress={() => {
-            lightHaptic();
-            navigation.navigate(ROUTES.APP.GROUP_INFO, {
-              groupId: group.groupId,
-              initialTitle: SCREEN_TITLES.groupInfo,
-              backTitle: group.name,
-            });
-          }}
-          accessibilityLabel="Group info and admin"
-          style={{ margin: 0 }}
-        />
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <IconButton
+            icon="robot-happy-outline"
+            iconColor={theme.colors.primary}
+            size={22}
+            onPress={() => {
+              lightHaptic();
+              navigation.navigate(ROUTES.APP.ASK_AI, {
+                groupId: group.groupId,
+                backTitle: group.name,
+              });
+            }}
+            accessibilityLabel="Ask AI about this group"
+            style={{ margin: 0 }}
+          />
+          <IconButton
+            icon="information-outline"
+            iconColor={theme.colors.primary}
+            size={22}
+            onPress={() => {
+              lightHaptic();
+              navigation.navigate(ROUTES.APP.GROUP_INFO, {
+                groupId: group.groupId,
+                initialTitle: SCREEN_TITLES.groupInfo,
+                backTitle: group.name,
+              });
+            }}
+            accessibilityLabel="Group info and admin"
+            style={{ margin: 0 }}
+          />
+        </View>
       ),
     });
   }, [navigation, theme.colors.primary, group?.groupId, group?.name]);
