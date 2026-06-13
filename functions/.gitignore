@@ -1,0 +1,3 @@
+# Compiled output — rebuilt by the predeploy hook (npm run build) on every deploy.
+lib/
+node_modules/

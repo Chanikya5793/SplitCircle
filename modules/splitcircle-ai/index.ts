@@ -8,6 +8,8 @@
 import NativeModule, {
   type OnDeviceAiAvailability,
   type OnDeviceAskResult,
+  type OnDeviceReceiptItem,
+  type OnDeviceReceiptResult,
 } from './src/SplitCircleAIModule';
 import { redactPIIFallback } from './src/redactFallback';
 
@@ -83,5 +85,26 @@ export async function askOnDevice(question: string, context: string): Promise<On
   return NativeModule.askOnDevice(question, context);
 }
 
+/**
+ * Parse OCR receipt text into structured data fully on-device (Apple Foundation
+ * Models). `fewShot` is an optional plain-text block of learned merchant
+ * corrections. Throws when the on-device model is unavailable — callers should
+ * check `getOnDeviceAiAvailability()` first and fall back to the native parser.
+ */
+export async function parseReceiptStructured(
+  rawText: string,
+  fewShot = '',
+): Promise<OnDeviceReceiptResult> {
+  if (!NativeModule?.parseReceiptStructured) {
+    throw new Error('On-device receipt parsing is not available on this platform.');
+  }
+  return NativeModule.parseReceiptStructured(rawText, fewShot);
+}
+
 export { redactPIIFallback };
-export type { OnDeviceAiAvailability, OnDeviceAskResult };
+export type {
+  OnDeviceAiAvailability,
+  OnDeviceAskResult,
+  OnDeviceReceiptItem,
+  OnDeviceReceiptResult,
+};

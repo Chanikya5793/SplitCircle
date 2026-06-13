@@ -210,6 +210,39 @@ export const resetLearningForMerchant = async (merchant: string): Promise<void> 
   });
 };
 
+export interface ReceiptNameHint {
+  /** Normalized scanned text the user historically corrected. */
+  from: string;
+  /** The corrected item name the user settled on. */
+  to: string;
+  count: number;
+}
+
+/**
+ * Learned name corrections for a merchant (plus global ones), strongest first.
+ * Used to build a few-shot hint block for the on-device receipt parser so item
+ * naming improves as the user scans and corrects more receipts.
+ */
+export const getReceiptNameHints = async (
+  merchantName: string | null | undefined,
+  limit = 12,
+): Promise<ReceiptNameHint[]> => {
+  const profile = await loadProfile();
+  const mKey = merchantKey(merchantName);
+  const hints: ReceiptNameHint[] = [];
+
+  for (const [key, entry] of Object.entries(profile.corrections)) {
+    if (!entry || entry.count < MIN_CORRECTION_HITS) continue;
+    const [keyMerchant, from] = key.split('::');
+    if (keyMerchant !== mKey && keyMerchant !== 'global') continue;
+    if (!from || !entry.to) continue;
+    if (normalize(entry.to) === from) continue;
+    hints.push({ from, to: entry.to, count: entry.count });
+  }
+
+  return hints.sort((a, b) => b.count - a.count).slice(0, Math.max(0, limit));
+};
+
 export const applyReceiptLearning = async (
   merchantName: string | null | undefined,
   items: Array<{ name: string; price: number; quantity: number; confidence: number }>,

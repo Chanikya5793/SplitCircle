@@ -14,6 +14,22 @@ export interface OnDeviceAskResult {
   sourceIndexes: number[];
 }
 
+export interface OnDeviceReceiptItem {
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+export interface OnDeviceReceiptResult {
+  items: OnDeviceReceiptItem[];
+  merchantName: string;
+  date: string;
+  subtotal: number;
+  tax: number;
+  tip: number;
+  total: number;
+}
+
 /** Native surface implemented in ios/SplitCircleAIModule.swift (iOS only). */
 export interface SplitCircleAINativeModule {
   redactPII(text: string): string;
@@ -22,6 +38,8 @@ export interface SplitCircleAINativeModule {
   /** Token context window of the active on-device model; 0 when unavailable. */
   getOnDeviceContextSize(): number;
   askOnDevice(question: string, context: string): Promise<OnDeviceAskResult>;
+  /** Parse OCR receipt text into structured data on-device. */
+  parseReceiptStructured(rawText: string, fewShot: string): Promise<OnDeviceReceiptResult>;
 }
 
 /** Null on platforms without the native module (Android, web, Node tests). */
