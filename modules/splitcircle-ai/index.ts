@@ -101,6 +101,18 @@ export async function parseReceiptStructured(
   return NativeModule.parseReceiptStructured(rawText, fewShot);
 }
 
+/**
+ * Suggest a single expense category on-device for the given text. The caller
+ * must validate the returned string against its canonical category list.
+ * Throws when the on-device model is unavailable.
+ */
+export async function suggestExpenseCategory(text: string): Promise<string> {
+  if (!NativeModule?.suggestExpenseCategory) {
+    throw new Error('On-device categorization is not available on this platform.');
+  }
+  return NativeModule.suggestExpenseCategory(text);
+}
+
 export { redactPIIFallback };
 export type {
   OnDeviceAiAvailability,

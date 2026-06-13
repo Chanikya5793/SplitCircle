@@ -49,6 +49,8 @@ export interface SplitCircleAINativeModule {
   askOnDevice(question: string, context: string): Promise<OnDeviceAskResult>;
   /** Parse OCR receipt text into structured data on-device. */
   parseReceiptStructured(rawText: string, fewShot: string): Promise<OnDeviceReceiptResult>;
+  /** Suggest one expense category for the given text (validated by the caller). */
+  suggestExpenseCategory(text: string): Promise<string>;
 }
 
 /** Null on platforms without the native module (Android, web, Node tests). */

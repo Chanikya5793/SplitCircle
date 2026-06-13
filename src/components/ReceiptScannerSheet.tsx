@@ -16,6 +16,7 @@ import { ScanningAnimation } from '@/components/ScanningAnimation';
 import { useTheme } from '@/context/ThemeContext';
 import type { ReceiptInsights } from '@/models/expense';
 import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
+import { suggestCategoryOnDevice } from '@/services/onDeviceCategoryService';
 import { isOnDeviceReceiptParsingAvailable, parseReceiptOnDevice } from '@/services/onDeviceReceiptService';
 import {
     applyReceiptLearning,
@@ -1289,7 +1290,14 @@ export const ReceiptScannerSheet = ({
         splitConfig: item.splitConfig,
       }));
 
-    const inferredCategory = rawText ? inferCategoryFromText(rawText) : null;
+    // Keyword baseline, upgraded to an on-device model suggestion when eligible.
+    let inferredCategory = rawText ? inferCategoryFromText(rawText) : null;
+    if (rawText) {
+      inferredCategory = await suggestCategoryOnDevice(
+        `${merchantName ?? ''} ${rawText}`,
+        inferredCategory ?? 'General',
+      );
+    }
 
     const finalTotal = scannedTotal > 0 ? scannedTotal : calculatedTotal;
 
