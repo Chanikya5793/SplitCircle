@@ -229,18 +229,37 @@ export const getReceiptNameHints = async (
 ): Promise<ReceiptNameHint[]> => {
   const profile = await loadProfile();
   const mKey = merchantKey(merchantName);
-  const hints: ReceiptNameHint[] = [];
+
+  // Dedupe by normalized `from`: a merchant-scoped correction beats a global one,
+  // and among equal scope the higher-count one wins — so we never emit two
+  // conflicting few-shot examples for the same scanned text. Stored values are
+  // validated defensively (corrupt count/to can't break sorting or the prompt).
+  const byFrom = new Map<string, { hint: ReceiptNameHint; scoped: boolean }>();
 
   for (const [key, entry] of Object.entries(profile.corrections)) {
-    if (!entry || entry.count < MIN_CORRECTION_HITS) continue;
+    if (!entry || typeof entry.count !== 'number' || !Number.isFinite(entry.count)) continue;
+    if (entry.count < MIN_CORRECTION_HITS) continue;
+    if (typeof entry.to !== 'string' || !entry.to.trim()) continue;
+
     const [keyMerchant, from] = key.split('::');
     if (keyMerchant !== mKey && keyMerchant !== 'global') continue;
-    if (!from || !entry.to) continue;
+    if (!from) continue;
     if (normalize(entry.to) === from) continue;
-    hints.push({ from, to: entry.to, count: entry.count });
+
+    const scoped = keyMerchant === mKey && mKey !== 'global';
+    const candidate: ReceiptNameHint = { from, to: entry.to, count: entry.count };
+    const existing = byFrom.get(from);
+    const better =
+      !existing ||
+      (scoped && !existing.scoped) ||
+      (scoped === existing.scoped && entry.count > existing.hint.count);
+    if (better) byFrom.set(from, { hint: candidate, scoped });
   }
 
-  return hints.sort((a, b) => b.count - a.count).slice(0, Math.max(0, limit));
+  return Array.from(byFrom.values())
+    .map((v) => v.hint)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, Math.max(0, limit));
 };
 
 export const applyReceiptLearning = async (

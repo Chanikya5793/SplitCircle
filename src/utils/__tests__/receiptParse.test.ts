@@ -18,6 +18,20 @@ describe('buildReceiptFewShot', () => {
   it('returns empty string with no hints', () => {
     expect(buildReceiptFewShot([])).toBe('');
   });
+
+  it('neutralizes quotes/newlines so the block can’t be broken', () => {
+    const out = buildReceiptFewShot([
+      { from: 'he said "x"', to: 'Line1\nLine2' },
+      { from: '  spaced  ', to: 'A   B' },
+    ]);
+    expect(out).toBe('- "he said \'x\'" -> "Line1 Line2"\n- "spaced" -> "A B"');
+    // exactly two entries → exactly one separating newline
+    expect(out.split('\n')).toHaveLength(2);
+  });
+
+  it('drops hints that become empty after sanitizing', () => {
+    expect(buildReceiptFewShot([{ from: '   ', to: 'X' }])).toBe('');
+  });
 });
 
 describe('mapOnDeviceReceipt', () => {

@@ -25,10 +25,20 @@ export interface OnDeviceReceiptParsed {
   total: number | null;
 }
 
+// Names come from user-entered corrections, so neutralize characters that would
+// break the quoted, one-per-line few-shot block (newlines, embedded quotes).
+const sanitizeHintText = (s: string): string =>
+  s.replace(/[\r\n]+/g, ' ').replace(/["“”]/g, "'").replace(/\s+/g, ' ').trim();
+
 /** Render learned name corrections as a compact few-shot block for the prompt. */
 export const buildReceiptFewShot = (
   hints: readonly { from: string; to: string }[],
-): string => hints.map((h) => `- "${h.from}" -> "${h.to}"`).join('\n');
+): string =>
+  hints
+    .map((h) => ({ from: sanitizeHintText(h.from), to: sanitizeHintText(h.to) }))
+    .filter((h) => h.from && h.to)
+    .map((h) => `- "${h.from}" -> "${h.to}"`)
+    .join('\n');
 
 const positive = (n: unknown): number | null =>
   typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : null;
