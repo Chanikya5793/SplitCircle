@@ -5,12 +5,16 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "ios": {
+        "image": "macos-tahoe-26.4-xcode-26.4"
+      }
     },
     "preview": {
       "distribution": "internal",
       "ios": {
-        "resourceClass": "m-medium"
+        "resourceClass": "m-medium",
+        "image": "macos-tahoe-26.4-xcode-26.4"
       }
     },
     "verification": {
@@ -24,7 +28,8 @@
       "distribution": "store",
       "autoIncrement": true,
       "ios": {
-        "resourceClass": "m-medium"
+        "resourceClass": "m-medium",
+        "image": "macos-tahoe-26.4-xcode-26.4"
       },
       "android": {
         "buildType": "app-bundle",
