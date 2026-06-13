@@ -298,7 +298,9 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         }
         const path = `groups/${groupId}/expenses/${expenseId}/${fileName}`;
         const url = await uploadFile(fileUri, path);
-        receipt = { url, fileName };
+        // Merge so on-device receipt insights (and any other metadata) survive
+        // the image upload instead of being overwritten.
+        receipt = { ...expense.receipt, url, fileName };
       }
 
       // Use the participants calculated by the UI, which handles rounding correctly
@@ -385,7 +387,8 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
 
           const path = `groups/${groupId}/expenses/${updatedExpense.expenseId}/${fileName}`;
           const url = await uploadFile(newFileUri, path);
-          receipt = { url, fileName };
+          // Preserve insights/other receipt metadata across the image swap.
+          receipt = { ...updatedExpense.receipt, url, fileName };
         }
       }
 

@@ -20,6 +20,14 @@ export interface OnDeviceReceiptItem {
   quantity: number;
 }
 
+export interface OnDeviceReceiptInsightsRaw {
+  merchantAddress: string;
+  merchantPhone: string;
+  paymentMethod: string;
+  savings: number;
+  returnPolicy: string;
+}
+
 export interface OnDeviceReceiptResult {
   items: OnDeviceReceiptItem[];
   merchantName: string;
@@ -28,6 +36,7 @@ export interface OnDeviceReceiptResult {
   tax: number;
   tip: number;
   total: number;
+  insights?: OnDeviceReceiptInsightsRaw;
 }
 
 /** Native surface implemented in ios/SplitCircleAIModule.swift (iOS only). */

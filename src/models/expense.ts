@@ -85,11 +85,26 @@ export interface ExpenseSplitMetadata {
   itemCategories?: ExpenseItemCategory[];
 }
 
+export interface ReceiptInsights {
+  /** Store address as printed on the receipt. */
+  merchantAddress?: string;
+  /** Store phone number. */
+  merchantPhone?: string;
+  /** Payment method, e.g. "Visa ••1234" or "Cash". */
+  paymentMethod?: string;
+  /** Total discounts/coupons/savings on the receipt. */
+  savings?: number;
+  /** Return/exchange policy or window text. */
+  returnPolicy?: string;
+}
+
 export interface ReceiptMetadata {
   url?: string;
   fileName?: string;
   size?: number;
   scannedWith?: 'visionkit' | 'ocr' | 'manual';
+  /** Rich, on-device-extracted details surfaced under "More info". */
+  insights?: ReceiptInsights;
 }
 
 export interface RecurringExpenseMetadata {

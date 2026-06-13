@@ -8,7 +8,7 @@ import { ReceiptScannerSheet, type ReceiptScannerResult } from '@/components/Rec
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { ExpenseReceiptItem, ExpenseSplitMetadata, Group, ParticipantShare, SplitType } from '@/models';
+import type { ExpenseReceiptItem, ExpenseSplitMetadata, Group, ParticipantShare, ReceiptInsights, SplitType } from '@/models';
 import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
 import {
   normalizeScannedMerchantName,
@@ -71,6 +71,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   const [receiptUri, setReceiptUri] = useState<string | null>(null);
   const [receiptType, setReceiptType] = useState<'image' | 'document' | null>(null);
   const [receiptName, setReceiptName] = useState<string | null>(null);
+  const [receiptInsights, setReceiptInsights] = useState<ReceiptInsights | null>(null);
 
   const [showPayerDialog, setShowPayerDialog] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
@@ -98,6 +99,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
         setSelectedMembers(expense.participants.map((p) => p.userId));
         setSplitMetadata(inferExpenseSplitMetadata(expense));
         setSplitMethodLabel(getExpenseSplitLabel(expense));
+        setReceiptInsights(expense.receipt?.insights ?? null);
 
         if (expense.receipt?.url) {
           setReceiptUri(expense.receipt.url);
@@ -302,6 +304,11 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   };
 
   const applyReceiptScanResult = (scanResult: ReceiptScannerResult) => {
+    // Keep rich on-device insights (address, payment, savings, …) for "More info".
+    if (scanResult.insights) {
+      setReceiptInsights(scanResult.insights);
+    }
+
     // Auto-attach the scanned receipt image
     if (scanResult.imageUri) {
       setReceiptUri(scanResult.imageUri);
@@ -511,6 +518,13 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
 
   const handleSubmit = async (requestId: string) => {
     try {
+      const existingForReceipt = expenseId ? group.expenses.find((e) => e.expenseId === expenseId) : undefined;
+      // Persist on-device receipt insights (merged with any existing receipt
+      // metadata). The image upload in addExpense/updateExpense merges url/fileName.
+      const receiptMeta = receiptInsights
+        ? { ...existingForReceipt?.receipt, insights: receiptInsights, scannedWith: 'visionkit' as const }
+        : undefined;
+
       const shareMap = Object.fromEntries(participantShares.map((participant) => [participant.userId, participant.share]));
       const finalSplitMetadata: ExpenseSplitMetadata = splitMetadata
         ? {
@@ -555,6 +569,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
         splitMetadata: finalSplitMetadata,
         settled: false,
         notes: '',
+        ...(receiptMeta ? { receipt: receiptMeta } : {}),
       };
 
       if (expenseId) {

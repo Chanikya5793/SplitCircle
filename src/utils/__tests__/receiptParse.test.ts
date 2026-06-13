@@ -70,6 +70,28 @@ describe('mapOnDeviceReceipt', () => {
     expect(out.merchantName).toBeNull();
     expect(out.date).toBeNull();
     expect(out.total).toBeNull();
+    expect(out.insights).toBeNull();
+  });
+
+  it('maps non-empty insight fields and drops empties', () => {
+    const out = mapOnDeviceReceipt({
+      insights: {
+        merchantAddress: ' 5 Pine Rd ',
+        merchantPhone: '',
+        paymentMethod: 'Mastercard ••9',
+        savings: 0, // dropped
+        returnPolicy: '14 days',
+      },
+    });
+    expect(out.insights).toEqual({
+      merchantAddress: '5 Pine Rd',
+      paymentMethod: 'Mastercard ••9',
+      returnPolicy: '14 days',
+    });
+  });
+
+  it('returns null insights when all fields are empty', () => {
+    expect(mapOnDeviceReceipt({ insights: { merchantAddress: '  ', savings: 0 } }).insights).toBeNull();
   });
 
   it('normalizes empty merchant/date strings to null', () => {

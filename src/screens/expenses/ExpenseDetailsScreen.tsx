@@ -7,11 +7,12 @@ import { useTheme } from '@/context/ThemeContext';
 import { getExpenseDetailsTitle } from '@/navigation/screenTitles';
 import { formatCurrency } from '@/utils/currency';
 import { getExpenseSplitDetails } from '@/utils/expenseSplit';
+import { buildReceiptInsightRows } from '@/utils/receiptInsights';
 import { useNavigation } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Image, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Button, Chip, Dialog, Divider, IconButton, Portal, Text, TextInput } from 'react-native-paper';
+import { Button, Chip, Dialog, Divider, Icon, IconButton, Portal, Text, TextInput } from 'react-native-paper';
 
 // Category to Icon mapping
 const getCategoryIcon = (category: string): string => {
@@ -68,6 +69,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   const [isEditingNote, setIsEditingNote] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showImageModal, setShowImageModal] = useState(false);
+  const [showMoreInfo, setShowMoreInfo] = useState(false);
 
   const memberMap = useMemo(
     () =>
@@ -231,6 +233,49 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
               </View>
             </>
           )}
+
+          {/* More info — rich on-device receipt insights (address, payment, savings…) */}
+          {(() => {
+            const insightRows = buildReceiptInsightRows(
+              expense.receipt?.insights,
+              (n) => formatCurrency(n, group.currency),
+            );
+            if (insightRows.length === 0) return null;
+            return (
+              <>
+                <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
+                <View style={styles.section}>
+                  <TouchableOpacity
+                    onPress={() => setShowMoreInfo((v) => !v)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={showMoreInfo ? 'Hide more info' : 'Show more info'}
+                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                  >
+                    <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface, marginBottom: 0 }]}>
+                      More info
+                    </Text>
+                    <Icon source={showMoreInfo ? 'chevron-up' : 'chevron-down'} size={22} color={theme.colors.onSurfaceVariant} />
+                  </TouchableOpacity>
+                  {showMoreInfo && (
+                    <View style={{ marginTop: 8 }}>
+                      {insightRows.map((row) => (
+                        <View key={row.label} style={styles.receiptItemRow}>
+                          <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>{row.label}</Text>
+                          <Text
+                            variant="bodyMedium"
+                            style={{ color: theme.colors.onSurface, fontWeight: '600', flexShrink: 1, textAlign: 'right', marginLeft: 16 }}
+                          >
+                            {row.value}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              </>
+            );
+          })()}
 
           <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
 
