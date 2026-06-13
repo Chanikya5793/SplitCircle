@@ -96,11 +96,16 @@ Review UI (existing ReceiptScannerSheet)
   `RecognizeDocumentsRequest` (table-aware) inside the VisionKit native module —
   a separate native change requiring device verification.
 
-### Phase 2 — Rich receipt insights + "More info"
-- Extend the FM `@Generable` schema to extract merchant address, payment method,
-  savings/discounts, tax breakdown, per-item categories, return/warranty window,
-  loyalty info, etc. Store a `receiptInsights` blob on the expense.
-- Surface a summary + a **"More info" expander on the Expense Details page**.
+### Phase 2 — Rich receipt insights + "More info" ✅ (shipped, code)
+- FM `@Generable OnDeviceReceiptInsights` extracts merchant address, phone,
+  payment method, savings/discounts, and return policy alongside the line items.
+- Stored on `Expense.receipt.insights` (`ReceiptInsights`); `addExpense` /
+  `updateExpense` now **merge** receipt metadata on image upload so insights
+  survive. Captured through `ReceiptScannerResult` → `AddExpenseScreen`.
+- Surfaced via a collapsible **"More info" section on the Expense Details page**
+  (`buildReceiptInsightRows`, pure + unit-tested).
+- **Deferred:** per-item categories, tax breakdown, loyalty/warranty — additive
+  later if wanted.
 
 ### Phase 3 — More on-device AI
 - On-device auto-categorization (replace keyword `inferCategoryFromText`).

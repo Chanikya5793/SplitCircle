@@ -33,6 +33,22 @@ struct OnDeviceReceiptItem {
   var quantity: Int
 }
 
+/// Extra "more info" details extracted from a receipt (best-effort).
+@available(iOS 26.0, *)
+@Generable
+struct OnDeviceReceiptInsights {
+  @Guide(description: "Store street address as printed, or empty string.")
+  var merchantAddress: String
+  @Guide(description: "Store phone number, or empty string.")
+  var merchantPhone: String
+  @Guide(description: "Payment method, e.g. 'Visa ****1234' or 'Cash'; empty if unknown.")
+  var paymentMethod: String
+  @Guide(description: "Total discounts/coupons/savings amount, or 0 if none.")
+  var savings: Double
+  @Guide(description: "Return or exchange policy/window text, or empty string.")
+  var returnPolicy: String
+}
+
 /// Structured receipt extracted on-device from OCR text.
 @available(iOS 26.0, *)
 @Generable
@@ -51,6 +67,8 @@ struct OnDeviceReceipt {
   var tip: Double
   @Guide(description: "Grand total amount, or 0 if not present.")
   var total: Double
+  @Guide(description: "Additional details for the user's reference.")
+  var insights: OnDeviceReceiptInsights
 }
 #endif
 
@@ -243,6 +261,13 @@ public class SplitCircleAIModule: Module {
           "tax": r.tax,
           "tip": r.tip,
           "total": r.total,
+          "insights": [
+            "merchantAddress": r.insights.merchantAddress,
+            "merchantPhone": r.insights.merchantPhone,
+            "paymentMethod": r.insights.paymentMethod,
+            "savings": r.insights.savings,
+            "returnPolicy": r.insights.returnPolicy,
+          ],
         ]
       }
       #endif

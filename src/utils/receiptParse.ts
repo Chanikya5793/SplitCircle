@@ -4,6 +4,8 @@
  * availability, learning lookup) lives in src/services/onDeviceReceiptService.ts.
  */
 
+import type { ReceiptInsights } from '@/models/expense';
+
 /** Raw structural shape returned by the native `parseReceiptStructured`. */
 export interface OnDeviceReceiptRaw {
   items?: { name?: string; price?: number; quantity?: number }[];
@@ -13,6 +15,13 @@ export interface OnDeviceReceiptRaw {
   tax?: number;
   tip?: number;
   total?: number;
+  insights?: {
+    merchantAddress?: string;
+    merchantPhone?: string;
+    paymentMethod?: string;
+    savings?: number;
+    returnPolicy?: string;
+  };
 }
 
 export interface OnDeviceReceiptParsed {
@@ -23,6 +32,7 @@ export interface OnDeviceReceiptParsed {
   tax: number | null;
   tip: number | null;
   total: number | null;
+  insights: ReceiptInsights | null;
 }
 
 // Names come from user-entered corrections, so neutralize characters that would
@@ -42,6 +52,28 @@ export const buildReceiptFewShot = (
 
 const positive = (n: unknown): number | null =>
   typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : null;
+
+const cleanStr = (s: unknown): string | undefined =>
+  typeof s === 'string' && s.trim().length > 0 ? s.trim() : undefined;
+
+/** Keep only the insight fields the model actually filled in; null if none. */
+export const mapReceiptInsights = (
+  raw: OnDeviceReceiptRaw['insights'],
+): ReceiptInsights | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const insights: ReceiptInsights = {};
+  const address = cleanStr(raw.merchantAddress);
+  if (address) insights.merchantAddress = address;
+  const phone = cleanStr(raw.merchantPhone);
+  if (phone) insights.merchantPhone = phone;
+  const payment = cleanStr(raw.paymentMethod);
+  if (payment) insights.paymentMethod = payment;
+  const returnPolicy = cleanStr(raw.returnPolicy);
+  if (returnPolicy) insights.returnPolicy = returnPolicy;
+  const savings = positive(raw.savings);
+  if (savings != null) insights.savings = savings;
+  return Object.keys(insights).length > 0 ? insights : null;
+};
 
 /** Normalize + validate the raw native result into app-friendly fields. */
 export const mapOnDeviceReceipt = (r: OnDeviceReceiptRaw): OnDeviceReceiptParsed => ({
@@ -66,4 +98,5 @@ export const mapOnDeviceReceipt = (r: OnDeviceReceiptRaw): OnDeviceReceiptParsed
   tax: positive(r.tax),
   tip: positive(r.tip),
   total: positive(r.total),
+  insights: mapReceiptInsights(r.insights),
 });

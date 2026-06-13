@@ -14,6 +14,7 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ScanningAnimation } from '@/components/ScanningAnimation';
 import { useTheme } from '@/context/ThemeContext';
+import type { ReceiptInsights } from '@/models/expense';
 import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
 import { isOnDeviceReceiptParsingAvailable, parseReceiptOnDevice } from '@/services/onDeviceReceiptService';
 import {
@@ -99,6 +100,8 @@ export interface ReceiptScannerResult {
   inferredCategory: string | null;
   /** Raw OCR text */
   rawText: string | null;
+  /** Rich on-device-extracted details for "More info" (eligible devices only). */
+  insights?: ReceiptInsights | null;
 }
 
 interface ReceiptScannerSheetProps {
@@ -773,6 +776,7 @@ export const ReceiptScannerSheet = ({
   const [merchantConfidence, setMerchantConfidence] = useState<number | null>(null);
   const [date, setDate] = useState<string | null>(null);
   const [rawText, setRawText] = useState<string | null>(null);
+  const [receiptInsights, setReceiptInsights] = useState<ReceiptInsights | null>(null);
   const [parserTelemetry, setParserTelemetry] = useState<string[]>([]);
   const [showDebugTelemetry, setShowDebugTelemetry] = useState(false);
   const [headerTapCount, setHeaderTapCount] = useState(0);
@@ -979,6 +983,7 @@ export const ReceiptScannerSheet = ({
           setMerchantName(parsed.merchantName || normalizeScannedMerchantName(titleLine.slice(0, 50), null));
           setDate(parsed.date || result.date || null);
           setRawText(result.rawText);
+          setReceiptInsights(parsed.insights);
           setParserTelemetry(['On-device Foundation Models parser used']);
 
           const mappedItems = parsed.items.map((item) => ({
@@ -1307,6 +1312,7 @@ export const ReceiptScannerSheet = ({
       date,
       inferredCategory,
       rawText,
+      insights: receiptInsights,
     });
   };
 
