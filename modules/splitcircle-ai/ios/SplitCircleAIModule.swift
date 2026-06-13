@@ -70,6 +70,14 @@ struct OnDeviceReceipt {
   @Guide(description: "Additional details for the user's reference.")
   var insights: OnDeviceReceiptInsights
 }
+
+/// Single expense category chosen by the on-device model.
+@available(iOS 26.0, *)
+@Generable
+struct OnDeviceCategory {
+  @Guide(description: "The single best category, EXACTLY one of: General, Food, Transport, Utilities, Entertainment, Shopping, Travel, Health.")
+  var category: String
+}
 #endif
 
 public class SplitCircleAIModule: Module {
@@ -269,6 +277,29 @@ public class SplitCircleAIModule: Module {
             "returnPolicy": r.insights.returnPolicy,
           ],
         ]
+      }
+      #endif
+      throw OnDeviceAiUnavailableException()
+    }
+
+    /// Suggest a single expense category for the given text (title/merchant/
+    /// notes) fully on-device. The caller validates the result against its
+    /// canonical list. Throws when the model is unavailable.
+    AsyncFunction("suggestExpenseCategory") { (text: String) async throws -> String in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else {
+          throw OnDeviceAiUnavailableException()
+        }
+        let session = LanguageModelSession {
+          """
+          You categorize a shared expense into exactly one category from this
+          fixed list: General, Food, Transport, Utilities, Entertainment,
+          Shopping, Travel, Health. Pick the closest match.
+          """
+        }
+        let response = try await session.respond(to: "Expense: \(text)", generating: OnDeviceCategory.self)
+        return response.content.category
       }
       #endif
       throw OnDeviceAiUnavailableException()

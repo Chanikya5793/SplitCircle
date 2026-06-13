@@ -107,12 +107,22 @@ Review UI (existing ReceiptScannerSheet)
 - **Deferred:** per-item categories, tax breakdown, loyalty/warranty — additive
   later if wanted.
 
-### Phase 3 — More on-device AI
-- On-device auto-categorization (replace keyword `inferCategoryFromText`).
-- **Natural-language expense entry** ("$40 dinner with Alice & Bob, split equally")
-  → structured expense via `@Generable`.
-- "Month in review" / group insights; anomaly flags; chat smart-replies.
-- Optionally upgrade Suggested split with an FM rationale.
+### Phase 3 — More on-device AI (in progress)
+Owner picked the full set + a voice assistant; building safest-first across a few PRs.
+
+- **PR 1 ✅ (shipped, code) — "smarter Add Expense":**
+  - On-device **smart categorization** (`suggestExpenseCategory` @Generable +
+    `coerceCategory` + `onDeviceCategoryService`), wired into the receipt confirm
+    flow with the keyword matcher as fallback.
+  - Pure **duplicate / unusually-large anomaly warnings**
+    (`utils/expenseAnomaly`, fully tested) surfaced as a banner in Add Expense.
+- **Next:**
+  - **Natural-language expense entry** ("$40 dinner with Alice & Bob, split
+    equally") → structured expense via `@Generable`.
+  - **Voice assistant** — on-device speech (Speech framework) → NL entry / Ask AI
+    (needs mic + speech Info.plist keys; highest native effort).
+  - **Spending insights / month-in-review** — on-device narrative summary screen.
+  - Optional: chat smart-replies; FM rationale on Suggested split.
 
 ### Phase 4 — Optional / advanced
 - iOS 27 direct-image receipt understanding (crumpled receipts).

@@ -24,6 +24,7 @@ import {
 } from '@/utils/expenseSplit';
 import { mediumHaptic, successHaptic } from '@/utils/haptics';
 import { buildSplitHistory, recommendSplit } from '@/utils/smartSplitRecommender';
+import { detectExpenseAnomalies } from '@/utils/expenseAnomaly';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -262,6 +263,17 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     // Only surface a genuinely learned, confident pattern.
     return rec.basis === 'history' && rec.confidence >= 0.5 ? rec : undefined;
   }, [amount, selectedMembers, category, splitHistory]);
+
+  // On-device, pure heuristics: warn about a likely duplicate or an unusually
+  // large amount as the user fills in the expense.
+  const expenseAnomalies = useMemo(
+    () =>
+      detectExpenseAnomalies(
+        { title, amount: Number(amount) || 0, excludeExpenseId: expenseId },
+        group.expenses,
+      ),
+    [title, amount, expenseId, group.expenses],
+  );
 
   const applySplitSuggestion = () => {
     if (!splitSuggestion) return;
@@ -795,6 +807,25 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
               </Text>
             </View>
 
+            {/* On-device anomaly warnings (duplicate / unusually large) */}
+            {expenseAnomalies.length > 0 ? (
+              <View
+                style={[
+                  styles.anomalyBanner,
+                  { backgroundColor: isDark ? 'rgba(255,150,0,0.12)' : 'rgba(255,140,0,0.08)' },
+                ]}
+              >
+                <Icon source="alert-outline" size={20} color="#FF9500" />
+                <View style={{ flex: 1, gap: 2 }}>
+                  {expenseAnomalies.map((a) => (
+                    <Text key={a.type} variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, lineHeight: 18 }}>
+                      {a.message}
+                    </Text>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
             <View style={styles.actions}>
               <Button mode="outlined" onPress={onClose} style={{ borderColor: theme.colors.outline }}>
                 Cancel
@@ -964,6 +995,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  anomalyBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
     borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 16,
