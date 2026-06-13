@@ -8,6 +8,7 @@
 import NativeModule, {
   type OnDeviceAiAvailability,
   type OnDeviceAskResult,
+  type OnDeviceParsedExpenseRaw,
   type OnDeviceReceiptItem,
   type OnDeviceReceiptResult,
 } from './src/SplitCircleAIModule';
@@ -113,10 +114,26 @@ export async function suggestExpenseCategory(text: string): Promise<string> {
   return NativeModule.suggestExpenseCategory(text);
 }
 
+/**
+ * Parse a natural-language sentence into an expense draft on-device. The caller
+ * maps the returned names back to user ids. Throws when the model is unavailable.
+ */
+export async function parseExpenseFromText(
+  text: string,
+  memberNames: string,
+  currentUserName: string,
+): Promise<OnDeviceParsedExpenseRaw> {
+  if (!NativeModule?.parseExpenseFromText) {
+    throw new Error('On-device expense parsing is not available on this platform.');
+  }
+  return NativeModule.parseExpenseFromText(text, memberNames, currentUserName);
+}
+
 export { redactPIIFallback };
 export type {
   OnDeviceAiAvailability,
   OnDeviceAskResult,
+  OnDeviceParsedExpenseRaw,
   OnDeviceReceiptItem,
   OnDeviceReceiptResult,
 };
