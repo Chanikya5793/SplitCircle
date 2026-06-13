@@ -6,8 +6,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Expense } from '../../models/expense';
 import {
+  DEFAULT_CONTEXT_TOKENS,
   MAX_CONTEXT_EXPENSES,
+  MIN_CONTEXT_EXPENSES,
   buildExpenseContext,
+  maxExpensesForContext,
   rankExpenses,
   resolveCitedExpenses,
 } from '../onDeviceAiContext';
@@ -35,6 +38,22 @@ const makeExpense = (overrides: Partial<Expense>, i: number): Expense => ({
   ...overrides,
 });
 
+describe('maxExpensesForContext', () => {
+  it('packs more lines on a larger context window', () => {
+    const small = maxExpensesForContext(4096);
+    const large = maxExpensesForContext(16384);
+    expect(large).toBeGreaterThan(small);
+    expect(large).toBeLessThanOrEqual(MAX_CONTEXT_EXPENSES);
+  });
+
+  it('clamps to [MIN, MAX] and defaults on a non-positive window', () => {
+    expect(maxExpensesForContext(0)).toBe(maxExpensesForContext(DEFAULT_CONTEXT_TOKENS));
+    expect(maxExpensesForContext(-100)).toBe(maxExpensesForContext(DEFAULT_CONTEXT_TOKENS));
+    expect(maxExpensesForContext(1)).toBe(MIN_CONTEXT_EXPENSES); // tiny window → floor
+    expect(maxExpensesForContext(10_000_000)).toBe(MAX_CONTEXT_EXPENSES); // huge → ceiling
+  });
+});
+
 describe('rankExpenses', () => {
   it('prefers keyword matches over recency', () => {
     const expenses = [
@@ -43,14 +62,19 @@ describe('rankExpenses', () => {
     ];
     const ranked = rankExpenses(expenses, 'how much did we spend on sushi?', members);
     expect(ranked[0].title).toBe('Sushi dinner');
-    expect(ranked).toHaveLength(MAX_CONTEXT_EXPENSES);
+    expect(ranked).toHaveLength(46); // all of them — under the cap
+  });
+
+  it('respects an explicit maxLines cap', () => {
+    const expenses = Array.from({ length: 50 }, (_, i) => makeExpense({}, i));
+    expect(rankExpenses(expenses, 'q', members, 10)).toHaveLength(10);
   });
 
   it('falls back to most-recent-first when nothing matches', () => {
     const expenses = Array.from({ length: 50 }, (_, i) => makeExpense({}, i));
-    const ranked = rankExpenses(expenses, 'zzz unrelated', members);
+    const ranked = rankExpenses(expenses, 'zzz unrelated', members, 20);
     expect(ranked[0].expenseId).toBe('e49'); // newest
-    expect(ranked).toHaveLength(MAX_CONTEXT_EXPENSES);
+    expect(ranked).toHaveLength(20);
   });
 
   it('matches on payer display name', () => {

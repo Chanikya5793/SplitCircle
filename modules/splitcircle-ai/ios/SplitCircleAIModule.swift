@@ -106,6 +106,23 @@ public class SplitCircleAIModule: Module {
       return "unsupportedOS"
     }
 
+    /// The on-device model's context window in tokens. On more capable hardware
+    /// (iPhone Air / iPhone 17 Pro family, which auto-select Apple's larger
+    /// "Core Advanced" on-device model) this reports a bigger window, so the JS
+    /// layer can ground the answer in MORE of the group's expenses. Returns 0
+    /// when the model isn't available. `contextSize` is @backDeployed to
+    /// iOS 26.0 (added in 26.4), so it runs on every device that has the
+    /// framework. Falls back to 0 if the running OS predates the symbol.
+    Function("getOnDeviceContextSize") { () -> Int in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else { return 0 }
+        return SystemLanguageModel.default.contextSize
+      }
+      #endif
+      return 0
+    }
+
     /// Ask the on-device model a question grounded in the numbered expense
     /// context built JS-side. Fully on-device: nothing leaves the phone and
     /// there is no per-call cost. Throws when the model is unavailable.

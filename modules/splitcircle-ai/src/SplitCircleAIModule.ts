@@ -19,6 +19,8 @@ export interface SplitCircleAINativeModule {
   redactPII(text: string): string;
   donateAskActivity(query?: string | null): Promise<void>;
   getOnDeviceAiAvailability(): OnDeviceAiAvailability;
+  /** Token context window of the active on-device model; 0 when unavailable. */
+  getOnDeviceContextSize(): number;
   askOnDevice(question: string, context: string): Promise<OnDeviceAskResult>;
 }
 

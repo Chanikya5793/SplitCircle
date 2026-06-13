@@ -14,11 +14,16 @@ import {
   askOnDevice,
   donateAskActivity,
   getOnDeviceAiAvailability,
+  getOnDeviceContextSize,
   type OnDeviceAiAvailability,
 } from '../../modules/splitcircle-ai';
 import type { Group } from '@/models';
 import type { ExpenseAiAnswer } from '@/services/aiService';
-import { buildExpenseContext, resolveCitedExpenses } from '@/utils/onDeviceAiContext';
+import {
+  buildExpenseContext,
+  maxExpensesForContext,
+  resolveCitedExpenses,
+} from '@/utils/onDeviceAiContext';
 
 export type { OnDeviceAiAvailability };
 export { getOnDeviceAiAvailability };
@@ -44,11 +49,17 @@ export async function askExpenseAiOnDevice(
   group: Group,
 ): Promise<ExpenseAiAnswer> {
   const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
+
+  // Adapt how much history we ground in to the device's real context window:
+  // iPhone Air / 17 Pro auto-run Apple's larger "Core Advanced" on-device model
+  // and report a bigger window, so they get more expenses → fuller answers.
+  const maxLines = maxExpensesForContext(getOnDeviceContextSize());
   const { context, selected } = buildExpenseContext(
     group.expenses,
     question,
     members,
     group.currency,
+    maxLines,
   );
 
   if (selected.length === 0) {

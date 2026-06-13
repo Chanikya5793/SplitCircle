@@ -24,9 +24,38 @@ export interface ExpenseContext {
   selected: Expense[];
 }
 
-/** Keep well under the 4096-token combined budget (~15 tokens/line). */
-export const MAX_CONTEXT_EXPENSES = 40;
+/**
+ * Hard ceiling on context lines regardless of how big the window is — beyond
+ * this, on-device latency and answer quality stop improving. Capable hardware
+ * (iPhone Air / 17 Pro running Apple's larger "Core Advanced" model) reports a
+ * bigger `contextSize` and so packs closer to this ceiling; base devices stay
+ * well below it.
+ */
+export const MAX_CONTEXT_EXPENSES = 120;
+/** Floor so even a tiny window still grounds the answer in some history. */
+export const MIN_CONTEXT_EXPENSES = 15;
+/** Conservative default window (tokens) when the device can't report one. */
+export const DEFAULT_CONTEXT_TOKENS = 4096;
+
+// Rough budgeting constants (deliberately conservative so we never overflow the
+// real window — the on-device model throws if the prompt exceeds contextSize).
+const APPROX_TOKENS_PER_LINE = 45; // a dated, currency-bearing expense line
+const RESERVE_TOKENS = 900; // system instructions + question + room for the answer
+
 const MAX_TITLE_CHARS = 48;
+
+/**
+ * How many ranked expense lines to include given the model's real context
+ * window (tokens). Larger window → more grounding → better answers on capable
+ * hardware; clamped to [MIN, MAX]. A non-positive/unknown window falls back to
+ * the conservative default budget.
+ */
+export function maxExpensesForContext(contextTokens: number): number {
+  const window = contextTokens > 0 ? contextTokens : DEFAULT_CONTEXT_TOKENS;
+  const usable = window - RESERVE_TOKENS;
+  const fit = Math.floor(usable / APPROX_TOKENS_PER_LINE);
+  return Math.max(MIN_CONTEXT_EXPENSES, Math.min(MAX_CONTEXT_EXPENSES, fit));
+}
 
 const tokenize = (text: string): string[] =>
   text
@@ -47,6 +76,7 @@ export function rankExpenses(
   expenses: readonly Expense[],
   question: string,
   members: readonly ContextMemberName[],
+  maxLines: number = MAX_CONTEXT_EXPENSES,
 ): Expense[] {
   const qTokens = new Set(tokenize(question));
   const nameOf = new Map(members.map((m) => [m.userId, m.displayName]));
@@ -64,7 +94,7 @@ export function rankExpenses(
   // tiebreak inside an equal match count is "most recent first" after sorting.
   return scored
     .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_CONTEXT_EXPENSES)
+    .slice(0, Math.max(1, maxLines))
     .map((s) => s.e);
 }
 
@@ -78,9 +108,10 @@ export function buildExpenseContext(
   question: string,
   members: readonly ContextMemberName[],
   currency: string,
+  maxLines: number = MAX_CONTEXT_EXPENSES,
 ): ExpenseContext {
   const nameOf = new Map(members.map((m) => [m.userId, m.displayName]));
-  const selected = rankExpenses(expenses, question, members).sort(
+  const selected = rankExpenses(expenses, question, members, maxLines).sort(
     (a, b) => a.createdAt - b.createdAt,
   );
 

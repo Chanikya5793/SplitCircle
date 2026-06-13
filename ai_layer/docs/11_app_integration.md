@@ -12,10 +12,30 @@ As of June 2026 the Ask-AI feature runs **on-device first** via Apple's
 Foundation Models framework (iOS 26+, Apple Intelligence hardware: iPhone 15
 Pro or newer, all 16/16e/17/Air). **No backend, no API bill, nothing leaves
 the phone** — the group's expenses are already local (embedded array), so
-"retrieval" is a pure rank-and-trim (`src/utils/onDeviceAiContext.ts`, 40-line
-cap inside the model's 4096-token combined budget) and the ~3B on-device model
-answers with `@Generable`-structured citations
+"retrieval" is a pure rank-and-trim (`src/utils/onDeviceAiContext.ts`) and the
+on-device model answers with `@Generable`-structured citations
 (`modules/splitcircle-ai/ios/SplitCircleAIModule.swift` → `askOnDevice`).
+
+### Advanced model tier (AFM 3 "Core Advanced") — automatic, no opt-in API
+
+Apple's third-gen Foundation Models (WWDC 2026) ship two on-device models:
+**AFM 3 Core** (3B dense) and **AFM 3 Core Advanced** (20B sparse, activates
+1–4B params/request), the latter restricted to ≥12 GB-RAM hardware — **iPhone
+Air, iPhone 17 Pro / Pro Max**, M4+ iPads, M5 Vision Pro, M3+ Macs. Verified
+against the WWDC26 session "What's new in the Foundation Models framework" (241)
+and Apple docs: **there is no public API to name/select Core Advanced.** It
+powers Apple's own Siri/dictation, and for third-party apps
+`SystemLanguageModel.default` **automatically** binds to the most capable model
+the device supports. So on an iPhone Air / 17 Pro our existing `askOnDevice`
+already runs on Core Advanced — transparently, no code change.
+
+What the API *does* expose for adapting to that better hardware is
+**`SystemLanguageModel.contextSize` + `tokenCount(for:)`** (added iOS 26.4,
+`@backDeployed` to 26.0; window grew 4096 → 8192+). We use it:
+`getOnDeviceContextSize()` (Swift) → `maxExpensesForContext()` sizes how many
+ranked expense lines we ground in, clamped to `[15, 120]`. Capable devices
+report a bigger window and get **more** of the group's history per question →
+fuller answers; base devices stay conservative so the prompt never overflows.
 
 - `getOnDeviceAiAvailability()` surfaces the exact reason when unavailable
   (`deviceNotEligible` / `appleIntelligenceNotEnabled` / `modelNotReady` /
@@ -24,10 +44,11 @@ answers with `@Generable`-structured citations
   AI layer has been enabled; otherwise they get the sorry note. The cloud
   RAG stack (sections 1–2) is now **optional** — provision it only if/when
   older-device coverage is worth the GCP cost.
-- Build note: compiling the FoundationModels code path needs **Xcode 26+ /
-  iOS 26 SDK** (EAS default images qualify). The Swift is guarded with
-  `#if canImport(FoundationModels)` + `@available(iOS 26, *)`, so older
-  toolchains/OSes degrade to `unsupportedOS` instead of breaking the build.
+- Build note: compiling the FoundationModels code path (incl. `contextSize`)
+  needs the **iOS 26.4 SDK / Xcode 26.4+** (current EAS images qualify). The
+  Swift is guarded with `#if canImport(FoundationModels)` + `@available(iOS 26,
+  *)`; `contextSize` is `@backDeployed`, so it runs on any iOS 26.x device and
+  older OSes degrade to `unsupportedOS`/window 0 instead of breaking the build.
 - WWDC 2026 follow-ups (iOS 27, fall 2026): free Private Cloud Compute tier
   for apps <2M downloads (would cover older devices at no cost), image input
   (receipt understanding), and third-party model routing through the same

@@ -56,6 +56,22 @@ export function getOnDeviceAiAvailability(): OnDeviceAiAvailability {
 }
 
 /**
+ * Token context window of the active on-device model (iOS 26.4+, @backDeployed).
+ * Larger on more capable hardware (e.g. iPhone Air / 17 Pro, which auto-select
+ * Apple's larger "Core Advanced" on-device model), letting us ground answers in
+ * more expenses. Returns 0 when the model/API isn't available; callers should
+ * apply their own default budget in that case.
+ */
+export function getOnDeviceContextSize(): number {
+  if (!NativeModule?.getOnDeviceContextSize) return 0;
+  try {
+    return NativeModule.getOnDeviceContextSize();
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Ask the on-device model a question grounded in pre-built numbered expense
  * context. Throws when unavailable — callers should check
  * `getOnDeviceAiAvailability()` first and fall back / explain.
