@@ -5,7 +5,10 @@
  * Elsewhere: pure JS redaction fallback; donation is a no-op.
  */
 
-import NativeModule from './src/SplitCircleAIModule';
+import NativeModule, {
+  type OnDeviceAiAvailability,
+  type OnDeviceAskResult,
+} from './src/SplitCircleAIModule';
 import { redactPIIFallback } from './src/redactFallback';
 
 /**
@@ -38,4 +41,47 @@ export async function donateAskActivity(query?: string): Promise<void> {
   }
 }
 
+/**
+ * Availability of the on-device Apple Foundation Models LLM (Apple
+ * Intelligence). "unsupportedOS" covers non-iOS platforms, iOS < 26, and
+ * builds without the native module.
+ */
+export function getOnDeviceAiAvailability(): OnDeviceAiAvailability {
+  if (!NativeModule?.getOnDeviceAiAvailability) return 'unsupportedOS';
+  try {
+    return NativeModule.getOnDeviceAiAvailability();
+  } catch {
+    return 'unsupportedOS';
+  }
+}
+
+/**
+ * Token context window of the active on-device model (iOS 26.4+, @backDeployed).
+ * Larger on more capable hardware (e.g. iPhone Air / 17 Pro, which auto-select
+ * Apple's larger "Core Advanced" on-device model), letting us ground answers in
+ * more expenses. Returns 0 when the model/API isn't available; callers should
+ * apply their own default budget in that case.
+ */
+export function getOnDeviceContextSize(): number {
+  if (!NativeModule?.getOnDeviceContextSize) return 0;
+  try {
+    return NativeModule.getOnDeviceContextSize();
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Ask the on-device model a question grounded in pre-built numbered expense
+ * context. Throws when unavailable — callers should check
+ * `getOnDeviceAiAvailability()` first and fall back / explain.
+ */
+export async function askOnDevice(question: string, context: string): Promise<OnDeviceAskResult> {
+  if (!NativeModule?.askOnDevice) {
+    throw new Error('On-device AI is not available on this platform.');
+  }
+  return NativeModule.askOnDevice(question, context);
+}
+
 export { redactPIIFallback };
+export type { OnDeviceAiAvailability, OnDeviceAskResult };

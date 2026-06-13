@@ -1,13 +1,12 @@
 /**
  * AskAiScreen — natural-language Q&A over the group's expenses.
  *
- * Talks to the AI layer through `aiService.askExpenseAi` (Firebase callable →
- * RAG service), which returns a grounded, cited answer. The question is scrubbed
- * of PII on-device before it leaves (handled inside aiService).
- *
- * Degrades gracefully: when the AI layer is gated off / not yet deployed the
- * callable throws `AiUnavailableError`, and we show a calm "not available yet"
- * state instead of an error — the rest of the app is unaffected.
+ * Prefers Apple's ON-DEVICE Foundation Models (Apple Intelligence, iOS 26+):
+ * free, private, no backend — the group's expenses are already on the phone.
+ * Falls back to the cloud `askExpenseAi` callable when the device isn't
+ * eligible AND the cloud AI layer is enabled. When neither is available we
+ * show a precise, friendly note (e.g. "needs an iPhone 15 Pro or newer")
+ * instead of an error — the rest of the app is unaffected.
  */
 
 import { GlassView } from '@/components/GlassView';
@@ -19,9 +18,14 @@ import {
   askExpenseAi,
   type ExpenseAiAnswer,
 } from '@/services/aiService';
+import {
+  askExpenseAiOnDevice,
+  getOnDeviceAiAvailability,
+  ON_DEVICE_UNAVAILABLE_COPY,
+} from '@/services/onDeviceAiService';
 import { formatCurrency } from '@/utils/currency';
 import { mediumHaptic } from '@/utils/haptics';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Keyboard, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ActivityIndicator, Chip, Icon, Text, TextInput } from 'react-native-paper';
 
@@ -43,8 +47,19 @@ export const AskAiScreen = ({ group, initialQuestion }: AskAiScreenProps) => {
   const [question, setQuestion] = useState(initialQuestion ?? '');
   const [loading, setLoading] = useState(false);
   const [answer, setAnswer] = useState<ExpenseAiAnswer | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
+  const [unavailable, setUnavailable] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Stable per-mount: Apple Intelligence eligibility doesn't change mid-screen.
+  const onDeviceAvailability = useMemo(() => getOnDeviceAiAvailability(), []);
+  const onDevice = onDeviceAvailability === 'available';
+  // Only devices that genuinely cannot run the on-device model should reach the
+  // (optional) cloud path. "Enable Apple Intelligence" and "model still
+  // downloading" are actionable states on otherwise-capable hardware — we show
+  // the user how to fix them rather than silently sending the question to a
+  // backend they didn't opt into.
+  const cloudEligible =
+    onDeviceAvailability === 'deviceNotEligible' || onDeviceAvailability === 'unsupportedOS';
 
   const submit = async (raw?: string) => {
     const q = (raw ?? question).trim();
@@ -54,14 +69,30 @@ export const AskAiScreen = ({ group, initialQuestion }: AskAiScreenProps) => {
     setQuestion(q);
     setLoading(true);
     setError(null);
-    setUnavailable(false);
+    setUnavailable(null);
     setAnswer(null);
     try {
-      const result = await askExpenseAi(q, { groupId: group.groupId });
-      setAnswer(result);
+      if (onDevice) {
+        // Free + private: Apple's on-device model over the local expense data.
+        setAnswer(await askExpenseAiOnDevice(q, group));
+      } else if (cloudEligible) {
+        // Device can't run on-device AI → cloud AI layer, if it's been enabled.
+        setAnswer(await askExpenseAi(q, { groupId: group.groupId }));
+      } else {
+        // appleIntelligenceNotEnabled / modelNotReady → actionable, no network.
+        setUnavailable(ON_DEVICE_UNAVAILABLE_COPY[onDeviceAvailability]);
+      }
     } catch (err) {
       if (err instanceof AiUnavailableError) {
-        setUnavailable(true);
+        // Only the cloud path throws this. Reached only for ineligible/
+        // unsupported devices — surface that device's specific note. If
+        // on-device was available (shouldn't happen here), don't mislabel a
+        // cloud outage as an OS problem — show the real error.
+        if (onDeviceAvailability === 'available') {
+          setError(err.message);
+        } else {
+          setUnavailable(ON_DEVICE_UNAVAILABLE_COPY[onDeviceAvailability]);
+        }
       } else {
         setError(err instanceof Error ? err.message : 'Something went wrong. Try again.');
       }
@@ -140,12 +171,11 @@ export const AskAiScreen = ({ group, initialQuestion }: AskAiScreenProps) => {
             <View style={styles.headerRow}>
               <Icon source="cloud-off-outline" size={20} color={theme.colors.onSurfaceVariant} />
               <Text variant="titleSmall" style={{ fontWeight: '700', color: theme.colors.onSurface }}>
-                Not available yet
+                Not available on this device
               </Text>
             </View>
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              The AI assistant hasn't been switched on for your account yet. Everything
-              else in the app works as usual — check back soon.
+              {unavailable}
             </Text>
           </GlassView>
         ) : null}
@@ -217,8 +247,9 @@ export const AskAiScreen = ({ group, initialQuestion }: AskAiScreenProps) => {
         ) : null}
 
         <Text variant="bodySmall" style={[styles.disclaimer, { color: theme.colors.onSurfaceVariant }]}>
-          AI answers can be imperfect. Your question is scrubbed of contact details
-          on-device before it's sent.
+          {onDevice
+            ? 'Powered by Apple Intelligence — answers are generated entirely on your iPhone and your data never leaves the device. AI answers can be imperfect.'
+            : "AI answers can be imperfect. Your question is scrubbed of contact details on-device before it's sent."}
         </Text>
       </ScrollView>
     </LiquidBackground>
