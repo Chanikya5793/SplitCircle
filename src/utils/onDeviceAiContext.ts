@@ -5,9 +5,11 @@
  * The group's expenses are already on the device (embedded array), so
  * "retrieval" is a local rank-and-trim: score each expense against the
  * question (keyword overlap + recency), keep the best N, and render them as
- * compact numbered lines the model can cite by index. The combined
- * input+output budget of the on-device model is 4096 tokens, hence the hard
- * line cap and trimmed fields. Pure module — no native/RN imports.
+ * compact numbered lines the model can cite by index. How many lines fit is
+ * driven by the device's real context window (`maxExpensesForContext`): 4096
+ * tokens is the conservative default, but capable hardware (iPhone Air / 17 Pro
+ * running Apple's larger "Core Advanced" model) reports a bigger window and is
+ * grounded in more history. Pure module — no native/RN imports.
  */
 
 import type { Expense } from '../models/expense';
@@ -51,7 +53,10 @@ const MAX_TITLE_CHARS = 48;
  * the conservative default budget.
  */
 export function maxExpensesForContext(contextTokens: number): number {
-  const window = contextTokens > 0 ? contextTokens : DEFAULT_CONTEXT_TOKENS;
+  // Treat any window below the conservative default as "unknown" (0, a buggy
+  // small value, or an older API) and budget against the default — never
+  // up-clamp a tiny reported window into a prompt that overflows it.
+  const window = contextTokens >= DEFAULT_CONTEXT_TOKENS ? contextTokens : DEFAULT_CONTEXT_TOKENS;
   const usable = window - RESERVE_TOKENS;
   const fit = Math.floor(usable / APPROX_TOKENS_PER_LINE);
   return Math.max(MIN_CONTEXT_EXPENSES, Math.min(MAX_CONTEXT_EXPENSES, fit));
@@ -87,13 +92,15 @@ export function rankExpenses(
     );
     let matches = 0;
     for (const t of haystack) if (qTokens.has(t)) matches += 1;
-    return { e, score: matches * 1000 + i };
+    return { e, index: i, matches };
   });
 
-  // `i` preserves array order (chronological in the embedded array), so the
-  // tiebreak inside an equal match count is "most recent first" after sorting.
+  // Keyword matches dominate; ties break on recency (higher original index =
+  // newer in the chronological embedded array). A two-key comparator instead of
+  // a combined `matches * K + i` score, so recency can never outweigh a real
+  // match — a fixed multiplier would be defeated past ~K expenses.
   return scored
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.matches - a.matches || b.index - a.index)
     .slice(0, Math.max(1, maxLines))
     .map((s) => s.e);
 }

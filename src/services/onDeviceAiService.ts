@@ -15,6 +15,7 @@ import {
   donateAskActivity,
   getOnDeviceAiAvailability,
   getOnDeviceContextSize,
+  redactPII,
   type OnDeviceAiAvailability,
 } from '../../modules/splitcircle-ai';
 import type { Group } from '@/models';
@@ -78,8 +79,10 @@ export async function askExpenseAiOnDevice(
   // in citation behavior instead (cited answers are checkable by the user).
   const confidence = cited.length > 0 ? Math.min(0.9, 0.5 + 0.1 * cited.length) : 0.35;
 
-  // Same Siri/Spotlight donation as the cloud path (fire-and-forget).
-  void donateAskActivity(question);
+  // Same Siri/Spotlight donation as the cloud path (fire-and-forget). The
+  // model itself runs on the raw question (all on-device), but the donated
+  // string is persisted in the OS activity index, so redact PII from it first.
+  void donateAskActivity(redactPII(question));
 
   return {
     answer: result.answer,

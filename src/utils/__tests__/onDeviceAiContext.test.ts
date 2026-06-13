@@ -46,11 +46,17 @@ describe('maxExpensesForContext', () => {
     expect(large).toBeLessThanOrEqual(MAX_CONTEXT_EXPENSES);
   });
 
-  it('clamps to [MIN, MAX] and defaults on a non-positive window', () => {
-    expect(maxExpensesForContext(0)).toBe(maxExpensesForContext(DEFAULT_CONTEXT_TOKENS));
-    expect(maxExpensesForContext(-100)).toBe(maxExpensesForContext(DEFAULT_CONTEXT_TOKENS));
-    expect(maxExpensesForContext(1)).toBe(MIN_CONTEXT_EXPENSES); // tiny window → floor
+  it('treats sub-default windows as unknown and budgets against the default', () => {
+    const atDefault = maxExpensesForContext(DEFAULT_CONTEXT_TOKENS);
+    expect(maxExpensesForContext(0)).toBe(atDefault);
+    expect(maxExpensesForContext(-100)).toBe(atDefault);
+    expect(maxExpensesForContext(1)).toBe(atDefault); // tiny → don't up-clamp into overflow
+    expect(maxExpensesForContext(DEFAULT_CONTEXT_TOKENS - 1)).toBe(atDefault);
+  });
+
+  it('clamps within [MIN, MAX]', () => {
     expect(maxExpensesForContext(10_000_000)).toBe(MAX_CONTEXT_EXPENSES); // huge → ceiling
+    expect(maxExpensesForContext(0)).toBeGreaterThanOrEqual(MIN_CONTEXT_EXPENSES);
   });
 });
 
