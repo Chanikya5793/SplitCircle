@@ -78,6 +78,26 @@ struct OnDeviceCategory {
   @Guide(description: "The single best category, EXACTLY one of: General, Food, Transport, Utilities, Entertainment, Shopping, Travel, Health.")
   var category: String
 }
+
+/// A natural-language expense draft parsed from a sentence.
+@available(iOS 26.0, *)
+@Generable
+struct OnDeviceParsedExpense {
+  @Guide(description: "Short expense title (e.g. 'Dinner'), inferred from the text.")
+  var title: String
+  @Guide(description: "Total amount as a number, e.g. 42.50. 0 if not stated.")
+  var amount: Double
+  @Guide(description: "Category, EXACTLY one of: General, Food, Transport, Utilities, Entertainment, Shopping, Travel, Health.")
+  var category: String
+  @Guide(description: "Name of who paid, copied from the provided member names; empty means the current user.")
+  var paidByName: String
+  @Guide(description: "Names of people sharing the expense, copied from the provided member names. Empty list means everyone.")
+  var participantNames: [String]
+  @Guide(description: "True if split equally (the default); false only if the text clearly says otherwise.")
+  var splitEqually: Bool
+  @Guide(description: "Date as YYYY-MM-DD if explicitly stated, otherwise empty string.")
+  var date: String
+}
 #endif
 
 public class SplitCircleAIModule: Module {
@@ -300,6 +320,41 @@ public class SplitCircleAIModule: Module {
         }
         let response = try await session.respond(to: "Expense: \(text)", generating: OnDeviceCategory.self)
         return response.content.category
+      }
+      #endif
+      throw OnDeviceAiUnavailableException()
+    }
+
+    /// Parse a natural-language sentence into an expense draft, fully on-device.
+    /// `memberNames` (comma-separated) and `currentUserName` ground participant
+    /// resolution. The caller maps names back to user ids. Throws when unavailable.
+    AsyncFunction("parseExpenseFromText") { (text: String, memberNames: String, currentUserName: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else {
+          throw OnDeviceAiUnavailableException()
+        }
+        let session = LanguageModelSession {
+          """
+          You convert a short sentence into an expense. Only use names from the
+          provided member list; copy them exactly. If a payer isn't named, leave
+          paidByName empty (it means the current user). If no people are named,
+          return an empty participantNames list (means everyone). Amounts are
+          numbers. Pick the closest category from the fixed list.
+          Members: \(memberNames). Current user: \(currentUserName).
+          """
+        }
+        let response = try await session.respond(to: "Sentence: \(text)", generating: OnDeviceParsedExpense.self)
+        let e = response.content
+        return [
+          "title": e.title,
+          "amount": e.amount,
+          "category": e.category,
+          "paidByName": e.paidByName,
+          "participantNames": e.participantNames,
+          "splitEqually": e.splitEqually,
+          "date": e.date,
+        ]
       }
       #endif
       throw OnDeviceAiUnavailableException()

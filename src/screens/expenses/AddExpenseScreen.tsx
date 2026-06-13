@@ -25,6 +25,7 @@ import {
 import { mediumHaptic, successHaptic } from '@/utils/haptics';
 import { buildSplitHistory, recommendSplit } from '@/utils/smartSplitRecommender';
 import { detectExpenseAnomalies } from '@/utils/expenseAnomaly';
+import { isOnDeviceExpenseNlAvailable, parseExpenseFromTextOnDevice } from '@/services/onDeviceExpenseNlService';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -73,6 +74,9 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   const [receiptType, setReceiptType] = useState<'image' | 'document' | null>(null);
   const [receiptName, setReceiptName] = useState<string | null>(null);
   const [receiptInsights, setReceiptInsights] = useState<ReceiptInsights | null>(null);
+  const [nlText, setNlText] = useState('');
+  const [nlBusy, setNlBusy] = useState(false);
+  const nlAvailable = useMemo(() => isOnDeviceExpenseNlAvailable(), []);
 
   const [showPayerDialog, setShowPayerDialog] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
@@ -274,6 +278,38 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       ),
     [title, amount, expenseId, group.expenses],
   );
+
+  // Natural-language entry: "$40 dinner with Alex, split equally" → prefilled form.
+  const handleNlParse = async () => {
+    const text = nlText.trim();
+    if (!text || nlBusy) return;
+    setNlBusy(true);
+    try {
+      const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
+      const draft = await parseExpenseFromTextOnDevice(
+        text,
+        members,
+        user?.userId ?? group.members[0]?.userId ?? '',
+      );
+      if (draft.title) setTitle(draft.title);
+      if (draft.amount > 0) setAmount(String(draft.amount));
+      if (draft.category) setCategory(draft.category);
+      if (draft.participantUserIds.length > 0) setSelectedMembers(draft.participantUserIds);
+      if (draft.paidByUserId) setPaidBy(draft.paidByUserId);
+      if (draft.splitEqually) {
+        setSplitType('equal');
+        setSplitMetadata(undefined);
+        setCustomShares({});
+        setSplitMethodLabel('Equal');
+      }
+      successHaptic();
+      setNlText('');
+    } catch {
+      Alert.alert('Could not read that', 'Try rephrasing, e.g. "$40 dinner with Alex, split equally".');
+    } finally {
+      setNlBusy(false);
+    }
+  };
 
   const applySplitSuggestion = () => {
     if (!splitSuggestion) return;
@@ -619,6 +655,42 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
         <ScrollView contentContainerStyle={styles.container}>
           <GlassView style={styles.card}>
             <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>{expenseId ? 'Edit expense' : 'Add expense'}</Text>
+
+            {/* Natural-language entry (on-device, eligible devices only) */}
+            {nlAvailable && !expenseId ? (
+              <View
+                style={[
+                  styles.nlCard,
+                  {
+                    borderColor: theme.colors.primary,
+                    backgroundColor: isDark ? 'rgba(88,166,255,0.08)' : 'rgba(31,111,235,0.05)',
+                  },
+                ]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <Icon source="creation" size={16} color={theme.colors.primary} />
+                  <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                    Type it in plain English
+                  </Text>
+                </View>
+                <TextInput
+                  mode="outlined"
+                  value={nlText}
+                  onChangeText={setNlText}
+                  placeholder="e.g. $40 dinner with Alex & Sam, split equally"
+                  multiline
+                  onSubmitEditing={handleNlParse}
+                  style={{ backgroundColor: 'transparent' }}
+                  right={
+                    <TextInput.Icon
+                      icon={nlBusy ? 'loading' : 'arrow-right-circle'}
+                      disabled={nlBusy || !nlText.trim()}
+                      onPress={handleNlParse}
+                    />
+                  }
+                />
+              </View>
+            ) : null}
 
             {isRecurringExpense && (
               <View style={[styles.recurringNote, { backgroundColor: isDark ? 'rgba(100,180,255,0.12)' : 'rgba(33,150,243,0.08)' }]}>
@@ -1008,6 +1080,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     marginBottom: 8,
+  },
+  nlCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
   },
   splitPreview: {
     marginBottom: 8,

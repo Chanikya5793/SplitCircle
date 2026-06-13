@@ -116,9 +116,13 @@ Owner picked the full set + a voice assistant; building safest-first across a fe
     flow with the keyword matcher as fallback.
   - Pure **duplicate / unusually-large anomaly warnings**
     (`utils/expenseAnomaly`, fully tested) surfaced as a banner in Add Expense.
+- **PR 2 ✅ (shipped, code) — Natural-language expense entry:** native
+  `parseExpenseFromText` (@Generable `OnDeviceParsedExpense`) +
+  `utils/expenseNlParse` (name→id resolution, category coercion, amount/ date
+  validation, pure + tested) + `onDeviceExpenseNlService`. A "Type it in plain
+  English" box at the top of Add Expense prefills title/amount/category/
+  participants/payer/split. Eligible devices only.
 - **Next:**
-  - **Natural-language expense entry** ("$40 dinner with Alice & Bob, split
-    equally") → structured expense via `@Generable`.
   - **Voice assistant** — on-device speech (Speech framework) → NL entry / Ask AI
     (needs mic + speech Info.plist keys; highest native effort).
   - **Spending insights / month-in-review** — on-device narrative summary screen.

@@ -51,6 +51,22 @@ export interface SplitCircleAINativeModule {
   parseReceiptStructured(rawText: string, fewShot: string): Promise<OnDeviceReceiptResult>;
   /** Suggest one expense category for the given text (validated by the caller). */
   suggestExpenseCategory(text: string): Promise<string>;
+  /** Parse a natural-language sentence into an expense draft. */
+  parseExpenseFromText(
+    text: string,
+    memberNames: string,
+    currentUserName: string,
+  ): Promise<OnDeviceParsedExpenseRaw>;
+}
+
+export interface OnDeviceParsedExpenseRaw {
+  title: string;
+  amount: number;
+  category: string;
+  paidByName: string;
+  participantNames: string[];
+  splitEqually: boolean;
+  date: string;
 }
 
 /** Null on platforms without the native module (Android, web, Node tests). */
