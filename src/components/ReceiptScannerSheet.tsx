@@ -14,7 +14,8 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ScanningAnimation } from '@/components/ScanningAnimation';
 import { useTheme } from '@/context/ThemeContext';
-import { extractReceiptData, inferCategoryFromText, parseStructuredReceiptWithAI } from '@/services/ocrService';
+import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
+import { isOnDeviceReceiptParsingAvailable, parseReceiptOnDevice } from '@/services/onDeviceReceiptService';
 import {
     applyReceiptLearning,
     getStrictReviewMode,
@@ -956,51 +957,57 @@ export const ReceiptScannerSheet = ({
   }, []);
 
   const processScanResultWithAI = async (result: NonNullable<Awaited<ReturnType<typeof scanReceiptWithVisionKit>>>) => {
-    if (result.rawText) {
+    // On-device Apple Foundation Models parse (eligible iPhones only). No cloud,
+    // no API bill, receipt text never leaves the device. Biased by the user's
+    // learned per-merchant corrections (few-shot). Falls back to the native
+    // VisionKit parser on ineligible devices or any failure.
+    if (result.rawText && isOnDeviceReceiptParsingAvailable()) {
       setPhase('parsing_with_ai');
-      setScanMessage('Applying AI magic...');
-      
-      const aiResult = await parseStructuredReceiptWithAI(result.rawText);
-      if (aiResult.success && aiResult.parsedData) {
-        setPhase('complete');
-        const itemsList = aiResult.parsedData.items || [];
-        setScanMessage(`Found ${itemsList.length} items!`);
-        setScanItemCount(itemsList.length);
-        successHaptic();
-        
-        setImageUri(result.imageUri || null);
-        const titleLine = result.rawText.split('\n')[0]?.trim() ?? '';
-        setMerchantName(aiResult.parsedData.merchantName || normalizeScannedMerchantName(titleLine.slice(0, 50), null));
-        setDate(aiResult.parsedData.date || result.date || null);
-        setRawText(result.rawText);
-        setParserTelemetry(['AI Parser used successfully']);
+      setScanMessage('Parsing on-device with Apple Intelligence…');
 
-        const mappedItems = itemsList.map((item) => ({
-          id: generateId(),
-          name: item.name,
-          price: String(Number(item.price).toFixed(2)),
-          quantity: item.quantity || 1,
-          confidence: 1.0,
-          reviewed: true,
-          source: 'scan' as const,
-          originalName: item.name,
-        }));
-        
-        setScannedBaselineItems(mappedItems.map(m => ({ name: m.name, price: Number(m.price), confidence: 1.0 })));
-        setItems(mappedItems);
+      try {
+        const parsed = await parseReceiptOnDevice(result.rawText, result.merchantName);
 
-        if (aiResult.parsedData.tax != null) setTax(aiResult.parsedData.tax.toFixed(2));
-        else setTax('');
-        if (aiResult.parsedData.tip != null) setTip(aiResult.parsedData.tip.toFixed(2));
-        else setTip('');
-        if (aiResult.parsedData.total != null) setTotal(aiResult.parsedData.total.toFixed(2));
+        if (parsed.items.length > 0 || parsed.total != null) {
+          setPhase('complete');
+          setScanMessage(`Found ${parsed.items.length} items!`);
+          setScanItemCount(parsed.items.length);
+          successHaptic();
 
-        setTimeout(() => setPhase('review'), 1200);
-        return;
+          setImageUri(result.imageUri || null);
+          const titleLine = result.rawText.split('\n')[0]?.trim() ?? '';
+          setMerchantName(parsed.merchantName || normalizeScannedMerchantName(titleLine.slice(0, 50), null));
+          setDate(parsed.date || result.date || null);
+          setRawText(result.rawText);
+          setParserTelemetry(['On-device Foundation Models parser used']);
+
+          const mappedItems = parsed.items.map((item) => ({
+            id: generateId(),
+            name: item.name,
+            price: String(Number(item.price).toFixed(2)),
+            quantity: item.quantity || 1,
+            confidence: 1.0,
+            reviewed: true,
+            source: 'scan' as const,
+            originalName: item.name,
+          }));
+
+          setScannedBaselineItems(mappedItems.map((m) => ({ name: m.name, price: Number(m.price), confidence: 1.0 })));
+          setItems(mappedItems);
+
+          setTax(parsed.tax != null ? parsed.tax.toFixed(2) : '');
+          setTip(parsed.tip != null ? parsed.tip.toFixed(2) : '');
+          if (parsed.total != null) setTotal(parsed.total.toFixed(2));
+
+          setTimeout(() => setPhase('review'), 1200);
+          return;
+        }
+      } catch (error) {
+        console.warn('[ReceiptScanner] On-device AI parse failed, falling back to native parser:', error);
       }
     }
-    
-    // Fallback if AI fails or rawText is missing
+
+    // Fallback: native VisionKit parser (no cloud) — also covers ineligible devices.
     setPhase('complete');
     setScanMessage(`Found ${result.items?.length || 0} items!`);
     setScanItemCount(result.items?.length || 0);

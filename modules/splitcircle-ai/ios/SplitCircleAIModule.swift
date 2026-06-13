@@ -20,6 +20,38 @@ struct OnDeviceExpenseAnswer {
   @Guide(description: "The 1-based numbers of the expense lines actually used to answer. Empty if none were relevant.")
   var sourceIndexes: [Int]
 }
+
+/// One parsed receipt line item.
+@available(iOS 26.0, *)
+@Generable
+struct OnDeviceReceiptItem {
+  @Guide(description: "Cleaned, concise item name. Fix obvious OCR typos only when confident.")
+  var name: String
+  @Guide(description: "Unit price as a number, e.g. 5.99")
+  var price: Double
+  @Guide(description: "Quantity; default 1 when not stated.")
+  var quantity: Int
+}
+
+/// Structured receipt extracted on-device from OCR text.
+@available(iOS 26.0, *)
+@Generable
+struct OnDeviceReceipt {
+  @Guide(description: "Merchandise/food line items ONLY. Never include subtotal, tax, tip, total, payment, card, approval, or 'items sold' lines.")
+  var items: [OnDeviceReceiptItem]
+  @Guide(description: "Merchant/store name, or empty string if unknown.")
+  var merchantName: String
+  @Guide(description: "Purchase date as YYYY-MM-DD, or empty string if not present.")
+  var date: String
+  @Guide(description: "Subtotal amount, or 0 if not present.")
+  var subtotal: Double
+  @Guide(description: "Tax amount, or 0 if not present.")
+  var tax: Double
+  @Guide(description: "Tip/gratuity amount, or 0 if not present.")
+  var tip: Double
+  @Guide(description: "Grand total amount, or 0 if not present.")
+  var total: Double
+}
 #endif
 
 public class SplitCircleAIModule: Module {
@@ -158,6 +190,59 @@ public class SplitCircleAIModule: Module {
         return [
           "answer": response.content.answer,
           "sourceIndexes": response.content.sourceIndexes,
+        ]
+      }
+      #endif
+      throw OnDeviceAiUnavailableException()
+    }
+
+    /// Parse OCR receipt text into structured data fully on-device via
+    /// Foundation Models. `fewShot` is an optional plain-text block of learned
+    /// merchant corrections used to bias item naming. Throws when unavailable.
+    AsyncFunction("parseReceiptStructured") { (rawText: String, fewShot: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else {
+          throw OnDeviceAiUnavailableException()
+        }
+
+        let session = LanguageModelSession {
+          """
+          You are a precise receipt-parsing assistant. From the raw OCR text of a \
+          single receipt, extract the merchandise/food line items (name, unit \
+          price, quantity), plus subtotal, tax, tip, total, merchant name, and \
+          date. Never treat subtotal, tax, tip, total, change, card, approval, or \
+          'items sold' lines as items. Clean item names and fix obvious OCR typos \
+          only when confident. Use 0 for any missing amount and an empty string \
+          for a missing merchant or date.
+          """
+        }
+
+        let hints = fewShot.isEmpty ? "" : """
+
+        The user has previously corrected this merchant's item names as below; \
+        prefer these spellings when an item clearly matches:
+        \(fewShot)
+        """
+
+        let prompt = """
+        Raw OCR text:
+        \"\"\"
+        \(rawText)
+        \"\"\"
+        \(hints)
+        """
+
+        let response = try await session.respond(to: prompt, generating: OnDeviceReceipt.self)
+        let r = response.content
+        return [
+          "items": r.items.map { ["name": $0.name, "price": $0.price, "quantity": $0.quantity] },
+          "merchantName": r.merchantName,
+          "date": r.date,
+          "subtotal": r.subtotal,
+          "tax": r.tax,
+          "tip": r.tip,
+          "total": r.total,
         ]
       }
       #endif

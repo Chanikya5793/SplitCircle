@@ -294,61 +294,9 @@ export const inferCategoryFromText = (text: string): string => {
     return 'General';
 };
 
-/**
- * Parse receipt text using a server-side AI proxy.
- *
- * The Gemini API key lives only in Firebase Functions Secret Manager.
- * This function sends the raw OCR text to the authenticated Cloud Function
- * which performs the LLM call and returns structured data.
- */
-export const parseStructuredReceiptWithAI = async (rawText: string): Promise<OCRResult> => {
-    try {
-        const proxyEndpoint = process.env.EXPO_PUBLIC_GEMINI_PROXY_ENDPOINT?.trim()
-            ?? OCR_PROXY_ENDPOINT;
-
-        if (!proxyEndpoint) {
-            throw new Error('AI parsing endpoint is not configured.');
-        }
-
-        const currentUser = getAuth().currentUser;
-        if (!currentUser) {
-            throw new Error('You must be signed in to use AI receipt parsing.');
-        }
-
-        const idToken = await currentUser.getIdToken();
-
-        const response = await fetch(proxyEndpoint, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
-                'Authorization': `Bearer ${idToken}`,
-            },
-            body: JSON.stringify({ rawText }),
-        });
-
-        if (!response.ok) {
-            const errBody = await response.text().catch(() => '');
-            throw new Error(`AI proxy error: ${response.status} ${errBody}`);
-        }
-
-        const data = await response.json();
-
-        if (!data?.success || !data?.parsedData) {
-            throw new Error('AI proxy returned an invalid response.');
-        }
-
-        return {
-            success: true,
-            extractedText: rawText,
-            parsedData: data.parsedData,
-        };
-    } catch (error) {
-        console.error('AI Parsing Error:', error);
-        return {
-            success: false,
-            extractedText: rawText,
-            error: error instanceof Error ? error.message : 'Unknown error during AI breakdown',
-        };
-    }
-};
+// NOTE: Structured AI receipt parsing has moved fully on-device to Apple
+// Foundation Models — see src/services/onDeviceReceiptService.ts. The previous
+// Gemini Cloud Function proxy (parseStructuredReceiptWithAI / parseReceiptWithLLM)
+// has been removed to eliminate the per-call API cost and keep receipt text on
+// the device. The backend OCR proxy above (extractReceiptData) remains as the
+// non-iOS / non-eligible fallback for raw text extraction.

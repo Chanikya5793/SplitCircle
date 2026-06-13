@@ -210,6 +210,58 @@ export const resetLearningForMerchant = async (merchant: string): Promise<void> 
   });
 };
 
+export interface ReceiptNameHint {
+  /** Normalized scanned text the user historically corrected. */
+  from: string;
+  /** The corrected item name the user settled on. */
+  to: string;
+  count: number;
+}
+
+/**
+ * Learned name corrections for a merchant (plus global ones), strongest first.
+ * Used to build a few-shot hint block for the on-device receipt parser so item
+ * naming improves as the user scans and corrects more receipts.
+ */
+export const getReceiptNameHints = async (
+  merchantName: string | null | undefined,
+  limit = 12,
+): Promise<ReceiptNameHint[]> => {
+  const profile = await loadProfile();
+  const mKey = merchantKey(merchantName);
+
+  // Dedupe by normalized `from`: a merchant-scoped correction beats a global one,
+  // and among equal scope the higher-count one wins — so we never emit two
+  // conflicting few-shot examples for the same scanned text. Stored values are
+  // validated defensively (corrupt count/to can't break sorting or the prompt).
+  const byFrom = new Map<string, { hint: ReceiptNameHint; scoped: boolean }>();
+
+  for (const [key, entry] of Object.entries(profile.corrections)) {
+    if (!entry || typeof entry.count !== 'number' || !Number.isFinite(entry.count)) continue;
+    if (entry.count < MIN_CORRECTION_HITS) continue;
+    if (typeof entry.to !== 'string' || !entry.to.trim()) continue;
+
+    const [keyMerchant, from] = key.split('::');
+    if (keyMerchant !== mKey && keyMerchant !== 'global') continue;
+    if (!from) continue;
+    if (normalize(entry.to) === from) continue;
+
+    const scoped = keyMerchant === mKey && mKey !== 'global';
+    const candidate: ReceiptNameHint = { from, to: entry.to, count: entry.count };
+    const existing = byFrom.get(from);
+    const better =
+      !existing ||
+      (scoped && !existing.scoped) ||
+      (scoped === existing.scoped && entry.count > existing.hint.count);
+    if (better) byFrom.set(from, { hint: candidate, scoped });
+  }
+
+  return Array.from(byFrom.values())
+    .map((v) => v.hint)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, Math.max(0, limit));
+};
+
 export const applyReceiptLearning = async (
   merchantName: string | null | undefined,
   items: Array<{ name: string; price: number; quantity: number; confidence: number }>,

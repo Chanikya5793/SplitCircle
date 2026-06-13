@@ -79,15 +79,22 @@ Review UI (existing ReceiptScannerSheet)
   Ask AI 🤖 and the info button); remove the dead navigator-level `headerRight`.
 - This roadmap doc.
 
-### Phase 1 — On-device Receipt Brain (remove Gemini)
-- Native module: add `RecognizeDocumentsRequest` + a Foundation Models
-  `@Generable` receipt parser (`parseReceiptOnDevice`), behind availability gating.
-- `ReceiptScannerSheet`: prefer the on-device FM parse on eligible devices; fall
-  back to the VisionKit native parser otherwise. **Delete the Gemini path**
-  (`parseStructuredReceiptWithAI` + `EXPO_PUBLIC_GEMINI_PROXY_ENDPOINT`); retire
-  the `parseReceiptWithLLM` Cloud Function + `GEMINI_API_KEY` secret.
-- Feed `receiptLearningService` corrections back as **few-shot examples** in the
-  FM prompt so accuracy improves with use.
+### Phase 1 — On-device Receipt Brain (remove Gemini) ✅ (shipped, code)
+- Native module: Foundation Models `@Generable` receipt parser
+  (`parseReceiptStructured` → `OnDeviceReceipt`) gated by availability.
+- `ReceiptScannerSheet`: prefers the on-device FM parse on eligible devices;
+  falls back to the VisionKit native parser otherwise. **Gemini path deleted**
+  (`parseStructuredReceiptWithAI` + `EXPO_PUBLIC_GEMINI_PROXY_ENDPOINT` client;
+  `parseReceiptWithLLM` Cloud Function removed). **Action for owner:** delete the
+  `GEMINI_API_KEY` secret + the function from Firebase, and drop the env var from
+  EAS — `firebase functions:secrets:destroy GEMINI_API_KEY`.
+- `receiptLearningService.getReceiptNameHints` feeds learned corrections back as
+  **few-shot examples** in the FM prompt so accuracy improves with use.
+- Hygiene: `functions/lib` (compiled output, rebuilt by the predeploy hook) is
+  now gitignored instead of committed.
+- **Deferred to Phase 1b / 2:** upgrading the OCR step itself to Vision
+  `RecognizeDocumentsRequest` (table-aware) inside the VisionKit native module —
+  a separate native change requiring device verification.
 
 ### Phase 2 — Rich receipt insights + "More info"
 - Extend the FM `@Generable` schema to extract merchant address, payment method,
