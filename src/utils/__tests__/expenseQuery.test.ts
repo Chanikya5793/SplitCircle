@@ -96,6 +96,51 @@ describe('balances & settlements (the hallucination screenshots)', () => {
   });
 });
 
+describe('pairwise balance', () => {
+  // u1 paid 100 split 50/50 → u2 owes u1 50 (u1 net +50 w.r.t. u2)
+  const expenses = [
+    exp({ amount: 100, paidBy: 'u1', participants: [{ userId: 'u1', share: 50 }, { userId: 'u2', share: 50 }] }),
+  ];
+
+  it('"does Bob owe me" → exact bilateral net', () => {
+    const r = answerExpenseQuery('does Bob owe me anything?', ctx(expenses));
+    expect(r.handled).toBe(true);
+    expect(r.answer).toBe('Bob owes you 50.00 USD.');
+  });
+
+  it('"how much do I owe Bob" when the user is the debtor', () => {
+    const flipped = [exp({ amount: 100, paidBy: 'u2', participants: [{ userId: 'u1', share: 50 }, { userId: 'u2', share: 50 }] })];
+    const r = answerExpenseQuery('how much do I owe Bob?', ctx(flipped));
+    expect(r.answer).toBe('You owe Bob 50.00 USD.');
+  });
+
+  it('settles pairwise after a recorded settlement', () => {
+    const settled: Settlement[] = [{ settlementId: 's', fromUserId: 'u2', toUserId: 'u1', amount: 50, createdAt: 1, status: 'completed' }];
+    const r = answerExpenseQuery('do I owe Bob?', ctx(expenses, settled));
+    expect(r.answer).toBe('You and Bob are settled up.');
+  });
+});
+
+describe('what did I pay for / recent', () => {
+  const expenses = [
+    exp({ title: 'Hotel', category: 'Travel', amount: 200, paidBy: 'u1', createdAt: Date.UTC(2026, 4, 10), participants: [{ userId: 'u1', share: 200 }] }),
+    exp({ title: 'Cab', category: 'Transport', amount: 30, paidBy: 'u2', createdAt: Date.UTC(2026, 4, 12), participants: [{ userId: 'u2', share: 30 }] }),
+  ];
+
+  it('"what did I pay for" lists the user\'s paid expenses', () => {
+    const r = answerExpenseQuery('what did I pay for?', ctx(expenses));
+    expect(r.answer).toContain('You paid for 1 expense');
+    expect(r.answer).toContain('Hotel — 200.00 USD');
+    expect(r.sources).toHaveLength(1);
+  });
+
+  it('"recent expenses" lists newest first', () => {
+    const r = answerExpenseQuery('show me recent expenses', ctx(expenses));
+    expect(r.answer).toContain('Most recent expenses');
+    expect(r.answer.indexOf('Cab')).toBeLessThan(r.answer.indexOf('Hotel')); // Cab is newer
+  });
+});
+
 describe('biggest / total / count / summary', () => {
   const expenses = [
     exp({ title: 'Hotel', category: 'Travel', amount: 999.99, participants: [{ userId: 'u1', share: 999.99 }] }),
