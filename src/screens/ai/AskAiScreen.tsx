@@ -25,6 +25,7 @@ import {
   getOnDeviceAiAvailability,
   ON_DEVICE_UNAVAILABLE_COPY,
 } from '@/services/onDeviceAiService';
+import { ASSISTANT_CAPABILITIES } from '@/utils/expenseQuery';
 import { formatCurrency } from '@/utils/currency';
 import { mediumHaptic } from '@/utils/haptics';
 import { useMemo, useState } from 'react';
@@ -92,7 +93,9 @@ export const AskAiScreen = ({ group, initialQuestion }: AskAiScreenProps) => {
         setAnswer(await askExpenseAi(q, { groupId: group.groupId }));
       } else {
         // appleIntelligenceNotEnabled / modelNotReady → actionable, no network.
-        setUnavailable(ON_DEVICE_UNAVAILABLE_COPY[onDeviceAvailability]);
+        // We still answer the common questions deterministically above, so for
+        // open-ended ones here, point the user at what they CAN ask.
+        setUnavailable(`${ON_DEVICE_UNAVAILABLE_COPY[onDeviceAvailability]}\n\n${ASSISTANT_CAPABILITIES}`);
       }
     } catch (err) {
       if (err instanceof AiUnavailableError) {
@@ -103,7 +106,7 @@ export const AskAiScreen = ({ group, initialQuestion }: AskAiScreenProps) => {
         if (onDeviceAvailability === 'available') {
           setError(err.message);
         } else {
-          setUnavailable(ON_DEVICE_UNAVAILABLE_COPY[onDeviceAvailability]);
+          setUnavailable(`${ON_DEVICE_UNAVAILABLE_COPY[onDeviceAvailability]}\n\n${ASSISTANT_CAPABILITIES}`);
         }
       } else {
         setError(err instanceof Error ? err.message : 'Something went wrong. Try again.');
