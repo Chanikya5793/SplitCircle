@@ -1501,7 +1501,7 @@ export const ReceiptScannerSheet = ({
                 <View style={[styles.mismatchBanner, { backgroundColor: isDark ? 'rgba(255,150,0,0.12)' : 'rgba(255,140,0,0.08)', marginBottom: 16, marginTop: 0 }]}>
                   <Icon source="shield-alert-outline" size={18} color="#FF9500" />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant, flex: 1, lineHeight: 18 }}>
-                    {useAI ? "Processed securely using Gemini AI. Please cross-check and correct any misreads below." : "Processed completely on-device! Please cross-check and correct any OCR misreads below."}
+                    {useAI ? "Processed entirely on-device with Apple Intelligence. Please cross-check and correct any misreads below." : "Processed completely on-device! Please cross-check and correct any OCR misreads below."}
                   </Text>
                 </View>
 

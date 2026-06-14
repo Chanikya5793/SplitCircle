@@ -75,6 +75,10 @@
 	<string>Allow ManaSplit to save photos</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Allow ManaSplit to access your photos</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>com.splitcircle.ask-ai</string>
+	</array>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>RCTRootViewBackgroundColor</key>
