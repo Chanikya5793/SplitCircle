@@ -150,6 +150,47 @@ export function buildExpenseAnalytics(
   };
 }
 
+// ── Memoized index (cache) ───────────────────────────────────────────────────
+//
+// The group's expenses already live in memory (GroupContext's live snapshot), so
+// this caches the *derived* index and recomputes only when the group's data
+// actually changes — keyed by a cheap signature. Reusable across Ask AI, Group
+// Stats, etc. In-memory per session; a disk-persisted layer can build on this.
+
+interface GroupLike {
+  groupId: string;
+  expenses?: Expense[];
+  settlements?: Settlement[];
+  updatedAt?: number;
+}
+
+/** Cheap change-signature: invalidates the cache when expenses/settlements change. */
+export function analyticsSignature(group: GroupLike): string {
+  const ex = group.expenses ?? [];
+  const st = group.settlements ?? [];
+  let maxUpdated = 0;
+  for (const e of ex) maxUpdated = Math.max(maxUpdated, e.updatedAt ?? 0);
+  return `${ex.length}:${maxUpdated}:${st.length}:${group.updatedAt ?? 0}`;
+}
+
+const analyticsCache = new Map<string, { sig: string; value: ExpenseAnalytics }>();
+
+/** Memoized `buildExpenseAnalytics` keyed by group + user + change-signature. */
+export function getGroupAnalytics(group: GroupLike, currentUserId: string): ExpenseAnalytics {
+  const key = `${group.groupId}:${currentUserId}`;
+  const sig = analyticsSignature(group);
+  const hit = analyticsCache.get(key);
+  if (hit && hit.sig === sig) return hit.value;
+  const value = buildExpenseAnalytics(group.expenses ?? [], group.settlements ?? [], currentUserId);
+  analyticsCache.set(key, { sig, value });
+  return value;
+}
+
+/** Test/maintenance hook to clear the in-memory analytics cache. */
+export function clearAnalyticsCache(): void {
+  analyticsCache.clear();
+}
+
 // ── Filters for the query engine (pure) ──────────────────────────────────────
 
 export interface Timeframe {

@@ -150,9 +150,13 @@ language):
 - Overflow fix: bumped the context budget (70 tok/line, 1400 reserve) so
   "summarize" no longer exceeds the window; summaries are also answered
   deterministically.
-- 70 unit tests (regression tests mirror the exact failing screenshots).
-- **Next (this track):** persist the index for instant cold-start; expand intents
-  (per-member spend, "who paid most"); optional LLM phrasing of deterministic facts.
+- Regression tests mirror the exact failing screenshots.
+- **Expanded** (follow-up shipped): per-member queries ("how much did Bob spend
+  on food"), "who paid/spent the most", average expense; and a **memoized
+  analytics index** (`getGroupAnalytics`, cached by a cheap change-signature) —
+  the reusable on-device "index" the cache goal called for.
+- **Next (this track):** disk-persist the index for instant cold-start; optional
+  LLM phrasing of deterministic facts; reuse the index in Group Stats.
 
 ### Phase 4 — Optional / advanced
 - iOS 27 direct-image receipt understanding (crumpled receipts).
