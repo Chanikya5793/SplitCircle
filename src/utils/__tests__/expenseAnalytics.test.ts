@@ -8,7 +8,9 @@ import type { Settlement } from '../../models/group';
 import {
   analyticsSignature,
   buildExpenseAnalytics,
+  calendarWindow,
   clearAnalyticsCache,
+  comparisonWindows,
   getGroupAnalytics,
   monthKey,
   parseTimeframe,
@@ -127,5 +129,27 @@ describe('parseTimeframe', () => {
 
   it('returns null when no timeframe is mentioned', () => {
     expect(parseTimeframe('how much on food', now)).toBeNull();
+  });
+});
+
+describe('comparison windows', () => {
+  const now = Date.UTC(2026, 5, 14); // 2026-06-14
+
+  it('calendarWindow for this/last month', () => {
+    expect(new Date(calendarWindow(now, 'month', 0).startMs).getUTCMonth()).toBe(5); // June
+    expect(new Date(calendarWindow(now, 'month', -1).startMs).getUTCMonth()).toBe(4); // May
+  });
+
+  it('comparisonWindows month: current vs previous are adjacent, non-overlapping', () => {
+    const { current, previous } = comparisonWindows(now, 'month');
+    expect(current.label).toBe('this month');
+    expect(previous.label).toBe('last month');
+    expect(previous.endMs).toBeLessThan(current.startMs);
+  });
+
+  it('comparisonWindows week: two rolling 7-day windows', () => {
+    const { current, previous } = comparisonWindows(now, 'week');
+    expect(current.endMs - current.startMs).toBe(7 * 86400000);
+    expect(previous.endMs).toBe(current.startMs);
   });
 });

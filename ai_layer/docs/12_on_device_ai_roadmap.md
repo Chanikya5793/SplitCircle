@@ -160,6 +160,9 @@ language):
 - **Deprioritized:** disk-persisting the index — low value, since the source
   expenses must already be in memory (live `GroupContext`) before we can answer,
   making a recompute of the pure index effectively free.
+- **Also shipped:** period **comparison** ("this month vs last month", "am I
+  spending more than last week", optional category + per-member), monthly
+  **trend**, and a help/capabilities fallback so nothing dead-ends.
 - **Next (this track):** optional LLM phrasing of deterministic facts; reuse the
   index in Group Stats / a "month in review" surface.
 
