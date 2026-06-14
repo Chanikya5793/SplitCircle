@@ -12,6 +12,7 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useTheme } from '@/context/ThemeContext';
+import { useAuth } from '@/context/AuthContext';
 import type { Group } from '@/models';
 import {
   AiUnavailableError,
@@ -19,6 +20,7 @@ import {
   type ExpenseAiAnswer,
 } from '@/services/aiService';
 import {
+  answerExpenseLocally,
   askExpenseAiOnDevice,
   getOnDeviceAiAvailability,
   ON_DEVICE_UNAVAILABLE_COPY,
@@ -44,6 +46,8 @@ const SUGGESTED_PROMPTS = [
 
 export const AskAiScreen = ({ group, initialQuestion }: AskAiScreenProps) => {
   const { theme, isDark } = useTheme();
+  const { user } = useAuth();
+  const currentUserId = user?.userId ?? group.members[0]?.userId ?? '';
   const [question, setQuestion] = useState(initialQuestion ?? '');
   const [loading, setLoading] = useState(false);
   const [answer, setAnswer] = useState<ExpenseAiAnswer | null>(null);
@@ -72,9 +76,17 @@ export const AskAiScreen = ({ group, initialQuestion }: AskAiScreenProps) => {
     setUnavailable(null);
     setAnswer(null);
     try {
+      // 1) Deterministic, exact answer for the common questions — computed
+      // on-device with no model, so it's correct, instant, and works on EVERY
+      // device (no Apple Intelligence needed).
+      const local = answerExpenseLocally(q, group, currentUserId);
+      if (local) {
+        setAnswer(local);
+        return;
+      }
+      // 2) Open-ended → on-device LLM (grounded with exact totals).
       if (onDevice) {
-        // Free + private: Apple's on-device model over the local expense data.
-        setAnswer(await askExpenseAiOnDevice(q, group));
+        setAnswer(await askExpenseAiOnDevice(q, group, currentUserId));
       } else if (cloudEligible) {
         // Device can't run on-device AI → cloud AI layer, if it's been enabled.
         setAnswer(await askExpenseAi(q, { groupId: group.groupId }));

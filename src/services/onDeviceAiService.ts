@@ -25,9 +25,58 @@ import {
   maxExpensesForContext,
   resolveCitedExpenses,
 } from '@/utils/onDeviceAiContext';
+import { buildExpenseAnalytics } from '@/utils/expenseAnalytics';
+import { answerExpenseQuery, type QueryContext } from '@/utils/expenseQuery';
 
 export type { OnDeviceAiAvailability };
 export { getOnDeviceAiAvailability };
+
+/**
+ * Deterministic, on-device answer for the common questions (spend by category,
+ * balances, settle-up, biggest, totals, summary) computed with EXACT numbers —
+ * no LLM, so no arithmetic mistakes. Works on EVERY device (no Apple
+ * Intelligence required). Returns null for open-ended questions so the caller
+ * can fall back to the grounded LLM.
+ */
+export function answerExpenseLocally(
+  question: string,
+  group: Group,
+  currentUserId: string,
+): ExpenseAiAnswer | null {
+  const queryCtx: QueryContext = {
+    expenses: group.expenses ?? [],
+    settlements: group.settlements ?? [],
+    members: group.members.map((m) => ({ userId: m.userId, displayName: m.displayName })),
+    currentUserId,
+    currency: group.currency,
+  };
+  const r = answerExpenseQuery(question, queryCtx);
+  if (!r.handled) return null;
+  void donateAskActivity(redactPII(question));
+  return { answer: r.answer, sources: r.sources, confidence: r.confidence };
+}
+
+/** Compact, exact facts block prepended to the LLM context so it never recomputes. */
+function buildFactsBlock(group: Group, currentUserId: string): string {
+  const a = buildExpenseAnalytics(group.expenses ?? [], group.settlements ?? [], currentUserId);
+  const cur = group.currency || 'USD';
+  const topCats = a.byCategory.slice(0, 5).map((c) => `${c.category} ${c.total.toFixed(2)}`).join(', ');
+  const bal =
+    Math.abs(a.userBalance) < 0.01
+      ? 'settled up'
+      : a.userBalance < 0
+        ? `you owe ${Math.abs(a.userBalance).toFixed(2)} ${cur}`
+        : `you're owed ${a.userBalance.toFixed(2)} ${cur}`;
+  return [
+    'Verified totals (use these EXACT numbers; do NOT recompute or add up the lines yourself):',
+    `- Total group spend: ${a.totalSpend.toFixed(2)} ${cur} across ${a.count} expenses`,
+    `- Your total share: ${a.userShareTotal.toFixed(2)} ${cur}; you paid: ${a.userPaidTotal.toFixed(2)} ${cur}`,
+    `- Your balance: ${bal}`,
+    topCats ? `- Spend by category: ${topCats}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
 
 /** Human copy for each unavailability reason (the "sorry" notes). */
 export const ON_DEVICE_UNAVAILABLE_COPY: Record<Exclude<OnDeviceAiAvailability, 'available'>, string> = {
@@ -48,6 +97,7 @@ export const ON_DEVICE_UNAVAILABLE_COPY: Record<Exclude<OnDeviceAiAvailability, 
 export async function askExpenseAiOnDevice(
   question: string,
   group: Group,
+  currentUserId: string,
 ): Promise<ExpenseAiAnswer> {
   const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
 
@@ -71,7 +121,10 @@ export async function askExpenseAiOnDevice(
     };
   }
 
-  const result = await askOnDevice(question, context);
+  // Prepend exact precomputed totals so the model phrases an answer rather than
+  // doing (unreliable) arithmetic over the raw lines.
+  const groundedContext = `${buildFactsBlock(group, currentUserId)}\n\nExpenses:\n${context}`;
+  const result = await askOnDevice(question, groundedContext);
   const cited = resolveCitedExpenses(result.sourceIndexes ?? [], selected);
   const nameOf = new Map(members.map((m) => [m.userId, m.displayName]));
 
