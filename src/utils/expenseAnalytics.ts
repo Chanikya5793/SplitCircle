@@ -150,6 +150,32 @@ export function buildExpenseAnalytics(
   };
 }
 
+/**
+ * Exact bilateral balance between two users from `a`'s perspective:
+ *   > 0  ⇒ a owes b that much
+ *   < 0  ⇒ b owes a that much
+ * Counts each expense the other paid (your share) minus the ones you paid (their
+ * share), then nets recorded settlements between the two. Unlike the group-wide
+ * minimized plan, this is the true pairwise figure for "how much do I owe Bob".
+ */
+export function pairwiseNet(
+  expenses: readonly Expense[],
+  settlements: readonly Settlement[],
+  a: string,
+  b: string,
+): number {
+  let aOwesB = 0;
+  for (const e of expenses ?? []) {
+    if (e.paidBy === b) aOwesB += userShareOf(e, a); // b paid → a owes their share
+    else if (e.paidBy === a) aOwesB -= userShareOf(e, b); // a paid → b owes their share
+  }
+  for (const s of settlements ?? []) {
+    if (s.fromUserId === a && s.toUserId === b) aOwesB -= s.amount; // a already paid b
+    else if (s.fromUserId === b && s.toUserId === a) aOwesB += s.amount; // b paid a
+  }
+  return cents(aOwesB);
+}
+
 // ── Memoized index (cache) ───────────────────────────────────────────────────
 //
 // The group's expenses already live in memory (GroupContext's live snapshot), so

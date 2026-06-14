@@ -14,6 +14,7 @@ import type { Settlement } from '@/models/group';
 import {
   buildExpenseAnalytics,
   inTimeframe,
+  pairwiseNet,
   parseTimeframe,
   sumTotal,
   sumUserShare,
@@ -180,6 +181,23 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
 
   // ── Balance / owe ("how much do I owe", "what's my balance", "am I even") ──
   if (/\bowe[ds]?\b|\bbalance\b|settled up\?|\beven\b/i.test(q)) {
+    // Pairwise: "how much do I owe Bob" / "does Bob owe me" → exact bilateral net.
+    const other = detectMember(q, ctx.members.filter((m) => m.userId !== ctx.currentUserId));
+    if (other) {
+      const net = pairwiseNet(ctx.expenses, ctx.settlements, ctx.currentUserId, other.userId);
+      if (Math.abs(net) < 0.01) {
+        return { handled: true, answer: `You and ${other.displayName} are settled up.`, sources: [], confidence: 1 };
+      }
+      return {
+        handled: true,
+        answer:
+          net > 0
+            ? `You owe ${other.displayName} ${money(net, currency)}.`
+            : `${other.displayName} owes you ${money(Math.abs(net), currency)}.`,
+        sources: [],
+        confidence: 1,
+      };
+    }
     const analytics = buildExpenseAnalytics(ctx.expenses, ctx.settlements, ctx.currentUserId);
     const bal = analytics.userBalance;
     if (Math.abs(bal) < 0.01) {
@@ -217,6 +235,44 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
       handled: true,
       answer: `Biggest expenses${tfSuffix(tf)}:\n${lines.join('\n')}`,
       sources: top.map((e) => toSource(e, ctx)),
+      confidence: 1,
+    };
+  }
+
+  // ── What did I pay for (list a user's paid expenses) ──
+  if (/\b(paid for|pay for|did i pay|i paid|i bought|did i buy|what.* i pay)\b/i.test(q)) {
+    const target = resolveTarget(q, ctx) ?? { userId: ctx.currentUserId, subject: 'You' };
+    const paid = ctx.expenses
+      .filter((e) => inTf(e) && e.paidBy === target.userId && lc(e.category ?? '') !== 'settlement')
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    if (paid.length === 0) {
+      return { handled: true, answer: `${target.subject === 'You' ? "You haven't" : `${target.subject} hasn't`} paid for anything${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+    }
+    const total = sumTotal(paid);
+    const lines = paid.slice(0, MAX_SOURCES).map((e) => `• ${e.title || 'Untitled'} — ${money(e.amount, currency)}`);
+    const subj = target.subject === 'You' ? 'You paid for' : `${target.subject} paid for`;
+    return {
+      handled: true,
+      answer: `${subj} ${paid.length} expense${paid.length === 1 ? '' : 's'}${tfSuffix(tf)} (${money(total, currency)} total):\n${lines.join('\n')}`,
+      sources: paid.slice(0, MAX_SOURCES).map((e) => toSource(e, ctx)),
+      confidence: 1,
+    };
+  }
+
+  // ── Recent / latest expenses ──
+  if (/\b(recent|latest|most recent|last few)\b.*\bexpenses?\b|\brecent (activity|expenses?)\b|\bwhat'?s new\b/i.test(q)) {
+    const recent = [...ctx.expenses]
+      .filter((e) => lc(e.category ?? '') !== 'settlement')
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      .slice(0, 5);
+    if (recent.length === 0) {
+      return { handled: true, answer: 'No expenses yet.', sources: [], confidence: 1 };
+    }
+    const lines = recent.map((e) => `• ${e.title || 'Untitled'} — ${money(e.amount, currency)}${e.category ? ` (${e.category})` : ''}`);
+    return {
+      handled: true,
+      answer: `Most recent expenses:\n${lines.join('\n')}`,
+      sources: recent.map((e) => toSource(e, ctx)),
       confidence: 1,
     };
   }

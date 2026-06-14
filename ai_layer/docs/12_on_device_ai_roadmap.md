@@ -151,12 +151,17 @@ language):
   "summarize" no longer exceeds the window; summaries are also answered
   deterministically.
 - Regression tests mirror the exact failing screenshots.
-- **Expanded** (follow-up shipped): per-member queries ("how much did Bob spend
-  on food"), "who paid/spent the most", average expense; and a **memoized
-  analytics index** (`getGroupAnalytics`, cached by a cheap change-signature) —
-  the reusable on-device "index" the cache goal called for.
-- **Next (this track):** disk-persist the index for instant cold-start; optional
-  LLM phrasing of deterministic facts; reuse the index in Group Stats.
+- **Expanded** (follow-ups shipped): per-member queries ("how much did Bob spend
+  on food"), "who paid/spent the most", average expense; **pairwise balances**
+  ("how much do I owe Bob" via exact `pairwiseNet`), "what did I pay for", recent
+  expenses; and a **memoized analytics index** (`getGroupAnalytics`, cached by a
+  cheap change-signature) — the reusable on-device "index" the cache goal called
+  for.
+- **Deprioritized:** disk-persisting the index — low value, since the source
+  expenses must already be in memory (live `GroupContext`) before we can answer,
+  making a recompute of the pure index effectively free.
+- **Next (this track):** optional LLM phrasing of deterministic facts; reuse the
+  index in Group Stats / a "month in review" surface.
 
 ### Phase 4 — Optional / advanced
 - iOS 27 direct-image receipt understanding (crumpled receipts).
