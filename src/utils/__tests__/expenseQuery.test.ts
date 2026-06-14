@@ -199,6 +199,15 @@ describe('per-member + superlatives + average', () => {
   });
 });
 
+describe('help', () => {
+  it('answers "what can you do" with capabilities', () => {
+    const r = answerExpenseQuery('what can you do?', ctx([exp({ amount: 10 })]));
+    expect(r.handled).toBe(true);
+    expect(r.answer).toContain('Try asking me');
+    expect(r.answer).toContain('How much do I owe');
+  });
+});
+
 describe('fallthrough', () => {
   it('returns handled:false for open-ended questions', () => {
     const r = answerExpenseQuery('why is Bob always late to pay?', ctx([exp({ amount: 10 })]));

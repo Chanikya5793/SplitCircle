@@ -57,6 +57,17 @@ export interface QueryResult {
 
 const NOT_HANDLED: QueryResult = { handled: false, answer: '', sources: [], confidence: 0 };
 
+/** What the deterministic assistant can answer — shown for help/unknown questions. */
+export const ASSISTANT_CAPABILITIES = [
+  'Try asking me:',
+  '• "How much did I spend on food?"',
+  '• "How much do I owe Bob?"',
+  '• "Show our settle-up"',
+  '• "What were our biggest expenses?"',
+  '• "Who paid the most last month?"',
+  '• "Summarize this month"',
+].join('\n');
+
 const MAX_SOURCES = 8;
 
 // Canonical category → words that imply it (improves recall for "food", "gas"…).
@@ -157,6 +168,11 @@ const tfSuffix = (tf: Timeframe | null): string => (tf ? ` ${tf.label}` : '');
 export function answerExpenseQuery(question: string, ctx: QueryContext): QueryResult {
   const q = (question ?? '').trim();
   if (!q) return NOT_HANDLED;
+  // ── Help / capabilities ──
+  if (/\b(help|what can (you|i) (do|ask)|how does this work|what can you answer)\b/i.test(q)) {
+    return { handled: true, answer: ASSISTANT_CAPABILITIES, sources: [], confidence: 1 };
+  }
+
   const tf = parseTimeframe(q, ctx.now);
   const scoped = inTimeframe; // alias
   const inTf = (e: Expense) => scoped(e, tf);
