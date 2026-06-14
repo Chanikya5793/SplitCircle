@@ -229,6 +229,36 @@ describe('period comparison & trend', () => {
   });
 });
 
+describe('overview / breakdown / leaderboard', () => {
+  // u1 paid 100 (50/50) and u2 paid 60 (Food 30/30 → wait keep simple)
+  const expenses = [
+    exp({ category: 'Food', amount: 100, paidBy: 'u1', participants: [{ userId: 'u1', share: 50 }, { userId: 'u2', share: 50 }] }),
+    exp({ category: 'Transport', amount: 60, paidBy: 'u2', participants: [{ userId: 'u1', share: 30 }, { userId: 'u2', share: 30 }] }),
+  ];
+
+  it('"everyone\'s balances" lists each member net', () => {
+    const r = answerExpenseQuery("show everyone's balances", ctx(expenses));
+    expect(r.handled).toBe(true);
+    // u1: paid 100, share 80 → +20 (owed); u2: paid 60, share 80 → -20 (owes)
+    expect(r.answer).toContain('You are owed 20.00 USD');
+    expect(r.answer).toContain('Bob owes 20.00 USD');
+  });
+
+  it('"where did the money go" breaks down by category', () => {
+    const r = answerExpenseQuery('where did the money go?', ctx(expenses));
+    expect(r.answer).toContain('Spending by category');
+    expect(r.answer).toContain('Food: 100.00 USD');
+    expect(r.answer).toContain('Transport: 60.00 USD');
+  });
+
+  it('"how much has each person spent" leaderboard by share', () => {
+    const r = answerExpenseQuery('how much has each person spent?', ctx(expenses));
+    expect(r.answer).toContain('How much each person spent');
+    expect(r.answer).toContain('You: 80.00 USD'); // 50+30
+    expect(r.answer).toContain('Bob: 80.00 USD'); // 50+30
+  });
+});
+
 describe('help', () => {
   it('answers "what can you do" with capabilities', () => {
     const r = answerExpenseQuery('what can you do?', ctx([exp({ amount: 10 })]));
