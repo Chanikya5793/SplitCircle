@@ -126,6 +126,34 @@ describe('biggest / total / count / summary', () => {
   });
 });
 
+describe('per-member + superlatives + average', () => {
+  const expenses = [
+    exp({ title: 'Dinner', category: 'Food', amount: 100, paidBy: 'u1', participants: [{ userId: 'u1', share: 40 }, { userId: 'u2', share: 60 }] }),
+    exp({ title: 'Cab', category: 'Transport', amount: 50, paidBy: 'u2', participants: [{ userId: 'u1', share: 25 }, { userId: 'u2', share: 25 }] }),
+  ];
+
+  it('answers per-member category spend by name', () => {
+    const r = answerExpenseQuery('how much did Bob spend on food', ctx(expenses));
+    expect(r.answer).toContain('Bob spent 60.00 USD on Food');
+  });
+
+  it('"who paid the most" ranks by amount paid (self shows as "You")', () => {
+    const r = answerExpenseQuery('who paid the most?', ctx(expenses));
+    expect(r.answer).toContain('You paid the most'); // u1 (current user) paid 100 vs u2 50
+  });
+
+  it('"who spent the most" ranks by share', () => {
+    const r = answerExpenseQuery('who spent the most?', ctx(expenses));
+    // u1 share 40+25=65, u2 share 60+25=85 → Bob
+    expect(r.answer).toContain('Bob spent the most');
+  });
+
+  it('average expense', () => {
+    const r = answerExpenseQuery('what is the average expense?', ctx(expenses));
+    expect(r.answer).toContain('average expense is 75.00 USD'); // (100+50)/2
+  });
+});
+
 describe('fallthrough', () => {
   it('returns handled:false for open-ended questions', () => {
     const r = answerExpenseQuery('why is Bob always late to pay?', ctx([exp({ amount: 10 })]));

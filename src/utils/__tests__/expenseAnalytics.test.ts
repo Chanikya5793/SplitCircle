@@ -6,7 +6,10 @@ import { describe, expect, it } from 'vitest';
 import type { Expense } from '../../models/expense';
 import type { Settlement } from '../../models/group';
 import {
+  analyticsSignature,
   buildExpenseAnalytics,
+  clearAnalyticsCache,
+  getGroupAnalytics,
   monthKey,
   parseTimeframe,
   sumTotal,
@@ -82,6 +85,30 @@ describe('helpers', () => {
   it('monthKey buckets by calendar month', () => {
     expect(monthKey(Date.UTC(2026, 0, 5))).toBe('2026-01');
     expect(monthKey(Date.UTC(2026, 11, 31))).toBe('2026-12');
+  });
+});
+
+describe('memoized index (cache)', () => {
+  it('caches by signature and recomputes when data changes', () => {
+    clearAnalyticsCache();
+    const e1 = exp({ amount: 100, participants: [{ userId: 'u1', share: 100 }] });
+    const group = { groupId: 'g1', expenses: [e1], settlements: [], updatedAt: 1 };
+
+    const a1 = getGroupAnalytics(group, 'u1');
+    const a2 = getGroupAnalytics(group, 'u1');
+    expect(a2).toBe(a1); // same reference → served from cache
+
+    const group2 = { ...group, expenses: [e1, exp({ amount: 50, participants: [{ userId: 'u1', share: 50 }] })] };
+    const a3 = getGroupAnalytics(group2, 'u1');
+    expect(a3).not.toBe(a1); // signature changed → recomputed
+    expect(a3.totalSpend).toBe(150);
+  });
+
+  it('signature changes with count, updatedAt, settlements', () => {
+    const base = { groupId: 'g', expenses: [exp({ updatedAt: 10 })], settlements: [], updatedAt: 5 };
+    const sig = analyticsSignature(base);
+    expect(analyticsSignature({ ...base, updatedAt: 6 })).not.toBe(sig);
+    expect(analyticsSignature({ ...base, expenses: [...base.expenses, exp({})] })).not.toBe(sig);
   });
 });
 

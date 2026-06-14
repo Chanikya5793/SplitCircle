@@ -85,6 +85,34 @@ const nameOf = (members: readonly QueryMember[], userId: string, selfId: string)
 /** True when the question is scoped to the current user ("I", "my", "me"). */
 const isUserScoped = (q: string): boolean => /\b(i|me|my|mine)\b/i.test(q);
 
+interface Target {
+  userId: string;
+  /** Sentence subject, e.g. "You" or "Bob". */
+  subject: string;
+}
+
+/** Find a member named in the question (full name or first name), if any. */
+function detectMember(q: string, members: readonly QueryMember[]): QueryMember | null {
+  for (const m of members) {
+    const full = (m.displayName ?? '').trim();
+    if (!full) continue;
+    const first = full.split(/\s+/)[0];
+    if (wordIn(q, full) || (first.length >= 2 && wordIn(q, first))) return m;
+  }
+  return null;
+}
+
+/**
+ * Who the question is about: the current user ("I/my"), a named member, or the
+ * whole group (null). "I" wins over a name so "how much do I owe Bob" is self.
+ */
+function resolveTarget(q: string, ctx: QueryContext): Target | null {
+  if (isUserScoped(q)) return { userId: ctx.currentUserId, subject: 'You' };
+  const m = detectMember(q, ctx.members);
+  if (m) return { userId: m.userId, subject: m.displayName };
+  return null;
+}
+
 /** Detect a category mentioned in the question, preferring categories present in data. */
 function detectCategory(q: string, expenses: readonly Expense[]): string | null {
   const present = new Map<string, string>(); // lc → original casing
@@ -193,6 +221,50 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
     };
   }
 
+  // ── Who paid / spent the most ──
+  if (/\bwho\b.*\b(paid|spent|spend|owes? the most|biggest spender)\b|biggest spender/i.test(q)) {
+    const pool = ctx.expenses.filter((e) => inTf(e) && lc(e.category ?? '') !== 'settlement');
+    if (pool.length === 0) {
+      return { handled: true, answer: `No expenses found${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+    }
+    const byPaid = lc(q).includes('paid');
+    const totals = new Map<string, number>();
+    for (const e of pool) {
+      if (byPaid) {
+        totals.set(e.paidBy, (totals.get(e.paidBy) ?? 0) + (e.amount || 0));
+      } else {
+        for (const p of e.participants ?? []) totals.set(p.userId, (totals.get(p.userId) ?? 0) + (Number(p.share) || 0));
+      }
+    }
+    const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+    if (ranked.length === 0) {
+      return { handled: true, answer: `No expenses found${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+    }
+    const [topId, topAmt] = ranked[0];
+    const verb = byPaid ? 'paid' : 'spent';
+    return {
+      handled: true,
+      answer: `${nameOf(ctx.members, topId, ctx.currentUserId)} ${verb} the most${tfSuffix(tf)}: ${money(Math.round(topAmt * 100) / 100, currency)}.`,
+      sources: [],
+      confidence: 1,
+    };
+  }
+
+  // ── Average expense ──
+  if (/\baverage\b|\bavg\b|\bon average\b|\btypical (expense|amount)\b/i.test(q)) {
+    const pool = ctx.expenses.filter((e) => inTf(e) && lc(e.category ?? '') !== 'settlement');
+    if (pool.length === 0) {
+      return { handled: true, answer: `No expenses found${tfSuffix(tf)}.`, sources: [], confidence: 1 };
+    }
+    const avg = sumTotal(pool) / pool.length;
+    return {
+      handled: true,
+      answer: `The average expense${tfSuffix(tf)} is ${money(Math.round(avg * 100) / 100, currency)} (across ${pool.length}).`,
+      sources: [],
+      confidence: 1,
+    };
+  }
+
   // ── Count ("how many expenses") ──
   if (/how many\b.*\bexpenses?\b|\bnumber of expenses\b/i.test(q)) {
     const pool = ctx.expenses.filter((e) => inTf(e));
@@ -238,7 +310,7 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
   const category = detectCategory(q, ctx.expenses);
   if (category && /\b(spen[dt]|spending|cost|paid|much)\b/i.test(q)) {
     const matching = ctx.expenses.filter((e) => inTf(e) && lc(e.category ?? '') === lc(category));
-    const userScoped = isUserScoped(q);
+    const target = resolveTarget(q, ctx);
     if (matching.length === 0) {
       return {
         handled: true,
@@ -247,8 +319,8 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
         confidence: 1,
       };
     }
-    const amount = userScoped ? sumUserShare(matching, ctx.currentUserId) : sumTotal(matching);
-    const who = userScoped ? 'You spent' : 'The group spent';
+    const amount = target ? sumUserShare(matching, target.userId) : sumTotal(matching);
+    const who = target ? `${target.subject} spent` : 'The group spent';
     return {
       handled: true,
       answer: `${who} ${money(amount, currency)} on ${category}${tfSuffix(tf)} across ${matching.length} expense${matching.length === 1 ? '' : 's'}.`,
@@ -263,9 +335,11 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
     if (pool.length === 0) {
       return { handled: true, answer: `No expenses found${tfSuffix(tf)}.`, sources: [], confidence: 1 };
     }
-    const userScoped = isUserScoped(q);
-    const amount = userScoped ? sumUserShare(pool, ctx.currentUserId) : sumTotal(pool);
-    const who = userScoped ? 'Your share of spending' : 'Total spending';
+    const target = resolveTarget(q, ctx);
+    const amount = target ? sumUserShare(pool, target.userId) : sumTotal(pool);
+    const who = target
+      ? `${target.subject === 'You' ? 'Your' : `${target.subject}'s`} share of spending`
+      : 'Total spending';
     return {
       handled: true,
       answer: `${who}${tfSuffix(tf)} is ${money(amount, currency)} across ${pool.length} expense${pool.length === 1 ? '' : 's'}.`,

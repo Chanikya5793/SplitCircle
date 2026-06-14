@@ -25,7 +25,7 @@ import {
   maxExpensesForContext,
   resolveCitedExpenses,
 } from '@/utils/onDeviceAiContext';
-import { buildExpenseAnalytics } from '@/utils/expenseAnalytics';
+import { getGroupAnalytics } from '@/utils/expenseAnalytics';
 import { answerExpenseQuery, type QueryContext } from '@/utils/expenseQuery';
 
 export type { OnDeviceAiAvailability };
@@ -58,7 +58,7 @@ export function answerExpenseLocally(
 
 /** Compact, exact facts block prepended to the LLM context so it never recomputes. */
 function buildFactsBlock(group: Group, currentUserId: string): string {
-  const a = buildExpenseAnalytics(group.expenses ?? [], group.settlements ?? [], currentUserId);
+  const a = getGroupAnalytics(group, currentUserId);
   const cur = group.currency || 'USD';
   const topCats = a.byCategory.slice(0, 5).map((c) => `${c.category} ${c.total.toFixed(2)}`).join(', ');
   const bal =
