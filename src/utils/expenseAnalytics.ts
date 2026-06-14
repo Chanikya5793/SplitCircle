@@ -267,3 +267,44 @@ export function parseTimeframe(question: string, now: number = Date.now()): Time
 
 export const inTimeframe = (e: Expense, tf: Timeframe | null): boolean =>
   !tf || (e.createdAt >= tf.startMs && e.createdAt <= tf.endMs);
+
+export type PeriodUnit = 'week' | 'month' | 'year';
+
+/** Calendar window for a month/year at `offset` (0 = current, -1 = previous). */
+export function calendarWindow(now: number, unit: 'month' | 'year', offset: number): Timeframe {
+  const d = new Date(now);
+  const y = d.getFullYear();
+  const m = d.getMonth();
+  if (unit === 'year') {
+    return {
+      startMs: new Date(y + offset, 0, 1).getTime(),
+      endMs: new Date(y + offset + 1, 0, 1).getTime() - 1,
+      label: offset === 0 ? 'this year' : offset === -1 ? 'last year' : `${y + offset}`,
+    };
+  }
+  return {
+    startMs: new Date(y, m + offset, 1).getTime(),
+    endMs: new Date(y, m + offset + 1, 1).getTime() - 1,
+    label: offset === 0 ? 'this month' : offset === -1 ? 'last month' : 'that month',
+  };
+}
+
+/** Rolling N-day window ending `daysBack` days ago (for week comparisons). */
+export function rollingWindow(now: number, daysBack: number, daysSpan: number, label: string): Timeframe {
+  const day = 86400000;
+  return { startMs: now - daysBack * day, endMs: now - (daysBack - daysSpan) * day, label };
+}
+
+/** Current + previous comparable windows for a unit. */
+export function comparisonWindows(now: number, unit: PeriodUnit): { current: Timeframe; previous: Timeframe } {
+  if (unit === 'week') {
+    return {
+      current: rollingWindow(now, 7, 7, 'this week'),
+      previous: rollingWindow(now, 14, 7, 'last week'),
+    };
+  }
+  return {
+    current: calendarWindow(now, unit, 0),
+    previous: calendarWindow(now, unit, -1),
+  };
+}

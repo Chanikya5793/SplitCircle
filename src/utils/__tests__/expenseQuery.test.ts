@@ -199,6 +199,36 @@ describe('per-member + superlatives + average', () => {
   });
 });
 
+describe('period comparison & trend', () => {
+  const now = Date.UTC(2026, 5, 14); // 2026-06-14
+  // This month (June): 200; last month (May): 50.
+  const expenses = [
+    exp({ title: 'June A', category: 'Food', amount: 120, createdAt: Date.UTC(2026, 5, 3), participants: [{ userId: 'u1', share: 120 }] }),
+    exp({ title: 'June B', category: 'Food', amount: 80, createdAt: Date.UTC(2026, 5, 10), participants: [{ userId: 'u1', share: 80 }] }),
+    exp({ title: 'May A', category: 'Food', amount: 50, createdAt: Date.UTC(2026, 4, 20), participants: [{ userId: 'u1', share: 50 }] }),
+  ];
+  const c = (): QueryContext => ({ expenses, settlements: [], members, currentUserId: 'u1', currency: 'USD', now });
+
+  it('compares this month vs last month with delta and %', () => {
+    const r = answerExpenseQuery('compare this month vs last month', c());
+    expect(r.handled).toBe(true);
+    expect(r.answer).toContain('200.00 USD this month');
+    expect(r.answer).toContain('50.00 USD last month');
+    expect(r.answer).toContain('up 150.00 USD (300%)');
+  });
+
+  it('handles "am I spending more than last month" (user-scoped)', () => {
+    const r = answerExpenseQuery('am I spending more than last month?', c());
+    expect(r.answer).toContain('You spent 200.00 USD this month');
+  });
+
+  it('lists a monthly trend', () => {
+    const r = answerExpenseQuery('show my spending by month', c());
+    expect(r.answer).toContain('2026-05: 50.00 USD');
+    expect(r.answer).toContain('2026-06: 200.00 USD');
+  });
+});
+
 describe('help', () => {
   it('answers "what can you do" with capabilities', () => {
     const r = answerExpenseQuery('what can you do?', ctx([exp({ amount: 10 })]));

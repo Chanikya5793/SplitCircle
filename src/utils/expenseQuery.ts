@@ -13,12 +13,14 @@ import type { Expense } from '@/models/expense';
 import type { Settlement } from '@/models/group';
 import {
   buildExpenseAnalytics,
+  comparisonWindows,
   inTimeframe,
   pairwiseNet,
   parseTimeframe,
   sumTotal,
   sumUserShare,
   userShareOf,
+  type PeriodUnit,
   type Timeframe,
 } from './expenseAnalytics';
 
@@ -177,6 +179,59 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
   const scoped = inTimeframe; // alias
   const inTf = (e: Expense) => scoped(e, tf);
   const currency = ctx.currency || 'USD';
+  const now = ctx.now ?? Date.now();
+
+  // ── Period comparison ("this month vs last month", "spending more than last week") ──
+  const wantsCompare =
+    /\b(compare|compared to|versus|vs\.?)\b/i.test(q) ||
+    /\bthan last (week|month|year)\b/i.test(q) ||
+    /\b(more|less|higher|lower)\b[^.?!]*\blast (week|month|year)\b/i.test(q);
+  if (wantsCompare) {
+    const unit: PeriodUnit = /\bweek\b/i.test(q) ? 'week' : /\byear\b/i.test(q) ? 'year' : 'month';
+    const { current, previous } = comparisonWindows(now, unit);
+    const target = resolveTarget(q, ctx);
+    const category = detectCategory(q, ctx.expenses);
+    const matches = (e: Expense, w: Timeframe) =>
+      inTimeframe(e, w) && lc(e.category ?? '') !== 'settlement' && (!category || lc(e.category ?? '') === lc(category));
+    const valueIn = (w: Timeframe) => {
+      const pool = ctx.expenses.filter((e) => matches(e, w));
+      return target ? sumUserShare(pool, target.userId) : sumTotal(pool);
+    };
+    const cur = valueIn(current);
+    const prev = valueIn(previous);
+    const delta = Math.round((cur - prev) * 100) / 100;
+    const subject = target ? (target.subject === 'You' ? 'You' : target.subject) : 'The group';
+    const scopeLabel = category ? ` on ${category}` : '';
+    let trend: string;
+    if (Math.abs(delta) < 0.01) {
+      trend = 'about the same';
+    } else {
+      const pct = prev > 0 ? ` (${Math.abs(Math.round((delta / prev) * 100))}%)` : '';
+      trend = `${delta > 0 ? 'up' : 'down'} ${money(Math.abs(delta), currency)}${pct}`;
+    }
+    return {
+      handled: true,
+      answer: `${subject} spent ${money(cur, currency)}${scopeLabel} ${current.label} vs ${money(prev, currency)} ${previous.label} — ${trend}.`,
+      sources: [],
+      confidence: 1,
+    };
+  }
+
+  // ── Trend / spending over time (last few months) ──
+  if (/\b(trend|over time|by month|each month|month by month|spending history)\b/i.test(q)) {
+    const a = buildExpenseAnalytics(ctx.expenses, ctx.settlements, ctx.currentUserId);
+    const months = Object.keys(a.byMonth).sort().slice(-6);
+    if (months.length === 0) {
+      return { handled: true, answer: 'No expenses yet.', sources: [], confidence: 1 };
+    }
+    const lines = months.map((mk) => `• ${mk}: ${money(a.byMonth[mk].total, currency)}`);
+    return {
+      handled: true,
+      answer: `Spending by month:\n${lines.join('\n')}`,
+      sources: [],
+      confidence: 1,
+    };
+  }
 
   // ── Settle-up plan ("settlements", "who owes whom", "settle up") ──
   if (/\bsettle( ?up)?\b|\bsettlements?\b|who owes who/i.test(q)) {
