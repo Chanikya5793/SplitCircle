@@ -41,8 +41,11 @@ export const DEFAULT_CONTEXT_TOKENS = 4096;
 
 // Rough budgeting constants (deliberately conservative so we never overflow the
 // real window — the on-device model throws if the prompt exceeds contextSize).
-const APPROX_TOKENS_PER_LINE = 45; // a dated, currency-bearing expense line
-const RESERVE_TOKENS = 900; // system instructions + question + room for the answer
+// Tuned up after a real "Exceeded model context window size" failure: the prior
+// 45 tok/line under-counted dated, currency-bearing lines, and the reserve must
+// also cover the prepended verified-totals facts block.
+const APPROX_TOKENS_PER_LINE = 70; // a dated, currency-bearing expense line
+const RESERVE_TOKENS = 1400; // instructions + question + facts block + answer room
 
 const MAX_TITLE_CHARS = 48;
 

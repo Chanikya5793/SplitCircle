@@ -128,6 +128,32 @@ Owner picked the full set + a voice assistant; building safest-first across a fe
   - **Spending insights / month-in-review** — on-device narrative summary screen.
   - Optional: chat smart-replies; FM rationale on Suggested split.
 
+### Phase 3.5 — Deterministic analytics engine (ACCURACY FIX) ✅ (shipped, code)
+Device testing of Ask AI showed it was wrong ~99% of the time: it asked the small
+on-device LLM to **filter + add up** raw expense rows, which LLMs provably can't do
+(answers didn't match cited sources; "settlements" dumped expenses; "summarize"
+overflowed the context). Root cause: we made the model do arithmetic.
+
+Fix (research-backed — route math to a deterministic engine, use the LLM only for
+language):
+- `src/utils/expenseAnalytics.ts` — pure on-device "index": exact per-category /
+  per-user / per-month totals + balances, reusing the app's canonical
+  `debtMinimizer` so AI numbers match the Balances/Settle-up UI.
+- `src/utils/expenseQuery.ts` — deterministic answerer for the common questions
+  (category spend, balance/owe, settle-up, biggest, total, count, summary,
+  with timeframe parsing). Returns exact numbers + real sources; `handled:false`
+  for open-ended questions.
+- `onDeviceAiService.answerExpenseLocally` is tried **first** in `AskAiScreen` →
+  exact answers that need **no model**, so they're correct, instant, and work on
+  **every device** (not just Apple Intelligence). The LLM is the fallback for
+  open-ended questions only, now **grounded with a verified-totals facts block**.
+- Overflow fix: bumped the context budget (70 tok/line, 1400 reserve) so
+  "summarize" no longer exceeds the window; summaries are also answered
+  deterministically.
+- 70 unit tests (regression tests mirror the exact failing screenshots).
+- **Next (this track):** persist the index for instant cold-start; expand intents
+  (per-member spend, "who paid most"); optional LLM phrasing of deterministic facts.
+
 ### Phase 4 — Optional / advanced
 - iOS 27 direct-image receipt understanding (crumpled receipts).
 - Custom LoRA adapter pipeline (with the version-lock maintenance cost).
