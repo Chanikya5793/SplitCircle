@@ -3,6 +3,7 @@ import type { ChatMessage, ChatParticipant, Expense, Group, GroupMember, Partici
 import { queueMessage } from '@/services/messageQueueService';
 import { deleteFile, uploadFile } from '@/services/storageService';
 import { loadCachedGroups, persistGroups } from '@/services/groupCache';
+import { findDuplicateExpense, findDuplicateSettlement } from '@/utils/writeIdempotency';
 import {
     arrayUnion,
     collection,
@@ -336,32 +337,26 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         newExpense.receipt = stripUndefinedDeep(receipt);
       }
 
-      const writtenExpenseId = await runTransaction(db, async (transaction) => {
-        const groupSnapshot = await transaction.get(docRef);
-        if (!groupSnapshot.exists()) {
-          throw new Error('Group not found');
-        }
+      // Idempotency without a server read (so the write works offline): if this
+      // expense (by id or requestId) is already in the locally-cached group,
+      // it's a retry/double-submit — no-op. Firestore's latency compensation
+      // reflects a just-queued offline write here too.
+      const localGroup = groups.find((g) => g.groupId === groupId);
+      const duplicate = findDuplicateExpense(localGroup?.expenses, expenseId, requestId ?? expense.requestId);
+      if (duplicate) {
+        console.log('Expense already present (idempotent no-op):', duplicate.expenseId);
+        return;
+      }
 
-        const groupData = groupSnapshot.data() as Group;
-        const existingExpense = (groupData.expenses ?? []).find((entry) =>
-          entry.expenseId === expenseId ||
-          ((requestId ?? expense.requestId) && entry.requestId === (requestId ?? expense.requestId)),
-        );
-
-        if (existingExpense) {
-          return existingExpense.expenseId;
-        }
-
-        transaction.update(docRef, {
-          expenses: [...(groupData.expenses ?? []), newExpense],
-          updatedAt: serverTimestamp(),
-        });
-
-        return expenseId;
+      // `arrayUnion` queues offline AND merges server-side, so concurrent adds
+      // from multiple devices don't clobber each other (unlike read-modify-write).
+      await updateDoc(docRef, {
+        expenses: arrayUnion(newExpense),
+        updatedAt: serverTimestamp(),
       });
 
       // Also add to the top-level expenses collection for easier querying later.
-      await setDoc(doc(db, 'expenses', writtenExpenseId), {
+      await setDoc(doc(db, 'expenses', expenseId), {
         ...newExpense,
         groupId,
         createdAt: serverTimestamp(),
@@ -504,37 +499,26 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     const docRef = doc(db, 'groups', groupId);
     const settlementId = requestId ?? settlement.requestId ?? uuid();
 
-    await runTransaction(db, async (transaction) => {
-      const groupSnapshot = await transaction.get(docRef);
-      if (!groupSnapshot.exists()) {
-        throw new Error('Group not found');
-      }
+    // Idempotent, offline-capable (same pattern as addExpense): skip if this
+    // settlement is already in the locally-cached group, else queue via arrayUnion.
+    const localGroup = groups.find((g) => g.groupId === groupId);
+    const duplicate = findDuplicateSettlement(localGroup?.settlements, settlementId, requestId ?? settlement.requestId);
+    if (duplicate) {
+      console.log('Settlement already present (idempotent no-op):', duplicate.settlementId);
+      return;
+    }
 
-      const groupData = groupSnapshot.data() as Group;
-      const existingSettlement = (groupData.settlements ?? []).find((entry) =>
-        entry.settlementId === settlementId ||
-        ((requestId ?? settlement.requestId) && entry.requestId === (requestId ?? settlement.requestId)),
-      );
+    const newSettlement = stripUndefinedDeep({
+      ...settlement,
+      settlementId,
+      requestId: requestId ?? settlement.requestId ?? settlementId,
+      createdAt: Date.now(),
+      status: 'pending',
+    });
 
-      if (existingSettlement) {
-        return existingSettlement.settlementId;
-      }
-
-      transaction.update(docRef, {
-        settlements: [
-          ...(groupData.settlements ?? []),
-          {
-            ...settlement,
-            settlementId,
-            requestId: requestId ?? settlement.requestId ?? settlementId,
-            createdAt: Date.now(),
-            status: 'pending',
-          },
-        ],
-        updatedAt: serverTimestamp(),
-      });
-
-      return settlementId;
+    await updateDoc(docRef, {
+      settlements: arrayUnion(newSettlement),
+      updatedAt: serverTimestamp(),
     });
   };
 

@@ -40,12 +40,15 @@ tool-calling, since our data/index live in JS):
   AsyncStorage). `GroupContext` hydrates from it on launch (instant + offline)
   and refreshes it on every snapshot; live Firestore data wins when online. The
   on-device AI now has data to work on offline.
-- **P2.2 (next, careful):** offline write queue — `addExpense`/`settleUp` use
-  `runTransaction`, which fails offline; refactor to `arrayUnion`/idempotent
-  `updateDoc` (queues offline) with stable ids so retries don't double-add. This
-  is the money-write path → must be verified on device, not shipped blind. The
-  other mutators (`updateExpense`/`deleteExpense`/`deleteSettlement`/`createGroup`)
-  already queue offline.
+- **P2.2 ✅ (shipped, code — verify on device):** offline-capable money writes.
+  `addExpense`/`settleUp` moved off `runTransaction` (server read → fails offline)
+  to `arrayUnion` + `updateDoc`, which queues offline and merges server-side (so
+  concurrent multi-device adds don't clobber each other). The transactional
+  existence check is replaced by an in-memory dedup against the cached group
+  (`utils/writeIdempotency`, unit-tested) so retries/double-submits are no-ops.
+  Admin ops (`removeMember`/`leaveGroup`/role changes) keep `runTransaction` —
+  online-only by nature. ⚠️ Money path: confirm on device that an offline add /
+  settle-up queues and syncs once exactly on reconnect.
 - **P2.3 (partial):** connectivity banner — slim, safe-area-aware `OfflineBanner`
   mounted at the app shell (`App.tsx`), shown on every screen when the device is
   offline ("showing saved data; edits will sync"). Styled translucent to respect
