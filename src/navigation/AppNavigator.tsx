@@ -950,7 +950,11 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.ASK_AI}
         component={AskAiRoute}
-        options={{ title: SCREEN_TITLES.askAi }}
+        options={{
+          title: SCREEN_TITLES.askAi,
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
       />
       <AppStack.Screen
         name={ROUTES.APP.BILL_SPLIT}

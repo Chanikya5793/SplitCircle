@@ -54,26 +54,36 @@ export interface AssistantTurn {
   reply: string;
   sources?: ExpenseAiSource[];
   action?: ProposedAction;
+  /** True when the bot asked for missing info — the next message should be
+   *  merged with this one (the UI keeps `priorContext` and re-sends). */
+  needsMore?: boolean;
 }
 
 const money = (n: number, currency: string): string => `${n.toFixed(2)} ${currency}`;
 const nameOf = (group: Group, userId: string, selfId: string): string =>
   userId === selfId ? 'you' : group.members.find((m) => m.userId === userId)?.displayName ?? 'someone';
 
-/** Process one conversational turn. Pure-ish orchestration over tested layers. */
+/**
+ * Process one conversational turn. `priorContext` carries the earlier message
+ * when the bot just asked a follow-up, so slot-filling works by merging
+ * (e.g. "add $20" → "what for?" → "lunch" ⇒ parses "add $20 lunch").
+ */
 export async function processAssistantTurn(
   message: string,
   group: Group,
   currentUserId: string,
+  priorContext?: string,
 ): Promise<AssistantTurn> {
+  // Merge a pending follow-up with the new reply (capped so it can't grow forever).
+  const msg = (priorContext ? `${priorContext} ${message}` : message).trim().slice(-500);
   const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
-  const intent = classifyMessage(message, members);
+  const intent = classifyMessage(msg, members);
 
   // ── Delete expense (matched by title; destructive → explicit confirm) ──
   if (intent === 'delete_expense') {
-    const match = matchExpenseByText(message, group.expenses);
+    const match = matchExpenseByText(msg, group.expenses);
     if (!match) {
-      return { reply: 'Which expense should I delete? Try naming it, e.g. "delete the dinner expense".' };
+      return { reply: 'Which expense should I delete? Try naming it, e.g. "delete the dinner expense".', needsMore: true };
     }
     return {
       reply: 'Delete this expense? This cannot be undone.',
@@ -88,10 +98,10 @@ export async function processAssistantTurn(
 
   // ── Edit expense (rename / amount / category) ──
   if (intent === 'edit_expense') {
-    const edit = parseExpenseEdit(message, group.expenses);
+    const edit = parseExpenseEdit(msg, group.expenses);
     const existing = edit ? group.expenses.find((e) => e.expenseId === edit.expenseId) : undefined;
     if (!edit || !existing) {
-      return { reply: 'Which expense, and what should change? e.g. "rename the dinner expense to Brunch" or "change the gas amount to 45".' };
+      return { reply: 'Which expense, and what should change? e.g. "rename the dinner expense to Brunch" or "change the gas amount to 45".', needsMore: true };
     }
     const updated: Expense = { ...existing };
     const parts: string[] = [];
@@ -122,9 +132,9 @@ export async function processAssistantTurn(
 
   // ── Delete settlement ──
   if (intent === 'delete_settlement') {
-    const match = matchSettlement(message, group.settlements, members);
+    const match = matchSettlement(msg, group.settlements, members);
     if (!match) {
-      return { reply: 'I couldn’t find a settlement to delete. Try "delete the last settlement" or "undo the settlement with Alex".' };
+      return { reply: 'I couldn’t find a settlement to delete. Try "delete the last settlement" or "undo the settlement with Alex".', needsMore: true };
     }
     const from = nameOf(group, match.fromUserId, currentUserId);
     const to = nameOf(group, match.toUserId, currentUserId);
@@ -141,18 +151,18 @@ export async function processAssistantTurn(
 
   // ── Navigate / open a screen ──
   if (intent === 'navigate') {
-    const target = detectNavTarget(message);
+    const target = detectNavTarget(msg);
     if (!target) {
-      return { reply: 'Where to? Try "open settle up", "show stats", or "open recurring bills".' };
+      return { reply: 'Where to? Try "open settle up", "show stats", or "open recurring bills".', needsMore: true };
     }
     return { reply: `Open ${NAV_LABELS[target]}?`, action: { type: 'navigate', target, summary: NAV_LABELS[target] } };
   }
 
   // ── Settle up (deterministic parse; works on every device) ──
   if (intent === 'settle_up') {
-    const draft = parseSettlement(message, members, currentUserId);
+    const draft = parseSettlement(msg, members, currentUserId);
     if (!draft) {
-      return { reply: 'Who do you want to settle up with? Try "settle up with Alex" or "I paid Sam 20".' };
+      return { reply: 'Who do you want to settle up with? Try "settle up with Alex" or "I paid Sam 20".', needsMore: true };
     }
     let amount = draft.amount;
     if (amount == null) {
@@ -180,9 +190,15 @@ export async function processAssistantTurn(
     if (!isOnDeviceExpenseNlAvailable()) {
       return { reply: 'I can add expenses from a sentence on Apple Intelligence iPhones (15 Pro or newer). Meanwhile, tap “Add” on the group to enter it manually.' };
     }
-    const draft = await parseExpenseFromTextOnDevice(message, members, currentUserId);
+    const draft = await parseExpenseFromTextOnDevice(msg, members, currentUserId);
     if (draft.amount <= 0 || !draft.title) {
-      return { reply: 'Got it — how much was it and what for? e.g. "add $40 dinner with Alex, split equally".' };
+      return {
+        reply:
+          draft.amount <= 0
+            ? 'How much was it? e.g. "$40 for dinner".'
+            : `What was the ${money(draft.amount, group.currency)} for? e.g. "dinner" or "groceries".`,
+        needsMore: true,
+      };
     }
     const participants = equalSplit(draft.participantUserIds, draft.amount);
     const expense: NewExpense = {
@@ -208,14 +224,14 @@ export async function processAssistantTurn(
   }
 
   // ── Question → deterministic exact answer (every device) ──
-  const local: ExpenseAiAnswer | null = answerExpenseLocally(message, group, currentUserId);
+  const local: ExpenseAiAnswer | null = answerExpenseLocally(msg, group, currentUserId);
   if (local) {
     return { reply: local.answer, sources: local.sources };
   }
 
   // ── Open-ended → on-device LLM (grounded), else a gentle nudge ──
   if (getOnDeviceAiAvailability() === 'available') {
-    const ans = await askExpenseAiOnDevice(message, group, currentUserId);
+    const ans = await askExpenseAiOnDevice(msg, group, currentUserId);
     return { reply: ans.answer, sources: ans.sources };
   }
   return {
