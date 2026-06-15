@@ -31,7 +31,8 @@ tool-calling, since our data/index live in JS):
 - **P1.3 ✅** `onDeviceAiService.answerExpenseSmart` (understand → retrieve →
   exact cited answer); wired in `assistantService` between the deterministic
   fast path and the grounded LLM fallback.
-- **P1.4 (next):** richer citations UI (inline `[n]` markers → Expense Details);
+- **P1.4 (in progress):** tappable citation cards — each `[n]` source row opens
+  that expense's Details screen (the "cite" step made actionable). Still to do:
   optional FM compose for conversational phrasing (verify number fidelity on device).
 
 ## Track 2 — Offline-first

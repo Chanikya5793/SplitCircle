@@ -20,7 +20,7 @@ import type { ExpenseAiSource } from '@/services/aiService';
 import { processAssistantTurn, type ProposedAction } from '@/services/assistantService';
 import type { NavTarget } from '@/utils/assistantChat';
 import { formatCurrency } from '@/utils/currency';
-import { mediumHaptic, successHaptic } from '@/utils/haptics';
+import { lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -148,6 +148,18 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
     if (r) navigation.navigate(r.route, r.params);
   };
 
+  // Tap a citation → open that expense's details (the RAG "cite" step made actionable).
+  const openSource = (s: ExpenseAiSource) => {
+    if (!s.expenseId) return;
+    lightHaptic();
+    navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, {
+      groupId: s.groupId || group.groupId,
+      expenseId: s.expenseId,
+      expenseTitle: s.title,
+      backTitle: group.name,
+    });
+  };
+
   const confirmAction = async (msg: ChatMsg) => {
     const a = msg.action;
     if (!a || a.type === 'navigate' || busy) return;
@@ -197,7 +209,14 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           {item.sources && item.sources.length > 0 ? (
             <View style={styles.sources}>
               {item.sources.map((s, i) => (
-                <View key={`${s.expenseId}-${i}`} style={styles.sourceRow}>
+                <TouchableOpacity
+                  key={`${s.expenseId}-${i}`}
+                  style={styles.sourceRow}
+                  onPress={() => openSource(s)}
+                  disabled={!s.expenseId}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${s.title ?? 'expense'}`}
+                >
                   <Text variant="bodySmall" style={{ color: theme.colors.primary, fontWeight: '700' }}>[{i + 1}]</Text>
                   <Text variant="bodySmall" style={{ flex: 1, color: theme.colors.onSurface }}>
                     {s.title ?? 'Expense'}{s.category ? ` · ${s.category}` : ''}
@@ -205,7 +224,10 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                   <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                     {formatCurrency(s.amount, s.currency ?? group.currency)}
                   </Text>
-                </View>
+                  {s.expenseId ? (
+                    <Icon source="chevron-right" size={16} color={theme.colors.onSurfaceVariant} />
+                  ) : null}
+                </TouchableOpacity>
               ))}
             </View>
           ) : null}
