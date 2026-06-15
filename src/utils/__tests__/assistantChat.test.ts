@@ -3,7 +3,16 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { classifyMessage, detectNavTarget, findMember, matchExpenseByText, parseAmount, parseSettlement } from '../assistantChat';
+import {
+  classifyMessage,
+  detectNavTarget,
+  findMember,
+  matchExpenseByText,
+  matchSettlement,
+  parseAmount,
+  parseExpenseEdit,
+  parseSettlement,
+} from '../assistantChat';
 
 const members = [
   { userId: 'u1', displayName: 'Alice Smith' },
@@ -46,6 +55,12 @@ describe('classifyMessage', () => {
     expect(classifyMessage('take me to stats', members)).toBe('navigate');
   });
 
+  it('detects edit_expense and delete_settlement', () => {
+    expect(classifyMessage('rename the dinner expense to Brunch', members)).toBe('edit_expense');
+    expect(classifyMessage('change the gas amount to 45', members)).toBe('edit_expense');
+    expect(classifyMessage('delete the last settlement', members)).toBe('delete_settlement');
+  });
+
   it('routes plain questions to question', () => {
     expect(classifyMessage('how much did I spend on food?', members)).toBe('question');
     expect(classifyMessage('show our settlements', members)).toBe('question'); // no member+amount ⇒ Q&A
@@ -78,6 +93,49 @@ describe('matchExpenseByText', () => {
 
   it('returns null when nothing matches', () => {
     expect(matchExpenseByText('delete the rent expense', expenses)).toBeNull();
+  });
+});
+
+describe('parseExpenseEdit', () => {
+  const expenses = [
+    { expenseId: 'e1', title: 'Sushi dinner', amount: 40, createdAt: 1 },
+    { expenseId: 'e2', title: 'Gas refill', amount: 30, createdAt: 2 },
+  ];
+
+  it('parses an amount change', () => {
+    expect(parseExpenseEdit('change the gas amount to 45', expenses)).toEqual({ expenseId: 'e2', changes: { amount: 45 } });
+  });
+
+  it('parses a rename', () => {
+    expect(parseExpenseEdit('rename the sushi dinner to Brunch', expenses)).toEqual({ expenseId: 'e1', changes: { title: 'Brunch' } });
+  });
+
+  it('parses a category change (coerced to canonical)', () => {
+    expect(parseExpenseEdit('set the gas category to transport', expenses)).toEqual({ expenseId: 'e2', changes: { category: 'Transport' } });
+  });
+
+  it('returns null when no expense matches', () => {
+    expect(parseExpenseEdit('change the rent amount to 100', expenses)).toBeNull();
+  });
+});
+
+describe('matchSettlement', () => {
+  const settlements = [
+    { settlementId: 's1', fromUserId: 'u1', toUserId: 'u2', amount: 20, createdAt: 1 },
+    { settlementId: 's2', fromUserId: 'u2', toUserId: 'u1', amount: 30, createdAt: 2 },
+  ];
+
+  it('picks the most recent overall', () => {
+    expect(matchSettlement('delete the last settlement', settlements, members)?.settlementId).toBe('s2');
+  });
+
+  it('narrows to a named member (most recent involving them)', () => {
+    // both involve Bob(u2); newest is s2
+    expect(matchSettlement('undo the settlement with Bob', settlements, members)?.settlementId).toBe('s2');
+  });
+
+  it('returns null with no settlements', () => {
+    expect(matchSettlement('delete settlement', [], members)).toBeNull();
   });
 });
 

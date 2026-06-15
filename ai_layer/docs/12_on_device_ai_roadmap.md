@@ -187,10 +187,13 @@ Evolves the single-shot Ask AI into a multi-turn chatbot.
 - **PR 2 ✅ (shipped, code):** **delete expense** (matched by title via
   `matchExpenseByText`, destructive red confirm) and **navigate/open** a screen
   ("open settle up", "show stats" → Settlements/Stats/Bills/Add-Expense/Group-Info).
-- **Next:** edit expense, delete settlement, group management (rename / add-remove
-  member / leave / delete group) — each confirmed, destructive ones warned; a
-  dedicated on-device `SFSpeechRecognizer` mic button (needs
-  `NSSpeechRecognitionUsageDescription` + audio-session coexistence with calls).
+- **PR 3 ✅ (shipped, code):** **edit expense** (rename / change amount [re-splits
+  equally] / change category, via `parseExpenseEdit`, before→after confirm) and
+  **delete settlement** (`matchSettlement`, destructive confirm).
+- **Next (held until on-device verification):** group management (rename /
+  add-remove member / leave / delete group) — destructive, warned; a dedicated
+  on-device `SFSpeechRecognizer` mic button (needs `NSSpeechRecognitionUsageDescription`
+  + audio-session coexistence with calls).
 
 ### Phase 4 — Optional / advanced
 - iOS 27 direct-image receipt understanding (crumpled receipts).

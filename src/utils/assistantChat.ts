@@ -8,7 +8,15 @@
  * and confirmed before execution. No RN/native imports (unit-tested).
  */
 
-export type AssistantIntent = 'add_expense' | 'settle_up' | 'delete_expense' | 'navigate' | 'question' | 'chat';
+export type AssistantIntent =
+  | 'add_expense'
+  | 'settle_up'
+  | 'delete_expense'
+  | 'edit_expense'
+  | 'delete_settlement'
+  | 'navigate'
+  | 'question'
+  | 'chat';
 
 /** Where a "navigate" intent wants to go (screen maps this to a route). */
 export type NavTarget = 'settlements' | 'stats' | 'bills' | 'add_expense' | 'chat' | 'group_info';
@@ -18,6 +26,19 @@ export interface MatchableExpense {
   title: string;
   amount: number;
   createdAt: number;
+}
+
+export interface MatchableSettlement {
+  settlementId: string;
+  fromUserId: string;
+  toUserId: string;
+  amount: number;
+  createdAt: number;
+}
+
+export interface ExpenseEdit {
+  expenseId: string;
+  changes: { title?: string; amount?: number; category?: string };
 }
 
 export interface AssistantMember {
@@ -31,6 +52,8 @@ export interface SettlementDraft {
   /** null ⇒ caller should fill from the exact pairwise balance. */
   amount: number | null;
 }
+
+import { coerceCategory } from './categoryMatch';
 
 const lc = (s: string): string => (s ?? '').toLowerCase();
 
@@ -72,8 +95,17 @@ export function classifyMessage(message: string, members: readonly AssistantMemb
   const hasMember = findMember(q, members) != null;
   const hasAmount = parseAmount(q) != null;
 
-  // Delete expense (requires the word "expense" to stay safe / unambiguous).
+  // Delete settlement / expense (require the noun to stay safe / unambiguous).
+  if (DELETE_RE.test(q) && /\bsettlements?\b|\bpayment\b/i.test(q)) return 'delete_settlement';
   if (DELETE_RE.test(q) && /\bexpense\b/i.test(q)) return 'delete_expense';
+
+  // Edit expense ("rename ... to ...", "change ... amount to ...", "set category to ...").
+  if (
+    /\b(rename|change|set|update|edit|make)\b/i.test(q) &&
+    /\bexpense\b|\bamount\b|\bcategor|\bname\b|\btitle\b|\brename\b|\bcost\b|\bprice\b/i.test(q)
+  ) {
+    return 'edit_expense';
+  }
 
   // Navigate ("open settle up", "take me to stats").
   if (NAVIGATE_RE.test(q) && detectNavTarget(q) != null) return 'navigate';
@@ -130,6 +162,9 @@ export function detectNavTarget(message: string): NavTarget | null {
 const STOPWORDS = new Set([
   'delete', 'remove', 'undo', 'get', 'rid', 'of', 'the', 'expense', 'my', 'our', 'last',
   'that', 'this', 'a', 'an', 'for', 'please', 'can', 'you', 'cancel',
+  // edit-related, so matching keys on the existing title, not the new value
+  'rename', 'change', 'set', 'update', 'edit', 'make', 'to', 'as', 'amount', 'category',
+  'name', 'title', 'cost', 'price',
 ]);
 
 /** Best-matching expense for a delete request, by title-token overlap then recency. */
@@ -150,4 +185,50 @@ export function matchExpenseByText<T extends MatchableExpense>(message: string, 
     }
   }
   return best;
+}
+
+/** Most recent settlement to delete; narrows to one involving a named member. */
+export function matchSettlement<T extends MatchableSettlement>(
+  message: string,
+  settlements: readonly T[],
+  members: readonly AssistantMember[],
+): T | null {
+  const member = findMember(message, members);
+  const pool = member
+    ? settlements.filter((s) => s.fromUserId === member.userId || s.toUserId === member.userId)
+    : settlements;
+  if (pool.length === 0) return null;
+  return [...pool].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+}
+
+/**
+ * Parse an edit request into the matched expense + the changed fields
+ * (title / amount / category). Returns null if no expense matches or no change
+ * is detected. Heuristic — the UI shows a before/after confirm card.
+ */
+export function parseExpenseEdit<T extends MatchableExpense>(message: string, expenses: readonly T[]): ExpenseEdit | null {
+  const match = matchExpenseByText(message, expenses);
+  if (!match) return null;
+  const q = message;
+  const changes: ExpenseEdit['changes'] = {};
+
+  // Category: "category to Food" / "as Food".
+  if (/\bcategor/i.test(q)) {
+    const m = q.match(/\b(?:to|as|=)\s+([a-z]+)/i);
+    if (m) changes.category = coerceCategory(m[1]);
+  }
+
+  // Title: "rename ... to X" / "name it X" / "title to X" → trailing text.
+  if (/\b(rename|call it|name|title)\b/i.test(q) && !/\bcategor/i.test(q)) {
+    const m = q.match(/\bto\s+(.+)$/i) || q.match(/\bcall it\s+(.+)$/i);
+    if (m) changes.title = m[1].trim().replace(/["'.]+$/g, '');
+  }
+
+  // Amount: a number with edit/cost wording, unless this was a title edit.
+  if (changes.title == null) {
+    const amt = parseAmount(q);
+    if (amt != null && /\b(amount|cost|price|change|set|make|update|to)\b/i.test(q)) changes.amount = amt;
+  }
+
+  return Object.keys(changes).length > 0 ? { expenseId: match.expenseId, changes } : null;
 }
