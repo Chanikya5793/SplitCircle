@@ -19,7 +19,15 @@ import {
   isOnDeviceExpenseNlAvailable,
   parseExpenseFromTextOnDevice,
 } from '@/services/onDeviceExpenseNlService';
-import { classifyMessage, detectNavTarget, matchExpenseByText, parseSettlement, type NavTarget } from '@/utils/assistantChat';
+import {
+  classifyMessage,
+  detectNavTarget,
+  matchExpenseByText,
+  matchSettlement,
+  parseExpenseEdit,
+  parseSettlement,
+  type NavTarget,
+} from '@/utils/assistantChat';
 import { pairwiseNet } from '@/utils/expenseAnalytics';
 import { equalSplit } from '@/utils/smartSplitRecommender';
 
@@ -29,6 +37,8 @@ export type ProposedAction =
   | { type: 'add_expense'; expense: NewExpense; summary: string }
   | { type: 'settle_up'; settlement: { fromUserId: string; toUserId: string; amount: number }; summary: string }
   | { type: 'delete_expense'; expenseId: string; summary: string; destructive: true }
+  | { type: 'edit_expense'; expense: Expense; summary: string }
+  | { type: 'delete_settlement'; settlementId: string; summary: string; destructive: true }
   | { type: 'navigate'; target: NavTarget; summary: string };
 
 const NAV_LABELS: Record<NavTarget, string> = {
@@ -72,6 +82,59 @@ export async function processAssistantTurn(
         expenseId: match.expenseId,
         destructive: true,
         summary: `${match.title || 'Untitled'} — ${money(match.amount, group.currency)}`,
+      },
+    };
+  }
+
+  // ── Edit expense (rename / amount / category) ──
+  if (intent === 'edit_expense') {
+    const edit = parseExpenseEdit(message, group.expenses);
+    const existing = edit ? group.expenses.find((e) => e.expenseId === edit.expenseId) : undefined;
+    if (!edit || !existing) {
+      return { reply: 'Which expense, and what should change? e.g. "rename the dinner expense to Brunch" or "change the gas amount to 45".' };
+    }
+    const updated: Expense = { ...existing };
+    const parts: string[] = [];
+    if (edit.changes.title && edit.changes.title !== existing.title) {
+      updated.title = edit.changes.title;
+      parts.push(`title → "${edit.changes.title}"`);
+    }
+    if (edit.changes.category && edit.changes.category !== existing.category) {
+      updated.category = edit.changes.category;
+      parts.push(`category → ${edit.changes.category}`);
+    }
+    if (edit.changes.amount != null && Math.abs(edit.changes.amount - existing.amount) > 0.001) {
+      updated.amount = edit.changes.amount;
+      // Re-split equally among the existing participants so balances stay correct.
+      const ids = (existing.participants ?? []).map((p) => p.userId);
+      updated.participants = equalSplit(ids.length ? ids : group.members.map((m) => m.userId), edit.changes.amount);
+      updated.splitType = 'equal';
+      parts.push(`amount → ${money(edit.changes.amount, group.currency)} (re-split equally)`);
+    }
+    if (parts.length === 0) {
+      return { reply: `"${existing.title}" already matches that — nothing to change.` };
+    }
+    return {
+      reply: 'Apply this change?',
+      action: { type: 'edit_expense', expense: updated, summary: `${existing.title}: ${parts.join(', ')}` },
+    };
+  }
+
+  // ── Delete settlement ──
+  if (intent === 'delete_settlement') {
+    const match = matchSettlement(message, group.settlements, members);
+    if (!match) {
+      return { reply: 'I couldn’t find a settlement to delete. Try "delete the last settlement" or "undo the settlement with Alex".' };
+    }
+    const from = nameOf(group, match.fromUserId, currentUserId);
+    const to = nameOf(group, match.toUserId, currentUserId);
+    return {
+      reply: 'Delete this settlement? This cannot be undone.',
+      action: {
+        type: 'delete_settlement',
+        settlementId: match.settlementId,
+        destructive: true,
+        summary: `${from === 'you' ? 'You' : from} → ${to}: ${money(match.amount, group.currency)}`,
       },
     };
   }

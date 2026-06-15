@@ -54,7 +54,7 @@ const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
-  const { addExpense, settleUp, deleteExpense } = useGroups();
+  const { addExpense, settleUp, deleteExpense, updateExpense, deleteSettlement } = useGroups();
   const navigation = useNavigation<any>();
   const currentUserId = user?.userId ?? group.members[0]?.userId ?? '';
   const listRef = useRef<FlatList<ChatMsg>>(null);
@@ -149,6 +149,12 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
       } else if (a.type === 'settle_up') {
         await settleUp(group.groupId, a.settlement, uid());
         ok = '✓ Settlement recorded.';
+      } else if (a.type === 'edit_expense') {
+        await updateExpense(group.groupId, a.expense, undefined, undefined, uid());
+        ok = '✓ Expense updated.';
+      } else if (a.type === 'delete_settlement') {
+        await deleteSettlement(group.groupId, a.settlementId);
+        ok = '✓ Settlement deleted.';
       } else {
         await deleteExpense(group.groupId, a.expenseId);
         ok = '✓ Expense deleted.';
@@ -216,10 +222,10 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => confirmAction(item)}
-                    style={[styles.actionBtn, { backgroundColor: item.action.type === 'delete_expense' ? theme.colors.error : theme.colors.primary, borderColor: 'transparent' }]}
+                    style={[styles.actionBtn, { backgroundColor: 'destructive' in item.action && item.action.destructive ? theme.colors.error : theme.colors.primary, borderColor: 'transparent' }]}
                     disabled={busy}
                   >
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>{item.action.type === 'delete_expense' ? 'Delete' : 'Confirm'}</Text>
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>{'destructive' in item.action && item.action.destructive ? 'Delete' : 'Confirm'}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
