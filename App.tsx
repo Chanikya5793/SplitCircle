@@ -1,4 +1,5 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { OfflineBanner } from '@/components/OfflineBanner';
 import { AuthProvider } from '@/context/AuthContext';
 import { CallProvider } from '@/context/CallContext';
 import { ChatProvider } from '@/context/ChatContext';
@@ -26,6 +27,7 @@ function AppContent() {
                 <CallProvider>
                   <StatusBar style={isDark ? "light" : "dark"} />
                   <LiquidBackground>
+                    <OfflineBanner />
                     <AppNavigator />
                   </LiquidBackground>
                 </CallProvider>

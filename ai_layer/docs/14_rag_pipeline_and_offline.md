@@ -46,7 +46,11 @@ tool-calling, since our data/index live in JS):
   is the money-write path → must be verified on device, not shipped blind. The
   other mutators (`updateExpense`/`deleteExpense`/`deleteSettlement`/`createGroup`)
   already queue offline.
-- **P2.3** Offline UX: connectivity banner, "queued" badges on pending writes.
+- **P2.3 (partial):** connectivity banner — slim, safe-area-aware `OfflineBanner`
+  mounted at the app shell (`App.tsx`), shown on every screen when the device is
+  offline ("showing saved data; edits will sync"). Styled translucent to respect
+  the liquid-glass DNA. Still to do: "queued" badges on individual pending writes
+  (depends on P2.2's write queue).
 - **P2.4** Persist the analytics index to disk so RAG retrieval is instant + offline.
 
 ## Notes / risks
