@@ -12,6 +12,7 @@ import type { Expense, Group } from '@/models';
 import type { ExpenseAiAnswer, ExpenseAiSource } from '@/services/aiService';
 import {
   answerExpenseLocally,
+  answerExpenseSmart,
   askExpenseAiOnDevice,
   getOnDeviceAiAvailability,
 } from '@/services/onDeviceAiService';
@@ -223,10 +224,17 @@ export async function processAssistantTurn(
     };
   }
 
-  // ── Question → deterministic exact answer (every device) ──
+  // ── Question → deterministic exact answer (fast path, every device) ──
   const local: ExpenseAiAnswer | null = answerExpenseLocally(msg, group, currentUserId);
   if (local) {
     return { reply: local.answer, sources: local.sources };
+  }
+
+  // ── Smart RAG: model UNDERSTANDS the phrasing → exact deterministic retrieval
+  //    + citations (no LLM arithmetic). Handles questions the patterns miss. ──
+  const smart = await answerExpenseSmart(msg, group, currentUserId);
+  if (smart) {
+    return { reply: smart.answer, sources: smart.sources };
   }
 
   // ── Open-ended → on-device LLM (grounded), else a gentle nudge ──

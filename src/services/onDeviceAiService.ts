@@ -15,9 +15,11 @@ import {
   donateAskActivity,
   getOnDeviceAiAvailability,
   getOnDeviceContextSize,
+  planExpenseQuery,
   redactPII,
   type OnDeviceAiAvailability,
 } from '../../modules/splitcircle-ai';
+import { planToQuestion, type PlanIntent, type PlanTimeframe, type QueryPlan } from '@/utils/expensePlan';
 import type { Group } from '@/models';
 import type { ExpenseAiAnswer } from '@/services/aiService';
 import {
@@ -51,6 +53,56 @@ export function answerExpenseLocally(
     currency: group.currency,
   };
   const r = answerExpenseQuery(question, queryCtx);
+  if (!r.handled) return null;
+  void donateAskActivity(redactPII(question));
+  return { answer: r.answer, sources: r.sources, confidence: r.confidence };
+}
+
+const PLAN_INTENTS: ReadonlySet<PlanIntent> = new Set([
+  'spend', 'balance', 'settle_up', 'biggest', 'count', 'average', 'who_most',
+  'leaderboard', 'breakdown', 'paid_for', 'recent', 'summary', 'compare', 'trend', 'unknown',
+]);
+const PLAN_TIMEFRAMES: ReadonlySet<string> = new Set([
+  'this_month', 'last_month', 'this_week', 'last_week', 'this_year', 'today',
+]);
+
+/** Validate the raw native plan into a typed QueryPlan (guards bad model output). */
+function coercePlan(raw: { intent?: string; scope?: string; category?: string; member?: string; metric?: string; timeframe?: string }): QueryPlan {
+  const intent = (raw.intent && PLAN_INTENTS.has(raw.intent as PlanIntent) ? raw.intent : 'unknown') as PlanIntent;
+  const timeframe = (raw.timeframe && PLAN_TIMEFRAMES.has(raw.timeframe) ? raw.timeframe : null) as PlanTimeframe;
+  const metric = raw.metric === 'paid' ? 'paid' : raw.metric === 'share' ? 'share' : undefined;
+  const clean = (s?: string) => (s && s.trim() ? s.trim() : undefined);
+  return { intent, scope: clean(raw.scope), category: clean(raw.category), member: clean(raw.member), metric, timeframe };
+}
+
+/**
+ * Smart RAG path: the on-device model UNDERSTANDS a free-form question (→ plan),
+ * we RETRIEVE the exact answer + citations deterministically from the index, and
+ * return it. Numbers never come from the model. Returns null when the model is
+ * unavailable or the question maps to nothing deterministic (caller falls back).
+ */
+export async function answerExpenseSmart(
+  question: string,
+  group: Group,
+  currentUserId: string,
+): Promise<ExpenseAiAnswer | null> {
+  if (getOnDeviceAiAvailability() !== 'available') return null;
+  let raw;
+  try {
+    raw = await planExpenseQuery(question, group.members.map((m) => m.displayName).filter(Boolean).join(', '));
+  } catch {
+    return null;
+  }
+  const canonical = planToQuestion(coercePlan(raw));
+  if (!canonical) return null;
+  const ctx: QueryContext = {
+    expenses: group.expenses ?? [],
+    settlements: group.settlements ?? [],
+    members: group.members.map((m) => ({ userId: m.userId, displayName: m.displayName })),
+    currentUserId,
+    currency: group.currency,
+  };
+  const r = answerExpenseQuery(canonical, ctx);
   if (!r.handled) return null;
   void donateAskActivity(redactPII(question));
   return { answer: r.answer, sources: r.sources, confidence: r.confidence };
