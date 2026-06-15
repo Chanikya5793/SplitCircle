@@ -34,11 +34,16 @@ tool-calling, since our data/index live in JS):
 - **P1.4 (next):** richer citations UI (inline `[n]` markers → Expense Details);
   optional FM compose for conversational phrasing (verify number fidelity on device).
 
-## Track 2 — Offline-first (planned)
-- **P2.1** Persistent group cache (`expo-sqlite`, already a dep): hydrate
-  `GroupContext` on launch, update on each snapshot → app shows data offline.
-- **P2.2** Offline write queue: refactor `addExpense`/`settleUp` off
-  `runTransaction` to idempotent `updateDoc` (+ replay queue). The other mutators
+## Track 2 — Offline-first
+- **P2.1 ✅ (shipped, code):** persistent group cache (`services/groupCache.ts`,
+  AsyncStorage). `GroupContext` hydrates from it on launch (instant + offline)
+  and refreshes it on every snapshot; live Firestore data wins when online. The
+  on-device AI now has data to work on offline.
+- **P2.2 (next, careful):** offline write queue — `addExpense`/`settleUp` use
+  `runTransaction`, which fails offline; refactor to `arrayUnion`/idempotent
+  `updateDoc` (queues offline) with stable ids so retries don't double-add. This
+  is the money-write path → must be verified on device, not shipped blind. The
+  other mutators (`updateExpense`/`deleteExpense`/`deleteSettlement`/`createGroup`)
   already queue offline.
 - **P2.3** Offline UX: connectivity banner, "queued" badges on pending writes.
 - **P2.4** Persist the analytics index to disk so RAG retrieval is instant + offline.
