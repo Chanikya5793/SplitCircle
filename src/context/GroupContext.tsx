@@ -2,6 +2,7 @@ import { db } from '@/firebase';
 import type { ChatMessage, ChatParticipant, Expense, Group, GroupMember, ParticipantShare, Settlement } from '@/models';
 import { queueMessage } from '@/services/messageQueueService';
 import { deleteFile, uploadFile } from '@/services/storageService';
+import { loadCachedGroups, persistGroups } from '@/services/groupCache';
 import {
     arrayUnion,
     collection,
@@ -137,16 +138,32 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       return () => undefined;
     }
 
+    const uid = user.userId;
+    let active = true;
+
+    // Hydrate from the on-device cache first so the app shows data instantly and
+    // works offline (Firestore JS SDK can't persist on RN). Live data wins below.
+    void loadCachedGroups(uid).then((cached) => {
+      if (active && cached) {
+        setGroups((prev) => (prev.length ? prev : cached));
+        setLoading(false);
+      }
+    });
+
     const groupsRef = collection(db, 'groups');
-    const q = query(groupsRef, where('memberIds', 'array-contains', user.userId));
+    const q = query(groupsRef, where('memberIds', 'array-contains', uid));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const payload = snapshot.docs.map((docSnapshot) => adaptGroup(docSnapshot.data() as Group));
       setGroups(payload);
       setLoading(false);
+      void persistGroups(uid, payload); // keep the offline cache fresh
     });
 
-    return () => unsubscribe();
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [user?.userId]);
 
   const createGroup = async (name: string, currency: string, requestId?: string) => {
