@@ -98,6 +98,24 @@ struct OnDeviceParsedExpense {
   @Guide(description: "Date as YYYY-MM-DD if explicitly stated, otherwise empty string.")
   var date: String
 }
+
+/// A structured plan parsed from a free-form question about expenses.
+@available(iOS 26.0, *)
+@Generable
+struct OnDeviceQueryPlan {
+  @Guide(description: "One of: spend, balance, settle_up, biggest, count, average, who_most, leaderboard, breakdown, paid_for, recent, summary, compare, trend, unknown. Use unknown if it isn't about this group's expenses/balances.")
+  var intent: String
+  @Guide(description: "Who it's about: 'me', 'group', or a member's EXACT name from the provided list. Empty for the whole group.")
+  var scope: String
+  @Guide(description: "Category if mentioned: General, Food, Transport, Utilities, Entertainment, Shopping, Travel, Health. Empty if none.")
+  var category: String
+  @Guide(description: "A member's EXACT name for a balance question like 'how much do I owe X'. Empty otherwise.")
+  var member: String
+  @Guide(description: "'paid' or 'share' for who_most/leaderboard. Empty otherwise.")
+  var metric: String
+  @Guide(description: "One of: this_month, last_month, this_week, last_week, this_year, today. Empty for all-time.")
+  var timeframe: String
+}
 #endif
 
 public class SplitCircleAIModule: Module {
@@ -354,6 +372,36 @@ public class SplitCircleAIModule: Module {
           "participantNames": e.participantNames,
           "splitEqually": e.splitEqually,
           "date": e.date,
+        ]
+      }
+      #endif
+      throw OnDeviceAiUnavailableException()
+    }
+
+    /// "Understand" pass of the RAG pipeline: turn a free-form question into a
+    /// structured plan the JS layer maps to an exact deterministic answer.
+    AsyncFunction("planExpenseQuery") { (question: String, memberNames: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else {
+          throw OnDeviceAiUnavailableException()
+        }
+        let session = LanguageModelSession {
+          """
+          You convert a question about a shared-expense group into a structured
+          plan. Use EXACT member names from this list when a person is meant:
+          \(memberNames). If the question isn't about this group's expenses,
+          balances, or settlements, set intent to "unknown".
+          """
+        }
+        let r = try await session.respond(to: "Question: \(question)", generating: OnDeviceQueryPlan.self).content
+        return [
+          "intent": r.intent,
+          "scope": r.scope,
+          "category": r.category,
+          "member": r.member,
+          "metric": r.metric,
+          "timeframe": r.timeframe,
         ]
       }
       #endif

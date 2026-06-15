@@ -115,6 +115,17 @@ export async function suggestExpenseCategory(text: string): Promise<string> {
 }
 
 /**
+ * "Understand" pass of the RAG pipeline: turn a free-form question into a
+ * structured plan. Throws when the on-device model is unavailable.
+ */
+export async function planExpenseQuery(question: string, memberNames: string) {
+  if (!NativeModule?.planExpenseQuery) {
+    throw new Error('On-device query planning is not available on this platform.');
+  }
+  return NativeModule.planExpenseQuery(question, memberNames);
+}
+
+/**
  * Parse a natural-language sentence into an expense draft on-device. The caller
  * maps the returned names back to user ids. Throws when the model is unavailable.
  */

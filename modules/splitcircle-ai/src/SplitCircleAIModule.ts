@@ -57,6 +57,17 @@ export interface SplitCircleAINativeModule {
     memberNames: string,
     currentUserName: string,
   ): Promise<OnDeviceParsedExpenseRaw>;
+  /** "Understand" pass: free-form question → structured query plan. */
+  planExpenseQuery(question: string, memberNames: string): Promise<OnDeviceQueryPlanRaw>;
+}
+
+export interface OnDeviceQueryPlanRaw {
+  intent: string;
+  scope: string;
+  category: string;
+  member: string;
+  metric: string;
+  timeframe: string;
 }
 
 export interface OnDeviceParsedExpenseRaw {
