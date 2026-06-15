@@ -25,6 +25,7 @@ export const SCREEN_TITLES = {
   callDetailsFallback: 'Call Details',
   liveCall: 'Live call',
   notifications: 'Notifications',
+  aiIndex: 'On-Device AI',
 } as const;
 
 export const getGroupNameById = (
@@ -150,6 +151,8 @@ export const getRouteBackLabel = (route: RouteLike | undefined): string | undefi
       return SCREEN_TITLES.liveCall;
     case ROUTES.APP.NOTIFICATION_SETTINGS:
       return SCREEN_TITLES.notifications;
+    case ROUTES.APP.AI_INDEX:
+      return SCREEN_TITLES.aiIndex;
     default:
       return undefined;
   }

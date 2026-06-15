@@ -34,6 +34,7 @@ import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
 import { AiChatScreen } from '@/screens/ai/AiChatScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { NotificationSettingsScreen } from '@/screens/settings/NotificationSettingsScreen';
+import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import type { NotificationData } from '@/utils/notifications';
 import { lightHaptic } from '@/utils/haptics';
@@ -986,6 +987,11 @@ const AppStackNavigator = () => {
         options={{
           title: SCREEN_TITLES.notifications,
         }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.AI_INDEX}
+        component={AiIndexScreen}
+        options={{ title: SCREEN_TITLES.aiIndex }}
       />
       <AppStack.Screen
         name={ROUTES.APP.CHAT_MEDIA_GALLERY}
