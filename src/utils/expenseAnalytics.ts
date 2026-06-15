@@ -199,7 +199,7 @@ export function analyticsSignature(group: GroupLike): string {
   return `${ex.length}:${maxUpdated}:${st.length}:${group.updatedAt ?? 0}`;
 }
 
-const analyticsCache = new Map<string, { sig: string; value: ExpenseAnalytics }>();
+const analyticsCache = new Map<string, { sig: string; value: ExpenseAnalytics; indexedAt: number }>();
 
 /** Memoized `buildExpenseAnalytics` keyed by group + user + change-signature. */
 export function getGroupAnalytics(group: GroupLike, currentUserId: string): ExpenseAnalytics {
@@ -208,8 +208,13 @@ export function getGroupAnalytics(group: GroupLike, currentUserId: string): Expe
   const hit = analyticsCache.get(key);
   if (hit && hit.sig === sig) return hit.value;
   const value = buildExpenseAnalytics(group.expenses ?? [], group.settlements ?? [], currentUserId);
-  analyticsCache.set(key, { sig, value });
+  analyticsCache.set(key, { sig, value, indexedAt: Date.now() });
   return value;
+}
+
+/** Which group indexes are currently cached on-device (for the Settings view). */
+export function getAnalyticsCacheInfo(): { key: string; indexedAt: number }[] {
+  return [...analyticsCache.entries()].map(([key, v]) => ({ key, indexedAt: v.indexedAt }));
 }
 
 /** Test/maintenance hook to clear the in-memory analytics cache. */

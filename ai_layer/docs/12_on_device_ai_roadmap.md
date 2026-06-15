@@ -198,10 +198,23 @@ Evolves the single-shot Ask AI into a multi-turn chatbot.
   expense (slot-filling by merge-and-retry).
 - **Next (held until on-device verification):** group management (destructive,
   warned); dedicated on-device `SFSpeechRecognizer` mic button.
-- **Bigger asks (planned, see below):** persistent on-device index cache +
-  an indexing progress view in Settings; custom "skills" (LoRA adapters /
-  tool-calling) injected into the foundation model; Private Cloud Compute
-  routing with user transparency; a full background-DNA audit of remaining screens.
+- **PR 5 ✅ (shipped, code):** on-device index **transparency** — Settings →
+  "On-Device AI" (`AiIndexScreen`) shows what's indexed per group (expense/
+  settlement counts, cached state), that indexing + exact answers run entirely
+  on-device, the Apple Intelligence status for chat, and a **Rebuild index**
+  action. Backed by the signature-keyed analytics cache (`getAnalyticsCacheInfo`)
+  + pure `buildIndexStatus`.
+- **Bigger asks (status):**
+  - Persistent (cross-launch) index cache: in-memory signature-keyed memo is the
+    "smart" cache today (recomputes only on change). Disk persistence is low
+    value (data must be in memory anyway) — deferred unless needed.
+  - **Custom "skills" / LoRA adapters:** large offline training pipeline,
+    version-locked to each OS model — deferred (documented in §Research). Our
+    structured-intent actions already give the model "skills" safely.
+  - **Private Cloud Compute routing:** `PrivateCloudComputeLanguageModel` is
+    iOS 27 / WWDC26 beta, not GA — revisit when it ships; will surface a clear
+    "answered in Private Cloud Compute" badge for transparency.
+  - Full background-DNA audit of remaining screens — incremental, per-screen.
 
 ### Phase 4 — Optional / advanced
 - iOS 27 direct-image receipt understanding (crumpled receipts).

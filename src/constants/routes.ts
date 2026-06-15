@@ -31,6 +31,7 @@ export const ROUTES = {
     BILL_SPLIT: 'BillSplit',
     SETTINGS: 'Settings',
     NOTIFICATION_SETTINGS: 'NotificationSettings',
+    AI_INDEX: 'AiIndex',
     PROFILE: 'Profile',
     CHAT_MEDIA_GALLERY: 'ChatMediaGallery',
     FILE_PREVIEW: 'FilePreview',

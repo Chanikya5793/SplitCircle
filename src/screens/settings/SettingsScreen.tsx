@@ -172,6 +172,17 @@ export const SettingsScreen = () => {
               }}
             />
             <Divider />
+            <List.Item
+              title="On-Device AI"
+              description="What's indexed on this device · privacy"
+              left={() => <List.Icon icon="brain" />}
+              right={() => <List.Icon icon="chevron-right" />}
+              onPress={() => {
+                lightHaptic();
+                (navigation as any).navigate('AiIndex', { backTitle: ROOT_SCREEN_TITLES.settings });
+              }}
+            />
+            <Divider />
             <List.Item title="Offline sync" description="Enabled" left={() => <List.Icon icon="cloud-sync" />} />
           </List.Section>
         </GlassView>
