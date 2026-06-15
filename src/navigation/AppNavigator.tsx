@@ -31,7 +31,7 @@ import { GroupDetailsScreen } from '@/screens/groups/GroupDetailsScreen';
 import { GroupInfoScreen } from '@/screens/groups/GroupInfoScreen';
 import { GroupListScreen } from '@/screens/groups/GroupListScreen';
 import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
-import { AskAiScreen } from '@/screens/ai/AskAiScreen';
+import { AiChatScreen } from '@/screens/ai/AiChatScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { NotificationSettingsScreen } from '@/screens/settings/NotificationSettingsScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
@@ -544,7 +544,7 @@ const AskAiRoute = ({ route }: any) => {
   if (!group) {
     return <LoadingScreen />;
   }
-  return <AskAiScreen group={group} initialQuestion={route.params?.initialQuestion} />;
+  return <AiChatScreen group={group} initialQuestion={route.params?.initialQuestion} />;
 };
 
 const RecurringBillsRoute = ({ route }: any) => {

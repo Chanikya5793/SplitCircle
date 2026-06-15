@@ -168,6 +168,27 @@ language):
 - **Next (this track):** optional LLM phrasing of deterministic facts; reuse the
   index in Group Stats / a "month in review" surface.
 
+### Phase 5 — Conversational assistant (chatbot that answers AND acts) — in progress
+Evolves the single-shot Ask AI into a multi-turn chatbot.
+
+- **PR 1 ✅ (shipped, code):** `AiChatScreen` (multi-turn thread, action
+  confirmation cards, iOS keyboard dictation mic for voice). Orchestrator
+  `assistantService.processAssistantTurn` routes each message:
+  - **question →** deterministic engine (exact, every device);
+  - **add expense →** on-device NL parse → confirm card → `addExpense`;
+  - **settle up →** pure `parseSettlement` (+ exact `pairwiseNet` when no amount
+    given) → confirm card → `settleUp`;
+  - **open-ended →** on-device LLM (grounded).
+  Every write is a `ProposedAction` the user must Confirm — the model never
+  mutates data directly. Pure core (`utils/assistantChat`) is unit-tested.
+- **Architecture:** structured-intent (model parses → JS confirms → executes via
+  tested `GroupContext`), not Swift tool-calling — keeps writes in the verified
+  layer with a human confirm step.
+- **Next:** more actions (edit/delete expense & settlement, group management) per
+  "all functions", each with confirmation (destructive ones warned); a dedicated
+  on-device `SFSpeechRecognizer` mic button (needs `NSSpeechRecognitionUsageDescription`
+  + audio-session coexistence with calls).
+
 ### Phase 4 — Optional / advanced
 - iOS 27 direct-image receipt understanding (crumpled receipts).
 - Custom LoRA adapter pipeline (with the version-lock maintenance cost).
