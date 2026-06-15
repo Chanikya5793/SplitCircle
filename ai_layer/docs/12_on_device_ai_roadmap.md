@@ -184,10 +184,13 @@ Evolves the single-shot Ask AI into a multi-turn chatbot.
 - **Architecture:** structured-intent (model parses → JS confirms → executes via
   tested `GroupContext`), not Swift tool-calling — keeps writes in the verified
   layer with a human confirm step.
-- **Next:** more actions (edit/delete expense & settlement, group management) per
-  "all functions", each with confirmation (destructive ones warned); a dedicated
-  on-device `SFSpeechRecognizer` mic button (needs `NSSpeechRecognitionUsageDescription`
-  + audio-session coexistence with calls).
+- **PR 2 ✅ (shipped, code):** **delete expense** (matched by title via
+  `matchExpenseByText`, destructive red confirm) and **navigate/open** a screen
+  ("open settle up", "show stats" → Settlements/Stats/Bills/Add-Expense/Group-Info).
+- **Next:** edit expense, delete settlement, group management (rename / add-remove
+  member / leave / delete group) — each confirmed, destructive ones warned; a
+  dedicated on-device `SFSpeechRecognizer` mic button (needs
+  `NSSpeechRecognitionUsageDescription` + audio-session coexistence with calls).
 
 ### Phase 4 — Optional / advanced
 - iOS 27 direct-image receipt understanding (crumpled receipts).

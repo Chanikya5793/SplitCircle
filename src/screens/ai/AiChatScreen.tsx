@@ -11,14 +11,17 @@
 
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import type { ExpenseAiSource } from '@/services/aiService';
 import { processAssistantTurn, type ProposedAction } from '@/services/assistantService';
+import type { NavTarget } from '@/utils/assistantChat';
 import { formatCurrency } from '@/utils/currency';
 import { mediumHaptic, successHaptic } from '@/utils/haptics';
+import { useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, Keyboard, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ActivityIndicator, Icon, Text, TextInput } from 'react-native-paper';
@@ -51,9 +54,27 @@ const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
-  const { addExpense, settleUp } = useGroups();
+  const { addExpense, settleUp, deleteExpense } = useGroups();
+  const navigation = useNavigation<any>();
   const currentUserId = user?.userId ?? group.members[0]?.userId ?? '';
   const listRef = useRef<FlatList<ChatMsg>>(null);
+
+  const routeFor = (t: NavTarget): { route: string; params: Record<string, unknown> } | null => {
+    switch (t) {
+      case 'settlements':
+        return { route: ROUTES.APP.SETTLEMENTS, params: { groupId: group.groupId } };
+      case 'stats':
+        return { route: ROUTES.APP.GROUP_STATS, params: { groupId: group.groupId, backTitle: group.name } };
+      case 'bills':
+        return { route: ROUTES.APP.RECURRING_BILLS, params: { groupId: group.groupId, backTitle: group.name } };
+      case 'add_expense':
+        return { route: ROUTES.APP.ADD_EXPENSE, params: { groupId: group.groupId } };
+      case 'group_info':
+        return { route: ROUTES.APP.GROUP_INFO, params: { groupId: group.groupId, initialTitle: 'Group Info', backTitle: group.name } };
+      default:
+        return null;
+    }
+  };
 
   const [messages, setMessages] = useState<ChatMsg[]>([
     {
@@ -110,22 +131,31 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   const setActionState = (id: string, actionState: ActionState) =>
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, actionState } : m)));
 
+  const openTarget = (msg: ChatMsg, target: NavTarget) => {
+    setActionState(msg.id, 'done');
+    const r = routeFor(target);
+    if (r) navigation.navigate(r.route, r.params);
+  };
+
   const confirmAction = async (msg: ChatMsg) => {
-    if (!msg.action || busy) return;
+    const a = msg.action;
+    if (!a || a.type === 'navigate' || busy) return;
     setBusy(true);
     try {
-      if (msg.action.type === 'add_expense') {
-        await addExpense(group.groupId, msg.action.expense, undefined, undefined, uid());
+      let ok: string;
+      if (a.type === 'add_expense') {
+        await addExpense(group.groupId, a.expense, undefined, undefined, uid());
+        ok = '✓ Expense added.';
+      } else if (a.type === 'settle_up') {
+        await settleUp(group.groupId, a.settlement, uid());
+        ok = '✓ Settlement recorded.';
       } else {
-        await settleUp(group.groupId, msg.action.settlement, uid());
+        await deleteExpense(group.groupId, a.expenseId);
+        ok = '✓ Expense deleted.';
       }
       successHaptic();
       setActionState(msg.id, 'done');
-      append({
-        id: uid(),
-        role: 'assistant',
-        text: msg.action.type === 'add_expense' ? '✓ Expense added.' : '✓ Settlement recorded.',
-      });
+      append({ id: uid(), role: 'assistant', text: ok });
     } catch (err) {
       append({ id: uid(), role: 'assistant', text: `Couldn't complete that: ${err instanceof Error ? err.message : 'unknown error'}.` });
     } finally {
@@ -164,19 +194,36 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           ) : null}
 
           {item.action && item.actionState === 'pending' ? (
-            <View style={[styles.actionCard, { borderColor: theme.colors.outline }]}>
-              <Text variant="bodySmall" style={{ color: theme.colors.onSurface, marginBottom: 10, fontWeight: '600' }}>
-                {item.action.summary}
-              </Text>
-              <View style={styles.actionButtons}>
-                <TouchableOpacity onPress={() => setActionState(item.id, 'cancelled')} style={[styles.actionBtn, { borderColor: theme.colors.outline }]} disabled={busy}>
-                  <Text style={{ color: theme.colors.onSurfaceVariant, fontWeight: '700' }}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => confirmAction(item)} style={[styles.actionBtn, { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }]} disabled={busy}>
-                  <Text style={{ color: '#fff', fontWeight: '700' }}>Confirm</Text>
-                </TouchableOpacity>
+            item.action.type === 'navigate' ? (
+              <View style={[styles.actionCard, { borderColor: theme.colors.outline }]}>
+                <View style={styles.actionButtons}>
+                  <TouchableOpacity onPress={() => setActionState(item.id, 'cancelled')} style={[styles.actionBtn, { borderColor: theme.colors.outline }]}>
+                    <Text style={{ color: theme.colors.onSurfaceVariant, fontWeight: '700' }}>Not now</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => openTarget(item, (item.action as { target: NavTarget }).target)} style={[styles.actionBtn, { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }]}>
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>Open {item.action.summary}</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
+            ) : (
+              <View style={[styles.actionCard, { borderColor: theme.colors.outline }]}>
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurface, marginBottom: 10, fontWeight: '600' }}>
+                  {item.action.summary}
+                </Text>
+                <View style={styles.actionButtons}>
+                  <TouchableOpacity onPress={() => setActionState(item.id, 'cancelled')} style={[styles.actionBtn, { borderColor: theme.colors.outline }]} disabled={busy}>
+                    <Text style={{ color: theme.colors.onSurfaceVariant, fontWeight: '700' }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => confirmAction(item)}
+                    style={[styles.actionBtn, { backgroundColor: item.action.type === 'delete_expense' ? theme.colors.error : theme.colors.primary, borderColor: 'transparent' }]}
+                    disabled={busy}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>{item.action.type === 'delete_expense' ? 'Delete' : 'Confirm'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )
           ) : null}
           {item.action && item.actionState === 'cancelled' ? (
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 8, fontStyle: 'italic' }}>Cancelled.</Text>

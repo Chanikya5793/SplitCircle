@@ -19,7 +19,7 @@ import {
   isOnDeviceExpenseNlAvailable,
   parseExpenseFromTextOnDevice,
 } from '@/services/onDeviceExpenseNlService';
-import { classifyMessage, parseSettlement } from '@/utils/assistantChat';
+import { classifyMessage, detectNavTarget, matchExpenseByText, parseSettlement, type NavTarget } from '@/utils/assistantChat';
 import { pairwiseNet } from '@/utils/expenseAnalytics';
 import { equalSplit } from '@/utils/smartSplitRecommender';
 
@@ -27,7 +27,18 @@ export type NewExpense = Omit<Expense, 'expenseId' | 'createdAt' | 'updatedAt'>;
 
 export type ProposedAction =
   | { type: 'add_expense'; expense: NewExpense; summary: string }
-  | { type: 'settle_up'; settlement: { fromUserId: string; toUserId: string; amount: number }; summary: string };
+  | { type: 'settle_up'; settlement: { fromUserId: string; toUserId: string; amount: number }; summary: string }
+  | { type: 'delete_expense'; expenseId: string; summary: string; destructive: true }
+  | { type: 'navigate'; target: NavTarget; summary: string };
+
+const NAV_LABELS: Record<NavTarget, string> = {
+  settlements: 'Settle up',
+  stats: 'Stats',
+  bills: 'Recurring bills',
+  add_expense: 'Add expense',
+  chat: 'Group chat',
+  group_info: 'Group info',
+};
 
 export interface AssistantTurn {
   reply: string;
@@ -47,6 +58,32 @@ export async function processAssistantTurn(
 ): Promise<AssistantTurn> {
   const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
   const intent = classifyMessage(message, members);
+
+  // ── Delete expense (matched by title; destructive → explicit confirm) ──
+  if (intent === 'delete_expense') {
+    const match = matchExpenseByText(message, group.expenses);
+    if (!match) {
+      return { reply: 'Which expense should I delete? Try naming it, e.g. "delete the dinner expense".' };
+    }
+    return {
+      reply: 'Delete this expense? This cannot be undone.',
+      action: {
+        type: 'delete_expense',
+        expenseId: match.expenseId,
+        destructive: true,
+        summary: `${match.title || 'Untitled'} — ${money(match.amount, group.currency)}`,
+      },
+    };
+  }
+
+  // ── Navigate / open a screen ──
+  if (intent === 'navigate') {
+    const target = detectNavTarget(message);
+    if (!target) {
+      return { reply: 'Where to? Try "open settle up", "show stats", or "open recurring bills".' };
+    }
+    return { reply: `Open ${NAV_LABELS[target]}?`, action: { type: 'navigate', target, summary: NAV_LABELS[target] } };
+  }
 
   // ── Settle up (deterministic parse; works on every device) ──
   if (intent === 'settle_up') {

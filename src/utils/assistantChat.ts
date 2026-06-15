@@ -8,7 +8,17 @@
  * and confirmed before execution. No RN/native imports (unit-tested).
  */
 
-export type AssistantIntent = 'add_expense' | 'settle_up' | 'question' | 'chat';
+export type AssistantIntent = 'add_expense' | 'settle_up' | 'delete_expense' | 'navigate' | 'question' | 'chat';
+
+/** Where a "navigate" intent wants to go (screen maps this to a route). */
+export type NavTarget = 'settlements' | 'stats' | 'bills' | 'add_expense' | 'chat' | 'group_info';
+
+export interface MatchableExpense {
+  expenseId: string;
+  title: string;
+  amount: number;
+  createdAt: number;
+}
 
 export interface AssistantMember {
   userId: string;
@@ -54,10 +64,19 @@ const PAID_FOR_RE = /\b(i|we)\s+(paid|spent|bought)\b/i;
  * Ambiguous/general messages fall to `question` (handled deterministically) and
  * then `chat` (LLM) by the orchestrator.
  */
+const DELETE_RE = /\b(delete|remove|undo|get rid of)\b/i;
+const NAVIGATE_RE = /\b(open|go to|take me to|jump to|navigate to)\b/i;
+
 export function classifyMessage(message: string, members: readonly AssistantMember[]): AssistantIntent {
   const q = message ?? '';
   const hasMember = findMember(q, members) != null;
   const hasAmount = parseAmount(q) != null;
+
+  // Delete expense (requires the word "expense" to stay safe / unambiguous).
+  if (DELETE_RE.test(q) && /\bexpense\b/i.test(q)) return 'delete_expense';
+
+  // Navigate ("open settle up", "take me to stats").
+  if (NAVIGATE_RE.test(q) && detectNavTarget(q) != null) return 'navigate';
 
   // Settle: explicit settle wording, or "paid <member>" / "<member> paid" with a member.
   if (SETTLE_RE.test(q) && (hasMember || /\bsettle( up)?\b/i.test(q))) return 'settle_up';
@@ -94,4 +113,41 @@ export function parseSettlement(
   }
   // Default + "I paid <member>" / "settle up with <member>" ⇒ me → member.
   return { fromUserId: currentUserId, toUserId: member.userId, amount };
+}
+
+/** Detect which screen a "navigate" message wants (null if none). */
+export function detectNavTarget(message: string): NavTarget | null {
+  const q = lc(message);
+  if (/\bsettle|settlement/.test(q)) return 'settlements';
+  if (/\bstats|statistics|charts?|spending breakdown\b/.test(q)) return 'stats';
+  if (/\bbills?|recurring\b/.test(q)) return 'bills';
+  if (/\badd (an )?expense|new expense\b/.test(q)) return 'add_expense';
+  if (/\bchat|messages?\b/.test(q)) return 'chat';
+  if (/\bgroup info|members|settings\b/.test(q)) return 'group_info';
+  return null;
+}
+
+const STOPWORDS = new Set([
+  'delete', 'remove', 'undo', 'get', 'rid', 'of', 'the', 'expense', 'my', 'our', 'last',
+  'that', 'this', 'a', 'an', 'for', 'please', 'can', 'you', 'cancel',
+]);
+
+/** Best-matching expense for a delete request, by title-token overlap then recency. */
+export function matchExpenseByText<T extends MatchableExpense>(message: string, expenses: readonly T[]): T | null {
+  const tokens = new Set(
+    lc(message).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((t) => t.length >= 2 && !STOPWORDS.has(t)),
+  );
+  let best: T | null = null;
+  let bestScore = 0;
+  for (const e of expenses) {
+    const titleTokens = lc(e.title ?? '').replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+    let overlap = 0;
+    for (const t of titleTokens) if (tokens.has(t)) overlap += 1;
+    const score = overlap * 1_000_000_000 + (e.createdAt || 0); // overlap dominates; recency breaks ties
+    if (overlap > 0 && score > bestScore) {
+      bestScore = score;
+      best = e;
+    }
+  }
+  return best;
 }

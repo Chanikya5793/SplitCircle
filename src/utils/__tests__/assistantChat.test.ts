@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { classifyMessage, findMember, parseAmount, parseSettlement } from '../assistantChat';
+import { classifyMessage, detectNavTarget, findMember, matchExpenseByText, parseAmount, parseSettlement } from '../assistantChat';
 
 const members = [
   { userId: 'u1', displayName: 'Alice Smith' },
@@ -40,10 +40,44 @@ describe('classifyMessage', () => {
     expect(classifyMessage('mark Bob paid 30', members)).toBe('settle_up');
   });
 
+  it('detects delete_expense and navigate', () => {
+    expect(classifyMessage('delete the dinner expense', members)).toBe('delete_expense');
+    expect(classifyMessage('open settle up', members)).toBe('navigate');
+    expect(classifyMessage('take me to stats', members)).toBe('navigate');
+  });
+
   it('routes plain questions to question', () => {
     expect(classifyMessage('how much did I spend on food?', members)).toBe('question');
     expect(classifyMessage('show our settlements', members)).toBe('question'); // no member+amount ⇒ Q&A
     expect(classifyMessage('who paid the most?', members)).toBe('question');
+  });
+});
+
+describe('detectNavTarget', () => {
+  it('maps phrases to targets', () => {
+    expect(detectNavTarget('open settle up')).toBe('settlements');
+    expect(detectNavTarget('show me the stats')).toBe('stats');
+    expect(detectNavTarget('go to recurring bills')).toBe('bills');
+    expect(detectNavTarget('add an expense')).toBe('add_expense');
+    expect(detectNavTarget('open the weather app')).toBeNull();
+  });
+});
+
+describe('matchExpenseByText', () => {
+  const expenses = [
+    { expenseId: 'e1', title: 'Sushi dinner', amount: 40, createdAt: 1 },
+    { expenseId: 'e2', title: 'Gas refill', amount: 30, createdAt: 2 },
+    { expenseId: 'e3', title: 'Dinner with Sam', amount: 80, createdAt: 3 },
+  ];
+
+  it('matches by title token; recency breaks ties', () => {
+    expect(matchExpenseByText('delete the gas expense', expenses)?.expenseId).toBe('e2');
+    // "dinner" matches e1 and e3 → newer (e3) wins
+    expect(matchExpenseByText('remove the dinner expense', expenses)?.expenseId).toBe('e3');
+  });
+
+  it('returns null when nothing matches', () => {
+    expect(matchExpenseByText('delete the rent expense', expenses)).toBeNull();
   });
 });
 
