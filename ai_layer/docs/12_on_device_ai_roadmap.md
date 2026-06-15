@@ -190,10 +190,18 @@ Evolves the single-shot Ask AI into a multi-turn chatbot.
 - **PR 3 ✅ (shipped, code):** **edit expense** (rename / change amount [re-splits
   equally] / change category, via `parseExpenseEdit`, before→after confirm) and
   **delete settlement** (`matchSettlement`, destructive confirm).
-- **Next (held until on-device verification):** group management (rename /
-  add-remove member / leave / delete group) — destructive, warned; a dedicated
-  on-device `SFSpeechRecognizer` mic button (needs `NSSpeechRecognitionUsageDescription`
-  + audio-session coexistence with calls).
+- **PR 4 ✅ (shipped, code):** UI fixes — chat input now keyboard-avoiding
+  (`KeyboardAvoidingView` + header offset), `ASK_AI` header transparent so the
+  LiquidBackground runs top-to-bottom (the app's DNA), safe-area insets; and
+  **follow-up questions** — the orchestrator returns `needsMore` and the screen
+  keeps a `priorContext` so "add $20" → "what for?" → "lunch" merges into one
+  expense (slot-filling by merge-and-retry).
+- **Next (held until on-device verification):** group management (destructive,
+  warned); dedicated on-device `SFSpeechRecognizer` mic button.
+- **Bigger asks (planned, see below):** persistent on-device index cache +
+  an indexing progress view in Settings; custom "skills" (LoRA adapters /
+  tool-calling) injected into the foundation model; Private Cloud Compute
+  routing with user transparency; a full background-DNA audit of remaining screens.
 
 ### Phase 4 — Optional / advanced
 - iOS 27 direct-image receipt understanding (crumpled receipts).

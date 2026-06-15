@@ -22,9 +22,11 @@ import type { NavTarget } from '@/utils/assistantChat';
 import { formatCurrency } from '@/utils/currency';
 import { mediumHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
+import { useHeaderHeight } from '@react-navigation/elements';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FlatList, Keyboard, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { FlatList, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ActivityIndicator, Icon, Text, TextInput } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface AiChatScreenProps {
   group: Group;
@@ -56,6 +58,8 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   const { user } = useAuth();
   const { addExpense, settleUp, deleteExpense, updateExpense, deleteSettlement } = useGroups();
   const navigation = useNavigation<any>();
+  const headerHeight = useHeaderHeight();
+  const insets = useSafeAreaInsets();
   const currentUserId = user?.userId ?? group.members[0]?.userId ?? '';
   const listRef = useRef<FlatList<ChatMsg>>(null);
 
@@ -91,6 +95,10 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
   }, []);
 
+  // Carries the prior message while the bot is waiting on a follow-up answer,
+  // so "add $20" → "what for?" → "lunch" merges into one expense.
+  const pendingRef = useRef<string | null>(null);
+
   const send = useCallback(
     async (raw?: string) => {
       const text = (raw ?? input).trim();
@@ -100,8 +108,10 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
       append({ id: uid(), role: 'user', text });
       setInput('');
       setBusy(true);
+      const prior = pendingRef.current;
       try {
-        const turn = await processAssistantTurn(text, group, currentUserId);
+        const turn = await processAssistantTurn(text, group, currentUserId, prior ?? undefined);
+        pendingRef.current = turn.needsMore ? `${prior ? `${prior} ` : ''}${text}`.slice(-500) : null;
         append({
           id: uid(),
           role: 'assistant',
@@ -111,6 +121,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           actionState: turn.action ? 'pending' : undefined,
         });
       } catch (err) {
+        pendingRef.current = null;
         append({ id: uid(), role: 'assistant', text: err instanceof Error ? err.message : 'Something went wrong. Try again.' });
       } finally {
         setBusy(false);
@@ -241,13 +252,17 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
 
   return (
     <LiquidBackground>
-      <View style={styles.container}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={headerHeight}
+      >
         <FlatList
           ref={listRef}
           data={messages}
           keyExtractor={(m) => m.id}
           renderItem={renderItem}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, { paddingTop: headerHeight + 8 }]}
           keyboardShouldPersistTaps="handled"
           ListFooterComponent={
             busy ? (
@@ -270,7 +285,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           </View>
         ) : null}
 
-        <View style={[styles.inputBar, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}>
+        <View style={[styles.inputBar, { marginBottom: Math.max(insets.bottom, 8), backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}>
           <TextInput
             mode="flat"
             value={input}
@@ -287,7 +302,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
             <Icon source="arrow-up-circle" size={34} color={input.trim() && !busy ? theme.colors.primary : theme.colors.onSurfaceVariant} />
           </TouchableOpacity>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </LiquidBackground>
   );
 };
@@ -304,7 +319,7 @@ const styles = StyleSheet.create({
   actionBtn: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1 },
   quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
   quickChip: { borderRadius: 16, paddingVertical: 6, paddingHorizontal: 12 },
-  inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, margin: 12, marginTop: 4, borderRadius: 24, paddingLeft: 16, paddingRight: 6, paddingVertical: 4 },
+  inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginHorizontal: 12, marginTop: 4, borderRadius: 24, paddingLeft: 16, paddingRight: 6, paddingVertical: 4 },
   textInput: { flex: 1, backgroundColor: 'transparent', maxHeight: 120, fontSize: 15 },
   sendBtn: { paddingBottom: 6 },
 });
