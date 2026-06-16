@@ -263,8 +263,13 @@ describe('help', () => {
   it('answers "what can you do" with capabilities', () => {
     const r = answerExpenseQuery('what can you do?', ctx([exp({ amount: 10 })]));
     expect(r.handled).toBe(true);
-    expect(r.answer).toContain('Try asking me');
+    expect(r.answer).toContain('expense assistant');
     expect(r.answer).toContain('How much do I owe');
+  });
+  it('answers "what all can you do" (was falling through before)', () => {
+    const r = answerExpenseQuery('what all can you do?', ctx([exp({ amount: 10 })]));
+    expect(r.handled).toBe(true);
+    expect(r.answer).toContain('expense assistant');
   });
 });
 

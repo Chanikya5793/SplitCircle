@@ -61,13 +61,22 @@ const NOT_HANDLED: QueryResult = { handled: false, answer: '', sources: [], conf
 
 /** What the deterministic assistant can answer — shown for help/unknown questions. */
 export const ASSISTANT_CAPABILITIES = [
-  'Try asking me:',
+  "I'm your expense assistant. I can:",
+  '',
+  '📊 Answer questions (exact, with sources)',
   '• "How much did I spend on food?"',
   '• "How much do I owe Bob?"',
   '• "Show our settle-up"',
   '• "What were our biggest expenses?"',
   '• "Who paid the most last month?"',
-  '• "Summarize this month"',
+  '',
+  '✏️ Do things for you (you confirm first)',
+  '• "Add $40 for dinner, split with everyone"',
+  '• "Settle up with Alex"',
+  '• "Delete the gas expense"',
+  '• "Open stats"',
+  '',
+  'If I\'m missing something, I\'ll ask — just tap an option or type your answer.',
 ].join('\n');
 
 const MAX_SOURCES = 8;
@@ -171,7 +180,7 @@ export function answerExpenseQuery(question: string, ctx: QueryContext): QueryRe
   const q = (question ?? '').trim();
   if (!q) return NOT_HANDLED;
   // ── Help / capabilities ──
-  if (/\b(help|what can (you|i) (do|ask)|how does this work|what can you answer)\b/i.test(q)) {
+  if (/\b(help|what (all )?can (you|u|i) (do|ask|help)|what (do|are) you (do|capable|able)|what can you answer|how (do|does) (this|you|it) work|commands?|capabilities|who are you|what are you)\b/i.test(q)) {
     return { handled: true, answer: ASSISTANT_CAPABILITIES, sources: [], confidence: 1 };
   }
 
