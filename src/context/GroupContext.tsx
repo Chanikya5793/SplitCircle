@@ -3,7 +3,10 @@ import type { ChatMessage, ChatParticipant, Expense, Group, GroupMember, Partici
 import { queueMessage } from '@/services/messageQueueService';
 import { deleteFile, uploadFile } from '@/services/storageService';
 import { loadCachedGroups, persistGroups } from '@/services/groupCache';
+import { enqueueOp, loadOutbox, removeOp } from '@/services/outbox';
 import { findDuplicateExpense, findDuplicateSettlement } from '@/utils/writeIdempotency';
+import { mergeOutboxIntoGroups, type OutboxOp } from '@/utils/outboxApply';
+import NetInfo from '@react-native-community/netinfo';
 import {
     arrayUnion,
     collection,
@@ -19,7 +22,7 @@ import {
     where,
     writeBatch,
 } from 'firebase/firestore';
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { v4 as uuid } from 'uuid';
 import { useAuth } from './AuthContext';
 
@@ -132,10 +135,86 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Durable offline write queue. Writes made offline are mirrored to AsyncStorage
+  // (services/outbox) so they survive an app-kill, kept visible optimistically,
+  // and replayed on launch / reconnect. `pendingOpsRef` mirrors the queue so the
+  // snapshot listener can keep not-yet-synced writes from flickering out.
+  const pendingOpsRef = useRef<OutboxOp[]>([]);
+  const flushingRef = useRef(false);
+
+  /** Perform the network write for one queued op (idempotent via arrayUnion). */
+  const writeOp = useCallback(async (op: OutboxOp): Promise<void> => {
+    if (op.kind === 'addExpense') {
+      let expense = op.expense;
+      if (op.fileUri) {
+        try {
+          const fileName = op.fileName ?? 'receipt.jpg';
+          const url = await uploadFile(op.fileUri, `groups/${op.groupId}/expenses/${op.expense.expenseId}/${fileName}`);
+          expense = { ...op.expense, receipt: stripUndefinedDeep({ ...op.expense.receipt, url, fileName }) };
+        } catch {
+          // Image upload failed (e.g. the local file is gone after a relaunch) —
+          // still write the expense so the money data isn't lost.
+        }
+      }
+      await updateDoc(doc(db, 'groups', op.groupId), {
+        expenses: arrayUnion(expense),
+        updatedAt: serverTimestamp(),
+      });
+      await setDoc(doc(db, 'expenses', op.expense.expenseId), {
+        ...expense,
+        groupId: op.groupId,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    } else {
+      await updateDoc(doc(db, 'groups', op.groupId), {
+        settlements: arrayUnion(op.settlement),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  }, []);
+
+  /**
+   * Drain the outbox to the cloud. Single-writer (mutex) so a write is never
+   * issued twice concurrently. Only attempts when online — offline, Firestore
+   * write promises never resolve, so we keep the ops and retry on reconnect.
+   */
+  const flushOutbox = useCallback(async () => {
+    if (flushingRef.current) return;
+    flushingRef.current = true;
+    try {
+      const net = await NetInfo.fetch();
+      if (!(net.isConnected && net.isInternetReachable !== false)) return;
+      let guard = 0;
+      while (guard++ < 100) {
+        const ops = await loadOutbox();
+        pendingOpsRef.current = ops;
+        if (!ops.length) break;
+        let progressed = false;
+        for (const op of ops) {
+          try {
+            await writeOp(op);
+            await removeOp(op.id);
+            pendingOpsRef.current = pendingOpsRef.current.filter((o) => o.id !== op.id);
+            progressed = true;
+          } catch (error) {
+            console.warn('Outbox flush deferred for op', op.id, error);
+            progressed = false;
+            break;
+          }
+        }
+        if (!progressed) break;
+      }
+    } finally {
+      flushingRef.current = false;
+    }
+  }, [writeOp]);
+
   useEffect(() => {
     if (!user) {
       setGroups([]);
       setLoading(false);
+      pendingOpsRef.current = [];
       return () => undefined;
     }
 
@@ -151,11 +230,24 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       }
     });
 
+    // Replay any durable writes left over from a previous (offline) session, and
+    // flush again whenever connectivity returns.
+    void loadOutbox().then((ops) => {
+      if (!active) return;
+      pendingOpsRef.current = ops;
+      void flushOutbox();
+    });
+    const unsubscribeNet = NetInfo.addEventListener((state) => {
+      if (state.isConnected && state.isInternetReachable !== false) void flushOutbox();
+    });
+
     const groupsRef = collection(db, 'groups');
     const q = query(groupsRef, where('memberIds', 'array-contains', uid));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const payload = snapshot.docs.map((docSnapshot) => adaptGroup(docSnapshot.data() as Group));
+      const raw = snapshot.docs.map((docSnapshot) => docSnapshot.data() as Group);
+      // Keep optimistic (not-yet-acked) writes visible until the server confirms them.
+      const payload = mergeOutboxIntoGroups(raw, pendingOpsRef.current).map(adaptGroup);
       setGroups(payload);
       setLoading(false);
       void persistGroups(uid, payload); // keep the offline cache fresh
@@ -164,8 +256,9 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     return () => {
       active = false;
       unsubscribe();
+      unsubscribeNet();
     };
-  }, [user?.userId]);
+  }, [user?.userId, flushOutbox]);
 
   const createGroup = async (name: string, currency: string, requestId?: string) => {
     if (!user) throw new Error('Missing user');
@@ -301,72 +394,48 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     originalFileName?: string,
     requestId?: string,
   ) => {
-    try {
-      console.log('Adding expense to group:', groupId, expense);
-      const expenseId = requestId ?? expense.requestId ?? uuid();
-      const docRef = doc(db, 'groups', groupId);
+    const expenseId = requestId ?? expense.requestId ?? uuid();
+    const reqId = requestId ?? expense.requestId ?? expenseId;
 
-      let receipt = expense.receipt;
-      if (fileUri) {
-        // Determine extension from URI or default to jpg
-        let fileName = originalFileName;
-        if (!fileName) {
-          const extension = fileUri.split('.').pop()?.split('?')[0] || 'jpg';
-          fileName = `receipt.${extension}`;
-        }
-        const path = `groups/${groupId}/expenses/${expenseId}/${fileName}`;
-        const url = await uploadFile(fileUri, path);
-        // Merge so on-device receipt insights (and any other metadata) survive
-        // the image upload instead of being overwritten.
-        receipt = { ...expense.receipt, url, fileName };
-      }
-
-      // Use the participants calculated by the UI, which handles rounding correctly
-      const splitShares: ParticipantShare[] = expense.participants;
-
-      const newExpense = stripUndefinedDeep({
-        ...expense,
-        expenseId,
-        requestId: requestId ?? expense.requestId ?? expenseId,
-        participants: splitShares,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-
-      if (receipt) {
-        newExpense.receipt = stripUndefinedDeep(receipt);
-      }
-
-      // Idempotency without a server read (so the write works offline): if this
-      // expense (by id or requestId) is already in the locally-cached group,
-      // it's a retry/double-submit — no-op. Firestore's latency compensation
-      // reflects a just-queued offline write here too.
-      const localGroup = groups.find((g) => g.groupId === groupId);
-      const duplicate = findDuplicateExpense(localGroup?.expenses, expenseId, requestId ?? expense.requestId);
-      if (duplicate) {
-        console.log('Expense already present (idempotent no-op):', duplicate.expenseId);
-        return;
-      }
-
-      // `arrayUnion` queues offline AND merges server-side, so concurrent adds
-      // from multiple devices don't clobber each other (unlike read-modify-write).
-      await updateDoc(docRef, {
-        expenses: arrayUnion(newExpense),
-        updatedAt: serverTimestamp(),
-      });
-
-      // Also add to the top-level expenses collection for easier querying later.
-      await setDoc(doc(db, 'expenses', expenseId), {
-        ...newExpense,
-        groupId,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-      console.log('Expense added successfully');
-    } catch (error) {
-      console.error('Error adding expense:', error);
-      throw error;
+    // Idempotency without a server read (works offline): if this expense (by id
+    // or requestId) is already in local state, it's a retry/double-submit — no-op.
+    const localGroup = groups.find((g) => g.groupId === groupId);
+    if (findDuplicateExpense(localGroup?.expenses, expenseId, reqId)) {
+      return;
     }
+
+    // Use the participants calculated by the UI, which handles rounding correctly.
+    const splitShares: ParticipantShare[] = expense.participants;
+    const newExpense = stripUndefinedDeep({
+      ...expense,
+      expenseId,
+      requestId: reqId,
+      participants: splitShares,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      ...(expense.receipt ? { receipt: stripUndefinedDeep(expense.receipt) } : {}),
+    }) as Expense;
+
+    let fileName = originalFileName;
+    if (fileUri && !fileName) {
+      const extension = fileUri.split('.').pop()?.split('?')[0] || 'jpg';
+      fileName = `receipt.${extension}`;
+    }
+
+    // Queue durably FIRST so the write survives an app-kill while offline, then
+    // reflect it immediately. The actual network write happens in flushOutbox so
+    // the UI never blocks on a server ack (offline, write promises never resolve).
+    const op: OutboxOp = { id: expenseId, kind: 'addExpense', groupId, expense: newExpense, fileUri, fileName, createdAt: Date.now() };
+    await enqueueOp(op);
+    pendingOpsRef.current = [...pendingOpsRef.current.filter((o) => o.id !== op.id), op];
+
+    setGroups((prev) => {
+      const next = mergeOutboxIntoGroups(prev, [op]).map(adaptGroup);
+      if (user) void persistGroups(user.userId, next);
+      return next;
+    });
+
+    void flushOutbox();
   };
 
   const updateExpense = async (groupId: string, updatedExpense: Expense, newFileUri?: string | null, newFileName?: string, requestId?: string) => {
@@ -496,30 +565,35 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     settlement: Omit<Settlement, 'settlementId' | 'createdAt' | 'status'>,
     requestId?: string,
   ) => {
-    const docRef = doc(db, 'groups', groupId);
     const settlementId = requestId ?? settlement.requestId ?? uuid();
+    const reqId = requestId ?? settlement.requestId ?? settlementId;
 
-    // Idempotent, offline-capable (same pattern as addExpense): skip if this
-    // settlement is already in the locally-cached group, else queue via arrayUnion.
+    // Idempotent, offline-capable (same pattern as addExpense): skip if already present.
     const localGroup = groups.find((g) => g.groupId === groupId);
-    const duplicate = findDuplicateSettlement(localGroup?.settlements, settlementId, requestId ?? settlement.requestId);
-    if (duplicate) {
-      console.log('Settlement already present (idempotent no-op):', duplicate.settlementId);
+    if (findDuplicateSettlement(localGroup?.settlements, settlementId, reqId)) {
       return;
     }
 
     const newSettlement = stripUndefinedDeep({
       ...settlement,
       settlementId,
-      requestId: requestId ?? settlement.requestId ?? settlementId,
+      requestId: reqId,
       createdAt: Date.now(),
-      status: 'pending',
+      status: 'pending' as const,
+    }) as Settlement;
+
+    // Durable queue + optimistic display; the network write happens in flushOutbox.
+    const op: OutboxOp = { id: settlementId, kind: 'settleUp', groupId, settlement: newSettlement, createdAt: Date.now() };
+    await enqueueOp(op);
+    pendingOpsRef.current = [...pendingOpsRef.current.filter((o) => o.id !== op.id), op];
+
+    setGroups((prev) => {
+      const next = mergeOutboxIntoGroups(prev, [op]).map(adaptGroup);
+      if (user) void persistGroups(user.userId, next);
+      return next;
     });
 
-    await updateDoc(docRef, {
-      settlements: arrayUnion(newSettlement),
-      updatedAt: serverTimestamp(),
-    });
+    void flushOutbox();
   };
 
   const updateSettlement = async (groupId: string, updatedSettlement: Settlement, requestId?: string) => {

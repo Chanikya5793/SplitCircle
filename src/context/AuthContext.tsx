@@ -1,6 +1,7 @@
 import { auth, db } from '@/firebase';
 import type { UserProfile } from '@/models';
 import { unregisterCurrentDevice } from '@/services/notificationService';
+import { clearCachedProfile, loadCachedProfile, persistProfile } from '@/services/profileCache';
 import * as Google from 'expo-auth-session/providers/google';
 import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
@@ -104,8 +105,18 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
   useEffect(() => {
     let unsubscribeSnapshot: (() => void) | undefined;
+    let resolvedFromAuth = false;
+
+    // Hydrate the last-known profile so a cold offline start paints instantly
+    // (before onAuthStateChanged resolves). onAuthStateChanged wins below.
+    void loadCachedProfile().then((cached) => {
+      if (cached && !resolvedFromAuth) {
+        setUser((prev) => prev ?? cached);
+      }
+    });
 
     const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      resolvedFromAuth = true;
       if (unsubscribeSnapshot) {
         unsubscribeSnapshot();
         unsubscribeSnapshot = undefined;
@@ -114,8 +125,20 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       if (!firebaseUser) {
         setUser(null);
         setLoading(false);
+        void clearCachedProfile();
         return;
       }
+
+      // CRITICAL (offline): render immediately from the persisted auth session.
+      // The Firestore `users/{uid}` snapshot below only fires online (memory-only
+      // cache on RN), so without this the app would hang on the splash forever
+      // and never reach the signed-in UI when offline.
+      setUser((prev) => {
+        const profile = buildUserProfile(firebaseUser, prev ?? undefined);
+        void persistProfile(profile);
+        return profile;
+      });
+      setLoading(false);
 
       const docRef = doc(db, 'users', firebaseUser.uid);
 
@@ -124,6 +147,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           const payload = buildUserProfile(firebaseUser, docSnap.data() as UserProfile);
           setUser(payload);
           setLoading(false);
+          void persistProfile(payload);
         } else {
           // Document doesn't exist yet. 
           // If we are registering, registerWithEmail will create it shortly.
