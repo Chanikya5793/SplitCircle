@@ -17,7 +17,8 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import type { ExpenseAiSource } from '@/services/aiService';
-import { processAssistantTurn, type ProposedAction } from '@/services/assistantService';
+import { processAssistantTurn, type ConversationState, type ProposedAction } from '@/services/assistantService';
+import { loadChatSession, saveChatSession } from '@/services/chatSession';
 import type { NavTarget } from '@/utils/assistantChat';
 import { formatCurrency } from '@/utils/currency';
 import { lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
@@ -42,7 +43,15 @@ interface ChatMsg {
   sources?: ExpenseAiSource[];
   action?: ProposedAction;
   actionState?: ActionState;
+  /** Tappable quick replies offered by the assistant. */
+  choices?: string[];
 }
+
+const GREETING = (name: string): ChatMsg => ({
+  id: 'greeting',
+  role: 'assistant',
+  text: `Hi! Ask me about ${name}'s spending and balances, or tell me to add an expense or settle up.`,
+});
 
 const QUICK_PROMPTS = [
   'How much did I spend on food?',
@@ -80,24 +89,54 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
     }
   };
 
-  const [messages, setMessages] = useState<ChatMsg[]>([
-    {
-      id: 'greeting',
-      role: 'assistant',
-      text: `Hi! Ask me about ${group.name}'s spending and balances, or tell me to add an expense or settle up.`,
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMsg[]>([GREETING(group.name)]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const append = useCallback((msg: ChatMsg) => {
-    setMessages((prev) => [...prev, msg]);
-    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
-  }, []);
+  // Conversation memory (slot-filling draft / last proposed action), carried
+  // across turns and persisted per group so the thread survives navigation.
+  const stateRef = useRef<ConversationState>({});
+  const hydrated = useRef(false);
 
-  // Carries the prior message while the bot is waiting on a follow-up answer,
-  // so "add $20" → "what for?" → "lunch" merges into one expense.
-  const pendingRef = useRef<string | null>(null);
+  const persist = useCallback(
+    (msgs: ChatMsg[]) => {
+      void saveChatSession(group.groupId, msgs, stateRef.current);
+    },
+    [group.groupId],
+  );
+
+  const append = useCallback(
+    (msg: ChatMsg) => {
+      setMessages((prev) => {
+        const next = [...prev, msg];
+        persist(next);
+        return next;
+      });
+      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+    },
+    [persist],
+  );
+
+  // Restore the persisted conversation for this group on first mount.
+  useEffect(() => {
+    let active = true;
+    void loadChatSession<ChatMsg>(group.groupId).then((saved) => {
+      if (!active || hydrated.current) return;
+      hydrated.current = true;
+      if (saved && saved.messages.length > 0) {
+        // Drop any stale pending confirm cards from the previous session.
+        const restored = saved.messages.map((m) =>
+          m.action && m.actionState === 'pending' ? { ...m, actionState: 'cancelled' as ActionState } : m,
+        );
+        setMessages(restored);
+        stateRef.current = { ...saved.state, pending: undefined, lastProposed: undefined };
+        requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [group.groupId]);
 
   const send = useCallback(
     async (raw?: string) => {
@@ -108,10 +147,9 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
       append({ id: uid(), role: 'user', text });
       setInput('');
       setBusy(true);
-      const prior = pendingRef.current;
       try {
-        const turn = await processAssistantTurn(text, group, currentUserId, prior ?? undefined);
-        pendingRef.current = turn.needsMore ? `${prior ? `${prior} ` : ''}${text}`.slice(-500) : null;
+        const turn = await processAssistantTurn(text, group, currentUserId, stateRef.current);
+        stateRef.current = turn.state;
         append({
           id: uid(),
           role: 'assistant',
@@ -119,9 +157,9 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           sources: turn.sources,
           action: turn.action,
           actionState: turn.action ? 'pending' : undefined,
+          choices: turn.choices,
         });
       } catch (err) {
-        pendingRef.current = null;
         append({ id: uid(), role: 'assistant', text: err instanceof Error ? err.message : 'Something went wrong. Try again.' });
       } finally {
         setBusy(false);
@@ -139,8 +177,16 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
     }
   }, [initialQuestion, send]);
 
-  const setActionState = (id: string, actionState: ActionState) =>
-    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, actionState } : m)));
+  const setActionState = (id: string, actionState: ActionState) => {
+    // Resolving a proposal clears the "last proposed" memory so the next message
+    // isn't treated as a tweak to an already-handled card.
+    if (actionState !== 'pending') stateRef.current = { ...stateRef.current, lastProposed: undefined };
+    setMessages((prev) => {
+      const next = prev.map((m) => (m.id === id ? { ...m, actionState } : m));
+      persist(next);
+      return next;
+    });
+  };
 
   const openTarget = (msg: ChatMsg, target: NavTarget) => {
     setActionState(msg.id, 'done');
@@ -227,6 +273,23 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                   {s.expenseId ? (
                     <Icon source="chevron-right" size={16} color={theme.colors.onSurfaceVariant} />
                   ) : null}
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
+
+          {!isUser && item.choices && item.choices.length > 0 ? (
+            <View style={styles.choices}>
+              {item.choices.map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  onPress={() => send(c)}
+                  disabled={busy}
+                  style={[styles.choiceChip, { borderColor: theme.colors.primary }]}
+                  accessibilityRole="button"
+                  accessibilityLabel={c}
+                >
+                  <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>{c}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -336,6 +399,8 @@ const styles = StyleSheet.create({
   bubble: { maxWidth: '88%', borderRadius: 18, paddingVertical: 10, paddingHorizontal: 14 },
   sources: { marginTop: 10, gap: 4 },
   sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  choiceChip: { borderRadius: 16, borderWidth: 1.5, paddingVertical: 6, paddingHorizontal: 14 },
   actionCard: { marginTop: 10, borderWidth: 1, borderRadius: 12, padding: 10 },
   actionButtons: { flexDirection: 'row', gap: 8, justifyContent: 'flex-end' },
   actionBtn: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1 },

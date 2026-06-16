@@ -42,3 +42,32 @@ export function coerceCategory(
   });
   return contains ?? fallback;
 }
+
+/**
+ * Keyword → canonical category, for deterministically categorizing an expense
+ * from its title/description (offline, no model). First keyword hit wins.
+ */
+const CATEGORY_KEYWORDS: Record<string, readonly string[]> = {
+  Food: ['food', 'dinner', 'lunch', 'breakfast', 'brunch', 'restaurant', 'eat', 'eating', 'groceries', 'grocery', 'meal', 'snack', 'dining', 'coffee', 'pizza', 'drinks', 'bar', 'beer', 'takeout', 'doordash', 'ubereats'],
+  Transport: ['transport', 'gas', 'fuel', 'petrol', 'uber', 'lyft', 'taxi', 'cab', 'commute', 'train', 'bus', 'parking', 'toll', 'metro', 'ride'],
+  Utilities: ['utility', 'utilities', 'electric', 'electricity', 'water', 'internet', 'wifi', 'rent', 'bill', 'phone', 'heating', 'trash', 'gas bill'],
+  Entertainment: ['entertainment', 'movie', 'cinema', 'concert', 'netflix', 'spotify', 'game', 'show', 'tickets', 'event'],
+  Shopping: ['shopping', 'amazon', 'walmart', 'target', 'clothes', 'clothing', 'shoes', 'mall', 'store', 'electronics'],
+  Travel: ['travel', 'flight', 'hotel', 'airbnb', 'trip', 'vacation', 'airfare', 'booking', 'resort'],
+  Health: ['health', 'doctor', 'pharmacy', 'medicine', 'gym', 'medical', 'dentist', 'hospital', 'clinic'],
+};
+
+/**
+ * Best-effort category for a free-text expense title (e.g. "100 for gas" → Transport).
+ * Returns `fallback` ('General') when nothing matches. Pure + offline.
+ */
+export function categorizeText(text: string | null | undefined, fallback: string = 'General'): string {
+  if (typeof text !== 'string' || !text.trim()) return fallback;
+  const q = ` ${text.toLowerCase()} `;
+  for (const [category, words] of Object.entries(CATEGORY_KEYWORDS)) {
+    if (words.some((w) => q.includes(` ${w} `) || q.includes(`${w}s `) || q.includes(` ${w},`))) {
+      return category;
+    }
+  }
+  return fallback;
+}
