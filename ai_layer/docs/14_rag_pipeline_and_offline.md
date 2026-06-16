@@ -36,19 +36,30 @@ tool-calling, since our data/index live in JS):
   optional FM compose for conversational phrasing (verify number fidelity on device).
 
 ## Track 2 — Offline-first
+- **P2.0 ✅ (critical — the "doesn't work offline at all" fix):** `AuthContext`
+  only set the signed-in user from the `users/{uid}` Firestore snapshot, which
+  never fires offline (memory-only cache on RN) — so on a cold offline launch the
+  user stayed `null` and `loading` stayed `true` forever, hanging the splash. Now
+  we build the profile from the persisted auth session immediately (clearing
+  `loading`) and only ENRICH it via snapshot when online; `services/profileCache`
+  (AsyncStorage) preserves the profile across cold offline starts. Cleared on sign-out.
 - **P2.1 ✅ (shipped, code):** persistent group cache (`services/groupCache.ts`,
   AsyncStorage). `GroupContext` hydrates from it on launch (instant + offline)
   and refreshes it on every snapshot; live Firestore data wins when online. The
   on-device AI now has data to work on offline.
-- **P2.2 ✅ (shipped, code — verify on device):** offline-capable money writes.
+- **P2.2 ✅ (durable outbox — verify on device):** offline writes are now durable.
   `addExpense`/`settleUp` moved off `runTransaction` (server read → fails offline)
-  to `arrayUnion` + `updateDoc`, which queues offline and merges server-side (so
-  concurrent multi-device adds don't clobber each other). The transactional
-  existence check is replaced by an in-memory dedup against the cached group
-  (`utils/writeIdempotency`, unit-tested) so retries/double-submits are no-ops.
-  Admin ops (`removeMember`/`leaveGroup`/role changes) keep `runTransaction` —
-  online-only by nature. ⚠️ Money path: confirm on device that an offline add /
-  settle-up queues and syncs once exactly on reconnect.
+  AND off `await`-ing the Firestore write (its promise only resolves on server ack,
+  so offline it hung the UI). Each create is mirrored to a persistent **outbox**
+  (`services/outbox`, AsyncStorage) BEFORE the network write, shown optimistically
+  (`utils/outboxApply.mergeOutboxIntoGroups` + balance recompute via `adaptGroup`),
+  and replayed on launch / reconnect by a single-writer, NetInfo-gated
+  `flushOutbox`. Replays are idempotent (`arrayUnion` + stable `requestId` +
+  `utils/writeIdempotency` dedup), so they survive an app-kill while offline and
+  sync once exactly on reconnect. Pure merge logic is unit-tested. The snapshot
+  listener merges still-pending ops so optimistic writes don't flicker out. Admin
+  ops (`removeMember`/`leaveGroup`/role changes) keep `runTransaction` —
+  online-only by nature. ⚠️ Money path: confirm the once-exactly sync on device.
 - **P2.3 (partial):** connectivity banner — slim, safe-area-aware `OfflineBanner`
   mounted at the app shell (`App.tsx`), shown on every screen when the device is
   offline ("showing saved data; edits will sync"). Styled translucent to respect
