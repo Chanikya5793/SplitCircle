@@ -51,3 +51,6 @@ GoogleService-Info.plist
 
 
 google-service-account.json
+
+# Spike (fm-ios27) local Xcode-beta build output
+ios/build-s0/
