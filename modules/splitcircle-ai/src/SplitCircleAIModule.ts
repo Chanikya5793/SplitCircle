@@ -59,6 +59,41 @@ export interface SplitCircleAINativeModule {
   ): Promise<OnDeviceParsedExpenseRaw>;
   /** "Understand" pass: free-form question → structured query plan. */
   planExpenseQuery(question: string, memberNames: string): Promise<OnDeviceQueryPlanRaw>;
+
+  // ── Pipeline v2 spike (doc 17 §A0) ────────────────────────────────────────
+  /** S2 — ask grounded in a persistent per-session transcript (continuity). */
+  askOnDeviceStateful(
+    sessionId: string,
+    question: string,
+    context: string,
+    instructions: string,
+  ): Promise<OnDeviceAskResult>;
+  /** S2 — clear a session's transcript ('' clears all). */
+  resetOnDeviceSession(sessionId: string): void;
+  /** S3 — single abstaining router decision over a persistent group session. */
+  routeMessage(
+    sessionId: string,
+    text: string,
+    memberNames: string,
+    isoDate: string,
+  ): Promise<OnDeviceRouterDecisionRaw>;
+  /** S5 — Private Cloud Compute probe (iOS 27). available=false until entitled. */
+  pccProbe(question: string): Promise<OnDevicePccProbeResult>;
+}
+
+export interface OnDeviceRouterDecisionRaw {
+  intent: string;
+  confidence: number;
+  abstain: boolean;
+  chitchatReply: string;
+  queryPlan: OnDeviceQueryPlanRaw;
+}
+
+export interface OnDevicePccProbeResult {
+  available: boolean;
+  reason: string;
+  answer: string;
+  contextSize: number;
 }
 
 export interface OnDeviceQueryPlanRaw {

@@ -62,6 +62,19 @@ target 'SplitCircle' do
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
 
+    # Xcode 27 / iOS 27 SDK rejects deployment targets below 15.0. A few pod
+    # resource-bundle sub-targets (SDWebImage, RNCAsyncStorage, RNSVG) ship stale
+    # floors (9.0/12.4/13.4) that react_native_post_install doesn't bump — raise
+    # every pod target to the app's minimum so the workspace compiles on Xcode 27.
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+        if current.nil? || current.to_f < 15.1
+          config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
+        end
+      end
+    end
+
     # ExpoSQLite's umbrella header can resolve to system sqlite3.h; force pod-scoped header.
     umbrella_path = File.join(__dir__, 'Pods', 'Target Support Files', 'ExpoSQLite', 'ExpoSQLite-umbrella.h')
     if File.exist?(umbrella_path)

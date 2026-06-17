@@ -3557,6 +3557,8 @@ PODS:
     - libwebp (~> 1.0)
     - SDWebImage/Core (~> 5.17)
   - SocketRocket (0.7.1)
+  - SplitCircleAI (1.0.0):
+    - ExpoModulesCore
   - SwiftUIIntrospect (1.3.0)
   - UMAppLoader (55.0.2)
   - VideoTrim (8.1.0):
@@ -3739,6 +3741,7 @@ DEPENDENCIES:
   - RNVoipPushNotification (from `../node_modules/react-native-voip-push-notification`)
   - RNWorklets (from `../node_modules/react-native-worklets`)
   - SocketRocket (~> 0.7.1)
+  - SplitCircleAI (from `../modules/splitcircle-ai/ios`)
   - UMAppLoader (from `../node_modules/unimodules-app-loader/ios`)
   - VideoTrim (from `../node_modules/react-native-video-trim`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
@@ -4036,6 +4039,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native-voip-push-notification"
   RNWorklets:
     :path: "../node_modules/react-native-worklets"
+  SplitCircleAI:
+    :path: "../modules/splitcircle-ai/ios"
   UMAppLoader:
     :path: "../node_modules/unimodules-app-loader/ios"
   VideoTrim:
@@ -4189,6 +4194,7 @@ SPEC CHECKSUMS:
   SDWebImage: e9fc87c1aab89a8ab1bbd74eba378c6f53be8abf
   SDWebImageWebPCoder: 0e06e365080397465cc73a7a9b472d8a3bd0f377
   SocketRocket: d4aabe649be1e368d1318fdf28a022d714d65748
+  SplitCircleAI: 363b09508a39519eb3013e7453769a2d25300893
   SwiftUIIntrospect: fee9aa07293ee280373a591e1824e8ddc869ba5d
   UMAppLoader: 71b50bcc31d86495e52c0b4cd17e2708bf297be3
   VideoTrim: 0ec602bce708d9f336bcf36096ed3727f0a5b96e
@@ -4196,6 +4202,6 @@ SPEC CHECKSUMS:
   Yoga: 3d56e80930898685da43cbf53b5843932df8e765
   ZXingObjC: 8898711ab495761b2dbbdec76d90164a6d7e14c5
 
-PODFILE CHECKSUM: ee7e3e37b64f4004cfd557fd0388d8d5a1461134
+PODFILE CHECKSUM: 8874204e0209a39eb6a2b312ef1c8288c41dbb3e
 
 COCOAPODS: 1.16.2

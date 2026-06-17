@@ -9,8 +9,10 @@ import NativeModule, {
   type OnDeviceAiAvailability,
   type OnDeviceAskResult,
   type OnDeviceParsedExpenseRaw,
+  type OnDevicePccProbeResult,
   type OnDeviceReceiptItem,
   type OnDeviceReceiptResult,
+  type OnDeviceRouterDecisionRaw,
 } from './src/SplitCircleAIModule';
 import { redactPIIFallback } from './src/redactFallback';
 
@@ -140,11 +142,61 @@ export async function parseExpenseFromText(
   return NativeModule.parseExpenseFromText(text, memberNames, currentUserName);
 }
 
+// ── Pipeline v2 spike wrappers (doc 17 §A0) ─────────────────────────────────
+
+/** S2 — ask grounded in a PERSISTENT per-session transcript for real multi-turn
+ * continuity. `sessionId` keys the session (e.g. group id). Throws when unavailable. */
+export async function askOnDeviceStateful(
+  sessionId: string,
+  question: string,
+  context: string,
+  instructions = '',
+): Promise<OnDeviceAskResult> {
+  if (!NativeModule?.askOnDeviceStateful) {
+    throw new Error('On-device AI is not available on this platform.');
+  }
+  return NativeModule.askOnDeviceStateful(sessionId, question, context, instructions);
+}
+
+/** S2 — clear a session's transcript (pass '' to clear all sessions). No-op off-iOS. */
+export function resetOnDeviceSession(sessionId = ''): void {
+  if (!NativeModule?.resetOnDeviceSession) return;
+  try {
+    NativeModule.resetOnDeviceSession(sessionId);
+  } catch {
+    // best-effort
+  }
+}
+
+/** S3 — abstaining router over a persistent per-group session. Throws when unavailable. */
+export async function routeMessage(
+  sessionId: string,
+  text: string,
+  memberNames: string,
+  isoDate: string,
+): Promise<OnDeviceRouterDecisionRaw> {
+  if (!NativeModule?.routeMessage) {
+    throw new Error('On-device routing is not available on this platform.');
+  }
+  return NativeModule.routeMessage(sessionId, text, memberNames, isoDate);
+}
+
+/** S5 — Private Cloud Compute probe (iOS 27). `available` is false until the PCC
+ * entitlement is granted; returns a neutral result off-iOS instead of throwing. */
+export async function pccProbe(question: string): Promise<OnDevicePccProbeResult> {
+  if (!NativeModule?.pccProbe) {
+    return { available: false, reason: 'unsupportedOS', answer: '', contextSize: 0 };
+  }
+  return NativeModule.pccProbe(question);
+}
+
 export { redactPIIFallback };
 export type {
   OnDeviceAiAvailability,
   OnDeviceAskResult,
   OnDeviceParsedExpenseRaw,
+  OnDevicePccProbeResult,
   OnDeviceReceiptItem,
   OnDeviceReceiptResult,
+  OnDeviceRouterDecisionRaw,
 };

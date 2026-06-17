@@ -116,6 +116,86 @@ struct OnDeviceQueryPlan {
   @Guide(description: "One of: this_month, last_month, this_week, last_week, this_year, today. Empty for all-time.")
   var timeframe: String
 }
+
+// MARK: - Pipeline v2 spike (doc 17, branch spike/fm-ios27) -------------------
+// Additive + guarded. Proves three things compile on the iOS 27 SDK before the
+// Phase A rewrite: (S2) a persistent multi-turn session, (S3) a single abstaining
+// router @Generable, (S5) the iOS-27 Private Cloud Compute model. Existing
+// functions are left untouched.
+
+/// S3 — one structured router decision the JS layer routes on. `abstain` lets the
+/// model decline non-money / greeting messages instead of fabricating a plan
+/// (the root cause of "Hello" → settle-up dump). `queryPlan` reuses the existing
+/// @Generable plan, proving nested guided generation compiles.
+@available(iOS 26.0, *)
+@Generable
+struct OnDeviceRouterDecision {
+  @Guide(description: "Intent, EXACTLY one of: question, add_expense, settle_up, delete_expense, edit_expense, delete_settlement, navigate, chitchat.")
+  var intent: String
+  @Guide(description: "Your confidence from 0.0 to 1.0 that the intent is correct.")
+  var confidence: Double
+  @Guide(description: "True if this message is a greeting, small talk, an app/meta command, or NOT about this group's money. When true, leave the query plan empty.")
+  var abstain: Bool
+  @Guide(description: "A short, friendly reply to show ONLY when abstain is true (e.g. answer a greeting). Empty otherwise.")
+  var chitchatReply: String
+  @Guide(description: "For a 'question' intent: the structured query plan. For any other intent, leave its fields empty.")
+  var queryPlan: OnDeviceQueryPlan
+}
+
+/// S2 — persistent `LanguageModelSession` cache keyed by a caller string (per
+/// group / per role) so the model keeps a real multi-turn Transcript across
+/// turns. Today every call spins a fresh session and loses continuity; this is
+/// the highest-value fix. Stored behind a `nonisolated(unsafe)` global because
+/// the type is iOS-26-gated. NOTE: a session handles one request at a time —
+/// the JS layer serializes turns; revisit locking before shipping.
+nonisolated(unsafe) private var _fmSessionStore: AnyObject?
+
+@available(iOS 26.0, *)
+final class FMSessionStore {
+  static func shared() -> FMSessionStore {
+    if let s = _fmSessionStore as? FMSessionStore { return s }
+    let s = FMSessionStore()
+    _fmSessionStore = s
+    return s
+  }
+
+  private var sessions: [String: LanguageModelSession] = [:]
+
+  func session(id: String, instructions: String) -> LanguageModelSession {
+    if let existing = sessions[id] { return existing }
+    let created = LanguageModelSession(instructions: instructions)
+    created.prewarm()
+    sessions[id] = created
+    return created
+  }
+
+  func reset(id: String) { sessions.removeValue(forKey: id) }
+  func resetAll() { sessions.removeAll() }
+}
+
+/// S3 — the richer system prompt (session `instructions`). Carries persona, the
+/// fixed category list, the abstain rule, the "never compute numbers" rule, and
+/// today's date (the model has no clock) so relative timeframes resolve.
+@available(iOS 26.0, *)
+func routerInstructions(memberNames: String, isoDate: String) -> String {
+  """
+  You are SplitCircle's assistant for a shared-expense group. Today is \(isoDate). \
+  Group members: \(memberNames).
+
+  Classify each user message into ONE intent. For a 'question', also fill the \
+  query plan. Rules:
+  - NEVER compute, total, or invent numbers — return only a plan; the app computes \
+    exact amounts deterministically.
+  - If the message is a greeting, small talk, an app/meta command (e.g. "clear the \
+    chat"), or not about this group's money, set abstain=true, intent='chitchat', \
+    and put a short friendly reply in chitchatReply. Do NOT fabricate a plan.
+  - Copy member names EXACTLY from the list above; never invent people.
+  - Pick categories only from: General, Food, Transport, Utilities, Entertainment, \
+    Shopping, Travel, Health.
+  - Use the conversation so far to resolve follow-ups like "what about April?" or \
+    "the month before that".
+  """
+}
 #endif
 
 public class SplitCircleAIModule: Module {
@@ -406,6 +486,114 @@ public class SplitCircleAIModule: Module {
       }
       #endif
       throw OnDeviceAiUnavailableException()
+    }
+
+    // ── Pipeline v2 spike probes (doc 17 §A0) ───────────────────────────────
+
+    /// S2 — ask grounded in a PERSISTENT, per-session transcript so follow-ups
+    /// keep continuity. `sessionId` is the caller's group/thread key.
+    AsyncFunction("askOnDeviceStateful") { (sessionId: String, question: String, context: String, instructions: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else {
+          throw OnDeviceAiUnavailableException()
+        }
+        let instr = instructions.isEmpty
+          ? "You are SplitCircle's expense assistant. Answer ONLY from the numbered expense lines; never invent numbers."
+          : instructions
+        let session = FMSessionStore.shared().session(id: sessionId, instructions: instr)
+        let prompt = context.isEmpty ? question : """
+        Expenses:
+        \(context)
+
+        Question: \(question)
+        """
+        let response = try await session.respond(to: prompt, generating: OnDeviceExpenseAnswer.self)
+        return [
+          "answer": response.content.answer,
+          "sourceIndexes": response.content.sourceIndexes,
+        ]
+      }
+      #endif
+      throw OnDeviceAiUnavailableException()
+    }
+
+    /// S2 — clear a session's transcript (e.g. "clear the chat" / new thread).
+    Function("resetOnDeviceSession") { (sessionId: String) -> Void in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        if sessionId.isEmpty { FMSessionStore.shared().resetAll() }
+        else { FMSessionStore.shared().reset(id: sessionId) }
+      }
+      #endif
+    }
+
+    /// S3 — single abstaining router over a persistent per-group session.
+    AsyncFunction("routeMessage") { (sessionId: String, text: String, memberNames: String, isoDate: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else {
+          throw OnDeviceAiUnavailableException()
+        }
+        let session = FMSessionStore.shared().session(
+          id: "router:\(sessionId)",
+          instructions: routerInstructions(memberNames: memberNames, isoDate: isoDate)
+        )
+        let r = try await session.respond(to: "Message: \(text)", generating: OnDeviceRouterDecision.self).content
+        return [
+          "intent": r.intent,
+          "confidence": r.confidence,
+          "abstain": r.abstain,
+          "chitchatReply": r.chitchatReply,
+          "queryPlan": [
+            "intent": r.queryPlan.intent,
+            "scope": r.queryPlan.scope,
+            "category": r.queryPlan.category,
+            "member": r.queryPlan.member,
+            "metric": r.queryPlan.metric,
+            "timeframe": r.queryPlan.timeframe,
+          ],
+        ]
+      }
+      #endif
+      throw OnDeviceAiUnavailableException()
+    }
+
+    /// S5 — Private Cloud Compute COMPILE probe (iOS 27). Proves the symbols +
+    /// signatures build. At runtime `isAvailable` is false until the PCC
+    /// entitlement is granted — that's the expected spike outcome.
+    AsyncFunction("pccProbe") { (question: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels)
+      if #available(iOS 27.0, *) {
+        let model = PrivateCloudComputeLanguageModel()
+        var reason = "available"
+        switch model.availability {
+        case .available:
+          reason = "available"
+        case .unavailable(let r):
+          switch r {
+          case .deviceNotEligible: reason = "deviceNotEligible"
+          case .systemNotReady: reason = "systemNotReady"
+          @unknown default: reason = "unknown"
+          }
+        @unknown default:
+          reason = "unknown"
+        }
+        // PCC's contextSize getter is throwing + isolation-bound (unlike
+        // SystemLanguageModel's plain Int) — read it with try/await.
+        let ctxSize = (try? await model.contextSize) ?? 0
+        guard model.isAvailable else {
+          return ["available": false, "reason": reason, "answer": "", "contextSize": ctxSize]
+        }
+        let session = LanguageModelSession(model: model, instructions: "You are SplitCircle's expense assistant.")
+        let response = try await session.respond(
+          to: question,
+          contextOptions: ContextOptions(reasoningLevel: .light)
+        )
+        return ["available": true, "reason": reason, "answer": response.content, "contextSize": ctxSize]
+      }
+      #endif
+      return ["available": false, "reason": "unsupportedOS", "answer": "", "contextSize": 0]
     }
   }
 }
