@@ -232,8 +232,36 @@ export interface Timeframe {
 
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 
+// Month name → 0-indexed month. Full names + 3-letter abbreviations.
+const MONTH_NAMES: Record<string, number> = {
+  january: 0, jan: 0,
+  february: 1, feb: 1,
+  march: 2, mar: 2,
+  april: 3, apr: 3,
+  may: 4,
+  june: 5, jun: 5,
+  july: 6, jul: 6,
+  august: 7, aug: 7,
+  september: 8, sep: 8, sept: 8,
+  october: 9, oct: 9,
+  november: 10, nov: 10,
+  december: 11, dec: 11,
+};
+const MONTH_NAME_RE = new RegExp(
+  `\\b(${Object.keys(MONTH_NAMES).join('|')})(?:['’]?s)?\\b\\s*(\\d{4})?`,
+);
+const MONTH_LABEL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** Calendar window spanning the whole of month `m` (0-indexed) in year `y`. */
+const monthWindow = (y: number, m: number, label: string): Timeframe => ({
+  startMs: new Date(y, m, 1).getTime(),
+  endMs: new Date(y, m + 1, 1).getTime() - 1,
+  label,
+});
+
 /**
- * Parse a relative timeframe from a question ("last month", "this week", …).
+ * Parse a relative timeframe from a question ("last month", "this week", …) or
+ * an explicit one ("April", "April 2025", "in 2024").
  * Returns null when none is mentioned (⇒ all-time). `now` is injectable for tests.
  */
 export function parseTimeframe(question: string, now: number = Date.now()): Timeframe | null {
@@ -267,6 +295,32 @@ export function parseTimeframe(question: string, now: number = Date.now()): Time
   if (/\btoday\b/.test(q)) {
     return { startMs: startOfDay(d), endMs: now, label: 'today' };
   }
+
+  // ── Explicit month name ("April", "in April", "April 2025", "Apr's total") ──
+  const mn = MONTH_NAME_RE.exec(q);
+  // "may" is also a modal verb — don't treat "may I/we/you…" as the month.
+  const isModalMay = mn?.[1] === 'may' && /\bmay\s+(i|we|you|he|she|they|be|not|have|need|the)\b/.test(q);
+  if (mn && !isModalMay) {
+    const mi = MONTH_NAMES[mn[1]];
+    if (mn[2]) {
+      // Year given explicitly.
+      const yr = Number(mn[2]);
+      return monthWindow(yr, mi, `${MONTH_LABEL[mi]} ${yr}`);
+    }
+    // No year: use the most recent occurrence that isn't in the future — i.e.
+    // this year if the month has already started, otherwise last year. ("April"
+    // asked in June → this year's April; "December" asked in June → last year.)
+    const yr = mi <= m ? y : y - 1;
+    return monthWindow(yr, mi, MONTH_LABEL[mi]);
+  }
+
+  // ── Explicit calendar year ("2024", "in 2023") ──
+  const yrMatch = /\b(20\d{2})\b/.exec(q);
+  if (yrMatch) {
+    const yr = Number(yrMatch[1]);
+    return { startMs: new Date(yr, 0, 1).getTime(), endMs: new Date(yr + 1, 0, 1).getTime() - 1, label: `${yr}` };
+  }
+
   return null;
 }
 

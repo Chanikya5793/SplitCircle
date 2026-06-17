@@ -50,7 +50,8 @@ export type ProposedAction =
   | { type: 'delete_expense'; expenseId: string; summary: string; destructive: true }
   | { type: 'edit_expense'; expense: Expense; summary: string }
   | { type: 'delete_settlement'; settlementId: string; summary: string; destructive: true }
-  | { type: 'navigate'; target: NavTarget; summary: string };
+  | { type: 'navigate'; target: NavTarget; summary: string }
+  | { type: 'clear_chat'; summary: string; destructive: true };
 
 /** A partially-collected expense the bot is still filling in. */
 export interface ExpenseDraft {
@@ -148,6 +149,14 @@ export async function processAssistantTurn(
   }
 
   const fresh = classifyMessage(text, members);
+
+  // Chat-control meta-command ("clear the chat", "start over"). Caught before any
+  // flow/modify logic so it never leaks into the spend engine or the model — and
+  // it abandons any in-progress draft. Confirmed before the UI actually wipes.
+  if (fresh === 'clear_chat') {
+    const action: ProposedAction = { type: 'clear_chat', summary: 'Clear this conversation', destructive: true };
+    return { reply: 'Clear this conversation? This erases the chat history here.', action, state: {} };
+  }
 
   // 1) Modify the pending PROPOSED expense ("split with everyone", "make it 50",
   //    "category to Food") — unless the user is clearly starting a new add.

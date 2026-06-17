@@ -130,6 +130,54 @@ describe('parseTimeframe', () => {
   it('returns null when no timeframe is mentioned', () => {
     expect(parseTimeframe('how much on food', now)).toBeNull();
   });
+
+  // Screenshot bug #3: "Aprils total?" silently fell through to all-time.
+  it('parses an explicit month name to that calendar month', () => {
+    const apr = parseTimeframe('aprils total?', now)!;
+    expect(apr.label).toBe('April');
+    expect(new Date(apr.startMs).getUTCMonth()).toBe(3); // April
+    expect(new Date(apr.startMs).getUTCFullYear()).toBe(2026); // already passed → this year
+    expect(new Date(apr.endMs).getUTCMonth()).toBe(3);
+
+    const what = parseTimeframe('what about april', now)!;
+    expect(what.label).toBe('April');
+  });
+
+  it('uses last year for a month that has not started yet', () => {
+    // Asked in June 2026, "December" means last December (2025), not future.
+    const dec = parseTimeframe('how much in december', now)!;
+    expect(new Date(dec.startMs).getUTCMonth()).toBe(11);
+    expect(new Date(dec.startMs).getUTCFullYear()).toBe(2025);
+  });
+
+  it('honors an explicit year after the month name', () => {
+    const apr25 = parseTimeframe('april 2025 total', now)!;
+    expect(apr25.label).toBe('April 2025');
+    expect(new Date(apr25.startMs).getUTCFullYear()).toBe(2025);
+    expect(new Date(apr25.startMs).getUTCMonth()).toBe(3);
+  });
+
+  it('parses a 3-letter month abbreviation', () => {
+    const jan = parseTimeframe('show jan spending', now)!;
+    expect(jan.label).toBe('January');
+    expect(new Date(jan.startMs).getUTCMonth()).toBe(0);
+  });
+
+  it('parses a bare calendar year', () => {
+    const yr = parseTimeframe('what did we spend in 2024', now)!;
+    expect(yr.label).toBe('2024');
+    expect(new Date(yr.startMs).getUTCFullYear()).toBe(2024);
+    expect(new Date(yr.startMs).getUTCMonth()).toBe(0);
+    expect(new Date(yr.endMs).getUTCFullYear()).toBe(2024);
+    expect(new Date(yr.endMs).getUTCMonth()).toBe(11);
+  });
+
+  it('does not treat the modal verb "may" as the month of May', () => {
+    expect(parseTimeframe('what may i ask you', now)).toBeNull();
+    // but the bare month still works
+    const may = parseTimeframe('how much in may', now)!;
+    expect(new Date(may.startMs).getUTCMonth()).toBe(4);
+  });
 });
 
 describe('comparison windows', () => {

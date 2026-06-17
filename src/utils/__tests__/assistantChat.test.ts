@@ -66,6 +66,21 @@ describe('classifyMessage', () => {
     expect(classifyMessage('show our settlements', members)).toBe('question'); // no member+amount ⇒ Q&A
     expect(classifyMessage('who paid the most?', members)).toBe('question');
   });
+
+  // Screenshot bug #2: "Clear the chat" returned a spend number from the model.
+  it('routes chat-control meta-commands to clear_chat', () => {
+    expect(classifyMessage('clear the chat', members)).toBe('clear_chat');
+    expect(classifyMessage('clear chat', members)).toBe('clear_chat');
+    expect(classifyMessage('reset the conversation', members)).toBe('clear_chat');
+    expect(classifyMessage('start over', members)).toBe('clear_chat');
+    expect(classifyMessage('wipe the history', members)).toBe('clear_chat');
+    expect(classifyMessage('new chat', members)).toBe('clear_chat');
+  });
+
+  it('does not confuse delete-expense with clear_chat', () => {
+    expect(classifyMessage('delete this expense', members)).toBe('delete_expense');
+    expect(classifyMessage('delete the dinner expense', members)).toBe('delete_expense');
+  });
 });
 
 describe('detectNavTarget', () => {

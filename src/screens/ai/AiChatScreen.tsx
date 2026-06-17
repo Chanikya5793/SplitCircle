@@ -18,7 +18,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import type { ExpenseAiSource } from '@/services/aiService';
 import { processAssistantTurn, type ConversationState, type ProposedAction } from '@/services/assistantService';
-import { loadChatSession, saveChatSession } from '@/services/chatSession';
+import { clearChatSession, loadChatSession, saveChatSession } from '@/services/chatSession';
 import type { NavTarget } from '@/utils/assistantChat';
 import { formatCurrency } from '@/utils/currency';
 import { lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
@@ -61,6 +61,14 @@ const QUICK_PROMPTS = [
 ];
 
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+// A proposed-action card older than this (parsed from its id timestamp) is
+// retired on restore; anything more recent stays live so a reload mid-flow keeps it.
+const STALE_CARD_MS = 30 * 60 * 1000;
+const tsOf = (id: string): number => {
+  const m = /^(\d+)/.exec(id);
+  return m ? Number(m[1]) : 0;
+};
 
 export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   const { theme, isDark } = useTheme();
@@ -124,12 +132,24 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
       if (!active || hydrated.current) return;
       hydrated.current = true;
       if (saved && saved.messages.length > 0) {
-        // Drop any stale pending confirm cards from the previous session.
-        const restored = saved.messages.map((m) =>
-          m.action && m.actionState === 'pending' ? { ...m, actionState: 'cancelled' as ActionState } : m,
-        );
+        // Retire only STALE confirm cards (older than the window); a recent
+        // proposal is kept live so reloading mid-flow doesn't kill it. An
+        // in-progress slot-filling draft (`pending`) is always preserved so a
+        // reload continues the flow instead of forgetting it (screenshot bug #6).
+        const now = Date.now();
+        let keptLiveCard = false;
+        const restored = saved.messages.map((m) => {
+          if (m.action && m.actionState === 'pending') {
+            if (now - tsOf(m.id) > STALE_CARD_MS) return { ...m, actionState: 'cancelled' as ActionState };
+            keptLiveCard = true;
+          }
+          return m;
+        });
         setMessages(restored);
-        stateRef.current = { ...saved.state, pending: undefined, lastProposed: undefined };
+        stateRef.current = {
+          pending: saved.state?.pending,
+          lastProposed: keptLiveCard ? saved.state?.lastProposed : undefined,
+        };
         requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
       }
     });
@@ -206,9 +226,21 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
     });
   };
 
+  // Wipe the conversation: clear persisted session + reset to a fresh greeting.
+  const clearConversation = useCallback(() => {
+    void clearChatSession(group.groupId);
+    stateRef.current = {};
+    successHaptic();
+    setMessages([GREETING(group.name)]);
+  }, [group.groupId, group.name]);
+
   const confirmAction = async (msg: ChatMsg) => {
     const a = msg.action;
     if (!a || a.type === 'navigate' || busy) return;
+    if (a.type === 'clear_chat') {
+      clearConversation();
+      return;
+    }
     setBusy(true);
     try {
       let ok: string;
@@ -321,7 +353,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                     style={[styles.actionBtn, { backgroundColor: 'destructive' in item.action && item.action.destructive ? theme.colors.error : theme.colors.primary, borderColor: 'transparent' }]}
                     disabled={busy}
                   >
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>{'destructive' in item.action && item.action.destructive ? 'Delete' : 'Confirm'}</Text>
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>{item.action.type === 'clear_chat' ? 'Clear' : 'destructive' in item.action && item.action.destructive ? 'Delete' : 'Confirm'}</Text>
                   </TouchableOpacity>
                 </View>
               </View>

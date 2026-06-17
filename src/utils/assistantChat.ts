@@ -15,6 +15,7 @@ export type AssistantIntent =
   | 'edit_expense'
   | 'delete_settlement'
   | 'navigate'
+  | 'clear_chat'
   | 'question'
   | 'chat';
 
@@ -214,11 +215,18 @@ const NAVIGATE_RE = /\b(open|go to|take me to|jump to|navigate to)\b/i;
 
 const SHOW_RE = /\b(show|list|view|see|display|what (are|is|were)|tell me)\b/i;
 const HELP_RE = /\b(help|what (all )?can (you|u|i) (do|ask|help)|what (do|are) you (do|capable|able)|what can you answer|how (do|does) (this|you|it) work|commands?|capabilities|who are you|what are you)\b/i;
+// Chat-control / meta ("clear the chat", "start over", "reset conversation"). Caught
+// before everything else so it can never leak to the model as a spend query.
+const CLEAR_CHAT_RE = /\b(clear|reset|wipe|erase|start over|restart)\b[^?]*\b(chat|conversation|convo|history|messages?)\b|^\s*(clear|reset|start over|new chat)\s*$/i;
 
 export function classifyMessage(message: string, members: readonly AssistantMember[]): AssistantIntent {
   const q = message ?? '';
   const hasMember = findMember(q, members) != null;
   const hasAmount = parseAmount(q) != null;
+
+  // Chat-control / meta-command. Must precede DELETE/SHOW so "clear the chat" and
+  // "delete this conversation" don't get read as delete-expense or a spend query.
+  if (CLEAR_CHAT_RE.test(q)) return 'clear_chat';
 
   // Help / capabilities → handled deterministically by the question engine.
   if (HELP_RE.test(q)) return 'question';

@@ -227,6 +227,31 @@ S2–S4); **include the PCC compile probe S5** in this first spike (runtime stay
 
 Everything here compiles on the current Xcode 26.5 and is mostly TypeScript + a modest Swift change.
 
+#### Phase A progress (2026-06-17) — deterministic items landed, sandbox-verified
+
+The pure-TypeScript items that need no device were implemented first (they fix three of the
+six screenshot symptoms with zero native risk; all `npm run test:unit` + `tsc` clean):
+
+- **A.4 — Timeframe coverage ✅.** `parseTimeframe` ([expenseAnalytics.ts](../../src/utils/expenseAnalytics.ts))
+  now parses **explicit month names** ("April", "Apr", "April's total?"), **`Month YYYY`** ("April 2025"),
+  and **bare calendar years** ("2024"). Month-without-year resolves to the most recent past occurrence
+  (April asked in June → this year; December → last year). Guards the modal verb "may" ("may I…" ≠ May).
+  This flows straight through `answerExpenseQuery`'s total/category branches, so "Aprils total?" is now an
+  exact, cited, April-scoped local answer instead of falling to the model (fixes symptom **#3**).
+- **A.6 — Meta-command vocabulary ✅.** New `clear_chat` intent ([assistantChat.ts](../../src/utils/assistantChat.ts)
+  `CLEAR_CHAT_RE`, classified before everything else) → `assistantService` returns a confirmed
+  `clear_chat` ProposedAction; `AiChatScreen` wipes the persisted session + resets to a greeting on
+  Confirm. "Clear the chat" / "start over" / "new chat" can no longer leak to the model as a spend
+  query (fixes symptom **#2**); "delete this expense" still routes to delete-expense.
+- **A.7 — Persistence fix ✅.** On restore, `AiChatScreen` no longer wipes `pending`/`lastProposed`;
+  it **preserves an in-progress slot-filling draft** and retires only confirm cards older than 30 min
+  (age parsed from the message id timestamp). Reloading mid-add no longer kills the draft (fixes
+  symptom **#6**).
+
+Still open (need the native session + device, or larger state plumbing): **A.1** persistent session,
+**A.2** richer instructions, **A.3** RouterDecision + abstain, **A.5** conversational memory on the
+Q&A path (`lastQuery` for "the month before that"), **A.8** eval harness.
+
 - **A.1 — Persistent session & transcript (Swift).** Hold one `LanguageModelSession` per group
   (keyed, lazily created, `prewarm()`ed) instead of `let session = LanguageModelSession {…}` per call.
   Expose `resetSession(groupId)` for "clear chat". This alone restores multi-turn continuity.
