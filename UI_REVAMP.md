@@ -163,6 +163,14 @@ fallback `'SplitCircle'`). All in-app copy uses it (kills the ManaSplit/SplitCir
   duplicate pinned rows, MessageInfo offline notice, money colors unified onto tokens,
   invite-code copy/share, FriendInfo entry point from Friends list, owner-badge contrast.
 - Dead code removed: GlassTabBar, TabBarSurface, GroupCard.
+- **Launch-crash root cause (2026-07-03, CONFIRMED via iOS 27 simulator repro)**: apps
+  **linked against the iOS 27 SDK** (any `eas build --local` on a Mac with only Xcode 27
+  beta) are killed by UIKit at launch on iOS 27 devices — `UIScene life cycle is required
+  for apps built with this SDK` (TN3187, SIGTRAP before the first frame; looks like a
+  splash crash). The identical binary runs fine on iOS 26.x. Neither Expo SDK 55 nor
+  RN 0.83 supports the UIScene lifecycle yet, so the fix is to build against the stable
+  SDK: use **remote** `eas build -p ios` (EAS builders run stable Xcode). Do NOT ship
+  local Xcode-27-beta builds to an iOS 27 device until Expo adopts UIScene.
 - **Build fix (2026-07-03)**: EAS production builds failed compiling the iOS 27 FM spike
   (`PrivateCloudComputeLanguageModel`/`ContextOptions` don't exist in stable Xcode's SDK —
   `#available` is runtime-only). Gated with `#if canImport(FoundationModels) && compiler(>=6.4)`
