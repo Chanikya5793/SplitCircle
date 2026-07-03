@@ -15,17 +15,18 @@ import {
     setUseAIForReceipts,
     type LearningMerchantSummary,
 } from '@/services/receiptLearningService';
+import { ACCENT_IDS, ACCENTS } from '@/theme';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Alert, Animated, StyleSheet, View } from 'react-native';
-import { Button, Divider, List, Switch, Text } from 'react-native-paper';
+import { Alert, Animated, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Button, Divider, Icon, List, SegmentedButtons, Switch, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export const SettingsScreen = () => {
   const navigation = useNavigation();
   const { user, signOutUser } = useAuth();
-  const { isDark, toggleTheme, theme } = useTheme();
+  const { isDark, theme, mode, setMode, accent, setAccent } = useTheme();
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
   const bottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
@@ -47,9 +48,14 @@ export const SettingsScreen = () => {
     extrapolate: 'clamp',
   });
 
-  const handleToggleTheme = () => {
+  const handleSetMode = (next: string) => {
     selectionHaptic();
-    toggleTheme();
+    setMode(next as typeof mode);
+  };
+
+  const handleSetAccent = (next: (typeof ACCENT_IDS)[number]) => {
+    selectionHaptic();
+    setAccent(next);
   };
 
   const handleSignOut = () => {
@@ -141,11 +147,43 @@ export const SettingsScreen = () => {
 
         <GlassView style={styles.settingsList} contentStyle={styles.settingsListContent}>
           <List.Section>
-            <List.Item
-              title="Dark Mode"
-              left={() => <List.Icon icon="theme-light-dark" />}
-              right={() => <Switch value={isDark} onValueChange={handleToggleTheme} />}
-            />
+            <List.Subheader>Appearance</List.Subheader>
+            <View style={styles.appearanceBlock}>
+              <SegmentedButtons
+                value={mode}
+                onValueChange={handleSetMode}
+                buttons={[
+                  { value: 'system', label: 'System', icon: 'theme-light-dark' },
+                  { value: 'light', label: 'Light', icon: 'white-balance-sunny' },
+                  { value: 'dark', label: 'Dark', icon: 'weather-night' },
+                ]}
+              />
+              <View style={styles.accentRow}>
+                {ACCENT_IDS.map((id) => {
+                  const swatch = ACCENTS[id][isDark ? 'dark' : 'light'];
+                  const selected = accent === id;
+                  return (
+                    <TouchableOpacity
+                      key={id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${ACCENTS[id].label} accent`}
+                      accessibilityState={{ selected }}
+                      onPress={() => handleSetAccent(id)}
+                      style={[
+                        styles.accentSwatch,
+                        { backgroundColor: swatch.primary },
+                        selected && { borderColor: theme.colors.onSurface, borderWidth: 2 },
+                      ]}
+                    >
+                      {selected ? <Icon source="check" size={18} color={swatch.onPrimary} /> : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Text variant="labelSmall" style={{ color: theme.colors.muted, textAlign: 'center' }}>
+                {ACCENTS[accent].label} · saved on this device, works offline
+              </Text>
+            </View>
             <Divider />
             <List.Item
               title="AI Receipt Parsing"
@@ -261,5 +299,22 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     paddingHorizontal: 8,
     paddingVertical: 4,
+  },
+  appearanceBlock: {
+    paddingHorizontal: 12,
+    paddingBottom: 14,
+    gap: 14,
+  },
+  accentRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+  },
+  accentSwatch: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

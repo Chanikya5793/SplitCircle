@@ -29,6 +29,9 @@ import { useAuth } from './AuthContext';
 interface GroupContextValue {
   groups: Group[];
   loading: boolean;
+  /** Ids of expenses/settlements written optimistically but not yet acked by
+   *  the server (durable outbox). UI shows a SyncBadge for these. */
+  pendingSyncIds: Set<string>;
   createGroup: (name: string, currency: string, requestId?: string) => Promise<string>;
   joinGroup: (inviteCode: string, requestId?: string) => Promise<void>;
   addExpense: (groupId: string, expense: Omit<Expense, 'expenseId' | 'createdAt' | 'updatedAt'>, fileUri?: string, fileName?: string, requestId?: string) => Promise<void>;
@@ -141,6 +144,19 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
   // snapshot listener can keep not-yet-synced writes from flickering out.
   const pendingOpsRef = useRef<OutboxOp[]>([]);
   const flushingRef = useRef(false);
+  const [pendingSyncIds, setPendingSyncIds] = useState<Set<string>>(new Set());
+
+  /** Recompute the reactive id set after any pendingOpsRef mutation. */
+  const refreshPendingIds = useCallback(() => {
+    const ids = new Set<string>();
+    for (const op of pendingOpsRef.current) {
+      ids.add(op.kind === 'addExpense' ? op.expense.expenseId : op.settlement.settlementId);
+    }
+    setPendingSyncIds((prev) => {
+      if (prev.size === ids.size && [...ids].every((id) => prev.has(id))) return prev;
+      return ids;
+    });
+  }, []);
 
   /** Perform the network write for one queued op (idempotent via arrayUnion). */
   const writeOp = useCallback(async (op: OutboxOp): Promise<void> => {
@@ -189,6 +205,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       while (guard++ < 100) {
         const ops = await loadOutbox();
         pendingOpsRef.current = ops;
+        refreshPendingIds();
         if (!ops.length) break;
         let progressed = false;
         for (const op of ops) {
@@ -196,6 +213,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
             await writeOp(op);
             await removeOp(op.id);
             pendingOpsRef.current = pendingOpsRef.current.filter((o) => o.id !== op.id);
+            refreshPendingIds();
             progressed = true;
           } catch (error) {
             console.warn('Outbox flush deferred for op', op.id, error);
@@ -208,13 +226,14 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     } finally {
       flushingRef.current = false;
     }
-  }, [writeOp]);
+  }, [writeOp, refreshPendingIds]);
 
   useEffect(() => {
     if (!user) {
       setGroups([]);
       setLoading(false);
       pendingOpsRef.current = [];
+      refreshPendingIds();
       return () => undefined;
     }
 
@@ -235,6 +254,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     void loadOutbox().then((ops) => {
       if (!active) return;
       pendingOpsRef.current = ops;
+      refreshPendingIds();
       void flushOutbox();
     });
     const unsubscribeNet = NetInfo.addEventListener((state) => {
@@ -258,7 +278,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       unsubscribe();
       unsubscribeNet();
     };
-  }, [user?.userId, flushOutbox]);
+  }, [user?.userId, flushOutbox, refreshPendingIds]);
 
   const createGroup = async (name: string, currency: string, requestId?: string) => {
     if (!user) throw new Error('Missing user');
@@ -428,6 +448,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     const op: OutboxOp = { id: expenseId, kind: 'addExpense', groupId, expense: newExpense, fileUri, fileName, createdAt: Date.now() };
     await enqueueOp(op);
     pendingOpsRef.current = [...pendingOpsRef.current.filter((o) => o.id !== op.id), op];
+    refreshPendingIds();
 
     setGroups((prev) => {
       const next = mergeOutboxIntoGroups(prev, [op]).map(adaptGroup);
@@ -586,6 +607,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     const op: OutboxOp = { id: settlementId, kind: 'settleUp', groupId, settlement: newSettlement, createdAt: Date.now() };
     await enqueueOp(op);
     pendingOpsRef.current = [...pendingOpsRef.current.filter((o) => o.id !== op.id), op];
+    refreshPendingIds();
 
     setGroups((prev) => {
       const next = mergeOutboxIntoGroups(prev, [op]).map(adaptGroup);
@@ -999,6 +1021,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     () => ({
       groups,
       loading,
+      pendingSyncIds,
       createGroup,
       joinGroup,
       addExpense,
@@ -1013,7 +1036,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       leaveGroup,
       deleteGroup,
     }),
-    [groups, loading],
+    [groups, loading, pendingSyncIds],
   );
 
   return <GroupContext.Provider value={value}>{children}</GroupContext.Provider>;

@@ -1,6 +1,12 @@
+// Ambient animated blob background — the app's signature backdrop. Blob
+// palettes now come from the design system: the neutral "balanced" state is
+// tinted by the user's chosen accent, while settled/debts keep their
+// semantic green/red trios. Colors crossfade with themeProgress as before.
+
 import { useTheme } from '@/context/ThemeContext';
+import { ACCENTS, NEUTRALS } from '@/theme/palette';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Dimensions, InteractionManager, StyleSheet, View, ViewStyle } from 'react-native';
+import { InteractionManager, StyleSheet, useWindowDimensions, View, ViewStyle } from 'react-native';
 import Animated, {
     Easing,
     interpolateColor,
@@ -11,8 +17,6 @@ import Animated, {
     withTiming
 } from 'react-native-reanimated';
 
-const { width, height } = Dimensions.get('window');
-
 export type HealthStatus = 'settled' | 'balanced' | 'debts';
 
 interface LiquidBackgroundProps {
@@ -20,20 +24,6 @@ interface LiquidBackgroundProps {
   style?: ViewStyle;
   healthStatus?: HealthStatus;
 }
-
-// Color palettes for different health statuses
-const COLOR_PALETTES = {
-  light: {
-    settled: ['#84fab0', '#a8edea', '#b8f6e6'],
-    balanced: ['#ff9a9e', '#fad0c4', '#a18cd1'],
-    debts: ['#ff6b6b', '#ffa07a', '#ff7f50'],
-  },
-  dark: {
-    settled: ['#00695C', '#00897B', '#26A69A'],
-    balanced: ['#4527A0', '#283593', '#00695C'],
-    debts: ['#B71C1C', '#C62828', '#D84315'],
-  },
-};
 
 interface BlobProps {
   lightColor: string;
@@ -50,13 +40,18 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, 
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
 
-  // Generate random animation parameters for more natural movement
-  const durationX = 12000 + Math.random() * 6000;
-  const durationY = 10000 + Math.random() * 8000;
-  const durationScale = 9000 + Math.random() * 6000;
-
-  const rangeX = 60 + Math.random() * 60;
-  const rangeY = 60 + Math.random() * 60;
+  // Random motion parameters must be stable across re-renders — regenerating
+  // them (the old bug) restarted animation phases whenever the tree updated.
+  const motion = useMemo(
+    () => ({
+      durationX: 12000 + Math.random() * 6000,
+      durationY: 10000 + Math.random() * 8000,
+      durationScale: 9000 + Math.random() * 6000,
+      rangeX: 60 + Math.random() * 60,
+      rangeY: 60 + Math.random() * 60,
+    }),
+    [],
+  );
 
   useEffect(() => {
     // Don't start animations until the transition is complete.
@@ -66,9 +61,9 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, 
 
     scaleSv.value = withRepeat(
       withSequence(
-        withTiming(1.3, { duration: durationScale, easing: Easing.inOut(Easing.ease) }),
-        withTiming(0.8, { duration: durationScale, easing: Easing.inOut(Easing.ease) }),
-        withTiming(1, { duration: durationScale, easing: Easing.inOut(Easing.ease) })
+        withTiming(1.3, { duration: motion.durationScale, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0.8, { duration: motion.durationScale, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: motion.durationScale, easing: Easing.inOut(Easing.ease) })
       ),
       -1,
       true
@@ -76,8 +71,8 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, 
 
     translateX.value = withRepeat(
       withSequence(
-        withTiming(rangeX, { duration: durationX, easing: Easing.inOut(Easing.quad) }),
-        withTiming(-rangeX, { duration: durationX * 1.2, easing: Easing.inOut(Easing.quad) })
+        withTiming(motion.rangeX, { duration: motion.durationX, easing: Easing.inOut(Easing.quad) }),
+        withTiming(-motion.rangeX, { duration: motion.durationX * 1.2, easing: Easing.inOut(Easing.quad) })
       ),
       -1,
       true
@@ -85,8 +80,8 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, 
 
     translateY.value = withRepeat(
       withSequence(
-        withTiming(-rangeY, { duration: durationY, easing: Easing.inOut(Easing.quad) }),
-        withTiming(rangeY, { duration: durationY * 1.1, easing: Easing.inOut(Easing.quad) })
+        withTiming(-motion.rangeY, { duration: motion.durationY, easing: Easing.inOut(Easing.quad) }),
+        withTiming(motion.rangeY, { duration: motion.durationY * 1.1, easing: Easing.inOut(Easing.quad) })
       ),
       -1,
       true
@@ -129,12 +124,11 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, 
 };
 
 export const LiquidBackground = ({ children, style, healthStatus = 'balanced' }: LiquidBackgroundProps) => {
-  const { themeProgress, isDark } = useTheme();
+  const { themeProgress, theme } = useTheme();
+  const { width, height } = useWindowDimensions();
   const [animate, setAnimate] = useState(false);
 
   // Defer blob animations until the navigation transition finishes.
-  // Blobs render immediately as static colored circles (cheap), but their
-  // movement animations only start after InteractionManager signals idle.
   useEffect(() => {
     const task = InteractionManager.runAfterInteractions(() => {
       setAnimate(true);
@@ -142,17 +136,23 @@ export const LiquidBackground = ({ children, style, healthStatus = 'balanced' }:
     return () => task.cancel();
   }, []);
 
-  // Memoize color selection based on health status
-  const { lightBlobColors, darkBlobColors } = useMemo(() => ({
-    lightBlobColors: COLOR_PALETTES.light[healthStatus],
-    darkBlobColors: COLOR_PALETTES.dark[healthStatus],
-  }), [healthStatus]);
+  // The crossfade needs BOTH schemes' trios, so resolve them from the palette
+  // by accent — this component is a design-system primitive like GlassCard.
+  const { lightBlobColors, darkBlobColors } = useMemo(() => {
+    const accent = ACCENTS[theme.accentId];
+    const pick = (scheme: 'light' | 'dark'): [string, string, string] => {
+      if (healthStatus === 'settled') return NEUTRALS[scheme].blobSettled;
+      if (healthStatus === 'debts') return NEUTRALS[scheme].blobDebts;
+      return accent[scheme].blobBalanced;
+    };
+    return { lightBlobColors: pick('light'), darkBlobColors: pick('dark') };
+  }, [healthStatus, theme.accentId]);
 
   const containerStyle = useAnimatedStyle(() => {
     const backgroundColor = interpolateColor(
       themeProgress.value,
       [0, 1],
-      ['#fdfbfb', '#121212']
+      [NEUTRALS.light.appBackground, NEUTRALS.dark.appBackground]
     );
     return { backgroundColor };
   });

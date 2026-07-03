@@ -41,8 +41,8 @@ function AppContent() {
 }
 
 function AppRoot() {
-  const { isDark } = useTheme();
-  const appBackground = isDark ? '#121212' : '#FDFBFB';
+  const { theme } = useTheme();
+  const appBackground = theme.colors.appBackground;
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: appBackground }}>

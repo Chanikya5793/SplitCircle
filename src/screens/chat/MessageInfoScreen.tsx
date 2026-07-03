@@ -1,6 +1,7 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
+import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatParticipant, ChatThread, MessageType } from '@/models';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
@@ -103,6 +104,7 @@ export const MessageInfoScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const { theme, isDark } = useTheme();
+  const { isOnline } = useOfflineSync();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -323,6 +325,17 @@ export const MessageInfoScreen = () => {
               </Text>
             </View>
           </GlassView>
+
+          {!isOnline ? (
+            <GlassView style={styles.section}>
+              <Text
+                variant="bodySmall"
+                style={[styles.emptyText, { color: theme.colors.onSurfaceVariant }]}
+              >
+                You're offline — receipt status will update when you reconnect.
+              </Text>
+            </GlassView>
+          ) : null}
 
           <GlassView style={styles.section}>
             {renderSectionHeader('Read by', 'checkmark-done', '#53BDEB', readByRows.length)}

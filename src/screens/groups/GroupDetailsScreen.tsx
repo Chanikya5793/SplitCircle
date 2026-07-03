@@ -12,7 +12,8 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense, Group, Settlement } from '@/models';
 import { syncRecurringBillsForGroupWithFallback } from '@/services/recurringBillService';
-import { errorHaptic, lightHaptic } from '@/utils/haptics';
+import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
+import * as Clipboard from 'expo-clipboard';
 import { useNavigation } from '@react-navigation/native';
 import { BlurView } from 'expo-blur';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -566,8 +567,19 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
         <GlassView style={styles.headerCard}>
           <View style={styles.header}>
             <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{group.name}</Text>
-            <Text variant="bodyMedium" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
+            <Text
+              variant="bodyMedium"
+              style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}
+              onPress={async () => {
+                successHaptic();
+                await Clipboard.setStringAsync(group.inviteCode);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Copy invite code"
+            >
               Invite code: <Text style={{ fontWeight: 'bold', color: theme.colors.primary }}>{group.inviteCode}</Text>
+              {'  '}
+              <Text style={{ color: theme.colors.muted, fontSize: 12 }}>(tap to copy)</Text>
             </Text>
           </View>
 
@@ -746,7 +758,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 style={styles.compactButton}
                 borderless
               >
-                <View style={[styles.compactButtonInner, { backgroundColor: '#10b981' }]}>
+                <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.success }]}>
                   <IconButton icon="handshake" size={20} iconColor="#fff" style={{ margin: 0 }} />
                   <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Settle Up</Text>
                 </View>
@@ -822,7 +834,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               pointerEvents={isCompact ? 'auto' : 'none'}
             >
               <View style={[styles.androidDock, { backgroundColor: isDark ? 'rgba(18,22,30,0.96)' : 'rgba(252,252,255,0.98)', borderColor: isDark ? 'rgba(148,163,184,0.24)' : 'rgba(15,23,42,0.14)' }]}>
-                <TouchableRipple onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: '#10b981' }]} borderless>
+                <TouchableRipple onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.success }]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="handshake" size={18} color="#fff" />
                     <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Settle</Text>

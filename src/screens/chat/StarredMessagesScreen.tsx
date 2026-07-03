@@ -1,4 +1,5 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -34,7 +35,7 @@ const iconForType = (type: MessageType): keyof typeof Ionicons.glyphMap => {
 };
 
 export const StarredMessagesScreen = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const route = useRoute();
   const params = (route.params as StarredScreenParams) ?? {};
   const insets = useSafeAreaInsets();
@@ -132,7 +133,19 @@ export const StarredMessagesScreen = () => {
           </View>
         }
         renderItem={({ item }) => (
-          <View style={[styles.card, { backgroundColor: surface }]}>
+          <TouchableOpacity
+            style={[styles.card, { backgroundColor: surface }]}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={`Open chat ${item.chatTitle}`}
+            onPress={() =>
+              navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+                chatId: item.message.chatId,
+                initialTitle: item.chatTitle,
+                backTitle: 'Starred',
+              })
+            }
+          >
             <View style={styles.cardHeaderRow}>
               <Text style={[styles.cardChat, { color: theme.colors.primary }]} numberOfLines={1}>
                 {item.chatTitle}
@@ -155,7 +168,7 @@ export const StarredMessagesScreen = () => {
                 {item.message.content || '(no text)'}
               </Text>
             </View>
-          </View>
+          </TouchableOpacity>
         )}
       />
     </LiquidBackground>

@@ -9,9 +9,10 @@ import type { GroupMember } from '@/models';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
 import { errorHaptic, lightHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
+import * as Clipboard from 'expo-clipboard';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Share, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, Button, Divider, IconButton, List, Text, TextInput } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -309,9 +310,9 @@ export const GroupInfoScreen = () => {
         const items: React.ReactNode[] = [];
         if (member.userId === group.createdBy) {
             items.push(
-                <View key="owner" style={styles.roleBadge}>
-                    <MaterialCommunityIcons name="crown" size={14} color="#FFD700" />
-                    <Text variant="labelSmall" style={[styles.roleBadgeText, { color: '#B8860B' }]}>
+                <View key="owner" style={[styles.roleBadge, { backgroundColor: theme.colors.warningContainer }]}>
+                    <MaterialCommunityIcons name="crown" size={14} color={theme.colors.warning} />
+                    <Text variant="labelSmall" style={[styles.roleBadgeText, { color: theme.colors.onWarningContainer }]}>
                         Owner
                     </Text>
                 </View>,
@@ -545,8 +546,25 @@ export const GroupInfoScreen = () => {
                         <Divider />
                         <List.Item
                             title="Invite code"
-                            description={group.inviteCode}
+                            description={`${group.inviteCode} · tap to copy`}
                             left={(props) => <List.Icon {...props} icon="ticket-confirmation-outline" />}
+                            onPress={async () => {
+                                successHaptic();
+                                await Clipboard.setStringAsync(group.inviteCode);
+                            }}
+                            right={(props) => (
+                                <IconButton
+                                    {...props}
+                                    icon="share-variant"
+                                    accessibilityLabel="Share invite code"
+                                    onPress={() => {
+                                        lightHaptic();
+                                        void Share.share({
+                                            message: `Join "${group.name}" — use invite code ${group.inviteCode}`,
+                                        });
+                                    }}
+                                />
+                            )}
                         />
                     </GlassView>
 
@@ -792,7 +810,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 10,
         paddingVertical: 4,
         borderRadius: 12,
-        backgroundColor: 'rgba(255, 215, 0, 0.18)',
     },
     roleBadgeText: {
         fontWeight: '700',

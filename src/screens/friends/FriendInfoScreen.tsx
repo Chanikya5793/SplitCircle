@@ -140,8 +140,8 @@ export const FriendInfoScreen = () => {
   const balanceColor = Math.abs(balanceSum) < 0.01
     ? theme.colors.onSurfaceVariant
     : balanceSum > 0
-      ? '#10B981'
-      : '#EF4444';
+      ? theme.colors.moneyPositive
+      : theme.colors.moneyNegative;
 
   const placeCall = async (type: 'audio' | 'video') => {
     if (!user || !profile) return;

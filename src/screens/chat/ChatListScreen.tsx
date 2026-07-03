@@ -13,7 +13,7 @@ import { getChatMessages, subscribeToLocalMessages } from '@/services/localMessa
 import { lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, RefreshControl, StyleSheet, View } from 'react-native';
+import { Animated, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
@@ -218,7 +218,6 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
               />
             </GlassView>
           )}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} />}
           ListEmptyComponent={
             loading ? (
               <View>
@@ -239,7 +238,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                 <View>
                   <TouchableRipple
                     onPress={() => { lightHaptic(); setFilterVisible(true); }}
-                    style={[styles.filterButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}
+                    style={[styles.filterButton, { backgroundColor: theme.colors.skeleton }]}
                     borderless
                   >
                     <View style={styles.filterButtonContent}>

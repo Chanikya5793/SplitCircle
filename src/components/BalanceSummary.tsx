@@ -1,5 +1,4 @@
 import { GlassView } from '@/components/GlassView';
-import { colors } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group, GroupMember } from '@/models';
 import { formatCurrency } from '@/utils/currency';
@@ -45,10 +44,10 @@ export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
   const renderRow = (member: GroupMember, archived: boolean) => {
     const isSettled = Math.abs(member.balance) < 0.005;
     const amountColor = isSettled
-      ? colors.success
+      ? theme.colors.moneyNeutral
       : member.balance > 0
-        ? colors.success
-        : theme.colors.error;
+        ? theme.colors.moneyPositive
+        : theme.colors.moneyNegative;
     const labelColor = archived ? theme.colors.onSurfaceVariant : theme.colors.onSurface;
 
     return (

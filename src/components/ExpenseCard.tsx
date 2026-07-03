@@ -1,4 +1,6 @@
 import { GlassView } from '@/components/GlassView';
+import { SyncBadge } from '@/components/ui/SyncBadge';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
 import { formatCurrency } from '@/utils/currency';
@@ -17,6 +19,8 @@ interface ExpenseCardProps {
 
 export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0 }: ExpenseCardProps) => {
   const { theme, isDark } = useTheme();
+  const { pendingSyncIds } = useGroups();
+  const isPendingSync = pendingSyncIds.has(expense.expenseId);
   const payerName = memberMap[expense.paidBy] || 'Unknown';
   const isSettlement = expense.category === 'Settlement';
   const splitLabel = getExpenseSplitLabel(expense);
@@ -37,6 +41,7 @@ export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0 }
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                   {new Date(expense.createdAt).toLocaleDateString()}
                 </Text>
+                {isPendingSync ? <SyncBadge style={{ marginTop: 4 }} /> : null}
               </View>
               <View style={styles.amountContainer}>
                 <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>

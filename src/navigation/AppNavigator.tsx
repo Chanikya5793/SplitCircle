@@ -218,7 +218,7 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
     return (
       <View style={styles.groupAccessoryInlineWrap}>
         <View style={styles.groupAccessoryInlineGlass}>
-          <TouchableOpacity onPress={openSettle} style={[styles.groupAccessoryInlineQuick, { backgroundColor: '#10b981' }]} activeOpacity={0.85}>
+          <TouchableOpacity onPress={openSettle} style={[styles.groupAccessoryInlineQuick, { backgroundColor: theme.colors.success }]} activeOpacity={0.85}>
             <View style={styles.groupAccessoryInlineQuickInner}>
               <Icon source="handshake" size={16} color="#fff" />
             </View>
@@ -256,7 +256,7 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
     <View style={styles.groupAccessoryRegularWrap}>
       <View style={styles.groupAccessoryRegularGlass}>
         <View style={styles.groupAccessoryRegularRow}>
-          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryPill, { backgroundColor: '#10b981' }]} borderless>
+          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryPill, { backgroundColor: theme.colors.success }]} borderless>
             <View style={styles.groupAccessoryPillInner}>
               <Icon source="handshake" size={17} color="#fff" />
               <Text variant="labelSmall" style={styles.groupAccessoryPrimaryText}>Settle</Text>
@@ -418,8 +418,8 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
 };
 
 const GroupsStackNavigator = () => {
-  const { theme, isDark } = useTheme();
-  const screenBackground = isDark ? '#121212' : '#FDFBFB';
+  const { theme } = useTheme();
+  const screenBackground = theme.colors.appBackground;
 
   return (
     <GroupsStack.Navigator
@@ -665,8 +665,8 @@ const CallSessionRoute = ({ route, navigation }: any) => {
 };
 
 const AuthStackNavigator = () => {
-  const { isDark } = useTheme();
-  const screenBackground = isDark ? '#121212' : '#FDFBFB';
+  const { theme } = useTheme();
+  const screenBackground = theme.colors.appBackground;
 
   return (
     <AuthStack.Navigator
@@ -692,7 +692,7 @@ const AppTabs = () => {
     }
 
     let isActive = true;
-    const inactiveColor = isDark ? '#9CA3AF' : '#64748B';
+    const inactiveColor = theme.colors.muted;
     const activeColor = theme.colors.primary;
 
     const loadIcon = async (name: React.ComponentProps<typeof MaterialCommunityIcons>['name'], color: string) => {
@@ -779,22 +779,22 @@ const AppTabs = () => {
         headerShown: false,
         lazy: Platform.OS === 'ios' ? false : true,
         tabBarActiveTintColor: theme.colors.primary,
-        tabBarInactiveTintColor: isDark ? '#9CA3AF' : '#64748B',
+        tabBarInactiveTintColor: theme.colors.muted,
         tabBarLabelStyle: {
           fontWeight: '600',
           fontSize: 12,
         },
         tabBarStyle: Platform.select({
           ios: {
-            backgroundColor: isDark ? '#121212' : '#FDFBFB',
+            backgroundColor: theme.colors.appBackground,
           },
           android: {
-            backgroundColor: isDark ? '#0D1117' : '#FFFFFF',
+            backgroundColor: theme.colors.surface,
           },
           default: undefined,
         }),
         tabBarActiveIndicatorColor: Platform.select({
-          android: isDark ? 'rgba(88,166,255,0.20)' : 'rgba(31,111,235,0.16)',
+          android: theme.colors.primaryContainer,
           default: undefined,
         }),
         tabBarBlurEffect: Platform.OS === 'ios' ? (isDark ? 'systemMaterialDark' : 'systemMaterialLight') : undefined,
@@ -852,8 +852,8 @@ const AppTabs = () => {
 };
 
 const AppStackNavigator = () => {
-  const { theme, isDark } = useTheme();
-  const screenBackground = isDark ? '#121212' : '#FDFBFB';
+  const { theme } = useTheme();
+  const screenBackground = theme.colors.appBackground;
 
   return (
       <AppStack.Navigator
@@ -1339,13 +1339,13 @@ const styles = StyleSheet.create({
 
 export const AppNavigator = () => {
   const { user, loading } = useAuth();
-  const { isDark } = useTheme();
+  const { theme, isDark } = useTheme();
 
   if (loading) {
     return <LoadingScreen />;
   }
 
-  const navigationBackground = isDark ? '#121212' : '#FDFBFB';
+  const navigationBackground = theme.colors.appBackground;
 
   const navigationTheme = {
     ...(isDark ? DarkTheme : DefaultTheme),

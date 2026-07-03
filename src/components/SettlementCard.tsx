@@ -1,4 +1,6 @@
 import { GlassView } from '@/components/GlassView';
+import { SyncBadge } from '@/components/ui/SyncBadge';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Settlement } from '@/models';
 import { formatCurrency } from '@/utils/currency';
@@ -26,6 +28,8 @@ export const SettlementCard = ({
     index = 0,
 }: SettlementCardProps) => {
     const { theme } = useTheme();
+    const { pendingSyncIds } = useGroups();
+    const isPendingSync = pendingSyncIds.has(settlement.settlementId);
     const swipeableRef = useRef<Swipeable>(null);
     const fromName = memberMap[settlement.fromUserId] || 'Unknown';
     const toName = memberMap[settlement.toUserId] || 'Unknown';
@@ -108,6 +112,7 @@ export const SettlementCard = ({
                                         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
                                             {new Date(settlement.createdAt).toLocaleDateString()}
                                         </Text>
+                                        {isPendingSync ? <SyncBadge style={{ marginTop: 4 }} /> : null}
                                     </View>
                                 </View>
                                 <View style={styles.amountContainer}>

@@ -1525,7 +1525,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 styles.sendButtonTouchable,
                 {
                   backgroundColor: !text.trim()
-                    ? (isDark ? '#555' : '#ccc')
+                    ? theme.colors.surfaceDisabled
                     : theme.colors.primary,
                 },
               ]}

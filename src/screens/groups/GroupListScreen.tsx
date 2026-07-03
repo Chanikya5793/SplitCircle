@@ -2,6 +2,7 @@ import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { PrimaryButton } from '@/components/PrimaryButton';
+import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { GroupCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableGroupCard } from '@/components/SwipeableGroupCard';
 import { GroupFilterSortSheet, GroupSortField, GroupSortOrder } from '@/components/GroupFilterSortSheet';
@@ -18,7 +19,7 @@ import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Keyboard, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Modal, Portal, Text, IconButton, Chip, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -30,6 +31,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { groups, loading, createGroup, joinGroup } = useGroups();
+  const { isOnline } = useOfflineSync();
   const { theme, isDark } = useTheme();
   const [dialog, setDialog] = useState<'create' | 'join' | null>(null);
   const [name, setName] = useState('');
@@ -142,6 +144,11 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       return;
     }
 
+    if (!isOnline) {
+      // createGroup is a direct Firestore write — offline it never resolves.
+      Alert.alert("You're offline", 'Creating a group needs an internet connection. Try again when you reconnect.');
+      return;
+    }
     try {
       await createGroup(name.trim(), selectedCurrency.code, requestId);
       successHaptic();
@@ -156,6 +163,10 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   };
 
   const handleJoin = async (requestId: string) => {
+    if (!isOnline) {
+      Alert.alert("You're offline", 'Joining a group needs an internet connection. Try again when you reconnect.');
+      return;
+    }
     try {
       await joinGroup(inviteCode.trim().toUpperCase(), requestId);
       successHaptic();
@@ -279,7 +290,6 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
             </Text>
           )
         }
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} tintColor={theme.colors.primary} />}
       />
 
       <View style={[styles.actions, { bottom: tabBarEnvelopeHeight + 12 }]}>
@@ -403,12 +413,12 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
               <Button onPress={() => setDialog(null)} textColor={theme.colors.primary}>Cancel</Button>
               <PrimaryButton
                 onPress={handleJoin}
-                disabled={!inviteCode}
+                disabled={!inviteCode || !isOnline}
                 requestKey="group-join"
                 loadingMessage="Joining group..."
                 showGlobalOverlay
               >
-                Join
+                {isOnline ? 'Join' : 'Offline'}
               </PrimaryButton>
             </View>
           </GlassView>

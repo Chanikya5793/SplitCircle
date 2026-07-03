@@ -1,12 +1,10 @@
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
 import React, { useMemo } from 'react';
-import { Dimensions, StyleSheet, View } from 'react-native';
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { LineChart, PieChart } from 'react-native-chart-kit';
 import { Text } from 'react-native-paper';
 import { GlassView } from './GlassView';
-
-const screenWidth = Dimensions.get('window').width;
 
 interface SpendingChartProps {
     expenses: Expense[];
@@ -39,8 +37,12 @@ const aggregateByWeek = (expenses: Expense[]): { labels: string[]; data: number[
     };
 };
 
-// Aggregate expenses by category
-const aggregateByCategory = (expenses: Expense[]): { name: string; amount: number; color: string }[] => {
+// Aggregate expenses by category — palette + legend color come from theme tokens
+const aggregateByCategory = (
+    expenses: Expense[],
+    palette: string[],
+    legendColor: string,
+): { name: string; amount: number; color: string }[] => {
     const categoryMap = new Map<string, number>();
 
     expenses.forEach((expense) => {
@@ -49,33 +51,37 @@ const aggregateByCategory = (expenses: Expense[]): { name: string; amount: numbe
         }
     });
 
-    const colors = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#C9CBCF', '#7BC225'];
-
     return Array.from(categoryMap.entries())
         .sort((a, b) => b[1] - a[1])
         .slice(0, 8)
         .map(([name, amount], index) => ({
             name,
             amount,
-            color: colors[index % colors.length],
-            legendFontColor: '#7F7F7F',
+            color: palette[index % palette.length],
+            legendFontColor: legendColor,
             legendFontSize: 12,
         }));
 };
 
 export const SpendingChart = ({ expenses, currency, showPieChart = true }: SpendingChartProps) => {
     const { theme, isDark } = useTheme();
+    const { width: screenWidth } = useWindowDimensions();
 
     const lineData = useMemo(() => aggregateByWeek(expenses), [expenses]);
-    const pieData = useMemo(() => aggregateByCategory(expenses), [expenses]);
+    const pieData = useMemo(
+        () => aggregateByCategory(expenses, theme.colors.chart, theme.colors.muted),
+        [expenses, theme],
+    );
 
     const chartConfig = {
         backgroundColor: 'transparent',
-        backgroundGradientFrom: isDark ? '#1E1E1E' : '#ffffff',
-        backgroundGradientTo: isDark ? '#1E1E1E' : '#ffffff',
+        backgroundGradientFrom: theme.colors.surface,
+        backgroundGradientTo: theme.colors.surface,
         decimalPlaces: 0,
-        color: (opacity = 1) => isDark ? `rgba(167, 139, 250, ${opacity})` : `rgba(99, 102, 241, ${opacity})`,
-        labelColor: (opacity = 1) => isDark ? `rgba(255, 255, 255, ${opacity})` : `rgba(0, 0, 0, ${opacity})`,
+        color: (opacity = 1) =>
+            theme.colors.primary + Math.round(opacity * 255).toString(16).padStart(2, '0'),
+        labelColor: (opacity = 1) =>
+            isDark ? `rgba(255, 255, 255, ${opacity})` : `rgba(0, 0, 0, ${opacity})`,
         style: {
             borderRadius: 16,
         },
