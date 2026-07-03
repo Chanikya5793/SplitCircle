@@ -6,6 +6,13 @@ import CallKit
 // RNCallKeep and RNVoipPushNotificationManager are imported through
 // SplitCircle-Bridging-Header.h — they're ObjC pods without Swift modulemaps.
 
+// iOS 27 refuses to launch apps built with the iOS 26 SDK (or later) that use
+// the classic UIApplication lifecycle (TN3187 — SIGTRAP before first frame).
+// The app therefore adopts the UIScene lifecycle: this delegate keeps process-
+// level setup (React Native factory, VoIP PushKit, theme-override observer),
+// while window creation + startReactNative live in SceneDelegate below, wired
+// up via UIApplicationSceneManifest in Info.plist.
+
 @UIApplicationMain
 class AppDelegate: ExpoAppDelegate, PKPushRegistryDelegate {
   var window: UIWindow?
@@ -13,6 +20,9 @@ class AppDelegate: ExpoAppDelegate, PKPushRegistryDelegate {
   var reactNativeDelegate: ExpoReactNativeFactoryDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
   var voipRegistry: PKPushRegistry?
+  /** Kept for SceneDelegate — startReactNative wants the launch options, and
+   *  scene connection happens after didFinishLaunching returns. */
+  var launchOptionsSnapshot: [UIApplication.LaunchOptionsKey: Any]?
 
   override func application(
     _ application: UIApplication,
@@ -24,37 +34,14 @@ class AppDelegate: ExpoAppDelegate, PKPushRegistryDelegate {
 
     reactNativeDelegate = delegate
     reactNativeFactory = factory
+    launchOptionsSnapshot = launchOptions
 
-#if os(iOS) || os(tvOS)
-    window = UIWindow(frame: UIScreen.main.bounds)
-    // Prevent white flash during tab transitions by giving the window an explicit
-    // background that matches the app's dark/light theme at the native level.
-    if #available(iOS 13.0, *) {
-      window?.backgroundColor = UIColor { traitCollection in
-        traitCollection.userInterfaceStyle == .dark
-          ? UIColor(red: 18/255, green: 18/255, blue: 18/255, alpha: 1)
-          : UIColor(red: 253/255, green: 251/255, blue: 251/255, alpha: 1)
-      }
-      // If the user previously chose a theme in-app, apply it immediately so
-      // the UITabBarController (and all native views) use the correct appearance
-      // before JavaScript even loads. Updated live via userDefaultsDidChange.
-      if let stored = UserDefaults.standard.object(forKey: "RNThemeIsDark") as? Int {
-        window?.overrideUserInterfaceStyle = stored == 1 ? .dark : .light
-      }
-      NotificationCenter.default.addObserver(
-        self,
-        selector: #selector(userDefaultsDidChange(_:)),
-        name: UserDefaults.didChangeNotification,
-        object: nil
-      )
-    } else {
-      window?.backgroundColor = UIColor(red: 253/255, green: 251/255, blue: 251/255, alpha: 1)
-    }
-    factory.startReactNative(
-      withModuleName: "main",
-      in: window,
-      launchOptions: launchOptions)
-#endif
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(userDefaultsDidChange(_:)),
+      name: UserDefaults.didChangeNotification,
+      object: nil
+    )
 
     registerVoipPushKit()
 
@@ -126,7 +113,6 @@ class AppDelegate: ExpoAppDelegate, PKPushRegistryDelegate {
   // Called whenever JS writes a theme preference via Settings.set({ RNThemeIsDark: 0|1 }).
   // Updates window.overrideUserInterfaceStyle so the UITabBarController and all other
   // native views reflect the in-app theme rather than the system setting.
-  @available(iOS 13.0, *)
   @objc func userDefaultsDidChange(_ notification: Notification) {
     guard let stored = UserDefaults.standard.object(forKey: "RNThemeIsDark") as? Int else { return }
     let newStyle: UIUserInterfaceStyle = stored == 1 ? .dark : .light
@@ -153,6 +139,75 @@ class AppDelegate: ExpoAppDelegate, PKPushRegistryDelegate {
   ) -> Bool {
     let result = RCTLinkingManager.application(application, continue: userActivity, restorationHandler: restorationHandler)
     return super.application(application, continue: userActivity, restorationHandler: restorationHandler) || result
+  }
+}
+
+// MARK: - UIScene lifecycle
+
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+  var window: UIWindow?
+
+  func scene(
+    _ scene: UIScene,
+    willConnectTo session: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions
+  ) {
+    guard let windowScene = scene as? UIWindowScene else { return }
+    guard
+      let appDelegate = UIApplication.shared.delegate as? AppDelegate,
+      let factory = appDelegate.reactNativeFactory
+    else { return }
+
+    let window = UIWindow(windowScene: windowScene)
+
+    // Prevent white flash during tab transitions by giving the window an explicit
+    // background that matches the app's dark/light theme at the native level.
+    window.backgroundColor = UIColor { traitCollection in
+      traitCollection.userInterfaceStyle == .dark
+        ? UIColor(red: 18/255, green: 18/255, blue: 18/255, alpha: 1)
+        : UIColor(red: 253/255, green: 251/255, blue: 251/255, alpha: 1)
+    }
+    // If the user previously chose a theme in-app, apply it immediately so
+    // the UITabBarController (and all native views) use the correct appearance
+    // before JavaScript even loads. Updated live via userDefaultsDidChange.
+    if let stored = UserDefaults.standard.object(forKey: "RNThemeIsDark") as? Int {
+      window.overrideUserInterfaceStyle = stored == 1 ? .dark : .light
+    }
+
+    self.window = window
+    // Libraries (RNCallKeep, RN internals) and the theme observer read
+    // UIApplication.delegate.window — keep it pointing at the scene's window.
+    appDelegate.window = window
+
+    // Synthesize the URL launch option so Linking.getInitialURL() keeps
+    // working for cold-start deep links, which scenes deliver via
+    // connectionOptions instead of didFinishLaunching.
+    var launchOptions = appDelegate.launchOptionsSnapshot ?? [:]
+    if let urlContext = connectionOptions.urlContexts.first {
+      launchOptions[.url] = urlContext.url
+    }
+
+    factory.startReactNative(
+      withModuleName: "main",
+      in: window,
+      launchOptions: launchOptions)
+  }
+
+  // Deep links while running (custom scheme — expo-linking, Google auth redirect).
+  // Route through the app delegate's open-url chain so every Expo module
+  // subscriber receives it, same as the classic lifecycle.
+  func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+    guard
+      let url = URLContexts.first?.url,
+      let appDelegate = UIApplication.shared.delegate as? AppDelegate
+    else { return }
+    _ = appDelegate.application(UIApplication.shared, open: url, options: [:])
+  }
+
+  // Universal Links while running.
+  func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+    guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else { return }
+    _ = appDelegate.application(UIApplication.shared, continue: userActivity, restorationHandler: { _ in })
   }
 }
 
