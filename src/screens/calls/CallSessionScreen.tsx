@@ -1,6 +1,10 @@
 import { CallControls } from '@/components/CallControls';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GroupAvatar, UserAvatar } from '@/components/ui';
+import { useAuth } from '@/context/AuthContext';
+import { useChat } from '@/context/ChatContext';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useCallManager } from '@/hooks/useCallManager';
 import type { CallStatus, CallType } from '@/models';
@@ -13,6 +17,7 @@ import {
   useTracks,
   VideoTrack,
 } from '@livekit/react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { ConnectionState, Track } from 'livekit-client';
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { BackHandler, StyleSheet, View } from 'react-native';
@@ -31,6 +36,20 @@ type CallTheme = {
     onSurfaceVariant: string;
   };
 };
+
+/** Who we're talking to — drives avatars/titles on every call surface. */
+export interface CallPeer {
+  name: string;
+  photoURL?: string;
+  isGroup: boolean;
+}
+
+const PeerAvatar = ({ peer, size }: { peer: CallPeer; size: number }) =>
+  peer.isGroup ? (
+    <GroupAvatar photoURL={peer.photoURL} name={peer.name} size={size} />
+  ) : (
+    <UserAvatar photoURL={peer.photoURL} displayName={peer.name} size={size} />
+  );
 
 const formatDuration = (seconds: number) => {
   const mins = Math.floor(seconds / 60);
@@ -103,9 +122,10 @@ const LocalTrackPublisher = ({ callType, isMuted, isCameraOff }: LocalTrackPubli
 interface VideoRoomContentProps {
   theme: CallTheme;
   isCameraOff: boolean;
+  peer: CallPeer;
 }
 
-const VideoRoomContent = ({ theme, isCameraOff }: VideoRoomContentProps) => {
+const VideoRoomContent = ({ theme, isCameraOff, peer }: VideoRoomContentProps) => {
   const connectionState = useConnectionState();
   const participants = useParticipants();
   const tracks = useTracks([Track.Source.Camera]);
@@ -181,9 +201,10 @@ const VideoRoomContent = ({ theme, isCameraOff }: VideoRoomContentProps) => {
           <VideoTrack trackRef={remoteTrack} style={styles.rtcView} objectFit="cover" />
         ) : (
           <View style={styles.videoPlaceholder}>
-            <View style={styles.avatarPlaceholder}>
-              <Text style={styles.avatarText}>👤</Text>
-            </View>
+            <PeerAvatar peer={peer} size={104} />
+            <Text style={[styles.placeholderName, { color: theme.colors.onSurface }]} numberOfLines={1}>
+              {peer.name}
+            </Text>
             <Text style={[styles.placeholderText, { color: theme.colors.onSurfaceVariant }]}>
               {connectionState === ConnectionState.Connected
                 ? participants.length > 1
@@ -206,7 +227,11 @@ const VideoRoomContent = ({ theme, isCameraOff }: VideoRoomContentProps) => {
             />
           ) : (
             <View style={styles.videoPlaceholder}>
-              <Text style={styles.localAvatarText}>{isCameraOff ? '📷' : '👤'}</Text>
+              <Ionicons
+                name={isCameraOff ? 'videocam-off' : 'person'}
+                size={26}
+                color="rgba(255,255,255,0.85)"
+              />
             </View>
           )}
         </GlassView>
@@ -224,9 +249,10 @@ interface AudioRoomContentProps {
   theme: CallTheme;
   status: CallStatus;
   callDuration: number;
+  peer: CallPeer;
 }
 
-const AudioRoomContent = ({ theme, status, callDuration }: AudioRoomContentProps) => {
+const AudioRoomContent = ({ theme, status, callDuration, peer }: AudioRoomContentProps) => {
   const connectionState = useConnectionState();
   const participants = useParticipants();
 
@@ -251,14 +277,16 @@ const AudioRoomContent = ({ theme, status, callDuration }: AudioRoomContentProps
   return (
     <View style={styles.audioCallContainer}>
       <GlassView style={styles.audioCallCard}>
-        <View style={styles.audioAvatar}>
-          <Text style={styles.audioAvatarText}>🎧</Text>
-        </View>
-        <Text variant="headlineMedium" style={[styles.audioTitle, { color: theme.colors.onSurface }]}> 
-          Audio Call
+        <PeerAvatar peer={peer} size={132} />
+        <Text variant="headlineMedium" style={[styles.audioTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
+          {peer.name}
         </Text>
-        <Text style={[styles.audioSubtitle, { color: theme.colors.onSurfaceVariant }]}> 
-          {remoteParticipant ? remoteParticipant.name || 'Connected' : 'Waiting for participant...'}
+        <Text style={[styles.audioSubtitle, { color: theme.colors.onSurfaceVariant }]}>
+          {status === 'connected'
+            ? remoteParticipant?.name || 'Connected'
+            : remoteParticipant
+              ? remoteParticipant.name || 'Connected'
+              : 'Waiting for participant...'}
         </Text>
         {status === 'connected' && (
           <Text style={[styles.audioDuration, { color: theme.colors.primary }]}>
@@ -395,8 +423,31 @@ export const CallSessionScreen = ({
     toggleCamera,
   } = useCallManager({ chatId, groupId });
   const { theme } = useTheme();
+  const { threads } = useChat();
+  const { groups } = useGroups();
+  const { user } = useAuth();
   const [callDuration, setCallDuration] = useState(0);
   const [shouldConnectRoom, setShouldConnectRoom] = useState(true);
+
+  // Who this call is with — group identity for group calls, the other
+  // participant for DMs. Pure presentation; falls back gracefully when the
+  // thread hasn't loaded yet.
+  const peer = useMemo<CallPeer>(() => {
+    if (groupId) {
+      const group = groups.find((g) => g.groupId === groupId);
+      if (group) return { name: group.name, photoURL: group.photoURL, isGroup: true };
+    }
+    const thread = threads.find((t) => t.chatId === chatId);
+    if (thread) {
+      if (thread.type === 'group') {
+        const group = groups.find((g) => g.groupId === thread.groupId);
+        return { name: group?.name ?? 'Group call', photoURL: group?.photoURL, isGroup: true };
+      }
+      const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+      if (other) return { name: other.displayName || 'Call', photoURL: other.photoURL, isGroup: false };
+    }
+    return { name: type === 'video' ? 'Video call' : 'Audio call', isGroup: Boolean(groupId) };
+  }, [chatId, groupId, groups, threads, type, user?.userId]);
 
   const hasInitializedRef = useRef(false);
   const isLocalHangupRef = useRef(false);
@@ -583,9 +634,20 @@ export const CallSessionScreen = ({
             />
           ) : null}
           <View style={styles.statusContent}>
-            <Text style={[styles.statusTitle, { color: theme.colors.onSurface }]}> 
-              {callType === 'video' ? '📹 Video Call' : '📞 Audio Call'}
-            </Text>
+            <View style={styles.statusIdentityRow}>
+              <PeerAvatar peer={peer} size={28} />
+              <Text
+                style={[styles.statusTitle, { color: theme.colors.onSurface }]}
+                numberOfLines={1}
+              >
+                {peer.name}
+              </Text>
+              <Ionicons
+                name={callType === 'video' ? 'videocam' : 'call'}
+                size={15}
+                color={theme.colors.onSurfaceVariant}
+              />
+            </View>
             <View style={styles.statusRow}>
               <Text style={[styles.statusText, { color: theme.colors.onSurfaceVariant }]}>
                 {statusText}
@@ -628,12 +690,13 @@ export const CallSessionScreen = ({
                 hasAutoClosedRef={hasAutoClosedRef}
               />
               {callType === 'video' ? (
-                <VideoRoomContent theme={theme as CallTheme} isCameraOff={isCameraOff} />
+                <VideoRoomContent theme={theme as CallTheme} isCameraOff={isCameraOff} peer={peer} />
               ) : (
                 <AudioRoomContent
                   theme={theme as CallTheme}
                   status={status}
                   callDuration={callDuration}
+                  peer={peer}
                 />
               )}
             </LiveKitRoom>
@@ -692,10 +755,17 @@ const styles = StyleSheet.create({
   statusContent: {
     alignItems: 'center',
   },
-  statusTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+  statusIdentityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginBottom: 4,
+    maxWidth: '85%',
+  },
+  statusTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    flexShrink: 1,
   },
   statusRow: {
     flexDirection: 'row',
@@ -746,20 +816,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
   },
-  avatarPlaceholder: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  avatarText: {
-    fontSize: 48,
-  },
-  localAvatarText: {
-    fontSize: 24,
+  placeholderName: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginTop: 14,
+    marginBottom: 4,
+    maxWidth: '80%',
   },
   placeholderText: {
     fontSize: 14,
@@ -817,20 +879,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     minWidth: 280,
   },
-  audioAvatar: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  audioAvatarText: {
-    fontSize: 56,
-  },
   audioTitle: {
+    marginTop: 20,
     marginBottom: 8,
+    fontWeight: '700',
+    maxWidth: 260,
+    textAlign: 'center',
   },
   audioSubtitle: {
     fontSize: 16,

@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { GroupAvatar, UserAvatar } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { useAuth } from '@/context/AuthContext';
@@ -11,7 +12,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
+import { IconButton, Portal, Text, TouchableRipple } from 'react-native-paper';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
 interface CallLobbyScreenProps {
@@ -54,6 +55,16 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
     }
     const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
     return otherParticipant?.displayName || 'Direct Chat';
+  }, [groups, user?.userId]);
+
+  // Photo + kind for the row avatar (group photo / other participant's photo).
+  const getChatAvatar = useMemo(() => (thread: ChatThread): { kind: 'group' | 'user'; photoURL?: string; name: string } => {
+    if (thread.type === 'group' && thread.groupId) {
+      const group = groups.find(g => g.groupId === thread.groupId);
+      return { kind: 'group', photoURL: group?.photoURL, name: group?.name || 'Group Chat' };
+    }
+    const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+    return { kind: 'user', photoURL: otherParticipant?.photoURL, name: otherParticipant?.displayName || 'Direct Chat' };
   }, [groups, user?.userId]);
 
   // Sort Logic
@@ -121,26 +132,50 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
             { useNativeDriver: true }
           )}
           scrollEventThrottle={16}
-          renderItem={({ item }) => (
-            <GlassView style={styles.card}>
-              <List.Item
-                title={getChatTitle(item)}
-                description={item.lastMessage?.content ?? 'Start a call'}
-                titleStyle={{ color: theme.colors.onSurface }}
-                descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
-                right={() => (
-                  <View style={styles.callActions}>
-                    <Button compact mode="text" onPress={() => onStartCall(item, 'audio')}>
-                      Audio
-                    </Button>
-                    <Button compact mode="text" onPress={() => onStartCall(item, 'video')}>
-                      Video
-                    </Button>
-                  </View>
+          renderItem={({ item }) => {
+            const avatar = getChatAvatar(item);
+            return (
+              <GlassView style={styles.card} contentStyle={styles.cardContent}>
+                {avatar.kind === 'group' ? (
+                  <GroupAvatar photoURL={avatar.photoURL} name={avatar.name} size={46} />
+                ) : (
+                  <UserAvatar photoURL={avatar.photoURL} displayName={avatar.name} size={46} />
                 )}
-              />
-            </GlassView>
-          )}
+                <View style={styles.cardText}>
+                  <Text
+                    variant="titleMedium"
+                    style={{ color: theme.colors.onSurface, fontWeight: '600' }}
+                    numberOfLines={1}
+                  >
+                    {getChatTitle(item)}
+                  </Text>
+                  <Text
+                    variant="bodySmall"
+                    style={{ color: theme.colors.onSurfaceVariant }}
+                    numberOfLines={1}
+                  >
+                    {item.type === 'group' ? 'Group call' : 'Personal call'}
+                  </Text>
+                </View>
+                <View style={styles.callActions}>
+                  <IconButton
+                    icon="phone"
+                    mode="contained-tonal"
+                    size={20}
+                    onPress={() => { lightHaptic(); onStartCall(item, 'audio'); }}
+                    accessibilityLabel={`Audio call ${getChatTitle(item)}`}
+                  />
+                  <IconButton
+                    icon="video"
+                    mode="contained-tonal"
+                    size={20}
+                    onPress={() => { lightHaptic(); onStartCall(item, 'video'); }}
+                    accessibilityLabel={`Video call ${getChatTitle(item)}`}
+                  />
+                </View>
+              </GlassView>
+            );
+          }}
           ListEmptyComponent={<Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No contacts available for calls.</Text>}
         />
       </View>
@@ -170,12 +205,21 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: 16,
     overflow: 'hidden',
-    paddingHorizontal: 8,
+  },
+  cardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  cardText: {
+    flex: 1,
+    gap: 1,
   },
   callActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
   },
   empty: {
     marginTop: 32,
