@@ -199,3 +199,21 @@ fallback `'SplitCircle'`). All in-app copy uses it (kills the ManaSplit/SplitCir
 - Keep react-native-paper components; do not introduce new UI libraries.
 - Do not change navigation structure, route names, or data contexts' public APIs.
 - Do not break the three-tier storage DNA (see ARCHITECTURE.md).
+
+## 2026-07-03 (later): wallpapers, photo integration, calls revamp — VERIFIED ON iOS 27 SIM
+- Custom backgrounds: app-wide photo, chat-default, per-chat/per-group overrides
+  (wallpaperService + useWallpaper + LiquidBackground photo layer). Verified live:
+  app slot renders behind Groups/Settings/Calls; chat-default renders in
+  conversations; Settings rows detect set photos; chat header menu shows
+  Change/Reset wallpaper. NOTE: iOS 27 beta sim's PHPicker hangs on "Loading…"
+  (OS bug — picker is out-of-process); verified by injecting storage directly.
+- Profile photos: buildUserProfile precedence fixed (Firestore-first),
+  uploader syncs Firebase Auth + propagates to group member entries;
+  UserAvatar/GroupAvatar unified components; verified real photo rendering in
+  chat list rows + chat header pill.
+- Group photos: model + updateGroup + GroupPhotoUploader (Group Info, admin
+  camera badge); GroupAvatar across ChatList/GroupDetails/GroupInfo/call header.
+- firestore.rules updated (photoURL/description in mutable list + profile-sync
+  clause) — MUST run `firebase deploy --only firestore:rules`.
+- Calls: session screen shows peer identity (avatar/name) everywhere,
+  FaceTime-style CallControls, avatar-led lobby rows.
