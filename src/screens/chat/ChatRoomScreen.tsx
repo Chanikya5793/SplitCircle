@@ -21,6 +21,12 @@ import type { SelectionAction } from '@/components/Chat/SelectionToolbar';
 import { AlbumBubble } from '@/components/AlbumBubble';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GroupAvatar, UserAvatar } from '@/components/ui';
+import {
+  clearWallpaper,
+  getWallpaperSync,
+  pickAndSetWallpaper,
+} from '@/services/wallpaperService';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -1244,7 +1250,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   ]);
 
   return (
-    <LiquidBackground>
+    <LiquidBackground wallpaperChatId={thread.chatId}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -1273,20 +1279,21 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             >
               <GlassView style={styles.headerPill} intensity={40}>
                 <View style={styles.headerPillContent}>
-                  {thread.type === 'direct' && directParticipant?.photoURL ? (
-                    <Avatar.Image
-                      size={36}
-                      source={{ uri: directParticipant.photoURL }}
-                      style={{ marginRight: 10 }}
-                    />
-                  ) : (
-                    <Avatar.Text
-                      size={36}
-                      label={groupInitials}
-                      style={{ backgroundColor: theme.colors.primary, marginRight: 10 }}
-                      color={theme.colors.onPrimary}
-                    />
-                  )}
+                  <View style={{ marginRight: 10 }}>
+                    {thread.type === 'direct' ? (
+                      <UserAvatar
+                        photoURL={directParticipant?.photoURL}
+                        displayName={directParticipant?.displayName ?? title}
+                        size={36}
+                      />
+                    ) : (
+                      <GroupAvatar
+                        photoURL={groups.find((g) => g.groupId === thread.groupId)?.photoURL}
+                        name={title}
+                        size={36}
+                      />
+                    )}
+                  </View>
                   <View style={{ flexShrink: 1 }}>
                     <Text
                       variant="titleMedium"
@@ -1628,6 +1635,35 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               enterSelectionMode();
             },
           },
+          {
+            key: 'wallpaper',
+            label: 'Change wallpaper',
+            icon: 'image-outline',
+            onPress: () => {
+              void (async () => {
+                try {
+                  await pickAndSetWallpaper(`chat:${thread.chatId}`);
+                } catch (error) {
+                  Alert.alert(
+                    'Wallpaper',
+                    error instanceof Error ? error.message : 'Could not set the wallpaper.',
+                  );
+                }
+              })();
+            },
+          },
+          ...(getWallpaperSync(`chat:${thread.chatId}`)
+            ? [
+                {
+                  key: 'wallpaper-reset',
+                  label: 'Reset wallpaper',
+                  icon: 'refresh-outline',
+                  onPress: () => {
+                    void clearWallpaper(`chat:${thread.chatId}`);
+                  },
+                } satisfies HeaderMenuItem,
+              ]
+            : []),
         ] satisfies HeaderMenuItem[]}
       />
 

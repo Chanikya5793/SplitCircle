@@ -1,7 +1,10 @@
 import { APP_NAME } from '@/constants/appInfo';
 import { useAuth } from '@/context/AuthContext';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
-import { db, storage } from '@/firebase';
+import { auth, db, storage } from '@/firebase';
+import { propagateProfileToGroups } from '@/services/profilePropagation';
+import { updateProfile } from 'firebase/auth';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -17,6 +20,7 @@ interface ProfilePhotoUploaderProps {
 
 export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhotoUploaderProps) => {
   const { user } = useAuth();
+  const { groups } = useGroups();
   const { theme } = useTheme();
   const [uploading, setUploading] = useState(false);
   const [localUri, setLocalUri] = useState<string | null>(null);
@@ -63,9 +67,19 @@ export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhot
       
       const downloadUrl = await getDownloadURL(storageRef);
 
-      // Update Firestore user profile
+      // Update Firestore user profile (authoritative)
       const userRef = doc(db, 'users', user.userId);
       await updateDoc(userRef, { photoURL: downloadUrl });
+
+      // Keep the Firebase Auth profile in step so auth-derived surfaces
+      // (fresh installs before the first snapshot) show the same photo.
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, { photoURL: downloadUrl }).catch(() => {});
+      }
+
+      // Push the new photo into every group's denormalized member entry —
+      // that's where friends lists, chats, and expense rows read it from.
+      void propagateProfileToGroups(user.userId, { photoURL: downloadUrl }, groups);
 
       successHaptic();
     } catch (error) {

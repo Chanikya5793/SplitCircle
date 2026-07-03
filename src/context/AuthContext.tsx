@@ -50,8 +50,12 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const buildUserProfile = (firebaseUser: FirebaseUser, existing?: UserProfile): UserProfile => ({
   userId: firebaseUser.uid,
   email: firebaseUser.email ?? '',
-  displayName: firebaseUser.displayName ?? existing?.displayName ?? '',
-  photoURL: firebaseUser.photoURL ?? existing?.photoURL ?? null,  // Must be null, not undefined for Firestore
+  // App profile (Firestore/cache) wins over the Firebase Auth copy: the photo
+  // uploader and name edits write to Firestore, while the Auth profile keeps
+  // whatever the provider set at sign-up (e.g. the Google avatar). Auth-first
+  // ordering silently reverted every uploaded photo on the next snapshot.
+  displayName: existing?.displayName?.trim() || firebaseUser.displayName || '',
+  photoURL: existing?.photoURL ?? firebaseUser.photoURL ?? null,  // Must be null, not undefined for Firestore
   groups: existing?.groups ?? [],
   status: 'online',
   createdAt: existing?.createdAt ?? Date.now(),

@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GroupAvatar, GroupPhotoUploader } from '@/components/ui';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -353,12 +354,7 @@ export const GroupInfoScreen = () => {
                 >
                     <GlassView style={styles.stickyHeaderGlass}>
                         <View style={styles.stickyHeaderContent}>
-                            <Avatar.Text
-                                size={32}
-                                label={groupInitials}
-                                style={{ backgroundColor: theme.colors.primary }}
-                                color={theme.colors.onPrimary}
-                            />
+                            <GroupAvatar photoURL={group.photoURL} name={group.name} size={32} />
                             <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
                                 {group.name}
                             </Text>
@@ -382,12 +378,7 @@ export const GroupInfoScreen = () => {
                     </Animated.View>
 
                     <View style={styles.profileSection}>
-                        <Avatar.Text
-                            size={120}
-                            label={groupInitials}
-                            style={{ backgroundColor: theme.colors.primary }}
-                            color={theme.colors.onPrimary}
-                        />
+                        <GroupPhotoUploader group={group} size={120} editable={isAdmin} />
 
                         <View style={styles.nameSection}>
                             {isEditingName ? (

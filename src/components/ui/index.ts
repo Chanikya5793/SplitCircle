@@ -13,3 +13,5 @@ export {
 } from './ScreenScaffold';
 export { SectionLabel, type SectionLabelProps } from './SectionLabel';
 export { SyncBadge, type SyncBadgeProps } from './SyncBadge';
+export { GroupAvatar, UserAvatar } from './AvatarPhoto';
+export { GroupPhotoUploader } from './GroupPhotoUploader';

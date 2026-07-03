@@ -2,11 +2,17 @@
 // palettes now come from the design system: the neutral "balanced" state is
 // tinted by the user's chosen accent, while settled/debts keep their
 // semantic green/red trios. Colors crossfade with themeProgress as before.
+//
+// Users can replace the blobs with their own photo (Settings ▸ Appearance, or
+// per-conversation from the chat header menu). When a wallpaper resolves for
+// this screen, the photo renders under a theme-adaptive scrim instead of the
+// blobs; the scrim keeps foreground text legible over arbitrary photos.
 
 import { useTheme } from '@/context/ThemeContext';
+import { useWallpaper } from '@/hooks/useWallpaper';
 import { ACCENTS, NEUTRALS } from '@/theme/palette';
 import React, { useEffect, useMemo, useState } from 'react';
-import { InteractionManager, StyleSheet, useWindowDimensions, View, ViewStyle } from 'react-native';
+import { Image, InteractionManager, StyleSheet, useWindowDimensions, View, ViewStyle } from 'react-native';
 import Animated, {
     Easing,
     interpolateColor,
@@ -23,6 +29,11 @@ interface LiquidBackgroundProps {
   children: React.ReactNode;
   style?: ViewStyle;
   healthStatus?: HealthStatus;
+  /**
+   * Conversation id — resolves that chat's wallpaper (per-chat → chat
+   * default). Omit for regular screens, which use the app-wide wallpaper.
+   */
+  wallpaperChatId?: string;
 }
 
 interface BlobProps {
@@ -123,10 +134,16 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, 
   );
 };
 
-export const LiquidBackground = ({ children, style, healthStatus = 'balanced' }: LiquidBackgroundProps) => {
-  const { themeProgress, theme } = useTheme();
+export const LiquidBackground = ({
+  children,
+  style,
+  healthStatus = 'balanced',
+  wallpaperChatId,
+}: LiquidBackgroundProps) => {
+  const { themeProgress, theme, isDark } = useTheme();
   const { width, height } = useWindowDimensions();
   const [animate, setAnimate] = useState(false);
+  const wallpaper = useWallpaper(wallpaperChatId);
 
   // Defer blob animations until the navigation transition finishes.
   useEffect(() => {
@@ -156,6 +173,31 @@ export const LiquidBackground = ({ children, style, healthStatus = 'balanced' }:
     );
     return { backgroundColor };
   });
+
+  if (wallpaper) {
+    // Photo background: no blobs, no theme crossfade — the photo IS the
+    // backdrop. The scrim adapts to the scheme so text stays readable in
+    // dark mode without making light mode look washed out.
+    return (
+      <Animated.View style={[styles.container, containerStyle, style]}>
+        <Image
+          key={wallpaper.setAt}
+          source={{ uri: wallpaper.uri }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+          accessibilityIgnoresInvertColors
+        />
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            { backgroundColor: isDark ? 'rgba(0,0,0,0.42)' : 'rgba(255,255,255,0.18)' },
+          ]}
+        />
+        <View style={styles.content}>{children}</View>
+      </Animated.View>
+    );
+  }
 
   return (
     <Animated.View style={[styles.container, containerStyle, style]}>

@@ -40,7 +40,7 @@ interface GroupContextValue {
   settleUp: (groupId: string, settlement: Omit<Settlement, 'settlementId' | 'createdAt' | 'status'>, requestId?: string) => Promise<void>;
   updateSettlement: (groupId: string, settlement: Settlement, requestId?: string) => Promise<void>;
   deleteSettlement: (groupId: string, settlementId: string) => Promise<void>;
-  updateGroup: (groupId: string, updates: { name?: string; description?: string }) => Promise<void>;
+  updateGroup: (groupId: string, updates: { name?: string; description?: string; photoURL?: string }) => Promise<void>;
   updateMemberRole: (groupId: string, userId: string, role: 'admin' | 'member') => Promise<void>;
   removeMember: (groupId: string, userId: string) => Promise<void>;
   leaveGroup: (groupId: string) => Promise<void>;
@@ -739,7 +739,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
 
   const updateGroup = async (
     groupId: string,
-    updates: { name?: string; description?: string },
+    updates: { name?: string; description?: string; photoURL?: string },
   ) => {
     if (!user) throw new Error('You must be signed in to edit a group.');
     const group = groups.find((g) => g.groupId === groupId);
@@ -762,6 +762,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     const writePayload: Record<string, unknown> = { updatedAt: serverTimestamp() };
     if (hasName && trimmedName) writePayload.name = trimmedName;
     if (hasDescription) writePayload.description = trimmedDescription ?? '';
+    if (updates.photoURL !== undefined) writePayload.photoURL = updates.photoURL;
 
     if (Object.keys(writePayload).length === 1) {
       // Only updatedAt would change — skip the write.

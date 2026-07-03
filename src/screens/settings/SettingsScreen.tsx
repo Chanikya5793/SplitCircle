@@ -1,6 +1,12 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
+import { useWallpaperSlot } from '@/hooks/useWallpaper';
+import {
+  clearWallpaper,
+  pickAndSetWallpaper,
+  type WallpaperSlot,
+} from '@/services/wallpaperService';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -27,6 +33,33 @@ export const SettingsScreen = () => {
   const navigation = useNavigation();
   const { user, signOutUser } = useAuth();
   const { isDark, theme, mode, setMode, accent, setAccent } = useTheme();
+  const appWallpaper = useWallpaperSlot('app');
+  const chatDefaultWallpaper = useWallpaperSlot('chat-default');
+
+  const handleWallpaper = (slot: WallpaperSlot, hasValue: boolean) => {
+    lightHaptic();
+    if (!hasValue) {
+      void pickAndSetWallpaper(slot).catch((error) =>
+        Alert.alert('Background', error instanceof Error ? error.message : 'Could not set the photo.'),
+      );
+      return;
+    }
+    Alert.alert(
+      slot === 'app' ? 'App background' : 'Chat wallpaper',
+      undefined,
+      [
+        {
+          text: 'Choose new photo',
+          onPress: () =>
+            void pickAndSetWallpaper(slot).catch((error) =>
+              Alert.alert('Background', error instanceof Error ? error.message : 'Could not set the photo.'),
+            ),
+        },
+        { text: 'Remove photo', style: 'destructive', onPress: () => void clearWallpaper(slot) },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
+  };
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
   const bottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
@@ -184,6 +217,22 @@ export const SettingsScreen = () => {
                 {ACCENTS[accent].label} · saved on this device, works offline
               </Text>
             </View>
+            <Divider />
+            <List.Item
+              title="App background"
+              description={appWallpaper ? 'Custom photo · tap to change or remove' : 'Use your own photo behind every screen'}
+              left={() => <List.Icon icon="image-outline" />}
+              right={() => <List.Icon icon="chevron-right" />}
+              onPress={() => handleWallpaper('app', Boolean(appWallpaper))}
+            />
+            <Divider />
+            <List.Item
+              title="Chat wallpaper"
+              description={chatDefaultWallpaper ? 'Custom photo for all chats · tap to change' : 'Default photo for all chats & groups'}
+              left={() => <List.Icon icon="message-image-outline" />}
+              right={() => <List.Icon icon="chevron-right" />}
+              onPress={() => handleWallpaper('chat-default', Boolean(chatDefaultWallpaper))}
+            />
             <Divider />
             <List.Item
               title="AI Receipt Parsing"

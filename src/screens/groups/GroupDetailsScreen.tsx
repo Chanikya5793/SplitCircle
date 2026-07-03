@@ -3,6 +3,7 @@ import { DebtsList } from '@/components/DebtsList';
 import { ActivityTypeFilter, DateRange, FilterSortSheet, SortField, SortOrder } from '@/components/FilterSortSheet';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GroupAvatar } from '@/components/ui';
 import { SettlementCard } from '@/components/SettlementCard';
 import { ExpenseCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableExpenseCard } from '@/components/SwipeableExpenseCard';
@@ -566,7 +567,10 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
         <View style={{ height: 110 }} />
         <GlassView style={styles.headerCard}>
           <View style={styles.header}>
-            <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{group.name}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <GroupAvatar photoURL={group.photoURL} name={group.name} size={44} />
+              <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface, flexShrink: 1 }} numberOfLines={1}>{group.name}</Text>
+            </View>
             <Text
               variant="bodyMedium"
               style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}

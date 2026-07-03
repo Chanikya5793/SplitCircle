@@ -16,6 +16,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
+import { GroupAvatar, UserAvatar } from '@/components/ui';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
 interface ChatListScreenProps {
@@ -59,6 +60,17 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     }
     const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
     return otherParticipant?.displayName || 'Direct Chat';
+  }, [groups, user?.userId]);
+
+  // Photo + kind for the row avatar: group photo for group threads, the other
+  // participant's profile photo for DMs; initials render as the fallback.
+  const getChatAvatar = useMemo(() => (thread: ChatThread): { kind: 'group' | 'user'; photoURL?: string; name: string } => {
+    if (thread.type === 'group' && thread.groupId) {
+      const group = groups.find(g => g.groupId === thread.groupId);
+      return { kind: 'group', photoURL: group?.photoURL, name: group?.name || 'Group Chat' };
+    }
+    const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+    return { kind: 'user', photoURL: otherParticipant?.photoURL, name: otherParticipant?.displayName || 'Direct Chat' };
   }, [groups, user?.userId]);
 
   // Helper to get chat initials for avatar
@@ -195,12 +207,14 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                 description={lastPreviewFor(item)}
                 left={() => (
                   <View>
-                    <Avatar.Text
-                      size={48}
-                      label={getChatInitials(item)}
-                      style={{ backgroundColor: theme.colors.primary }}
-                      color={theme.colors.onPrimary}
-                    />
+                    {(() => {
+                      const avatar = getChatAvatar(item);
+                      return avatar.kind === 'group' ? (
+                        <GroupAvatar photoURL={avatar.photoURL} name={avatar.name} size={48} />
+                      ) : (
+                        <UserAvatar photoURL={avatar.photoURL} displayName={avatar.name} size={48} />
+                      );
+                    })()}
                     {(localUnreadCounts[item.chatId] ?? 0) > 0 && (
                       <View style={[styles.unreadBadge, { backgroundColor: theme.colors.error, borderColor: theme.colors.background }]}>
                         <Text style={{ color: theme.colors.onError, fontSize: 10, fontWeight: 'bold' }}>
