@@ -22,6 +22,7 @@ import {
   type GuardScope,
   type GuardTargets,
 } from '@/services/privacyGuardService';
+import { authenticate, biometricLabel, isBiometricAvailable } from '@/services/biometrics';
 import { lightHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useMemo } from 'react';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -118,6 +119,12 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
   const { threads } = useChat();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
+  const [bioAvailable, setBioAvailable] = React.useState(false);
+  const [bioLabel, setBioLabel] = React.useState('Face ID');
+  React.useEffect(() => {
+    void isBiometricAvailable().then(setBioAvailable);
+    void biometricLabel().then(setBioLabel);
+  }, []);
 
   const surface = isDark ? '#1c1c20' : '#ffffff';
   const divider = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
@@ -377,6 +384,19 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
             'Trip automatically when the app goes to the background',
             settings.rearmOnBackground,
             (v) => void updateGuard({ rearmOnBackground: v }),
+          )}
+          {toggleRow(
+            `Unlock with ${bioLabel}`,
+            bioAvailable ? 'Use biometrics instead of the code to reveal & open' : `Set up ${bioLabel} in iOS Settings first`,
+            settings.biometricUnlock,
+            (v) => {
+              if (!v) { void updateGuard({ biometricUnlock: false }); return; }
+              void (async () => {
+                if (!(await isBiometricAvailable())) return;
+                const ok = await authenticate(`Enable ${bioLabel} unlock`);
+                if (ok) void updateGuard({ biometricUnlock: true });
+              })();
+            },
           )}
 
           <View style={[styles.divider, { backgroundColor: divider, marginTop: 6 }]} />

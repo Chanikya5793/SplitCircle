@@ -7,7 +7,8 @@ import { GroupProvider } from '@/context/GroupContext';
 import { LoadingProvider } from '@/context/LoadingContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { PrivacyGuardProvider } from '@/context/PrivacyGuardContext';
-import { LockedOverlay } from '@/components/ui';
+import { AppLockProvider } from '@/context/AppLockContext';
+import { AppLockGate, LockedOverlay } from '@/components/ui';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { AppNavigator } from '@/navigation/AppNavigator';
 import { StatusBar } from 'expo-status-bar';
@@ -27,14 +28,17 @@ function AppContent() {
             <GroupProvider>
               <ChatProvider>
                 <CallProvider>
-                  <PrivacyGuardProvider>
-                    <StatusBar style={isDark ? "light" : "dark"} />
-                    <LiquidBackground>
-                      <OfflineBanner />
-                      <AppNavigator />
-                    </LiquidBackground>
-                    <LockedOverlay />
-                  </PrivacyGuardProvider>
+                  <AppLockProvider>
+                    <PrivacyGuardProvider>
+                      <StatusBar style={isDark ? "light" : "dark"} />
+                      <LiquidBackground>
+                        <OfflineBanner />
+                        <AppNavigator />
+                      </LiquidBackground>
+                      <LockedOverlay />
+                    </PrivacyGuardProvider>
+                    <AppLockGate />
+                  </AppLockProvider>
                 </CallProvider>
               </ChatProvider>
             </GroupProvider>

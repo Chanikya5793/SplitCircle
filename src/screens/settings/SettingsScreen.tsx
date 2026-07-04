@@ -7,6 +7,9 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
 import { GlassCard, ListRow, PrivacyGuardSheet, SectionLabel, StickyHeaderPill, WallpaperPickerSheet } from '@/components/ui';
 import { getGuardSync, hashCode, updateGuard, verifyCode } from '@/services/privacyGuardService';
+import { useAppLock } from '@/context/AppLockContext';
+import { AUTO_LOCK_OPTIONS, updateAppLock } from '@/services/appLockService';
+import { authenticate, biometricLabel, isBiometricAvailable } from '@/services/biometrics';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { APP_NAME, APP_VERSION } from '@/constants/appInfo';
 import { useAuth } from '@/context/AuthContext';
@@ -54,16 +57,60 @@ export const SettingsScreen = () => {
 
   const [wallpaperSlot, setWallpaperSlot] = useState<WallpaperSlot | null>(null);
   const [guardSheetOpen, setGuardSheetOpen] = useState(false);
+  const { settings: appLock } = useAppLock();
+  const [bioLabel, setBioLabel] = useState('Face ID');
+  const [bioAvailable, setBioAvailable] = useState(false);
   const versionTapsRef = useRef<number[]>([]);
 
   // Hidden entry: 7 quick taps on the version footer. First time sets the
   // secret code; afterwards the code is required to open the sheet.
+  const promptForCode = () => {
+    Alert.prompt(
+      'Enter code',
+      undefined,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Open',
+          onPress: (code?: string) => {
+            void verifyCode(code ?? '').then((ok) => {
+              if (ok) {
+                void updateGuard({ active: false });
+                setGuardSheetOpen(true);
+              } else {
+                lightHaptic();
+              }
+            });
+          },
+        },
+      ],
+      'secure-text',
+    );
+  };
+
   const handleVersionTap = () => {
     const now = Date.now();
     versionTapsRef.current = [...versionTapsRef.current.filter((t) => now - t < 3000), now];
     if (versionTapsRef.current.length < 7) return;
     versionTapsRef.current = [];
     const guard = getGuardSync();
+    // Face ID shortcut: if the user opted into biometric unlock and it's set
+    // up, open the hidden settings on a successful scan (code stays as the
+    // fallback below if biometrics fail or aren't enrolled).
+    if (guard.codeHash && guard.biometricUnlock) {
+      void (async () => {
+        if (await isBiometricAvailable()) {
+          const ok = await authenticate('Open privacy settings');
+          if (ok) {
+            void updateGuard({ active: false });
+            setGuardSheetOpen(true);
+            return;
+          }
+        }
+        promptForCode();
+      })();
+      return;
+    }
     if (!guard.codeHash) {
       Alert.prompt(
         'Set a secret code',
@@ -89,27 +136,7 @@ export const SettingsScreen = () => {
       );
       return;
     }
-    Alert.prompt(
-      'Enter code',
-      undefined,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Open',
-          onPress: (code?: string) => {
-            void verifyCode(code ?? '').then((ok) => {
-              if (ok) {
-                void updateGuard({ active: false });
-                setGuardSheetOpen(true);
-              } else {
-                lightHaptic();
-              }
-            });
-          },
-        },
-      ],
-      'secure-text',
-    );
+    promptForCode();
   };
   const [strictReviewMode, setStrictReviewModeState] = useState(false);
   const [useAIForReceipts, setUseAIForReceiptsState] = useState(true);
@@ -161,7 +188,40 @@ export const SettingsScreen = () => {
 
   useEffect(() => {
     void loadReceiptLearningSettings();
+    void biometricLabel().then(setBioLabel);
+    void isBiometricAvailable().then(setBioAvailable);
   }, []);
+
+  const toggleAppLock = (enable: boolean) => {
+    lightHaptic();
+    if (!enable) {
+      void updateAppLock({ enabled: false });
+      return;
+    }
+    void (async () => {
+      if (!(await isBiometricAvailable())) {
+        Alert.alert(`${bioLabel} unavailable`, `Set up ${bioLabel} in iOS Settings first.`);
+        return;
+      }
+      const ok = await authenticate(`Enable App Lock with ${bioLabel}`, true);
+      if (ok) void updateAppLock({ enabled: true });
+    })();
+  };
+
+  const pickAutoLock = () => {
+    lightHaptic();
+    Alert.alert(
+      'Auto-lock',
+      'Require unlock after the app has been in the background for:',
+      [
+        ...AUTO_LOCK_OPTIONS.map((o) => ({
+          text: o.label,
+          onPress: () => void updateAppLock({ autoLockMs: o.value }),
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ],
+    );
+  };
 
   const handleToggleStrictReviewMode = async (enabled: boolean) => {
     selectionHaptic();
@@ -384,6 +444,39 @@ export const SettingsScreen = () => {
                   </View>
                 ))}
               </View>
+            </>
+          )}
+        </GlassCard>
+
+        <SectionLabel style={styles.sectionLabel}>Security</SectionLabel>
+        <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+          <ListRow
+            title={`App Lock (${bioLabel})`}
+            subtitle={
+              !bioAvailable
+                ? `Set up ${bioLabel} in iOS Settings to use this`
+                : appLock.enabled
+                  ? 'Unlock required to open the app'
+                  : 'Require unlock to open the app'
+            }
+            icon="lock-outline"
+            trailing={
+              <Switch
+                value={appLock.enabled}
+                disabled={!bioAvailable}
+                onValueChange={toggleAppLock}
+              />
+            }
+          />
+          {appLock.enabled && (
+            <>
+              {divider}
+              <ListRow
+                title="Auto-lock"
+                subtitle={AUTO_LOCK_OPTIONS.find((o) => o.value === appLock.autoLockMs)?.label ?? 'Immediately'}
+                icon="timer-outline"
+                onPress={pickAutoLock}
+              />
             </>
           )}
         </GlassCard>

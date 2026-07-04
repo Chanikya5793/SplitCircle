@@ -19,6 +19,7 @@ import {
 import { errorHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, Platform, Settings } from 'react-native';
+import { authenticate, isBiometricAvailable } from '@/services/biometrics';
 
 type GuardTarget = keyof GuardTargets;
 
@@ -115,32 +116,44 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
           void updateGuard({ active: true });
           return;
         }
-        // Already tripped → shake to reveal: prompt for the code.
+        // Already tripped → shake to reveal. Biometrics first if enabled,
+        // then fall back to the secret code so there's always a way out.
         if (promptingRef.current) return;
         promptingRef.current = true;
         warningHaptic();
-        Alert.prompt(
-          'Enter code',
-          'Shake detected — enter your code to reveal.',
-          [
-            { text: 'Cancel', style: 'cancel', onPress: () => { promptingRef.current = false; } },
-            {
-              text: 'Reveal',
-              onPress: (code?: string) => {
-                void verifyCode(code ?? '').then((ok) => {
-                  promptingRef.current = false;
-                  if (ok) {
-                    successHaptic();
-                    void updateGuard({ active: false });
-                  } else {
-                    errorHaptic();
-                  }
-                });
+        void (async () => {
+          if (current.biometricUnlock && (await isBiometricAvailable())) {
+            const ok = await authenticate('Reveal hidden content');
+            if (ok) {
+              promptingRef.current = false;
+              successHaptic();
+              void updateGuard({ active: false });
+              return;
+            }
+          }
+          Alert.prompt(
+            'Enter code',
+            'Shake detected — enter your code to reveal.',
+            [
+              { text: 'Cancel', style: 'cancel', onPress: () => { promptingRef.current = false; } },
+              {
+                text: 'Reveal',
+                onPress: (code?: string) => {
+                  void verifyCode(code ?? '').then((ok) => {
+                    promptingRef.current = false;
+                    if (ok) {
+                      successHaptic();
+                      void updateGuard({ active: false });
+                    } else {
+                      errorHaptic();
+                    }
+                  });
+                },
               },
-            },
-          ],
-          'secure-text',
-        );
+            ],
+            'secure-text',
+          );
+        })();
       });
     })();
 

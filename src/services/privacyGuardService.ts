@@ -70,6 +70,8 @@ export interface PrivacyGuardSettings {
   chatScope: GuardScope;
   /** Trip automatically whenever the app goes to the background. */
   rearmOnBackground: boolean;
+  /** Allow Face ID / Touch ID as an alternative to the secret code. */
+  biometricUnlock: boolean;
 }
 
 export const DEFAULT_GUARD_SETTINGS: PrivacyGuardSettings = {
@@ -89,6 +91,7 @@ export const DEFAULT_GUARD_SETTINGS: PrivacyGuardSettings = {
   groupScope: { mode: 'all', ids: [] },
   chatScope: { mode: 'all', ids: [] },
   rearmOnBackground: false,
+  biometricUnlock: false,
 };
 
 /** Whether an entity id falls inside a scope. */
