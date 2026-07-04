@@ -209,3 +209,80 @@ export const verifyCode = async (code: string): Promise<boolean> => {
   if (!settings.codeHash) return false;
   return (await hashCode(code)) === settings.codeHash;
 };
+
+// ---------------------------------------------------------------------------
+// Failed-attempt lockout — a 4-char code is brute-forceable, so escalating
+// cooldowns are enforced after repeated wrong entries. State persists (in the
+// settings blob) so killing the app doesn't reset the counter.
+
+const LOCKOUT_KEY = 'guard_lockout_v1';
+interface LockoutState {
+  fails: number;
+  until: number; // ms epoch; 0 = not locked out
+}
+let lockout: LockoutState = { fails: 0, until: 0 };
+let lockoutHydrated = false;
+
+const loadLockout = async (): Promise<LockoutState> => {
+  if (lockoutHydrated) return lockout;
+  try {
+    const raw = await AsyncStorage.getItem(LOCKOUT_KEY);
+    if (raw) lockout = JSON.parse(raw) as LockoutState;
+  } catch {
+    // keep defaults
+  }
+  lockoutHydrated = true;
+  return lockout;
+};
+
+const saveLockout = async () => {
+  try {
+    await AsyncStorage.setItem(LOCKOUT_KEY, JSON.stringify(lockout));
+  } catch {
+    // ephemeral fallback
+  }
+};
+
+/** Escalating cooldown after each threshold of failures (ms). */
+const cooldownFor = (fails: number): number => {
+  if (fails < 5) return 0;
+  if (fails < 8) return 30_000; // 30s
+  if (fails < 11) return 5 * 60_000; // 5m
+  return 60 * 60_000; // 1h
+};
+
+/** Remaining lockout in ms (0 = free to try). Hydrates on first call. */
+export const lockoutRemainingMs = async (): Promise<number> => {
+  await loadLockout();
+  return Math.max(0, lockout.until - Date.now());
+};
+
+export interface UnlockResult {
+  ok: boolean;
+  /** When ok is false, ms the caller must wait before another attempt. */
+  lockedForMs: number;
+}
+
+/**
+ * Verify a code with brute-force protection. On success the counter resets;
+ * on failure it increments and, past the threshold, sets an escalating
+ * cooldown. Callers should surface `lockedForMs` when non-zero.
+ */
+export const attemptUnlock = async (code: string): Promise<UnlockResult> => {
+  await loadLockout();
+  const remaining = Math.max(0, lockout.until - Date.now());
+  if (remaining > 0) return { ok: false, lockedForMs: remaining };
+
+  const ok = await verifyCode(code);
+  if (ok) {
+    lockout = { fails: 0, until: 0 };
+    await saveLockout();
+    return { ok: true, lockedForMs: 0 };
+  }
+
+  lockout.fails += 1;
+  const cd = cooldownFor(lockout.fails);
+  lockout.until = cd > 0 ? Date.now() + cd : 0;
+  await saveLockout();
+  return { ok: false, lockedForMs: cd };
+};

@@ -11,6 +11,7 @@ import {
   onGuardChanged,
   SHAKE_THRESHOLDS,
   updateGuard,
+  attemptUnlock,
   verifyCode,
   type GuardAction,
   type GuardTargets,
@@ -139,7 +140,7 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
               {
                 text: 'Reveal',
                 onPress: (code?: string) => {
-                  void verifyCode(code ?? '').then((ok) => {
+                  void attemptUnlock(code ?? '').then(({ ok }) => {
                     promptingRef.current = false;
                     if (ok) {
                       successHaptic();

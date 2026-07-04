@@ -6,7 +6,7 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
 import { GlassCard, ListRow, PrivacyGuardSheet, SectionLabel, StickyHeaderPill, WallpaperPickerSheet } from '@/components/ui';
-import { getGuardSync, hashCode, updateGuard, verifyCode } from '@/services/privacyGuardService';
+import { attemptUnlock, getGuardSync, hashCode, lockoutRemainingMs, updateGuard } from '@/services/privacyGuardService';
 import { useAppLock } from '@/context/AppLockContext';
 import { AUTO_LOCK_OPTIONS, updateAppLock } from '@/services/appLockService';
 import { authenticate, biometricLabel, isBiometricAvailable } from '@/services/biometrics';
@@ -65,27 +65,36 @@ export const SettingsScreen = () => {
   // Hidden entry: 7 quick taps on the version footer. First time sets the
   // secret code; afterwards the code is required to open the sheet.
   const promptForCode = () => {
-    Alert.prompt(
-      'Enter code',
-      undefined,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Open',
-          onPress: (code?: string) => {
-            void verifyCode(code ?? '').then((ok) => {
-              if (ok) {
-                void updateGuard({ active: false });
-                setGuardSheetOpen(true);
-              } else {
-                lightHaptic();
-              }
-            });
+    void lockoutRemainingMs().then((remaining) => {
+      if (remaining > 0) {
+        Alert.alert('Too many attempts', `Try again in ${Math.ceil(remaining / 1000)}s.`);
+        return;
+      }
+      Alert.prompt(
+        'Enter code',
+        undefined,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Open',
+            onPress: (code?: string) => {
+              void attemptUnlock(code ?? '').then(({ ok, lockedForMs }) => {
+                if (ok) {
+                  void updateGuard({ active: false });
+                  setGuardSheetOpen(true);
+                } else {
+                  lightHaptic();
+                  if (lockedForMs > 0) {
+                    Alert.alert('Too many attempts', `Locked for ${Math.ceil(lockedForMs / 1000)}s.`);
+                  }
+                }
+              });
+            },
           },
-        },
-      ],
-      'secure-text',
-    );
+        ],
+        'secure-text',
+      );
+    });
   };
 
   const handleVersionTap = () => {
