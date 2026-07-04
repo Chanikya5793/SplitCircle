@@ -1404,7 +1404,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         />
 
         {chatShielded && (
-          <View style={styles.chatLockOverlay} pointerEvents="auto">
+          <View style={[styles.chatLockOverlay, { backgroundColor: theme.colors.appBackground }]} pointerEvents="auto">
             <Icon source="lock-outline" size={40} color={theme.colors.onSurfaceVariant} />
             <Text style={{ color: theme.colors.onSurface, fontWeight: '600', marginTop: 12, fontSize: 16 }}>
               Messages hidden
