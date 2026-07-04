@@ -32,10 +32,13 @@ export const usePrivacyMask = () => {
     const maskPersonName = (name: string): string =>
       isShielded('friends') && settings.hideNames ? maskTextValue(name, style) : name;
 
-    const maskPreview = (text: string, chatId?: string): string =>
-      isShielded('chats') && settings.hidePreviews && inScope(settings.chatScope, chatId)
-        ? maskTextValue(text, style)
-        : text;
+    const maskPreview = (text: string, chatId?: string): string => {
+      if (!(isShielded('chats') && settings.hidePreviews && inScope(settings.chatScope, chatId))) return text;
+      // Drop any leading type glyph (📷/📞/📄/🚫 …) before masking so the
+      // preview reveals neither content nor message CATEGORY.
+      const stripped = text.replace(/^[^\p{L}\p{N}]+/u, '');
+      return maskTextValue(stripped || text, style);
+    };
 
     // Text inside an expense group — expense titles, payer/member names.
     // Gated on the expenses shield + hideNames + the group's scope.
