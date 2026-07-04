@@ -77,11 +77,13 @@ export const GroupInfoScreen = () => {
     const [wallpaperSheetOpen, setWallpaperSheetOpen] = useState(false);
     const groupInitials = group.name.slice(0, 2).toUpperCase();
 
-    const headerOpacity = scrollY.interpolate({
-        inputRange: [0, 100],
-        outputRange: [0, 1],
-        extrapolate: 'clamp',
-    });
+    // Transform slide-in, not opacity — fractional alpha on an ancestor kills
+  // UIVisualEffectView glass materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
+    extrapolate: 'clamp',
+  });
     const titleOpacity = scrollY.interpolate({
         inputRange: [0, 100],
         outputRange: [1, 0],
@@ -352,7 +354,7 @@ export const GroupInfoScreen = () => {
         <LiquidBackground>
             <SafeAreaView style={styles.container} edges={['bottom']}>
                 <Animated.View
-                    style={[styles.stickyHeader, { opacity: headerOpacity, paddingTop: insets.top }]}
+                    style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }], paddingTop: insets.top }]}
                     pointerEvents="none"
                 >
                     <GlassView style={styles.stickyHeaderGlass}>

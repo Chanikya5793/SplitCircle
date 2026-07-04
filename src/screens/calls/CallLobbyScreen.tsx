@@ -41,9 +41,11 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
     });
   }, [navigation]);
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 40],
-    outputRange: [0, 1],
+  // Transform slide-in, not opacity — fractional alpha on an ancestor kills
+  // UIVisualEffectView glass materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
 
@@ -97,7 +99,7 @@ export const CallLobbyScreen = ({ onStartCall }: CallLobbyScreenProps) => {
 
   return (
     <LiquidBackground>
-      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+      <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }] }]}>
         <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Calls</Text>
         </GlassView>

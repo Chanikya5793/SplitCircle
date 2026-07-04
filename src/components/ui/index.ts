@@ -17,3 +17,4 @@ export { GroupAvatar, UserAvatar } from './AvatarPhoto';
 export { GroupPhotoUploader } from './GroupPhotoUploader';
 export { StickyHeaderPill, type StickyHeaderPillProps } from './StickyHeaderPill';
 export { WallpaperPickerSheet, type WallpaperPickerSheetProps } from './WallpaperPickerSheet';
+export { GlassBackButton, type GlassBackButtonProps } from './GlassBackButton';

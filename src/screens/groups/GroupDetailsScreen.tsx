@@ -204,9 +204,11 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
     [group.members, group.archivedMembers]
   );
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [90, 130],
-    outputRange: [0, 1],
+  // Transform slide-in, not opacity — fractional alpha on an ancestor kills
+  // UIVisualEffectView glass materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
 
@@ -469,7 +471,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
   return (
     <LiquidBackground wallpaperSlots={[`group:${group.groupId}`, 'app']}>
-      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+      <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }] }]}>
         <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>{group.name}</Text>
         </GlassView>

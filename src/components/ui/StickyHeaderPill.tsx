@@ -1,43 +1,30 @@
-// Sticky-header pill for scroll-collapsing screens. Deliberately NOT native
-// glass/blur: the pill fades with the scroll position, and UIVisualEffectView
-// drops its material when an ancestor animates alpha below 1 (iOS 27 is
-// stricter about restoring it), which left floating titles with no backdrop.
-// A translucent themed tint + hairline border renders identically under any
-// opacity and stays legible over photo wallpapers.
+// Sticky-header pill for scroll-collapsing screens — real liquid glass.
+//
+// CONTRACT: screens must reveal this pill by animating TRANSFORMS
+// (translateY slide-in), never opacity. UIVisualEffectView-backed materials
+// stop rendering when an ancestor holds fractional alpha, and iOS 27 won't
+// reliably restore them — that's how the tabs' floating titles lost their
+// backdrop. Transforms leave the material intact.
 
-import { useTheme } from '@/context/ThemeContext';
 import React from 'react';
-import { StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { StyleProp, StyleSheet, ViewStyle } from 'react-native';
+import { GlassCard } from './GlassCard';
 
 export interface StickyHeaderPillProps {
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
 }
 
-export const StickyHeaderPill = ({ children, style }: StickyHeaderPillProps) => {
-  const { isDark } = useTheme();
-  return (
-    <View
-      style={[
-        styles.pill,
-        {
-          backgroundColor: isDark ? 'rgba(28,28,32,0.92)' : 'rgba(250,250,252,0.92)',
-          borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
-        },
-        style,
-      ]}
-    >
-      {children}
-    </View>
-  );
-};
+export const StickyHeaderPill = ({ children, style }: StickyHeaderPillProps) => (
+  <GlassCard radius={20} intensity={45} contentStyle={[styles.pillContent, style]}>
+    {children}
+  </GlassCard>
+);
 
 const styles = StyleSheet.create({
-  pill: {
+  pillContent: {
     paddingVertical: 8,
     paddingHorizontal: 20,
-    borderRadius: 20,
-    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },

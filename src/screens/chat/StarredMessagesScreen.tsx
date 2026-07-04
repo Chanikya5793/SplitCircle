@@ -1,4 +1,5 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GlassBackButton } from '@/components/ui';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -100,15 +101,9 @@ export const StarredMessagesScreen = () => {
           },
         ]}
       >
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.headerBtn}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="chevron-back" size={26} color={theme.colors.onSurface} />
-        </TouchableOpacity>
+        <View style={styles.headerBtn}>
+          <GlassBackButton />
+        </View>
         <Text
           numberOfLines={1}
           style={[styles.titleText, { color: theme.colors.onSurface }]}

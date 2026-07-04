@@ -46,9 +46,11 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     });
   }, [navigation]);
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 40],
-    outputRange: [0, 1],
+  // Slide the glass pill in with a TRANSFORM (not opacity): fractional alpha
+  // on an ancestor kills UIVisualEffectView materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
 
@@ -188,7 +190,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
       <Animated.View
         style={[
           styles.stickyHeader,
-          { opacity: headerOpacity, paddingTop: insets.top + 8 },
+          { transform: [{ translateY: headerTranslate }], paddingTop: insets.top + 8 },
         ]}
       >
         <StickyHeaderPill style={styles.stickyHeaderGlass}>

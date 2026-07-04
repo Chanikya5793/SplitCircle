@@ -111,9 +111,11 @@ export const MessageInfoScreen = () => {
   const { message, thread } = route.params as MessageInfoRouteParams;
   const [receiptMap, setReceiptMap] = useState<Record<string, ReceiptData>>({});
 
-  const headerOpacity = scrollY.interpolate({
+  // Transform slide-in, not opacity — fractional alpha on an ancestor kills
+  // UIVisualEffectView glass materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
     inputRange: [0, 60],
-    outputRange: [0, 1],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
 
@@ -283,7 +285,7 @@ export const MessageInfoScreen = () => {
   return (
     <LiquidBackground>
       <SafeAreaView style={styles.container} edges={['bottom']}>
-        <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity, paddingTop: insets.top }]}>
+        <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }], paddingTop: insets.top }]}>
           <GlassView style={styles.stickyHeaderGlass}>
             <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>
               Message Info
