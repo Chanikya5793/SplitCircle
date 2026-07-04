@@ -244,7 +244,7 @@ export const SettingsScreen = () => {
           <ListRow
             title="Chat wallpaper"
             subtitle={chatDefaultWallpaper ? 'Custom photo for all chats' : 'Default for chats & groups'}
-            icon="chatbubbles-outline"
+            icon="forum-outline"
             trailing={wallpaperPreview(chatDefaultWallpaper?.uri)}
             onPress={() => openWallpaper('chat-default')}
           />
@@ -255,21 +255,21 @@ export const SettingsScreen = () => {
           <ListRow
             title="AI receipt parsing"
             subtitle="Cloud AI sharpens OCR accuracy"
-            icon="sparkles-outline"
+            icon="creation"
             trailing={<Switch value={useAIForReceipts} onValueChange={handleToggleUseAI} />}
           />
           {divider}
           <ListRow
             title="Strict receipt review"
             subtitle="Review low-confidence rows before saving"
-            icon="shield-checkmark-outline"
+            icon="shield-check-outline"
             trailing={<Switch value={strictReviewMode} onValueChange={handleToggleStrictReviewMode} />}
           />
           {divider}
           <ListRow
             title="On-device AI"
             subtitle="What's indexed on this device"
-            icon="hardware-chip-outline"
+            icon="chip"
             onPress={() => {
               lightHaptic();
               (navigation as any).navigate('AiIndex', { backTitle: ROOT_SCREEN_TITLES.settings });
@@ -307,7 +307,7 @@ export const SettingsScreen = () => {
           <ListRow
             title="Notifications"
             subtitle="Messages, expenses, sounds & more"
-            icon="notifications-outline"
+            icon="bell-outline"
             onPress={() => {
               lightHaptic();
               (navigation as any).navigate('NotificationSettings', { backTitle: ROOT_SCREEN_TITLES.settings });
@@ -317,7 +317,7 @@ export const SettingsScreen = () => {
           <ListRow
             title="Offline sync"
             subtitle="Changes save locally and sync when online"
-            icon="cloud-done-outline"
+            icon="cloud-check-outline"
             trailing={<Ionicons name="checkmark-circle" size={20} color={theme.colors.success} />}
           />
         </GlassCard>
@@ -325,7 +325,7 @@ export const SettingsScreen = () => {
         <GlassCard style={[styles.card, styles.signOutCard]} contentStyle={styles.cardContent}>
           <ListRow
             title="Sign out"
-            icon="log-out-outline"
+            icon="logout"
             iconColor={theme.colors.error}
             chevron={false}
             onPress={handleSignOut}
