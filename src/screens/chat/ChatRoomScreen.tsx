@@ -23,6 +23,7 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GroupAvatar, UserAvatar } from '@/components/ui';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { WallpaperPickerSheet } from '@/components/ui';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
@@ -1036,6 +1037,8 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // title so back buttons and Group Info still read correctly.
   const { maskChatTitle } = usePrivacyMask();
   const displayTitle = maskChatTitle(title, thread.chatId);
+  const { isShielded: guardIsShielded } = usePrivacyGuard();
+  const chatShielded = guardIsShielded('chats', thread.chatId);
 
   const handleHeaderPress = () => {
     lightHaptic();
@@ -1351,7 +1354,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
         <Animated.FlatList
           ref={listRef as any}
-          data={rows as readonly ChatRow[] as any}
+          data={(chatShielded ? [] : rows) as readonly ChatRow[] as any}
           keyExtractor={(row: ChatRow) =>
             row.kind === 'album'
               ? `album:${row.albumId}`
@@ -1399,6 +1402,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             });
           }}
         />
+
+        {chatShielded && (
+          <View style={styles.chatLockOverlay} pointerEvents="auto">
+            <Icon source="lock-outline" size={40} color={theme.colors.onSurfaceVariant} />
+            <Text style={{ color: theme.colors.onSurface, fontWeight: '600', marginTop: 12, fontSize: 16 }}>
+              Messages hidden
+            </Text>
+            <Text style={{ color: theme.colors.onSurfaceVariant, fontSize: 13, marginTop: 4 }}>
+              Shake again or enter your code to reveal.
+            </Text>
+          </View>
+        )}
 
         {/* Mention autocomplete — floats just above the composer when active */}
         {isGroupChat && mentionQuery !== null && (
@@ -1964,6 +1979,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
+  },
+  chatLockOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    zIndex: 5,
   },
   headerTitle: {
     fontWeight: '700',

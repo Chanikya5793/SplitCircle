@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { SpendingChart } from '@/components/SpendingChart';
 import { useTheme } from '@/context/ThemeContext';
 import { Group } from '@/models';
@@ -65,6 +66,7 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
 
   return (
     <LiquidBackground>
+      <GuardedScreen target="expenses" entityId={group.groupId} label="Stats hidden">
       <ScrollView contentContainerStyle={styles.container}>
         {/* Spending Trend Chart */}
         <SpendingChart expenses={group.expenses} currency={group.currency} showPieChart={false} />
@@ -94,6 +96,7 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
           )}
         </GlassView>
       </ScrollView>
+    </GuardedScreen>
     </LiquidBackground>
   );
 };

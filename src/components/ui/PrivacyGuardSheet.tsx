@@ -373,16 +373,29 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
 
           <View style={[styles.divider, { backgroundColor: divider, marginTop: 6 }]} />
 
+          {/* Status + explicit hide/reveal. Revealing sets `active` false but
+              leaves the shake detection armed — the app can be tripped again
+              without re-enabling anything. */}
+          <View style={styles.statusRow}>
+            <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+              Status
+            </Text>
+            <Text variant="bodyMedium" style={{ color: settings.active ? theme.colors.error : theme.colors.primary, fontWeight: '600' }}>
+              {settings.active ? 'Hidden' : 'Visible'}
+            </Text>
+          </View>
           <Pressable
             onPress={() => {
               lightHaptic();
-              void updateGuard({ active: true });
-              onClose();
+              void updateGuard({ active: !settings.active });
+              if (!settings.active) onClose();
             }}
             accessibilityRole="button"
             style={styles.actionRow}
           >
-            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Activate now</Text>
+            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>
+              {settings.active ? 'Reveal now (stays armed)' : 'Hide now'}
+            </Text>
           </Pressable>
           <Pressable onPress={changeCode} accessibilityRole="button" style={styles.actionRow}>
             <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Change secret code</Text>
@@ -466,6 +479,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     gap: 2,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
   },
   actionRow: {
     paddingVertical: 12,

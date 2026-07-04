@@ -19,5 +19,5 @@ export { StickyHeaderPill, type StickyHeaderPillProps } from './StickyHeaderPill
 export { WallpaperPickerSheet, type WallpaperPickerSheetProps } from './WallpaperPickerSheet';
 export { GlassBackButton, type GlassBackButtonProps } from './GlassBackButton';
 export { CurrencyConvertSheet } from './CurrencyConvertSheet';
-export { LockedOverlay, Shield, promptGuardUnlock } from "./Shield";
+export { GuardedScreen, LockedOverlay, Shield, promptGuardUnlock } from "./Shield";
 export { PrivacyGuardSheet } from "./PrivacyGuardSheet";

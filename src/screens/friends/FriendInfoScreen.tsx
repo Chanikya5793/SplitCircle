@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useCallContext } from '@/context/CallContext';
@@ -185,6 +186,7 @@ export const FriendInfoScreen = () => {
 
   return (
     <LiquidBackground>
+      <GuardedScreen target="friends" label="Hidden">
       <ScrollView
         contentContainerStyle={[styles.container, { paddingTop: insets.top + 64, paddingBottom: insets.bottom + 32 }]}
       >
@@ -357,6 +359,7 @@ export const FriendInfoScreen = () => {
           </GlassView>
         )}
       </ScrollView>
+    </GuardedScreen>
     </LiquidBackground>
   );
 };

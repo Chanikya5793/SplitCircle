@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { useTheme } from '@/context/ThemeContext';
@@ -284,6 +285,7 @@ export const MessageInfoScreen = () => {
 
   return (
     <LiquidBackground>
+      <GuardedScreen target="chats" label="Hidden">
       <SafeAreaView style={styles.container} edges={['bottom']}>
         <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }], paddingTop: insets.top }]}>
           <GlassView style={styles.stickyHeaderGlass}>
@@ -382,6 +384,7 @@ export const MessageInfoScreen = () => {
           )}
         </Animated.ScrollView>
       </SafeAreaView>
+    </GuardedScreen>
     </LiquidBackground>
   );
 };

@@ -4,6 +4,7 @@ import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useTheme } from '@/context/ThemeContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import type { ChatMessage, MessageType } from '@/models';
 import { getChatMessages } from '@/services/localMessageStorage';
 import { formatRelativeTime } from '@/utils/format';
@@ -41,6 +42,8 @@ export const StarredMessagesScreen = () => {
   const params = (route.params as StarredScreenParams) ?? {};
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useTheme();
+  const { isShielded: guardIsShielded } = usePrivacyGuard();
+  const starredShielded = guardIsShielded('chats');
   const { threads } = useChat();
   const { user } = useAuth();
 
@@ -114,16 +117,18 @@ export const StarredMessagesScreen = () => {
       </View>
 
       <FlatList
-        data={items}
+        data={starredShielded ? [] : items}
         keyExtractor={(item) => `${item.message.chatId}_${item.message.messageId || item.message.id}`}
         contentContainerStyle={[styles.list, { paddingTop: HEADER_HEIGHT + 12 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={theme.colors.primary} />}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Ionicons name="star-outline" size={56} color={theme.colors.onSurfaceVariant} />
-            <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>No starred messages</Text>
+            <Ionicons name={starredShielded ? 'lock-closed-outline' : 'star-outline'} size={56} color={theme.colors.onSurfaceVariant} />
+            <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>
+              {starredShielded ? 'Hidden' : 'No starred messages'}
+            </Text>
             <Text style={[styles.emptySub, { color: theme.colors.onSurfaceVariant }]}>
-              Long-press a message and tap Star to keep it here.
+              {starredShielded ? 'Shake again or enter your code to reveal.' : 'Long-press a message and tap Star to keep it here.'}
             </Text>
           </View>
         }
