@@ -3,11 +3,10 @@ import { StickyHeaderPill } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
 import { useWallpaperSlot } from '@/hooks/useWallpaper';
+import { WallpaperPickerSheet } from '@/components/ui';
 import {
   clearAllChatOverrides,
-  clearWallpaper,
   listChatOverrideSlots,
-  pickAndSetWallpaper,
   type WallpaperSlot,
 } from '@/services/wallpaperService';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
@@ -39,6 +38,8 @@ export const SettingsScreen = () => {
   const appWallpaper = useWallpaperSlot('app');
   const chatDefaultWallpaper = useWallpaperSlot('chat-default');
 
+  const [wallpaperSlot, setWallpaperSlot] = useState<WallpaperSlot | null>(null);
+
   // Changing the chat DEFAULT doesn't touch chats the user customized
   // individually — after a successful change, offer to reset those too.
   const offerOverrideReset = () => {
@@ -54,33 +55,9 @@ export const SettingsScreen = () => {
     );
   };
 
-  const pickForSlot = (slot: WallpaperSlot) =>
-    pickAndSetWallpaper(slot)
-      .then((entry) => {
-        if (entry && slot === 'chat-default') offerOverrideReset();
-      })
-      .catch((error) =>
-        Alert.alert('Background', error instanceof Error ? error.message : 'Could not set the photo.'),
-      );
-
-  const handleWallpaper = (slot: WallpaperSlot, hasValue: boolean) => {
+  const handleWallpaper = (slot: WallpaperSlot) => {
     lightHaptic();
-    if (!hasValue) {
-      void pickForSlot(slot);
-      return;
-    }
-    Alert.alert(
-      slot === 'app' ? 'App background' : 'Chat wallpaper',
-      undefined,
-      [
-        {
-          text: 'Choose new photo',
-          onPress: () => void pickForSlot(slot),
-        },
-        { text: 'Remove photo', style: 'destructive', onPress: () => void clearWallpaper(slot) },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-    );
+    setWallpaperSlot(slot);
   };
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -245,7 +222,7 @@ export const SettingsScreen = () => {
               description={appWallpaper ? 'Custom photo · tap to change or remove' : 'Use your own photo behind every screen'}
               left={() => <List.Icon icon="image-outline" />}
               right={() => <List.Icon icon="chevron-right" />}
-              onPress={() => handleWallpaper('app', Boolean(appWallpaper))}
+              onPress={() => handleWallpaper('app')}
             />
             <Divider />
             <List.Item
@@ -253,7 +230,7 @@ export const SettingsScreen = () => {
               description={chatDefaultWallpaper ? 'Custom photo for all chats · tap to change' : 'Default photo for all chats & groups'}
               left={() => <List.Icon icon="message-image-outline" />}
               right={() => <List.Icon icon="chevron-right" />}
-              onPress={() => handleWallpaper('chat-default', Boolean(chatDefaultWallpaper))}
+              onPress={() => handleWallpaper('chat-default')}
             />
             <Divider />
             <List.Item
@@ -325,6 +302,15 @@ export const SettingsScreen = () => {
           </List.Section>
         </GlassView>
       </Animated.ScrollView>
+      <WallpaperPickerSheet
+        visible={wallpaperSlot !== null}
+        slot={wallpaperSlot}
+        title={wallpaperSlot === 'app' ? 'App background' : 'Chat wallpaper'}
+        onClose={() => setWallpaperSlot(null)}
+        onChanged={(slot) => {
+          if (slot === 'chat-default') offerOverrideReset();
+        }}
+      />
     </LiquidBackground>
   );
 };

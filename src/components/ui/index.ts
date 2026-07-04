@@ -16,3 +16,4 @@ export { SyncBadge, type SyncBadgeProps } from './SyncBadge';
 export { GroupAvatar, UserAvatar } from './AvatarPhoto';
 export { GroupPhotoUploader } from './GroupPhotoUploader';
 export { StickyHeaderPill, type StickyHeaderPillProps } from './StickyHeaderPill';
+export { WallpaperPickerSheet, type WallpaperPickerSheetProps } from './WallpaperPickerSheet';

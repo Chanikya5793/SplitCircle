@@ -22,11 +22,7 @@ import { AlbumBubble } from '@/components/AlbumBubble';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GroupAvatar, UserAvatar } from '@/components/ui';
-import {
-  clearWallpaper,
-  getWallpaperSync,
-  pickAndSetWallpaper,
-} from '@/services/wallpaperService';
+import { WallpaperPickerSheet } from '@/components/ui';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -196,6 +192,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [actionTarget, setActionTarget] = useState<ChatMessage | null>(null);
   // Header overflow menu (search, gallery, starred)
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [wallpaperSheetOpen, setWallpaperSheetOpen] = useState(false);
   // Forward picker state — separate from the action sheet so it can stay open while the picker animates in.
   const [forwardSource, setForwardSource] = useState<ChatMessage[] | null>(null);
   // Attachment menu state
@@ -1639,32 +1636,16 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             key: 'wallpaper',
             label: 'Change wallpaper',
             icon: 'image-outline',
-            onPress: () => {
-              void (async () => {
-                try {
-                  await pickAndSetWallpaper(`chat:${thread.chatId}`);
-                } catch (error) {
-                  Alert.alert(
-                    'Wallpaper',
-                    error instanceof Error ? error.message : 'Could not set the wallpaper.',
-                  );
-                }
-              })();
-            },
+            onPress: () => setWallpaperSheetOpen(true),
           },
-          ...(getWallpaperSync(`chat:${thread.chatId}`)
-            ? [
-                {
-                  key: 'wallpaper-reset',
-                  label: 'Reset wallpaper',
-                  icon: 'refresh-outline',
-                  onPress: () => {
-                    void clearWallpaper(`chat:${thread.chatId}`);
-                  },
-                } satisfies HeaderMenuItem,
-              ]
-            : []),
         ] satisfies HeaderMenuItem[]}
+      />
+
+      <WallpaperPickerSheet
+        visible={wallpaperSheetOpen}
+        slot={`chat:${thread.chatId}`}
+        title="Chat wallpaper"
+        onClose={() => setWallpaperSheetOpen(false)}
       />
 
       {/* Pinned messages bar — anchored under the header pill, above the message list */}

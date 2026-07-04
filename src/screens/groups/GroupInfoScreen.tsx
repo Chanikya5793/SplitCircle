@@ -1,11 +1,8 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GroupAvatar, GroupPhotoUploader } from '@/components/ui';
-import {
-  clearWallpaper,
-  getWallpaperSync,
-  pickAndSetWallpaper,
-} from '@/services/wallpaperService';
+import { WallpaperPickerSheet } from '@/components/ui';
+import { getWallpaperSync } from '@/services/wallpaperService';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -77,6 +74,7 @@ export const GroupInfoScreen = () => {
     const me = group.members.find((m) => m.userId === user?.userId);
     const isOwner = me?.role === 'owner';
     const isAdmin = isOwner || me?.role === 'admin';
+    const [wallpaperSheetOpen, setWallpaperSheetOpen] = useState(false);
     const groupInitials = group.name.slice(0, 2).toUpperCase();
 
     const headerOpacity = scrollY.interpolate({
@@ -530,24 +528,7 @@ export const GroupInfoScreen = () => {
                             left={(props) => <List.Icon {...props} icon="image-outline" />}
                             onPress={() => {
                                 lightHaptic();
-                                const slot = `group:${group.groupId}` as const;
-                                if (!getWallpaperSync(slot)) {
-                                    void pickAndSetWallpaper(slot).catch((error) =>
-                                        Alert.alert('Wallpaper', error instanceof Error ? error.message : 'Could not set the photo.'),
-                                    );
-                                    return;
-                                }
-                                Alert.alert('Group wallpaper', undefined, [
-                                    {
-                                        text: 'Choose new photo',
-                                        onPress: () =>
-                                            void pickAndSetWallpaper(slot).catch((error) =>
-                                                Alert.alert('Wallpaper', error instanceof Error ? error.message : 'Could not set the photo.'),
-                                            ),
-                                    },
-                                    { text: 'Remove photo', style: 'destructive', onPress: () => void clearWallpaper(slot) },
-                                    { text: 'Cancel', style: 'cancel' },
-                                ]);
+                                setWallpaperSheetOpen(true);
                             }}
                         />
                         <Divider />
@@ -700,6 +681,12 @@ export const GroupInfoScreen = () => {
                     </GlassView>
                 </Animated.ScrollView>
             </SafeAreaView>
+            <WallpaperPickerSheet
+                visible={wallpaperSheetOpen}
+                slot={`group:${group.groupId}`}
+                title="Group wallpaper"
+                onClose={() => setWallpaperSheetOpen(false)}
+            />
         </LiquidBackground>
     );
 };

@@ -14,9 +14,10 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Asset } from 'expo-asset';
+import { Directory, File, Paths } from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
-import { Directory, File, Paths } from 'expo-file-system';
 
 const STORAGE_KEY = 'wallpapers_v1';
 
@@ -108,13 +109,24 @@ export const pickAndSetWallpaper = async (
     { compress: 0.85, format: ImageManipulator.SaveFormat.JPEG },
   );
 
+  return storeAsWallpaper(slot, manipulated.uri, 'move');
+};
+
+/** Copy/move a local image file into app storage and point the slot at it. */
+const storeAsWallpaper = async (
+  slot: WallpaperSlot,
+  sourceUri: string,
+  mode: 'move' | 'copy',
+): Promise<WallpaperEntry> => {
   const dir = wallpapersDir();
   if (!dir.exists) dir.create({ intermediates: true });
 
   // One file per slot (slot name is filesystem-safe after replacing ':').
   const fileName = `${slot.replace(/:/g, '_')}_${Date.now()}.jpg`;
   const dest = new File(dir, fileName);
-  new File(manipulated.uri).move(dest);
+  const source = new File(sourceUri);
+  if (mode === 'move') source.move(dest);
+  else source.copy(dest);
 
   const map = { ...(await loadMap()) };
   const previous = map[slot] as WallpaperEntry | undefined;
@@ -133,6 +145,21 @@ export const pickAndSetWallpaper = async (
   }
 
   return entry;
+};
+
+/**
+ * Set a slot from a bundled catalog wallpaper (a require()'d asset module).
+ * Copies the asset into the wallpapers dir so entries survive OTA updates
+ * (bundled asset paths change per update; our copies don't).
+ */
+export const setWallpaperFromBundled = async (
+  slot: WallpaperSlot,
+  assetModule: number,
+): Promise<WallpaperEntry> => {
+  const asset = Asset.fromModule(assetModule);
+  await asset.downloadAsync(); // no-op locally; guarantees localUri
+  if (!asset.localUri) throw new Error('Wallpaper asset unavailable.');
+  return storeAsWallpaper(slot, asset.localUri, 'copy');
 };
 
 /** Chat slots the user has individually customized (excludes the default). */
