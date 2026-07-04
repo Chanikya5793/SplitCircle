@@ -41,6 +41,7 @@ interface GroupContextValue {
   updateSettlement: (groupId: string, settlement: Settlement, requestId?: string) => Promise<void>;
   deleteSettlement: (groupId: string, settlementId: string) => Promise<void>;
   updateGroup: (groupId: string, updates: { name?: string; description?: string; photoURL?: string }) => Promise<void>;
+  convertGroupCurrency: (groupId: string, newCurrency: string, rate: number) => Promise<void>;
   updateMemberRole: (groupId: string, userId: string, role: 'admin' | 'member') => Promise<void>;
   removeMember: (groupId: string, userId: string) => Promise<void>;
   leaveGroup: (groupId: string) => Promise<void>;
@@ -779,6 +780,62 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     }
   };
 
+
+  /**
+   * Convert every monetary value in the group to `newCurrency` using `rate`
+   * (amount_new = amount_old * rate). One transaction over the group doc:
+   * expenses (amount + participant shares + receipt line items), settlements,
+   * and the group currency itself. Admin-gated like other group edits. The
+   * rate is chosen/confirmed by the user in the UI before this runs.
+   */
+  const convertGroupCurrency = async (groupId: string, newCurrency: string, rate: number) => {
+    if (!user) throw new Error('You must be signed in to convert a group currency.');
+    if (!(rate > 0) || !Number.isFinite(rate)) throw new Error('Invalid exchange rate.');
+    const group = groups.find((g) => g.groupId === groupId);
+    if (!group) throw new Error('Group not found.');
+    const me = group.members.find((m) => m.userId === user.userId);
+    if (!me || (me.role !== 'owner' && me.role !== 'admin')) {
+      throw new Error('Only group admins can convert the currency.');
+    }
+    const target = newCurrency.toUpperCase();
+    if (target === group.currency?.toUpperCase()) return;
+
+    const zeroDecimal = ['JPY', 'KRW', 'VND', 'CLP'].includes(target);
+    const round = (v: number) => (zeroDecimal ? Math.round(v * rate) : Math.round(v * rate * 100) / 100);
+
+    await runTransaction(db, async (txn) => {
+      const ref = doc(db, 'groups', groupId);
+      const snap = await txn.get(ref);
+      if (!snap.exists()) throw new Error('Group not found.');
+      const data = snap.data() as Group;
+
+      const expenses = (data.expenses ?? []).map((expense) => ({
+        ...expense,
+        amount: round(expense.amount),
+        participants: (expense.participants ?? []).map((participantShare) => ({
+          ...participantShare,
+          share: round(participantShare.share),
+        })),
+      }));
+      const settlements = (data.settlements ?? []).map((settlement) => ({
+        ...settlement,
+        amount: round(settlement.amount),
+      }));
+
+      txn.update(ref, {
+        currency: target,
+        expenses,
+        settlements,
+        updatedAt: serverTimestamp(),
+      });
+    });
+
+    await writeGroupSystemMessage(
+      groupId,
+      `converted the group currency from ${group.currency} to ${target}`,
+    );
+  };
+
   const updateMemberRole = async (
     groupId: string,
     userId: string,
@@ -1032,6 +1089,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       updateSettlement,
       deleteSettlement,
       updateGroup,
+      convertGroupCurrency,
       updateMemberRole,
       removeMember,
       leaveGroup,

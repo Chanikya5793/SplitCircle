@@ -1,7 +1,7 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GroupAvatar, GroupPhotoUploader } from '@/components/ui';
-import { WallpaperPickerSheet } from '@/components/ui';
+import { CurrencyConvertSheet, WallpaperPickerSheet } from '@/components/ui';
 import { getWallpaperSync } from '@/services/wallpaperService';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -75,6 +75,7 @@ export const GroupInfoScreen = () => {
     const isOwner = me?.role === 'owner';
     const isAdmin = isOwner || me?.role === 'admin';
     const [wallpaperSheetOpen, setWallpaperSheetOpen] = useState(false);
+    const [currencySheetOpen, setCurrencySheetOpen] = useState(false);
     const groupInitials = group.name.slice(0, 2).toUpperCase();
 
     // Transform slide-in, not opacity — fractional alpha on an ancestor kills
@@ -548,8 +549,10 @@ export const GroupInfoScreen = () => {
                         <Divider />
                         <List.Item
                             title="Currency"
-                            description={group.currency}
+                            description={isAdmin ? `${group.currency} · tap to convert` : group.currency}
                             left={(props) => <List.Icon {...props} icon="currency-usd" />}
+                            onPress={isAdmin ? () => { lightHaptic(); setCurrencySheetOpen(true); } : undefined}
+                            right={isAdmin ? (props) => <List.Icon {...props} icon="chevron-right" /> : undefined}
                         />
                         <Divider />
                         <List.Item
@@ -688,6 +691,11 @@ export const GroupInfoScreen = () => {
                 slot={`group:${group.groupId}`}
                 title="Group wallpaper"
                 onClose={() => setWallpaperSheetOpen(false)}
+            />
+            <CurrencyConvertSheet
+                visible={currencySheetOpen}
+                group={group}
+                onClose={() => setCurrencySheetOpen(false)}
             />
         </LiquidBackground>
     );

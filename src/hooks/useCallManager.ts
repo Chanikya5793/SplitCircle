@@ -190,6 +190,10 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       //    incoming-answered flows, and a duplicate activation throws
       //    "Session activation failed". Don't let that kill the call.
       try {
+        // Video calls default to speaker (FaceTime behavior); audio to earpiece.
+        await AudioSession.configureAudio({
+          ios: { defaultOutput: type === 'video' ? 'speaker' : 'earpiece' },
+        });
         await AudioSession.startAudioSession();
       } catch (audioErr) {
         console.warn('useCallManager: AudioSession.startAudioSession failed (CallKit likely already owns it)', audioErr);
@@ -345,6 +349,10 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       //    cascade into nativeCallService.endCall via the catch block below
       //    (that would visibly hang up the call the moment the receiver answers).
       try {
+        // Video calls default to speaker (FaceTime behavior); audio to earpiece.
+        await AudioSession.configureAudio({
+          ios: { defaultOutput: session.type === 'video' ? 'speaker' : 'earpiece' },
+        });
         await AudioSession.startAudioSession();
       } catch (audioErr) {
         console.warn('useCallManager: AudioSession.startAudioSession failed (CallKit likely already owns it)', audioErr);

@@ -1,3 +1,4 @@
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
 import React, { useMemo } from 'react';
@@ -65,6 +66,8 @@ const aggregateByCategory = (
 
 export const SpendingChart = ({ expenses, currency, showPieChart = true }: SpendingChartProps) => {
     const { theme, isDark } = useTheme();
+    const { isShielded: chartsIsShielded, action: chartAction } = usePrivacyGuard();
+    const chartsShielded = chartsIsShielded('charts');
     const { width: screenWidth } = useWindowDimensions();
 
     const lineData = useMemo(() => aggregateByWeek(expenses), [expenses]);
@@ -93,6 +96,15 @@ export const SpendingChart = ({ expenses, currency, showPieChart = true }: Spend
     };
 
     if (expenses.length === 0 || lineData.data.length === 0) {
+        // Privacy guard: charts target hides the whole visualization.
+        if (chartsShielded) {
+            return chartAction === 'vanish' ? null : (
+                <GlassView style={styles.container}>
+                    <Text style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>Hidden</Text>
+                </GlassView>
+            );
+        }
+
         return (
             <GlassView style={styles.container}>
                 <Text style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>

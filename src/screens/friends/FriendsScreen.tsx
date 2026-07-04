@@ -24,6 +24,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, StyleSheet, View } from 'react-native';
 import { Avatar, IconButton, Text } from 'react-native-paper';
+import { Shield } from '@/components/ui';
 import { TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -362,6 +363,7 @@ export const FriendsScreen = () => {
         </StickyHeaderPill>
       </Animated.View>
 
+      <Shield target="friends">
       <Animated.ScrollView
         contentContainerStyle={[
           styles.container,
@@ -395,6 +397,7 @@ export const FriendsScreen = () => {
           </>
         )}
       </Animated.ScrollView>
+      </Shield>
     </LiquidBackground>
   );
 };

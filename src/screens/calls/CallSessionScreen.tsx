@@ -18,7 +18,7 @@ import {
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { ConnectionState, Track } from 'livekit-client';
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
-import { BackHandler, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { AppState, BackHandler, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ActivityIndicator, Text } from 'react-native-paper';
 
@@ -102,6 +102,20 @@ interface LocalTrackPublisherProps {
 const LocalTrackPublisher = ({ callType, isMuted, isCameraOff }: LocalTrackPublisherProps) => {
   const room = useRoomContext();
   const connectionState = useConnectionState();
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
+  const [retryTick, setRetryTick] = useState(0);
+  const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // iOS forbids starting camera capture while the app is backgrounded — which
+  // is exactly the state when a call is answered from the CallKit lock screen.
+  // A single silent setCameraEnabled failure used to mean video NEVER started
+  // for the callee. Track foreground state and re-attempt on activation.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      setAppActive(state === 'active');
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     if (!room) return;
@@ -122,6 +136,8 @@ const LocalTrackPublisher = ({ callType, isMuted, isCameraOff }: LocalTrackPubli
 
       try {
         if (callType === 'video') {
+          // Don't attempt camera capture in the background — it will fail.
+          if (wantCamera && !appActive) return;
           if (local.isCameraEnabled !== wantCamera) {
             await local.setCameraEnabled(wantCamera);
           }
@@ -129,10 +145,24 @@ const LocalTrackPublisher = ({ callType, isMuted, isCameraOff }: LocalTrackPubli
           await local.setCameraEnabled(false);
         }
       } catch (error) {
-        console.warn('LocalTrackPublisher: setCameraEnabled failed', error);
+        console.warn('LocalTrackPublisher: setCameraEnabled failed; retrying shortly', error);
+        // Transient failures right after CallKit's audio-session activation
+        // are common — schedule a bounded re-attempt instead of giving up.
+        if (retryTick < 4 && !retryTimerRef.current) {
+          retryTimerRef.current = setTimeout(() => {
+            retryTimerRef.current = null;
+            setRetryTick((t) => t + 1);
+          }, 1400);
+        }
       }
     })();
-  }, [room, connectionState, callType, isMuted, isCameraOff]);
+  }, [room, connectionState, callType, isMuted, isCameraOff, appActive, retryTick]);
+
+  useEffect(() => {
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
+  }, []);
 
   return null;
 };

@@ -3,6 +3,7 @@
 // same concept — this kills that class of drift.
 
 import { useTheme } from '@/context/ThemeContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { formatCurrency } from '@/utils/currency';
 import React from 'react';
 import { StyleProp, TextStyle } from 'react-native';
@@ -46,9 +47,18 @@ export const MoneyText = ({
           ? theme.colors.moneyNeutral
           : theme.colors.onSurface;
 
+  // Privacy guard: every amount in the app funnels through here, so one
+  // check scrambles them all when the "expenses" shield is tripped.
+  const { isShielded, action } = usePrivacyGuard();
+  const scrambleAmounts = isShielded('expenses');
+
   const type = theme.typography[size];
-  const magnitude = formatCurrency(Math.abs(amount), currency);
-  const sign = showSign && amount !== 0 ? (amount > 0 ? '+' : '−') : '';
+  const magnitude = scrambleAmounts
+    ? action === 'vanish'
+      ? '···'
+      : '••••'
+    : formatCurrency(Math.abs(amount), currency);
+  const sign = !scrambleAmounts && showSign && amount !== 0 ? (amount > 0 ? '+' : '−') : '';
 
   return (
     <Text

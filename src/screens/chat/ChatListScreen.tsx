@@ -17,6 +17,7 @@ import { Animated, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
 import { GroupAvatar, UserAvatar, StickyHeaderPill} from '@/components/ui';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
 interface ChatListScreenProps {
@@ -66,6 +67,9 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
 
   // Photo + kind for the row avatar: group photo for group threads, the other
   // participant's profile photo for DMs; initials render as the fallback.
+  const { isShielded } = usePrivacyGuard();
+  const chatsShielded = isShielded('chats');
+
   const getChatAvatar = useMemo(() => (thread: ChatThread): { kind: 'group' | 'user'; photoURL?: string; name: string } => {
     if (thread.type === 'group' && thread.groupId) {
       const group = groups.find(g => g.groupId === thread.groupId);
@@ -200,7 +204,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
 
       <View style={styles.container}>
         <Animated.FlatList
-          data={processedThreads}
+          data={chatsShielded ? [] : processedThreads}
           keyExtractor={(item) => item.chatId}
           renderItem={({ item }) => (
             <GlassView style={styles.chatItem} contentStyle={styles.chatItemContent}>

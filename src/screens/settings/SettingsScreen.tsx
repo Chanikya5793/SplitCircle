@@ -5,7 +5,8 @@
 
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
-import { GlassCard, ListRow, SectionLabel, StickyHeaderPill, WallpaperPickerSheet } from '@/components/ui';
+import { GlassCard, ListRow, PrivacyGuardSheet, SectionLabel, StickyHeaderPill, WallpaperPickerSheet } from '@/components/ui';
+import { getGuardSync, hashCode, updateGuard, verifyCode } from '@/services/privacyGuardService';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { APP_NAME, APP_VERSION } from '@/constants/appInfo';
 import { useAuth } from '@/context/AuthContext';
@@ -47,6 +48,64 @@ export const SettingsScreen = () => {
   const bottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
 
   const [wallpaperSlot, setWallpaperSlot] = useState<WallpaperSlot | null>(null);
+  const [guardSheetOpen, setGuardSheetOpen] = useState(false);
+  const versionTapsRef = useRef<number[]>([]);
+
+  // Hidden entry: 7 quick taps on the version footer. First time sets the
+  // secret code; afterwards the code is required to open the sheet.
+  const handleVersionTap = () => {
+    const now = Date.now();
+    versionTapsRef.current = [...versionTapsRef.current.filter((t) => now - t < 3000), now];
+    if (versionTapsRef.current.length < 7) return;
+    versionTapsRef.current = [];
+    const guard = getGuardSync();
+    if (!guard.codeHash) {
+      Alert.prompt(
+        'Set a secret code',
+        'This unlocks the hidden privacy settings and releases the guard after a shake.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Save',
+            onPress: (code?: string) => {
+              const trimmed = code?.trim() ?? '';
+              if (trimmed.length < 4) {
+                Alert.alert('Too short', 'Use at least 4 characters.');
+                return;
+              }
+              void hashCode(trimmed).then((digest) => {
+                void updateGuard({ codeHash: digest });
+                setGuardSheetOpen(true);
+              });
+            },
+          },
+        ],
+        'secure-text',
+      );
+      return;
+    }
+    Alert.prompt(
+      'Enter code',
+      undefined,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Open',
+          onPress: (code?: string) => {
+            void verifyCode(code ?? '').then((ok) => {
+              if (ok) {
+                void updateGuard({ active: false });
+                setGuardSheetOpen(true);
+              } else {
+                lightHaptic();
+              }
+            });
+          },
+        },
+      ],
+      'secure-text',
+    );
+  };
   const [strictReviewMode, setStrictReviewModeState] = useState(false);
   const [useAIForReceipts, setUseAIForReceiptsState] = useState(true);
   const [merchantLearning, setMerchantLearning] = useState<LearningMerchantSummary[]>([]);
@@ -332,11 +391,17 @@ export const SettingsScreen = () => {
           />
         </GlassCard>
 
-        <Text variant="labelSmall" style={[styles.versionText, { color: theme.colors.onSurfaceVariant }]}>
+        <Text
+          variant="labelSmall"
+          onPress={handleVersionTap}
+          suppressHighlighting
+          style={[styles.versionText, { color: theme.colors.onSurfaceVariant }]}
+        >
           {APP_NAME} {APP_VERSION ? `v${APP_VERSION}` : ''}
         </Text>
       </Animated.ScrollView>
 
+      <PrivacyGuardSheet visible={guardSheetOpen} onClose={() => setGuardSheetOpen(false)} />
       <WallpaperPickerSheet
         visible={wallpaperSlot !== null}
         slot={wallpaperSlot}

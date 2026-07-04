@@ -36,6 +36,7 @@ import {
 import { Gesture, GestureDetector, GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, Text, TextInput, TouchableRipple } from 'react-native-paper';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import Animated, {
     FadeIn,
     FadeOut,
@@ -70,6 +71,8 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const { isShielded } = usePrivacyGuard();
+  const callsShielded = isShielded('calls');
   const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
 
   const [callHistory, setCallHistory] = useState<CallHistoryEntry[]>([]);
@@ -480,7 +483,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
 
       <View style={styles.container}>
         <RNAnimated.SectionList
-          sections={sections}
+          sections={callsShielded ? [] : sections}
           keyExtractor={(item) => item.callId}
           renderItem={renderCallItem}
           renderSectionHeader={renderSectionHeader}
