@@ -3,7 +3,7 @@ import { SyncBadge } from '@/components/ui/SyncBadge';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Settlement } from '@/models';
-import { formatCurrency } from '@/utils/currency';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
@@ -27,6 +27,7 @@ export const SettlementCard = ({
     onDelete,
     index = 0,
 }: SettlementCardProps) => {
+  const fmtMoney = useMoneyDisplay();
     const { theme } = useTheme();
     const { pendingSyncIds } = useGroups();
     const isPendingSync = pendingSyncIds.has(settlement.settlementId);
@@ -117,7 +118,7 @@ export const SettlementCard = ({
                                 </View>
                                 <View style={styles.amountContainer}>
                                     <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.primary }}>
-                                        {formatCurrency(settlement.amount, currency)}
+                                        {fmtMoney(settlement.amount, currency)}
                                     </Text>
                                 </View>
                             </View>

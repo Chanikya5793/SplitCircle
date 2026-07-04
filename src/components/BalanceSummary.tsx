@@ -1,7 +1,7 @@
 import { GlassView } from '@/components/GlassView';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group, GroupMember } from '@/models';
-import { formatCurrency } from '@/utils/currency';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -12,6 +12,7 @@ interface BalanceSummaryProps {
 }
 
 export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
+  const fmtMoney = useMoneyDisplay();
   const { theme } = useTheme();
 
   const activeMembers = group.members ?? [];
@@ -63,7 +64,7 @@ export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
           ) : null}
         </View>
         <Text style={[styles.amount, { color: amountColor }]}>
-          {formatCurrency(member.balance, group.currency)}
+          {fmtMoney(member.balance, group.currency)}
         </Text>
       </View>
     );

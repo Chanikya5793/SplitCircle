@@ -1,7 +1,7 @@
 import { GlassView } from '@/components/GlassView';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
-import { formatCurrency } from '@/utils/currency';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { heavyHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
@@ -17,6 +17,7 @@ interface SwipeableGroupCardProps {
 }
 
 export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, index = 0, loading = false }: SwipeableGroupCardProps) => {
+  const fmtMoney = useMoneyDisplay();
   const { theme } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
   const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
@@ -96,7 +97,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, index
                 )}
               </View>
               <Text variant="bodyMedium" style={[styles.total, { color: theme.colors.primary }]}>
-                Total spent {formatCurrency(total, group.currency)}
+                Total spent {fmtMoney(total, group.currency)}
               </Text>
             </View>
           </TouchableRipple>

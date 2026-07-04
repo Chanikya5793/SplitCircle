@@ -1,7 +1,7 @@
 import { GlassView } from '@/components/GlassView';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
-import { formatCurrency } from '@/utils/currency';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { getExpenseSplitLabel } from '@/utils/expenseSplit';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
@@ -43,6 +43,7 @@ export const SwipeableExpenseCard = ({
   onDelete,
   index = 0,
 }: SwipeableExpenseCardProps) => {
+  const fmtMoney = useMoneyDisplay();
   const { theme } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
   const payerName = memberMap[expense.paidBy] || 'Unknown';
@@ -126,7 +127,7 @@ export const SwipeableExpenseCard = ({
                 </View>
                 <View style={styles.amountContainer}>
                   <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                    {formatCurrency(expense.amount, currency)}
+                    {fmtMoney(expense.amount, currency)}
                   </Text>
                 </View>
               </View>

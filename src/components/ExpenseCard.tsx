@@ -3,7 +3,7 @@ import { SyncBadge } from '@/components/ui/SyncBadge';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
-import { formatCurrency } from '@/utils/currency';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { getExpenseSplitLabel } from '@/utils/expenseSplit';
 import { StyleSheet, View } from 'react-native';
 import { IconButton, Text, TouchableRipple } from 'react-native-paper';
@@ -18,6 +18,7 @@ interface ExpenseCardProps {
 }
 
 export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0 }: ExpenseCardProps) => {
+  const fmtMoney = useMoneyDisplay();
   const { theme, isDark } = useTheme();
   const { pendingSyncIds } = useGroups();
   const isPendingSync = pendingSyncIds.has(expense.expenseId);
@@ -45,7 +46,7 @@ export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0 }
               </View>
               <View style={styles.amountContainer}>
                 <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                  {formatCurrency(expense.amount, currency)}
+                  {fmtMoney(expense.amount, currency)}
                 </Text>
                 {isSettlement && <IconButton icon="check-circle" size={20} iconColor={theme.colors.primary} />}
               </View>
