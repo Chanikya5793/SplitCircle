@@ -59,12 +59,22 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
     let cancelled = false;
 
     void (async () => {
+      // Probe for the NATIVE module before evaluating expo-sensors' JS:
+      // requireNativeModule throws during module initialization when the
+      // binary predates the dependency, and a throw at that point segfaults
+      // release Hermes (observed SIGSEGV in DictPropertyMap::lookupEntryFor)
+      // — a try/catch around the require is NOT sufficient.
       let Accelerometer: typeof import('expo-sensors').Accelerometer;
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { requireOptionalNativeModule } = require('expo-modules-core');
+        if (!requireOptionalNativeModule('ExponentAccelerometer')) {
+          return; // Binary predates expo-sensors — guard can't arm.
+        }
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
         Accelerometer = require('expo-sensors').Accelerometer;
       } catch {
-        return; // Binary predates expo-sensors — guard can't arm.
+        return;
       }
       if (cancelled) return;
 
