@@ -221,9 +221,9 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                     {(() => {
                       const avatar = getChatAvatar(item);
                       return avatar.kind === 'group' ? (
-                        <GroupAvatar photoURL={avatar.photoURL} name={avatar.name} size={48} />
+                        <GroupAvatar photoURL={avatar.photoURL} name={maskChatTitle(avatar.name, item.chatId)} size={48} />
                       ) : (
-                        <UserAvatar photoURL={avatar.photoURL} displayName={avatar.name} size={48} />
+                        <UserAvatar photoURL={avatar.photoURL} displayName={maskChatTitle(avatar.name, item.chatId)} size={48} />
                       );
                     })()}
                     {(localUnreadCounts[item.chatId] ?? 0) > 0 && (

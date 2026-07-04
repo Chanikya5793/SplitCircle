@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { GroupAvatar } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
@@ -7,7 +8,7 @@ import { heavyHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import { ActivityIndicator, Avatar, IconButton, Text, TouchableRipple } from 'react-native-paper';
+import { ActivityIndicator, IconButton, Text, TouchableRipple } from 'react-native-paper';
 
 interface SwipeableGroupCardProps {
   group: Group;
@@ -79,12 +80,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, index
           <TouchableRipple onPress={loading ? undefined : handlePress} style={{ flex: 1 }} disabled={loading}>
             <View style={styles.content}>
               <View style={styles.header}>
-                <Avatar.Text
-                  size={48}
-                  label={group.name.slice(0, 2).toUpperCase()}
-                  style={{ backgroundColor: theme.colors.primaryContainer }}
-                  color={theme.colors.onPrimaryContainer}
-                />
+                <GroupAvatar photoURL={group.photoURL} name={displayName} size={48} />
                 <View style={styles.meta}>
                   <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{displayName}</Text>
                   <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
