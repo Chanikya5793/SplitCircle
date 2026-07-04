@@ -197,9 +197,13 @@ export const SettingsScreen = () => {
     ]);
   };
 
-  /** 34px rounded preview of the slot's photo (wallpaper rows). */
+  /**
+   * 34px rounded preview of the slot's photo (wallpaper rows). Suppressed
+   * while the guard is hiding wallpapers — otherwise the thumbnail itself
+   * would leak the exact photo the background reverted away from.
+   */
   const wallpaperPreview = (uri: string | undefined) =>
-    uri ? (
+    uri && !(guardActive && guardSettings.hideWallpaper) ? (
       <Image source={{ uri }} style={styles.wallpaperThumb} accessibilityIgnoresInvertColors />
     ) : undefined;
 
@@ -305,7 +309,13 @@ export const SettingsScreen = () => {
           {divider}
           <ListRow
             title="App background"
-            subtitle={appWallpaper ? 'Custom photo' : 'Liquid colors'}
+            subtitle={
+              guardActive && guardSettings.hideWallpaper
+                ? 'Hidden'
+                : appWallpaper
+                  ? 'Custom photo'
+                  : 'Liquid colors'
+            }
             icon="image-outline"
             trailing={wallpaperPreview(appWallpaper?.uri)}
             onPress={() => openWallpaper('app')}
@@ -313,7 +323,13 @@ export const SettingsScreen = () => {
           {divider}
           <ListRow
             title="Chat wallpaper"
-            subtitle={chatDefaultWallpaper ? 'Custom photo for all chats' : 'Default for chats & groups'}
+            subtitle={
+              guardActive && guardSettings.hideWallpaper
+                ? 'Hidden'
+                : chatDefaultWallpaper
+                  ? 'Custom photo for all chats'
+                  : 'Default for chats & groups'
+            }
             icon="forum-outline"
             trailing={wallpaperPreview(chatDefaultWallpaper?.uri)}
             onPress={() => openWallpaper('chat-default')}
