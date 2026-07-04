@@ -1,6 +1,4 @@
 import { CallControls } from '@/components/CallControls';
-import { GlassView } from '@/components/GlassView';
-import { LiquidBackground } from '@/components/LiquidBackground';
 import { GroupAvatar, UserAvatar } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -20,8 +18,9 @@ import {
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { ConnectionState, Track } from 'livekit-client';
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
-import { BackHandler, StyleSheet, View } from 'react-native';
-import { ActivityIndicator, IconButton, Text } from 'react-native-paper';
+import { BackHandler, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ActivityIndicator, Text } from 'react-native-paper';
 
 const debugLog = (...args: unknown[]) => {
   if (__DEV__) {
@@ -50,6 +49,25 @@ const PeerAvatar = ({ peer, size }: { peer: CallPeer; size: number }) =>
   ) : (
     <UserAvatar photoURL={peer.photoURL} displayName={peer.name} size={size} />
   );
+
+// Full-screen dark backdrop — the callee's photo heavily blurred under a
+// scrim, iOS-call style. Always dark regardless of app theme.
+const CallBackdrop = ({ peer }: { peer: CallPeer }) => (
+  <View style={[StyleSheet.absoluteFill, { backgroundColor: '#0B0E14' }]}>
+    {peer.photoURL ? (
+      <>
+        <Image
+          source={{ uri: peer.photoURL }}
+          style={[StyleSheet.absoluteFill, { opacity: 0.5 }]}
+          blurRadius={60}
+          resizeMode="cover"
+          accessibilityIgnoresInvertColors
+        />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(8,10,16,0.55)' }]} />
+      </>
+    ) : null}
+  </View>
+);
 
 const formatDuration = (seconds: number) => {
   const mins = Math.floor(seconds / 60);
@@ -183,61 +201,44 @@ const VideoRoomContent = ({ theme, isCameraOff, peer }: VideoRoomContentProps) =
     }
   })();
 
+  const hasRemoteVideo = Boolean(remoteTrack && isTrackReference(remoteTrack));
+
   return (
-    <View style={styles.videoGrid}>
-      {connectionText && (
-        <View style={styles.connectionOverlay}>
-          <GlassView style={styles.connectionBadge}>
-            <ActivityIndicator size="small" color={theme.colors.primary} />
-            <Text style={[styles.connectionText, { color: theme.colors.onSurface }]}>
-              {connectionText}
-            </Text>
-          </GlassView>
+    <View style={styles.videoFill}>
+      {hasRemoteVideo ? (
+        <VideoTrack trackRef={remoteTrack!} style={styles.rtcView} objectFit="cover" />
+      ) : (
+        <View style={styles.identityCenter}>
+          <PeerAvatar peer={peer} size={116} />
+          <Text style={styles.identityName} numberOfLines={1}>
+            {peer.name}
+          </Text>
+          <Text style={styles.identityStatus}>
+            {connectionText ??
+              (participants.length > 1 ? 'Waiting for video…' : 'Waiting for participant…')}
+          </Text>
         </View>
       )}
 
-      <GlassView style={styles.video}>
-        {remoteTrack && isTrackReference(remoteTrack) ? (
-          <VideoTrack trackRef={remoteTrack} style={styles.rtcView} objectFit="cover" />
-        ) : (
-          <View style={styles.videoPlaceholder}>
-            <PeerAvatar peer={peer} size={104} />
-            <Text style={[styles.placeholderName, { color: theme.colors.onSurface }]} numberOfLines={1}>
-              {peer.name}
-            </Text>
-            <Text style={[styles.placeholderText, { color: theme.colors.onSurfaceVariant }]}>
-              {connectionState === ConnectionState.Connected
-                ? participants.length > 1
-                  ? 'Waiting for video...'
-                  : 'Waiting for participant...'
-                : 'Connecting...'}
-            </Text>
-          </View>
-        )}
-      </GlassView>
+      {hasRemoteVideo && (
+        <View style={styles.videoTopPill} pointerEvents="none">
+          <Text style={styles.videoTopPillText} numberOfLines={1}>
+            {peer.name}
+          </Text>
+        </View>
+      )}
 
-      <View style={styles.localVideoContainer}>
-        <GlassView style={styles.localVideo}>
-          {localTrack && !isCameraOff && isTrackReference(localTrack) ? (
-            <VideoTrack
-              trackRef={localTrack}
-              style={styles.rtcView}
-              objectFit="cover"
-              zOrder={1}
+      {/* Local preview PiP — floats above the control bar, FaceTime-style. */}
+      <View style={styles.pip}>
+        {localTrack && !isCameraOff && isTrackReference(localTrack) ? (
+          <VideoTrack trackRef={localTrack} style={styles.rtcView} objectFit="cover" zOrder={1} />
+        ) : (
+          <View style={styles.pipPlaceholder}>
+            <Ionicons
+              name={isCameraOff ? 'videocam-off' : 'person'}
+              size={24}
+              color="rgba(255,255,255,0.8)"
             />
-          ) : (
-            <View style={styles.videoPlaceholder}>
-              <Ionicons
-                name={isCameraOff ? 'videocam-off' : 'person'}
-                size={26}
-                color="rgba(255,255,255,0.85)"
-              />
-            </View>
-          )}
-        </GlassView>
-        {isCameraOff && (
-          <View style={styles.cameraOffBadge}>
-            <Text style={styles.cameraOffText}>Camera off</Text>
           </View>
         )}
       </View>
@@ -275,25 +276,18 @@ const AudioRoomContent = ({ theme, status, callDuration, peer }: AudioRoomConten
   const remoteParticipant = participants.find((participant) => !participant.isLocal);
 
   return (
-    <View style={styles.audioCallContainer}>
-      <GlassView style={styles.audioCallCard}>
-        <PeerAvatar peer={peer} size={132} />
-        <Text variant="headlineMedium" style={[styles.audioTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
-          {peer.name}
-        </Text>
-        <Text style={[styles.audioSubtitle, { color: theme.colors.onSurfaceVariant }]}>
-          {status === 'connected'
-            ? remoteParticipant?.name || 'Connected'
-            : remoteParticipant
-              ? remoteParticipant.name || 'Connected'
-              : 'Waiting for participant...'}
-        </Text>
-        {status === 'connected' && (
-          <Text style={[styles.audioDuration, { color: theme.colors.primary }]}>
-            {formatDuration(callDuration)}
-          </Text>
-        )}
-      </GlassView>
+    <View style={styles.identityCenter}>
+      <PeerAvatar peer={peer} size={116} />
+      <Text style={styles.identityName} numberOfLines={1}>
+        {peer.name}
+      </Text>
+      <Text style={styles.identityStatus}>
+        {status === 'connected'
+          ? formatDuration(callDuration)
+          : remoteParticipant
+            ? 'Ringing…'
+            : 'Calling…'}
+      </Text>
     </View>
   );
 };
@@ -423,6 +417,7 @@ export const CallSessionScreen = ({
     toggleCamera,
   } = useCallManager({ chatId, groupId });
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { threads } = useChat();
   const { groups } = useGroups();
   const { user } = useAuth();
@@ -620,44 +615,30 @@ export const CallSessionScreen = ({
       pointerEvents={visible ? 'auto' : 'none'}
       style={[styles.overlay, visible ? styles.overlayVisible : styles.overlayHidden]}
     >
-      <LiquidBackground>
+      <CallBackdrop peer={peer} />
       <View style={styles.container}>
-        <GlassView style={styles.statusContainer}>
-          {onMinimize ? (
-            <IconButton
-              icon="chevron-down"
-              mode="contained-tonal"
-              size={20}
-              onPress={handleMinimize}
-              style={styles.minimizeButton}
-              accessibilityLabel="Minimize call"
-            />
-          ) : null}
-          <View style={styles.statusContent}>
-            <View style={styles.statusIdentityRow}>
-              <PeerAvatar peer={peer} size={28} />
-              <Text
-                style={[styles.statusTitle, { color: theme.colors.onSurface }]}
-                numberOfLines={1}
-              >
-                {peer.name}
-              </Text>
-              <Ionicons
-                name={callType === 'video' ? 'videocam' : 'call'}
-                size={15}
-                color={theme.colors.onSurfaceVariant}
-              />
-            </View>
-            <View style={styles.statusRow}>
-              <Text style={[styles.statusText, { color: theme.colors.onSurfaceVariant }]}>
-                {statusText}
-              </Text>
-              {(status === 'idle' || status === 'ringing') && (
-                <ActivityIndicator size="small" color={theme.colors.primary} style={styles.loader} />
-              )}
-            </View>
-          </View>
-        </GlassView>
+        {/* Status chip — call type + live status, iOS-thin, top center. */}
+        <View style={[styles.statusChip, { top: insets.top + 10 }]} pointerEvents="none">
+          <Ionicons
+            name={callType === 'video' ? 'videocam' : 'call'}
+            size={13}
+            color="rgba(255,255,255,0.75)"
+          />
+          <Text style={styles.statusChipText} numberOfLines={1}>
+            {statusText}
+          </Text>
+        </View>
+        {onMinimize ? (
+          <TouchableOpacity
+            onPress={handleMinimize}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Minimize call"
+            style={[styles.minimizeBtn, { top: insets.top + 4 }]}
+          >
+            <Ionicons name="chevron-down" size={22} color="#fff" />
+          </TouchableOpacity>
+        ) : null}
 
         {token && serverUrl ? (
           <View style={styles.roomContainer}>
@@ -703,22 +684,21 @@ export const CallSessionScreen = ({
           </View>
         ) : (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={theme.colors.primary} />
-            <Text style={[styles.loadingText, { color: theme.colors.onSurfaceVariant }]}> 
-              Setting up call...
-            </Text>
+            <ActivityIndicator size="large" color="#fff" />
+            <Text style={styles.loadingText}>Setting up call…</Text>
           </View>
         )}
 
-        <CallControls
-          micEnabled={!isMuted}
-          cameraEnabled={!isCameraOff}
-          onToggleMic={toggleMute}
-          onToggleCamera={callType === 'video' ? toggleCamera : undefined}
-          onHangUp={handleHangUp}
-        />
+        <View style={[styles.controlsWrap, { paddingBottom: insets.bottom + 18 }]}>
+          <CallControls
+            micEnabled={!isMuted}
+            cameraEnabled={!isCameraOff}
+            onToggleMic={toggleMute}
+            onToggleCamera={callType === 'video' ? toggleCamera : undefined}
+            onHangUp={handleHangUp}
+          />
+        </View>
       </View>
-      </LiquidBackground>
     </View>
   );
 };
@@ -728,6 +708,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     zIndex: 1000,
     elevation: 1000,
+    backgroundColor: '#0B0E14',
   },
   overlayVisible: {
     opacity: 1,
@@ -737,161 +718,116 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    justifyContent: 'space-between',
-    padding: 16,
   },
-  statusContainer: {
-    position: 'relative',
-    padding: 16,
-    borderRadius: 16,
-    zIndex: 10,
-  },
-  minimizeButton: {
+  statusChip: {
     position: 'absolute',
-    top: 8,
-    right: 8,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    zIndex: 20,
+    maxWidth: '70%',
+  },
+  statusChipText: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 13,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  minimizeBtn: {
+    position: 'absolute',
+    left: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
     zIndex: 20,
   },
-  statusContent: {
-    alignItems: 'center',
-  },
-  statusIdentityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
-    maxWidth: '85%',
-  },
-  statusTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    flexShrink: 1,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  statusText: {
-    fontSize: 14,
-  },
-  loader: {
-    marginLeft: 4,
-  },
   roomContainer: {
-    flex: 1,
-    marginVertical: 16,
+    ...StyleSheet.absoluteFillObject,
   },
-  videoGrid: {
+  videoFill: {
     flex: 1,
-    position: 'relative',
-  },
-  video: {
-    flex: 1,
-    borderRadius: 20,
-    overflow: 'hidden',
-  },
-  localVideoContainer: {
-    position: 'absolute',
-    bottom: 16,
-    right: 16,
-    width: 100,
-    height: 140,
-  },
-  localVideo: {
-    flex: 1,
-    borderRadius: 16,
-    overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   rtcView: {
     flex: 1,
     width: '100%',
     height: '100%',
   },
-  videoPlaceholder: {
-    flex: 1,
-    justifyContent: 'center',
+  identityCenter: {
+    ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    justifyContent: 'center',
+    paddingBottom: 140,
+    gap: 6,
   },
-  placeholderName: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginTop: 14,
-    marginBottom: 4,
-    maxWidth: '80%',
-  },
-  placeholderText: {
-    fontSize: 14,
-  },
-  cameraOffBadge: {
-    position: 'absolute',
-    bottom: 8,
-    left: 8,
-    right: 8,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    borderRadius: 8,
-    padding: 4,
-  },
-  cameraOffText: {
+  identityName: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: 30,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+    marginTop: 14,
+    maxWidth: '80%',
     textAlign: 'center',
   },
-  connectionOverlay: {
-    position: 'absolute',
-    top: 16,
-    left: 16,
-    right: 16,
-    zIndex: 20,
+  identityStatus: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 15,
+    fontVariant: ['tabular-nums'],
   },
-  connectionBadge: {
-    flexDirection: 'row',
+  videoTopPill: {
+    position: 'absolute',
+    top: 110,
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: 'rgba(10,12,18,0.55)',
+    maxWidth: '70%',
+  },
+  videoTopPillText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  pip: {
+    position: 'absolute',
+    right: 16,
+    bottom: 170,
+    width: 108,
+    height: 158,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: '#1B1E26',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
+  pipPlaceholder: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 12,
-    borderRadius: 12,
-    gap: 8,
-  },
-  connectionText: {
-    fontSize: 14,
-    fontWeight: '500',
   },
   loadingContainer: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 16,
   },
   loadingText: {
-    fontSize: 16,
+    fontSize: 15,
+    color: 'rgba(255,255,255,0.7)',
   },
-  audioCallContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  audioCallCard: {
-    padding: 40,
-    borderRadius: 32,
-    alignItems: 'center',
-    minWidth: 280,
-  },
-  audioTitle: {
-    marginTop: 20,
-    marginBottom: 8,
-    fontWeight: '700',
-    maxWidth: 260,
-    textAlign: 'center',
-  },
-  audioSubtitle: {
-    fontSize: 16,
-    marginBottom: 16,
-  },
-  audioDuration: {
-    fontSize: 24,
-    fontWeight: '600',
+  controlsWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 10,
   },
 });

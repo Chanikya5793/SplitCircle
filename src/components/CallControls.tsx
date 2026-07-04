@@ -1,66 +1,52 @@
-// In-call control bar — FaceTime-style circular controls on a glass pill.
-// Toggles invert when "off" (white fill, dark glyph) so state reads at a
-// glance over any wallpaper or remote video frame; hang-up stays the one
-// destructive red circle.
+// In-call controls — native-iOS idiom: translucent circular buttons with
+// labels underneath over the dark call backdrop, red end button. Toggles
+// invert to solid white with a dark glyph when "off" (exactly how the Phone
+// app shows an active Mute). The call screen is always dark regardless of
+// app theme, so colors here are fixed, not themed.
 
-import { GlassView } from '@/components/GlassView';
-import { useTheme } from '@/context/ThemeContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 interface ControlButtonProps {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  accessibilityLabel: string;
   onPress?: () => void;
-  /** Toggle state; when false the button inverts to show "off". */
+  /** Toggle state; false renders the inverted (engaged) look. */
   active?: boolean;
   danger?: boolean;
-  size?: number;
 }
 
-const ControlButton = ({ icon, label, onPress, active = true, danger, size = 56 }: ControlButtonProps) => {
-  const { isDark } = useTheme();
+const BUTTON_SIZE = 64;
 
+const ControlButton = ({ icon, label, accessibilityLabel, onPress, active = true, danger }: ControlButtonProps) => {
   const background = danger
-    ? '#E5484D'
+    ? '#FF3B30'
     : active
-      ? isDark
-        ? 'rgba(255,255,255,0.14)'
-        : 'rgba(0,0,0,0.08)'
-      : isDark
-        ? 'rgba(255,255,255,0.92)'
-        : 'rgba(30,30,30,0.85)';
-  const iconColor = danger
-    ? '#fff'
-    : active
-      ? isDark
-        ? '#fff'
-        : '#1d1d1f'
-      : isDark
-        ? '#1d1d1f'
-        : '#fff';
+      ? 'rgba(255,255,255,0.18)'
+      : 'rgba(255,255,255,0.95)';
+  const iconColor = danger ? '#fff' : active ? '#fff' : '#111';
 
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={!onPress}
-      activeOpacity={0.75}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ selected: !active }}
-      style={[
-        styles.button,
-        { width: size, height: size, borderRadius: size / 2, backgroundColor: background },
-        !onPress && styles.buttonDisabled,
-      ]}
-    >
-      <Ionicons
-        name={icon}
-        size={size * 0.44}
-        color={iconColor}
-        style={danger ? styles.hangupGlyph : undefined}
-      />
-    </TouchableOpacity>
+    <View style={styles.buttonColumn}>
+      <TouchableOpacity
+        onPress={onPress}
+        disabled={!onPress}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        accessibilityState={{ selected: !active }}
+        style={[styles.button, { backgroundColor: background }, !onPress && styles.buttonDisabled]}
+      >
+        <Ionicons
+          name={icon}
+          size={28}
+          color={iconColor}
+          style={danger ? styles.hangupGlyph : undefined}
+        />
+      </TouchableOpacity>
+      <Text style={styles.buttonLabel}>{label}</Text>
+    </View>
   );
 };
 
@@ -79,49 +65,58 @@ export const CallControls = ({
   onToggleCamera,
   onHangUp,
 }: CallControlsProps) => (
-  <View style={styles.wrapper}>
-    <GlassView style={styles.pill} contentStyle={styles.pillContent} intensity={50}>
+  <View style={styles.row}>
+    <ControlButton
+      icon={micEnabled ? 'mic' : 'mic-off'}
+      label={micEnabled ? 'mute' : 'unmute'}
+      accessibilityLabel={micEnabled ? 'Mute microphone' : 'Unmute microphone'}
+      onPress={onToggleMic}
+      active={micEnabled}
+    />
+    {onToggleCamera ? (
       <ControlButton
-        icon={micEnabled ? 'mic' : 'mic-off'}
-        label={micEnabled ? 'Mute microphone' : 'Unmute microphone'}
-        onPress={onToggleMic}
-        active={micEnabled}
+        icon={cameraEnabled ? 'videocam' : 'videocam-off'}
+        label="camera"
+        accessibilityLabel={cameraEnabled ? 'Turn camera off' : 'Turn camera on'}
+        onPress={onToggleCamera}
+        active={cameraEnabled}
       />
-      {onToggleCamera ? (
-        <ControlButton
-          icon={cameraEnabled ? 'videocam' : 'videocam-off'}
-          label={cameraEnabled ? 'Turn camera off' : 'Turn camera on'}
-          onPress={onToggleCamera}
-          active={cameraEnabled}
-        />
-      ) : null}
-      <ControlButton icon="call" label="End call" onPress={onHangUp} danger size={64} />
-    </GlassView>
+    ) : null}
+    <ControlButton
+      icon="call"
+      label="end"
+      accessibilityLabel="End call"
+      onPress={onHangUp}
+      danger
+    />
   </View>
 );
 
 const styles = StyleSheet.create({
-  wrapper: {
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  pill: {
-    borderRadius: 40,
-    overflow: 'hidden',
-  },
-  pillContent: {
+  row: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    gap: 40,
+  },
+  buttonColumn: {
     alignItems: 'center',
-    gap: 18,
-    paddingHorizontal: 22,
-    paddingVertical: 12,
+    gap: 8,
   },
   button: {
+    width: BUTTON_SIZE,
+    height: BUTTON_SIZE,
+    borderRadius: BUTTON_SIZE / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
   buttonDisabled: {
     opacity: 0.5,
+  },
+  buttonLabel: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 13,
+    fontWeight: '500',
   },
   // The "call" glyph points up; rotated it reads as hang-up.
   hangupGlyph: {
