@@ -187,6 +187,42 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
     );
   };
 
+  const changeDuressCode = () => {
+    Alert.prompt(
+      settings.duressCodeHash ? 'Change duress code' : 'Set a duress code',
+      'A second code that fakes an unlock but keeps everything hidden — for when someone makes you open it. Must differ from your real code.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Save',
+          onPress: (code?: string) => {
+            const trimmed = code?.trim() ?? '';
+            if (trimmed.length < 4) {
+              Alert.alert('Too short', 'Use at least 4 characters.');
+              return;
+            }
+            void hashCode(trimmed).then((digest) => {
+              if (digest === settings.codeHash) {
+                Alert.alert('Pick a different code', 'The duress code must not match your real code.');
+                return;
+              }
+              void updateGuard({ duressCodeHash: digest });
+              successHaptic();
+            });
+          },
+        },
+      ],
+      'secure-text',
+    );
+  };
+
+  const clearDuressCode = () => {
+    Alert.alert('Remove duress code?', 'The fake-unlock code will stop working.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => void updateGuard({ duressCodeHash: null }) },
+    ]);
+  };
+
   const sectionLabel = (text: string) => (
     <Text variant="labelMedium" style={[styles.groupLabel, { color: theme.colors.onSurfaceVariant }]}>
       {text}
@@ -397,6 +433,54 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
                 if (ok) void updateGuard({ biometricUnlock: true });
               })();
             },
+          )}
+
+          {sectionLabel('SCREEN CAPTURE')}
+          {toggleRow(
+            'Hide on screenshot',
+            'Trip automatically when a screenshot is taken',
+            settings.hideOnScreenshot,
+            (v) => void updateGuard({ hideOnScreenshot: v }),
+          )}
+          {toggleRow(
+            'Blur in screen recordings',
+            'Blank the app in recordings & the app switcher while hidden',
+            settings.blockScreenRecording,
+            (v) => void updateGuard({ blockScreenRecording: v }),
+          )}
+
+          {sectionLabel('PANIC TAP')}
+          <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 8 }}>
+            Triple-tap this corner of the screen to hide — silent, no shaking.
+          </Text>
+          <SegmentedButtons
+            value={settings.panicCorner}
+            onValueChange={(v) => {
+              selectionHaptic();
+              void updateGuard({ panicCorner: v as typeof settings.panicCorner });
+            }}
+            buttons={[
+              { value: 'off', label: 'Off' },
+              { value: 'top-left', label: 'Top-left' },
+              { value: 'top-right', label: 'Top-right' },
+            ]}
+          />
+
+          {sectionLabel('DURESS CODE')}
+          <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 4 }}>
+            {settings.duressCodeHash
+              ? 'Set. Entering it looks like a normal unlock but reveals nothing.'
+              : 'Optional. A code you can give under pressure that fakes an unlock.'}
+          </Text>
+          <Pressable onPress={changeDuressCode} accessibilityRole="button" style={styles.actionRow}>
+            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>
+              {settings.duressCodeHash ? 'Change duress code' : 'Set duress code'}
+            </Text>
+          </Pressable>
+          {settings.duressCodeHash && (
+            <Pressable onPress={clearDuressCode} accessibilityRole="button" style={styles.actionRow}>
+              <Text style={{ color: theme.colors.error, fontWeight: '600' }}>Remove duress code</Text>
+            </Pressable>
           )}
 
           <View style={[styles.divider, { backgroundColor: divider, marginTop: 6 }]} />

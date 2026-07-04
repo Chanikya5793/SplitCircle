@@ -22,3 +22,4 @@ export { CurrencyConvertSheet } from './CurrencyConvertSheet';
 export { GuardedScreen, LockedOverlay, Shield, promptGuardUnlock } from "./Shield";
 export { PrivacyGuardSheet } from "./PrivacyGuardSheet";
 export { AppLockGate } from "./AppLockGate";
+export { PanicTapZone } from "./PanicTapZone";

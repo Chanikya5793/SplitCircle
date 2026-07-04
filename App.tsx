@@ -8,7 +8,7 @@ import { LoadingProvider } from '@/context/LoadingContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { PrivacyGuardProvider } from '@/context/PrivacyGuardContext';
 import { AppLockProvider } from '@/context/AppLockContext';
-import { AppLockGate, LockedOverlay } from '@/components/ui';
+import { AppLockGate, LockedOverlay, PanicTapZone } from '@/components/ui';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { AppNavigator } from '@/navigation/AppNavigator';
 import { StatusBar } from 'expo-status-bar';
@@ -35,6 +35,7 @@ function AppContent() {
                         <OfflineBanner />
                         <AppNavigator />
                       </LiquidBackground>
+                      <PanicTapZone />
                       <LockedOverlay />
                     </PrivacyGuardProvider>
                     <AppLockGate />

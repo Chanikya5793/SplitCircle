@@ -42,11 +42,25 @@ export interface GuardTargets {
   everything: boolean;
 }
 
+export type PanicCorner = 'off' | 'top-left' | 'top-right';
+
 export interface PrivacyGuardSettings {
   /** Master switch — when false, shaking does nothing. */
   enabled: boolean;
   /** SHA-256 hash of the secret code; null until first setup. */
   codeHash: string | null;
+  /**
+   * Optional SHA-256 hash of a DURESS code. Entering it at any unlock prompt
+   * fakes a successful unlock (neutral dismissal, no error) but leaves the
+   * guard fully armed — so a coerced "open it" reveals nothing. null = unset.
+   */
+  duressCodeHash: string | null;
+  /** Trip the guard automatically when a screenshot is taken. */
+  hideOnScreenshot: boolean;
+  /** Blur the app in screen recordings / the app switcher while armed. */
+  blockScreenRecording: boolean;
+  /** A silent alternative to shaking: triple-tap a hidden screen corner. */
+  panicCorner: PanicCorner;
   action: GuardAction;
   targets: GuardTargets;
   sensitivity: GuardSensitivity;
@@ -77,6 +91,10 @@ export interface PrivacyGuardSettings {
 export const DEFAULT_GUARD_SETTINGS: PrivacyGuardSettings = {
   enabled: false,
   codeHash: null,
+  duressCodeHash: null,
+  hideOnScreenshot: false,
+  blockScreenRecording: false,
+  panicCorner: 'off',
   action: 'scramble',
   targets: { expenses: true, charts: true, calls: false, friends: false, chats: false, everything: false },
   sensitivity: 'normal',
@@ -259,30 +277,50 @@ export const lockoutRemainingMs = async (): Promise<number> => {
 
 export interface UnlockResult {
   ok: boolean;
+  /**
+   * True when the DURESS code was entered. Callers must treat this like a
+   * neutral non-event: dismiss the prompt without an error, but do NOT drop
+   * the shields — the guard stays armed so nothing is revealed.
+   */
+  duress: boolean;
   /** When ok is false, ms the caller must wait before another attempt. */
   lockedForMs: number;
 }
 
+/** Whether a code matches the (optional) duress code. */
+export const isDuressCode = async (code: string): Promise<boolean> => {
+  const settings = getGuardSync();
+  if (!settings.duressCodeHash) return false;
+  return (await hashCode(code)) === settings.duressCodeHash;
+};
+
 /**
  * Verify a code with brute-force protection. On success the counter resets;
  * on failure it increments and, past the threshold, sets an escalating
- * cooldown. Callers should surface `lockedForMs` when non-zero.
+ * cooldown. A duress-code match returns { ok: false, duress: true } WITHOUT
+ * counting as a failure, so the coercer sees no error. Callers should surface
+ * `lockedForMs` when non-zero and stay silent on `duress`.
  */
 export const attemptUnlock = async (code: string): Promise<UnlockResult> => {
   await loadLockout();
   const remaining = Math.max(0, lockout.until - Date.now());
-  if (remaining > 0) return { ok: false, lockedForMs: remaining };
+  if (remaining > 0) return { ok: false, duress: false, lockedForMs: remaining };
 
   const ok = await verifyCode(code);
   if (ok) {
     lockout = { fails: 0, until: 0 };
     await saveLockout();
-    return { ok: true, lockedForMs: 0 };
+    return { ok: true, duress: false, lockedForMs: 0 };
+  }
+
+  // Duress code: look like nothing happened. Don't reveal, don't penalize.
+  if (await isDuressCode(code)) {
+    return { ok: false, duress: true, lockedForMs: 0 };
   }
 
   lockout.fails += 1;
   const cd = cooldownFor(lockout.fails);
   lockout.until = cd > 0 ? Date.now() + cd : 0;
   await saveLockout();
-  return { ok: false, lockedForMs: cd };
+  return { ok: false, duress: false, lockedForMs: cd };
 };

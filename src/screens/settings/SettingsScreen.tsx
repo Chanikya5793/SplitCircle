@@ -78,10 +78,13 @@ export const SettingsScreen = () => {
           {
             text: 'Open',
             onPress: (code?: string) => {
-              void attemptUnlock(code ?? '').then(({ ok, lockedForMs }) => {
+              void attemptUnlock(code ?? '').then(({ ok, duress, lockedForMs }) => {
                 if (ok) {
                   void updateGuard({ active: false });
                   setGuardSheetOpen(true);
+                } else if (duress) {
+                  // Coerced open: look like a dead end, reveal nothing.
+                  lightHaptic();
                 } else {
                   lightHaptic();
                   if (lockedForMs > 0) {

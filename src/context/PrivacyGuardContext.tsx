@@ -21,6 +21,7 @@ import { errorHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, Platform, Settings } from 'react-native';
 import { authenticate, isBiometricAvailable } from '@/services/biometrics';
+import { setScreenCaptureBlocked, subscribeScreenshot } from '@/services/screenCaptureGuard';
 
 type GuardTarget = keyof GuardTargets;
 
@@ -140,11 +141,15 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
               {
                 text: 'Reveal',
                 onPress: (code?: string) => {
-                  void attemptUnlock(code ?? '').then(({ ok }) => {
+                  void attemptUnlock(code ?? '').then(({ ok, duress }) => {
                     promptingRef.current = false;
                     if (ok) {
                       successHaptic();
                       void updateGuard({ active: false });
+                    } else if (duress) {
+                      // Fake the unlock: same buzz + dismissal a real code gives,
+                      // but the shields stay up. The coercer sees nothing amiss.
+                      successHaptic();
                     } else {
                       errorHaptic();
                     }
@@ -173,6 +178,25 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
     });
     return () => sub.remove();
   }, [settings.enabled, settings.rearmOnBackground, settings.codeHash]);
+
+  // Screenshot → trip. iOS reports the screenshot only after the frame is
+  // already captured, so this hides everything going FORWARD (the taken shot
+  // still shows what was on screen — unavoidable at the OS level).
+  useEffect(() => {
+    if (!settings.enabled || !settings.codeHash || !settings.hideOnScreenshot) return;
+    return subscribeScreenshot(() => {
+      if (!getGuardSync().active) {
+        warningHaptic();
+        void updateGuard({ active: true });
+      }
+    });
+  }, [settings.enabled, settings.codeHash, settings.hideOnScreenshot]);
+
+  // Blur the app in screen recordings while the shields are up.
+  useEffect(() => {
+    const active = settings.active && Boolean(settings.codeHash);
+    void setScreenCaptureBlocked(active && settings.blockScreenRecording);
+  }, [settings.active, settings.codeHash, settings.blockScreenRecording]);
 
   const value = useMemo<PrivacyGuardContextValue>(() => {
     // `enabled` arms the SHAKE listener only; `active` raises the shields no
