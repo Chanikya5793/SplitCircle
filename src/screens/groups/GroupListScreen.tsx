@@ -14,6 +14,7 @@ import {
 import { CURRENCIES } from '@/constants/currencies';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import type { Group } from '@/models';
 import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
@@ -34,6 +35,9 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const { groups, loading, createGroup, joinGroup } = useGroups();
   const { isOnline } = useOfflineSync();
   const { theme, isDark } = useTheme();
+  const { isShielded: guardIsShielded } = usePrivacyGuard();
+  // Creating/joining groups is blocked while expenses are hidden.
+  const groupsShielded = guardIsShielded('expenses');
   const [dialog, setDialog] = useState<'create' | 'join' | null>(null);
   const [name, setName] = useState('');
   const [currencyInput, setCurrencyInput] = useState('USD');
@@ -295,7 +299,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         }
       />
 
-      <View style={[styles.actions, { bottom: tabBarEnvelopeHeight + 12 }]}>
+      {!groupsShielded && <View style={[styles.actions, { bottom: tabBarEnvelopeHeight + 12 }]}>
         <Button mode="contained" onPress={() => { lightHaptic(); setDialog('create'); }}>
           New group
         </Button>
@@ -316,7 +320,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
             <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Join via code</Text>
           </GlassView>
         </TouchableOpacity>
-      </View>
+      </View>}
 
       <Portal>
         <GroupFilterSortSheet

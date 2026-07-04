@@ -1,6 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GroupAvatar, GroupPhotoUploader } from '@/components/ui';
+import { GroupAvatar, GroupPhotoUploader, GuardedScreen} from '@/components/ui';
 import { CurrencyConvertSheet, WallpaperPickerSheet } from '@/components/ui';
 import { getWallpaperSync } from '@/services/wallpaperService';
 import { ROUTES } from '@/constants';
@@ -353,6 +353,7 @@ export const GroupInfoScreen = () => {
 
     return (
         <LiquidBackground>
+            <GuardedScreen target="expenses" entityId={group.groupId} label="Group hidden">
             <SafeAreaView style={styles.container} edges={['bottom']}>
                 <Animated.View
                     style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }], paddingTop: insets.top }]}
@@ -697,6 +698,7 @@ export const GroupInfoScreen = () => {
                 group={group}
                 onClose={() => setCurrencySheetOpen(false)}
             />
+        </GuardedScreen>
         </LiquidBackground>
     );
 };

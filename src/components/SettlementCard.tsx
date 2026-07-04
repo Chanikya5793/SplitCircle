@@ -104,18 +104,18 @@ export const SettlementCard = ({
                                     </View>
                                     <View style={{ flex: 1 }}>
                                         <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                                            Settlement
+                                            {maskGroupText('Settlement', groupId)}
                                         </Text>
                                         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                                             {fromName} → {toName}
                                         </Text>
                                         {settlement.note && (
                                             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
-                                                {settlement.note}
+                                                {maskGroupText(settlement.note, groupId)}
                                             </Text>
                                         )}
                                         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
-                                            {new Date(settlement.createdAt).toLocaleDateString()}
+                                            {maskGroupText(new Date(settlement.createdAt).toLocaleDateString(), groupId)}
                                         </Text>
                                         {isPendingSync ? <SyncBadge style={{ marginTop: 4 }} /> : null}
                                     </View>

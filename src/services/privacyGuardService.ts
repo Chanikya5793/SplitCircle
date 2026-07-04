@@ -60,6 +60,10 @@ export interface PrivacyGuardSettings {
   hidePhotos: boolean;
   /** Hide last-message previews in the chat list. */
   hidePreviews: boolean;
+  /** Revert custom wallpapers/backgrounds to the default liquid background. */
+  hideWallpaper: boolean;
+  /** Hide the user's own profile photo + email in Settings. */
+  hideProfile: boolean;
   /** Which expense groups the guard touches. */
   groupScope: GuardScope;
   /** Which conversations the guard touches. */
@@ -80,6 +84,8 @@ export const DEFAULT_GUARD_SETTINGS: PrivacyGuardSettings = {
   hideNames: false,
   hidePhotos: false,
   hidePreviews: true,
+  hideWallpaper: false,
+  hideProfile: false,
   groupScope: { mode: 'all', ids: [] },
   chatScope: { mode: 'all', ids: [] },
   rearmOnBackground: false,

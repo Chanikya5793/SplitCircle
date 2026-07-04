@@ -12,6 +12,9 @@ import { APP_NAME, APP_VERSION } from '@/constants/appInfo';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useWallpaperSlot } from '@/hooks/useWallpaper';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import {
@@ -30,7 +33,6 @@ import {
 } from '@/services/wallpaperService';
 import { ACCENT_IDS, ACCENTS } from '@/theme';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
-import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Alert, Animated, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -43,6 +45,9 @@ export const SettingsScreen = () => {
   const { isDark, theme, mode, setMode, accent, setAccent } = useTheme();
   const appWallpaper = useWallpaperSlot('app');
   const chatDefaultWallpaper = useWallpaperSlot('chat-default');
+  const { active: guardActive, settings: guardSettings } = usePrivacyGuard();
+  const { maskPersonName } = usePrivacyMask();
+  const hideOwnProfile = guardActive && guardSettings.hideProfile;
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
   const bottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
@@ -232,17 +237,23 @@ export const SettingsScreen = () => {
 
         {/* Profile hero — identity only; sign-out lives at the bottom. */}
         <GlassCard style={styles.card} contentStyle={styles.profileContent}>
-          <ProfilePhotoUploader size={64} editable />
+          {hideOwnProfile ? (
+            <View style={[styles.profileSilhouette, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
+              <Ionicons name="person" size={30} color={theme.colors.onSurfaceVariant} />
+            </View>
+          ) : (
+            <ProfilePhotoUploader size={64} editable />
+          )}
           <View style={styles.profileText}>
             <Text
               variant="titleMedium"
               numberOfLines={1}
               style={{ fontWeight: '700', color: theme.colors.onSurface }}
             >
-              {user?.displayName || 'Your profile'}
+              {hideOwnProfile ? maskPersonName(user?.displayName || 'Your profile') : (user?.displayName || 'Your profile')}
             </Text>
             <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
-              {user?.email}
+              {hideOwnProfile ? '••••••••••' : user?.email}
             </Text>
           </View>
         </GlassCard>
@@ -441,6 +452,13 @@ const styles = StyleSheet.create({
   },
   cardContent: {
     paddingVertical: 4,
+  },
+  profileSilhouette: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   profileContent: {
     flexDirection: 'row',

@@ -73,6 +73,9 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   const insets = useSafeAreaInsets();
   const { isShielded } = usePrivacyGuard();
   const callsShielded = isShielded('calls');
+  // The New Call sheet lists conversations by name — block it whenever calls
+  // OR chats are hidden so it can't reveal who you talk to.
+  const newCallBlocked = callsShielded || isShielded('chats');
   const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
 
   const [callHistory, setCallHistory] = useState<CallHistoryEntry[]>([]);
@@ -764,16 +767,18 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
 
                   {/* Thread list */}
                   <FlatList
-                    data={filteredThreads}
+                    data={newCallBlocked ? [] : filteredThreads}
                     keyExtractor={(item) => item.chatId}
                     keyboardShouldPersistTaps="handled"
                     contentContainerStyle={styles.sheetListContent}
                     ListEmptyComponent={
                       <View style={styles.sheetEmpty}>
                         <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                          {searchQuery
-                            ? 'No contacts found.'
-                            : 'No conversations yet. Start a chat first.'}
+                          {newCallBlocked
+                            ? 'Hidden — shake again or enter your code to reveal.'
+                            : searchQuery
+                              ? 'No contacts found.'
+                              : 'No conversations yet. Start a chat first.'}
                         </Text>
                       </View>
                     }

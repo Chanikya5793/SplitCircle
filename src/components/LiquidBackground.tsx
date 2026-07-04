@@ -10,6 +10,7 @@
 
 import { useTheme } from '@/context/ThemeContext';
 import { useWallpaper, useWallpaperChain } from '@/hooks/useWallpaper';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { ACCENTS, NEUTRALS } from '@/theme/palette';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Image, InteractionManager, StyleSheet, useWindowDimensions, View, ViewStyle } from 'react-native';
@@ -148,7 +149,12 @@ export const LiquidBackground = ({
   const [animate, setAnimate] = useState(false);
   const chatWallpaper = useWallpaper(wallpaperChatId);
   const chainWallpaper = useWallpaperChain(wallpaperSlots ?? []);
-  const wallpaper = wallpaperSlots ? chainWallpaper : chatWallpaper;
+  const resolvedWallpaper = wallpaperSlots ? chainWallpaper : chatWallpaper;
+  // Privacy guard: optionally revert custom photo backgrounds to the neutral
+  // liquid blobs while the shields are up, so the wallpaper itself can't hint
+  // at context (e.g. a partner's photo behind a chat).
+  const { active: guardActive, settings: guardSettings } = usePrivacyGuard();
+  const wallpaper = guardActive && guardSettings.hideWallpaper ? null : resolvedWallpaper;
 
   // Defer blob animations until the navigation transition finishes.
   useEffect(() => {

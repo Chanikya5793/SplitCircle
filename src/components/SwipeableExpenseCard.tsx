@@ -121,11 +121,11 @@ export const SwipeableExpenseCard = ({
                     <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{maskGroupText(expense.title, groupId)}</Text>
                     <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
                       {isSettlement
-                        ? `${expense.category} · Paid by ${payerName}`
-                        : `${expense.category} · ${splitLabel} · Paid by ${payerName}`}
+                        ? `${maskGroupText(expense.category, groupId)} · Paid by ${payerName}`
+                        : `${maskGroupText(expense.category, groupId)} · ${maskGroupText(splitLabel, groupId)} · Paid by ${payerName}`}
                     </Text>
                     <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                      {new Date(expense.createdAt).toLocaleDateString()}
+                      {maskGroupText(new Date(expense.createdAt).toLocaleDateString(), groupId)}
                     </Text>
                   </View>
                 </View>

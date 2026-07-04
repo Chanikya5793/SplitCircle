@@ -30,6 +30,8 @@ interface PrivacyGuardContextValue {
    * user's All / Only-selected / All-except scope configuration.
    */
   isShielded: (target: Exclude<GuardTarget, 'everything'>, entityId?: string) => boolean;
+  /** Shields are up (tripped) — for global effects like wallpaper/profile hiding. */
+  active: boolean;
   /** Whole-app lockdown active. */
   fullLock: boolean;
   action: GuardAction;
@@ -40,6 +42,7 @@ interface PrivacyGuardContextValue {
 const PrivacyGuardContext = createContext<PrivacyGuardContextValue>({
   settings: getGuardSync(),
   isShielded: () => false,
+  active: false,
   fullLock: false,
   action: 'scramble',
   trip: () => {},
@@ -157,6 +160,7 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
     return {
       settings,
       action: settings.action,
+      active,
       fullLock: active && settings.targets.everything,
       isShielded: (target, entityId) => {
         if (!active) return false;

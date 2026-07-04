@@ -1324,16 +1324,20 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               </GlassView>
             </TouchableOpacity>
             <View style={styles.headerCallActions}>
-              <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
-                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
-                  <Icon source="phone" size={18} color={theme.colors.primary} />
-                </GlassView>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Video call">
-                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
-                  <Icon source="video" size={18} color={theme.colors.primary} />
-                </GlassView>
-              </TouchableOpacity>
+              {!chatShielded && (
+                <>
+                  <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
+                    <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                      <Icon source="phone" size={18} color={theme.colors.primary} />
+                    </GlassView>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Video call">
+                    <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                      <Icon source="video" size={18} color={theme.colors.primary} />
+                    </GlassView>
+                  </TouchableOpacity>
+                </>
+              )}
               <TouchableOpacity
                 onPress={() => {
                   lightHaptic();

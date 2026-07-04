@@ -298,6 +298,14 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
             </>
           )}
 
+          {sectionLabel('ALSO HIDE')}
+          {toggleRow('Wallpapers & backgrounds', 'Revert custom photos to the default background', settings.hideWallpaper, (v) =>
+            void updateGuard({ hideWallpaper: v }),
+          )}
+          {toggleRow('My profile & email', 'Hide your own photo and email in Settings', settings.hideProfile, (v) =>
+            void updateGuard({ hideProfile: v }),
+          )}
+
           {sectionLabel('WHAT HIDES')}
           {TARGET_ROWS.map(({ key, label, hint }) => (
             <View key={key} style={styles.row}>

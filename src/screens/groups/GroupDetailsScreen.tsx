@@ -36,7 +36,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   const insets = useSafeAreaInsets();
   const { deleteExpense, deleteSettlement, loading } = useGroups();
   const { theme, isDark } = useTheme();
-  const { maskGroupName } = usePrivacyMask();
+  const { maskGroupName, maskGroupText } = usePrivacyMask();
   const groupDisplayName = maskGroupName(group.name, group.groupId);
   const scrollY = useRef(new Animated.Value(0)).current;
   const compactStateRef = useRef(false);
@@ -586,7 +586,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               accessibilityRole="button"
               accessibilityLabel="Copy invite code"
             >
-              Invite code: <Text style={{ fontWeight: 'bold', color: theme.colors.primary }}>{group.inviteCode}</Text>
+              Invite code: <Text style={{ fontWeight: 'bold', color: theme.colors.primary }}>{maskGroupText(group.inviteCode, group.groupId)}</Text>
               {'  '}
               <Text style={{ color: theme.colors.muted, fontSize: 12 }}>(tap to copy)</Text>
             </Text>
