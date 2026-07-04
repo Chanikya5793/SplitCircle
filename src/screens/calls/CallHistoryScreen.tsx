@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { StickyHeaderPill } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { useAuth } from '@/context/AuthContext';
@@ -465,14 +466,14 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
           { opacity: headerOpacity, paddingTop: insets.top + 8 },
         ]}
       >
-        <GlassView style={styles.stickyHeaderGlass}>
+        <StickyHeaderPill style={styles.stickyHeaderGlass}>
           <Text
             variant="titleMedium"
             style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}
           >
             Calls
           </Text>
-        </GlassView>
+        </StickyHeaderPill>
       </RNAnimated.View>
 
       <View style={styles.container}>

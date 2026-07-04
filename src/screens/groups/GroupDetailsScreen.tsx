@@ -468,7 +468,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
 
   return (
-    <LiquidBackground>
+    <LiquidBackground wallpaperSlots={[`group:${group.groupId}`, 'app']}>
       <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
         <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>{group.name}</Text>

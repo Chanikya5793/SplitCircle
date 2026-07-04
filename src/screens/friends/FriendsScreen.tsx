@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { StickyHeaderPill } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { ROUTES } from '@/constants';
@@ -348,11 +349,11 @@ export const FriendsScreen = () => {
       <Animated.View
         style={[styles.stickyHeader, { opacity: headerOpacity, paddingTop: insets.top + 8 }]}
       >
-        <GlassView style={styles.stickyHeaderGlass}>
+        <StickyHeaderPill style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
             Friends
           </Text>
-        </GlassView>
+        </StickyHeaderPill>
       </Animated.View>
 
       <Animated.ScrollView

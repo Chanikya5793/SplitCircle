@@ -1,5 +1,6 @@
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
+import { StickyHeaderPill } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
@@ -224,9 +225,9 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           { opacity: headerOpacity, paddingTop: insets.top + 8 },
         ]}
       >
-        <GlassView style={styles.stickyHeaderGlass}>
+        <StickyHeaderPill style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Groups</Text>
-        </GlassView>
+        </StickyHeaderPill>
       </Animated.View>
 
       <Animated.FlatList

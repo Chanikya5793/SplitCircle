@@ -1,9 +1,12 @@
 import { GlassView } from '@/components/GlassView';
+import { StickyHeaderPill } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
 import { useWallpaperSlot } from '@/hooks/useWallpaper';
 import {
+  clearAllChatOverrides,
   clearWallpaper,
+  listChatOverrideSlots,
   pickAndSetWallpaper,
   type WallpaperSlot,
 } from '@/services/wallpaperService';
@@ -36,12 +39,34 @@ export const SettingsScreen = () => {
   const appWallpaper = useWallpaperSlot('app');
   const chatDefaultWallpaper = useWallpaperSlot('chat-default');
 
+  // Changing the chat DEFAULT doesn't touch chats the user customized
+  // individually — after a successful change, offer to reset those too.
+  const offerOverrideReset = () => {
+    const overrides = listChatOverrideSlots();
+    if (overrides.length === 0) return;
+    Alert.alert(
+      'Apply to all chats?',
+      `${overrides.length} ${overrides.length === 1 ? 'chat has' : 'chats have'} their own wallpaper. Replace ${overrides.length === 1 ? 'it' : 'them'} with the new default, or keep them as they are?`,
+      [
+        { text: 'Keep custom wallpapers', style: 'cancel' },
+        { text: 'Apply to all', style: 'destructive', onPress: () => void clearAllChatOverrides() },
+      ],
+    );
+  };
+
+  const pickForSlot = (slot: WallpaperSlot) =>
+    pickAndSetWallpaper(slot)
+      .then((entry) => {
+        if (entry && slot === 'chat-default') offerOverrideReset();
+      })
+      .catch((error) =>
+        Alert.alert('Background', error instanceof Error ? error.message : 'Could not set the photo.'),
+      );
+
   const handleWallpaper = (slot: WallpaperSlot, hasValue: boolean) => {
     lightHaptic();
     if (!hasValue) {
-      void pickAndSetWallpaper(slot).catch((error) =>
-        Alert.alert('Background', error instanceof Error ? error.message : 'Could not set the photo.'),
-      );
+      void pickForSlot(slot);
       return;
     }
     Alert.alert(
@@ -50,10 +75,7 @@ export const SettingsScreen = () => {
       [
         {
           text: 'Choose new photo',
-          onPress: () =>
-            void pickAndSetWallpaper(slot).catch((error) =>
-              Alert.alert('Background', error instanceof Error ? error.message : 'Could not set the photo.'),
-            ),
+          onPress: () => void pickForSlot(slot),
         },
         { text: 'Remove photo', style: 'destructive', onPress: () => void clearWallpaper(slot) },
         { text: 'Cancel', style: 'cancel' },
@@ -149,9 +171,9 @@ export const SettingsScreen = () => {
           { opacity: headerOpacity, paddingTop: insets.top + 8 },
         ]}
       >
-        <GlassView style={styles.stickyHeaderGlass}>
+        <StickyHeaderPill style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>Settings</Text>
-        </GlassView>
+        </StickyHeaderPill>
       </Animated.View>
 
       <Animated.ScrollView

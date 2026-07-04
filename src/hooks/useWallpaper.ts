@@ -5,6 +5,7 @@ import {
   getWallpaperSync,
   hydrateWallpapers,
   onWallpapersChanged,
+  resolveChainSync,
   resolveChatWallpaperSync,
   type WallpaperEntry,
   type WallpaperSlot,
@@ -41,3 +42,7 @@ export const useWallpaper = (chatId?: string): WallpaperEntry | null =>
 /** A single slot with no fallback chain — for settings rows. */
 export const useWallpaperSlot = (slot: WallpaperSlot): WallpaperEntry | null =>
   useResolved(() => getWallpaperSync(slot), slot);
+
+/** First set slot in the chain wins — for screens with custom fallbacks. */
+export const useWallpaperChain = (slots: WallpaperSlot[]): WallpaperEntry | null =>
+  useResolved(() => resolveChainSync(slots), slots.join('|'));

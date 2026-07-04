@@ -9,7 +9,7 @@
 // blobs; the scrim keeps foreground text legible over arbitrary photos.
 
 import { useTheme } from '@/context/ThemeContext';
-import { useWallpaper } from '@/hooks/useWallpaper';
+import { useWallpaper, useWallpaperChain } from '@/hooks/useWallpaper';
 import { ACCENTS, NEUTRALS } from '@/theme/palette';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Image, InteractionManager, StyleSheet, useWindowDimensions, View, ViewStyle } from 'react-native';
@@ -34,6 +34,8 @@ interface LiquidBackgroundProps {
    * default). Omit for regular screens, which use the app-wide wallpaper.
    */
   wallpaperChatId?: string;
+  /** Explicit slot chain (first set wins) — e.g. ['group:<id>', 'app']. */
+  wallpaperSlots?: import('@/services/wallpaperService').WallpaperSlot[];
 }
 
 interface BlobProps {
@@ -139,11 +141,14 @@ export const LiquidBackground = ({
   style,
   healthStatus = 'balanced',
   wallpaperChatId,
+  wallpaperSlots,
 }: LiquidBackgroundProps) => {
   const { themeProgress, theme, isDark } = useTheme();
   const { width, height } = useWindowDimensions();
   const [animate, setAnimate] = useState(false);
-  const wallpaper = useWallpaper(wallpaperChatId);
+  const chatWallpaper = useWallpaper(wallpaperChatId);
+  const chainWallpaper = useWallpaperChain(wallpaperSlots ?? []);
+  const wallpaper = wallpaperSlots ? chainWallpaper : chatWallpaper;
 
   // Defer blob animations until the navigation transition finishes.
   useEffect(() => {

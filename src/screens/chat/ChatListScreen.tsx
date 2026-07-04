@@ -16,7 +16,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
-import { GroupAvatar, UserAvatar } from '@/components/ui';
+import { GroupAvatar, UserAvatar, StickyHeaderPill} from '@/components/ui';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
 interface ChatListScreenProps {
@@ -191,9 +191,9 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
           { opacity: headerOpacity, paddingTop: insets.top + 8 },
         ]}
       >
-        <GlassView style={styles.stickyHeaderGlass}>
+        <StickyHeaderPill style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Chats</Text>
-        </GlassView>
+        </StickyHeaderPill>
       </Animated.View>
 
       <View style={styles.container}>

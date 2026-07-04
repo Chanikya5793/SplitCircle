@@ -20,7 +20,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 
 const STORAGE_KEY = 'wallpapers_v1';
 
-export type WallpaperSlot = 'app' | 'chat-default' | `chat:${string}`;
+export type WallpaperSlot = 'app' | 'chat-default' | `chat:${string}` | `group:${string}`;
 
 export interface WallpaperEntry {
   /** file:// URI inside documentDirectory/wallpapers/ */
@@ -133,6 +133,26 @@ export const pickAndSetWallpaper = async (
   }
 
   return entry;
+};
+
+/** Chat slots the user has individually customized (excludes the default). */
+export const listChatOverrideSlots = (): WallpaperSlot[] =>
+  Object.keys(cache ?? {}).filter((k): k is WallpaperSlot => k.startsWith('chat:'));
+
+/** Remove every per-chat override so the chat default applies everywhere. */
+export const clearAllChatOverrides = async (): Promise<void> => {
+  for (const slot of listChatOverrideSlots()) {
+    await clearWallpaper(slot);
+  }
+};
+
+/** Resolve a slot chain — first set entry wins (e.g. group override → app). */
+export const resolveChainSync = (slots: WallpaperSlot[]): WallpaperEntry | null => {
+  for (const slot of slots) {
+    const entry = getWallpaperSync(slot);
+    if (entry) return entry;
+  }
+  return null;
 };
 
 /** Clear a slot (per-chat clear falls back to default; default clear to blobs). */

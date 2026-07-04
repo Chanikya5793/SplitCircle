@@ -1,6 +1,11 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GroupAvatar, GroupPhotoUploader } from '@/components/ui';
+import {
+  clearWallpaper,
+  getWallpaperSync,
+  pickAndSetWallpaper,
+} from '@/services/wallpaperService';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -517,6 +522,35 @@ export const GroupInfoScreen = () => {
                         <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
                             Group Information
                         </Text>
+                        <List.Item
+                            title="Group wallpaper"
+                            description={getWallpaperSync(`group:${group.groupId}`)
+                                ? 'Custom photo behind this group · only on this device'
+                                : 'Use a photo behind this group\u2019s screens'}
+                            left={(props) => <List.Icon {...props} icon="image-outline" />}
+                            onPress={() => {
+                                lightHaptic();
+                                const slot = `group:${group.groupId}` as const;
+                                if (!getWallpaperSync(slot)) {
+                                    void pickAndSetWallpaper(slot).catch((error) =>
+                                        Alert.alert('Wallpaper', error instanceof Error ? error.message : 'Could not set the photo.'),
+                                    );
+                                    return;
+                                }
+                                Alert.alert('Group wallpaper', undefined, [
+                                    {
+                                        text: 'Choose new photo',
+                                        onPress: () =>
+                                            void pickAndSetWallpaper(slot).catch((error) =>
+                                                Alert.alert('Wallpaper', error instanceof Error ? error.message : 'Could not set the photo.'),
+                                            ),
+                                    },
+                                    { text: 'Remove photo', style: 'destructive', onPress: () => void clearWallpaper(slot) },
+                                    { text: 'Cancel', style: 'cancel' },
+                                ]);
+                            }}
+                        />
+                        <Divider />
                         <List.Item
                             title="Created by"
                             description={group.members.find((m) => m.userId === group.createdBy)?.displayName || 'Unknown'}
