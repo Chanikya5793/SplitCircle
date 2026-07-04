@@ -2,6 +2,7 @@ import { GlassView } from '@/components/GlassView';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group, GroupMember } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -13,6 +14,7 @@ interface BalanceSummaryProps {
 
 export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
   const fmtMoney = useMoneyDisplay(group.groupId);
+  const { maskGroupText } = usePrivacyMask();
   const { theme } = useTheme();
 
   const activeMembers = group.members ?? [];
@@ -55,7 +57,7 @@ export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
       <View key={member.userId} style={styles.row}>
         <View style={styles.nameWrap}>
           <Text style={[styles.name, { color: labelColor }]} numberOfLines={1}>
-            {member.displayName}
+            {maskGroupText(member.displayName, group.groupId)}
           </Text>
           {archived ? (
             <Text variant="labelSmall" style={[styles.formerTag, { color: theme.colors.onSurfaceVariant }]}>

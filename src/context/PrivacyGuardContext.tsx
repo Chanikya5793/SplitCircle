@@ -16,9 +16,9 @@ import {
   type GuardTargets,
   type PrivacyGuardSettings,
 } from '@/services/privacyGuardService';
-import { warningHaptic } from '@/utils/haptics';
+import { errorHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState } from 'react-native';
+import { Alert, AppState } from 'react-native';
 
 type GuardTarget = keyof GuardTargets;
 
@@ -51,15 +51,19 @@ export const usePrivacyGuard = () => useContext(PrivacyGuardContext);
 export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }) => {
   const [settings, setSettings] = useState<PrivacyGuardSettings>(getGuardSync());
   const lastTripRef = useRef(0);
+  const promptingRef = useRef(false);
 
   useEffect(() => {
     void hydrateGuard().then(setSettings);
     return onGuardChanged(() => setSettings({ ...getGuardSync() }));
   }, []);
 
-  // Shake detection — only subscribed while armed and not already tripped.
+  // Shake detection — subscribed whenever the guard is armed WITH a code,
+  // regardless of active state, so the SAME gesture both hides (when idle)
+  // and offers to reveal (when tripped). This is the primary deactivation
+  // path: shake again → enter code → shields drop.
   useEffect(() => {
-    if (!settings.enabled || settings.active || !settings.codeHash) return;
+    if (!settings.enabled || !settings.codeHash) return;
 
     let subscription: { remove: () => void } | null = null;
     let cancelled = false;
@@ -92,8 +96,40 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
         const now = Date.now();
         if (now - lastTripRef.current < 1800) return; // debounce
         lastTripRef.current = now;
+
+        // Read fresh state (the listener isn't re-created on every trip).
+        const current = getGuardSync();
+        if (!current.active) {
+          warningHaptic();
+          void updateGuard({ active: true });
+          return;
+        }
+        // Already tripped → shake to reveal: prompt for the code.
+        if (promptingRef.current) return;
+        promptingRef.current = true;
         warningHaptic();
-        void updateGuard({ active: true });
+        Alert.prompt(
+          'Enter code',
+          'Shake detected — enter your code to reveal.',
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => { promptingRef.current = false; } },
+            {
+              text: 'Reveal',
+              onPress: (code?: string) => {
+                void verifyCode(code ?? '').then((ok) => {
+                  promptingRef.current = false;
+                  if (ok) {
+                    successHaptic();
+                    void updateGuard({ active: false });
+                  } else {
+                    errorHaptic();
+                  }
+                });
+              },
+            },
+          ],
+          'secure-text',
+        );
       });
     })();
 
@@ -101,7 +137,7 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
       cancelled = true;
       subscription?.remove();
     };
-  }, [settings.enabled, settings.active, settings.codeHash, settings.sensitivity]);
+  }, [settings.enabled, settings.codeHash, settings.sensitivity]);
 
   // Optional lock-on-exit: trip the guard whenever the app leaves the
   // foreground (Face-ID-style behavior, but with the secret code).

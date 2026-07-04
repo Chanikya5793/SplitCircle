@@ -3,7 +3,7 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { SpendingChart } from '@/components/SpendingChart';
 import { useTheme } from '@/context/ThemeContext';
 import { Group } from '@/models';
-import { formatCurrency } from '@/utils/currency';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { useMemo } from 'react';
 import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { PieChart } from 'react-native-chart-kit';
@@ -14,6 +14,7 @@ interface GroupStatsScreenProps {
 }
 
 export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
+  const fmtMoney = useMoneyDisplay(group?.groupId);
   const { theme } = useTheme();
   const { width: screenWidth } = useWindowDimensions();
 
@@ -73,7 +74,7 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
             Spending by Category
           </Text>
           <Text variant="titleMedium" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
-            Total: {formatCurrency(totalExpenses, group.currency)}
+            Total: {fmtMoney(totalExpenses, group.currency)}
           </Text>
 
           {categoryData.length > 0 ? (

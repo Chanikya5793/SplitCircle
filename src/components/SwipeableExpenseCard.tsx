@@ -2,6 +2,7 @@ import { GlassView } from '@/components/GlassView';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { getExpenseSplitLabel } from '@/utils/expenseSplit';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
@@ -46,9 +47,10 @@ export const SwipeableExpenseCard = ({
   groupId,
 }: SwipeableExpenseCardProps) => {
   const fmtMoney = useMoneyDisplay(groupId);
+  const { maskGroupText } = usePrivacyMask();
   const { theme } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
-  const payerName = memberMap[expense.paidBy] || 'Unknown';
+  const payerName = maskGroupText(memberMap[expense.paidBy] || 'Unknown', groupId);
   const isSettlement = expense.category === 'Settlement';
   const splitLabel = getExpenseSplitLabel(expense);
 
@@ -116,7 +118,7 @@ export const SwipeableExpenseCard = ({
                     />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{expense.title}</Text>
+                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{maskGroupText(expense.title, groupId)}</Text>
                     <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
                       {isSettlement
                         ? `${expense.category} · Paid by ${payerName}`

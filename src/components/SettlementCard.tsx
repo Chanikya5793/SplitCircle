@@ -4,6 +4,7 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Settlement } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
@@ -30,12 +31,13 @@ export const SettlementCard = ({
     groupId,
 }: SettlementCardProps) => {
   const fmtMoney = useMoneyDisplay(groupId);
+  const { maskGroupText } = usePrivacyMask();
     const { theme } = useTheme();
     const { pendingSyncIds } = useGroups();
     const isPendingSync = pendingSyncIds.has(settlement.settlementId);
     const swipeableRef = useRef<Swipeable>(null);
-    const fromName = memberMap[settlement.fromUserId] || 'Unknown';
-    const toName = memberMap[settlement.toUserId] || 'Unknown';
+    const fromName = maskGroupText(memberMap[settlement.fromUserId] || 'Unknown', groupId);
+    const toName = maskGroupText(memberMap[settlement.toUserId] || 'Unknown', groupId);
 
     const handlePress = () => {
         lightHaptic();

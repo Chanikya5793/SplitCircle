@@ -37,8 +37,15 @@ export const usePrivacyMask = () => {
         ? maskTextValue(text, style)
         : text;
 
+    // Text inside an expense group — expense titles, payer/member names.
+    // Gated on the expenses shield + hideNames + the group's scope.
+    const maskGroupText = (text: string, groupId?: string): string =>
+      isShielded('expenses', groupId) && settings.hideNames
+        ? maskTextValue(text, style)
+        : text;
+
     const hidePhoto = (): boolean => tripped && settings.hidePhotos;
 
-    return { maskGroupName, maskChatTitle, maskPersonName, maskPreview, hidePhoto };
+    return { maskGroupName, maskChatTitle, maskPersonName, maskPreview, maskGroupText, hidePhoto };
   }, [settings, isShielded]);
 };
