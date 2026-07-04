@@ -2,6 +2,7 @@ import { GlassView } from '@/components/GlassView';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { heavyHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
@@ -17,7 +18,9 @@ interface SwipeableGroupCardProps {
 }
 
 export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, index = 0, loading = false }: SwipeableGroupCardProps) => {
-  const fmtMoney = useMoneyDisplay();
+  const fmtMoney = useMoneyDisplay(group.groupId);
+  const { maskGroupName } = usePrivacyMask();
+  const displayName = maskGroupName(group.name, group.groupId);
   const { theme } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
   const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
@@ -83,7 +86,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, index
                   color={theme.colors.onPrimaryContainer}
                 />
                 <View style={styles.meta}>
-                  <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{group.name}</Text>
+                  <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{displayName}</Text>
                   <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
                     {group.members.length} members · {group.currency}
                   </Text>

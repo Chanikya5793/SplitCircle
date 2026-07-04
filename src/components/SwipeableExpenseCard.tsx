@@ -33,6 +33,7 @@ interface SwipeableExpenseCardProps {
   onPress: () => void;
   onDelete?: (expense: Expense) => void;
   index?: number;
+  groupId?: string;
 }
 
 export const SwipeableExpenseCard = ({
@@ -42,8 +43,9 @@ export const SwipeableExpenseCard = ({
   onPress,
   onDelete,
   index = 0,
+  groupId,
 }: SwipeableExpenseCardProps) => {
-  const fmtMoney = useMoneyDisplay();
+  const fmtMoney = useMoneyDisplay(groupId);
   const { theme } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
   const payerName = memberMap[expense.paidBy] || 'Unknown';

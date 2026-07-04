@@ -1,31 +1,110 @@
 // Hidden privacy-guard settings — reachable ONLY by tapping the Settings
 // version footer 7 times and entering the secret code (first visit sets it).
-// Configures what a shake hides (per-surface or everything), how (scramble
-// vs vanish), how hard the shake must be, plus manual activation and code
-// rotation. Deliberately reuses the plain sheet idiom so nothing about the
-// screen looks special if glimpsed.
+//
+// Deep customization: what a shake hides (per-surface or everything), HOW it
+// hides (scramble style for text/amounts, or vanish), which names/photos/
+// previews to disguise, and precise scopes — All / Only-selected / All-except
+// — for expense groups and conversations independently. Plus sensitivity,
+// lock-on-exit, manual activation, and code rotation. Reuses the plain sheet
+// idiom so nothing looks special if glimpsed.
 
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { useChat } from '@/context/ChatContext';
+import { useGroups } from '@/context/GroupContext';
+import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import { formatCurrency } from '@/utils/currency';
 import {
+  decoyAmount,
   hashCode,
+  maskTextValue,
   updateGuard,
+  type GuardScope,
   type GuardTargets,
 } from '@/services/privacyGuardService';
 import { lightHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
-import React from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import React, { useMemo } from 'react';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { SegmentedButtons, Switch, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const TARGET_ROWS: Array<{ key: keyof GuardTargets; label: string; hint: string }> = [
   { key: 'everything', label: 'Everything', hint: 'Locks the whole app behind a blank screen' },
-  { key: 'expenses', label: 'Expenses & balances', hint: 'All amounts scramble to ••••' },
-  { key: 'charts', label: 'Charts', hint: 'Spending charts hide' },
-  { key: 'calls', label: 'Calls', hint: 'Call history hides' },
-  { key: 'friends', label: 'Friends', hint: 'Friends list hides' },
-  { key: 'chats', label: 'Chats', hint: 'Conversation list hides' },
+  { key: 'expenses', label: 'Expenses & balances', hint: 'Amounts in expense groups' },
+  { key: 'charts', label: 'Charts', hint: 'Spending charts' },
+  { key: 'calls', label: 'Calls', hint: 'Call history' },
+  { key: 'friends', label: 'Friends', hint: 'Friends list' },
+  { key: 'chats', label: 'Chats', hint: 'Conversation list' },
 ];
+
+interface ScopeEditorProps {
+  scope: GuardScope;
+  items: Array<{ id: string; label: string }>;
+  onChange: (scope: GuardScope) => void;
+  onSurface: string;
+  onSurfaceVariant: string;
+  primary: string;
+  chipBg: string;
+}
+
+/** All / Only-selected / All-except editor with a chip multi-select. */
+const ScopeEditor = ({ scope, items, onChange, onSurface, onSurfaceVariant, primary, chipBg }: ScopeEditorProps) => {
+  const toggleId = (id: string) => {
+    selectionHaptic();
+    const has = scope.ids.includes(id);
+    onChange({ ...scope, ids: has ? scope.ids.filter((x) => x !== id) : [...scope.ids, id] });
+  };
+
+  return (
+    <View>
+      <SegmentedButtons
+        value={scope.mode}
+        onValueChange={(v) => {
+          selectionHaptic();
+          onChange({ ...scope, mode: v as GuardScope['mode'] });
+        }}
+        buttons={[
+          { value: 'all', label: 'All' },
+          { value: 'only', label: 'Only these' },
+          { value: 'except', label: 'All except' },
+        ]}
+      />
+      {scope.mode !== 'all' && (
+        <View style={styles.chips}>
+          {items.length === 0 ? (
+            <Text variant="labelSmall" style={{ color: onSurfaceVariant }}>
+              Nothing to choose yet.
+            </Text>
+          ) : (
+            items.map(({ id, label }) => {
+              const selected = scope.ids.includes(id);
+              return (
+                <TouchableOpacity
+                  key={id}
+                  onPress={() => toggleId(id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: selected ? primary : chipBg },
+                  ]}
+                >
+                  <Text
+                    variant="labelMedium"
+                    numberOfLines={1}
+                    style={{ color: selected ? '#fff' : onSurface, maxWidth: 150 }}
+                  >
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })
+          )}
+        </View>
+      )}
+    </View>
+  );
+};
 
 interface PrivacyGuardSheetProps {
   visible: boolean;
@@ -35,10 +114,46 @@ interface PrivacyGuardSheetProps {
 export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) => {
   const { theme, isDark } = useTheme();
   const { settings } = usePrivacyGuard();
+  const { groups } = useGroups();
+  const { threads } = useChat();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
 
   const surface = isDark ? '#1c1c20' : '#ffffff';
   const divider = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
+  const chipBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)';
+
+  const groupItems = useMemo(
+    () => groups.map((g) => ({ id: g.groupId, label: g.name })),
+    [groups],
+  );
+  const chatItems = useMemo(
+    () =>
+      threads.map((t) => {
+        let label = 'Chat';
+        if (t.type === 'group') {
+          label = groups.find((g) => g.groupId === t.groupId)?.name ?? 'Group';
+        } else {
+          const other = t.participants.find((p) => p.userId !== user?.userId) ?? t.participants[0];
+          label = other?.displayName ?? 'Direct';
+        }
+        return { id: t.chatId, label };
+      }),
+    [threads, groups, user?.userId],
+  );
+
+  // Live preview of the current scramble style.
+  const preview = useMemo(() => {
+    if (settings.action === 'vanish') return null;
+    const text = maskTextValue('Weekend Trip', settings.textStyle);
+    const amount =
+      settings.amountStyle === 'zeros'
+        ? formatCurrency(0, 'USD')
+        : settings.amountStyle === 'decoy'
+          ? formatCurrency(decoyAmount(184.5), 'USD')
+          : '••••';
+    return `${text} · ${amount}`;
+  }, [settings.action, settings.textStyle, settings.amountStyle]);
 
   const changeCode = () => {
     Alert.prompt(
@@ -65,6 +180,37 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
     );
   };
 
+  const sectionLabel = (text: string) => (
+    <Text variant="labelMedium" style={[styles.groupLabel, { color: theme.colors.onSurfaceVariant }]}>
+      {text}
+    </Text>
+  );
+
+  const toggleRow = (
+    label: string,
+    hint: string,
+    value: boolean,
+    onValueChange: (v: boolean) => void,
+  ) => (
+    <View style={styles.row}>
+      <View style={styles.rowText}>
+        <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+          {label}
+        </Text>
+        <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+          {hint}
+        </Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={(v) => {
+          selectionHaptic();
+          onValueChange(v);
+        }}
+      />
+    </View>
+  );
+
   return (
     <Modal visible={visible} transparent statusBarTranslucent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close" />
@@ -74,33 +220,20 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
           Shake to hide
         </Text>
         <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
-          Shake the phone and the chosen parts of {`the app`} disappear until you enter the code.
+          Shake the phone and the chosen parts of the app disguise or disappear until you enter the code.
         </Text>
 
         <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-          <View style={styles.row}>
-            <View style={styles.rowText}>
-              <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                Armed
-              </Text>
-              <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                Master switch — nothing happens while off
-              </Text>
-            </View>
-            <Switch
-              value={settings.enabled}
-              onValueChange={(v) => {
-                selectionHaptic();
-                void updateGuard({ enabled: v, active: false });
-              }}
-            />
-          </View>
+          {toggleRow(
+            'Armed',
+            'Master switch — nothing happens while off',
+            settings.enabled,
+            (v) => void updateGuard({ enabled: v, active: false }),
+          )}
 
           <View style={[styles.divider, { backgroundColor: divider }]} />
 
-          <Text variant="labelMedium" style={[styles.groupLabel, { color: theme.colors.onSurfaceVariant }]}>
-            WHEN SHAKEN
-          </Text>
+          {sectionLabel('WHEN SHAKEN')}
           <SegmentedButtons
             value={settings.action}
             onValueChange={(v) => {
@@ -113,9 +246,59 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
             ]}
           />
 
-          <Text variant="labelMedium" style={[styles.groupLabel, { color: theme.colors.onSurfaceVariant }]}>
-            WHAT HIDES
-          </Text>
+          {settings.action === 'scramble' && (
+            <>
+              {sectionLabel('TEXT STYLE')}
+              <SegmentedButtons
+                value={settings.textStyle}
+                onValueChange={(v) => {
+                  selectionHaptic();
+                  void updateGuard({ textStyle: v as typeof settings.textStyle });
+                }}
+                buttons={[
+                  { value: 'dots', label: '••••' },
+                  { value: 'blocks', label: '████' },
+                  { value: 'garble', label: 'Garble' },
+                ]}
+              />
+              {sectionLabel('AMOUNT STYLE')}
+              <SegmentedButtons
+                value={settings.amountStyle}
+                onValueChange={(v) => {
+                  selectionHaptic();
+                  void updateGuard({ amountStyle: v as typeof settings.amountStyle });
+                }}
+                buttons={[
+                  { value: 'dots', label: '••••' },
+                  { value: 'zeros', label: 'Zeros' },
+                  { value: 'decoy', label: 'Decoy' },
+                ]}
+              />
+              {preview && (
+                <View style={[styles.previewBox, { backgroundColor: chipBg }]}>
+                  <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                    Preview
+                  </Text>
+                  <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                    {preview}
+                  </Text>
+                </View>
+              )}
+
+              {sectionLabel('ALSO DISGUISE')}
+              {toggleRow('Names', 'Group names, chat titles & people', settings.hideNames, (v) =>
+                void updateGuard({ hideNames: v }),
+              )}
+              {toggleRow('Photos', 'Replace avatars with silhouettes', settings.hidePhotos, (v) =>
+                void updateGuard({ hidePhotos: v }),
+              )}
+              {toggleRow('Message previews', 'Hide last-message text in the chat list', settings.hidePreviews, (v) =>
+                void updateGuard({ hidePreviews: v }),
+              )}
+            </>
+          )}
+
+          {sectionLabel('WHAT HIDES')}
           {TARGET_ROWS.map(({ key, label, hint }) => (
             <View key={key} style={styles.row}>
               <View style={styles.rowText}>
@@ -136,9 +319,37 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
             </View>
           ))}
 
-          <Text variant="labelMedium" style={[styles.groupLabel, { color: theme.colors.onSurfaceVariant }]}>
-            SHAKE SENSITIVITY
-          </Text>
+          {(settings.targets.expenses || settings.targets.charts) && !settings.targets.everything && (
+            <>
+              {sectionLabel('WHICH EXPENSE GROUPS')}
+              <ScopeEditor
+                scope={settings.groupScope}
+                items={groupItems}
+                onChange={(s) => void updateGuard({ groupScope: s })}
+                onSurface={theme.colors.onSurface}
+                onSurfaceVariant={theme.colors.onSurfaceVariant}
+                primary={theme.colors.primary}
+                chipBg={chipBg}
+              />
+            </>
+          )}
+
+          {settings.targets.chats && !settings.targets.everything && (
+            <>
+              {sectionLabel('WHICH CHATS')}
+              <ScopeEditor
+                scope={settings.chatScope}
+                items={chatItems}
+                onChange={(s) => void updateGuard({ chatScope: s })}
+                onSurface={theme.colors.onSurface}
+                onSurfaceVariant={theme.colors.onSurfaceVariant}
+                primary={theme.colors.primary}
+                chipBg={chipBg}
+              />
+            </>
+          )}
+
+          {sectionLabel('SHAKE SENSITIVITY')}
           <SegmentedButtons
             value={settings.sensitivity}
             onValueChange={(v) => {
@@ -152,7 +363,15 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
             ]}
           />
 
-          <View style={[styles.divider, { backgroundColor: divider, marginTop: 16 }]} />
+          <View style={[styles.divider, { backgroundColor: divider, marginTop: 14 }]} />
+          {toggleRow(
+            'Lock when I leave the app',
+            'Trip automatically when the app goes to the background',
+            settings.rearmOnBackground,
+            (v) => void updateGuard({ rearmOnBackground: v }),
+          )}
+
+          <View style={[styles.divider, { backgroundColor: divider, marginTop: 6 }]} />
 
           <Pressable
             onPress={() => {
@@ -188,7 +407,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingTop: 8,
-    maxHeight: '88%',
+    maxHeight: '90%',
   },
   grabber: {
     alignSelf: 'center',
@@ -229,6 +448,24 @@ const styles = StyleSheet.create({
   divider: {
     height: StyleSheet.hairlineWidth,
     marginVertical: 6,
+  },
+  chips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+  },
+  previewBox: {
+    marginTop: 12,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 2,
   },
   actionRow: {
     paddingVertical: 12,

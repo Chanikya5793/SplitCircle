@@ -22,6 +22,7 @@ import { AlbumBubble } from '@/components/AlbumBubble';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GroupAvatar, UserAvatar } from '@/components/ui';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { WallpaperPickerSheet } from '@/components/ui';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
@@ -1031,6 +1032,10 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     ? groupName || 'Group Chat'
     : directParticipant?.displayName || 'Direct Chat';
   titleRef.current = title;
+  // Masked title for the header pill only — navigation params keep the real
+  // title so back buttons and Group Info still read correctly.
+  const { maskChatTitle } = usePrivacyMask();
+  const displayTitle = maskChatTitle(title, thread.chatId);
 
   const handleHeaderPress = () => {
     lightHaptic();
@@ -1286,7 +1291,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                     ) : (
                       <GroupAvatar
                         photoURL={groups.find((g) => g.groupId === thread.groupId)?.photoURL}
-                        name={title}
+                        name={displayTitle}
                         size={36}
                       />
                     )}
@@ -1297,7 +1302,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                       style={[styles.headerTitle, { color: theme.colors.onSurface }]}
                       numberOfLines={1}
                     >
-                      {title}
+                      {displayTitle}
                     </Text>
                     {typingNames.length > 0 && (
                       <Text

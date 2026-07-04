@@ -14,7 +14,7 @@ interface DebtsListProps {
 }
 
 export const DebtsList = ({ group }: DebtsListProps) => {
-  const fmtMoney = useMoneyDisplay();
+  const fmtMoney = useMoneyDisplay(group.groupId);
     const { theme, isDark } = useTheme();
     const navigation = useNavigation<any>();
     const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);

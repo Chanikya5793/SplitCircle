@@ -3,6 +3,7 @@
 // same way instead of hand-rolling Avatar.Text fallbacks per screen.
 
 import { useTheme } from '@/context/ThemeContext';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useState } from 'react';
 import { Image, StyleSheet, View } from 'react-native';
@@ -24,8 +25,24 @@ interface UserAvatarProps {
 /** A person: photo → initials. Falls back to initials if the image 404s. */
 export const UserAvatar = ({ photoURL, displayName, size = 40 }: UserAvatarProps) => {
   const { theme } = useTheme();
+  const { hidePhoto } = usePrivacyMask();
   const [failed, setFailed] = useState(false);
   const uri = !failed && photoURL?.trim() ? photoURL.trim() : null;
+
+  // Privacy guard "hide photos": drop to a neutral silhouette — no photo AND
+  // no initials, so neither face nor name leaks.
+  if (hidePhoto()) {
+    return (
+      <View
+        style={[
+          styles.disc,
+          { width: size, height: size, borderRadius: size / 2, backgroundColor: theme.colors.primaryContainer },
+        ]}
+      >
+        <Ionicons name="person" size={size * 0.5} color={theme.colors.onPrimaryContainer} />
+      </View>
+    );
+  }
 
   if (uri) {
     return (
@@ -57,8 +74,23 @@ interface GroupAvatarProps {
 /** A group: photo → people glyph on an accent-tinted disc. */
 export const GroupAvatar = ({ photoURL, name, size = 40 }: GroupAvatarProps) => {
   const { theme } = useTheme();
+  const { hidePhoto } = usePrivacyMask();
   const [failed, setFailed] = useState(false);
   const uri = !failed && photoURL?.trim() ? photoURL.trim() : null;
+
+  // Privacy guard "hide photos": neutral people glyph, no photo/initials.
+  if (hidePhoto()) {
+    return (
+      <View
+        style={[
+          styles.disc,
+          { width: size, height: size, borderRadius: size / 2, backgroundColor: theme.colors.secondaryContainer },
+        ]}
+      >
+        <Ionicons name="people" size={size * 0.5} color={theme.colors.onSecondaryContainer} />
+      </View>
+    );
+  }
 
   if (uri) {
     return (

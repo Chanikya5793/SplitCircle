@@ -15,10 +15,11 @@ interface ExpenseCardProps {
   memberMap: Record<string, string>;
   onPress: () => void;
   index?: number;
+  groupId?: string;
 }
 
-export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0 }: ExpenseCardProps) => {
-  const fmtMoney = useMoneyDisplay();
+export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0, groupId }: ExpenseCardProps) => {
+  const fmtMoney = useMoneyDisplay(groupId);
   const { theme, isDark } = useTheme();
   const { pendingSyncIds } = useGroups();
   const isPendingSync = pendingSyncIds.has(expense.expenseId);

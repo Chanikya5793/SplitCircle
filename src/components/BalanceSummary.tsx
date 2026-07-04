@@ -12,7 +12,7 @@ interface BalanceSummaryProps {
 }
 
 export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
-  const fmtMoney = useMoneyDisplay();
+  const fmtMoney = useMoneyDisplay(group.groupId);
   const { theme } = useTheme();
 
   const activeMembers = group.members ?? [];

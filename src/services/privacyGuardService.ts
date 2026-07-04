@@ -21,6 +21,17 @@ const STORAGE_KEY = 'privacy_guard_v1';
 
 export type GuardAction = 'scramble' | 'vanish';
 export type GuardSensitivity = 'gentle' | 'normal' | 'vigorous';
+/** How scrambled TEXT renders: dots ••••, blocks ████, or garble (fake but
+ *  plausible characters — deterministic per string, so the UI stays stable). */
+export type GuardTextStyle = 'dots' | 'blocks' | 'garble';
+/** How scrambled AMOUNTS render: dots, zeros, or decoy (fake but plausible). */
+export type GuardAmountStyle = 'dots' | 'zeros' | 'decoy';
+
+export interface GuardScope {
+  /** all = every entity; only = just ids; except = everything but ids. */
+  mode: 'all' | 'only' | 'except';
+  ids: string[];
+}
 
 export interface GuardTargets {
   expenses: boolean;
@@ -41,6 +52,20 @@ export interface PrivacyGuardSettings {
   sensitivity: GuardSensitivity;
   /** Whether the guard is currently tripped (persists across relaunches). */
   active: boolean;
+  textStyle: GuardTextStyle;
+  amountStyle: GuardAmountStyle;
+  /** Scramble names too (group names, chat titles, people). */
+  hideNames: boolean;
+  /** Replace profile/group photos with plain initials. */
+  hidePhotos: boolean;
+  /** Hide last-message previews in the chat list. */
+  hidePreviews: boolean;
+  /** Which expense groups the guard touches. */
+  groupScope: GuardScope;
+  /** Which conversations the guard touches. */
+  chatScope: GuardScope;
+  /** Trip automatically whenever the app goes to the background. */
+  rearmOnBackground: boolean;
 }
 
 export const DEFAULT_GUARD_SETTINGS: PrivacyGuardSettings = {
@@ -50,6 +75,78 @@ export const DEFAULT_GUARD_SETTINGS: PrivacyGuardSettings = {
   targets: { expenses: true, charts: true, calls: false, friends: false, chats: false, everything: false },
   sensitivity: 'normal',
   active: false,
+  textStyle: 'garble',
+  amountStyle: 'dots',
+  hideNames: false,
+  hidePhotos: false,
+  hidePreviews: true,
+  groupScope: { mode: 'all', ids: [] },
+  chatScope: { mode: 'all', ids: [] },
+  rearmOnBackground: false,
+};
+
+/** Whether an entity id falls inside a scope. */
+export const inScope = (scope: GuardScope, id: string | undefined): boolean => {
+  if (!id || scope.mode === 'all') return true;
+  const listed = scope.ids.includes(id);
+  return scope.mode === 'only' ? listed : !listed;
+};
+
+// ---------------------------------------------------------------------------
+// Disguise primitives — deterministic per input so the UI is stable frame to
+// frame and across screens (a garbled name always garbles the same way).
+
+const mulberry = (seedInput: string) => {
+  let seed = 2166136261 >>> 0;
+  for (let i = 0; i < seedInput.length; i++) {
+    seed = Math.imul(seed ^ seedInput.charCodeAt(i), 16777619) >>> 0;
+  }
+  return () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+};
+
+const CONSONANTS = 'bcdfghklmnprstvz';
+const VOWELS = 'aeiou';
+
+/** Fake-but-plausible text: keeps length, casing and word breaks. */
+export const garbleText = (input: string): string => {
+  const rand = mulberry(`garble:${input}`);
+  let out = '';
+  let useVowel = rand() > 0.5;
+  for (const ch of input) {
+    if (!/[a-z0-9]/i.test(ch)) {
+      out += ch;
+      useVowel = rand() > 0.5;
+      continue;
+    }
+    if (/[0-9]/.test(ch)) {
+      out += String(Math.floor(rand() * 10));
+      continue;
+    }
+    const pool = useVowel ? VOWELS : CONSONANTS;
+    const c = pool[Math.floor(rand() * pool.length)];
+    out += ch === ch.toUpperCase() ? c.toUpperCase() : c;
+    useVowel = !useVowel && rand() > 0.3;
+  }
+  return out;
+};
+
+/** Redacted text in the configured style. */
+export const maskTextValue = (input: string, style: GuardTextStyle): string => {
+  if (style === 'garble') return garbleText(input);
+  const glyph = style === 'blocks' ? '█' : '•';
+  const len = Math.max(4, Math.min(input.length, 14));
+  return glyph.repeat(len);
+};
+
+/** Decoy amount: plausible, stable for a given real value. */
+export const decoyAmount = (value: number): number => {
+  const rand = mulberry(`decoy:${value.toFixed(4)}`);
+  const magnitude = Math.abs(value) < 1 ? 10 : Math.abs(value) < 100 ? 100 : 1000;
+  const fake = Math.round((rand() * magnitude + magnitude * 0.05) * 100) / 100;
+  return value < 0 ? -fake : fake;
 };
 
 /** Acceleration magnitude (in g) that counts as a shake, per sensitivity. */

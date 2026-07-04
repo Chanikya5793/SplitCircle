@@ -4,6 +4,7 @@ import { ActivityTypeFilter, DateRange, FilterSortSheet, SortField, SortOrder } 
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GroupAvatar } from '@/components/ui';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { SettlementCard } from '@/components/SettlementCard';
 import { ExpenseCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableExpenseCard } from '@/components/SwipeableExpenseCard';
@@ -35,6 +36,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   const insets = useSafeAreaInsets();
   const { deleteExpense, deleteSettlement, loading } = useGroups();
   const { theme, isDark } = useTheme();
+  const { maskGroupName } = usePrivacyMask();
+  const groupDisplayName = maskGroupName(group.name, group.groupId);
   const scrollY = useRef(new Animated.Value(0)).current;
   const compactStateRef = useRef(false);
   const lastScrollYRef = useRef(0);
@@ -473,7 +476,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
     <LiquidBackground wallpaperSlots={[`group:${group.groupId}`, 'app']}>
       <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }] }]}>
         <GlassView style={styles.stickyHeaderGlass}>
-          <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>{group.name}</Text>
+          <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>{groupDisplayName}</Text>
         </GlassView>
       </Animated.View>
 
@@ -571,7 +574,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
           <View style={styles.header}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <GroupAvatar photoURL={group.photoURL} name={group.name} size={44} />
-              <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface, flexShrink: 1 }} numberOfLines={1}>{group.name}</Text>
+              <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface, flexShrink: 1 }} numberOfLines={1}>{groupDisplayName}</Text>
             </View>
             <Text
               variant="bodyMedium"
@@ -708,6 +711,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                         <SwipeableExpenseCard
                           key={`expense-${activity.data.expenseId}`}
                           expense={activity.data}
+                          groupId={group.groupId}
                           currency={group.currency}
                           memberMap={memberMap}
                           index={yearIndex * 100 + monthIndex * 10 + index}
@@ -728,6 +732,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                         <SettlementCard
                           key={`settlement-${activity.data.settlementId}`}
                           settlement={activity.data}
+                          groupId={group.groupId}
                           currency={group.currency}
                           memberMap={memberMap}
                           index={yearIndex * 100 + monthIndex * 10 + index}

@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
 import { GroupAvatar, UserAvatar, StickyHeaderPill} from '@/components/ui';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
 interface ChatListScreenProps {
@@ -67,8 +68,12 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
 
   // Photo + kind for the row avatar: group photo for group threads, the other
   // participant's profile photo for DMs; initials render as the fallback.
-  const { isShielded } = usePrivacyGuard();
-  const chatsShielded = isShielded('chats');
+  const { isShielded, action, settings: guardSettings } = usePrivacyGuard();
+  const { maskChatTitle, maskPreview } = usePrivacyMask();
+  // Full-list vanish only when the user chose "vanish" AND every chat is in
+  // scope; otherwise render the list and disguise rows per-scope below.
+  const vanishAllChats =
+    action === 'vanish' && isShielded('chats') && guardSettings.chatScope.mode === 'all';
 
   const getChatAvatar = useMemo(() => (thread: ChatThread): { kind: 'group' | 'user'; photoURL?: string; name: string } => {
     if (thread.type === 'group' && thread.groupId) {
@@ -204,13 +209,13 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
 
       <View style={styles.container}>
         <Animated.FlatList
-          data={chatsShielded ? [] : processedThreads}
+          data={vanishAllChats ? [] : processedThreads}
           keyExtractor={(item) => item.chatId}
           renderItem={({ item }) => (
             <GlassView style={styles.chatItem} contentStyle={styles.chatItemContent}>
               <List.Item
-                title={getChatTitle(item)}
-                description={lastPreviewFor(item)}
+                title={maskChatTitle(getChatTitle(item), item.chatId)}
+                description={maskPreview(lastPreviewFor(item), item.chatId)}
                 left={() => (
                   <View>
                     {(() => {

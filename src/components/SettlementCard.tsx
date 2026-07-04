@@ -17,6 +17,7 @@ interface SettlementCardProps {
     onPress: () => void;
     onDelete?: (settlement: Settlement) => void;
     index?: number;
+    groupId?: string;
 }
 
 export const SettlementCard = ({
@@ -26,8 +27,9 @@ export const SettlementCard = ({
     onPress,
     onDelete,
     index = 0,
+    groupId,
 }: SettlementCardProps) => {
-  const fmtMoney = useMoneyDisplay();
+  const fmtMoney = useMoneyDisplay(groupId);
     const { theme } = useTheme();
     const { pendingSyncIds } = useGroups();
     const isPendingSync = pendingSyncIds.has(settlement.settlementId);
