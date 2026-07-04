@@ -16,10 +16,10 @@ DERIVED="$HOME/Library/Developer/Xcode/DerivedData"
 # 1. Purge previous per-run SplitCircle DerivedData (safe: fully rebuildable).
 rm -rf "$DERIVED"/SplitCircle-* 2>/dev/null || true
 
-# 2. Purge stale eas-local temp workdirs from earlier runs.
-find "${TMPDIR:-/tmp}/../" -maxdepth 2 -name "eas-build-local-nodejs" -exec rm -rf {} + 2>/dev/null || true
+# NOTE: do NOT touch eas-build-local-nodejs temp dirs here — this hook runs
+# INSIDE the current build's temp workdir; deleting it kills the build.
 
-# 3. Fail fast (with a readable reason) if the disk can't fit an archive.
+# 2. Fail fast (with a readable reason) if the disk can't fit an archive.
 FREE_GB=$(df -g / | awk 'NR==2 {print $4}')
 if [ "${FREE_GB:-0}" -lt 12 ]; then
   echo "❌ eas-local-preflight: only ${FREE_GB}GB free — an iOS archive needs ~12GB."
