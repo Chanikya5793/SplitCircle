@@ -18,7 +18,7 @@ import {
 } from '@/services/privacyGuardService';
 import { errorHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState } from 'react-native';
+import { Alert, AppState, Platform, Settings } from 'react-native';
 
 type GuardTarget = keyof GuardTargets;
 
@@ -60,6 +60,14 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
     void hydrateGuard().then(setSettings);
     return onGuardChanged(() => setSettings({ ...getGuardSync() }));
   }, []);
+
+  // Mirror the "armed" state to NSUserDefaults so the native SceneDelegate can
+  // blur the app-switcher snapshot before iOS captures it (see AppDelegate.swift).
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    const armed = settings.enabled && Boolean(settings.codeHash);
+    Settings.set({ PrivacyGuardEnabled: armed ? 1 : 0 });
+  }, [settings.enabled, settings.codeHash]);
 
   // Shake detection — subscribed whenever the guard is armed WITH a code,
   // regardless of active state, so the SAME gesture both hides (when idle)

@@ -4,6 +4,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { maskTextValue } from '@/services/privacyGuardService';
 import { useCallManager } from '@/hooks/useCallManager';
 import type { CallStatus, CallType } from '@/models';
 import {
@@ -457,22 +459,38 @@ export const CallSessionScreen = ({
   // Who this call is with — group identity for group calls, the other
   // participant for DMs. Pure presentation; falls back gracefully when the
   // thread hasn't loaded yet.
+  // Privacy guard: if calls are hidden and the user trips the guard mid-call,
+  // mask the peer's name and drop their photo so the call screen gives nothing
+  // away (the call keeps working — this is presentation only).
+  const { isShielded: guardIsShielded, settings: guardSettings } = usePrivacyGuard();
+  const callsHidden = guardIsShielded('calls');
+
   const peer = useMemo<CallPeer>(() => {
+    let raw: CallPeer;
     if (groupId) {
       const group = groups.find((g) => g.groupId === groupId);
-      if (group) return { name: group.name, photoURL: group.photoURL, isGroup: true };
-    }
-    const thread = threads.find((t) => t.chatId === chatId);
-    if (thread) {
-      if (thread.type === 'group') {
+      raw = group ? { name: group.name, photoURL: group.photoURL, isGroup: true } : { name: 'Group call', isGroup: true };
+    } else {
+      const thread = threads.find((t) => t.chatId === chatId);
+      if (thread?.type === 'group') {
         const group = groups.find((g) => g.groupId === thread.groupId);
-        return { name: group?.name ?? 'Group call', photoURL: group?.photoURL, isGroup: true };
+        raw = { name: group?.name ?? 'Group call', photoURL: group?.photoURL, isGroup: true };
+      } else if (thread) {
+        const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+        raw = other
+          ? { name: other.displayName || 'Call', photoURL: other.photoURL, isGroup: false }
+          : { name: type === 'video' ? 'Video call' : 'Audio call', isGroup: false };
+      } else {
+        raw = { name: type === 'video' ? 'Video call' : 'Audio call', isGroup: false };
       }
-      const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
-      if (other) return { name: other.displayName || 'Call', photoURL: other.photoURL, isGroup: false };
     }
-    return { name: type === 'video' ? 'Video call' : 'Audio call', isGroup: Boolean(groupId) };
-  }, [chatId, groupId, groups, threads, type, user?.userId]);
+    if (!callsHidden) return raw;
+    return {
+      ...raw,
+      name: guardSettings.action === 'vanish' ? 'Call' : maskTextValue(raw.name, guardSettings.textStyle),
+      photoURL: undefined,
+    };
+  }, [chatId, groupId, groups, threads, type, user?.userId, callsHidden, guardSettings.action, guardSettings.textStyle]);
 
   const hasInitializedRef = useRef(false);
   const isLocalHangupRef = useRef(false);

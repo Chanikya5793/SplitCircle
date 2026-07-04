@@ -567,7 +567,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const handleSwipeInfo = (message: ChatMessage) => {
     lightHaptic();
     // @ts-ignore - navigation route typing is intentionally loose in this app
-    navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread, initialTitle: 'Message Info', backTitle: title });
+    navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread, initialTitle: 'Message Info', backTitle: displayTitle });
   };
 
   const titleRef = useRef('');
@@ -577,7 +577,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     navigation.navigate(ROUTES.APP.CHAT_MEDIA_GALLERY, {
       chatId: thread.chatId,
       title: 'Media',
-      backTitle: titleRef.current,
+      backTitle: displayTitle,
       participants: thread.participants,
       initialMessageId: message.messageId || message.id,
     });
@@ -1044,7 +1044,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     lightHaptic();
     if (thread.type === 'group' && thread.groupId) {
       // @ts-ignore - navigation types
-      navigation.navigate(ROUTES.APP.GROUP_INFO, { groupId: thread.groupId, initialTitle: 'Group Info', backTitle: title });
+      navigation.navigate(ROUTES.APP.GROUP_INFO, { groupId: thread.groupId, initialTitle: 'Group Info', backTitle: displayTitle });
       return;
     }
     if (thread.type === 'direct' && directParticipant?.userId) {
@@ -1053,7 +1053,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         userId: directParticipant.userId,
         displayName: directParticipant.displayName,
         photoURL: directParticipant.photoURL,
-        backTitle: title,
+        backTitle: displayTitle,
       });
     }
   };
@@ -1152,7 +1152,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       userId: participant.userId,
       displayName: participant.displayName,
       photoURL: participant.photoURL,
-      backTitle: title,
+      backTitle: displayTitle,
     });
   }, [navigation, thread.participants, thread.type]);
 
@@ -1629,7 +1629,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               navigation.navigate(ROUTES.APP.CHAT_MEDIA_GALLERY, {
                 chatId: thread.chatId,
                 title: 'Media',
-                backTitle: title,
+                backTitle: displayTitle,
                 participants: thread.participants,
               });
             },

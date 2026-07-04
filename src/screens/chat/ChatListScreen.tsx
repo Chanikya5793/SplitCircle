@@ -74,6 +74,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   // scope; otherwise render the list and disguise rows per-scope below.
   const vanishAllChats =
     action === 'vanish' && isShielded('chats') && guardSettings.chatScope.mode === 'all';
+  const chatsAnyShielded = isShielded('chats');
 
   const getChatAvatar = useMemo(() => (thread: ChatThread): { kind: 'group' | 'user'; photoURL?: string; name: string } => {
     if (thread.type === 'group' && thread.groupId) {
@@ -226,7 +227,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                         <UserAvatar photoURL={avatar.photoURL} displayName={maskChatTitle(avatar.name, item.chatId)} size={48} />
                       );
                     })()}
-                    {(localUnreadCounts[item.chatId] ?? 0) > 0 && (
+                    {!chatsAnyShielded && (localUnreadCounts[item.chatId] ?? 0) > 0 && (
                       <View style={[styles.unreadBadge, { backgroundColor: theme.colors.error, borderColor: theme.colors.background }]}>
                         <Text style={{ color: theme.colors.onError, fontSize: 10, fontWeight: 'bold' }}>
                           {(localUnreadCounts[item.chatId] ?? 0) > 9 ? '9+' : localUnreadCounts[item.chatId]}

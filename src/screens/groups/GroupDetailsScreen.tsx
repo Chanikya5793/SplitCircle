@@ -157,7 +157,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               lightHaptic();
               navigation.navigate(ROUTES.APP.ASK_AI, {
                 groupId: group.groupId,
-                backTitle: group.name,
+                backTitle: groupDisplayName,
               });
             }}
             accessibilityLabel="Ask AI about this group"
@@ -172,7 +172,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               navigation.navigate(ROUTES.APP.GROUP_INFO, {
                 groupId: group.groupId,
                 initialTitle: SCREEN_TITLES.groupInfo,
-                backTitle: group.name,
+                backTitle: groupDisplayName,
               });
             }}
             accessibilityLabel="Group info and admin"
@@ -721,7 +721,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                               groupId: group.groupId,
                               expenseId: activity.data.expenseId,
                               expenseTitle: activity.data.title,
-                              backTitle: group.name,
+                              backTitle: groupDisplayName,
                             });
                           }}
                           onDelete={handleDeleteExpense}
@@ -789,7 +789,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
             <View style={styles.actionGrid}>
               <TouchableRipple
-                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: group.name }); }}
+                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: groupDisplayName }); }}
                 style={styles.compactButtonSmall}
                 borderless
               >
@@ -817,7 +817,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               </TouchableRipple>
 
               <TouchableRipple
-                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: group.name }); }}
+                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: groupDisplayName }); }}
                 style={styles.compactButtonSmall}
                 borderless
               >
@@ -851,7 +851,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                     <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Settle</Text>
                   </View>
                 </TouchableRipple>
-                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: group.name })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: groupDisplayName })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="chart-pie" size={18} color={theme.colors.primary} />
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
@@ -863,7 +863,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
                   </View>
                 </TouchableRipple>
-                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: group.name })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: groupDisplayName })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="repeat" size={18} color={theme.colors.primary} />
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>

@@ -193,6 +193,38 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
       launchOptions: launchOptions)
   }
 
+  // MARK: - Privacy screen (app-switcher snapshot protection)
+  //
+  // When the privacy guard is armed (JS writes PrivacyGuardEnabled=1 to
+  // NSUserDefaults, mirroring the RNThemeIsDark bridge), cover the window with
+  // a blur before iOS captures the app-switcher/background snapshot, so no
+  // real content is preserved in the multitasking preview. Removed on return.
+  // Gated on the flag so normal users never see a blur when switching apps.
+  private var privacyCover: UIView?
+
+  private func showPrivacyCoverIfArmed() {
+    guard UserDefaults.standard.object(forKey: "PrivacyGuardEnabled") as? Int == 1 else { return }
+    guard let window = self.window, privacyCover == nil else { return }
+    let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThickMaterial))
+    blur.frame = window.bounds
+    blur.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    window.addSubview(blur)
+    privacyCover = blur
+  }
+
+  private func hidePrivacyCover() {
+    privacyCover?.removeFromSuperview()
+    privacyCover = nil
+  }
+
+  func sceneWillResignActive(_ scene: UIScene) {
+    showPrivacyCoverIfArmed()
+  }
+
+  func sceneDidBecomeActive(_ scene: UIScene) {
+    hidePrivacyCover()
+  }
+
   // Deep links while running (custom scheme — expo-linking, Google auth redirect).
   // Route through the app delegate's open-url chain so every Expo module
   // subscriber receives it, same as the classic lifecycle.

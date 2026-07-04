@@ -1,5 +1,5 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GlassBackButton } from '@/components/ui';
+import { GlassBackButton, GuardedScreen } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { lightHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -37,6 +37,8 @@ interface FilePreviewParams {
   fileName?: string;
   mimeType?: string;
   fileSize?: number;
+  /** Owning chat — lets the privacy guard scope the preview. */
+  chatId?: string;
 }
 
 type PreviewKind = 'image' | 'pdf' | 'text' | 'video' | 'audio' | 'unsupported';
@@ -430,7 +432,11 @@ export const FilePreviewScreen = () => {
     <LiquidBackground>
       <View style={styles.root}>
         {renderHeader()}
-        <View style={{ flex: 1 }}>{renderContent()}</View>
+        <View style={{ flex: 1 }}>
+          <GuardedScreen target="chats" entityId={params.chatId} label="Hidden">
+            {renderContent()}
+          </GuardedScreen>
+        </View>
       </View>
     </LiquidBackground>
   );
