@@ -11,7 +11,8 @@
     "ios": "EXPO_UNSTABLE_BONJOUR=0 expo run:ios",
     "web": "EXPO_UNSTABLE_BONJOUR=0 expo start --web",
     "postinstall": "patch-package && node scripts/fix-expo-ngrok.js",
-    "test:unit": "vitest run --config vitest.unit.config.ts"
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "eas-build-pre-install": "bash scripts/eas-local-preflight.sh"
   },
   "dependencies": {
     "@expo/metro-runtime": "~55.0.6",
