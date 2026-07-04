@@ -88,7 +88,10 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
   }, [settings.enabled, settings.active, settings.codeHash, settings.sensitivity]);
 
   const value = useMemo<PrivacyGuardContextValue>(() => {
-    const active = settings.enabled && settings.active;
+    // `enabled` arms the SHAKE listener only; `active` raises the shields no
+    // matter how they were tripped (shake or the manual Activate button).
+    // A code must exist so there is always a way back out.
+    const active = settings.active && Boolean(settings.codeHash);
     return {
       settings,
       action: settings.action,
