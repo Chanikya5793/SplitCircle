@@ -9,6 +9,7 @@ import { maskTextValue } from '@/services/privacyGuardService';
 import { useCallManager } from '@/hooks/useCallManager';
 import type { CallStatus, CallType } from '@/models';
 import {
+  AudioSession,
   LiveKitRoom,
   isTrackReference,
   useConnectionState,
@@ -19,6 +20,30 @@ import {
 } from '@livekit/react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { ConnectionState, Track } from 'livekit-client';
+
+/**
+ * Present iOS's system audio-route picker (AVRoutePickerView) so the user can
+ * send call audio to the speaker, earpiece, AirPods, a Bluetooth headset, or
+ * Ray-Ban Meta glasses — exactly like the Phone/WhatsApp output picker. Wrapped
+ * so an older binary lacking the native method falls back to toggling the
+ * built-in speaker instead of crashing.
+ */
+const presentAudioRoutePicker = () => {
+  void (async () => {
+    try {
+      await AudioSession.showAudioRoutePicker();
+    } catch {
+      // Fallback: flip between the built-in speaker and default routing.
+      try {
+        const outputs = await AudioSession.getAudioOutputs();
+        const next = outputs.includes('force_speaker') ? 'force_speaker' : 'default';
+        await AudioSession.selectAudioOutput(next);
+      } catch {
+        // Nothing else to do — leave routing as-is.
+      }
+    }
+  })();
+};
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { AppState, BackHandler, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -743,6 +768,7 @@ export const CallSessionScreen = ({
             cameraEnabled={!isCameraOff}
             onToggleMic={toggleMute}
             onToggleCamera={callType === 'video' ? toggleCamera : undefined}
+            onAudioRoute={presentAudioRoutePicker}
             onHangUp={handleHangUp}
           />
         </View>

@@ -55,6 +55,8 @@ interface CallControlsProps {
   cameraEnabled: boolean;
   onToggleMic?: () => void;
   onToggleCamera?: () => void;
+  /** Opens the iOS system audio-route picker (Speaker / iPhone / Bluetooth). */
+  onAudioRoute?: () => void;
   onHangUp?: () => void;
 }
 
@@ -63,6 +65,7 @@ export const CallControls = ({
   cameraEnabled,
   onToggleMic,
   onToggleCamera,
+  onAudioRoute,
   onHangUp,
 }: CallControlsProps) => (
   <View style={styles.row}>
@@ -73,6 +76,14 @@ export const CallControls = ({
       onPress={onToggleMic}
       active={micEnabled}
     />
+    {onAudioRoute ? (
+      <ControlButton
+        icon="volume-high"
+        label="audio"
+        accessibilityLabel="Choose audio output"
+        onPress={onAudioRoute}
+      />
+    ) : null}
     {onToggleCamera ? (
       <ControlButton
         icon={cameraEnabled ? 'videocam' : 'videocam-off'}
@@ -97,7 +108,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'center',
-    gap: 40,
+    gap: 28,
   },
   buttonColumn: {
     alignItems: 'center',
