@@ -53,7 +53,14 @@ export const AppLockProvider = ({ children }: { children: React.ReactNode }) => 
     const onChange = (state: AppStateStatus) => {
       const current = getAppLockSync();
       if (!current.enabled) return;
-      if (state === 'background' || state === 'inactive') {
+      // While a biometric prompt is up, iOS pushes us to 'inactive' (and can
+      // briefly 'background'). Ignore all transitions during an unlock so the
+      // Face ID sheet can't arm the auto-lock and re-lock us in a loop.
+      if (unlockingRef.current) return;
+      // Only a REAL background arms the lock. 'inactive' also covers the app
+      // switcher, Control Center, the notification shade, and system prompts —
+      // none of those should trip it. ('inactive' + autoLockMs:0 was the loop.)
+      if (state === 'background') {
         if (backgroundedAtRef.current === null) backgroundedAtRef.current = Date.now();
       } else if (state === 'active') {
         const since = backgroundedAtRef.current;
