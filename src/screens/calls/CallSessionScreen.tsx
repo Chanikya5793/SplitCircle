@@ -19,7 +19,7 @@ import {
   VideoTrack,
 } from '@livekit/react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { ConnectionState, Track } from 'livekit-client';
+import { ConnectionState, Track, type Room } from 'livekit-client';
 
 /**
  * Present iOS's system audio-route picker (AVRoutePickerView) so the user can
@@ -124,11 +124,22 @@ interface LocalTrackPublisherProps {
   callType: CallType;
   isMuted: boolean;
   isCameraOff: boolean;
+  /** Lifts the connected room up so the flip-camera control can reach it. */
+  roomRef?: MutableRefObject<Room | null>;
 }
 
-const LocalTrackPublisher = ({ callType, isMuted, isCameraOff }: LocalTrackPublisherProps) => {
+const LocalTrackPublisher = ({ callType, isMuted, isCameraOff, roomRef }: LocalTrackPublisherProps) => {
   const room = useRoomContext();
   const connectionState = useConnectionState();
+
+  // Expose the room to the parent (CallControls lives outside LiveKitRoom).
+  useEffect(() => {
+    if (!roomRef) return;
+    roomRef.current = room ?? null;
+    return () => {
+      roomRef.current = null;
+    };
+  }, [room, roomRef]);
   const [appActive, setAppActive] = useState(AppState.currentState === 'active');
   const [retryTick, setRetryTick] = useState(0);
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -480,6 +491,7 @@ export const CallSessionScreen = ({
   const { user } = useAuth();
   const [callDuration, setCallDuration] = useState(0);
   const [shouldConnectRoom, setShouldConnectRoom] = useState(true);
+  const roomRef = useRef<Room | null>(null);
 
   // Who this call is with — group identity for group calls, the other
   // participant for DMs. Pure presentation; falls back gracefully when the
@@ -627,6 +639,21 @@ export const CallSessionScreen = ({
     void endCall();
   }, [endCall, requestRoomShutdown]);
 
+  // Flip between the front and back phone camera. Uses the underlying
+  // react-native-webrtc track's native _switchCamera(), which flips in place
+  // without renegotiating the publication (no video flicker for the peer).
+  const handleFlipCamera = useCallback(() => {
+    const room = roomRef.current;
+    if (!room) return;
+    try {
+      const track = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
+      const mst = track?.mediaStreamTrack as unknown as { _switchCamera?: () => void } | undefined;
+      mst?._switchCamera?.();
+    } catch (err) {
+      console.warn('CallSessionScreen: flip camera failed', err);
+    }
+  }, []);
+
   const handleMinimize = useCallback(() => {
     if (!onMinimize) {
       return;
@@ -735,6 +762,7 @@ export const CallSessionScreen = ({
                 callType={callType}
                 isMuted={isMuted}
                 isCameraOff={isCameraOff}
+                roomRef={roomRef}
               />
               <CallPresenceWatcher
                 status={status}
@@ -769,6 +797,7 @@ export const CallSessionScreen = ({
             onToggleMic={toggleMute}
             onToggleCamera={callType === 'video' ? toggleCamera : undefined}
             onAudioRoute={presentAudioRoutePicker}
+            onFlipCamera={callType === 'video' && !isCameraOff ? handleFlipCamera : undefined}
             onHangUp={handleHangUp}
           />
         </View>

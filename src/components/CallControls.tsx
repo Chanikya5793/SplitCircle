@@ -17,7 +17,7 @@ interface ControlButtonProps {
   danger?: boolean;
 }
 
-const BUTTON_SIZE = 64;
+const BUTTON_SIZE = 56;
 
 const ControlButton = ({ icon, label, accessibilityLabel, onPress, active = true, danger }: ControlButtonProps) => {
   const background = danger
@@ -57,6 +57,8 @@ interface CallControlsProps {
   onToggleCamera?: () => void;
   /** Opens the iOS system audio-route picker (Speaker / iPhone / Bluetooth). */
   onAudioRoute?: () => void;
+  /** Flip between the front and back phone camera (video calls only). */
+  onFlipCamera?: () => void;
   onHangUp?: () => void;
 }
 
@@ -66,6 +68,7 @@ export const CallControls = ({
   onToggleMic,
   onToggleCamera,
   onAudioRoute,
+  onFlipCamera,
   onHangUp,
 }: CallControlsProps) => (
   <View style={styles.row}>
@@ -93,6 +96,14 @@ export const CallControls = ({
         active={cameraEnabled}
       />
     ) : null}
+    {onFlipCamera ? (
+      <ControlButton
+        icon="camera-reverse"
+        label="flip"
+        accessibilityLabel="Flip camera"
+        onPress={onFlipCamera}
+      />
+    ) : null}
     <ControlButton
       icon="call"
       label="end"
@@ -108,7 +119,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'center',
-    gap: 28,
+    gap: 20,
   },
   buttonColumn: {
     alignItems: 'center',

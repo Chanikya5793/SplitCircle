@@ -22,6 +22,25 @@ const debugLog = (...args: unknown[]) => {
   }
 };
 
+// Make Bluetooth accessories (Ray-Ban Meta glasses, AirPods, car kits) eligible
+// AND preferred for call audio. LiveKit's `defaultOutput` is only the fallback
+// used when no headset/bluetooth output is connected, so as long as the audio
+// category permits bluetooth, a connected accessory wins automatically. We keep
+// `defaultToSpeaker` for video (FaceTime-style speaker when nothing is paired)
+// and drop it for audio (earpiece fallback). Best-effort: if CallKit owns the
+// session this may no-op, and RNCallKeep's own config already allows bluetooth.
+const preferBluetoothAudio = async (isVideo: boolean): Promise<void> => {
+  try {
+    await AudioSession.setAppleAudioConfiguration({
+      audioCategoryOptions: isVideo
+        ? ['allowBluetooth', 'allowBluetoothA2DP', 'allowAirPlay', 'defaultToSpeaker']
+        : ['allowBluetooth', 'allowBluetoothA2DP', 'allowAirPlay'],
+    });
+  } catch (err) {
+    console.warn('useCallManager: setAppleAudioConfiguration failed', err);
+  }
+};
+
 interface UseCallManagerArgs {
   chatId?: string;
   groupId?: string;
@@ -195,6 +214,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
           ios: { defaultOutput: type === 'video' ? 'speaker' : 'earpiece' },
         });
         await AudioSession.startAudioSession();
+        await preferBluetoothAudio(type === 'video');
       } catch (audioErr) {
         console.warn('useCallManager: AudioSession.startAudioSession failed (CallKit likely already owns it)', audioErr);
       }
@@ -354,6 +374,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
           ios: { defaultOutput: session.type === 'video' ? 'speaker' : 'earpiece' },
         });
         await AudioSession.startAudioSession();
+        await preferBluetoothAudio(session.type === 'video');
       } catch (audioErr) {
         console.warn('useCallManager: AudioSession.startAudioSession failed (CallKit likely already owns it)', audioErr);
       }
