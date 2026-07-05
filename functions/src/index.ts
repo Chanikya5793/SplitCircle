@@ -27,7 +27,7 @@ import {
     materializeGroupFriendships,
     touchFriendInteraction,
 } from "./friends";
-export { cleanupOldRtdbData } from "./cleanup";
+export { cleanupOldRtdbData, reapStaleRingingCalls } from "./cleanup";
 // Consolidated AI-layer ingestion fan-out (gated by AI_LAYER_ENABLED; no-op until
 // activated — see aiLayer.ts and ai_layer/docs/08_self_review.md).
 export { onGroupWritten } from "./aiLayer";
@@ -702,6 +702,15 @@ export const onCallCreated = onValueCreated(
         }
 
         if (callData.status !== "ringing") {
+            return;
+        }
+
+        // Never ring for a node that's already stale by the time this fires.
+        // onValueCreated is normally near-instant, so an old startedAt means a
+        // replay/backfill or a badly delayed event — don't wake a device for it.
+        const startedAtRaw = typeof callData.startedAt === "number" ? callData.startedAt : 0;
+        if (startedAtRaw > 0 && Date.now() - startedAtRaw > 60_000) {
+            logger.warn("Skipping call push for stale node", { callId, ageMs: Date.now() - startedAtRaw });
             return;
         }
 

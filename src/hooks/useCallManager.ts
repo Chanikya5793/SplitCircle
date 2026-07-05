@@ -22,6 +22,11 @@ const debugLog = (...args: unknown[]) => {
   }
 };
 
+// How long an OUTGOING call rings before we give up and end it. Without this,
+// an unanswered call stays "ringing" forever — orphaning the RTDB node and
+// ghost-ringing the callee. Slightly longer than CallKit's own ~40s window.
+const RING_TIMEOUT_MS = 45 * 1000;
+
 // Make Bluetooth accessories (Ray-Ban Meta glasses, AirPods, car kits) eligible
 // AND preferred for call audio. LiveKit's `defaultOutput` is only the fallback
 // used when no headset/bluetooth output is connected, so as long as the audio
@@ -87,7 +92,10 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const isEndingRef = useRef(false);
   const nativeDirectionRef = useRef<'incoming' | 'outgoing'>('outgoing');
   const hasReportedConnectedNativeRef = useRef(false);
-  const endCallRef = useRef<(reason?: 'manual' | 'session-ended' | 'unmount') => Promise<void>>(async () => undefined);
+  const endCallRef = useRef<(reason?: 'manual' | 'session-ended' | 'unmount' | 'no-answer') => Promise<void>>(async () => undefined);
+  // Debounce rapid duplicate starts (double-taps / effect re-fires) so a single
+  // intent can't spawn several "ringing" call nodes in a burst.
+  const lastStartAtRef = useRef(0);
   const unsubscribes = useRef<Array<() => void>>([]);
 
   // Cleanup subscriptions
@@ -121,6 +129,13 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setError('Missing chat ID or user');
       return;
     }
+
+    const nowTs = Date.now();
+    if (nowTs - lastStartAtRef.current < 3000) {
+      debugLog('startCall ignored: duplicate start within debounce window');
+      return;
+    }
+    lastStartAtRef.current = nowTs;
 
     const sessionVersion = ++sessionVersionRef.current;
 
@@ -423,7 +438,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   }, [chatId, threads, user]);
 
   // End the call
-  const endCall = useCallback(async (reason: 'manual' | 'session-ended' | 'unmount' = 'manual') => {
+  const endCall = useCallback(async (reason: 'manual' | 'session-ended' | 'unmount' | 'no-answer' = 'manual') => {
     if (isEndingRef.current) {
       return;
     }
@@ -541,6 +556,18 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   useEffect(() => {
     endCallRef.current = endCall;
   }, [endCall]);
+
+  // Outgoing ring timeout — if an initiated call is never answered, end it so
+  // it can't linger as an orphaned "ringing" node. Only the initiator arms
+  // this; the callee's ring is bounded by CallKit/ConnectionService natively.
+  useEffect(() => {
+    if (status !== 'ringing' || !isInitiatorRef.current) return;
+    const timer = setTimeout(() => {
+      debugLog('useCallManager outgoing ring timed out; ending call');
+      void endCallRef.current('no-answer');
+    }, RING_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [status]);
 
   useEffect(() => {
     hasSessionToCleanupRef.current = Boolean(callIdRef.current || callId || token || serverUrl);
