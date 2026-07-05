@@ -1,5 +1,14 @@
 import { Platform } from 'react-native';
-import { v4 as uuidv4 } from 'uuid';
+import { v5 as uuidv5 } from 'uuid';
+
+// A FIXED namespace so a callId always maps to the same CallKit UUID on every
+// device AND on the server. This is critical: CallKit requires a valid
+// RFC-4122 UUID (a raw callId like "call_1783…" makes reportNewIncomingCall
+// fail with a nil UUID → the call never rings, only a notification shows). The
+// server's VoIP payload derives the uuid the same way (see functions
+// voipPush.ts), so the native push path and the JS path agree on one identity.
+const CALL_UUID_NAMESPACE = '6f9b8e2a-1c3d-4b5e-8a7f-0d1e2c3b4a59';
+export const nativeUuidForCall = (callId: string): string => uuidv5(callId, CALL_UUID_NAMESPACE);
 
 type CallKeepModule = typeof import('react-native-callkeep');
 type CallKeepDefault = CallKeepModule['default'];
@@ -85,7 +94,10 @@ const ensureMappedNativeCallId = (appCallId: string): string => {
     return existingNativeCallId;
   }
 
-  const nativeCallId = uuidv4();
+  // Deterministic (not random) so the native VoIP push path — which reports the
+  // call to CallKit before JS is even alive — and this JS path resolve to the
+  // exact same CallKit UUID, keeping answer/end events correlated.
+  const nativeCallId = nativeUuidForCall(appCallId);
   appToNativeCallIds.set(appCallId, nativeCallId);
   nativeToAppCallIds.set(nativeCallId, appCallId);
   return nativeCallId;

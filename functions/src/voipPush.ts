@@ -2,6 +2,13 @@ import apn from "@parse/node-apn";
 import { getFirestore } from "firebase-admin/firestore";
 import { defineSecret } from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
+import { v5 as uuidv5 } from "uuid";
+
+// MUST match the client (src/services/nativeCallService.ts). CallKit requires a
+// valid RFC-4122 UUID; deriving it deterministically from the callId means the
+// native VoIP push and the in-app JS path report the SAME CallKit identity.
+const CALL_UUID_NAMESPACE = "6f9b8e2a-1c3d-4b5e-8a7f-0d1e2c3b4a59";
+const nativeUuidForCall = (callId: string): string => uuidv5(callId, CALL_UUID_NAMESPACE);
 
 // Secrets — set via `firebase functions:secrets:set <name>` and bound on the
 // functions that consume them. Never read .env or commit values to the repo.
@@ -154,7 +161,9 @@ export const sendCallVoipPush = async (args: SendCallVoipPushArgs): Promise<{ ac
         notification.pushType = "voip";
         notification.payload = {
             // The AppDelegate handler reads these fields. Keep keys stable.
-            uuid: args.callId,
+            // `uuid` MUST be a valid RFC-4122 UUID or CallKit silently refuses
+            // to present the call — derive it deterministically from callId.
+            uuid: nativeUuidForCall(args.callId),
             callId: args.callId,
             chatId: args.chatId,
             groupId: args.groupId ?? null,

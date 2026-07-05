@@ -214,6 +214,12 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     }
 
     debugLog('CallContext: accepting incoming call');
+    // Clear the ref SYNCHRONOUSLY (not just via setState, which lags a frame):
+    // joining flips the session to 'connected', and the RTDB echo would
+    // otherwise still see this incoming call and fire nativeCallService.endCall
+    // — which issues a real CXEndCallAction and tears down the call we just
+    // answered (the "hangs up as soon as answered" bug).
+    incomingCallRef.current = null;
     setIncomingCall(null);
     startCallSession({
       chatId: call.chatId,
