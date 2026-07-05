@@ -824,6 +824,20 @@ export const onCallCreated = onValueCreated(
                 accepted: voipResult.accepted,
                 failed: voipResult.failed,
             });
+
+            // WhatsApp-style caller status: if any device accepted the push the
+            // callee is reachable and their phone is ringing → 'ringing';
+            // otherwise they're offline → keep showing 'calling'. Only write
+            // while the call is still ringing (don't clobber an answered call).
+            try {
+                const stateRef = getDatabase().ref(`calls/${callId}`);
+                const snap = await stateRef.get();
+                if (snap.exists() && snap.child("status").val() === "ringing") {
+                    await stateRef.child("deliveryState").set(voipResult.accepted > 0 ? "ringing" : "calling");
+                }
+            } catch (stateErr) {
+                logger.warn("Failed to write call deliveryState", { callId, error: toSafeError(stateErr) });
+            }
         } catch (error) {
             logger.error("VoIP call push failed", {
                 callId,
@@ -871,6 +885,78 @@ export const registerVoipPushToken = onCall(
         return { ok: true };
     },
 );
+
+// ─────────────────────────────────────────────────────────────
+// Missed-call notification (callable)
+// ─────────────────────────────────────────────────────────────
+// The caller invokes this when an outgoing call is never answered (ring
+// timeout or manual cancel before connect). It notifies the CALLEE(s) with a
+// "Missed voice/video call" push. Idempotent via a `missedNotified` flag so a
+// retry (or the server reaper) can't double-notify.
+
+export const reportMissedCall = onCall({ cors: true }, async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const callId = getStringValue((request.data as Record<string, unknown> | undefined)?.callId);
+    if (!callId) {
+        throw new HttpsError("invalid-argument", "callId is required.");
+    }
+
+    const callRef = getDatabase().ref(`calls/${callId}`);
+    const snap = await callRef.get();
+    if (!snap.exists()) return { ok: false, reason: "not-found" };
+
+    const call = snap.val() as MaybeCall;
+    const initiatorId = getStringValue(call?.initiatorId);
+    // Only the caller can report a missed call, and never for a connected one.
+    if (initiatorId !== uid) return { ok: false, reason: "not-initiator" };
+    if (snap.child("missedNotified").val() === true) return { ok: false, reason: "already-notified" };
+
+    const recipientIds = getAllowedUserIds(call?.allowedUserIds).filter((u) => u !== initiatorId);
+    if (recipientIds.length === 0) return { ok: false, reason: "no-recipients" };
+
+    // Claim the flag first (idempotency) before sending.
+    await callRef.child("missedNotified").set(true);
+
+    const callType = call?.type === "video" ? "video" : "audio";
+    const chatId = getStringValue(call?.chatId);
+    const groupId = getStringValue(call?.groupId);
+    let callerName = "Someone";
+    try {
+        const doc = await getFirestore().collection("users").doc(initiatorId).get();
+        callerName = sanitizeParticipantName(getStringValue(doc.data()?.displayName), "Someone");
+    } catch {
+        // best-effort caller name
+    }
+
+    const body = callType === "video" ? "📹 Missed video call" : "📞 Missed voice call";
+    try {
+        await sendPushToUsers(
+            recipientIds,
+            callerName,
+            body,
+            {
+                type: "missed_call",
+                chatId,
+                callId,
+                callType,
+                senderId: initiatorId,
+                senderName: callerName,
+                ...(groupId ? { groupId } : {}),
+            },
+            "calls",
+            undefined,
+            "calls",
+        );
+    } catch (error) {
+        logger.error("Failed to send missed-call notification", { callId, error: toSafeError(error) });
+        throw new HttpsError("internal", "Failed to notify.");
+    }
+
+    return { ok: true };
+});
 
 // ─────────────────────────────────────────────────────────────
 // Scheduler — Recurring Bills

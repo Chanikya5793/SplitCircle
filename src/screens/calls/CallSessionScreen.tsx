@@ -1,4 +1,5 @@
 import { CallControls } from '@/components/CallControls';
+import { startRingback, stopRingback } from '@/services/ringback';
 import { GroupAvatar, UserAvatar } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -489,6 +490,8 @@ export const CallSessionScreen = ({
     isMuted,
     isCameraOff,
     callType,
+    remoteRinging,
+    noAnswer,
     startCall,
     joinExistingCall,
     endCall,
@@ -722,6 +725,15 @@ export const CallSessionScreen = ({
     }
   }, [isCameraOff]);
 
+  // Caller ringback tone — only for OUTGOING calls (joinCallId is set for
+  // incoming) while ringing and not yet answered/timed-out.
+  useEffect(() => {
+    const shouldRing = !joinCallId && status === 'ringing' && !noAnswer;
+    if (shouldRing) startRingback();
+    else stopRingback();
+    return () => stopRingback();
+  }, [joinCallId, status, noAnswer]);
+
   const handleMinimize = useCallback(() => {
     if (!onMinimize) {
       return;
@@ -762,11 +774,14 @@ export const CallSessionScreen = ({
   }, [handleMinimize, onMinimize, visible]);
 
   const statusText = useMemo(() => {
+    if (noAnswer) return 'No answer';
     switch (status) {
       case 'idle':
         return 'Initializing...';
       case 'ringing':
-        return 'Calling...';
+        // WhatsApp-style: 'Calling…' until the callee's device is reachable,
+        // then 'Ringing…' once their phone is actually ringing.
+        return remoteRinging ? 'Ringing...' : 'Calling...';
       case 'connected':
         return formatDuration(callDuration);
       case 'ended':
@@ -776,7 +791,7 @@ export const CallSessionScreen = ({
       default:
         return status;
     }
-  }, [callDuration, error, status]);
+  }, [callDuration, error, status, remoteRinging, noAnswer]);
 
   return (
     <View
@@ -859,22 +874,62 @@ export const CallSessionScreen = ({
         )}
 
         <View style={[styles.controlsWrap, { paddingBottom: insets.bottom + 18 }]}>
-          <CallControls
-            micEnabled={!isMuted}
-            cameraEnabled={!isCameraOff}
-            speakerOn={speakerOn}
-            onToggleMic={toggleMute}
-            onToggleCamera={callType === 'video' ? toggleCamera : undefined}
-            onToggleSpeaker={toggleSpeaker}
-            onAudioRoute={presentAudioRoutePicker}
-            onFlipCamera={callType === 'video' && !isCameraOff ? handleFlipCamera : undefined}
-            onHangUp={handleHangUp}
-          />
+          {noAnswer ? (
+            <NoAnswerOptions
+              onCancel={onHangUp}
+              onMessage={onHangUp}
+              onCallAgain={() => void startCall(callType)}
+            />
+          ) : (
+            <CallControls
+              micEnabled={!isMuted}
+              cameraEnabled={!isCameraOff}
+              speakerOn={speakerOn}
+              onToggleMic={toggleMute}
+              onToggleCamera={callType === 'video' ? toggleCamera : undefined}
+              onToggleSpeaker={toggleSpeaker}
+              onAudioRoute={presentAudioRoutePicker}
+              onFlipCamera={callType === 'video' && !isCameraOff ? handleFlipCamera : undefined}
+              onHangUp={handleHangUp}
+            />
+          )}
         </View>
       </View>
     </View>
   );
 };
+
+// WhatsApp-style "No answer" actions shown when an outgoing call times out.
+const NoAnswerOptions = ({
+  onCancel,
+  onMessage,
+  onCallAgain,
+}: {
+  onCancel: () => void;
+  onMessage: () => void;
+  onCallAgain: () => void;
+}) => (
+  <View style={styles.noAnswerRow}>
+    <View style={styles.noAnswerCol}>
+      <TouchableOpacity onPress={onCancel} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Cancel" style={[styles.noAnswerBtn, { backgroundColor: '#fff' }]}>
+        <Ionicons name="close" size={26} color="#111" />
+      </TouchableOpacity>
+      <Text style={styles.noAnswerLabel}>Cancel</Text>
+    </View>
+    <View style={styles.noAnswerCol}>
+      <TouchableOpacity onPress={onMessage} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Message" style={[styles.noAnswerBtn, { backgroundColor: 'rgba(255,255,255,0.18)' }]}>
+        <Ionicons name="chatbubble" size={22} color="#fff" />
+      </TouchableOpacity>
+      <Text style={styles.noAnswerLabel}>Message</Text>
+    </View>
+    <View style={styles.noAnswerCol}>
+      <TouchableOpacity onPress={onCallAgain} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Call again" style={[styles.noAnswerBtn, { backgroundColor: '#34C759' }]}>
+        <Ionicons name="call" size={24} color="#fff" />
+      </TouchableOpacity>
+      <Text style={styles.noAnswerLabel}>Call again</Text>
+    </View>
+  </View>
+);
 
 const styles = StyleSheet.create({
   overlay: {
@@ -1002,5 +1057,27 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     zIndex: 10,
+  },
+  noAnswerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    gap: 44,
+  },
+  noAnswerCol: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  noAnswerBtn: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noAnswerLabel: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 13,
+    fontWeight: '500',
   },
 });

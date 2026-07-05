@@ -14,6 +14,8 @@ import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallSt
 import { nativeCallService } from '@/services/nativeCallService';
 import { requestCallPermissions } from '@/utils/permissions';
 import { AudioSession } from '@livekit/react-native';
+import { getApp } from 'firebase/app';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 const debugLog = (...args: unknown[]) => {
@@ -60,6 +62,10 @@ interface UseCallManagerReturn {
   serverUrl: string | null;
   token: string | null;
   callType: CallType;
+  /** Caller-side: callee's device is reachable and ringing (vs. 'calling'). */
+  remoteRinging: boolean;
+  /** Caller-side: the outgoing call timed out with no answer. */
+  noAnswer: boolean;
   startCall: (callType?: CallType) => Promise<void>;
   joinExistingCall: (callId: string) => Promise<void>;
   endCall: () => Promise<void>;
@@ -76,6 +82,10 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [callType, setCallType] = useState<CallType>('video');
+  // Caller-side: true once the callee's device is confirmed reachable ('ringing'
+  // vs 'calling'). And true once an outgoing call has timed out unanswered.
+  const [remoteRinging, setRemoteRinging] = useState(false);
+  const [noAnswer, setNoAnswer] = useState(false);
 
   // LiveKit connection details
   const [token, setToken] = useState<string | null>(null);
@@ -144,6 +154,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       cleanupSubscriptions();
       isEndingRef.current = false;
       setError(null);
+      setNoAnswer(false);
+      setRemoteRinging(false);
       setStatus('ringing'); // UI shows "Calling..."
       setCallType(type);
       hasReportedConnectedNativeRef.current = false;
@@ -250,6 +262,12 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         if (session.status === 'ended') {
           void endCallRef.current('session-ended');
           return;
+        }
+
+        // WhatsApp-style caller label: the server flips deliveryState to
+        // 'ringing' once the callee's device accepts the VoIP push.
+        if (session.status === 'ringing') {
+          setRemoteRinging(session.deliveryState === 'ringing');
         }
 
         if (session.status === 'connected') {
@@ -557,13 +575,28 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     endCallRef.current = endCall;
   }, [endCall]);
 
-  // Outgoing ring timeout — if an initiated call is never answered, end it so
-  // it can't linger as an orphaned "ringing" node. Only the initiator arms
-  // this; the callee's ring is bounded by CallKit/ConnectionService natively.
+  // Outgoing ring timeout — if an initiated call is never answered, tear down
+  // the LiveKit/CallKit call but surface a "No answer" state (WhatsApp-style)
+  // with Call again / Message options instead of just closing, and notify the
+  // callee with a missed-call push. Only the initiator arms this; the callee's
+  // ring is bounded by CallKit/ConnectionService natively.
   useEffect(() => {
     if (status !== 'ringing' || !isInitiatorRef.current) return;
     const timer = setTimeout(() => {
-      debugLog('useCallManager outgoing ring timed out; ending call');
+      debugLog('useCallManager outgoing ring timed out; no answer');
+      const timedOutCallId = callIdRef.current;
+      setNoAnswer(true);
+      // Notify the callee of the missed call (best-effort; idempotent server-side).
+      if (timedOutCallId) {
+        try {
+          const functions = getFunctions(getApp());
+          void httpsCallable(functions, 'reportMissedCall')({ callId: timedOutCallId }).catch((e) =>
+            console.warn('reportMissedCall failed', e),
+          );
+        } catch (e) {
+          console.warn('reportMissedCall dispatch failed', e);
+        }
+      }
       void endCallRef.current('no-answer');
     }, RING_TIMEOUT_MS);
     return () => clearTimeout(timer);
@@ -660,6 +693,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     serverUrl,
     token,
     callType,
+    remoteRinging,
+    noAnswer,
     startCall,
     joinExistingCall,
     endCall,
