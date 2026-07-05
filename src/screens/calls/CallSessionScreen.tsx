@@ -209,9 +209,11 @@ interface VideoRoomContentProps {
   theme: CallTheme;
   isCameraOff: boolean;
   peer: CallPeer;
+  /** Which camera is live — the self-view mirrors only for the front one. */
+  cameraFacing: 'front' | 'back';
 }
 
-const VideoRoomContent = ({ theme, isCameraOff, peer }: VideoRoomContentProps) => {
+const VideoRoomContent = ({ theme, isCameraOff, peer, cameraFacing }: VideoRoomContentProps) => {
   const connectionState = useConnectionState();
   const participants = useParticipants();
   const tracks = useTracks([Track.Source.Camera]);
@@ -299,7 +301,16 @@ const VideoRoomContent = ({ theme, isCameraOff, peer }: VideoRoomContentProps) =
       {/* Local preview PiP — floats above the control bar, FaceTime-style. */}
       <View style={styles.pip}>
         {localTrack && !isCameraOff && isTrackReference(localTrack) ? (
-          <VideoTrack trackRef={localTrack} style={styles.rtcView} objectFit="cover" zOrder={1} />
+          // Mirror the self-view for the front camera only (FaceTime/WhatsApp
+          // behavior); the back camera and what the remote peer receives are
+          // never mirrored.
+          <VideoTrack
+            trackRef={localTrack}
+            style={styles.rtcView}
+            objectFit="cover"
+            zOrder={1}
+            mirror={cameraFacing === 'front'}
+          />
         ) : (
           <View style={styles.pipPlaceholder}>
             <Ionicons
@@ -492,6 +503,10 @@ export const CallSessionScreen = ({
   const [callDuration, setCallDuration] = useState(0);
   const [shouldConnectRoom, setShouldConnectRoom] = useState(true);
   const roomRef = useRef<Room | null>(null);
+  const [cameraFacing, setCameraFacing] = useState<'front' | 'back'>('front');
+  const cameraFacingRef = useRef<'front' | 'back'>('front');
+  const flipInFlightRef = useRef(false);
+  const [speakerOn, setSpeakerOn] = useState(false);
 
   // Who this call is with — group identity for group calls, the other
   // participant for DMs. Pure presentation; falls back gracefully when the
@@ -639,20 +654,73 @@ export const CallSessionScreen = ({
     void endCall();
   }, [endCall, requestRoomShutdown]);
 
-  // Flip between the front and back phone camera. Uses the underlying
-  // react-native-webrtc track's native _switchCamera(), which flips in place
-  // without renegotiating the publication (no video flicker for the peer).
+  // Flip between the front and back phone camera. Prefers LiveKit's
+  // restartTrack({ facingMode }) — the documented, reliable switch that also
+  // updates the track's internal facing state — and falls back to the raw
+  // react-native-webrtc _switchCamera() if restartTrack isn't available.
   const handleFlipCamera = useCallback(() => {
     const room = roomRef.current;
-    if (!room) return;
-    try {
-      const track = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
-      const mst = track?.mediaStreamTrack as unknown as { _switchCamera?: () => void } | undefined;
-      mst?._switchCamera?.();
-    } catch (err) {
-      console.warn('CallSessionScreen: flip camera failed', err);
+    if (!room || flipInFlightRef.current) return;
+    const track = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track as
+      | {
+          restartTrack?: (o: { facingMode: 'user' | 'environment' }) => Promise<void>;
+          mediaStreamTrack?: { _switchCamera?: () => void };
+        }
+      | undefined;
+    if (!track) return;
+
+    const next = cameraFacingRef.current === 'front' ? 'back' : 'front';
+    const commit = () => {
+      cameraFacingRef.current = next;
+      setCameraFacing(next);
+      flipInFlightRef.current = false;
+    };
+    const rawSwitch = () => {
+      try {
+        track.mediaStreamTrack?._switchCamera?.();
+        commit();
+      } catch (err) {
+        console.warn('CallSessionScreen: _switchCamera fallback failed', err);
+        flipInFlightRef.current = false;
+      }
+    };
+
+    flipInFlightRef.current = true;
+    if (typeof track.restartTrack === 'function') {
+      void track
+        .restartTrack({ facingMode: next === 'front' ? 'user' : 'environment' })
+        .then(commit)
+        .catch((err: unknown) => {
+          console.warn('CallSessionScreen: restartTrack flip failed, falling back', err);
+          rawSwitch();
+        });
+    } else {
+      rawSwitch();
     }
   }, []);
+
+  // Speaker toggle. iOS gives no JS API to read the live route, so the button
+  // tracks the forced-speaker state we set here; long-press opens the system
+  // route picker for Bluetooth/AirPlay. Bluetooth (e.g. Ray-Ban Meta) is still
+  // auto-preferred when connected unless the user forces the speaker on.
+  const toggleSpeaker = useCallback(() => {
+    setSpeakerOn((on) => {
+      const next = !on;
+      void AudioSession.selectAudioOutput(next ? 'force_speaker' : 'default').catch((err) =>
+        console.warn('CallSessionScreen: selectAudioOutput failed', err),
+      );
+      return next;
+    });
+  }, []);
+
+  // Turning the camera off drops the track; the next enable re-creates it on the
+  // front lens, so reset facing/mirror to match and avoid a stale mirror state.
+  useEffect(() => {
+    if (isCameraOff && cameraFacingRef.current !== 'front') {
+      cameraFacingRef.current = 'front';
+      setCameraFacing('front');
+    }
+  }, [isCameraOff]);
 
   const handleMinimize = useCallback(() => {
     if (!onMinimize) {
@@ -772,7 +840,7 @@ export const CallSessionScreen = ({
                 hasAutoClosedRef={hasAutoClosedRef}
               />
               {callType === 'video' ? (
-                <VideoRoomContent theme={theme as CallTheme} isCameraOff={isCameraOff} peer={peer} />
+                <VideoRoomContent theme={theme as CallTheme} isCameraOff={isCameraOff} peer={peer} cameraFacing={cameraFacing} />
               ) : (
                 <AudioRoomContent
                   theme={theme as CallTheme}
@@ -794,8 +862,10 @@ export const CallSessionScreen = ({
           <CallControls
             micEnabled={!isMuted}
             cameraEnabled={!isCameraOff}
+            speakerOn={speakerOn}
             onToggleMic={toggleMute}
             onToggleCamera={callType === 'video' ? toggleCamera : undefined}
+            onToggleSpeaker={toggleSpeaker}
             onAudioRoute={presentAudioRoutePicker}
             onFlipCamera={callType === 'video' && !isCameraOff ? handleFlipCamera : undefined}
             onHangUp={handleHangUp}

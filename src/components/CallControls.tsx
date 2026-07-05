@@ -12,6 +12,7 @@ interface ControlButtonProps {
   label: string;
   accessibilityLabel: string;
   onPress?: () => void;
+  onLongPress?: () => void;
   /** Toggle state; false renders the inverted (engaged) look. */
   active?: boolean;
   danger?: boolean;
@@ -19,7 +20,7 @@ interface ControlButtonProps {
 
 const BUTTON_SIZE = 56;
 
-const ControlButton = ({ icon, label, accessibilityLabel, onPress, active = true, danger }: ControlButtonProps) => {
+const ControlButton = ({ icon, label, accessibilityLabel, onPress, onLongPress, active = true, danger }: ControlButtonProps) => {
   const background = danger
     ? '#FF3B30'
     : active
@@ -31,6 +32,7 @@ const ControlButton = ({ icon, label, accessibilityLabel, onPress, active = true
     <View style={styles.buttonColumn}>
       <TouchableOpacity
         onPress={onPress}
+        onLongPress={onLongPress}
         disabled={!onPress}
         activeOpacity={0.7}
         accessibilityRole="button"
@@ -53,9 +55,13 @@ const ControlButton = ({ icon, label, accessibilityLabel, onPress, active = true
 interface CallControlsProps {
   micEnabled: boolean;
   cameraEnabled: boolean;
+  /** Speaker is currently forced on (drives the audio button's engaged look). */
+  speakerOn?: boolean;
   onToggleMic?: () => void;
   onToggleCamera?: () => void;
-  /** Opens the iOS system audio-route picker (Speaker / iPhone / Bluetooth). */
+  /** Tap: toggle the speaker. */
+  onToggleSpeaker?: () => void;
+  /** Long-press: open the iOS system route picker (Bluetooth / AirPlay / …). */
   onAudioRoute?: () => void;
   /** Flip between the front and back phone camera (video calls only). */
   onFlipCamera?: () => void;
@@ -65,8 +71,10 @@ interface CallControlsProps {
 export const CallControls = ({
   micEnabled,
   cameraEnabled,
+  speakerOn = false,
   onToggleMic,
   onToggleCamera,
+  onToggleSpeaker,
   onAudioRoute,
   onFlipCamera,
   onHangUp,
@@ -79,12 +87,14 @@ export const CallControls = ({
       onPress={onToggleMic}
       active={micEnabled}
     />
-    {onAudioRoute ? (
+    {onToggleSpeaker || onAudioRoute ? (
       <ControlButton
-        icon="volume-high"
-        label="audio"
-        accessibilityLabel="Choose audio output"
-        onPress={onAudioRoute}
+        icon={speakerOn ? 'volume-high' : 'volume-medium'}
+        label={speakerOn ? 'speaker' : 'audio'}
+        accessibilityLabel={speakerOn ? 'Speaker on. Long-press to choose output' : 'Speaker off. Long-press to choose output'}
+        onPress={onToggleSpeaker ?? onAudioRoute}
+        onLongPress={onAudioRoute}
+        active={!speakerOn}
       />
     ) : null}
     {onToggleCamera ? (
