@@ -29,49 +29,52 @@ interface VoipDevice {
     bundleId?: string;
 }
 
-let cachedProvider: apn.Provider | null = null;
-let cachedKey: string | null = null;
-let cachedKeyId: string | null = null;
-let cachedTeamId: string | null = null;
-let cachedSandbox: boolean | null = null;
+// One provider per APNs environment (production vs sandbox). Token-based (.p8)
+// auth lets the SAME key authenticate against both gateways, so we can try the
+// other environment when a token is rejected for env mismatch — that's what
+// makes VoIP work whether the installed build is a dev (sandbox) or a
+// production/TestFlight/store build without any secret juggling.
+const providerCache = new Map<boolean, apn.Provider>();
+let cachedCreds: { key: string; keyId: string; teamId: string } | null = null;
 
-const getProvider = (): apn.Provider | null => {
+/** Whichever environment the APNS_USE_SANDBOX secret prefers, tried FIRST. */
+const prefersSandbox = (): boolean => {
+    const raw = apnsUseSandboxSecret.value();
+    return raw === "true" || raw === "1";
+};
+
+/** Provider for a specific environment; caches and rebuilds on cred rotation. */
+const getProvider = (production: boolean): apn.Provider | null => {
     const key = apnsAuthKeySecret.value();
     const keyId = apnsKeyIdSecret.value();
     const teamId = apnsTeamIdSecret.value();
-    const sandboxRaw = apnsUseSandboxSecret.value();
-    const sandbox = sandboxRaw === "true" || sandboxRaw === "1";
 
     if (!key || !keyId || !teamId) {
         logger.warn("voipPush: APNs secrets not configured; skipping VoIP push.");
         return null;
     }
 
-    const sameConfig =
-        cachedProvider !== null &&
-        cachedKey === key &&
-        cachedKeyId === keyId &&
-        cachedTeamId === teamId &&
-        cachedSandbox === sandbox;
-
-    if (sameConfig) {
-        return cachedProvider;
+    if (!cachedCreds || cachedCreds.key !== key || cachedCreds.keyId !== keyId || cachedCreds.teamId !== teamId) {
+        for (const p of providerCache.values()) p.shutdown();
+        providerCache.clear();
+        cachedCreds = { key, keyId, teamId };
     }
 
-    if (cachedProvider) {
-        cachedProvider.shutdown();
+    let provider = providerCache.get(production);
+    if (!provider) {
+        provider = new apn.Provider({ token: { key, keyId, teamId }, production });
+        providerCache.set(production, provider);
     }
-
-    cachedProvider = new apn.Provider({
-        token: { key, keyId, teamId },
-        production: !sandbox,
-    });
-    cachedKey = key;
-    cachedKeyId = keyId;
-    cachedTeamId = teamId;
-    cachedSandbox = sandbox;
-    return cachedProvider;
+    return provider;
 };
+
+// APNs rejection reasons that mean "wrong environment" — retry the other
+// gateway before giving up. `BadDeviceToken` is famously ambiguous: APNs
+// returns it both for env mismatch AND for genuinely dead tokens, so we retry
+// the other env first and only scrub if BOTH environments reject.
+const ENV_MISMATCH_REASONS = new Set(["BadDeviceToken", "BadEnvironmentKeyInToken"]);
+// Reasons that mean the token is permanently dead regardless of environment.
+const DEAD_TOKEN_REASONS = new Set(["Unregistered", "DeviceTokenNotForTopic"]);
 
 const collectVoipDevices = async (userIds: string[]): Promise<VoipDevice[]> => {
     if (userIds.length === 0) {
@@ -116,8 +119,9 @@ interface SendCallVoipPushArgs {
 }
 
 export const sendCallVoipPush = async (args: SendCallVoipPushArgs): Promise<{ accepted: number; failed: number }> => {
-    const provider = getProvider();
-    if (!provider) {
+    // Try the preferred environment first, then fall back to the other one.
+    const preferProduction = !prefersSandbox();
+    if (!getProvider(preferProduction)) {
         return { accepted: 0, failed: 0 };
     }
 
@@ -162,39 +166,54 @@ export const sendCallVoipPush = async (args: SendCallVoipPushArgs): Promise<{ ac
             handle: args.handle ?? args.chatId,
         };
 
-        try {
-            const result = await provider.send(notification, device.voipPushToken);
-            accepted += result.sent.length;
-            failed += result.failed.length;
-
-            if (result.failed.length > 0) {
-                for (const failure of result.failed) {
-                    logger.warn("voipPush: APNs rejected token", {
-                        callId: args.callId,
-                        deviceId: device.deviceId,
-                        status: failure.status,
-                        response: failure.response,
-                        error: failure.error?.message,
-                    });
-
-                    // 410 Gone or BadDeviceToken => token is dead, scrub it.
-                    const isGone =
-                        String(failure.status) === "410" ||
-                        failure.response?.reason === "BadDeviceToken" ||
-                        failure.response?.reason === "Unregistered";
-                    if (isGone) {
-                        await scrubDeadVoipToken(args.recipientUserIds, device.deviceId, device.voipPushToken);
-                    }
-                }
+        // Send against one environment; returns 'sent' | reason string | 'error'.
+        const sendVia = async (production: boolean): Promise<"sent" | string> => {
+            const provider = getProvider(production);
+            if (!provider) return "no-provider";
+            try {
+                const result = await provider.send(notification, device.voipPushToken);
+                if (result.sent.length > 0) return "sent";
+                const failure = result.failed[0];
+                return failure?.response?.reason ?? String(failure?.status ?? "unknown");
+            } catch (error) {
+                return error instanceof Error ? error.message : String(error);
             }
-        } catch (error) {
-            failed += 1;
-            logger.error("voipPush: send failed", {
+        };
+
+        // 1) Preferred environment. 2) On an env-mismatch reason, retry the
+        //    other gateway (same .p8 key works for both). Scrub only when the
+        //    token is dead in the environment(s) we actually reached.
+        let reason = await sendVia(preferProduction);
+        if (reason !== "sent" && ENV_MISMATCH_REASONS.has(reason)) {
+            const fallbackReason = await sendVia(!preferProduction);
+            if (fallbackReason === "sent") {
+                reason = "sent";
+            } else {
+                logger.warn("voipPush: rejected in both environments", {
+                    callId: args.callId,
+                    deviceId: device.deviceId,
+                    preferred: reason,
+                    fallback: fallbackReason,
+                });
+                // Dead in both environments → the token is genuinely gone.
+                if (ENV_MISMATCH_REASONS.has(fallbackReason) || DEAD_TOKEN_REASONS.has(fallbackReason)) {
+                    await scrubDeadVoipToken(args.recipientUserIds, device.deviceId, device.voipPushToken);
+                }
+                reason = fallbackReason;
+            }
+        } else if (reason !== "sent") {
+            logger.warn("voipPush: APNs rejected token", {
                 callId: args.callId,
                 deviceId: device.deviceId,
-                error: error instanceof Error ? error.message : String(error),
+                reason,
             });
+            if (DEAD_TOKEN_REASONS.has(reason)) {
+                await scrubDeadVoipToken(args.recipientUserIds, device.deviceId, device.voipPushToken);
+            }
         }
+
+        if (reason === "sent") accepted += 1;
+        else failed += 1;
     }));
 
     logger.info("voipPush: dispatch complete", {
