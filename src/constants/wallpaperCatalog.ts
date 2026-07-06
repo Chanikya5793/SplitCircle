@@ -11,6 +11,20 @@ export interface CatalogWallpaper {
 }
 
 export const WALLPAPER_CATALOG: CatalogWallpaper[] = [
+  // Signature liquid-blob backdrops — the app's original look, as static
+  // wallpapers. Multi-colour accent trios first, then single-colour washes.
+  { id: 'blob-blue', label: 'Blue', source: require('../../assets/wallpapers/blob-blue.jpg') },
+  { id: 'blob-purple', label: 'Purple', source: require('../../assets/wallpapers/blob-purple.jpg') },
+  { id: 'blob-teal', label: 'Teal', source: require('../../assets/wallpapers/blob-teal.jpg') },
+  { id: 'blob-orange', label: 'Orange', source: require('../../assets/wallpapers/blob-orange.jpg') },
+  { id: 'blob-pink', label: 'Pink', source: require('../../assets/wallpapers/blob-pink.jpg') },
+  { id: 'blob-slate', label: 'Slate', source: require('../../assets/wallpapers/blob-slate.jpg') },
+  { id: 'blob-mono-blue', label: 'Blue Wash', source: require('../../assets/wallpapers/blob-mono-blue.jpg') },
+  { id: 'blob-mono-purple', label: 'Purple Wash', source: require('../../assets/wallpapers/blob-mono-purple.jpg') },
+  { id: 'blob-mono-teal', label: 'Teal Wash', source: require('../../assets/wallpapers/blob-mono-teal.jpg') },
+  { id: 'blob-mono-orange', label: 'Orange Wash', source: require('../../assets/wallpapers/blob-mono-orange.jpg') },
+  { id: 'blob-mono-pink', label: 'Pink Wash', source: require('../../assets/wallpapers/blob-mono-pink.jpg') },
+  { id: 'blob-mono-slate', label: 'Slate Wash', source: require('../../assets/wallpapers/blob-mono-slate.jpg') },
   { id: 'bloom-pink', label: 'Pink Bloom', source: require('../../assets/wallpapers/bloom-pink.jpg') },
   { id: 'bloom-blue', label: 'Blue Bloom', source: require('../../assets/wallpapers/bloom-blue.jpg') },
   { id: 'bloom-purple', label: 'Purple Bloom', source: require('../../assets/wallpapers/bloom-purple.jpg') },

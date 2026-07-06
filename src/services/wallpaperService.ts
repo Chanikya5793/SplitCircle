@@ -24,13 +24,25 @@ const STORAGE_KEY = 'wallpapers_v1';
 export type WallpaperSlot = 'app' | 'chat-default' | `chat:${string}` | `group:${string}`;
 
 export interface WallpaperEntry {
-  /** file:// URI inside documentDirectory/wallpapers/ */
+  /** Absolute file:// URI, resolved against the CURRENT document dir on read. */
   uri: string;
   /** When the wallpaper was set (for cache-busting Image keys). */
   setAt: number;
 }
 
-type WallpaperMap = Partial<Record<string, WallpaperEntry>>;
+/**
+ * What we actually persist: the FILE NAME only, never an absolute path. iOS
+ * changes the app's data-container UUID on every install/update, so a stored
+ * absolute file:// URI goes stale after a new build (the file survives, the
+ * path doesn't) — that was the "wallpaper disappears after updating" bug. We
+ * store just the name and rebuild the URI from the live document dir on read.
+ */
+interface StoredEntry {
+  file: string;
+  setAt: number;
+}
+
+type WallpaperMap = Partial<Record<string, StoredEntry>>;
 
 let cache: WallpaperMap | null = null;
 const listeners = new Set<() => void>();
@@ -43,11 +55,36 @@ export const onWallpapersChanged = (listener: () => void): (() => void) => {
   return () => listeners.delete(listener);
 };
 
+/** Filename → absolute URI against the CURRENT container (see StoredEntry). */
+const basename = (p: string): string => p.split('/').pop() ?? p;
+const resolveUri = (file: string): string => new File(wallpapersDir(), file).uri;
+const toEntry = (stored: StoredEntry): WallpaperEntry => ({ uri: resolveUri(stored.file), setAt: stored.setAt });
+
 const loadMap = async (): Promise<WallpaperMap> => {
   if (cache) return cache;
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    cache = raw ? (JSON.parse(raw) as WallpaperMap) : {};
+    const parsed = raw ? (JSON.parse(raw) as Record<string, { file?: string; uri?: string; setAt?: number }>) : {};
+    // Migrate v1 entries that stored an absolute `uri` → keep only the filename.
+    let migrated = false;
+    const next: WallpaperMap = {};
+    for (const [slot, entry] of Object.entries(parsed)) {
+      if (!entry) continue;
+      if (entry.file) {
+        next[slot] = { file: entry.file, setAt: entry.setAt ?? Date.now() };
+      } else if (entry.uri) {
+        next[slot] = { file: basename(entry.uri), setAt: entry.setAt ?? Date.now() };
+        migrated = true;
+      }
+    }
+    cache = next;
+    if (migrated) {
+      try {
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // migration is best-effort; the in-memory map is already fixed
+      }
+    }
   } catch {
     cache = {};
   }
@@ -67,8 +104,10 @@ const persistMap = async (map: WallpaperMap) => {
 const wallpapersDir = () => new Directory(Paths.document, 'wallpapers');
 
 /** Synchronous read from the in-memory cache (hydrate() first at app start). */
-export const getWallpaperSync = (slot: WallpaperSlot): WallpaperEntry | null =>
-  (cache?.[slot] as WallpaperEntry | undefined) ?? null;
+export const getWallpaperSync = (slot: WallpaperSlot): WallpaperEntry | null => {
+  const stored = cache?.[slot];
+  return stored ? toEntry(stored) : null;
+};
 
 /** Resolve the wallpaper a conversation should show (per-chat → default). */
 export const resolveChatWallpaperSync = (chatId: string): WallpaperEntry | null =>
@@ -129,22 +168,21 @@ const storeAsWallpaper = async (
   else source.copy(dest);
 
   const map = { ...(await loadMap()) };
-  const previous = map[slot] as WallpaperEntry | undefined;
-  const entry: WallpaperEntry = { uri: dest.uri, setAt: Date.now() };
-  map[slot] = entry;
+  const previous = map[slot];
+  map[slot] = { file: fileName, setAt: Date.now() };
   await persistMap(map);
 
   // Remove the replaced file after the map points at the new one.
-  if (previous?.uri) {
+  if (previous?.file) {
     try {
-      const old = new File(previous.uri);
+      const old = new File(wallpapersDir(), previous.file);
       if (old.exists) old.delete();
     } catch {
       // Orphaned file — harmless.
     }
   }
 
-  return entry;
+  return toEntry(map[slot]!);
 };
 
 /**
@@ -185,12 +223,12 @@ export const resolveChainSync = (slots: WallpaperSlot[]): WallpaperEntry | null 
 /** Clear a slot (per-chat clear falls back to default; default clear to blobs). */
 export const clearWallpaper = async (slot: WallpaperSlot): Promise<void> => {
   const map = { ...(await loadMap()) };
-  const previous = map[slot] as WallpaperEntry | undefined;
+  const previous = map[slot];
   if (!previous) return;
   delete map[slot];
   await persistMap(map);
   try {
-    const old = new File(previous.uri);
+    const old = new File(wallpapersDir(), previous.file);
     if (old.exists) old.delete();
   } catch {
     // Orphaned file — harmless.

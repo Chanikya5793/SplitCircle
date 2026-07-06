@@ -92,7 +92,7 @@ export const WallpaperPickerSheet = ({
   };
 
   return (
-    <Modal visible={visible} transparent statusBarTranslucent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close wallpaper picker" />
       <View style={[styles.sheet, { backgroundColor: surface, paddingBottom: insets.bottom + 12 }]}>
         <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }]} />
