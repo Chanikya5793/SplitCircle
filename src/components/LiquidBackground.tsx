@@ -168,8 +168,9 @@ export const LiquidBackground = ({
   // by accent — this component is a design-system primitive like GlassCard.
   const { lightBlobColors, darkBlobColors } = useMemo(() => {
     // A selected BLOB wallpaper overrides the accent/health palette so the
-    // signature animated backdrop can be any colour the user picked.
-    if (wallpaper?.kind === 'blob') {
+    // signature animated backdrop can be any colour the user picked — UNLESS
+    // it's the "Adaptive" preset, which falls through to follow the live accent.
+    if (wallpaper?.kind === 'blob' && !wallpaper.adaptive) {
       return { lightBlobColors: wallpaper.light, darkBlobColors: wallpaper.dark };
     }
     const accent = ACCENTS[theme.accentId];

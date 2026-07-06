@@ -32,7 +32,7 @@ export type BlobTrio = [string, string, string];
  */
 export type WallpaperEntry =
   | { kind: 'photo'; uri: string; setAt: number }
-  | { kind: 'blob'; light: BlobTrio; dark: BlobTrio; setAt: number };
+  | { kind: 'blob'; light: BlobTrio; dark: BlobTrio; adaptive?: boolean; setAt: number };
 
 /**
  * What we actually persist. For photos we store the FILE NAME only, never an
@@ -43,7 +43,7 @@ export type WallpaperEntry =
  */
 type StoredEntry =
   | { kind: 'photo'; file: string; setAt: number }
-  | { kind: 'blob'; light: BlobTrio; dark: BlobTrio; setAt: number };
+  | { kind: 'blob'; light: BlobTrio; dark: BlobTrio; adaptive?: boolean; setAt: number };
 
 type WallpaperMap = Partial<Record<string, StoredEntry>>;
 
@@ -63,10 +63,10 @@ const basename = (p: string): string => p.split('/').pop() ?? p;
 const resolveUri = (file: string): string => new File(wallpapersDir(), file).uri;
 const toEntry = (stored: StoredEntry): WallpaperEntry =>
   stored.kind === 'blob'
-    ? { kind: 'blob', light: stored.light, dark: stored.dark, setAt: stored.setAt }
+    ? { kind: 'blob', light: stored.light, dark: stored.dark, adaptive: stored.adaptive, setAt: stored.setAt }
     : { kind: 'photo', uri: resolveUri(stored.file), setAt: stored.setAt };
 
-type RawStored = { kind?: string; file?: string; uri?: string; light?: BlobTrio; dark?: BlobTrio; setAt?: number };
+type RawStored = { kind?: string; file?: string; uri?: string; light?: BlobTrio; dark?: BlobTrio; adaptive?: boolean; setAt?: number };
 
 const loadMap = async (): Promise<WallpaperMap> => {
   if (cache) return cache;
@@ -80,7 +80,7 @@ const loadMap = async (): Promise<WallpaperMap> => {
       if (!entry) continue;
       const setAt = entry.setAt ?? Date.now();
       if (entry.kind === 'blob' && entry.light && entry.dark) {
-        next[slot] = { kind: 'blob', light: entry.light, dark: entry.dark, setAt };
+        next[slot] = { kind: 'blob', light: entry.light, dark: entry.dark, adaptive: entry.adaptive, setAt };
       } else if (entry.file) {
         next[slot] = { kind: 'photo', file: entry.file, setAt };
         if (entry.kind !== 'photo') migrated = true;
@@ -198,15 +198,17 @@ const deletePreviousFile = (previous: StoredEntry | undefined) => {
   }
 };
 
-/** Set a slot to the animated liquid-blob backdrop in a colour palette. */
+/** Set a slot to the animated liquid-blob backdrop in a colour palette (or, when
+ *  adaptive, following the app's live accent theme). */
 export const setWallpaperBlob = async (
   slot: WallpaperSlot,
   light: BlobTrio,
   dark: BlobTrio,
+  adaptive?: boolean,
 ): Promise<WallpaperEntry> => {
   const map = { ...(await loadMap()) };
   const previous = map[slot];
-  map[slot] = { kind: 'blob', light, dark, setAt: Date.now() };
+  map[slot] = { kind: 'blob', light, dark, adaptive, setAt: Date.now() };
   await persistMap(map);
   deletePreviousFile(previous); // frees the old photo file if we replaced one
   return toEntry(map[slot]!);

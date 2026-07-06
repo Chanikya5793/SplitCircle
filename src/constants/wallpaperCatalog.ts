@@ -17,6 +17,8 @@ export type CatalogWallpaper =
       /** Per-scheme blob colours; LiquidBackground crossfades light↔dark. */
       light: BlobTrio;
       dark: BlobTrio;
+      /** When true, ignore light/dark and follow the app's current accent theme. */
+      adaptive?: boolean;
       /** Still preview for the picker rail (require() module id). */
       thumb: number;
     }
@@ -33,6 +35,11 @@ const mono = (light: string, dark: string): { light: BlobTrio; dark: BlobTrio } 
 });
 
 export const WALLPAPER_CATALOG: CatalogWallpaper[] = [
+  // Adaptive — animated blobs that follow the app's current accent theme (recolour
+  // live when you change the accent). light/dark are placeholders; adaptive wins.
+  { id: 'blob-adaptive', label: 'Adaptive', kind: 'blob', adaptive: true, light: ['#a5c8ff', '#d0b3ff', '#9df0cf'], dark: ['#173B66', '#432C7A', '#0B4A37'], thumb: require('../../assets/wallpapers/blob-adaptive.jpg') },
+  // Prism — a mix of all the colours at once.
+  { id: 'blob-prism', label: 'Prism', kind: 'blob', light: ['#f79ab3', '#8fbaff', '#7fe6c4'], dark: ['#7F1D3A', '#0F4C75', '#0B4A37'], thumb: require('../../assets/wallpapers/blob-prism.jpg') },
   // Signature ANIMATED liquid-blob backdrops — moving circles in accent colours.
   { id: 'blob-blue', label: 'Blue', kind: 'blob', light: ['#a5c8ff', '#c4e0f9', '#9bb8f0'], dark: ['#173B66', '#1C2E58', '#0F4C75'], thumb: require('../../assets/wallpapers/blob-blue.jpg') },
   { id: 'blob-purple', label: 'Purple', kind: 'blob', light: ['#d0b3ff', '#e3d1fc', '#b79aef'], dark: ['#432C7A', '#33245E', '#4527A0'], thumb: require('../../assets/wallpapers/blob-purple.jpg') },

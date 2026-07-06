@@ -79,7 +79,7 @@ export const WallpaperPickerSheet = ({
     lightHaptic();
     setBusyId(item.id);
     try {
-      if (item.kind === 'blob') await setWallpaperBlob(slot, item.light, item.dark);
+      if (item.kind === 'blob') await setWallpaperBlob(slot, item.light, item.dark, item.adaptive);
       else await setWallpaperFromBundled(slot, item.source);
       successHaptic();
       onChanged?.(slot);
@@ -112,7 +112,8 @@ export const WallpaperPickerSheet = ({
     onClose();
   };
 
-  const translateY = slide.interpolate({ inputRange: [0, 1], outputRange: [-(sheetH + 60), 0] });
+  // Slides UP from the bottom while the Modal's fade brings in the scrim.
+  const translateY = slide.interpolate({ inputRange: [0, 1], outputRange: [sheetH + 60, 0] });
 
   return (
     <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={onClose}>
@@ -121,9 +122,10 @@ export const WallpaperPickerSheet = ({
         onLayout={(e) => setSheetH(e.nativeEvent.layout.height)}
         style={[
           styles.sheet,
-          { backgroundColor: surface, paddingTop: insets.top + 10, transform: [{ translateY }] },
+          { backgroundColor: surface, paddingBottom: insets.bottom + 12, transform: [{ translateY }] },
         ]}
       >
+        <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }]} />
         <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
           {title}
         </Text>
@@ -199,8 +201,6 @@ export const WallpaperPickerSheet = ({
             <Text style={{ color: theme.colors.error, fontWeight: '600' }}>Remove wallpaper</Text>
           </TouchableOpacity>
         )}
-
-        <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }]} />
       </Animated.View>
     </Modal>
   );
@@ -216,19 +216,19 @@ const styles = StyleSheet.create({
   },
   sheet: {
     position: 'absolute',
-    top: 0,
+    bottom: 0,
     left: 0,
     right: 0,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    paddingBottom: 10,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 8,
   },
   grabber: {
     alignSelf: 'center',
     width: 36,
     height: 4,
     borderRadius: 2,
-    marginTop: 12,
+    marginBottom: 10,
   },
   title: {
     fontWeight: '700',
