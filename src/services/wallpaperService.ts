@@ -23,24 +23,27 @@ const STORAGE_KEY = 'wallpapers_v1';
 
 export type WallpaperSlot = 'app' | 'chat-default' | `chat:${string}` | `group:${string}`;
 
-export interface WallpaperEntry {
-  /** Absolute file:// URI, resolved against the CURRENT document dir on read. */
-  uri: string;
-  /** When the wallpaper was set (for cache-busting Image keys). */
-  setAt: number;
-}
+export type BlobTrio = [string, string, string];
 
 /**
- * What we actually persist: the FILE NAME only, never an absolute path. iOS
- * changes the app's data-container UUID on every install/update, so a stored
- * absolute file:// URI goes stale after a new build (the file survives, the
- * path doesn't) — that was the "wallpaper disappears after updating" bug. We
- * store just the name and rebuild the URI from the live document dir on read.
+ * A resolved wallpaper. Either a still PHOTO (uri rebuilt on read) or the
+ * signature animated BLOB backdrop in a colour palette (rendered live by
+ * LiquidBackground, not an image).
  */
-interface StoredEntry {
-  file: string;
-  setAt: number;
-}
+export type WallpaperEntry =
+  | { kind: 'photo'; uri: string; setAt: number }
+  | { kind: 'blob'; light: BlobTrio; dark: BlobTrio; setAt: number };
+
+/**
+ * What we actually persist. For photos we store the FILE NAME only, never an
+ * absolute path: iOS changes the app's data-container UUID on every
+ * install/update, so a stored absolute file:// URI goes stale after a new build
+ * (the file survives, the path doesn't) — that was the "wallpaper disappears
+ * after updating" bug. We rebuild the URI from the live document dir on read.
+ */
+type StoredEntry =
+  | { kind: 'photo'; file: string; setAt: number }
+  | { kind: 'blob'; light: BlobTrio; dark: BlobTrio; setAt: number };
 
 type WallpaperMap = Partial<Record<string, StoredEntry>>;
 
@@ -58,22 +61,31 @@ export const onWallpapersChanged = (listener: () => void): (() => void) => {
 /** Filename → absolute URI against the CURRENT container (see StoredEntry). */
 const basename = (p: string): string => p.split('/').pop() ?? p;
 const resolveUri = (file: string): string => new File(wallpapersDir(), file).uri;
-const toEntry = (stored: StoredEntry): WallpaperEntry => ({ uri: resolveUri(stored.file), setAt: stored.setAt });
+const toEntry = (stored: StoredEntry): WallpaperEntry =>
+  stored.kind === 'blob'
+    ? { kind: 'blob', light: stored.light, dark: stored.dark, setAt: stored.setAt }
+    : { kind: 'photo', uri: resolveUri(stored.file), setAt: stored.setAt };
+
+type RawStored = { kind?: string; file?: string; uri?: string; light?: BlobTrio; dark?: BlobTrio; setAt?: number };
 
 const loadMap = async (): Promise<WallpaperMap> => {
   if (cache) return cache;
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    const parsed = raw ? (JSON.parse(raw) as Record<string, { file?: string; uri?: string; setAt?: number }>) : {};
-    // Migrate v1 entries that stored an absolute `uri` → keep only the filename.
+    const parsed = raw ? (JSON.parse(raw) as Record<string, RawStored>) : {};
+    // Migrate: v1 stored an absolute `uri`; v2 stored `{file}` with no kind.
     let migrated = false;
     const next: WallpaperMap = {};
     for (const [slot, entry] of Object.entries(parsed)) {
       if (!entry) continue;
-      if (entry.file) {
-        next[slot] = { file: entry.file, setAt: entry.setAt ?? Date.now() };
+      const setAt = entry.setAt ?? Date.now();
+      if (entry.kind === 'blob' && entry.light && entry.dark) {
+        next[slot] = { kind: 'blob', light: entry.light, dark: entry.dark, setAt };
+      } else if (entry.file) {
+        next[slot] = { kind: 'photo', file: entry.file, setAt };
+        if (entry.kind !== 'photo') migrated = true;
       } else if (entry.uri) {
-        next[slot] = { file: basename(entry.uri), setAt: entry.setAt ?? Date.now() };
+        next[slot] = { kind: 'photo', file: basename(entry.uri), setAt };
         migrated = true;
       }
     }
@@ -169,19 +181,34 @@ const storeAsWallpaper = async (
 
   const map = { ...(await loadMap()) };
   const previous = map[slot];
-  map[slot] = { file: fileName, setAt: Date.now() };
+  map[slot] = { kind: 'photo', file: fileName, setAt: Date.now() };
   await persistMap(map);
+  deletePreviousFile(previous);
+  return toEntry(map[slot]!);
+};
 
-  // Remove the replaced file after the map points at the new one.
-  if (previous?.file) {
-    try {
-      const old = new File(wallpapersDir(), previous.file);
-      if (old.exists) old.delete();
-    } catch {
-      // Orphaned file — harmless.
-    }
+/** Delete the backing image file of a replaced/cleared PHOTO entry. */
+const deletePreviousFile = (previous: StoredEntry | undefined) => {
+  if (previous?.kind !== 'photo') return;
+  try {
+    const old = new File(wallpapersDir(), previous.file);
+    if (old.exists) old.delete();
+  } catch {
+    // Orphaned file — harmless.
   }
+};
 
+/** Set a slot to the animated liquid-blob backdrop in a colour palette. */
+export const setWallpaperBlob = async (
+  slot: WallpaperSlot,
+  light: BlobTrio,
+  dark: BlobTrio,
+): Promise<WallpaperEntry> => {
+  const map = { ...(await loadMap()) };
+  const previous = map[slot];
+  map[slot] = { kind: 'blob', light, dark, setAt: Date.now() };
+  await persistMap(map);
+  deletePreviousFile(previous); // frees the old photo file if we replaced one
   return toEntry(map[slot]!);
 };
 
@@ -227,10 +254,5 @@ export const clearWallpaper = async (slot: WallpaperSlot): Promise<void> => {
   if (!previous) return;
   delete map[slot];
   await persistMap(map);
-  try {
-    const old = new File(wallpapersDir(), previous.file);
-    if (old.exists) old.delete();
-  } catch {
-    // Orphaned file — harmless.
-  }
+  deletePreviousFile(previous);
 };

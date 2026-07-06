@@ -167,6 +167,11 @@ export const LiquidBackground = ({
   // The crossfade needs BOTH schemes' trios, so resolve them from the palette
   // by accent — this component is a design-system primitive like GlassCard.
   const { lightBlobColors, darkBlobColors } = useMemo(() => {
+    // A selected BLOB wallpaper overrides the accent/health palette so the
+    // signature animated backdrop can be any colour the user picked.
+    if (wallpaper?.kind === 'blob') {
+      return { lightBlobColors: wallpaper.light, darkBlobColors: wallpaper.dark };
+    }
     const accent = ACCENTS[theme.accentId];
     const pick = (scheme: 'light' | 'dark'): [string, string, string] => {
       if (healthStatus === 'settled') return NEUTRALS[scheme].blobSettled;
@@ -174,7 +179,7 @@ export const LiquidBackground = ({
       return accent[scheme].blobBalanced;
     };
     return { lightBlobColors: pick('light'), darkBlobColors: pick('dark') };
-  }, [healthStatus, theme.accentId]);
+  }, [healthStatus, theme.accentId, wallpaper]);
 
   const containerStyle = useAnimatedStyle(() => {
     const backgroundColor = interpolateColor(
@@ -185,10 +190,11 @@ export const LiquidBackground = ({
     return { backgroundColor };
   });
 
-  if (wallpaper) {
+  if (wallpaper?.kind === 'photo') {
     // Photo background: no blobs, no theme crossfade — the photo IS the
     // backdrop. The scrim adapts to the scheme so text stays readable in
-    // dark mode without making light mode look washed out.
+    // dark mode without making light mode look washed out. (A 'blob'
+    // wallpaper falls through to the animated blob render below, recoloured.)
     return (
       <Animated.View style={[styles.container, containerStyle, style]}>
         <Image

@@ -1,23 +1,28 @@
 // Wallpaper chooser — one sheet for every wallpaper entry point (Settings,
-// chat header menu, Group Info). Catalog thumbnails set instantly from
-// bundled assets (no photo permission); "From Photos" runs the gallery
-// pipeline; "Remove" clears the slot. The sheet fully closes before the
-// system photo picker presents (same modal-dismissal rule as HeaderMenu).
+// chat header menu, Group Info). It drops DOWN from the top over a full-screen
+// grey scrim that fades in/out. Catalog thumbnails set instantly: 'blob'
+// entries apply the animated liquid backdrop in that palette, 'photo' entries
+// copy a bundled image. "From Photos" runs the gallery pipeline; "Remove"
+// clears the slot. The sheet fully closes before the system photo picker
+// presents (same modal-dismissal rule as HeaderMenu).
 
 import { useTheme } from '@/context/ThemeContext';
-import { WALLPAPER_CATALOG } from '@/constants/wallpaperCatalog';
+import { WALLPAPER_CATALOG, type CatalogWallpaper } from '@/constants/wallpaperCatalog';
 import {
   clearWallpaper,
   getWallpaperSync,
   pickAndSetWallpaper,
+  setWallpaperBlob,
   setWallpaperFromBundled,
   type WallpaperSlot,
 } from '@/services/wallpaperService';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
+  Easing,
   Image,
   Modal,
   Pressable,
@@ -50,16 +55,32 @@ export const WallpaperPickerSheet = ({
   const insets = useSafeAreaInsets();
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  // Entrance: the sheet slides DOWN from above while the Modal's fade brings
+  // the full-screen scrim in softly. Measured height keeps the slide exact.
+  const slide = useRef(new Animated.Value(0)).current;
+  const [sheetH, setSheetH] = useState(420);
+  useEffect(() => {
+    if (visible) {
+      slide.setValue(0);
+      Animated.timing(slide, {
+        toValue: 1,
+        duration: 320,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [visible, slide]);
+
   if (!slot) return null;
   const hasCurrent = Boolean(getWallpaperSync(slot));
-
   const surface = isDark ? '#1c1c20' : '#ffffff';
 
-  const applyCatalog = async (id: string, source: number) => {
+  const applyCatalog = async (item: CatalogWallpaper) => {
     lightHaptic();
-    setBusyId(id);
+    setBusyId(item.id);
     try {
-      await setWallpaperFromBundled(slot, source);
+      if (item.kind === 'blob') await setWallpaperBlob(slot, item.light, item.dark);
+      else await setWallpaperFromBundled(slot, item.source);
       successHaptic();
       onChanged?.(slot);
       onClose();
@@ -91,11 +112,18 @@ export const WallpaperPickerSheet = ({
     onClose();
   };
 
+  const translateY = slide.interpolate({ inputRange: [0, 1], outputRange: [-(sheetH + 60), 0] });
+
   return (
     <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close wallpaper picker" />
-      <View style={[styles.sheet, { backgroundColor: surface, paddingBottom: insets.bottom + 12 }]}>
-        <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }]} />
+      <Animated.View
+        onLayout={(e) => setSheetH(e.nativeEvent.layout.height)}
+        style={[
+          styles.sheet,
+          { backgroundColor: surface, paddingTop: insets.top + 10, transform: [{ translateY }] },
+        ]}
+      >
         <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
           {title}
         </Text>
@@ -126,14 +154,23 @@ export const WallpaperPickerSheet = ({
           {WALLPAPER_CATALOG.map((item) => (
             <TouchableOpacity
               key={item.id}
-              onPress={() => void applyCatalog(item.id, item.source)}
+              onPress={() => void applyCatalog(item)}
               activeOpacity={0.8}
               disabled={busyId !== null}
               accessibilityRole="button"
               accessibilityLabel={`${item.label} wallpaper`}
             >
               <View>
-                <Image source={item.source} style={styles.thumb} accessibilityIgnoresInvertColors />
+                <Image
+                  source={item.kind === 'blob' ? item.thumb : item.source}
+                  style={styles.thumb}
+                  accessibilityIgnoresInvertColors
+                />
+                {item.kind === 'blob' && (
+                  <View style={styles.animBadge} pointerEvents="none">
+                    <Ionicons name="sparkles" size={11} color="#fff" />
+                  </View>
+                )}
                 {busyId === item.id && (
                   <View style={styles.busyOverlay}>
                     <ActivityIndicator size="small" color="#fff" />
@@ -162,7 +199,9 @@ export const WallpaperPickerSheet = ({
             <Text style={{ color: theme.colors.error, fontWeight: '600' }}>Remove wallpaper</Text>
           </TouchableOpacity>
         )}
-      </View>
+
+        <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }]} />
+      </Animated.View>
     </Modal>
   );
 };
@@ -172,20 +211,24 @@ const THUMB_H = 164;
 
 const styles = StyleSheet.create({
   backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',  // modal scrim — intentionally scheme-independent
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',  // full-screen scrim, fades with the Modal
   },
   sheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingTop: 8,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    paddingBottom: 10,
   },
   grabber: {
     alignSelf: 'center',
     width: 36,
     height: 4,
     borderRadius: 2,
-    marginBottom: 10,
+    marginTop: 12,
   },
   title: {
     fontWeight: '700',
@@ -205,6 +248,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  animBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   busyOverlay: {
     ...StyleSheet.absoluteFillObject,

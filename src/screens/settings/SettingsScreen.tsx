@@ -274,10 +274,19 @@ export const SettingsScreen = () => {
    * while the guard is hiding wallpapers — otherwise the thumbnail itself
    * would leak the exact photo the background reverted away from.
    */
-  const wallpaperPreview = (uri: string | undefined) =>
-    uri && !(guardActive && guardSettings.hideWallpaper) ? (
-      <Image source={{ uri }} style={styles.wallpaperThumb} accessibilityIgnoresInvertColors />
-    ) : undefined;
+  const wallpaperPreview = (entry: ReturnType<typeof useWallpaperSlot>) => {
+    if (!entry || (guardActive && guardSettings.hideWallpaper)) return undefined;
+    if (entry.kind === 'blob') {
+      // Animated blob wallpaper — show its palette as a little gradient chip.
+      return (
+        <View style={[styles.wallpaperThumb, { backgroundColor: entry.light[1], overflow: 'hidden' }]}>
+          <View style={{ position: 'absolute', left: -6, top: -6, width: 24, height: 24, borderRadius: 12, backgroundColor: entry.light[0] }} />
+          <View style={{ position: 'absolute', right: -6, bottom: -6, width: 22, height: 22, borderRadius: 11, backgroundColor: entry.light[2] }} />
+        </View>
+      );
+    }
+    return <Image source={{ uri: entry.uri }} style={styles.wallpaperThumb} accessibilityIgnoresInvertColors />;
+  };
 
   const divider = (
     <View
@@ -389,7 +398,7 @@ export const SettingsScreen = () => {
                   : 'Liquid colors'
             }
             icon="image-outline"
-            trailing={wallpaperPreview(appWallpaper?.uri)}
+            trailing={wallpaperPreview(appWallpaper)}
             onPress={() => openWallpaper('app')}
           />
           {divider}
@@ -403,7 +412,7 @@ export const SettingsScreen = () => {
                   : 'Default for chats & groups'
             }
             icon="forum-outline"
-            trailing={wallpaperPreview(chatDefaultWallpaper?.uri)}
+            trailing={wallpaperPreview(chatDefaultWallpaper)}
             onPress={() => openWallpaper('chat-default')}
           />
         </GlassCard>
