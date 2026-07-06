@@ -43,7 +43,8 @@
         "serviceAccountKeyPath": "./google-service-account.json",
         "track": "production",
         "releaseStatus": "completed"
-      }
+      },
+      "ios": {}
     }
   }
 }

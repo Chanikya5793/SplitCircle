@@ -57,3 +57,6 @@ ios/build-s0/
 
 # EAS local build artifacts
 *.ipa
+build-output/
+credentials/
+SplitCircle*.ipa
