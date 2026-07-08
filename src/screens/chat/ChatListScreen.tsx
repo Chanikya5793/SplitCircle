@@ -13,9 +13,12 @@ import { getChatMessages, subscribeToLocalMessages } from '@/services/localMessa
 import { lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, RefreshControl, StyleSheet, View } from 'react-native';
+import { Animated, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
+import { GroupAvatar, UserAvatar, StickyHeaderPill} from '@/components/ui';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
 interface ChatListScreenProps {
@@ -45,9 +48,11 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     });
   }, [navigation]);
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 40],
-    outputRange: [0, 1],
+  // Slide the glass pill in with a TRANSFORM (not opacity): fractional alpha
+  // on an ancestor kills UIVisualEffectView materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
 
@@ -59,6 +64,25 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     }
     const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
     return otherParticipant?.displayName || 'Direct Chat';
+  }, [groups, user?.userId]);
+
+  // Photo + kind for the row avatar: group photo for group threads, the other
+  // participant's profile photo for DMs; initials render as the fallback.
+  const { isShielded, action, settings: guardSettings } = usePrivacyGuard();
+  const { maskChatTitle, maskPreview } = usePrivacyMask();
+  // Full-list vanish only when the user chose "vanish" AND every chat is in
+  // scope; otherwise render the list and disguise rows per-scope below.
+  const vanishAllChats =
+    action === 'vanish' && isShielded('chats') && guardSettings.chatScope.mode === 'all';
+  const chatsAnyShielded = isShielded('chats');
+
+  const getChatAvatar = useMemo(() => (thread: ChatThread): { kind: 'group' | 'user'; photoURL?: string; name: string } => {
+    if (thread.type === 'group' && thread.groupId) {
+      const group = groups.find(g => g.groupId === thread.groupId);
+      return { kind: 'group', photoURL: group?.photoURL, name: group?.name || 'Group Chat' };
+    }
+    const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+    return { kind: 'user', photoURL: otherParticipant?.photoURL, name: otherParticipant?.displayName || 'Direct Chat' };
   }, [groups, user?.userId]);
 
   // Helper to get chat initials for avatar
@@ -176,32 +200,34 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
       <Animated.View
         style={[
           styles.stickyHeader,
-          { opacity: headerOpacity, paddingTop: insets.top + 8 },
+          { transform: [{ translateY: headerTranslate }], paddingTop: insets.top + 8 },
         ]}
       >
-        <GlassView style={styles.stickyHeaderGlass}>
+        <StickyHeaderPill style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Chats</Text>
-        </GlassView>
+        </StickyHeaderPill>
       </Animated.View>
 
       <View style={styles.container}>
         <Animated.FlatList
-          data={processedThreads}
+          data={vanishAllChats ? [] : processedThreads}
           keyExtractor={(item) => item.chatId}
           renderItem={({ item }) => (
             <GlassView style={styles.chatItem} contentStyle={styles.chatItemContent}>
               <List.Item
-                title={getChatTitle(item)}
-                description={lastPreviewFor(item)}
+                title={maskChatTitle(getChatTitle(item), item.chatId)}
+                description={maskPreview(lastPreviewFor(item), item.chatId)}
                 left={() => (
                   <View>
-                    <Avatar.Text
-                      size={48}
-                      label={getChatInitials(item)}
-                      style={{ backgroundColor: theme.colors.primary }}
-                      color={theme.colors.onPrimary}
-                    />
-                    {(localUnreadCounts[item.chatId] ?? 0) > 0 && (
+                    {(() => {
+                      const avatar = getChatAvatar(item);
+                      return avatar.kind === 'group' ? (
+                        <GroupAvatar photoURL={avatar.photoURL} name={maskChatTitle(avatar.name, item.chatId)} size={48} />
+                      ) : (
+                        <UserAvatar photoURL={avatar.photoURL} displayName={maskChatTitle(avatar.name, item.chatId)} size={48} />
+                      );
+                    })()}
+                    {!chatsAnyShielded && (localUnreadCounts[item.chatId] ?? 0) > 0 && (
                       <View style={[styles.unreadBadge, { backgroundColor: theme.colors.error, borderColor: theme.colors.background }]}>
                         <Text style={{ color: theme.colors.onError, fontSize: 10, fontWeight: 'bold' }}>
                           {(localUnreadCounts[item.chatId] ?? 0) > 9 ? '9+' : localUnreadCounts[item.chatId]}
@@ -218,7 +244,6 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
               />
             </GlassView>
           )}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} />}
           ListEmptyComponent={
             loading ? (
               <View>
@@ -239,7 +264,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                 <View>
                   <TouchableRipple
                     onPress={() => { lightHaptic(); setFilterVisible(true); }}
-                    style={[styles.filterButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}
+                    style={[styles.filterButton, { backgroundColor: theme.colors.skeleton }]}
                     borderless
                   >
                     <View style={styles.filterButtonContent}>

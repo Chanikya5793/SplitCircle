@@ -1,11 +1,12 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { SpendingChart } from '@/components/SpendingChart';
 import { useTheme } from '@/context/ThemeContext';
 import { Group } from '@/models';
-import { formatCurrency } from '@/utils/currency';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { useMemo } from 'react';
-import { Dimensions, ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { PieChart } from 'react-native-chart-kit';
 import { Text } from 'react-native-paper';
 
@@ -13,48 +14,43 @@ interface GroupStatsScreenProps {
   group: Group;
 }
 
-const screenWidth = Dimensions.get('window').width;
-
-const CHART_CONFIG = {
-  backgroundGradientFrom: '#ffffff',
-  backgroundGradientFromOpacity: 0,
-  backgroundGradientTo: '#ffffff',
-  backgroundGradientToOpacity: 0,
-  color: (opacity = 1) => `rgba(103, 80, 164, ${opacity})`,
-  strokeWidth: 2,
-  barPercentage: 0.5,
-  useShadowColorFromDataset: false,
-};
-
-const PALETTE = [
-  '#FF6384',
-  '#36A2EB',
-  '#FFCE56',
-  '#4BC0C0',
-  '#9966FF',
-  '#FF9F40',
-  '#C9CBCF',
-  '#E7E9ED',
-];
-
 export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
-  const { theme, isDark } = useTheme();
+  const fmtMoney = useMoneyDisplay(group?.groupId);
+  const { theme } = useTheme();
+  const { width: screenWidth } = useWindowDimensions();
+
+  // Chart colors follow the theme (slot 0 is the user's accent).
+  const chartConfig = useMemo(
+    () => ({
+      backgroundGradientFrom: theme.colors.surface,
+      backgroundGradientFromOpacity: 0,
+      backgroundGradientTo: theme.colors.surface,
+      backgroundGradientToOpacity: 0,
+      color: (opacity = 1) => theme.colors.primary + Math.round(opacity * 255).toString(16).padStart(2, '0'),
+      strokeWidth: 2,
+      barPercentage: 0.5,
+      useShadowColorFromDataset: false,
+    }),
+    [theme],
+  );
 
   const categoryData = useMemo(() => {
     if (!group) return [];
     const totals: Record<string, number> = {};
     group.expenses.forEach((expense) => {
+      // Settlement pseudo-expenses aren't spending — keep them out of the pie.
+      if (expense.category === 'Settlement') return;
       totals[expense.category] = (totals[expense.category] || 0) + expense.amount;
     });
 
     return Object.entries(totals).map(([name, amount], index) => ({
       name,
       amount,
-      color: PALETTE[index % PALETTE.length],
-      legendFontColor: isDark ? '#E0E0E0' : '#7F7F7F',
+      color: theme.colors.chart[index % theme.colors.chart.length],
+      legendFontColor: theme.colors.muted,
       legendFontSize: 15,
     }));
-  }, [group, isDark]);
+  }, [group, theme]);
 
   if (!group) {
     return (
@@ -64,10 +60,13 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
     );
   }
 
-  const totalExpenses = group.expenses.reduce((sum, e) => sum + e.amount, 0);
+  const totalExpenses = group.expenses
+    .filter((e) => e.category !== 'Settlement')
+    .reduce((sum, e) => sum + e.amount, 0);
 
   return (
     <LiquidBackground>
+      <GuardedScreen target="expenses" entityId={group.groupId} label="Stats hidden">
       <ScrollView contentContainerStyle={styles.container}>
         {/* Spending Trend Chart */}
         <SpendingChart expenses={group.expenses} currency={group.currency} showPieChart={false} />
@@ -77,7 +76,7 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
             Spending by Category
           </Text>
           <Text variant="titleMedium" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
-            Total: {formatCurrency(totalExpenses, group.currency)}
+            Total: {fmtMoney(totalExpenses, group.currency)}
           </Text>
 
           {categoryData.length > 0 ? (
@@ -85,7 +84,7 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
               data={categoryData}
               width={screenWidth - 64} // Adjusted for padding
               height={220}
-              chartConfig={CHART_CONFIG}
+              chartConfig={chartConfig}
               accessor={'amount'}
               backgroundColor={'transparent'}
               paddingLeft={'15'}
@@ -97,6 +96,7 @@ export const GroupStatsScreen = ({ group }: GroupStatsScreenProps) => {
           )}
         </GlassView>
       </ScrollView>
+    </GuardedScreen>
     </LiquidBackground>
   );
 };

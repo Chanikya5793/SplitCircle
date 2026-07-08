@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { ROUTES } from '@/constants';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
@@ -129,6 +130,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
 
   return (
     <LiquidBackground>
+      <GuardedScreen target="calls" label="Hidden">
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.scrollContent}
@@ -395,6 +397,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
           </TouchableOpacity>
         </GlassView>
       </ScrollView>
+    </GuardedScreen>
     </LiquidBackground>
   );
 };

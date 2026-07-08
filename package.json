@@ -11,7 +11,11 @@
     "ios": "EXPO_UNSTABLE_BONJOUR=0 expo run:ios",
     "web": "EXPO_UNSTABLE_BONJOUR=0 expo start --web",
     "postinstall": "patch-package && node scripts/fix-expo-ngrok.js",
-    "test:unit": "vitest run --config vitest.unit.config.ts"
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "eas-build-pre-install": "bash scripts/eas-local-preflight.sh",
+    "ship:ios": "bash scripts/ship-ios.sh",
+    "ship:ios:full": "bash scripts/ship-ios.sh --full",
+    "build:ios:local": "bash scripts/ship-ios.sh --build-only"
   },
   "dependencies": {
     "@expo/metro-runtime": "~55.0.6",
@@ -50,10 +54,13 @@
     "expo-intent-launcher": "~55.0.8",
     "expo-linear-gradient": "~55.0.8",
     "expo-linking": "~55.0.7",
+    "expo-local-authentication": "~55.0.15",
     "expo-location": "~55.1.2",
     "expo-media-library": "~55.0.9",
     "expo-notifications": "~55.0.10",
+    "expo-screen-capture": "~55.0.15",
     "expo-secure-store": "~55.0.8",
+    "expo-sensors": "~55.0.16",
     "expo-sharing": "~55.0.11",
     "expo-splash-screen": "~55.0.10",
     "expo-sqlite": "~55.0.10",
@@ -102,6 +109,8 @@
     "vitest": "^3.2.6"
   },
   "overrides": {
+    "shell-quote": "https://codeload.github.com/ljharb/shell-quote/tar.gz/refs/tags/v1.8.3",
+    "protobufjs": "https://codeload.github.com/protobufjs/protobuf.js/tar.gz/refs/tags/protobufjs-v7.5.4",
     "@firebase/auth": {
       "@react-native-async-storage/async-storage": "$@react-native-async-storage/async-storage"
     },

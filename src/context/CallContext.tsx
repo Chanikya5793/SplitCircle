@@ -1,9 +1,11 @@
-import { declineCall, subscribeToIncomingCallForUser } from '@/services/callService';
+import { ackCallRinging, declineCall, getCallSessionOutcome, subscribeToIncomingCallForUser } from '@/services/callService';
 import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { nativeCallService } from '@/services/nativeCallService';
 import { voipPushService } from '@/services/voipPushService';
 import { startVoipPushRegistration } from '@/services/voipPushRegistration';
+import { MISSED_CALL_CATEGORY_ID, scheduleLocalNotification } from '@/utils/notifications';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Platform } from 'react-native';
 import { useAuth } from './AuthContext';
 import { useChat } from './ChatContext';
 
@@ -44,6 +46,19 @@ interface CallContextValue {
 
 const CallContext = createContext<CallContextValue | null>(null);
 
+// Callee-side ring timeout. Slightly LONGER than the caller's 45s
+// RING_TIMEOUT_MS (useCallManager) so the caller-initiated teardown is always
+// the primary path; this timer is the belt-and-braces fallback for a callee
+// whose RTDB listener never connected (woken from kill by the VoIP push,
+// no/flaky network) so the CallKit ring can't spin forever.
+const CALLEE_RING_TIMEOUT_MS = 60_000;
+
+interface RecentsStartCallRequest {
+  handle: string;
+  nativeCallId: string | null;
+  hasVideo: boolean;
+}
+
 const isSameActiveCall = (
   left: ActiveCallRequest | null,
   right: ActiveCallRequest,
@@ -64,6 +79,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
   const [activeCallRequest, setActiveCallRequest] = useState<ActiveCallRequest | null>(null);
   const [isCallUiVisible, setIsCallUiVisible] = useState(false);
+  const [recentsStartCall, setRecentsStartCall] = useState<RecentsStartCallRequest | null>(null);
 
   const incomingCallRef = useRef<IncomingCall | null>(null);
   const displayedIncomingCallIdRef = useRef<string | null>(null);
@@ -118,6 +134,68 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
         debugLog('CallContext: VoIP push primed incoming call', callId);
         setIncomingCall(synthesized);
       }
+
+      // Reconcile against the LIVE call state ASAP. The AppDelegate reported
+      // this push to CallKit unconditionally (mandatory iOS 13 contract), but
+      // the caller may have hung up before we woke, or the push may have been
+      // stored by APNs while this device was offline. Only a DEFINITIVE
+      // answer dismisses the ring — read errors (auth still restoring on a
+      // cold start, no network) are inconclusive and fall through to the
+      // callee ring-timeout instead of killing a legitimate call.
+      void (async () => {
+        const outcome = await getCallSessionOutcome(callId);
+
+        const dismissDeadCall = (reason: string) => {
+          debugLog(`CallContext: VoIP push refers to a dead call (${reason}) — dismissing`, callId);
+          void nativeCallService.endCall(callId);
+          nativeCallService.clearCall(callId);
+          if (incomingCallRef.current?.callId === callId) {
+            incomingCallRef.current = null;
+            displayedIncomingCallIdRef.current = null;
+            setIncomingCall(null);
+          }
+        };
+
+        if (outcome.kind === 'missing') {
+          dismissDeadCall('no longer exists');
+          return;
+        }
+
+        if (outcome.kind === 'error') {
+          debugLog('CallContext: VoIP live-check inconclusive; relying on ring timeout', callId);
+          return;
+        }
+
+        const session = outcome.session;
+        if (session.status === 'ended' || session.status === 'failed') {
+          dismissDeadCall(`status ${session.status}`);
+          return;
+        }
+
+        // Already connected with THIS user as a participant → the call was
+        // answered (here or on another device of this account) before the
+        // reconcile ran. Clear the synthesized incoming state WITHOUT touching
+        // the native call: ending it would issue a CXEndCallAction on the
+        // live call's UUID, and leaving the synthesized state in place would
+        // let the RTDB "answered elsewhere" branch do the same a moment later.
+        if (
+          session.status === 'connected'
+          && session.participants.some((participant) => participant.userId === user.userId)
+        ) {
+          debugLog('CallContext: VoIP push for an already-answered call — clearing synthesized state', callId);
+          if (incomingCallRef.current?.callId === callId) {
+            incomingCallRef.current = null;
+            displayedIncomingCallIdRef.current = null;
+            setIncomingCall(null);
+          }
+          return;
+        }
+
+        if (Date.now() - session.startedAt > CALLEE_RING_TIMEOUT_MS && session.status === 'ringing') {
+          dismissDeadCall('outside ring window');
+          return;
+        }
+      })();
     });
 
     return unsubscribe;
@@ -193,6 +271,34 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
       console.warn('Error saving declined call to history:', error);
     }
 
+    // Closest iOS-allowed equivalent of a lock-screen "Message" button
+    // (which Apple reserves for SMS on phone-number handles): right after a
+    // decline, drop a local notification carrying the quick-reply category so
+    // the user can pull it down and text the caller without opening the app.
+    if (Platform.OS !== 'web') {
+      try {
+        await scheduleLocalNotification(
+          currentIncomingCall.initiatorName,
+          currentIncomingCall.type === 'video'
+            ? '📹 You declined a video call — pull down to reply'
+            : '📞 You declined a voice call — pull down to reply',
+          {
+            type: 'missed_call',
+            chatId: currentIncomingCall.chatId,
+            groupId: currentIncomingCall.groupId,
+            callId: currentIncomingCall.callId,
+            callType: currentIncomingCall.type,
+            senderId: currentIncomingCall.initiatorId,
+            senderName: currentIncomingCall.initiatorName,
+          },
+          'calls',
+          MISSED_CALL_CATEGORY_ID,
+        );
+      } catch (error) {
+        console.warn('Failed to schedule declined-call reply notification:', error);
+      }
+    }
+
     try {
       await nativeCallService.rejectIncomingCall(currentIncomingCall.callId);
       await declineCall(currentIncomingCall.callId);
@@ -214,6 +320,12 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     }
 
     debugLog('CallContext: accepting incoming call');
+    // Clear the ref SYNCHRONOUSLY (not just via setState, which lags a frame):
+    // joining flips the session to 'connected', and the RTDB echo would
+    // otherwise still see this incoming call and fire nativeCallService.endCall
+    // — which issues a real CXEndCallAction and tears down the call we just
+    // answered (the "hangs up as soon as answered" bug).
+    incomingCallRef.current = null;
     setIncomingCall(null);
     startCallSession({
       chatId: call.chatId,
@@ -302,7 +414,119 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
       incomingCall.initiatorName,
       incomingCall.type === 'video',
     );
+
+    // Device-ack: this device is now ACTUALLY presenting the incoming call
+    // (CallKit banner / in-app ringer), so tell the caller their peer is
+    // ringing. This — not APNs accepting the push — is what flips the
+    // caller's UI from "Calling…" to "Ringing…" (WhatsApp behavior). The
+    // write itself re-checks that the call is still in 'ringing' status.
+    void ackCallRinging(incomingCall.callId);
   }, [incomingCall]);
+
+  // Callee-side ring timeout: never let the CallKit ring spin forever when
+  // cancel signals can't reach us (app woken from kill with no listener yet,
+  // caller offline mid-cancel). Anchored to the call's startedAt so a call
+  // adopted late times out sooner rather than ringing a full extra minute.
+  useEffect(() => {
+    if (!incomingCall) {
+      return;
+    }
+
+    const timeoutCallId = incomingCall.callId;
+    const remainingMs = Math.max(5_000, incomingCall.startedAt + CALLEE_RING_TIMEOUT_MS - Date.now());
+    const timer = setTimeout(() => {
+      const current = incomingCallRef.current;
+      if (!current || current.callId !== timeoutCallId) {
+        return;
+      }
+
+      debugLog('CallContext: callee ring timeout — dismissing as missed', timeoutCallId);
+      void nativeCallService.endCall(timeoutCallId);
+      nativeCallService.clearCall(timeoutCallId);
+      incomingCallRef.current = null;
+      displayedIncomingCallIdRef.current = null;
+      setIncomingCall(null);
+
+      void saveCallToHistory({
+        callId: current.callId,
+        chatId: current.chatId,
+        groupId: current.groupId,
+        type: current.type,
+        direction: 'incoming',
+        otherParticipant: {
+          userId: current.initiatorId,
+          displayName: current.initiatorName,
+        },
+        startedAt: current.startedAt,
+        endedAt: Date.now(),
+        duration: 0,
+        status: 'missed',
+      }).catch((error) => {
+        console.warn('Error saving missed call to history:', error);
+      });
+    }, remainingMs);
+
+    return () => clearTimeout(timer);
+  }, [incomingCall]);
+
+  // iOS Phone-app Recents redial (CallKeep didReceiveStartCallAction). The
+  // event delivers only the handle we reported the original call with (peer
+  // userId for 1:1, chatId for groups). Park the request in state and resolve
+  // it in the effect below once threads are available — cold starts deliver
+  // the buffered event long before ChatContext has loaded anything.
+  useEffect(() => {
+    const unsubscribeStartCall = nativeCallService.subscribe('startCall', (payload) => {
+      debugLog('CallContext: Recents start-call action received');
+      setRecentsStartCall(payload);
+    });
+
+    return unsubscribeStartCall;
+  }, []);
+
+  useEffect(() => {
+    if (!recentsStartCall || !user) {
+      return;
+    }
+
+    if (threads.length === 0) {
+      // Threads not loaded yet (cold start) — keep the request parked; this
+      // effect re-runs when ChatContext delivers them.
+      return;
+    }
+
+    const { handle, nativeCallId, hasVideo } = recentsStartCall;
+    setRecentsStartCall(null);
+
+    // CXStartCallAction path creates a placeholder CallKit call; dismiss it —
+    // the normal outgoing flow below reports its own call with the app's
+    // deterministic UUID. (The Recents/INStartCallIntent path has no UUID.)
+    if (nativeCallId) {
+      void nativeCallService.dismissNativeCall(nativeCallId);
+    }
+
+    if (activeCallRequest) {
+      debugLog('CallContext: ignoring Recents redial — a call is already active');
+      return;
+    }
+
+    const thread = threads.find((candidate) => candidate.chatId === handle)
+      ?? threads.find((candidate) =>
+        candidate.type === 'direct'
+        && handle !== user.userId
+        && candidate.participantIds.includes(handle));
+
+    if (!thread) {
+      console.warn('CallContext: could not resolve Recents redial handle to a chat');
+      return;
+    }
+
+    debugLog('CallContext: launching call from Recents redial');
+    startCallSession({
+      chatId: thread.chatId,
+      groupId: thread.groupId,
+      type: hasVideo ? 'video' : 'audio',
+    });
+  }, [recentsStartCall, threads, user, activeCallRequest, startCallSession]);
 
   useEffect(() => {
     const unsubscribeAnswer = nativeCallService.subscribe('answer', ({ appCallId }) => {

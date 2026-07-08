@@ -5,6 +5,11 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const BATCH_SIZE = 500;
+// A real ring never lasts this long — CallKit/ConnectionService time out well
+// under a minute. Anything still "ringing" past this is an abandoned/orphaned
+// call (client crashed, lost network, or was force-quit mid-ring) and must be
+// reaped fast so it stops ghost-ringing recipients.
+const STALE_RINGING_MS = 90 * 1000;
 
 /**
  * Multi-update in chunks to stay under the RTDB payload limit (~16 MB).
@@ -161,5 +166,61 @@ export const cleanupOldRtdbData = onSchedule("every 24 hours", async (event) => 
         });
     } catch (error) {
         logger.error("Failed to run RTDB cleanup", error);
+    }
+});
+
+/**
+ * Fast reaper for orphaned RINGING calls. The daily cleanup above only removes
+ * calls older than an hour, so an abandoned ring could ghost recipients for up
+ * to an hour (and the backlog only clears once a day). This runs every couple
+ * of minutes and deletes any call stuck in "ringing" past STALE_RINGING_MS,
+ * plus its userActiveCalls pointers. Connected calls are intentionally left
+ * alone (they can legitimately last a long time and have no age-based expiry).
+ */
+export const reapStaleRingingCalls = onSchedule("every 2 minutes", async () => {
+    const db = getDatabase();
+    const now = Date.now();
+    const cutoff = now - STALE_RINGING_MS;
+
+    try {
+        const callsSnapshot = await db.ref("calls").get();
+        if (!callsSnapshot.exists()) return;
+
+        const updates: Record<string, null> = {};
+        const staleCallIds: string[] = [];
+
+        callsSnapshot.forEach((callSnapshot) => {
+            const callId = callSnapshot.key;
+            const data = callSnapshot.val();
+            if (!callId || !data || typeof data !== "object") return;
+            const startedAt = typeof data.startedAt === "number" ? data.startedAt : 0;
+            if (data.status === "ringing" && startedAt > 0 && startedAt < cutoff) {
+                updates[`calls/${callId}`] = null;
+                staleCallIds.push(callId);
+            }
+        });
+
+        if (staleCallIds.length === 0) return;
+
+        // Drop the matching userActiveCalls pointers so clients don't resurface
+        // them from the index between the delete and the next daily sweep.
+        const staleSet = new Set(staleCallIds);
+        const activeSnapshot = await db.ref("userActiveCalls").get();
+        if (activeSnapshot.exists()) {
+            activeSnapshot.forEach((userSnapshot) => {
+                const userId = userSnapshot.key;
+                userSnapshot.forEach((callSnapshot) => {
+                    const callId = callSnapshot.key;
+                    if (callId && staleSet.has(callId)) {
+                        updates[`userActiveCalls/${userId}/${callId}`] = null;
+                    }
+                });
+            });
+        }
+
+        await applyInChunks(db, updates);
+        logger.info("Reaped stale ringing calls", { count: staleCallIds.length });
+    } catch (error) {
+        logger.error("Failed to reap stale ringing calls", error);
     }
 });

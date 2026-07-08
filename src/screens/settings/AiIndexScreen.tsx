@@ -10,6 +10,7 @@
 
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -51,6 +52,7 @@ export const AiIndexScreen = () => {
 
   return (
     <LiquidBackground>
+      <GuardedScreen target="expenses" label="On-device index hidden">
       <ScrollView contentContainerStyle={styles.container}>
         <GlassView style={styles.card}>
           <View style={styles.row}>
@@ -104,6 +106,7 @@ export const AiIndexScreen = () => {
           </Button>
         </GlassView>
       </ScrollView>
+      </GuardedScreen>
     </LiquidBackground>
   );
 };

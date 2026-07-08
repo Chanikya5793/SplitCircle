@@ -21,6 +21,10 @@ import type { SelectionAction } from '@/components/Chat/SelectionToolbar';
 import { AlbumBubble } from '@/components/AlbumBubble';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GroupAvatar, UserAvatar } from '@/components/ui';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { WallpaperPickerSheet } from '@/components/ui';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -190,6 +194,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const [actionTarget, setActionTarget] = useState<ChatMessage | null>(null);
   // Header overflow menu (search, gallery, starred)
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [wallpaperSheetOpen, setWallpaperSheetOpen] = useState(false);
   // Forward picker state — separate from the action sheet so it can stay open while the picker animates in.
   const [forwardSource, setForwardSource] = useState<ChatMessage[] | null>(null);
   // Attachment menu state
@@ -562,7 +567,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const handleSwipeInfo = (message: ChatMessage) => {
     lightHaptic();
     // @ts-ignore - navigation route typing is intentionally loose in this app
-    navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread, initialTitle: 'Message Info', backTitle: title });
+    navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread, initialTitle: 'Message Info', backTitle: displayTitle });
   };
 
   const titleRef = useRef('');
@@ -572,7 +577,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     navigation.navigate(ROUTES.APP.CHAT_MEDIA_GALLERY, {
       chatId: thread.chatId,
       title: 'Media',
-      backTitle: titleRef.current,
+      backTitle: displayTitle,
       participants: thread.participants,
       initialMessageId: message.messageId || message.id,
     });
@@ -1028,12 +1033,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     ? groupName || 'Group Chat'
     : directParticipant?.displayName || 'Direct Chat';
   titleRef.current = title;
+  // Masked title for the header pill only — navigation params keep the real
+  // title so back buttons and Group Info still read correctly.
+  const { maskChatTitle } = usePrivacyMask();
+  const displayTitle = maskChatTitle(title, thread.chatId);
+  const { isShielded: guardIsShielded } = usePrivacyGuard();
+  const chatShielded = guardIsShielded('chats', thread.chatId);
 
   const handleHeaderPress = () => {
     lightHaptic();
     if (thread.type === 'group' && thread.groupId) {
       // @ts-ignore - navigation types
-      navigation.navigate(ROUTES.APP.GROUP_INFO, { groupId: thread.groupId, initialTitle: 'Group Info', backTitle: title });
+      navigation.navigate(ROUTES.APP.GROUP_INFO, { groupId: thread.groupId, initialTitle: 'Group Info', backTitle: displayTitle });
       return;
     }
     if (thread.type === 'direct' && directParticipant?.userId) {
@@ -1042,7 +1053,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         userId: directParticipant.userId,
         displayName: directParticipant.displayName,
         photoURL: directParticipant.photoURL,
-        backTitle: title,
+        backTitle: displayTitle,
       });
     }
   };
@@ -1141,7 +1152,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       userId: participant.userId,
       displayName: participant.displayName,
       photoURL: participant.photoURL,
-      backTitle: title,
+      backTitle: displayTitle,
     });
   }, [navigation, thread.participants, thread.type]);
 
@@ -1244,7 +1255,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   ]);
 
   return (
-    <LiquidBackground>
+    <LiquidBackground wallpaperChatId={thread.chatId}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -1273,27 +1284,28 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             >
               <GlassView style={styles.headerPill} intensity={40}>
                 <View style={styles.headerPillContent}>
-                  {thread.type === 'direct' && directParticipant?.photoURL ? (
-                    <Avatar.Image
-                      size={36}
-                      source={{ uri: directParticipant.photoURL }}
-                      style={{ marginRight: 10 }}
-                    />
-                  ) : (
-                    <Avatar.Text
-                      size={36}
-                      label={groupInitials}
-                      style={{ backgroundColor: theme.colors.primary, marginRight: 10 }}
-                      color={theme.colors.onPrimary}
-                    />
-                  )}
+                  <View style={{ marginRight: 10 }}>
+                    {thread.type === 'direct' ? (
+                      <UserAvatar
+                        photoURL={directParticipant?.photoURL}
+                        displayName={directParticipant?.displayName ?? title}
+                        size={36}
+                      />
+                    ) : (
+                      <GroupAvatar
+                        photoURL={groups.find((g) => g.groupId === thread.groupId)?.photoURL}
+                        name={displayTitle}
+                        size={36}
+                      />
+                    )}
+                  </View>
                   <View style={{ flexShrink: 1 }}>
                     <Text
                       variant="titleMedium"
                       style={[styles.headerTitle, { color: theme.colors.onSurface }]}
                       numberOfLines={1}
                     >
-                      {title}
+                      {displayTitle}
                     </Text>
                     {typingNames.length > 0 && (
                       <Text
@@ -1312,16 +1324,20 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               </GlassView>
             </TouchableOpacity>
             <View style={styles.headerCallActions}>
-              <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
-                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
-                  <Icon source="phone" size={18} color={theme.colors.primary} />
-                </GlassView>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Video call">
-                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
-                  <Icon source="video" size={18} color={theme.colors.primary} />
-                </GlassView>
-              </TouchableOpacity>
+              {!chatShielded && (
+                <>
+                  <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
+                    <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                      <Icon source="phone" size={18} color={theme.colors.primary} />
+                    </GlassView>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Video call">
+                    <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                      <Icon source="video" size={18} color={theme.colors.primary} />
+                    </GlassView>
+                  </TouchableOpacity>
+                </>
+              )}
               <TouchableOpacity
                 onPress={() => {
                   lightHaptic();
@@ -1342,7 +1358,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
         <Animated.FlatList
           ref={listRef as any}
-          data={rows as readonly ChatRow[] as any}
+          data={(chatShielded ? [] : rows) as readonly ChatRow[] as any}
           keyExtractor={(row: ChatRow) =>
             row.kind === 'album'
               ? `album:${row.albumId}`
@@ -1390,6 +1406,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             });
           }}
         />
+
+        {chatShielded && (
+          <View style={[styles.chatLockOverlay, { backgroundColor: theme.colors.appBackground }]} pointerEvents="auto">
+            <Icon source="lock-outline" size={40} color={theme.colors.onSurfaceVariant} />
+            <Text style={{ color: theme.colors.onSurface, fontWeight: '600', marginTop: 12, fontSize: 16 }}>
+              Messages hidden
+            </Text>
+            <Text style={{ color: theme.colors.onSurfaceVariant, fontSize: 13, marginTop: 4 }}>
+              Shake again or enter your code to reveal.
+            </Text>
+          </View>
+        )}
 
         {/* Mention autocomplete — floats just above the composer when active */}
         {isGroupChat && mentionQuery !== null && (
@@ -1525,7 +1553,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 styles.sendButtonTouchable,
                 {
                   backgroundColor: !text.trim()
-                    ? (isDark ? '#555' : '#ccc')
+                    ? theme.colors.surfaceDisabled
                     : theme.colors.primary,
                 },
               ]}
@@ -1601,7 +1629,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               navigation.navigate(ROUTES.APP.CHAT_MEDIA_GALLERY, {
                 chatId: thread.chatId,
                 title: 'Media',
-                backTitle: title,
+                backTitle: displayTitle,
                 participants: thread.participants,
               });
             },
@@ -1628,7 +1656,20 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               enterSelectionMode();
             },
           },
+          {
+            key: 'wallpaper',
+            label: 'Change wallpaper',
+            icon: 'image-outline',
+            onPress: () => setWallpaperSheetOpen(true),
+          },
         ] satisfies HeaderMenuItem[]}
+      />
+
+      <WallpaperPickerSheet
+        visible={wallpaperSheetOpen}
+        slot={`chat:${thread.chatId}`}
+        title="Chat wallpaper"
+        onClose={() => setWallpaperSheetOpen(false)}
       />
 
       {/* Pinned messages bar — anchored under the header pill, above the message list */}
@@ -1942,6 +1983,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
+  },
+  chatLockOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    zIndex: 5,
   },
   headerTitle: {
     fontWeight: '700',

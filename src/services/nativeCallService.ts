@@ -1,5 +1,14 @@
 import { Platform } from 'react-native';
-import { v4 as uuidv4 } from 'uuid';
+import { v5 as uuidv5 } from 'uuid';
+
+// A FIXED namespace so a callId always maps to the same CallKit UUID on every
+// device AND on the server. This is critical: CallKit requires a valid
+// RFC-4122 UUID (a raw callId like "call_1783…" makes reportNewIncomingCall
+// fail with a nil UUID → the call never rings, only a notification shows). The
+// server's VoIP payload derives the uuid the same way (see functions
+// voipPush.ts), so the native push path and the JS path agree on one identity.
+const CALL_UUID_NAMESPACE = '6f9b8e2a-1c3d-4b5e-8a7f-0d1e2c3b4a59';
+export const nativeUuidForCall = (callId: string): string => uuidv5(callId, CALL_UUID_NAMESPACE);
 
 type CallKeepModule = typeof import('react-native-callkeep');
 type CallKeepDefault = CallKeepModule['default'];
@@ -20,6 +29,16 @@ type NativeCallEventMap = {
     appCallId: string | null;
     nativeCallId: string;
     muted: boolean;
+  };
+  // iOS Phone-app Recents redial (CXStartCallAction / INStartCallIntent).
+  // `handle` is whatever we reported the original call with (peer userId for
+  // 1:1, chatId for groups). `nativeCallId` is only present when CallKit
+  // actually created a placeholder call (performStartCallAction path); the
+  // Recents/Siri user-activity path delivers handle+video only.
+  startCall: {
+    handle: string;
+    nativeCallId: string | null;
+    hasVideo: boolean;
   };
 };
 
@@ -55,11 +74,34 @@ const eventListeners: {
   answer: new Set(),
   end: new Set(),
   mute: new Set(),
+  startCall: new Set(),
 };
+
+// Recents redials can arrive before any JS consumer has subscribed (cold
+// start: buffered events are flushed during initialize(), but CallContext
+// subscribes later). Park them here and replay on subscribe.
+const pendingStartCallEvents: NativeCallEventMap['startCall'][] = [];
 
 const nativeToAppCallIds = new Map<string, string>();
 const appToNativeCallIds = new Map<string, string>();
 const handledBufferedEvents = new Set<string>();
+
+// True while CallKit has an active AVAudioSession for a call. useCallManager's
+// activation watchdog reads this: if CallKit never activates, JS falls back to
+// activating the session itself so the call isn't silent.
+let audioSessionActivated = false;
+
+const handleAudioSessionActivated = (source: 'live' | 'buffered') => {
+  audioSessionActivated = true;
+  debugLog(`nativeCallService: didActivateAudioSession (${source})`);
+  RTCAudioSession?.audioSessionDidActivate();
+};
+
+const handleAudioSessionDeactivated = (source: 'live' | 'buffered') => {
+  audioSessionActivated = false;
+  debugLog(`nativeCallService: didDeactivateAudioSession (${source})`);
+  RTCAudioSession?.audioSessionDidDeactivate();
+};
 
 let isBound = false;
 let setupPromise: Promise<boolean> | null = null;
@@ -67,6 +109,7 @@ let bufferedListener: CallKeepEventListener | null = null;
 let answerListener: CallKeepEventListener | null = null;
 let endListener: CallKeepEventListener | null = null;
 let muteListener: CallKeepEventListener | null = null;
+let startCallListener: CallKeepEventListener | null = null;
 let didActivateListener: CallKeepEventListener | null = null;
 let didDeactivateListener: CallKeepEventListener | null = null;
 
@@ -74,9 +117,26 @@ const emit = <EventName extends NativeCallEventName>(
   eventName: EventName,
   payload: NativeCallEventMap[EventName]
 ) => {
+  if (eventName === 'startCall' && eventListeners.startCall.size === 0) {
+    pendingStartCallEvents.push(payload as NativeCallEventMap['startCall']);
+    return;
+  }
+
   for (const listener of eventListeners[eventName]) {
     listener(payload);
   }
+};
+
+const emitStartCall = (data: { handle?: string; callUUID?: string; video?: boolean; name?: string }) => {
+  const handle = typeof data.handle === 'string' ? data.handle.trim() : '';
+  if (!handle) {
+    return;
+  }
+  emit('startCall', {
+    handle,
+    nativeCallId: typeof data.callUUID === 'string' && data.callUUID.length > 0 ? data.callUUID : null,
+    hasVideo: data.video === true,
+  });
 };
 
 const ensureMappedNativeCallId = (appCallId: string): string => {
@@ -85,7 +145,10 @@ const ensureMappedNativeCallId = (appCallId: string): string => {
     return existingNativeCallId;
   }
 
-  const nativeCallId = uuidv4();
+  // Deterministic (not random) so the native VoIP push path — which reports the
+  // call to CallKit before JS is even alive — and this JS path resolve to the
+  // exact same CallKit UUID, keeping answer/end events correlated.
+  const nativeCallId = nativeUuidForCall(appCallId);
   appToNativeCallIds.set(appCallId, nativeCallId);
   nativeToAppCallIds.set(nativeCallId, appCallId);
   return nativeCallId;
@@ -101,6 +164,21 @@ const normalizeHandle = (handle: string, appCallId: string): string => {
 };
 
 const handleBufferedEvent = (event: BufferedCallKeepEvent) => {
+  // Audio-session lifecycle events MUST be processed even when buffered —
+  // lock-screen answers deliver them via didLoadWithEvents/getInitialEvents
+  // before the live listeners bind. A swallowed activation means WebRTC's
+  // audio unit never starts: a silent call. They carry no payload (so the
+  // dedup key would collide across calls) and duplicate activations are
+  // benign, so they bypass the dedup set entirely.
+  if (event.name === 'RNCallKeepDidActivateAudioSession') {
+    handleAudioSessionActivated('buffered');
+    return;
+  }
+  if (event.name === 'RNCallKeepDidDeactivateAudioSession') {
+    handleAudioSessionDeactivated('buffered');
+    return;
+  }
+
   const eventKey = buildBufferedEventKey(event);
   if (handledBufferedEvents.has(eventKey)) {
     return;
@@ -132,6 +210,11 @@ const handleBufferedEvent = (event: BufferedCallKeepEvent) => {
         nativeCallId,
         muted: event.data.muted,
       });
+      break;
+    }
+    case 'RNCallKeepDidReceiveStartCallAction': {
+      // Recents redial delivered before JS was alive (cold start).
+      emitStartCall(event.data as { handle?: string; callUUID?: string; video?: boolean });
       break;
     }
     default:
@@ -172,12 +255,19 @@ const bindListeners = () => {
     });
   });
 
+  startCallListener = RNCallKeep.addEventListener('didReceiveStartCallAction', (data) => {
+    // iOS Phone-app Recents / Siri redial while the app is running. The
+    // user-activity (INStartCallIntent) path carries no callUUID and creates
+    // no CallKit call; the CXStartCallAction path includes one.
+    emitStartCall(data as { handle?: string; callUUID?: string; video?: boolean });
+  });
+
   didActivateListener = RNCallKeep.addEventListener('didActivateAudioSession', () => {
-    RTCAudioSession?.audioSessionDidActivate();
+    handleAudioSessionActivated('live');
   });
 
   didDeactivateListener = RNCallKeep.addEventListener('didDeactivateAudioSession', () => {
-    RTCAudioSession?.audioSessionDidDeactivate();
+    handleAudioSessionDeactivated('live');
   });
 };
 
@@ -202,13 +292,17 @@ const createSetupOptions = (): Parameters<CallKeepDefault['setup']>[0] => ({
     includesCallsInRecents: true,
     maximumCallGroups: '1',
     maximumCallsPerCallGroup: '1',
+    // NO defaultToSpeaker here: this config is applied by CallKit for EVERY
+    // call, and with it audio calls activate on the loudspeaker — and while
+    // it's in the live options, overrideOutputAudioPort(.none) can never
+    // route back to the earpiece (the speaker button appears dead). Video
+    // calls get the speaker via configureAudio/preferBluetoothAudio instead.
     audioSession: AudioSessionCategoryOption && AudioSessionMode
       ? {
           categoryOptions:
             AudioSessionCategoryOption.allowBluetooth
             | AudioSessionCategoryOption.allowBluetoothA2DP
-            | AudioSessionCategoryOption.allowAirPlay
-            | AudioSessionCategoryOption.defaultToSpeaker,
+            | AudioSessionCategoryOption.allowAirPlay,
           mode: AudioSessionMode.voiceChat,
         }
       : undefined,
@@ -363,11 +457,25 @@ async function endCall(appCallId: string): Promise<void> {
   }
 
   await initialize();
-  const nativeCallId = appToNativeCallIds.get(appCallId);
-  if (!nativeCallId) {
+  // Deterministic mapping (uuidv5) — NOT appToNativeCallIds.get. On a VoIP
+  // cold start the native AppDelegate reported the CallKit call before JS
+  // existed, so no in-memory mapping exists yet; deriving the UUID lets JS
+  // dismiss that natively-reported call (ending an unknown UUID is a no-op).
+  const nativeCallId = ensureMappedNativeCallId(appCallId);
+  RNCallKeep.endCall(nativeCallId);
+}
+
+/**
+ * End a CallKit call identified by its NATIVE UUID (no app-call mapping).
+ * Used to dismiss the placeholder call CallKit creates for a Recents redial
+ * via CXStartCallAction before the app launches its own outgoing call flow.
+ */
+async function dismissNativeCall(nativeCallId: string): Promise<void> {
+  if (!RNCallKeep) {
     return;
   }
 
+  await initialize();
   RNCallKeep.endCall(nativeCallId);
 }
 
@@ -398,20 +506,46 @@ function subscribe<EventName extends NativeCallEventName>(
   handler: NativeCallEventHandler<EventName>
 ): () => void {
   eventListeners[eventName].add(handler);
+
+  if (eventName === 'startCall' && pendingStartCallEvents.length > 0) {
+    const parked = pendingStartCallEvents.splice(0, pendingStartCallEvents.length);
+    for (const payload of parked) {
+      (handler as NativeCallEventHandler<'startCall'>)(payload);
+    }
+  }
+
   return () => {
     eventListeners[eventName].delete(handler);
   };
 }
 
+/**
+ * Whether CallKit owns AVAudioSession activation on this device. When true,
+ * JS must never call setActive itself (Apple forbids it — racing CallKit's
+ * activation leaves WebRTC's audio unit wired to a dead session: silent call).
+ * Configure the session, then wait for provider:didActivateAudioSession.
+ */
+function managesAudioSession(): boolean {
+  return Platform.OS === 'ios' && RNCallKeep != null;
+}
+
+/** True while CallKit's AVAudioSession activation is in effect. */
+function hasActivatedAudioSession(): boolean {
+  return audioSessionActivated;
+}
+
 export const nativeCallService = {
   initialize,
   setAvailability,
+  managesAudioSession,
+  hasActivatedAudioSession,
   startOutgoingCall,
   displayIncomingCall,
   answerIncomingCall,
   rejectIncomingCall,
   markCallConnected,
   endCall,
+  dismissNativeCall,
   clearCall,
   bringAppToForeground,
   subscribe,

@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -95,6 +96,7 @@ export const SettlementsScreen = ({
 
   return (
     <LiquidBackground>
+      <GuardedScreen target="expenses" entityId={group.groupId} label="Hidden">
       <ScrollView contentContainerStyle={styles.container}>
         <GlassView style={styles.card}>
           <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
@@ -198,6 +200,7 @@ export const SettlementsScreen = ({
           </GlassView>
         </View>
       )}
+    </GuardedScreen>
     </LiquidBackground>
   );
 };

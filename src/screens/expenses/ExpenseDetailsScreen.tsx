@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { ROUTES } from '@/constants';
 import { useGroups } from '@/context/GroupContext';
@@ -59,9 +60,11 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
     }
   }, [navigation, groups, groupId]);
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [40, 80],
-    outputRange: [0, 1],
+  // Transform slide-in, not opacity — fractional alpha on an ancestor kills
+  // UIVisualEffectView glass materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
 
@@ -122,7 +125,8 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
 
   return (
     <LiquidBackground>
-      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+      <GuardedScreen target="expenses" entityId={groupId} label="Expense hidden">
+      <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }] }]}>
         <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
             {expense.title}
@@ -422,6 +426,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
           </View>
         </Modal>
       </Animated.ScrollView>
+    </GuardedScreen>
     </LiquidBackground>
   );
 };

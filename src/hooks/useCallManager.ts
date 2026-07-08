@@ -14,6 +14,8 @@ import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallSt
 import { nativeCallService } from '@/services/nativeCallService';
 import { requestCallPermissions } from '@/utils/permissions';
 import { AudioSession } from '@livekit/react-native';
+import { getApp } from 'firebase/app';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 const debugLog = (...args: unknown[]) => {
@@ -21,6 +23,39 @@ const debugLog = (...args: unknown[]) => {
     console.log(...args);
   }
 };
+
+// How long an OUTGOING call rings before we give up and end it. Without this,
+// an unanswered call stays "ringing" forever — orphaning the RTDB node and
+// ghost-ringing the callee. Slightly longer than CallKit's own ~40s window.
+const RING_TIMEOUT_MS = 45 * 1000;
+
+// Make Bluetooth accessories (Ray-Ban Meta glasses, AirPods, car kits) eligible
+// AND preferred for call audio. LiveKit's `defaultOutput` is only the fallback
+// used when no headset/bluetooth output is connected, so as long as the audio
+// category permits bluetooth, a connected accessory wins automatically. We keep
+// `defaultToSpeaker` for video (FaceTime-style speaker when nothing is paired)
+// and drop it for audio (earpiece fallback). Best-effort: if CallKit owns the
+// session this may no-op, and RNCallKeep's own config already allows bluetooth.
+const preferBluetoothAudio = async (isVideo: boolean): Promise<void> => {
+  try {
+    await AudioSession.setAppleAudioConfiguration({
+      audioCategoryOptions: isVideo
+        ? ['allowBluetooth', 'allowBluetoothA2DP', 'allowAirPlay', 'defaultToSpeaker']
+        : ['allowBluetooth', 'allowBluetoothA2DP', 'allowAirPlay'],
+      // Mode matters as much as the options: videoChat mode routes to the
+      // built-in speaker by itself, voiceChat to the earpiece. Keep them in
+      // lockstep with the options so audio calls actually land on the
+      // earpiece after CallKit activates with the (speaker-less) setup config.
+      audioMode: isVideo ? 'videoChat' : 'voiceChat',
+    });
+  } catch (err) {
+    console.warn('useCallManager: setAppleAudioConfiguration failed', err);
+  }
+};
+
+// How long to wait for CallKit's provider:didActivateAudioSession before
+// concluding it will never come and activating the session from JS instead.
+const AUDIO_ACTIVATION_WATCHDOG_MS = 3000;
 
 interface UseCallManagerArgs {
   chatId?: string;
@@ -36,6 +71,10 @@ interface UseCallManagerReturn {
   serverUrl: string | null;
   token: string | null;
   callType: CallType;
+  /** Caller-side: callee's device is reachable and ringing (vs. 'calling'). */
+  remoteRinging: boolean;
+  /** Caller-side: the outgoing call timed out with no answer. */
+  noAnswer: boolean;
   startCall: (callType?: CallType) => Promise<void>;
   joinExistingCall: (callId: string) => Promise<void>;
   endCall: () => Promise<void>;
@@ -52,6 +91,10 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [callType, setCallType] = useState<CallType>('video');
+  // Caller-side: true once the callee's device is confirmed reachable ('ringing'
+  // vs 'calling'). And true once an outgoing call has timed out unanswered.
+  const [remoteRinging, setRemoteRinging] = useState(false);
+  const [noAnswer, setNoAnswer] = useState(false);
 
   // LiveKit connection details
   const [token, setToken] = useState<string | null>(null);
@@ -68,8 +111,12 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const isEndingRef = useRef(false);
   const nativeDirectionRef = useRef<'incoming' | 'outgoing'>('outgoing');
   const hasReportedConnectedNativeRef = useRef(false);
-  const endCallRef = useRef<(reason?: 'manual' | 'session-ended' | 'unmount') => Promise<void>>(async () => undefined);
+  const endCallRef = useRef<(reason?: 'manual' | 'session-ended' | 'unmount' | 'no-answer') => Promise<void>>(async () => undefined);
+  // Debounce rapid duplicate starts (double-taps / effect re-fires) so a single
+  // intent can't spawn several "ringing" call nodes in a burst.
+  const lastStartAtRef = useRef(0);
   const unsubscribes = useRef<Array<() => void>>([]);
+  const audioWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cleanup subscriptions
   const cleanupSubscriptions = useCallback(() => {
@@ -95,6 +142,38 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     };
   }, [chatId, threads, user?.userId]);
 
+  // Configure call audio for the platform. On iOS with CallKit, the session
+  // is activated by CallKit itself (provider:didActivateAudioSession →
+  // RTCAudioSession.audioSessionDidActivate). Activating from JS here races
+  // that activation — Apple explicitly forbids it — and can leave WebRTC's
+  // audio unit wired to a dead session: a silent call. So with CallKit we
+  // only configure, and arm a watchdog that activates manually iff CallKit's
+  // activation never arrives. On Android (no CallKit) we activate directly.
+  const setupCallAudio = useCallback(async (isVideo: boolean) => {
+    await AudioSession.configureAudio({
+      ios: { defaultOutput: isVideo ? 'speaker' : 'earpiece' },
+    });
+    if (nativeCallService.managesAudioSession()) {
+      if (audioWatchdogRef.current) {
+        clearTimeout(audioWatchdogRef.current);
+      }
+      audioWatchdogRef.current = setTimeout(() => {
+        audioWatchdogRef.current = null;
+        if (nativeCallService.hasActivatedAudioSession()) {
+          return;
+        }
+        console.warn('useCallManager: CallKit never activated the audio session — activating manually');
+        AudioSession.startAudioSession()
+          .then(() => preferBluetoothAudio(isVideo))
+          .catch((err) => console.warn('useCallManager: fallback startAudioSession failed', err));
+      }, AUDIO_ACTIVATION_WATCHDOG_MS);
+      await preferBluetoothAudio(isVideo);
+    } else {
+      await AudioSession.startAudioSession();
+      await preferBluetoothAudio(isVideo);
+    }
+  }, []);
+
   // Start a new call (as initiator)
   const startCall = useCallback(async (type: CallType = 'video') => {
     if (!chatId || !user) {
@@ -103,6 +182,13 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       return;
     }
 
+    const nowTs = Date.now();
+    if (nowTs - lastStartAtRef.current < 3000) {
+      debugLog('startCall ignored: duplicate start within debounce window');
+      return;
+    }
+    lastStartAtRef.current = nowTs;
+
     const sessionVersion = ++sessionVersionRef.current;
 
     try {
@@ -110,6 +196,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       cleanupSubscriptions();
       isEndingRef.current = false;
       setError(null);
+      setNoAnswer(false);
+      setRemoteRinging(false);
       setStatus('ringing'); // UI shows "Calling..."
       setCallType(type);
       hasReportedConnectedNativeRef.current = false;
@@ -159,6 +247,17 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setCallId(newCallId);
       callIdRef.current = newCallId;
 
+      // Set the WebRTC audio-session template BEFORE reporting the call to
+      // CallKit — CallKit can activate the session any time after that, and
+      // the template decides which category/mode it activates with.
+      try {
+        await AudioSession.configureAudio({
+          ios: { defaultOutput: type === 'video' ? 'speaker' : 'earpiece' },
+        });
+      } catch (audioErr) {
+        console.warn('useCallManager: configureAudio failed', audioErr);
+      }
+
       const nativePresentation = buildNativeHandle(
         otherParticipantRef.current?.displayName,
         otherParticipantRef.current?.userId,
@@ -184,15 +283,13 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setToken(roomToken);
       setServerUrl(url);
 
-      // 3. Start Audio Session — best effort. On iOS, CallKit's
-      //    provider:didActivateAudioSession will already have driven the
-      //    AVAudioSession into the right category by the time we get here on
-      //    incoming-answered flows, and a duplicate activation throws
-      //    "Session activation failed". Don't let that kill the call.
+      // 3. Configure call audio — video defaults to speaker (FaceTime
+      //    behavior), audio to earpiece. With CallKit, activation is
+      //    CallKit's job; see setupCallAudio.
       try {
-        await AudioSession.startAudioSession();
+        await setupCallAudio(type === 'video');
       } catch (audioErr) {
-        console.warn('useCallManager: AudioSession.startAudioSession failed (CallKit likely already owns it)', audioErr);
+        console.warn('useCallManager: call audio setup failed', audioErr);
       }
 
       // 4. Subscribe to Call Session to see if answered or ended
@@ -211,6 +308,12 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         if (session.status === 'ended') {
           void endCallRef.current('session-ended');
           return;
+        }
+
+        // WhatsApp-style caller label: the server flips deliveryState to
+        // 'ringing' once the callee's device accepts the VoIP push.
+        if (session.status === 'ringing') {
+          setRemoteRinging(session.deliveryState === 'ringing');
         }
 
         if (session.status === 'connected') {
@@ -258,7 +361,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setError(err instanceof Error ? err.message : 'Failed to start call');
       setStatus('failed');
     }
-  }, [buildNativeHandle, chatId, groupId, threads, user]);
+  }, [buildNativeHandle, chatId, groupId, threads, user, setupCallAudio]);
 
   // Join an existing call (as answerer)
   const joinExistingCall = useCallback(async (existingCallId: string) => {
@@ -338,16 +441,15 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setToken(roomToken);
       setServerUrl(url);
 
-      // 2. Start Audio Session — best effort. CallKit's
-      //    provider:didActivateAudioSession may have already activated the
-      //    AVAudioSession when the user tapped Accept on the lock screen.
-      //    Calling startAudioSession again throws on iOS; we must NOT let that
-      //    cascade into nativeCallService.endCall via the catch block below
-      //    (that would visibly hang up the call the moment the receiver answers).
+      // 2. Configure call audio — CallKit may already have activated the
+      //    AVAudioSession when the user tapped Accept on the lock screen;
+      //    setupCallAudio never re-activates on iOS (that throws and could
+      //    cascade into nativeCallService.endCall via the catch block below,
+      //    visibly hanging up the call the moment the receiver answers).
       try {
-        await AudioSession.startAudioSession();
+        await setupCallAudio(session.type === 'video');
       } catch (audioErr) {
-        console.warn('useCallManager: AudioSession.startAudioSession failed (CallKit likely already owns it)', audioErr);
+        console.warn('useCallManager: call audio setup failed', audioErr);
       }
 
       await nativeCallService.answerIncomingCall(existingCallId);
@@ -391,10 +493,10 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       setError(err instanceof Error ? err.message : 'Failed to join call');
       setStatus('failed');
     }
-  }, [chatId, threads, user]);
+  }, [chatId, threads, user, setupCallAudio]);
 
   // End the call
-  const endCall = useCallback(async (reason: 'manual' | 'session-ended' | 'unmount' = 'manual') => {
+  const endCall = useCallback(async (reason: 'manual' | 'session-ended' | 'unmount' | 'no-answer' = 'manual') => {
     if (isEndingRef.current) {
       return;
     }
@@ -495,10 +597,25 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       hasSessionToCleanupRef.current = false;
       hasReportedConnectedNativeRef.current = false;
 
-      try {
-        await AudioSession.stopAudioSession();
-      } catch (audioErr) {
-        console.warn('useCallManager: AudioSession.stopAudioSession failed', audioErr);
+      if (audioWatchdogRef.current) {
+        clearTimeout(audioWatchdogRef.current);
+        audioWatchdogRef.current = null;
+      }
+
+      // With CallKit, deactivation is CallKit's job (didDeactivateAudioSession
+      // → audioSessionDidDeactivate); a JS setActive(false) here races it.
+      // Exception: if the watchdog fallback had to activate from JS (CallKit's
+      // activation never arrived — flag still false), CallKit won't deactivate
+      // either, so deactivate ourselves or the mic indicator stays on.
+      const jsOwnsActivation =
+        !nativeCallService.managesAudioSession()
+        || !nativeCallService.hasActivatedAudioSession();
+      if (jsOwnsActivation) {
+        try {
+          await AudioSession.stopAudioSession();
+        } catch (audioErr) {
+          console.warn('useCallManager: AudioSession.stopAudioSession failed', audioErr);
+        }
       }
       debugLog('useCallManager call ended');
 
@@ -512,6 +629,33 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   useEffect(() => {
     endCallRef.current = endCall;
   }, [endCall]);
+
+  // Outgoing ring timeout — if an initiated call is never answered, tear down
+  // the LiveKit/CallKit call but surface a "No answer" state (WhatsApp-style)
+  // with Call again / Message options instead of just closing, and notify the
+  // callee with a missed-call push. Only the initiator arms this; the callee's
+  // ring is bounded by CallKit/ConnectionService natively.
+  useEffect(() => {
+    if (status !== 'ringing' || !isInitiatorRef.current) return;
+    const timer = setTimeout(() => {
+      debugLog('useCallManager outgoing ring timed out; no answer');
+      const timedOutCallId = callIdRef.current;
+      setNoAnswer(true);
+      // Notify the callee of the missed call (best-effort; idempotent server-side).
+      if (timedOutCallId) {
+        try {
+          const functions = getFunctions(getApp());
+          void httpsCallable(functions, 'reportMissedCall')({ callId: timedOutCallId }).catch((e) =>
+            console.warn('reportMissedCall failed', e),
+          );
+        } catch (e) {
+          console.warn('reportMissedCall dispatch failed', e);
+        }
+      }
+      void endCallRef.current('no-answer');
+    }, RING_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [status]);
 
   useEffect(() => {
     hasSessionToCleanupRef.current = Boolean(callIdRef.current || callId || token || serverUrl);
@@ -604,6 +748,8 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     serverUrl,
     token,
     callType,
+    remoteRinging,
+    noAnswer,
     startCall,
     joinExistingCall,
     endCall,

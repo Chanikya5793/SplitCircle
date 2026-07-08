@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -1479,6 +1480,8 @@ export const ChatMediaGalleryScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
   const params = route.params as ChatMediaGalleryParams;
+  const { isShielded: guardIsShielded } = usePrivacyGuard();
+  const mediaShielded = guardIsShielded('chats', params.chatId);
   const { subscribeToMessages, deleteMessageForEveryone } = useChat();
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
@@ -2019,9 +2022,21 @@ export const ChatMediaGalleryScreen = () => {
     <LiquidBackground>
       <View style={{ flex: 1 }}>
         {/* Content (renders behind the sticky tab bar) */}
-        {activeTab === 'media' && renderMediaGrid()}
-        {activeTab === 'docs' && renderDocs()}
-        {activeTab === 'links' && renderLinks()}
+        {mediaShielded ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+            <Ionicons name="lock-closed-outline" size={40} color={theme.colors.onSurfaceVariant} />
+            <Text style={{ color: theme.colors.onSurface, fontWeight: '600', marginTop: 12, fontSize: 16 }}>Hidden</Text>
+            <Text style={{ color: theme.colors.onSurfaceVariant, fontSize: 13, marginTop: 4, textAlign: 'center' }}>
+              Shake again or enter your code to reveal.
+            </Text>
+          </View>
+        ) : (
+          <>
+            {activeTab === 'media' && renderMediaGrid()}
+            {activeTab === 'docs' && renderDocs()}
+            {activeTab === 'links' && renderLinks()}
+          </>
+        )}
 
         {/* Sticky tab bar — sits on top so content scrolls under it */}
         <View

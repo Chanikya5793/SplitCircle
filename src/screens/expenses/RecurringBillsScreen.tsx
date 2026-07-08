@@ -1,6 +1,7 @@
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { Group } from '@/models';
@@ -442,6 +443,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
 
     return (
         <LiquidBackground>
+      <GuardedScreen target="expenses" entityId={group.groupId} label="Bills hidden">
             <ScrollView contentContainerStyle={styles.container}>
                 <GlassView style={styles.headerCard}>
                     <Text variant="headlineSmall" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
@@ -770,7 +772,8 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     </GlassView>
                 </Modal>
             </Portal>
-        </LiquidBackground>
+        </GuardedScreen>
+    </LiquidBackground>
     );
 };
 

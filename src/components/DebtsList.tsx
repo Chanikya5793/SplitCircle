@@ -2,7 +2,8 @@ import { GlassView } from '@/components/GlassView';
 import { ROUTES } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
-import { formatCurrency } from '@/utils/currency';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { minimizeDebts, type Debt } from '@/utils/debtMinimizer';
 import { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -14,6 +15,8 @@ interface DebtsListProps {
 }
 
 export const DebtsList = ({ group }: DebtsListProps) => {
+  const fmtMoney = useMoneyDisplay(group.groupId);
+  const { maskGroupText } = usePrivacyMask();
     const { theme, isDark } = useTheme();
     const navigation = useNavigation<any>();
     const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
@@ -149,18 +152,18 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                                     <View style={styles.member}>
                                         <Avatar.Text
                                             size={28}
-                                            label={fromMember.displayName.slice(0, 2).toUpperCase()}
+                                            label={maskGroupText(fromMember.displayName, group.groupId).slice(0, 2).toUpperCase()}
                                             style={{ backgroundColor: theme.colors.errorContainer }}
                                             color={theme.colors.onErrorContainer}
                                         />
                                         <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                                            {fromMember.displayName}
+                                            {maskGroupText(fromMember.displayName, group.groupId)}
                                         </Text>
                                     </View>
 
                                     <View style={styles.amountContainer}>
                                         <Text style={[styles.amount, { color: theme.colors.error }]}>
-                                            {formatCurrency(debt.amount, group.currency)}
+                                            {fmtMoney(debt.amount, group.currency)}
                                         </Text>
                                         <IconButton icon="arrow-right" size={16} iconColor={theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
                                     </View>
@@ -168,12 +171,12 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                                     <View style={styles.member}>
                                         <Avatar.Text
                                             size={28}
-                                            label={toMember.displayName.slice(0, 2).toUpperCase()}
+                                            label={maskGroupText(toMember.displayName, group.groupId).slice(0, 2).toUpperCase()}
                                             style={{ backgroundColor: theme.colors.primaryContainer }}
                                             color={theme.colors.onPrimaryContainer}
                                         />
                                         <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                                            {toMember.displayName}
+                                            {maskGroupText(toMember.displayName, group.groupId)}
                                         </Text>
                                     </View>
 
@@ -229,7 +232,7 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                             </View>
 
                             <Text style={{ color: theme.colors.onSurfaceVariant, marginBottom: 16 }}>
-                                Why {memberMap[selectedDebt.from]?.displayName} owes {memberMap[selectedDebt.to]?.displayName} {formatCurrency(selectedDebt.amount, group.currency)}
+                                Why {maskGroupText(memberMap[selectedDebt.from]?.displayName ?? '', group.groupId)} owes {maskGroupText(memberMap[selectedDebt.to]?.displayName ?? '', group.groupId)} {fmtMoney(selectedDebt.amount, group.currency)}
                             </Text>
 
                             <ScrollView style={{ maxHeight: 400 }}>
@@ -253,7 +256,7 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                                                 </Text>
                                             </View>
                                             <Text style={{ color, fontWeight: 'bold' }}>
-                                                {sign} {formatCurrency(item.amount, group.currency)}
+                                                {sign} {fmtMoney(item.amount, group.currency)}
                                             </Text>
                                         </View>
                                     );
