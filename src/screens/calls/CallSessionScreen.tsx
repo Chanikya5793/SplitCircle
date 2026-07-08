@@ -145,6 +145,14 @@ const LocalTrackPublisher = ({ callType, isMuted, isCameraOff, roomRef }: LocalT
   const [retryTick, setRetryTick] = useState(0);
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  const scheduleRetry = useCallback(() => {
+    if (retryTick >= 4 || retryTimerRef.current) return;
+    retryTimerRef.current = setTimeout(() => {
+      retryTimerRef.current = null;
+      setRetryTick((t) => t + 1);
+    }, 1400);
+  }, [retryTick]);
+
   // iOS forbids starting camera capture while the app is backgrounded — which
   // is exactly the state when a call is answered from the CallKit lock screen.
   // A single silent setCameraEnabled failure used to mean video NEVER started
@@ -166,11 +174,14 @@ const LocalTrackPublisher = ({ callType, isMuted, isCameraOff, roomRef }: LocalT
 
     void (async () => {
       try {
-        if (local.isMicrophoneEnabled !== wantMic) {
+        const micPublication = local.getTrackPublication(Track.Source.Microphone);
+        const hasLiveMicTrack = Boolean(micPublication?.track);
+        if (wantMic ? !hasLiveMicTrack || !local.isMicrophoneEnabled : local.isMicrophoneEnabled) {
           await local.setMicrophoneEnabled(wantMic);
         }
       } catch (error) {
-        console.warn('LocalTrackPublisher: setMicrophoneEnabled failed', error);
+        console.warn('LocalTrackPublisher: setMicrophoneEnabled failed; retrying shortly', error);
+        scheduleRetry();
       }
 
       try {
@@ -187,15 +198,10 @@ const LocalTrackPublisher = ({ callType, isMuted, isCameraOff, roomRef }: LocalT
         console.warn('LocalTrackPublisher: setCameraEnabled failed; retrying shortly', error);
         // Transient failures right after CallKit's audio-session activation
         // are common — schedule a bounded re-attempt instead of giving up.
-        if (retryTick < 4 && !retryTimerRef.current) {
-          retryTimerRef.current = setTimeout(() => {
-            retryTimerRef.current = null;
-            setRetryTick((t) => t + 1);
-          }, 1400);
-        }
+        scheduleRetry();
       }
     })();
-  }, [room, connectionState, callType, isMuted, isCameraOff, appActive, retryTick]);
+  }, [room, connectionState, callType, isMuted, isCameraOff, appActive, retryTick, scheduleRetry]);
 
   useEffect(() => {
     return () => {

@@ -12,6 +12,7 @@ import {
   getFloatingTabBarEnvelopeHeight,
 } from '@/components/tabbar/tabBarMetrics';
 import { CURRENCIES } from '@/constants/currencies';
+import { ROUTES } from '@/constants/routes';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
@@ -30,13 +31,13 @@ interface GroupListScreenProps {
 }
 
 export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { groups, loading, createGroup, joinGroup } = useGroups();
   const { isOnline } = useOfflineSync();
   const { theme, isDark } = useTheme();
   const { isShielded: guardIsShielded } = usePrivacyGuard();
-  // Creating/joining groups is blocked while expenses are hidden.
+  // Creating/joining expense groups is blocked while expenses are hidden.
   const groupsShielded = guardIsShielded('expenses');
   const [dialog, setDialog] = useState<'create' | 'join' | null>(null);
   const [name, setName] = useState('');
@@ -232,7 +233,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         ]}
       >
         <StickyHeaderPill style={styles.stickyHeaderGlass}>
-          <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Groups</Text>
+          <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Expenses</Text>
         </StickyHeaderPill>
       </Animated.View>
 
@@ -255,7 +256,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         ListHeaderComponent={
           <View style={styles.headerContainer}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Groups</Text>
+              <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Expenses</Text>
               <TouchableRipple
                 onPress={() => { lightHaptic(); setFilterVisible(true); }}
                 style={styles.filterButton}
@@ -293,30 +294,34 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
             </View>
           ) : (
             <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
-              {groups.length > 0 ? 'No groups match your filters.' : 'No groups yet. Create one!'}
+              {groups.length > 0 ? 'No expense groups match your filters.' : 'No expenses yet. Create a group to start splitting.'}
             </Text>
           )
         }
       />
 
       {!groupsShielded && <View style={[styles.actions, { bottom: tabBarEnvelopeHeight + 12 }]}>
-        <Button mode="contained" onPress={() => { lightHaptic(); setDialog('create'); }}>
+        <Button mode="contained" compact style={styles.primaryAction} onPress={() => { lightHaptic(); setDialog('create'); }}>
           New group
         </Button>
 
         <TouchableOpacity
+          onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.FRIENDS, { backTitle: 'Expenses' }); }}
+          activeOpacity={0.8}
+          style={styles.glassAction}
+        >
+          <GlassView style={styles.glassActionInner}>
+            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Friends</Text>
+          </GlassView>
+        </TouchableOpacity>
+
+        <TouchableOpacity
           onPress={() => { lightHaptic(); setDialog('join'); }}
           activeOpacity={0.8}
-          style={{
-            borderRadius: 15,
-            overflow: 'hidden',
-            borderWidth: 0,
-            borderColor: 'rgba(0,0,0,0.08)',
-            minWidth: 100,
-          }}
+          style={styles.glassAction}
         >
           {/* GlassView provides the blurred/frosted fill inside the button */}
-          <GlassView style={{ paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' }}>
+          <GlassView style={styles.glassActionInner}>
             <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Join via code</Text>
           </GlassView>
         </TouchableOpacity>
@@ -446,7 +451,27 @@ const styles = StyleSheet.create({
     right: 20,
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
     zIndex: 10,
+  },
+  primaryAction: {
+    flex: 1,
+    minWidth: 0,
+  },
+  glassAction: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 15,
+    overflow: 'hidden',
+    borderWidth: 0,
+    borderColor: 'rgba(0,0,0,0.08)',
+  },
+  glassActionInner: {
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyContainer: {
     flex: 1,

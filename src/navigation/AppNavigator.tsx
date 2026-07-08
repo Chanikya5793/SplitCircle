@@ -36,10 +36,12 @@ import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { NotificationSettingsScreen } from '@/screens/settings/NotificationSettingsScreen';
 import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
+import { SearchScreen } from '@/screens/search/SearchScreen';
 import type { NotificationData } from '@/utils/notifications';
 import { lightHaptic } from '@/utils/haptics';
 import { getCallInfoTitle, getChatThreadTitle, getExpenseDetailsTitle, getRouteBackLabel, ROOT_SCREEN_TITLES, SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
+import { setLastSearchScopeForRoute } from '@/services/searchScope';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
 import {
@@ -59,7 +61,7 @@ import { AppStack, AuthStack, NativeTab } from './stacks';
 const navigationRef = createNavigationContainerRef<any>();
 
 type GroupWithFallback = Group | undefined;
-type TabIconKey = 'groups' | 'friends' | 'chat' | 'calls' | 'settings';
+type TabIconKey = 'expenses' | 'chat' | 'calls' | 'settings' | 'search';
 
 type NativeIconPair = {
   active?: ImageSourcePropType;
@@ -69,11 +71,11 @@ type NativeIconPair = {
 type NativeIconMap = Record<TabIconKey, NativeIconPair>;
 
 const EMPTY_NATIVE_ICON_MAP: NativeIconMap = {
-  groups: {},
-  friends: {},
+  expenses: {},
   chat: {},
   calls: {},
   settings: {},
+  search: {},
 };
 const FALLBACK_NATIVE_TAB_ICON = {
   type: 'image',
@@ -703,27 +705,27 @@ const AppTabs = () => {
     const loadAndroidIcons = async () => {
       try {
         const [
-          groupsInactive,
-          groupsActive,
-          friendsInactive,
-          friendsActive,
+          expensesInactive,
+          expensesActive,
           chatInactive,
           chatActive,
           callsInactive,
           callsActive,
           settingsInactive,
           settingsActive,
+          searchInactive,
+          searchActive,
         ] = await Promise.all([
-          loadIcon('account-group-outline', inactiveColor),
-          loadIcon('account-group', activeColor),
-          loadIcon('account-heart-outline', inactiveColor),
-          loadIcon('account-heart', activeColor),
+          loadIcon('receipt-text-outline', inactiveColor),
+          loadIcon('receipt-text', activeColor),
           loadIcon('chat-processing-outline', inactiveColor),
           loadIcon('chat-processing', activeColor),
           loadIcon('phone-outline', inactiveColor),
           loadIcon('phone', activeColor),
           loadIcon('cog-outline', inactiveColor),
           loadIcon('cog', activeColor),
+          loadIcon('magnify', inactiveColor),
+          loadIcon('magnify', activeColor),
         ]);
 
         if (!isActive) {
@@ -731,11 +733,11 @@ const AppTabs = () => {
         }
 
         setAndroidIcons({
-          groups: { inactive: groupsInactive, active: groupsActive ?? groupsInactive },
-          friends: { inactive: friendsInactive, active: friendsActive ?? friendsInactive },
+          expenses: { inactive: expensesInactive, active: expensesActive ?? expensesInactive },
           chat: { inactive: chatInactive, active: chatActive ?? chatInactive },
           calls: { inactive: callsInactive, active: callsActive ?? callsInactive },
           settings: { inactive: settingsInactive, active: settingsActive ?? settingsInactive },
+          search: { inactive: searchInactive, active: searchActive ?? searchInactive },
         });
       } catch (error) {
         console.warn('⚠️ Failed to load native tab icons, falling back to labels.', error);
@@ -751,11 +753,11 @@ const AppTabs = () => {
   const getTabIcon = (key: TabIconKey, focused: boolean): NativeBottomTabIcon => {
     if (Platform.OS === 'ios') {
       const iosIconMap: Record<TabIconKey, { regular: string; filled: string }> = {
-        groups: { regular: 'person.3', filled: 'person.3.fill' },
-        friends: { regular: 'heart.text.square', filled: 'heart.text.square.fill' },
+        expenses: { regular: 'list.bullet.rectangle', filled: 'list.bullet.rectangle.fill' },
         chat: { regular: 'bubble.left.and.bubble.right', filled: 'bubble.left.and.bubble.right.fill' },
         calls: { regular: 'phone', filled: 'phone.fill' },
         settings: { regular: 'gearshape', filled: 'gearshape.fill' },
+        search: { regular: 'magnifyingglass', filled: 'magnifyingglass' },
       };
 
       const icon = iosIconMap[key];
@@ -798,26 +800,22 @@ const AppTabs = () => {
           default: undefined,
         }),
         tabBarBlurEffect: Platform.OS === 'ios' ? (isDark ? 'systemMaterialDark' : 'systemMaterialLight') : undefined,
-        tabBarControllerMode: Platform.OS === 'ios' ? 'tabBar' : undefined,
+        tabBarControllerMode: Platform.OS === 'ios' ? 'auto' : undefined,
         tabBarMinimizeBehavior: IOS_NATIVE_ACCESSORY_SUPPORTED ? 'onScrollDown' : undefined,
       }}
+      screenListeners={({ route }) => ({
+        focus: () => {
+          setLastSearchScopeForRoute(route.name);
+        },
+      })}
     >
       <NativeTab.Screen
         name={ROUTES.APP.GROUPS_TAB}
         component={GroupsStackNavigator}
         options={{
-          title: 'Groups',
-          tabBarLabel: 'Groups',
-          tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('groups', focused),
-        }}
-      />
-      <NativeTab.Screen
-        name={ROUTES.APP.FRIENDS_TAB}
-        component={FriendsScreen}
-        options={{
-          title: 'Friends',
-          tabBarLabel: 'Friends',
-          tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('friends', focused),
+          title: 'Expenses',
+          tabBarLabel: 'Expenses',
+          tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('expenses', focused),
         }}
       />
       <NativeTab.Screen
@@ -846,6 +844,23 @@ const AppTabs = () => {
           tabBarLabel: 'Settings',
           tabBarIcon: ({ focused }) => getTabIcon('settings', focused),
         }}
+      />
+      <NativeTab.Screen
+        name={ROUTES.APP.SEARCH_TAB}
+        component={SearchScreen}
+        // iOS 26 renders `tabBarSystemItem: 'search'` as the native liquid-glass
+        // search tab positioned NEXT TO the tab bar (not a 6th regular tab).
+        // Setting title/tabBarLabel would override that and force a normal tab,
+        // so on iOS we pass ONLY the system item.
+        options={
+          Platform.OS === 'ios'
+            ? { tabBarSystemItem: 'search' as const }
+            : {
+                title: 'Search',
+                tabBarLabel: 'Search',
+                tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('search', focused),
+              }
+        }
       />
     </NativeTab.Navigator>
   );
@@ -897,6 +912,15 @@ const AppStackNavigator = () => {
         component={GroupInfoScreen}
         options={{
           title: SCREEN_TITLES.groupInfo,
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.FRIENDS}
+        component={FriendsScreen}
+        options={{
+          title: SCREEN_TITLES.friends,
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
