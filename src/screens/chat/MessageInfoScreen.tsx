@@ -1,6 +1,8 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
+import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatParticipant, ChatThread, MessageType } from '@/models';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
@@ -103,15 +105,18 @@ export const MessageInfoScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const { theme, isDark } = useTheme();
+  const { isOnline } = useOfflineSync();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
   const { message, thread } = route.params as MessageInfoRouteParams;
   const [receiptMap, setReceiptMap] = useState<Record<string, ReceiptData>>({});
 
-  const headerOpacity = scrollY.interpolate({
+  // Transform slide-in, not opacity — fractional alpha on an ancestor kills
+  // UIVisualEffectView glass materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
     inputRange: [0, 60],
-    outputRange: [0, 1],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
 
@@ -280,8 +285,9 @@ export const MessageInfoScreen = () => {
 
   return (
     <LiquidBackground>
+      <GuardedScreen target="chats" label="Hidden">
       <SafeAreaView style={styles.container} edges={['bottom']}>
-        <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity, paddingTop: insets.top }]}>
+        <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }], paddingTop: insets.top }]}>
           <GlassView style={styles.stickyHeaderGlass}>
             <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>
               Message Info
@@ -323,6 +329,17 @@ export const MessageInfoScreen = () => {
               </Text>
             </View>
           </GlassView>
+
+          {!isOnline ? (
+            <GlassView style={styles.section}>
+              <Text
+                variant="bodySmall"
+                style={[styles.emptyText, { color: theme.colors.onSurfaceVariant }]}
+              >
+                You're offline — receipt status will update when you reconnect.
+              </Text>
+            </GlassView>
+          ) : null}
 
           <GlassView style={styles.section}>
             {renderSectionHeader('Read by', 'checkmark-done', '#53BDEB', readByRows.length)}
@@ -367,6 +384,7 @@ export const MessageInfoScreen = () => {
           )}
         </Animated.ScrollView>
       </SafeAreaView>
+    </GuardedScreen>
     </LiquidBackground>
   );
 };

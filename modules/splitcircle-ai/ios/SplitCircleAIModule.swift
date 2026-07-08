@@ -563,7 +563,11 @@ public class SplitCircleAIModule: Module {
     /// signatures build. At runtime `isAvailable` is false until the PCC
     /// entitlement is granted — that's the expected spike outcome.
     AsyncFunction("pccProbe") { (question: String) async throws -> [String: Any] in
-      #if canImport(FoundationModels)
+      // compiler(>=6.4) == Xcode 27 toolchain. PrivateCloudComputeLanguageModel /
+      // ContextOptions are iOS 27 SDK symbols — `#available` alone is a runtime
+      // check and does NOT stop older SDKs (EAS stable Xcode) from failing to
+      // compile them. This gate broke the production EAS build.
+      #if canImport(FoundationModels) && compiler(>=6.4)
       if #available(iOS 27.0, *) {
         let model = PrivateCloudComputeLanguageModel()
         var reason = "available"

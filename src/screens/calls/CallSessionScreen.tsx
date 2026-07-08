@@ -1,10 +1,17 @@
 import { CallControls } from '@/components/CallControls';
-import { GlassView } from '@/components/GlassView';
-import { LiquidBackground } from '@/components/LiquidBackground';
+import { nativeCallService } from '@/services/nativeCallService';
+import { startRingback, stopRingback } from '@/services/ringback';
+import { GroupAvatar, UserAvatar } from '@/components/ui';
+import { useAuth } from '@/context/AuthContext';
+import { useChat } from '@/context/ChatContext';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { maskTextValue } from '@/services/privacyGuardService';
 import { useCallManager } from '@/hooks/useCallManager';
 import type { CallStatus, CallType } from '@/models';
 import {
+  AudioSession,
   LiveKitRoom,
   isTrackReference,
   useConnectionState,
@@ -13,10 +20,74 @@ import {
   useTracks,
   VideoTrack,
 } from '@livekit/react-native';
-import { ConnectionState, Track } from 'livekit-client';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { ConnectionState, Track, type Room } from 'livekit-client';
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
-import { BackHandler, StyleSheet, View } from 'react-native';
-import { ActivityIndicator, IconButton, Text } from 'react-native-paper';
+import { AppState, BackHandler, Image, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ActivityIndicator, Text } from 'react-native-paper';
+
+/**
+ * Present iOS's system audio-route picker (AVRoutePickerView) so the user can
+ * send call audio to the speaker, earpiece, AirPods, a Bluetooth headset, or
+ * Ray-Ban Meta glasses — exactly like the Phone/WhatsApp output picker. Wrapped
+ * so an older binary lacking the native method falls back to toggling the
+ * built-in speaker instead of crashing.
+ */
+const presentAudioRoutePicker = () => {
+  void (async () => {
+    try {
+      await AudioSession.showAudioRoutePicker();
+    } catch {
+      // Fallback: flip between the built-in speaker and default routing.
+      try {
+        const outputs = await AudioSession.getAudioOutputs();
+        const next = outputs.includes('force_speaker') ? 'force_speaker' : 'default';
+        await AudioSession.selectAudioOutput(next);
+      } catch {
+        // Nothing else to do — leave routing as-is.
+      }
+    }
+  })();
+};
+
+/**
+ * Route call audio to/away from the built-in loudspeaker.
+ *
+ * iOS: `selectAudioOutput` maps to `overrideOutputAudioPort(.speaker/.none)`.
+ * The `.none` override only falls back to the earpiece when the live session's
+ * mode/options don't themselves prefer the speaker — `videoChat` mode and the
+ * `defaultToSpeaker` option both do — so speaker-OFF first strips those. A
+ * connected Bluetooth accessory stays auto-preferred: with one attached,
+ * "default" routes to it, not the earpiece.
+ *
+ * Android: `selectAudioOutput` expects real device ids from
+ * `getAudioOutputs()` ('speaker' / 'earpiece' / ...), not iOS's
+ * 'force_speaker' sentinel.
+ *
+ * Web: no routing control — no-op.
+ */
+const applySpeakerRoute = async (speakerOn: boolean): Promise<void> => {
+  if (Platform.OS === 'ios') {
+    if (speakerOn) {
+      await AudioSession.selectAudioOutput('force_speaker');
+    } else {
+      await AudioSession.setAppleAudioConfiguration({
+        audioCategoryOptions: ['allowBluetooth', 'allowBluetoothA2DP', 'allowAirPlay'],
+        audioMode: 'voiceChat',
+      });
+      await AudioSession.selectAudioOutput('default');
+    }
+  } else if (Platform.OS === 'android') {
+    const outputs = await AudioSession.getAudioOutputs();
+    const target = speakerOn
+      ? outputs.find((o) => o === 'speaker')
+      : outputs.find((o) => o === 'earpiece') ?? outputs.find((o) => o !== 'speaker');
+    if (target) {
+      await AudioSession.selectAudioOutput(target);
+    }
+  }
+};
 
 const debugLog = (...args: unknown[]) => {
   if (__DEV__) {
@@ -31,6 +102,39 @@ type CallTheme = {
     onSurfaceVariant: string;
   };
 };
+
+/** Who we're talking to — drives avatars/titles on every call surface. */
+export interface CallPeer {
+  name: string;
+  photoURL?: string;
+  isGroup: boolean;
+}
+
+const PeerAvatar = ({ peer, size }: { peer: CallPeer; size: number }) =>
+  peer.isGroup ? (
+    <GroupAvatar photoURL={peer.photoURL} name={peer.name} size={size} />
+  ) : (
+    <UserAvatar photoURL={peer.photoURL} displayName={peer.name} size={size} />
+  );
+
+// Full-screen dark backdrop — the callee's photo heavily blurred under a
+// scrim, iOS-call style. Always dark regardless of app theme.
+const CallBackdrop = ({ peer }: { peer: CallPeer }) => (
+  <View style={[StyleSheet.absoluteFill, { backgroundColor: '#0B0E14' }]}>
+    {peer.photoURL ? (
+      <>
+        <Image
+          source={{ uri: peer.photoURL }}
+          style={[StyleSheet.absoluteFill, { opacity: 0.5 }]}
+          blurRadius={60}
+          resizeMode="cover"
+          accessibilityIgnoresInvertColors
+        />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(8,10,16,0.55)' }]} />
+      </>
+    ) : null}
+  </View>
+);
 
 const formatDuration = (seconds: number) => {
   const mins = Math.floor(seconds / 60);
@@ -60,11 +164,44 @@ interface LocalTrackPublisherProps {
   callType: CallType;
   isMuted: boolean;
   isCameraOff: boolean;
+  /** Lifts the connected room up so the flip-camera control can reach it. */
+  roomRef?: MutableRefObject<Room | null>;
 }
 
-const LocalTrackPublisher = ({ callType, isMuted, isCameraOff }: LocalTrackPublisherProps) => {
+const LocalTrackPublisher = ({ callType, isMuted, isCameraOff, roomRef }: LocalTrackPublisherProps) => {
   const room = useRoomContext();
   const connectionState = useConnectionState();
+
+  // Expose the room to the parent (CallControls lives outside LiveKitRoom).
+  useEffect(() => {
+    if (!roomRef) return;
+    roomRef.current = room ?? null;
+    return () => {
+      roomRef.current = null;
+    };
+  }, [room, roomRef]);
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
+  const [retryTick, setRetryTick] = useState(0);
+  const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const scheduleRetry = useCallback(() => {
+    if (retryTick >= 4 || retryTimerRef.current) return;
+    retryTimerRef.current = setTimeout(() => {
+      retryTimerRef.current = null;
+      setRetryTick((t) => t + 1);
+    }, 1400);
+  }, [retryTick]);
+
+  // iOS forbids starting camera capture while the app is backgrounded — which
+  // is exactly the state when a call is answered from the CallKit lock screen.
+  // A single silent setCameraEnabled failure used to mean video NEVER started
+  // for the callee. Track foreground state and re-attempt on activation.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      setAppActive(state === 'active');
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     if (!room) return;
@@ -76,15 +213,20 @@ const LocalTrackPublisher = ({ callType, isMuted, isCameraOff }: LocalTrackPubli
 
     void (async () => {
       try {
-        if (local.isMicrophoneEnabled !== wantMic) {
+        const micPublication = local.getTrackPublication(Track.Source.Microphone);
+        const hasLiveMicTrack = Boolean(micPublication?.track);
+        if (wantMic ? !hasLiveMicTrack || !local.isMicrophoneEnabled : local.isMicrophoneEnabled) {
           await local.setMicrophoneEnabled(wantMic);
         }
       } catch (error) {
-        console.warn('LocalTrackPublisher: setMicrophoneEnabled failed', error);
+        console.warn('LocalTrackPublisher: setMicrophoneEnabled failed; retrying shortly', error);
+        scheduleRetry();
       }
 
       try {
         if (callType === 'video') {
+          // Don't attempt camera capture in the background — it will fail.
+          if (wantCamera && !appActive) return;
           if (local.isCameraEnabled !== wantCamera) {
             await local.setCameraEnabled(wantCamera);
           }
@@ -92,10 +234,19 @@ const LocalTrackPublisher = ({ callType, isMuted, isCameraOff }: LocalTrackPubli
           await local.setCameraEnabled(false);
         }
       } catch (error) {
-        console.warn('LocalTrackPublisher: setCameraEnabled failed', error);
+        console.warn('LocalTrackPublisher: setCameraEnabled failed; retrying shortly', error);
+        // Transient failures right after CallKit's audio-session activation
+        // are common — schedule a bounded re-attempt instead of giving up.
+        scheduleRetry();
       }
     })();
-  }, [room, connectionState, callType, isMuted, isCameraOff]);
+  }, [room, connectionState, callType, isMuted, isCameraOff, appActive, retryTick, scheduleRetry]);
+
+  useEffect(() => {
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
+  }, []);
 
   return null;
 };
@@ -103,9 +254,12 @@ const LocalTrackPublisher = ({ callType, isMuted, isCameraOff }: LocalTrackPubli
 interface VideoRoomContentProps {
   theme: CallTheme;
   isCameraOff: boolean;
+  peer: CallPeer;
+  /** Which camera is live — the self-view mirrors only for the front one. */
+  cameraFacing: 'front' | 'back';
 }
 
-const VideoRoomContent = ({ theme, isCameraOff }: VideoRoomContentProps) => {
+const VideoRoomContent = ({ theme, isCameraOff, peer, cameraFacing }: VideoRoomContentProps) => {
   const connectionState = useConnectionState();
   const participants = useParticipants();
   const tracks = useTracks([Track.Source.Camera]);
@@ -163,56 +317,53 @@ const VideoRoomContent = ({ theme, isCameraOff }: VideoRoomContentProps) => {
     }
   })();
 
+  const hasRemoteVideo = Boolean(remoteTrack && isTrackReference(remoteTrack));
+
   return (
-    <View style={styles.videoGrid}>
-      {connectionText && (
-        <View style={styles.connectionOverlay}>
-          <GlassView style={styles.connectionBadge}>
-            <ActivityIndicator size="small" color={theme.colors.primary} />
-            <Text style={[styles.connectionText, { color: theme.colors.onSurface }]}>
-              {connectionText}
-            </Text>
-          </GlassView>
+    <View style={styles.videoFill}>
+      {hasRemoteVideo ? (
+        <VideoTrack trackRef={remoteTrack!} style={styles.rtcView} objectFit="cover" />
+      ) : (
+        <View style={styles.identityCenter}>
+          <PeerAvatar peer={peer} size={116} />
+          <Text style={styles.identityName} numberOfLines={1}>
+            {peer.name}
+          </Text>
+          <Text style={styles.identityStatus}>
+            {connectionText ??
+              (participants.length > 1 ? 'Waiting for video…' : 'Waiting for participant…')}
+          </Text>
         </View>
       )}
 
-      <GlassView style={styles.video}>
-        {remoteTrack && isTrackReference(remoteTrack) ? (
-          <VideoTrack trackRef={remoteTrack} style={styles.rtcView} objectFit="cover" />
-        ) : (
-          <View style={styles.videoPlaceholder}>
-            <View style={styles.avatarPlaceholder}>
-              <Text style={styles.avatarText}>👤</Text>
-            </View>
-            <Text style={[styles.placeholderText, { color: theme.colors.onSurfaceVariant }]}>
-              {connectionState === ConnectionState.Connected
-                ? participants.length > 1
-                  ? 'Waiting for video...'
-                  : 'Waiting for participant...'
-                : 'Connecting...'}
-            </Text>
-          </View>
-        )}
-      </GlassView>
+      {hasRemoteVideo && (
+        <View style={styles.videoTopPill} pointerEvents="none">
+          <Text style={styles.videoTopPillText} numberOfLines={1}>
+            {peer.name}
+          </Text>
+        </View>
+      )}
 
-      <View style={styles.localVideoContainer}>
-        <GlassView style={styles.localVideo}>
-          {localTrack && !isCameraOff && isTrackReference(localTrack) ? (
-            <VideoTrack
-              trackRef={localTrack}
-              style={styles.rtcView}
-              objectFit="cover"
-              zOrder={1}
+      {/* Local preview PiP — floats above the control bar, FaceTime-style. */}
+      <View style={styles.pip}>
+        {localTrack && !isCameraOff && isTrackReference(localTrack) ? (
+          // Mirror the self-view for the front camera only (FaceTime/WhatsApp
+          // behavior); the back camera and what the remote peer receives are
+          // never mirrored.
+          <VideoTrack
+            trackRef={localTrack}
+            style={styles.rtcView}
+            objectFit="cover"
+            zOrder={1}
+            mirror={cameraFacing === 'front'}
+          />
+        ) : (
+          <View style={styles.pipPlaceholder}>
+            <Ionicons
+              name={isCameraOff ? 'videocam-off' : 'person'}
+              size={24}
+              color="rgba(255,255,255,0.8)"
             />
-          ) : (
-            <View style={styles.videoPlaceholder}>
-              <Text style={styles.localAvatarText}>{isCameraOff ? '📷' : '👤'}</Text>
-            </View>
-          )}
-        </GlassView>
-        {isCameraOff && (
-          <View style={styles.cameraOffBadge}>
-            <Text style={styles.cameraOffText}>Camera off</Text>
           </View>
         )}
       </View>
@@ -224,9 +375,10 @@ interface AudioRoomContentProps {
   theme: CallTheme;
   status: CallStatus;
   callDuration: number;
+  peer: CallPeer;
 }
 
-const AudioRoomContent = ({ theme, status, callDuration }: AudioRoomContentProps) => {
+const AudioRoomContent = ({ theme, status, callDuration, peer }: AudioRoomContentProps) => {
   const connectionState = useConnectionState();
   const participants = useParticipants();
 
@@ -249,23 +401,18 @@ const AudioRoomContent = ({ theme, status, callDuration }: AudioRoomContentProps
   const remoteParticipant = participants.find((participant) => !participant.isLocal);
 
   return (
-    <View style={styles.audioCallContainer}>
-      <GlassView style={styles.audioCallCard}>
-        <View style={styles.audioAvatar}>
-          <Text style={styles.audioAvatarText}>🎧</Text>
-        </View>
-        <Text variant="headlineMedium" style={[styles.audioTitle, { color: theme.colors.onSurface }]}> 
-          Audio Call
-        </Text>
-        <Text style={[styles.audioSubtitle, { color: theme.colors.onSurfaceVariant }]}> 
-          {remoteParticipant ? remoteParticipant.name || 'Connected' : 'Waiting for participant...'}
-        </Text>
-        {status === 'connected' && (
-          <Text style={[styles.audioDuration, { color: theme.colors.primary }]}>
-            {formatDuration(callDuration)}
-          </Text>
-        )}
-      </GlassView>
+    <View style={styles.identityCenter}>
+      <PeerAvatar peer={peer} size={116} />
+      <Text style={styles.identityName} numberOfLines={1}>
+        {peer.name}
+      </Text>
+      <Text style={styles.identityStatus}>
+        {status === 'connected'
+          ? formatDuration(callDuration)
+          : remoteParticipant
+            ? 'Ringing…'
+            : 'Calling…'}
+      </Text>
     </View>
   );
 };
@@ -388,6 +535,8 @@ export const CallSessionScreen = ({
     isMuted,
     isCameraOff,
     callType,
+    remoteRinging,
+    noAnswer,
     startCall,
     joinExistingCall,
     endCall,
@@ -395,8 +544,63 @@ export const CallSessionScreen = ({
     toggleCamera,
   } = useCallManager({ chatId, groupId });
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const { threads } = useChat();
+  const { groups } = useGroups();
+  const { user } = useAuth();
   const [callDuration, setCallDuration] = useState(0);
   const [shouldConnectRoom, setShouldConnectRoom] = useState(true);
+  const roomRef = useRef<Room | null>(null);
+  const [cameraFacing, setCameraFacing] = useState<'front' | 'back'>('front');
+  const cameraFacingRef = useRef<'front' | 'back'>('front');
+  const flipInFlightRef = useRef(false);
+  // Video calls start on the loudspeaker (defaultOutput 'speaker' +
+  // videoChat mode), audio calls on the earpiece — mirror that so the button
+  // doesn't lie about the live route. `callType` resolves asynchronously for
+  // incoming joins, so keep syncing until the user explicitly toggles.
+  const [speakerOn, setSpeakerOn] = useState(callType === 'video');
+  const speakerTouchedRef = useRef(false);
+  useEffect(() => {
+    if (!speakerTouchedRef.current) {
+      setSpeakerOn(callType === 'video');
+    }
+  }, [callType]);
+
+  // Who this call is with — group identity for group calls, the other
+  // participant for DMs. Pure presentation; falls back gracefully when the
+  // thread hasn't loaded yet.
+  // Privacy guard: if calls are hidden and the user trips the guard mid-call,
+  // mask the peer's name and drop their photo so the call screen gives nothing
+  // away (the call keeps working — this is presentation only).
+  const { isShielded: guardIsShielded, settings: guardSettings } = usePrivacyGuard();
+  const callsHidden = guardIsShielded('calls');
+
+  const peer = useMemo<CallPeer>(() => {
+    let raw: CallPeer;
+    if (groupId) {
+      const group = groups.find((g) => g.groupId === groupId);
+      raw = group ? { name: group.name, photoURL: group.photoURL, isGroup: true } : { name: 'Group call', isGroup: true };
+    } else {
+      const thread = threads.find((t) => t.chatId === chatId);
+      if (thread?.type === 'group') {
+        const group = groups.find((g) => g.groupId === thread.groupId);
+        raw = { name: group?.name ?? 'Group call', photoURL: group?.photoURL, isGroup: true };
+      } else if (thread) {
+        const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+        raw = other
+          ? { name: other.displayName || 'Call', photoURL: other.photoURL, isGroup: false }
+          : { name: type === 'video' ? 'Video call' : 'Audio call', isGroup: false };
+      } else {
+        raw = { name: type === 'video' ? 'Video call' : 'Audio call', isGroup: false };
+      }
+    }
+    if (!callsHidden) return raw;
+    return {
+      ...raw,
+      name: guardSettings.action === 'vanish' ? 'Call' : maskTextValue(raw.name, guardSettings.textStyle),
+      photoURL: undefined,
+    };
+  }, [chatId, groupId, groups, threads, type, user?.userId, callsHidden, guardSettings.action, guardSettings.textStyle]);
 
   const hasInitializedRef = useRef(false);
   const isLocalHangupRef = useRef(false);
@@ -508,6 +712,111 @@ export const CallSessionScreen = ({
     void endCall();
   }, [endCall, requestRoomShutdown]);
 
+  // Flip between the front and back phone camera. Prefers LiveKit's
+  // restartTrack({ facingMode }) — the documented, reliable switch that also
+  // updates the track's internal facing state — and falls back to the raw
+  // react-native-webrtc _switchCamera() if restartTrack isn't available.
+  const handleFlipCamera = useCallback(() => {
+    const room = roomRef.current;
+    if (!room || flipInFlightRef.current) return;
+    const track = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track as
+      | {
+          restartTrack?: (o: { facingMode: 'user' | 'environment' }) => Promise<void>;
+          mediaStreamTrack?: { _switchCamera?: () => void };
+        }
+      | undefined;
+    if (!track) return;
+
+    const next = cameraFacingRef.current === 'front' ? 'back' : 'front';
+    const commit = () => {
+      cameraFacingRef.current = next;
+      setCameraFacing(next);
+      flipInFlightRef.current = false;
+    };
+    const rawSwitch = () => {
+      try {
+        track.mediaStreamTrack?._switchCamera?.();
+        commit();
+      } catch (err) {
+        console.warn('CallSessionScreen: _switchCamera fallback failed', err);
+        flipInFlightRef.current = false;
+      }
+    };
+
+    flipInFlightRef.current = true;
+    if (typeof track.restartTrack === 'function') {
+      void track
+        .restartTrack({ facingMode: next === 'front' ? 'user' : 'environment' })
+        .then(commit)
+        .catch((err: unknown) => {
+          console.warn('CallSessionScreen: restartTrack flip failed, falling back', err);
+          rawSwitch();
+        });
+    } else {
+      rawSwitch();
+    }
+  }, []);
+
+  // Speaker toggle. iOS gives no JS API to read the live route, so the button
+  // tracks the forced-speaker state we set here; long-press opens the system
+  // route picker for Bluetooth/AirPlay. Bluetooth (e.g. Ray-Ban Meta) is still
+  // auto-preferred when connected unless the user forces the speaker on.
+  const toggleSpeaker = useCallback(() => {
+    speakerTouchedRef.current = true;
+    setSpeakerOn((on) => {
+      const next = !on;
+      void applySpeakerRoute(next).catch((err) =>
+        console.warn('CallSessionScreen: speaker toggle failed', err),
+      );
+      return next;
+    });
+  }, []);
+
+  // Turning the camera off drops the track; the next enable re-creates it on the
+  // front lens, so reset facing/mirror to match and avoid a stale mirror state.
+  useEffect(() => {
+    if (isCameraOff && cameraFacingRef.current !== 'front') {
+      cameraFacingRef.current = 'front';
+      setCameraFacing('front');
+    }
+  }, [isCameraOff]);
+
+  // Caller ringback tone — only for OUTGOING calls (joinCallId is set for
+  // incoming), and only once the CALLEE's device has acked that it is
+  // actually ringing (remoteRinging). Real phones don't play ringback while
+  // still "Calling…" an unreachable peer — and starting audio early also
+  // raced CallKit's AVAudioSession activation on iOS, killing the tone.
+  useEffect(() => {
+    const shouldRing = !joinCallId && status === 'ringing' && !noAnswer && remoteRinging;
+    if (!shouldRing) {
+      stopRingback();
+      return () => stopRingback();
+    }
+
+    // iOS: CallKit owns the AVAudioSession for this call. Playing before
+    // provider:didActivateAudioSession wires expo-audio to a session CallKit
+    // is about to reconfigure → silent or clipped ringback. Poll briefly for
+    // activation and start then; after 5s start anyway (best effort — a
+    // missing ringback must never block the call).
+    if (nativeCallService.managesAudioSession() && !nativeCallService.hasActivatedAudioSession()) {
+      const pollStartedAt = Date.now();
+      const poll = setInterval(() => {
+        if (nativeCallService.hasActivatedAudioSession() || Date.now() - pollStartedAt > 5000) {
+          clearInterval(poll);
+          startRingback();
+        }
+      }, 250);
+
+      return () => {
+        clearInterval(poll);
+        stopRingback();
+      };
+    }
+
+    startRingback();
+    return () => stopRingback();
+  }, [joinCallId, status, noAnswer, remoteRinging]);
+
   const handleMinimize = useCallback(() => {
     if (!onMinimize) {
       return;
@@ -548,11 +857,14 @@ export const CallSessionScreen = ({
   }, [handleMinimize, onMinimize, visible]);
 
   const statusText = useMemo(() => {
+    if (noAnswer) return 'No answer';
     switch (status) {
       case 'idle':
         return 'Initializing...';
       case 'ringing':
-        return 'Calling...';
+        // WhatsApp-style: 'Calling…' until the callee's device is reachable,
+        // then 'Ringing…' once their phone is actually ringing.
+        return remoteRinging ? 'Ringing...' : 'Calling...';
       case 'connected':
         return formatDuration(callDuration);
       case 'ended':
@@ -562,40 +874,37 @@ export const CallSessionScreen = ({
       default:
         return status;
     }
-  }, [callDuration, error, status]);
+  }, [callDuration, error, status, remoteRinging, noAnswer]);
 
   return (
     <View
       pointerEvents={visible ? 'auto' : 'none'}
       style={[styles.overlay, visible ? styles.overlayVisible : styles.overlayHidden]}
     >
-      <LiquidBackground>
+      <CallBackdrop peer={peer} />
       <View style={styles.container}>
-        <GlassView style={styles.statusContainer}>
-          {onMinimize ? (
-            <IconButton
-              icon="chevron-down"
-              mode="contained-tonal"
-              size={20}
-              onPress={handleMinimize}
-              style={styles.minimizeButton}
-              accessibilityLabel="Minimize call"
-            />
-          ) : null}
-          <View style={styles.statusContent}>
-            <Text style={[styles.statusTitle, { color: theme.colors.onSurface }]}> 
-              {callType === 'video' ? '📹 Video Call' : '📞 Audio Call'}
-            </Text>
-            <View style={styles.statusRow}>
-              <Text style={[styles.statusText, { color: theme.colors.onSurfaceVariant }]}>
-                {statusText}
-              </Text>
-              {(status === 'idle' || status === 'ringing') && (
-                <ActivityIndicator size="small" color={theme.colors.primary} style={styles.loader} />
-              )}
-            </View>
-          </View>
-        </GlassView>
+        {/* Status chip — call type + live status, iOS-thin, top center. */}
+        <View style={[styles.statusChip, { top: insets.top + 10 }]} pointerEvents="none">
+          <Ionicons
+            name={callType === 'video' ? 'videocam' : 'call'}
+            size={13}
+            color="rgba(255,255,255,0.75)"
+          />
+          <Text style={styles.statusChipText} numberOfLines={1}>
+            {statusText}
+          </Text>
+        </View>
+        {onMinimize ? (
+          <TouchableOpacity
+            onPress={handleMinimize}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Minimize call"
+            style={[styles.minimizeBtn, { top: insets.top + 4 }]}
+          >
+            <Ionicons name="chevron-down" size={22} color="#fff" />
+          </TouchableOpacity>
+        ) : null}
 
         {token && serverUrl ? (
           <View style={styles.roomContainer}>
@@ -619,6 +928,7 @@ export const CallSessionScreen = ({
                 callType={callType}
                 isMuted={isMuted}
                 isCameraOff={isCameraOff}
+                roomRef={roomRef}
               />
               <CallPresenceWatcher
                 status={status}
@@ -628,43 +938,88 @@ export const CallSessionScreen = ({
                 hasAutoClosedRef={hasAutoClosedRef}
               />
               {callType === 'video' ? (
-                <VideoRoomContent theme={theme as CallTheme} isCameraOff={isCameraOff} />
+                <VideoRoomContent theme={theme as CallTheme} isCameraOff={isCameraOff} peer={peer} cameraFacing={cameraFacing} />
               ) : (
                 <AudioRoomContent
                   theme={theme as CallTheme}
                   status={status}
                   callDuration={callDuration}
+                  peer={peer}
                 />
               )}
             </LiveKitRoom>
           </View>
         ) : (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={theme.colors.primary} />
-            <Text style={[styles.loadingText, { color: theme.colors.onSurfaceVariant }]}> 
-              Setting up call...
-            </Text>
+            <ActivityIndicator size="large" color="#fff" />
+            <Text style={styles.loadingText}>Setting up call…</Text>
           </View>
         )}
 
-        <CallControls
-          micEnabled={!isMuted}
-          cameraEnabled={!isCameraOff}
-          onToggleMic={toggleMute}
-          onToggleCamera={callType === 'video' ? toggleCamera : undefined}
-          onHangUp={handleHangUp}
-        />
+        <View style={[styles.controlsWrap, { paddingBottom: insets.bottom + 18 }]}>
+          {noAnswer ? (
+            <NoAnswerOptions
+              onCancel={onHangUp}
+              onMessage={onHangUp}
+              onCallAgain={() => void startCall(callType)}
+            />
+          ) : (
+            <CallControls
+              micEnabled={!isMuted}
+              cameraEnabled={!isCameraOff}
+              speakerOn={speakerOn}
+              onToggleMic={toggleMute}
+              onToggleCamera={callType === 'video' ? toggleCamera : undefined}
+              onToggleSpeaker={toggleSpeaker}
+              onAudioRoute={presentAudioRoutePicker}
+              onFlipCamera={callType === 'video' && !isCameraOff ? handleFlipCamera : undefined}
+              onHangUp={handleHangUp}
+            />
+          )}
+        </View>
       </View>
-      </LiquidBackground>
     </View>
   );
 };
+
+// WhatsApp-style "No answer" actions shown when an outgoing call times out.
+const NoAnswerOptions = ({
+  onCancel,
+  onMessage,
+  onCallAgain,
+}: {
+  onCancel: () => void;
+  onMessage: () => void;
+  onCallAgain: () => void;
+}) => (
+  <View style={styles.noAnswerRow}>
+    <View style={styles.noAnswerCol}>
+      <TouchableOpacity onPress={onCancel} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Cancel" style={[styles.noAnswerBtn, { backgroundColor: '#fff' }]}>
+        <Ionicons name="close" size={26} color="#111" />
+      </TouchableOpacity>
+      <Text style={styles.noAnswerLabel}>Cancel</Text>
+    </View>
+    <View style={styles.noAnswerCol}>
+      <TouchableOpacity onPress={onMessage} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Message" style={[styles.noAnswerBtn, { backgroundColor: 'rgba(255,255,255,0.18)' }]}>
+        <Ionicons name="chatbubble" size={22} color="#fff" />
+      </TouchableOpacity>
+      <Text style={styles.noAnswerLabel}>Message</Text>
+    </View>
+    <View style={styles.noAnswerCol}>
+      <TouchableOpacity onPress={onCallAgain} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Call again" style={[styles.noAnswerBtn, { backgroundColor: '#34C759' }]}>
+        <Ionicons name="call" size={24} color="#fff" />
+      </TouchableOpacity>
+      <Text style={styles.noAnswerLabel}>Call again</Text>
+    </View>
+  </View>
+);
 
 const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 1000,
     elevation: 1000,
+    backgroundColor: '#0B0E14',
   },
   overlayVisible: {
     opacity: 1,
@@ -674,170 +1029,138 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    justifyContent: 'space-between',
-    padding: 16,
   },
-  statusContainer: {
-    position: 'relative',
-    padding: 16,
-    borderRadius: 16,
-    zIndex: 10,
-  },
-  minimizeButton: {
+  statusChip: {
     position: 'absolute',
-    top: 8,
-    right: 8,
-    zIndex: 20,
-  },
-  statusContent: {
-    alignItems: 'center',
-  },
-  statusTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  statusRow: {
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    zIndex: 20,
+    maxWidth: '70%',
   },
-  statusText: {
-    fontSize: 14,
+  statusChipText: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 13,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
   },
-  loader: {
-    marginLeft: 4,
+  minimizeBtn: {
+    position: 'absolute',
+    left: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
   },
   roomContainer: {
-    flex: 1,
-    marginVertical: 16,
+    ...StyleSheet.absoluteFillObject,
   },
-  videoGrid: {
+  videoFill: {
     flex: 1,
-    position: 'relative',
-  },
-  video: {
-    flex: 1,
-    borderRadius: 20,
-    overflow: 'hidden',
-  },
-  localVideoContainer: {
-    position: 'absolute',
-    bottom: 16,
-    right: 16,
-    width: 100,
-    height: 140,
-  },
-  localVideo: {
-    flex: 1,
-    borderRadius: 16,
-    overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   rtcView: {
     flex: 1,
     width: '100%',
     height: '100%',
   },
-  videoPlaceholder: {
-    flex: 1,
-    justifyContent: 'center',
+  identityCenter: {
+    ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
-  },
-  avatarPlaceholder: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
+    paddingBottom: 140,
+    gap: 6,
   },
-  avatarText: {
-    fontSize: 48,
-  },
-  localAvatarText: {
-    fontSize: 24,
-  },
-  placeholderText: {
-    fontSize: 14,
-  },
-  cameraOffBadge: {
-    position: 'absolute',
-    bottom: 8,
-    left: 8,
-    right: 8,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    borderRadius: 8,
-    padding: 4,
-  },
-  cameraOffText: {
+  identityName: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: 30,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+    marginTop: 14,
+    maxWidth: '80%',
     textAlign: 'center',
   },
-  connectionOverlay: {
-    position: 'absolute',
-    top: 16,
-    left: 16,
-    right: 16,
-    zIndex: 20,
+  identityStatus: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 15,
+    fontVariant: ['tabular-nums'],
   },
-  connectionBadge: {
-    flexDirection: 'row',
+  videoTopPill: {
+    position: 'absolute',
+    top: 110,
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: 'rgba(10,12,18,0.55)',
+    maxWidth: '70%',
+  },
+  videoTopPillText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  pip: {
+    position: 'absolute',
+    right: 16,
+    bottom: 170,
+    width: 108,
+    height: 158,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: '#1B1E26',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
+  pipPlaceholder: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 12,
-    borderRadius: 12,
-    gap: 8,
-  },
-  connectionText: {
-    fontSize: 14,
-    fontWeight: '500',
   },
   loadingContainer: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 16,
   },
   loadingText: {
-    fontSize: 16,
+    fontSize: 15,
+    color: 'rgba(255,255,255,0.7)',
   },
-  audioCallContainer: {
-    flex: 1,
+  controlsWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 10,
+  },
+  noAnswerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     justifyContent: 'center',
-    alignItems: 'center',
+    gap: 44,
   },
-  audioCallCard: {
-    padding: 40,
-    borderRadius: 32,
+  noAnswerCol: {
     alignItems: 'center',
-    minWidth: 280,
+    gap: 8,
   },
-  audioAvatar: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  noAnswerBtn: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 24,
   },
-  audioAvatarText: {
-    fontSize: 56,
-  },
-  audioTitle: {
-    marginBottom: 8,
-  },
-  audioSubtitle: {
-    fontSize: 16,
-    marginBottom: 16,
-  },
-  audioDuration: {
-    fontSize: 24,
-    fontWeight: '600',
+  noAnswerLabel: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 13,
+    fontWeight: '500',
   },
 });

@@ -146,6 +146,10 @@
         },
         "groupId": {
           ".validate": "!newData.exists() || newData.isString() || newData.val() == null"
+        },
+        "deliveryState": {
+          ".write": "auth != null && data.parent().child('allowedUserIds').child(auth.uid).val() == true",
+          ".validate": "!newData.exists() || (newData.isString() && (newData.val() == 'calling' || newData.val() == 'ringing'))"
         }
       }
     },

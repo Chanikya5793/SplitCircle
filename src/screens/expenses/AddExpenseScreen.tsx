@@ -3,6 +3,7 @@ import type { Participant, SplitMethod } from '@/components/BillSplit/types';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { ReceiptScannerSheet, type ReceiptScannerResult } from '@/components/ReceiptScannerSheet';
 import { useAuth } from '@/context/AuthContext';
@@ -652,6 +653,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   return (
     <PaperProvider theme={theme}>
       <LiquidBackground>
+      <GuardedScreen target="expenses" entityId={group.groupId} label="Hidden">
         <ScrollView contentContainerStyle={styles.container}>
           <GlassView style={styles.card}>
             <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>{expenseId ? 'Edit expense' : 'Add expense'}</Text>
@@ -914,7 +916,8 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
             </View>
           </GlassView>
         </ScrollView>
-      </LiquidBackground>
+      </GuardedScreen>
+    </LiquidBackground>
 
       {/* Receipt Scanner Modal */}
       <Modal

@@ -407,6 +407,59 @@ export async function getCallSession(callId: string): Promise<CallSession | null
 }
 
 /**
+ * Callee device-ack: mark the call as actually RINGING on this device.
+ *
+ * Written by the CALLEE when the incoming call has really been presented
+ * (CallKit banner reported / in-app ringer shown). The caller's UI flips
+ * from "Calling…" to "Ringing…" only on this ack — never on APNs accepting
+ * the push, which also happens for offline devices. Requires the
+ * calls/$callId/deliveryState rule in database.rules.json to be deployed;
+ * until then the write is permission-denied and silently skipped (caller
+ * simply keeps showing "Calling…").
+ */
+export async function ackCallRinging(callId: string): Promise<void> {
+  try {
+    const statusSnapshot = await get(ref(rtdb, `calls/${callId}/status`));
+    if (!statusSnapshot.exists() || statusSnapshot.val() !== 'ringing') {
+      return;
+    }
+    await set(ref(rtdb, `calls/${callId}/deliveryState`), 'ringing');
+    debugLog('callService.ackCallRinging applied');
+  } catch (error) {
+    if (isPermissionDeniedError(error)) {
+      debugLog('callService.ackCallRinging skipped (rules not deployed yet or not allowed)');
+      return;
+    }
+    console.warn('callService.ackCallRinging failed', error);
+  }
+}
+
+export type CallSessionOutcome =
+  | { kind: 'live'; session: CallSession }
+  | { kind: 'missing' }
+  | { kind: 'error' };
+
+/**
+ * Like getCallSession, but distinguishes "definitively absent" from
+ * "couldn't read" (auth still restoring on a VoIP cold start, offline,
+ * permission denied). Callers MUST only treat 'missing' as proof the call
+ * is dead — 'error' is inconclusive and must not dismiss a ringing call.
+ */
+export async function getCallSessionOutcome(callId: string): Promise<CallSessionOutcome> {
+  try {
+    const callRef = ref(rtdb, `calls/${callId}`);
+    const snapshot = await get(callRef);
+    if (!snapshot.exists()) {
+      return { kind: 'missing' };
+    }
+    return { kind: 'live', session: toCallSession(snapshot.val() as RawCallSession) };
+  } catch (error) {
+    debugLog('callService.getCallSessionOutcome inconclusive', error);
+    return { kind: 'error' };
+  }
+}
+
+/**
  * Update call session status
  */
 export async function updateCallStatus(callId: string, status: CallSession['status']): Promise<void> {

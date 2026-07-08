@@ -21,7 +21,7 @@ export const SkeletonLoader = ({
   borderRadius = 8,
   style,
 }: SkeletonLoaderProps) => {
-  const { isDark } = useTheme();
+  const { theme } = useTheme();
   const opacity = useSharedValue(0.3);
 
   useEffect(() => {
@@ -36,7 +36,7 @@ export const SkeletonLoader = ({
     opacity: opacity.value,
   }));
 
-  const backgroundColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+  const backgroundColor = theme.colors.skeleton;
 
   return (
     <Animated.View

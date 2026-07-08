@@ -1,7 +1,10 @@
 import { GlassView } from '@/components/GlassView';
+import { SyncBadge } from '@/components/ui/SyncBadge';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Settlement } from '@/models';
-import { formatCurrency } from '@/utils/currency';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
@@ -15,6 +18,7 @@ interface SettlementCardProps {
     onPress: () => void;
     onDelete?: (settlement: Settlement) => void;
     index?: number;
+    groupId?: string;
 }
 
 export const SettlementCard = ({
@@ -24,11 +28,16 @@ export const SettlementCard = ({
     onPress,
     onDelete,
     index = 0,
+    groupId,
 }: SettlementCardProps) => {
+  const fmtMoney = useMoneyDisplay(groupId);
+  const { maskGroupText } = usePrivacyMask();
     const { theme } = useTheme();
+    const { pendingSyncIds } = useGroups();
+    const isPendingSync = pendingSyncIds.has(settlement.settlementId);
     const swipeableRef = useRef<Swipeable>(null);
-    const fromName = memberMap[settlement.fromUserId] || 'Unknown';
-    const toName = memberMap[settlement.toUserId] || 'Unknown';
+    const fromName = maskGroupText(memberMap[settlement.fromUserId] || 'Unknown', groupId);
+    const toName = maskGroupText(memberMap[settlement.toUserId] || 'Unknown', groupId);
 
     const handlePress = () => {
         lightHaptic();
@@ -95,24 +104,25 @@ export const SettlementCard = ({
                                     </View>
                                     <View style={{ flex: 1 }}>
                                         <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                                            Settlement
+                                            {maskGroupText('Settlement', groupId)}
                                         </Text>
                                         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                                             {fromName} → {toName}
                                         </Text>
                                         {settlement.note && (
                                             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
-                                                {settlement.note}
+                                                {maskGroupText(settlement.note, groupId)}
                                             </Text>
                                         )}
                                         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
-                                            {new Date(settlement.createdAt).toLocaleDateString()}
+                                            {maskGroupText(new Date(settlement.createdAt).toLocaleDateString(), groupId)}
                                         </Text>
+                                        {isPendingSync ? <SyncBadge style={{ marginTop: 4 }} /> : null}
                                     </View>
                                 </View>
                                 <View style={styles.amountContainer}>
                                     <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.primary }}>
-                                        {formatCurrency(settlement.amount, currency)}
+                                        {fmtMoney(settlement.amount, currency)}
                                     </Text>
                                 </View>
                             </View>

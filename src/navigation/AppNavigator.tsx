@@ -36,10 +36,12 @@ import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { NotificationSettingsScreen } from '@/screens/settings/NotificationSettingsScreen';
 import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
+import { SearchScreen } from '@/screens/search/SearchScreen';
 import type { NotificationData } from '@/utils/notifications';
 import { lightHaptic } from '@/utils/haptics';
 import { getCallInfoTitle, getChatThreadTitle, getExpenseDetailsTitle, getRouteBackLabel, ROOT_SCREEN_TITLES, SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
+import { setLastSearchScopeForRoute } from '@/services/searchScope';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
 import {
@@ -59,7 +61,7 @@ import { AppStack, AuthStack, NativeTab } from './stacks';
 const navigationRef = createNavigationContainerRef<any>();
 
 type GroupWithFallback = Group | undefined;
-type TabIconKey = 'groups' | 'friends' | 'chat' | 'calls' | 'settings';
+type TabIconKey = 'expenses' | 'chat' | 'calls' | 'settings' | 'search';
 
 type NativeIconPair = {
   active?: ImageSourcePropType;
@@ -69,11 +71,11 @@ type NativeIconPair = {
 type NativeIconMap = Record<TabIconKey, NativeIconPair>;
 
 const EMPTY_NATIVE_ICON_MAP: NativeIconMap = {
-  groups: {},
-  friends: {},
+  expenses: {},
   chat: {},
   calls: {},
   settings: {},
+  search: {},
 };
 const FALLBACK_NATIVE_TAB_ICON = {
   type: 'image',
@@ -218,7 +220,7 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
     return (
       <View style={styles.groupAccessoryInlineWrap}>
         <View style={styles.groupAccessoryInlineGlass}>
-          <TouchableOpacity onPress={openSettle} style={[styles.groupAccessoryInlineQuick, { backgroundColor: '#10b981' }]} activeOpacity={0.85}>
+          <TouchableOpacity onPress={openSettle} style={[styles.groupAccessoryInlineQuick, { backgroundColor: theme.colors.success }]} activeOpacity={0.85}>
             <View style={styles.groupAccessoryInlineQuickInner}>
               <Icon source="handshake" size={16} color="#fff" />
             </View>
@@ -256,7 +258,7 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
     <View style={styles.groupAccessoryRegularWrap}>
       <View style={styles.groupAccessoryRegularGlass}>
         <View style={styles.groupAccessoryRegularRow}>
-          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryPill, { backgroundColor: '#10b981' }]} borderless>
+          <TouchableRipple onPress={openSettle} style={[styles.groupAccessoryPill, { backgroundColor: theme.colors.success }]} borderless>
             <View style={styles.groupAccessoryPillInner}>
               <Icon source="handshake" size={17} color="#fff" />
               <Text variant="labelSmall" style={styles.groupAccessoryPrimaryText}>Settle</Text>
@@ -418,8 +420,8 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
 };
 
 const GroupsStackNavigator = () => {
-  const { theme, isDark } = useTheme();
-  const screenBackground = isDark ? '#121212' : '#FDFBFB';
+  const { theme } = useTheme();
+  const screenBackground = theme.colors.appBackground;
 
   return (
     <GroupsStack.Navigator
@@ -665,8 +667,8 @@ const CallSessionRoute = ({ route, navigation }: any) => {
 };
 
 const AuthStackNavigator = () => {
-  const { isDark } = useTheme();
-  const screenBackground = isDark ? '#121212' : '#FDFBFB';
+  const { theme } = useTheme();
+  const screenBackground = theme.colors.appBackground;
 
   return (
     <AuthStack.Navigator
@@ -692,7 +694,7 @@ const AppTabs = () => {
     }
 
     let isActive = true;
-    const inactiveColor = isDark ? '#9CA3AF' : '#64748B';
+    const inactiveColor = theme.colors.muted;
     const activeColor = theme.colors.primary;
 
     const loadIcon = async (name: React.ComponentProps<typeof MaterialCommunityIcons>['name'], color: string) => {
@@ -703,27 +705,27 @@ const AppTabs = () => {
     const loadAndroidIcons = async () => {
       try {
         const [
-          groupsInactive,
-          groupsActive,
-          friendsInactive,
-          friendsActive,
+          expensesInactive,
+          expensesActive,
           chatInactive,
           chatActive,
           callsInactive,
           callsActive,
           settingsInactive,
           settingsActive,
+          searchInactive,
+          searchActive,
         ] = await Promise.all([
-          loadIcon('account-group-outline', inactiveColor),
-          loadIcon('account-group', activeColor),
-          loadIcon('account-heart-outline', inactiveColor),
-          loadIcon('account-heart', activeColor),
+          loadIcon('receipt-text-outline', inactiveColor),
+          loadIcon('receipt-text', activeColor),
           loadIcon('chat-processing-outline', inactiveColor),
           loadIcon('chat-processing', activeColor),
           loadIcon('phone-outline', inactiveColor),
           loadIcon('phone', activeColor),
           loadIcon('cog-outline', inactiveColor),
           loadIcon('cog', activeColor),
+          loadIcon('magnify', inactiveColor),
+          loadIcon('magnify', activeColor),
         ]);
 
         if (!isActive) {
@@ -731,11 +733,11 @@ const AppTabs = () => {
         }
 
         setAndroidIcons({
-          groups: { inactive: groupsInactive, active: groupsActive ?? groupsInactive },
-          friends: { inactive: friendsInactive, active: friendsActive ?? friendsInactive },
+          expenses: { inactive: expensesInactive, active: expensesActive ?? expensesInactive },
           chat: { inactive: chatInactive, active: chatActive ?? chatInactive },
           calls: { inactive: callsInactive, active: callsActive ?? callsInactive },
           settings: { inactive: settingsInactive, active: settingsActive ?? settingsInactive },
+          search: { inactive: searchInactive, active: searchActive ?? searchInactive },
         });
       } catch (error) {
         console.warn('⚠️ Failed to load native tab icons, falling back to labels.', error);
@@ -749,13 +751,37 @@ const AppTabs = () => {
   }, [isDark, theme.colors.primary]);
 
   const getTabIcon = (key: TabIconKey, focused: boolean): NativeBottomTabIcon => {
+    if (Platform.OS === 'web') {
+      // The web fallback uses the JS bottom-tab navigator, whose `tabBarIcon`
+      // must return a React element — native icon descriptors ({type, source})
+      // crash the renderer ("Objects are not valid as a React child").
+      const webIconMap: Record<
+        TabIconKey,
+        { regular: React.ComponentProps<typeof MaterialCommunityIcons>['name']; filled: React.ComponentProps<typeof MaterialCommunityIcons>['name'] }
+      > = {
+        expenses: { regular: 'receipt-text-outline', filled: 'receipt-text' },
+        chat: { regular: 'chat-processing-outline', filled: 'chat-processing' },
+        calls: { regular: 'phone-outline', filled: 'phone' },
+        settings: { regular: 'cog-outline', filled: 'cog' },
+        search: { regular: 'magnify', filled: 'magnify' },
+      };
+      const webIcon = webIconMap[key];
+      return (
+        <MaterialCommunityIcons
+          name={focused ? webIcon.filled : webIcon.regular}
+          size={24}
+          color={focused ? theme.colors.primary : theme.colors.muted}
+        />
+      ) as unknown as NativeBottomTabIcon;
+    }
+
     if (Platform.OS === 'ios') {
       const iosIconMap: Record<TabIconKey, { regular: string; filled: string }> = {
-        groups: { regular: 'person.3', filled: 'person.3.fill' },
-        friends: { regular: 'heart.text.square', filled: 'heart.text.square.fill' },
+        expenses: { regular: 'list.bullet.rectangle', filled: 'list.bullet.rectangle.fill' },
         chat: { regular: 'bubble.left.and.bubble.right', filled: 'bubble.left.and.bubble.right.fill' },
         calls: { regular: 'phone', filled: 'phone.fill' },
         settings: { regular: 'gearshape', filled: 'gearshape.fill' },
+        search: { regular: 'magnifyingglass', filled: 'magnifyingglass' },
       };
 
       const icon = iosIconMap[key];
@@ -779,45 +805,41 @@ const AppTabs = () => {
         headerShown: false,
         lazy: Platform.OS === 'ios' ? false : true,
         tabBarActiveTintColor: theme.colors.primary,
-        tabBarInactiveTintColor: isDark ? '#9CA3AF' : '#64748B',
+        tabBarInactiveTintColor: theme.colors.muted,
         tabBarLabelStyle: {
           fontWeight: '600',
           fontSize: 12,
         },
         tabBarStyle: Platform.select({
           ios: {
-            backgroundColor: isDark ? '#121212' : '#FDFBFB',
+            backgroundColor: theme.colors.appBackground,
           },
           android: {
-            backgroundColor: isDark ? '#0D1117' : '#FFFFFF',
+            backgroundColor: theme.colors.surface,
           },
           default: undefined,
         }),
         tabBarActiveIndicatorColor: Platform.select({
-          android: isDark ? 'rgba(88,166,255,0.20)' : 'rgba(31,111,235,0.16)',
+          android: theme.colors.primaryContainer,
           default: undefined,
         }),
         tabBarBlurEffect: Platform.OS === 'ios' ? (isDark ? 'systemMaterialDark' : 'systemMaterialLight') : undefined,
-        tabBarControllerMode: Platform.OS === 'ios' ? 'tabBar' : undefined,
+        tabBarControllerMode: Platform.OS === 'ios' ? 'auto' : undefined,
         tabBarMinimizeBehavior: IOS_NATIVE_ACCESSORY_SUPPORTED ? 'onScrollDown' : undefined,
       }}
+      screenListeners={({ route }) => ({
+        focus: () => {
+          setLastSearchScopeForRoute(route.name);
+        },
+      })}
     >
       <NativeTab.Screen
         name={ROUTES.APP.GROUPS_TAB}
         component={GroupsStackNavigator}
         options={{
-          title: 'Groups',
-          tabBarLabel: 'Groups',
-          tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('groups', focused),
-        }}
-      />
-      <NativeTab.Screen
-        name={ROUTES.APP.FRIENDS_TAB}
-        component={FriendsScreen}
-        options={{
-          title: 'Friends',
-          tabBarLabel: 'Friends',
-          tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('friends', focused),
+          title: 'Expenses',
+          tabBarLabel: 'Expenses',
+          tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('expenses', focused),
         }}
       />
       <NativeTab.Screen
@@ -847,13 +869,30 @@ const AppTabs = () => {
           tabBarIcon: ({ focused }) => getTabIcon('settings', focused),
         }}
       />
+      <NativeTab.Screen
+        name={ROUTES.APP.SEARCH_TAB}
+        component={SearchScreen}
+        // iOS 26 renders `tabBarSystemItem: 'search'` as the native liquid-glass
+        // search tab positioned NEXT TO the tab bar (not a 6th regular tab).
+        // Setting title/tabBarLabel would override that and force a normal tab,
+        // so on iOS we pass ONLY the system item.
+        options={
+          Platform.OS === 'ios'
+            ? { tabBarSystemItem: 'search' as const }
+            : {
+                title: 'Search',
+                tabBarLabel: 'Search',
+                tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('search', focused),
+              }
+        }
+      />
     </NativeTab.Navigator>
   );
 };
 
 const AppStackNavigator = () => {
-  const { theme, isDark } = useTheme();
-  const screenBackground = isDark ? '#121212' : '#FDFBFB';
+  const { theme } = useTheme();
+  const screenBackground = theme.colors.appBackground;
 
   return (
       <AppStack.Navigator
@@ -897,6 +936,15 @@ const AppStackNavigator = () => {
         component={GroupInfoScreen}
         options={{
           title: SCREEN_TITLES.groupInfo,
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.FRIENDS}
+        component={FriendsScreen}
+        options={{
+          title: SCREEN_TITLES.friends,
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
@@ -1106,6 +1154,7 @@ const NotificationNavigator = () => {
     const navigate = (data: NotificationData) => {
       switch (data.type) {
         case 'message':
+        case 'missed_call': // tap on a missed-call notification → open the chat
           if (data.chatId) {
             navigation.navigate(ROUTES.APP.GROUP_CHAT, {
               chatId: data.chatId,
@@ -1339,13 +1388,13 @@ const styles = StyleSheet.create({
 
 export const AppNavigator = () => {
   const { user, loading } = useAuth();
-  const { isDark } = useTheme();
+  const { theme, isDark } = useTheme();
 
   if (loading) {
     return <LoadingScreen />;
   }
 
-  const navigationBackground = isDark ? '#121212' : '#FDFBFB';
+  const navigationBackground = theme.colors.appBackground;
 
   const navigationTheme = {
     ...(isDark ? DarkTheme : DefaultTheme),
