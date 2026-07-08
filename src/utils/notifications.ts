@@ -8,6 +8,7 @@ import {
   notificationMatchesEntity,
   type EntityNotificationFilter,
 } from './notificationEntityMatch';
+import { extractRevokeFilters } from './notificationRevoke';
 
 // ─────────────────────────────────────────────────────────────
 // Notification Channels (Android)
@@ -35,6 +36,9 @@ export type NotificationType =
   | 'call'
   | 'missed_call'
   | 'reply_failed'
+  // Silent server push withdrawing stale tray notifications for a deleted
+  // group/expense/settlement — never shown, handled by the background task.
+  | 'revoke'
   | 'general';
 
 export interface NotificationData {
@@ -57,13 +61,36 @@ export interface NotificationData {
 // ─────────────────────────────────────────────────────────────
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async (notification) => {
+    // A "revoke" push is a server-side tray-cleanup instruction — it must
+    // never surface as a visible alert. Normally it arrives silently
+    // (content-available / data-only) and skips this handler entirely; this
+    // guard is defense-in-depth in case a platform routes it here anyway.
+    const data = notification?.request?.content?.data as
+      | Record<string, unknown>
+      | null
+      | undefined;
+    if (data?.type === 'revoke') {
+      for (const filter of extractRevokeFilters(data)) {
+        void dismissNotificationsForEntity(filter);
+      }
+      return {
+        shouldShowAlert: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+        shouldShowBanner: false,
+        shouldShowList: false,
+      };
+    }
+
+    return {
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    };
+  },
 });
 
 // ─────────────────────────────────────────────────────────────

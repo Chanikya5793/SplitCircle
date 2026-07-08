@@ -1,13 +1,13 @@
 import type { FailedSendItem } from '@/components/Chat';
 import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
 import type { MediaPreviewSendItem } from '@/components/Chat/MediaPreview';
+import { appAlert } from '@/utils/appAlert';
 import type { ChatMessage, ChatParticipant, MessageType } from '@/models';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { trimVideoInteractive } from '@/services/videoTrimService';
 import { warningHaptic } from '@/utils/haptics';
 import { getInfoAsync } from 'expo-file-system/legacy';
 import { useCallback, useState } from 'react';
-import { Alert } from 'react-native';
 import { v4 as uuid } from 'uuid';
 
 type SendContext = {
@@ -319,7 +319,7 @@ export const useMediaSendPipeline = ({
       });
     } catch (err) {
       console.error('Trim & retry failed:', err);
-      Alert.alert('Couldn’t trim video', err instanceof Error ? err.message : 'Please try again.');
+      appAlert('Couldn’t trim video', err instanceof Error ? err.message : 'Please try again.');
       setFailedSheetVisible(true);
     }
   }, [retrySingleFailedItem]);

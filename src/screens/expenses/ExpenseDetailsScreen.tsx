@@ -13,7 +13,8 @@ import { buildReceiptInsightRows } from '@/utils/receiptInsights';
 import { useNavigation } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Image, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, Image, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { appAlert } from '@/utils/appAlert';
 import { Button, Chip, Dialog, Divider, Icon, IconButton, Portal, Text, TextInput } from 'react-native-paper';
 
 // Category to Icon mapping
@@ -145,7 +146,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
       await deleteExpense(groupId, expenseId);
       navigation.goBack();
     } catch (error) {
-      Alert.alert('Error', 'Failed to delete expense');
+      appAlert('Error', 'Failed to delete expense');
     }
   };
 
@@ -154,7 +155,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
       await updateExpense(groupId, { ...expense, notes: note }, undefined, undefined, requestId);
       setIsEditingNote(false);
     } catch (error) {
-      Alert.alert('Error', 'Failed to save note');
+      appAlert('Error', 'Failed to save note');
     }
   };
 

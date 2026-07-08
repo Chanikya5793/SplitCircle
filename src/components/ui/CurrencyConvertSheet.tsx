@@ -5,6 +5,7 @@
 
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { appAlert } from '@/utils/appAlert';
 import type { Group } from '@/models';
 import {
   COMMON_CURRENCIES,
@@ -13,7 +14,7 @@ import {
 import { formatRelativeTime } from '@/utils/format';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import React, { useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ActivityIndicator, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -42,7 +43,7 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
       const ageLine = stale
         ? `Offline — using rates cached ${formatRelativeTime(fetchedAt)}.`
         : 'European Central Bank reference rate.';
-      Alert.alert(
+      appAlert(
         `Convert to ${target}?`,
         `${rateLine}\n${ageLine}\n\nEvery amount in this group (${expenseCount} ${expenseCount === 1 ? 'expense' : 'expenses'}, settlements, and balances) will be converted. This can't be undone automatically.`,
         [
@@ -57,7 +58,7 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
                   successHaptic();
                   onClose();
                 } catch (error) {
-                  Alert.alert(
+                  appAlert(
                     'Conversion failed',
                     error instanceof Error ? error.message : 'Please try again.',
                   );
@@ -68,7 +69,7 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
         ],
       );
     } catch (error) {
-      Alert.alert('Exchange rate', error instanceof Error ? error.message : 'Could not fetch rates.');
+      appAlert('Exchange rate', error instanceof Error ? error.message : 'Could not fetch rates.');
     } finally {
       setBusyCurrency(null);
     }

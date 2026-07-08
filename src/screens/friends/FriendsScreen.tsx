@@ -22,7 +22,8 @@ import { computeFriendBalances, type CurrencyAmount } from '@/utils/friendBalanc
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Alert, Animated, StyleSheet, View } from 'react-native';
+import { Animated, StyleSheet, View } from 'react-native';
+import { appAlert } from '@/utils/appAlert';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
 import { Shield } from '@/components/ui';
@@ -273,7 +274,7 @@ export const FriendsScreen = () => {
       });
     } catch (error) {
       console.warn('Failed to open direct chat', error);
-      Alert.alert('Could not open chat', 'Please try again in a moment.');
+      appAlert('Could not open chat', 'Please try again in a moment.');
     }
   };
 
@@ -290,7 +291,7 @@ export const FriendsScreen = () => {
       startCallSession({ chatId, type });
     } catch (error) {
       console.warn('Failed to start call to friend', error);
-      Alert.alert('Could not place call', 'Please try again in a moment.');
+      appAlert('Could not place call', 'Please try again in a moment.');
     }
   };
 
@@ -306,7 +307,7 @@ export const FriendsScreen = () => {
 
   const handleRemove = (row: FriendRow) => {
     if (!user) return;
-    Alert.alert(
+    appAlert(
       `Remove ${row.displayName}?`,
       'They’ll be removed from your friends list. If you share groups or have outstanding balances, they’ll come back as soon as those are recorded again.',
       [

@@ -24,7 +24,8 @@ import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Keyboard, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, Keyboard, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { appAlert } from '@/utils/appAlert';
 import { Button, Modal, Portal, Text, IconButton, Chip, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -167,13 +168,13 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     const selectedCurrency = CURRENCIES.find(c => c.code === currencyInput.toUpperCase());
 
     if (!selectedCurrency) {
-      Alert.alert('Invalid Currency', 'Please select a valid currency from the list.');
+      appAlert('Invalid Currency', 'Please select a valid currency from the list.');
       return;
     }
 
     if (!isOnline) {
       // createGroup is a direct Firestore write — offline it never resolves.
-      Alert.alert("You're offline", 'Creating a group needs an internet connection. Try again when you reconnect.');
+      appAlert("You're offline", 'Creating a group needs an internet connection. Try again when you reconnect.');
       return;
     }
     try {
@@ -185,13 +186,13 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       setShowCurrencyList(false);
     } catch (error) {
       console.error('Failed to create group', error);
-      Alert.alert('Error', 'Failed to create group');
+      appAlert('Error', 'Failed to create group');
     }
   };
 
   const handleJoin = async (requestId: string) => {
     if (!isOnline) {
-      Alert.alert("You're offline", 'Joining a group needs an internet connection. Try again when you reconnect.');
+      appAlert("You're offline", 'Joining a group needs an internet connection. Try again when you reconnect.');
       return;
     }
     try {
@@ -201,17 +202,17 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       setInviteCode('');
     } catch (error) {
       console.error('Failed to join group', error);
-      Alert.alert('Error', 'Failed to join group');
+      appAlert('Error', 'Failed to join group');
     }
   };
 
   const handleArchive = (group: Group) => {
     if (!user) return;
     if (!isOnline) {
-      Alert.alert("You're offline", 'Archiving needs an internet connection. Try again when you reconnect.');
+      appAlert("You're offline", 'Archiving needs an internet connection. Try again when you reconnect.');
       return;
     }
-    Alert.alert(
+    appAlert(
       'Archive Group',
       `"${group.name}" will move to your Archived section. Balances and expenses are unaffected, and only you see it as archived.`,
       [
@@ -224,7 +225,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
               successHaptic();
             } catch (error) {
               console.error('Failed to archive group', error);
-              Alert.alert('Error', 'Failed to archive group. Please try again.');
+              appAlert('Error', 'Failed to archive group. Please try again.');
             }
           },
         },
@@ -235,7 +236,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const handleUnarchive = async (group: Group) => {
     if (!user) return;
     if (!isOnline) {
-      Alert.alert("You're offline", 'Restoring needs an internet connection. Try again when you reconnect.');
+      appAlert("You're offline", 'Restoring needs an internet connection. Try again when you reconnect.');
       return;
     }
     try {
@@ -243,7 +244,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       successHaptic();
     } catch (error) {
       console.error('Failed to unarchive group', error);
-      Alert.alert('Error', 'Failed to restore group. Please try again.');
+      appAlert('Error', 'Failed to restore group. Please try again.');
     }
   };
 

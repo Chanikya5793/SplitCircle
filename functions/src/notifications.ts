@@ -3,6 +3,7 @@ import {
     getFirestore,
 } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
+import { buildRevokeData, type RevokeFilter } from "./revoke";
 
 export type NotificationCategory =
     | "messages"
@@ -29,15 +30,21 @@ export type NotificationRegistrationStatus =
 
 interface ExpoPushMessage {
     to: string;
-    title: string;
+    // Optional so silent/background pushes (revoke) can omit any visible
+    // content — a message with no title/body is delivered as data-only on
+    // Android and, with _contentAvailable, as a background push on iOS.
+    title?: string;
     subtitle?: string;
-    body: string;
+    body?: string;
     data?: Record<string, string>;
     sound?: "default" | null;
     badge?: number;
     channelId?: string;
     priority?: "default" | "normal" | "high";
     categoryId?: string;
+    // iOS: sets apns content-available:1 so the system wakes the app's
+    // background notification task without presenting anything.
+    _contentAvailable?: boolean;
 }
 
 interface ExpoPushTicket {
@@ -961,6 +968,111 @@ export const sendPushToUsers = async (
         pendingReceiptCount: pendingReceipts.length,
         status: finalStatus,
     };
+};
+
+// ─────────────────────────────────────────────────────────────
+// Silent revoke push — clear stale tray notifications remotely
+// ─────────────────────────────────────────────────────────────
+// When a group/expense/settlement is deleted, devices holding a visible push
+// about it have a dead deep link in the tray. This sends a silent push
+// (content-available on iOS, data-only on Android) so the client's background
+// notification task can withdraw them even when the app is killed.
+//
+// Intentionally skips the preference/category/mute gating used for visible
+// pushes: a user may have received the original notification before muting
+// or disabling a category, and a revoke must always be able to clear it.
+
+export interface SilentRevokeResult {
+    targetedDeviceCount: number;
+    acceptedCount: number;
+    errorCount: number;
+}
+
+export const sendSilentRevokePush = async (
+    userIds: string[],
+    revoke: RevokeFilter,
+): Promise<SilentRevokeResult> => {
+    const data = buildRevokeData(revoke);
+    if (!data || userIds.length === 0) {
+        return { targetedDeviceCount: 0, acceptedCount: 0, errorCount: 0 };
+    }
+
+    const db = getFirestore();
+    const devices: NotificationDeviceState[] = [];
+
+    for (const chunk of chunkArray(userIds, 20)) {
+        const deviceLists = await Promise.all(
+            chunk.map(async (userId) => {
+                try {
+                    return await listUserDeviceRecords(db, userId);
+                } catch (error) {
+                    logger.warn("Revoke push: failed to list devices for user", {
+                        userId,
+                        error: error instanceof Error ? error.message : "unknown",
+                    });
+                    return [] as NotificationDeviceState[];
+                }
+            }),
+        );
+
+        for (const userDevices of deviceLists) {
+            const candidates = userDevices.filter((device) =>
+                device.registrationStatus === "active" &&
+                Boolean(device.expoPushToken) &&
+                isPermissionCapable(device.permissionState) &&
+                isExpoPushToken(device.expoPushToken!),
+            );
+            devices.push(...dedupeDevicesForDelivery(candidates));
+        }
+    }
+
+    if (devices.length === 0) {
+        return { targetedDeviceCount: 0, acceptedCount: 0, errorCount: 0 };
+    }
+
+    const messages: ExpoPushMessage[] = devices.map((device) => ({
+        to: device.expoPushToken!,
+        data,
+        priority: "high",
+        _contentAvailable: true,
+        sound: null,
+    }));
+
+    const ticketResults = await sendExpoPush(messages);
+    let acceptedCount = 0;
+    let errorCount = 0;
+
+    for (let index = 0; index < ticketResults.length; index += 1) {
+        const result = ticketResults[index];
+        const device = devices[index];
+        if (!device) {
+            continue;
+        }
+
+        if (result.ticket.status === "ok") {
+            acceptedCount += 1;
+            continue;
+        }
+
+        errorCount += 1;
+        const ticketError = normalizeString(result.ticket.details?.error)
+            ?? normalizeString(result.ticket.message)
+            ?? "Unknown ticket error";
+
+        if (ticketError === "DeviceNotRegistered") {
+            await invalidateDeviceToken(device, ticketError);
+        }
+    }
+
+    logger.info("Sent silent revoke push", {
+        revoke: data,
+        requestedUserCount: userIds.length,
+        targetedDeviceCount: devices.length,
+        acceptedCount,
+        errorCount,
+    });
+
+    return { targetedDeviceCount: devices.length, acceptedCount, errorCount };
 };
 
 export const processPendingNotificationReceipts = async (): Promise<{ processed: number; completed: number }> => {

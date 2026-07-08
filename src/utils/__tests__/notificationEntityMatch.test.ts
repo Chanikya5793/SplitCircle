@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  diffRemovedChatIds,
   diffRemovedEntities,
   notificationMatchesEntity,
   type GroupEntityIds,
@@ -91,6 +92,34 @@ describe('diffRemovedEntities', () => {
     expect(diffRemovedEntities(prev, curr)).toEqual([
       { groupId: 'g1' },
       { expenseId: 'e3' },
+    ]);
+  });
+});
+
+describe('diffRemovedChatIds', () => {
+  it('returns nothing when snapshots are identical', () => {
+    expect(diffRemovedChatIds(new Set(['c1', 'c2']), new Set(['c1', 'c2']))).toEqual([]);
+  });
+
+  it('reports each vanished chat as a chatId filter', () => {
+    expect(diffRemovedChatIds(new Set(['c1', 'c2', 'c3']), new Set(['c2']))).toEqual([
+      { chatId: 'c1' },
+      { chatId: 'c3' },
+    ]);
+  });
+
+  it('ignores newly added chats', () => {
+    expect(diffRemovedChatIds(new Set(['c1']), new Set(['c1', 'c2']))).toEqual([]);
+  });
+
+  it('handles an empty previous snapshot', () => {
+    expect(diffRemovedChatIds(new Set(), new Set(['c1']))).toEqual([]);
+  });
+
+  it('reports everything gone when the current snapshot is empty', () => {
+    expect(diffRemovedChatIds(new Set(['c1', 'c2']), new Set())).toEqual([
+      { chatId: 'c1' },
+      { chatId: 'c2' },
     ]);
   });
 });

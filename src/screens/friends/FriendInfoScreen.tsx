@@ -14,7 +14,8 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { appAlert } from '@/utils/appAlert';
 import { Avatar, Button, Divider, IconButton, List, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -157,7 +158,7 @@ export const FriendInfoScreen = () => {
       startCallSession({ chatId, type });
     } catch (error) {
       console.warn('FriendInfoScreen placeCall failed', error);
-      Alert.alert('Could not place call', 'Please try again.');
+      appAlert('Could not place call', 'Please try again.');
     }
   };
 

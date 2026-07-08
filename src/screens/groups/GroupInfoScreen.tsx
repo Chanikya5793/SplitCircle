@@ -15,7 +15,8 @@ import { errorHaptic, lightHaptic, selectionHaptic, successHaptic } from '@/util
 import * as Clipboard from 'expo-clipboard';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Share, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, Share, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { appAlert } from '@/utils/appAlert';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { Avatar, Button, Divider, IconButton, List, Text, TextInput } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -82,6 +83,12 @@ export const GroupInfoScreen = () => {
     const [busy, setBusy] = useState(false);
     const scrollY = useRef(new Animated.Value(0)).current;
     const hasLeftRef = useRef(false);
+    // Hoisted above the "Group not found" early return below: if any hook
+    // lives past that return, the same mounted screen re-renders with MORE
+    // hooks once the group syncs in and React crashes with "Rendered more
+    // hooks than during the previous render". Keep every hook up here.
+    const [wallpaperSheetOpen, setWallpaperSheetOpen] = useState(false);
+    const [currencySheetOpen, setCurrencySheetOpen] = useState(false);
 
     const group = useMemo(() => groups.find((g) => g.groupId === groupId), [groups, groupId]);
 
@@ -116,8 +123,6 @@ export const GroupInfoScreen = () => {
     const me = group.members.find((m) => m.userId === user?.userId);
     const isOwner = me?.role === 'owner';
     const isAdmin = isOwner || me?.role === 'admin';
-    const [wallpaperSheetOpen, setWallpaperSheetOpen] = useState(false);
-    const [currencySheetOpen, setCurrencySheetOpen] = useState(false);
     const groupInitials = group.name.slice(0, 2).toUpperCase();
 
     // Transform slide-in, not opacity — fractional alpha on an ancestor kills
@@ -147,7 +152,7 @@ export const GroupInfoScreen = () => {
     const handleSaveName = async () => {
         const trimmed = editedName.trim();
         if (!trimmed) {
-            Alert.alert('Group name required', 'Please enter a name.');
+            appAlert('Group name required', 'Please enter a name.');
             return;
         }
         if (trimmed === group.name) {
@@ -161,7 +166,7 @@ export const GroupInfoScreen = () => {
             cancelEditName();
         } catch (error) {
             errorHaptic();
-            Alert.alert('Could not rename group', errorMessage(error, 'Please try again.'));
+            appAlert('Could not rename group', errorMessage(error, 'Please try again.'));
         } finally {
             setBusy(false);
         }
@@ -191,7 +196,7 @@ export const GroupInfoScreen = () => {
             cancelEditDescription();
         } catch (error) {
             errorHaptic();
-            Alert.alert('Could not update description', errorMessage(error, 'Please try again.'));
+            appAlert('Could not update description', errorMessage(error, 'Please try again.'));
         } finally {
             setBusy(false);
         }
@@ -234,7 +239,7 @@ export const GroupInfoScreen = () => {
             successHaptic();
         } catch (error) {
             errorHaptic();
-            Alert.alert('Action failed', errorMessage(error, 'Please try again.'));
+            appAlert('Action failed', errorMessage(error, 'Please try again.'));
         } finally {
             setBusy(false);
         }
@@ -250,7 +255,7 @@ export const GroupInfoScreen = () => {
     };
 
     const confirmRemoveMember = (member: GroupMember) => {
-        Alert.alert(
+        appAlert(
             'Remove member',
             `Remove ${member.displayName} from "${group.name}"? Their balance history stays in the group ledger.`,
             [
@@ -295,7 +300,7 @@ export const GroupInfoScreen = () => {
         if (options.length === 0) return;
 
         lightHaptic();
-        Alert.alert(member.displayName, member.role.charAt(0).toUpperCase() + member.role.slice(1), [
+        appAlert(member.displayName, member.role.charAt(0).toUpperCase() + member.role.slice(1), [
             ...options,
             { text: 'Cancel', style: 'cancel' },
         ]);
@@ -304,13 +309,13 @@ export const GroupInfoScreen = () => {
     const handleLeaveGroup = () => {
         if (!me) return;
         if (me.role === 'owner') {
-            Alert.alert(
+            appAlert(
                 'Transfer ownership first',
                 'Promote another member to admin and ask the group to give you a successor before leaving.',
             );
             return;
         }
-        Alert.alert(
+        appAlert(
             'Leave group',
             `Leave "${group.name}"? Your balance history will remain visible to other members.`,
             [
@@ -327,7 +332,7 @@ export const GroupInfoScreen = () => {
                         } catch (error) {
                             hasLeftRef.current = false;
                             errorHaptic();
-                            Alert.alert('Could not leave group', errorMessage(error, 'Please try again.'));
+                            appAlert('Could not leave group', errorMessage(error, 'Please try again.'));
                         } finally {
                             setBusy(false);
                         }
@@ -339,7 +344,7 @@ export const GroupInfoScreen = () => {
 
     const handleDeleteGroup = () => {
         if (!isOwner) return;
-        Alert.alert(
+        appAlert(
             'Delete group',
             `Permanently delete "${group.name}"? Expenses, settlements, and the group chat will be removed for everyone. This cannot be undone.`,
             [
@@ -356,7 +361,7 @@ export const GroupInfoScreen = () => {
                         } catch (error) {
                             hasLeftRef.current = false;
                             errorHaptic();
-                            Alert.alert('Could not delete group', errorMessage(error, 'Please try again.'));
+                            appAlert('Could not delete group', errorMessage(error, 'Please try again.'));
                         } finally {
                             setBusy(false);
                         }

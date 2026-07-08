@@ -14,6 +14,7 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ScanningAnimation } from '@/components/ScanningAnimation';
 import { useTheme } from '@/context/ThemeContext';
+import { appAlert } from '@/utils/appAlert';
 import type { ReceiptInsights } from '@/models/expense';
 import { extractReceiptData, inferCategoryFromText } from '@/services/ocrService';
 import { suggestCategoryOnDevice } from '@/services/onDeviceCategoryService';
@@ -37,7 +38,6 @@ import { mediumHaptic, successHaptic } from '@/utils/haptics';
 import * as ImagePicker from 'expo-image-picker';
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    Alert,
     Keyboard,
     Platform,
     Pressable,
@@ -1066,7 +1066,7 @@ export const ReceiptScannerSheet = ({
       } catch (error: any) {
         setPhase('idle');
         setScanMessage('Ready to scan');
-        Alert.alert('Scan Error', error.message || 'Failed to scan receipt');
+        appAlert('Scan Error', error.message || 'Failed to scan receipt');
       }
     } else {
       // Android / fallback — use camera + backend OCR
@@ -1077,7 +1077,7 @@ export const ReceiptScannerSheet = ({
   const handleFallbackScan = async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Permission required', 'Camera permission is needed to scan receipts.');
+      appAlert('Permission required', 'Camera permission is needed to scan receipts.');
       return;
     }
 
@@ -1255,7 +1255,7 @@ export const ReceiptScannerSheet = ({
   const handleConfirm = () => {
     if (lowConfidenceCount > 0) {
       if (strictReviewMode) {
-        Alert.alert(
+        appAlert(
           'Strict Review Enabled',
           `Review all ${lowConfidenceCount} low-confidence item${lowConfidenceCount > 1 ? 's' : ''} before confirming.`,
           [{ text: 'OK' }],
@@ -1263,7 +1263,7 @@ export const ReceiptScannerSheet = ({
         return;
       }
 
-      Alert.alert(
+      appAlert(
         'Review Needed',
         `${lowConfidenceCount} low-confidence item${lowConfidenceCount > 1 ? 's are' : ' is'} still unreviewed.`,
         [

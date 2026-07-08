@@ -40,6 +40,7 @@ import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import { useSelectionMode } from '@/hooks/useSelectionMode';
 import { useTypingPresence } from '@/hooks/useTypingPresence';
 import type { ChatMessage, ChatParticipant, ChatThread, MessageType, PinnedMessageRef } from '@/models';
+import { appAlert } from '@/utils/appAlert';
 import {
   markMessageDeletedForUser,
   toggleMessageReaction,
@@ -58,7 +59,7 @@ import { lightHaptic, mediumHaptic, successHaptic, warningHaptic } from '@/utils
 import { useNavigation } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, AppState, FlatList, InteractionManager, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, AppState, FlatList, InteractionManager, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, Icon, IconButton, Snackbar, Text, TextInput } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -698,7 +699,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     }
 
     if (!localPath) {
-      Alert.alert('File Not Available', 'The file could not be downloaded.');
+      appAlert('File Not Available', 'The file could not be downloaded.');
       return;
     }
 
@@ -832,7 +833,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
       }
       case 'deleteForEveryone': {
         const isAlbum = group.length > 1;
-        Alert.alert(
+        appAlert(
           isAlbum ? `Delete ${group.length} items for everyone?` : 'Delete for everyone?',
           isAlbum
             ? 'These items will be removed for everyone in the chat. They may have already seen them.'
@@ -958,7 +959,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     }
 
     if (action === 'deleteForEveryone') {
-      Alert.alert(
+      appAlert(
         `Delete for everyone (${selectedMessages.length})`,
         'These messages will be removed for everyone in the chat.',
         [

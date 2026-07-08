@@ -10,12 +10,13 @@
 
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { useTheme } from '@/context/ThemeContext';
+import { appPrompt } from '@/utils/appAlert';
 import { APP_NAME } from '@/constants/appInfo';
 import type { GuardTargets } from '@/services/privacyGuardService';
 import { errorHaptic, successHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useRef } from 'react';
-import { Alert, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -89,7 +90,7 @@ export const GuardedScreen = ({ target, entityId, children, label = 'Hidden' }: 
 
 /** Prompt for the secret code and unlock on success. */
 export const promptGuardUnlock = (unlock: (code: string) => Promise<boolean>) => {
-  Alert.prompt(
+  appPrompt(
     'Enter code',
     undefined,
     [

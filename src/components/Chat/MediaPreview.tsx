@@ -1,4 +1,5 @@
 import { useTheme } from '@/context/ThemeContext';
+import { appAlert } from '@/utils/appAlert';
 import {
   classifyFit,
   estimateProcessedSize,
@@ -14,7 +15,6 @@ import QuickLookPreviewView from '../../../modules/my-module/src/QuickLookPrevie
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    Alert,
     Dimensions,
     FlatList,
     Image,
@@ -415,7 +415,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
       });
     } catch (err) {
       console.error('Trim failed:', err);
-      Alert.alert('Couldn’t trim video', err instanceof Error ? err.message : 'Please try again.');
+      appAlert("Couldn't trim video", err instanceof Error ? err.message : 'Please try again.');
     }
   }, [media, safeIndex, qualities, triggerTrim]);
 

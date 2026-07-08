@@ -7,6 +7,7 @@
 // presents (same modal-dismissal rule as HeaderMenu).
 
 import { useTheme } from '@/context/ThemeContext';
+import { appAlert } from '@/utils/appAlert';
 import { WALLPAPER_CATALOG, type CatalogWallpaper } from '@/constants/wallpaperCatalog';
 import {
   clearWallpaper,
@@ -20,7 +21,6 @@ import { lightHaptic, successHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   Animated,
   Easing,
   Image,
@@ -85,7 +85,7 @@ export const WallpaperPickerSheet = ({
       onChanged?.(slot);
       onClose();
     } catch (error) {
-      Alert.alert('Wallpaper', error instanceof Error ? error.message : 'Could not set the wallpaper.');
+      appAlert('Wallpaper', error instanceof Error ? error.message : 'Could not set the wallpaper.');
     } finally {
       setBusyId(null);
     }
@@ -101,7 +101,7 @@ export const WallpaperPickerSheet = ({
           if (entry) onChanged?.(slot);
         })
         .catch((error) =>
-          Alert.alert('Wallpaper', error instanceof Error ? error.message : 'Could not set the wallpaper.'),
+          appAlert('Wallpaper', error instanceof Error ? error.message : 'Could not set the wallpaper.'),
         );
     }, 350);
   };

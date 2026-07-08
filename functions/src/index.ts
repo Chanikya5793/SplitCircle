@@ -7,16 +7,18 @@ import { defineSecret } from "firebase-functions/params";
 import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
 import { onValueCreated } from "firebase-functions/v2/database";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { onDocumentUpdated } from "firebase-functions/v2/firestore";
+import { onDocumentDeleted, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { AccessToken } from "livekit-server-sdk";
 import { processAllDueRecurringBills, processGroupDueRecurringBills } from "./recurringBills";
 import {
     processPendingNotificationReceipts,
     sendPushToUsers,
+    sendSilentRevokePush,
     syncNotificationDeviceRecord,
     unregisterNotificationDeviceRecord,
     type NotificationPermissionState,
 } from "./notifications";
+import { diffRemovedGroupEntities } from "./revoke";
 import {
     sendCallVoipPush,
     upsertVoipTokenForDevice,
@@ -485,6 +487,37 @@ export const onGroupUpdated = onDocumentUpdated(
         const groupName = (after.name as string) || "Group";
         const memberIds = (after.memberIds ?? []) as string[];
 
+        // ─── Detect removed expenses/settlements → silent revoke ───
+        // The deleting device tidies its own tray locally; every other
+        // member gets a silent push so their background handler can
+        // withdraw the now-dead notification even if the app is killed.
+        // Best-effort — must never block the visible notification path.
+        const removedEntities = diffRemovedGroupEntities(before, after);
+        if (memberIds.length > 0) {
+            for (const expenseId of removedEntities.expenseIds) {
+                try {
+                    await sendSilentRevokePush(memberIds, { expenseId });
+                } catch (error) {
+                    logger.error("Failed to send expense revoke push", {
+                        groupId,
+                        expenseId,
+                        error: toSafeError(error),
+                    });
+                }
+            }
+            for (const settlementId of removedEntities.settlementIds) {
+                try {
+                    await sendSilentRevokePush(memberIds, { settlementId });
+                } catch (error) {
+                    logger.error("Failed to send settlement revoke push", {
+                        groupId,
+                        settlementId,
+                        error: toSafeError(error),
+                    });
+                }
+            }
+        }
+
         // ─── Detect new expenses ────────────────────────────
         const beforeExpenses = (before.expenses ?? []) as Array<Record<string, unknown>>;
         const afterExpenses = (after.expenses ?? []) as Array<Record<string, unknown>>;
@@ -719,6 +752,52 @@ export const onGroupUpdated = onDocumentUpdated(
                     }
                 }
             }
+        }
+    },
+);
+
+// ─────────────────────────────────────────────────────────────
+// Silent Revoke — Group Deleted
+// ─────────────────────────────────────────────────────────────
+// When a group document is deleted, every delivered notification that
+// deep-links into it (expenses, settlements, joins, group-chat messages —
+// they all carry groupId) is now a dead end on members' devices. The
+// deleting device tidies its own tray locally; everyone else gets a silent
+// push so their background handler can withdraw those notifications even
+// when the app is killed or backgrounded.
+
+export const onGroupDeleted = onDocumentDeleted(
+    "groups/{groupId}",
+    async (event) => {
+        const groupId = event.params.groupId;
+        const data = event.data?.data();
+        if (!data) {
+            return;
+        }
+
+        const memberIds = Array.isArray(data.memberIds)
+            ? (data.memberIds as unknown[]).filter(
+                (id): id is string => typeof id === "string" && id.length > 0,
+            )
+            : [];
+
+        if (memberIds.length === 0) {
+            return;
+        }
+
+        try {
+            const result = await sendSilentRevokePush(memberIds, { groupId });
+            logger.info("Queued group revoke push", {
+                groupId,
+                memberCount: memberIds.length,
+                targetedDeviceCount: result.targetedDeviceCount,
+                acceptedCount: result.acceptedCount,
+            });
+        } catch (error) {
+            logger.error("Failed to send group revoke push", {
+                groupId,
+                error: toSafeError(error),
+            });
         }
     },
 );

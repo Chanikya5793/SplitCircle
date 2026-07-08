@@ -38,9 +38,10 @@ import { ACCENT_IDS, ACCENTS } from '@/theme';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Alert, Animated, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, SegmentedButtons, Switch, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { appAlert, appPrompt } from '@/utils/appAlert';
 
 export const SettingsScreen = () => {
   const navigation = useNavigation();
@@ -67,10 +68,10 @@ export const SettingsScreen = () => {
   const promptForCode = () => {
     void lockoutRemainingMs().then((remaining) => {
       if (remaining > 0) {
-        Alert.alert('Too many attempts', `Try again in ${Math.ceil(remaining / 1000)}s.`);
+        appAlert('Too many attempts', `Try again in ${Math.ceil(remaining / 1000)}s.`);
         return;
       }
-      Alert.prompt(
+      appPrompt(
         'Enter code',
         undefined,
         [
@@ -88,7 +89,7 @@ export const SettingsScreen = () => {
                 } else {
                   lightHaptic();
                   if (lockedForMs > 0) {
-                    Alert.alert('Too many attempts', `Locked for ${Math.ceil(lockedForMs / 1000)}s.`);
+                    appAlert('Too many attempts', `Locked for ${Math.ceil(lockedForMs / 1000)}s.`);
                   }
                 }
               });
@@ -124,7 +125,7 @@ export const SettingsScreen = () => {
       return;
     }
     if (!guard.codeHash) {
-      Alert.prompt(
+      appPrompt(
         'Set a secret code',
         'This unlocks the hidden privacy settings and releases the guard after a shake.',
         [
@@ -134,7 +135,7 @@ export const SettingsScreen = () => {
             onPress: (code?: string) => {
               const trimmed = code?.trim() ?? '';
               if (trimmed.length < 4) {
-                Alert.alert('Too short', 'Use at least 4 characters.');
+                appAlert('Too short', 'Use at least 4 characters.');
                 return;
               }
               void hashCode(trimmed).then((digest) => {
@@ -172,7 +173,7 @@ export const SettingsScreen = () => {
   const offerOverrideReset = () => {
     const overrides = listChatOverrideSlots();
     if (overrides.length === 0) return;
-    Alert.alert(
+    appAlert(
       'Apply to all chats?',
       `${overrides.length} ${overrides.length === 1 ? 'chat has' : 'chats have'} their own wallpaper. Replace ${overrides.length === 1 ? 'it' : 'them'} with the new default, or keep them as they are?`,
       [
@@ -212,7 +213,7 @@ export const SettingsScreen = () => {
     }
     void (async () => {
       if (!(await isBiometricAvailable())) {
-        Alert.alert(`${bioLabel} unavailable`, `Set up ${bioLabel} in iOS Settings first.`);
+        appAlert(`${bioLabel} unavailable`, `Set up ${bioLabel} in iOS Settings first.`);
         return;
       }
       const ok = await authenticate(`Enable App Lock with ${bioLabel}`, true);
@@ -222,7 +223,7 @@ export const SettingsScreen = () => {
 
   const pickAutoLock = () => {
     lightHaptic();
-    Alert.alert(
+    appAlert(
       'Auto-lock',
       'Require unlock after the app has been in the background for:',
       [
@@ -248,7 +249,7 @@ export const SettingsScreen = () => {
   };
 
   const handleResetMerchantLearning = (merchant: LearningMerchantSummary) => {
-    Alert.alert('Reset Receipt Learning', `Clear local scan-learning memory for ${merchant.label}?`, [
+    appAlert('Reset Receipt Learning', `Clear local scan-learning memory for ${merchant.label}?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Reset',
@@ -263,7 +264,7 @@ export const SettingsScreen = () => {
 
   const handleSignOut = () => {
     lightHaptic();
-    Alert.alert('Sign out', `Sign out of ${APP_NAME} on this device?`, [
+    appAlert('Sign out', `Sign out of ${APP_NAME} on this device?`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign out', style: 'destructive', onPress: () => void signOutUser() },
     ]);

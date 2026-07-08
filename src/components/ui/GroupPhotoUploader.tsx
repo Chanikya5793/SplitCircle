@@ -5,13 +5,14 @@
 
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { appAlert } from '@/utils/appAlert';
 import { storage } from '@/firebase';
 import type { Group } from '@/models';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import React, { useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { ActivityIndicator, IconButton, TouchableRipple } from 'react-native-paper';
 import { GroupAvatar } from './AvatarPhoto';
 
@@ -34,7 +35,7 @@ export const GroupPhotoUploader = ({ group, size = 72, editable = false }: Group
 
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Permission required', 'Please grant access to your photo library.');
+      appAlert('Permission required', 'Please grant access to your photo library.');
       return;
     }
 
@@ -59,7 +60,7 @@ export const GroupPhotoUploader = ({ group, size = 72, editable = false }: Group
       successHaptic();
     } catch (error) {
       console.error('Error uploading group photo:', error);
-      Alert.alert('Upload failed', 'Could not update the group photo. Please try again.');
+      appAlert('Upload failed', 'Could not update the group photo. Please try again.');
       setLocalUri(null);
     } finally {
       setUploading(false);

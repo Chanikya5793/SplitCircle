@@ -1,6 +1,7 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GlassBackButton, GuardedScreen } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
+import { appAlert } from '@/utils/appAlert';
 import { lightHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -11,7 +12,6 @@ import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
   Image,
   Linking,
@@ -159,7 +159,7 @@ export const FilePreviewScreen = () => {
         enableBarCollapsing: true,
       });
     } catch (e) {
-      Alert.alert('Cannot Open', 'Unable to open the in-app preview.');
+      appAlert('Cannot Open', 'Unable to open the in-app preview.');
     } finally {
       setBrowserOpening(false);
     }
@@ -172,7 +172,7 @@ export const FilePreviewScreen = () => {
     try {
       const fileInfo = await getInfoAsync(params.uri);
       if (!fileInfo.exists) {
-        Alert.alert('File Not Found', 'The file could not be found on this device.');
+        appAlert('File Not Found', 'The file could not be found on this device.');
         return;
       }
       const isAvailable = await Sharing.isAvailableAsync();
@@ -194,7 +194,7 @@ export const FilePreviewScreen = () => {
         if (canOpen) await Linking.openURL(params.uri);
       }
     } catch (e) {
-      Alert.alert('Cannot Open', `Unable to open ${fileName}.`);
+      appAlert('Cannot Open', `Unable to open ${fileName}.`);
     }
   };
 

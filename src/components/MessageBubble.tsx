@@ -3,6 +3,7 @@ import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
 import { ReactionsRow } from '@/components/Chat/ReactionsRow';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import { appAlert } from '@/utils/appAlert';
 import type { ChatMessage, MessageStatus, MessageType, UrlPreview } from '@/models';
 import { extractFirstUrl, fetchLinkPreview } from '@/services/linkPreviewService';
 import { updateMessageUrlPreview } from '@/services/localMessageStorage';
@@ -13,7 +14,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer, type AudioStatus } from 'expo-audio';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, Animated, Dimensions, Image, Linking, Modal, Platform, Pressable, StyleSheet, TouchableOpacity, View, ViewStyle } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
 
@@ -502,7 +503,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
       }
     } catch (error) {
       console.error('Error playing audio:', error);
-      Alert.alert('Error', 'Could not play audio message.');
+      appAlert('Error', 'Could not play audio message.');
     }
   };
 
@@ -762,7 +763,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
 
   const handleOpenDocument = () => {
     if (!mediaUri) {
-      Alert.alert('File Not Available', 'The file has not been downloaded yet.');
+      appAlert('File Not Available', 'The file has not been downloaded yet.');
       return;
     }
     onFilePress?.(message);

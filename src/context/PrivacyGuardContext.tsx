@@ -19,7 +19,8 @@ import {
 } from '@/services/privacyGuardService';
 import { errorHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState, Platform, Settings } from 'react-native';
+import { AppState, Platform, Settings } from 'react-native';
+import { appPrompt } from '@/utils/appAlert';
 import { authenticate, isBiometricAvailable } from '@/services/biometrics';
 import { setScreenCaptureBlocked, subscribeScreenshot } from '@/services/screenCaptureGuard';
 
@@ -133,7 +134,7 @@ export const PrivacyGuardProvider = ({ children }: { children: React.ReactNode }
               return;
             }
           }
-          Alert.prompt(
+          appPrompt(
             'Enter code',
             'Shake detected — enter your code to reveal.',
             [

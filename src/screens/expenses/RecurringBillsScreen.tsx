@@ -18,7 +18,8 @@ import { formatCurrency } from '@/utils/currency';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { findNextOccurrenceAt, getRecurrenceSummary, normalizeRecurrenceRule } from '@/utils/recurrence';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { appAlert } from '@/utils/appAlert';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { Button, IconButton, Modal, Portal, Switch, Text } from 'react-native-paper';
 import { ALL_EXPENSE_CATEGORIES } from '@/utils/categoryMatch';
@@ -292,7 +293,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
             setBills(data);
         } catch (error) {
             console.error('Error loading recurring bills:', error);
-            Alert.alert('Error', 'Failed to load recurring bills');
+            appAlert('Error', 'Failed to load recurring bills');
         } finally {
             setLoading(false);
         }
@@ -366,18 +367,18 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
 
     const handleCreate = async () => {
         if (!title.trim() || !amount.trim() || !paidBy) {
-            Alert.alert('Missing Fields', 'Please fill in title, amount, and paid-by.');
+            appAlert('Missing Fields', 'Please fill in title, amount, and paid-by.');
             return;
         }
 
         const billAmount = Number.parseFloat(amount);
         if (!Number.isFinite(billAmount) || billAmount <= 0) {
-            Alert.alert('Invalid Amount', 'Please enter a valid amount.');
+            appAlert('Invalid Amount', 'Please enter a valid amount.');
             return;
         }
 
         if (!selectedParticipantIds.length) {
-            Alert.alert('Participants Required', 'Select at least one participant.');
+            appAlert('Participants Required', 'Select at least one participant.');
             return;
         }
 
@@ -430,7 +431,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
             resetForm();
         } catch (error) {
             console.error('Error saving recurring bill:', error);
-            Alert.alert('Error', 'Failed to save recurring bill');
+            appAlert('Error', 'Failed to save recurring bill');
         } finally {
             setIsSubmitting(false);
         }
@@ -475,13 +476,13 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
             )));
         } catch (error) {
             console.error('Error toggling bill:', error);
-            Alert.alert('Error', 'Failed to update bill status');
+            appAlert('Error', 'Failed to update bill status');
             await loadBills();
         }
     };
 
     const handleDelete = (bill: RecurringBill) => {
-        Alert.alert('Delete Bill', 'Are you sure you want to delete this recurring bill?', [
+        appAlert('Delete Bill', 'Are you sure you want to delete this recurring bill?', [
             { text: 'Cancel', style: 'cancel' },
             {
                 text: 'Delete',
@@ -493,7 +494,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                         setBills((prev) => prev.filter((entry) => entry.billId !== bill.billId));
                     } catch (error) {
                         console.error('Error deleting bill:', error);
-                        Alert.alert('Error', 'Failed to delete recurring bill');
+                        appAlert('Error', 'Failed to delete recurring bill');
                     }
                 },
             },

@@ -9,13 +9,13 @@ import type { ChatThread } from '@/models';
 import { getCallInfoTitle } from '@/navigation/screenTitles';
 import type { CallHistoryEntry } from '@/services/localCallStorage';
 import { deleteCallFromHistory, getChatCallHistory } from '@/services/localCallStorage';
+import { appAlert } from '@/utils/appAlert';
 import { formatCallDuration, formatCallTime, getCallDateSection } from '@/utils/format';
 import { lightHaptic, mediumHaptic } from '@/utils/haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import {
-    Alert,
     Platform,
     ScrollView,
     StyleSheet,
@@ -100,7 +100,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
     };
 
     if (Platform.OS === 'ios') {
-      Alert.alert('Delete Call', 'Remove this call from history?', [
+      appAlert('Delete Call', 'Remove this call from history?', [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: performDelete },
       ]);

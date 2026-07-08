@@ -1,3 +1,4 @@
+import { AppAlertHost } from '@/components/AppAlertHost';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { MissedCallQuickReply } from '@/components/MissedCallQuickReply';
 import { OfflineBanner } from '@/components/OfflineBanner';
@@ -39,6 +40,7 @@ function AppContent() {
                       </LiquidBackground>
                       <PanicTapZone />
                       <LockedOverlay />
+                      <AppAlertHost />
                     </PrivacyGuardProvider>
                     <AppLockGate />
                   </AppLockProvider>

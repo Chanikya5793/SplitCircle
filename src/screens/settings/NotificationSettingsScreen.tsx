@@ -4,11 +4,12 @@ import { useNotificationContext } from '@/context/NotificationContext';
 import { useTheme } from '@/context/ThemeContext';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, StyleSheet, View } from 'react-native';
+import { Animated, StyleSheet, View } from 'react-native';
 import { Button, Divider, List, Switch, Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { appAlert } from '@/utils/appAlert';
 
 const formatTimestamp = (value: number | null): string => {
   if (!value) {
@@ -271,7 +272,7 @@ export const NotificationSettingsScreen = () => {
     try {
       await refreshRegistration({ requestPermission });
     } catch (error) {
-      Alert.alert('Registration refresh failed', getErrorMessage(error));
+      appAlert('Registration refresh failed', getErrorMessage(error));
     } finally {
       setIsRefreshing(false);
     }
@@ -290,7 +291,7 @@ export const NotificationSettingsScreen = () => {
     }
 
     if (!permission.granted && permission.state === 'denied') {
-      Alert.alert(
+      appAlert(
         'Notifications are blocked',
         'Enable notifications for ManaSplit in iPhone Settings, then return here to finish setup.',
         [
@@ -314,7 +315,7 @@ export const NotificationSettingsScreen = () => {
     lightHaptic();
 
     if (remoteTestBlockedReason) {
-      Alert.alert('Remote test unavailable', remoteTestBlockedReason);
+      appAlert('Remote test unavailable', remoteTestBlockedReason);
       return;
     }
 
@@ -322,12 +323,12 @@ export const NotificationSettingsScreen = () => {
 
     try {
       const result = await sendRemoteTestNotification();
-      Alert.alert(
+      appAlert(
         'Remote test queued',
         `Delivery ${result.deliveryId} was queued for ${result.acceptedCount} device${result.acceptedCount === 1 ? '' : 's'}. Check this iPhone for the live push alert.`,
       );
     } catch (error) {
-      Alert.alert('Remote test failed', getErrorMessage(error));
+      appAlert('Remote test failed', getErrorMessage(error));
     } finally {
       setIsSendingRemoteTest(false);
     }
@@ -340,7 +341,7 @@ export const NotificationSettingsScreen = () => {
     try {
       await sendLocalTestNotification();
     } catch (error) {
-      Alert.alert('Local test failed', getErrorMessage(error));
+      appAlert('Local test failed', getErrorMessage(error));
     } finally {
       setIsSendingLocalTest(false);
     }

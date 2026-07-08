@@ -70,3 +70,22 @@ export const diffRemovedEntities = (
 
   return removed;
 };
+
+/**
+ * Compares the previous chat-id snapshot with the current one and returns one
+ * filter per chat that disappeared (deleted, or this user removed from it).
+ * Used by the chat subscription to withdraw message and missed-call
+ * notifications for chats that no longer exist.
+ */
+export const diffRemovedChatIds = (
+  previous: Set<string>,
+  current: Set<string>,
+): EntityNotificationFilter[] => {
+  const removed: EntityNotificationFilter[] = [];
+  for (const chatId of previous) {
+    if (!current.has(chatId)) {
+      removed.push({ chatId });
+    }
+  }
+  return removed;
+};

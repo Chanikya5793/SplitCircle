@@ -4,6 +4,10 @@ import { registerRootComponent } from 'expo';
 import 'react-native-get-random-values';
 
 import App from './App';
+// Imported at the entry point so TaskManager.defineTask runs in module scope
+// — required for the OS to find the task when it launches the app headlessly
+// for a silent "revoke" push (stale-notification cleanup while killed).
+import { registerBackgroundNotificationTask } from './src/utils/backgroundNotificationTask';
 
 if (!__DEV__) {
         const noOp = () => undefined;
@@ -46,6 +50,10 @@ if (errorUtils?.setGlobalHandler) {
                 defaultHandler?.(error, isFatal);
         });
 }
+
+// Register the background notification task with the OS so silent revoke
+// pushes can tidy the tray even when the app is backgrounded or killed.
+void registerBackgroundNotificationTask();
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);
 // It also ensures that whether you load the app in Expo Go or in a native build,

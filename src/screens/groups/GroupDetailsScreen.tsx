@@ -19,7 +19,8 @@ import * as Clipboard from 'expo-clipboard';
 import { useNavigation } from '@react-navigation/native';
 import { BlurView } from 'expo-blur';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, InteractionManager, Platform, StyleSheet, View } from 'react-native';
+import { Animated, InteractionManager, Platform, StyleSheet, View } from 'react-native';
+import { appAlert } from '@/utils/appAlert';
 import { Icon, IconButton, Text, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -216,7 +217,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   });
 
   const handleDeleteExpense = (expense: Expense) => {
-    Alert.alert(
+    appAlert(
       'Delete Expense',
       `Are you sure you want to delete "${expense.title}"?`,
       [
@@ -230,7 +231,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               errorHaptic();
             } catch (error) {
               console.error('Failed to delete expense:', error);
-              Alert.alert('Error', 'Failed to delete expense');
+              appAlert('Error', 'Failed to delete expense');
             }
           },
         },
@@ -239,7 +240,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   };
 
   const handleDeleteSettlement = (settlement: Settlement) => {
-    Alert.alert(
+    appAlert(
       'Delete Settlement',
       `Are you sure you want to delete this settlement?`,
       [
@@ -253,7 +254,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               errorHaptic();
             } catch (error) {
               console.error('Failed to delete settlement:', error);
-              Alert.alert('Error', 'Failed to delete settlement');
+              appAlert('Error', 'Failed to delete settlement');
             }
           },
         },

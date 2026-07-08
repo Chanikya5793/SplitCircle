@@ -17,12 +17,12 @@ import {
 } from '@/services/localCallStorage';
 import { formatCallDuration, formatCallTime, getCallDateSection } from '@/utils/format';
 import { lightHaptic, mediumHaptic, warningHaptic } from '@/utils/haptics';
+import { appAlert } from '@/utils/appAlert';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
     ActionSheetIOS,
-    Alert,
     FlatList,
     KeyboardAvoidingView,
     Modal,
@@ -278,7 +278,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
         }
       );
     } else {
-      Alert.alert(
+      appAlert(
         'Clear All Recents',
         'This action cannot be undone.',
         [

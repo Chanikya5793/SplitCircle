@@ -1,12 +1,13 @@
 import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
 import { useTheme } from '@/context/ThemeContext';
+import { appAlert } from '@/utils/appAlert';
 import { hasGoogleMapsApiKey } from '@/utils/hasGoogleMapsApiKey';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Constants from 'expo-constants';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Location from 'expo-location';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Dimensions, Linking, Modal, Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Dimensions, Linking, Modal, Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import type { Region } from 'react-native-maps';
 import { Button, Text } from 'react-native-paper';
 
@@ -84,7 +85,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       }
 
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Permission to access location was denied');
+        appAlert('Permission Denied', 'Permission to access location was denied');
         setPermissionGranted(false);
         setLoading(false);
         return;
@@ -109,7 +110,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     } catch (error) {
       console.error('Error getting location:', error);
       if (isMountedRef.current && isVisibleRef.current) {
-        Alert.alert('Error', 'Could not fetch location');
+        appAlert('Error', 'Could not fetch location');
       }
     } finally {
       if (isMountedRef.current && isVisibleRef.current) {
@@ -191,11 +192,11 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
         setSelectedLocation({ latitude, longitude });
         void fetchAddress(latitude, longitude);
       } else {
-        Alert.alert('Not Found', 'Could not find location');
+        appAlert('Not Found', 'Could not find location');
       }
     } catch (error) {
       console.error('Search error:', error);
-      Alert.alert('Error', 'Failed to search location');
+      appAlert('Error', 'Failed to search location');
     } finally {
       setIsSearching(false);
     }
@@ -246,7 +247,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   const handleLiveLocation = async () => {
     // Background location is not supported in Expo Go
     if (isExpoGo) {
-      Alert.alert(
+      appAlert(
         'Development Build Required',
         'Live location sharing requires a development or production build. This feature is not available in Expo Go.',
         [{ text: 'OK' }]
@@ -262,7 +263,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
         // Need to request foreground permissions first
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
-          Alert.alert('Permission Denied', 'Foreground location permission is required before enabling background location.');
+          appAlert('Permission Denied', 'Foreground location permission is required before enabling background location.');
           return;
         }
       }
@@ -272,7 +273,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
 
       if (backgroundStatus === 'granted') {
         // Permission already granted, proceed with live location logic
-        Alert.alert('Coming Soon', 'Live location sharing will be available in the next update.');
+        appAlert('Coming Soon', 'Live location sharing will be available in the next update.');
         return;
       }
 
@@ -282,13 +283,13 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
 
       if (newBackgroundStatus === 'granted') {
         // Permission granted, proceed with live location logic
-        Alert.alert('Coming Soon', 'Live location sharing will be available in the next update.');
+        appAlert('Coming Soon', 'Live location sharing will be available in the next update.');
         return;
       }
 
       // If still not granted after request, guide user to settings
       // This handles cases where the user denied or the system requires manual settings change
-      Alert.alert(
+      appAlert(
         'Background Location Required',
         'To share your live location, please select "Allow all the time" in location settings.',
         [
@@ -310,7 +311,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       );
     } catch (error) {
       console.error('Error requesting background permissions:', error);
-      Alert.alert('Error', 'Could not request location permissions. If you are using Expo Go, please use a development build instead.');
+      appAlert('Error', 'Could not request location permissions. If you are using Expo Go, please use a development build instead.');
     }
   };
 

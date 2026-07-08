@@ -2,6 +2,7 @@ import { APP_NAME } from '@/constants/appInfo';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { appAlert } from '@/utils/appAlert';
 import { auth, db, storage } from '@/firebase';
 import { propagateProfileToGroups } from '@/services/profilePropagation';
 import { updateProfile } from 'firebase/auth';
@@ -10,7 +11,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { doc, updateDoc } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import React, { useState } from 'react';
-import { Alert, Image, StyleSheet, View } from 'react-native';
+import { Image, StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Avatar, IconButton, TouchableRipple } from 'react-native-paper';
 
 interface ProfilePhotoUploaderProps {
@@ -40,7 +41,7 @@ export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhot
 
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Permission required', 'Please grant access to your photo library.');
+      appAlert('Permission required', 'Please grant access to your photo library.');
       return;
     }
 
@@ -84,7 +85,7 @@ export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhot
       successHaptic();
     } catch (error) {
       console.error('Error uploading profile photo:', error);
-      Alert.alert('Upload failed', 'Could not upload your profile photo. Please try again.');
+      appAlert('Upload failed', 'Could not upload your profile photo. Please try again.');
       setLocalUri(null); // Revert to previous photo
     } finally {
       setUploading(false);

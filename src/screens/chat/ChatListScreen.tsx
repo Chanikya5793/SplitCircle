@@ -9,13 +9,14 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatThread } from '@/models';
 import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
+import { appAlert } from '@/utils/appAlert';
 import { getChatMessages, subscribeToLocalMessages } from '@/services/localMessageStorage';
 import { archiveChat, isChatArchived, unarchiveChat } from '@/services/archiveService';
 import { useNotificationContext } from '@/context/NotificationContext';
 import { heavyHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, StyleSheet, View } from 'react-native';
+import { Animated, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
@@ -273,7 +274,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
       successHaptic();
     } catch (error) {
       console.error('Failed to toggle chat archive', error);
-      Alert.alert('Error', `Failed to ${archived ? 'restore' : 'archive'} chat. Please try again.`);
+      appAlert('Error', `Failed to ${archived ? 'restore' : 'archive'} chat. Please try again.`);
     }
   };
 
@@ -291,7 +292,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const handleLongPressThread = (thread: ChatThread, archived: boolean) => {
     heavyHaptic();
     const muted = isChatMuted(thread.chatId);
-    Alert.alert(
+    appAlert(
       maskChatTitle(getChatTitle(thread), thread.chatId),
       undefined,
       [

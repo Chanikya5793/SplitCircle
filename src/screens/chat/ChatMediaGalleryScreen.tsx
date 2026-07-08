@@ -10,6 +10,7 @@ import { mediaExistsLocally, getOrDownloadMedia } from '@/services/mediaService'
 import { markMessageDeletedForUser, unmarkMessageDeletedForUser } from '@/services/localMessageStorage';
 import { warningHaptic } from '@/utils/haptics';
 import { useVideoThumbnail } from '@/utils/videoThumbnail';
+import { appAlert } from '@/utils/appAlert';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -22,7 +23,6 @@ import React, {
   useState,
 } from 'react';
 import {
-  Alert,
   Animated,
   Dimensions,
   FlatList,
@@ -1710,7 +1710,7 @@ export const ChatMediaGalleryScreen = () => {
 
   const promptBulkDeleteForMe = useCallback(() => {
     if (selectedMessages.length === 0) return;
-    Alert.alert(
+    appAlert(
       `Delete ${selectedMessages.length} item${selectedMessages.length === 1 ? '' : 's'} for me`,
       'These items will be removed from your chat. Other people will still see them.',
       [
@@ -1722,7 +1722,7 @@ export const ChatMediaGalleryScreen = () => {
 
   const promptBulkDeleteForEveryone = useCallback(() => {
     if (selectedMessages.length === 0) return;
-    Alert.alert(
+    appAlert(
       `Delete ${selectedMessages.length} item${selectedMessages.length === 1 ? '' : 's'} for everyone`,
       'These items will be removed for everyone in this chat. They may have already seen them.',
       [
@@ -1918,7 +1918,7 @@ export const ChatMediaGalleryScreen = () => {
     }
 
     if (!localPath) {
-      Alert.alert('File Not Available', 'The file could not be downloaded.');
+      appAlert('File Not Available', 'The file could not be downloaded.');
       return;
     }
 

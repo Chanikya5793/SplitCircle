@@ -13,6 +13,7 @@ import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import { appAlert, appPrompt } from '@/utils/appAlert';
 import { formatCurrency } from '@/utils/currency';
 import {
   decoyAmount,
@@ -25,7 +26,7 @@ import {
 import { authenticate, biometricLabel, isBiometricAvailable } from '@/services/biometrics';
 import { lightHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useMemo } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { SegmentedButtons, Switch, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -163,7 +164,7 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
   }, [settings.action, settings.textStyle, settings.amountStyle]);
 
   const changeCode = () => {
-    Alert.prompt(
+    appPrompt(
       'New secret code',
       'Used to open these settings and to unlock after a shake.',
       [
@@ -173,7 +174,7 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
           onPress: (code?: string) => {
             const trimmed = code?.trim() ?? '';
             if (trimmed.length < 4) {
-              Alert.alert('Too short', 'Use at least 4 characters.');
+              appAlert('Too short', 'Use at least 4 characters.');
               return;
             }
             void hashCode(trimmed).then((digest) => {
@@ -188,7 +189,7 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
   };
 
   const changeDuressCode = () => {
-    Alert.prompt(
+    appPrompt(
       settings.duressCodeHash ? 'Change duress code' : 'Set a duress code',
       'A second code that fakes an unlock but keeps everything hidden — for when someone makes you open it. Must differ from your real code.',
       [
@@ -198,12 +199,12 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
           onPress: (code?: string) => {
             const trimmed = code?.trim() ?? '';
             if (trimmed.length < 4) {
-              Alert.alert('Too short', 'Use at least 4 characters.');
+              appAlert('Too short', 'Use at least 4 characters.');
               return;
             }
             void hashCode(trimmed).then((digest) => {
               if (digest === settings.codeHash) {
-                Alert.alert('Pick a different code', 'The duress code must not match your real code.');
+                appAlert('Pick a different code', 'The duress code must not match your real code.');
                 return;
               }
               void updateGuard({ duressCodeHash: digest });
@@ -217,7 +218,7 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
   };
 
   const clearDuressCode = () => {
-    Alert.alert('Remove duress code?', 'The fake-unlock code will stop working.', [
+    appAlert('Remove duress code?', 'The fake-unlock code will stop working.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Remove', style: 'destructive', onPress: () => void updateGuard({ duressCodeHash: null }) },
     ]);

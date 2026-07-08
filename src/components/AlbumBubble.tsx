@@ -221,16 +221,15 @@ export const AlbumBubble = ({
     [messages, user],
   );
 
-  if (visible.length === 0) return null;
-
   // 4 tiles maximum; the last shows a "+N" overlay if there are more.
   const tiles = visible.slice(0, 4);
   const overflow = visible.length - tiles.length;
-  const layout = useMemo(() => computeLayout(tiles.length), [tiles.length]);
 
-  const anchor = visible[visible.length - 1];
-  const isMine = user?.userId === anchor.senderId;
-  const reply = visible[0]?.replyTo;
+  // Hoisted above the early return below: if any hook lives past the early
+  // return, a re-render after `visible` changes (e.g. messages sync in or get
+  // un-deleted) renders MORE hooks than before and React crashes with
+  // "Rendered more hooks than during the previous render".
+  const layout = useMemo(() => computeLayout(tiles.length), [tiles.length]);
 
   // Show the first member's caption — keep the bubble compact instead of
   // stacking each item's caption (per-item captions still surface inside the
@@ -245,6 +244,12 @@ export const AlbumBubble = ({
     }
     return '';
   }, [visible]);
+
+  if (visible.length === 0) return null;
+
+  const anchor = visible[visible.length - 1];
+  const isMine = user?.userId === anchor.senderId;
+  const reply = visible[0]?.replyTo;
 
   const bubbleBg = isMine ? theme.colors.primary : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)');
   const captionColor = isMine ? '#fff' : theme.colors.onSurface;

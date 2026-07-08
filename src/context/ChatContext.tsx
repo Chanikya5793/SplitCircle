@@ -41,6 +41,8 @@ import {
   sendBulkReadReceipts,
 } from '@/services/messageQueueService';
 import { useAuth } from '@/context/AuthContext';
+import { dismissNotificationsForEntity } from '@/utils/notifications';
+import { diffRemovedChatIds } from '@/utils/notificationEntityMatch';
 
 interface SendMessagePayload {
   chatId: string;
@@ -145,6 +147,13 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const threadsRef = useRef<ChatThread[]>([]);
   const userRef = useRef<typeof user | null>(null);
   const activeChatIdsRef = useRef<Set<string>>(new Set());
+
+  // Chat ids from the previous snapshot. When a chat vanishes between
+  // snapshots (deleted by another participant, or this user removed), we
+  // withdraw delivered message/missed-call notifications on THIS device that
+  // deep-link to it. null until the first snapshot arrives so an initial load
+  // never looks like a mass deletion.
+  const knownChatIdsRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     threadsRef.current = threads;
@@ -256,6 +265,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     if (!user) {
       setThreads([]);
       setLoading(false);
+      knownChatIdsRef.current = null;
       return () => undefined;
     }
 
@@ -274,6 +284,17 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           updatedAt: data.updatedAt ? normalizeTimestamp(data.updatedAt) : undefined,
         } satisfies ChatThread;
       });
+
+      // Withdraw delivered notifications for any chat deleted since the last
+      // snapshot (direct chat deleted by the other side, user removed from a
+      // group chat, …). Best-effort: dismissal failures never break the feed.
+      const currentChatIds = new Set(payload.map((thread) => thread.chatId));
+      if (knownChatIdsRef.current) {
+        for (const filter of diffRemovedChatIds(knownChatIdsRef.current, currentChatIds)) {
+          void dismissNotificationsForEntity(filter);
+        }
+      }
+      knownChatIdsRef.current = currentChatIds;
 
       setThreads(payload);
       setLoading(false);

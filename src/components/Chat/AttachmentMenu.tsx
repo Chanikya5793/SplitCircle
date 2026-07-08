@@ -1,5 +1,6 @@
 import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import { useTheme } from '@/context/ThemeContext';
+import { appAlert } from '@/utils/appAlert';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { createAudioPlayer, type AudioStatus } from 'expo-audio';
 import * as DocumentPicker from 'expo-document-picker';
@@ -7,7 +8,6 @@ import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
   Modal, Platform, Pressable,
   StyleSheet,
@@ -241,7 +241,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
   const requestCameraPermission = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert(
+      appAlert(
         'Camera Permission Required',
         'Please enable camera access in your device settings to take photos.',
         [{ text: 'OK' }]
@@ -254,7 +254,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
   const requestMediaLibraryPermission = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert(
+      appAlert(
         'Photo Library Permission Required',
         'Please enable photo library access in your device settings to select media.',
         [{ text: 'OK' }]
@@ -300,7 +300,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     } catch (error) {
       console.error('Camera error:', error);
       setStatus(null);
-      Alert.alert('Camera Error', 'Failed to capture photo. Please try again.');
+      appAlert('Camera Error', 'Failed to capture photo. Please try again.');
     }
   }, [onMediaSelected]);
 
@@ -384,7 +384,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     } catch (error) {
       console.error('Gallery media error:', error);
       setStatus(null);
-      Alert.alert('Selection Error', 'Failed to select media. Please try again.');
+      appAlert('Selection Error', 'Failed to select media. Please try again.');
     }
   }, [onMediaSelected]);
 
@@ -414,7 +414,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     } catch (error) {
       console.error('Document picker error:', error);
       setStatus(null);
-      Alert.alert('Selection Error', 'Failed to select document. Please try again.');
+      appAlert('Selection Error', 'Failed to select document. Please try again.');
     }
   }, [onMediaSelected]);
 
@@ -454,7 +454,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     } catch (error) {
       console.error('Audio picker error:', error);
       setStatus(null);
-      Alert.alert('Selection Error', 'Failed to select audio. Please try again.');
+      appAlert('Selection Error', 'Failed to select audio. Please try again.');
     }
   }, [onMediaSelected]);
 

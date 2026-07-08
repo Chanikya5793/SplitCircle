@@ -32,7 +32,8 @@ import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Alert, Image, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Image, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { appAlert } from '@/utils/appAlert';
 import { Button, Chip, Dialog, Icon, Menu, PaperProvider, Portal, Text, TextInput, TouchableRipple } from 'react-native-paper';
 
 interface AddExpenseScreenProps {
@@ -312,7 +313,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       successHaptic();
       setNlText('');
     } catch {
-      Alert.alert('Could not read that', 'Try rephrasing, e.g. "$40 dinner with Alex, split equally".');
+      appAlert('Could not read that', 'Try rephrasing, e.g. "$40 dinner with Alex, split equally".');
     } finally {
       setNlBusy(false);
     }
@@ -389,7 +390,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     if (scannedTotal > 0) {
       if (currentAmount > 0 && Math.abs(currentAmount - scannedTotal) > 0.01) {
         // Amount conflict — ask user
-        Alert.alert(
+        appAlert(
           'Amount Differs',
           `Scanned total is $${scannedTotal.toFixed(2)}, but you entered $${currentAmount.toFixed(2)}. Which would you like to use?`,
           [
@@ -506,13 +507,13 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
           setCategory(inferredCategory);
         }
 
-        Alert.alert(
+        appAlert(
           'Receipt Scanned',
           `Found: ${total ? `$${total.toFixed(2)}` : 'No total'}${normalizedTitle ? `, ${normalizedTitle}` : ''}`,
           [{ text: 'OK' }]
         );
       } else if (ocrResult.error) {
-        Alert.alert('OCR unavailable', ocrResult.error);
+        appAlert('OCR unavailable', ocrResult.error);
       }
     } catch (error) {
       console.error('OCR processing error:', error);
@@ -531,7 +532,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     setShowReceiptMenu(false);
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Permission required', 'Camera permission is required to take photos.');
+      appAlert('Permission required', 'Camera permission is required to take photos.');
       return;
     }
 
@@ -558,7 +559,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
         if (typeof asset.size === 'number' && asset.size > MAX_RECEIPT_FILE_SIZE_BYTES) {
-          Alert.alert('File too large', 'Please select a receipt smaller than 20MB.');
+          appAlert('File too large', 'Please select a receipt smaller than 20MB.');
           return;
         }
 
@@ -651,7 +652,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
       onClose();
     } catch (error) {
       console.error('Failed to save expense:', error);
-      Alert.alert('Error', 'Failed to save expense. Please try again.');
+      appAlert('Error', 'Failed to save expense. Please try again.');
     }
   };
 
@@ -810,7 +811,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
             <TouchableOpacity
               onPress={() => {
                 if (!title.trim() || !amount.trim() || Number(amount) <= 0) {
-                  Alert.alert(
+                  appAlert(
                     'Missing details',
                     'Please enter an expense title and amount before configuring split options.',
                   );
