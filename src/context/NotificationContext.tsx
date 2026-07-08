@@ -267,6 +267,10 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
     });
 
     const checkInitialNotification = async () => {
+      // Not available on web — calling it rejects with an UnavailabilityError.
+      if (Platform.OS === 'web') {
+        return;
+      }
       const lastResponse = await Notifications.getLastNotificationResponseAsync();
       const data = lastResponse?.notification.request.content.data as NotificationData | undefined;
       if (data?.type) {

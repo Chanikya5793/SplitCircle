@@ -1,5 +1,12 @@
-import { MD3DarkTheme, MD3LightTheme } from 'react-native-paper';
+// DEPRECATED compat layer — the real design system lives in src/theme/.
+// These exports keep legacy imports compiling while screens migrate to
+// useTheme() tokens (see UI_REVAMP.md). Do not add new imports of this file.
 
+import { buildTheme, DEFAULT_ACCENT } from '@/theme';
+
+export { spacing } from '@/theme';
+
+/** @deprecated Use useTheme().theme.colors — this is the light palette only. */
 export const colors = {
   primary: '#1F6FEB',
   secondary: '#FFAD05',
@@ -12,6 +19,7 @@ export const colors = {
   text: '#1F2937',
 };
 
+/** @deprecated Use useTheme().theme.colors. */
 export const darkColors = {
   primary: '#58A6FF',
   secondary: '#FFD369',
@@ -24,38 +32,8 @@ export const darkColors = {
   text: '#F3F4F6',
 };
 
-export const spacing = {
-  xs: 4,
-  sm: 8,
-  md: 16,
-  lg: 24,
-  xl: 32,
-};
+export const lightTheme = buildTheme('light', DEFAULT_ACCENT);
+export const darkTheme = buildTheme('dark', DEFAULT_ACCENT);
 
-export const lightTheme = {
-  ...MD3LightTheme,
-  colors: {
-    ...MD3LightTheme.colors,
-    primary: colors.primary,
-    secondary: colors.secondary,
-    surface: colors.surface,
-    background: 'transparent',
-    error: colors.danger,
-  },
-  roundness: 12,
-};
-
-export const darkTheme = {
-  ...MD3DarkTheme,
-  colors: {
-    ...MD3DarkTheme.colors,
-    primary: darkColors.primary,
-    secondary: darkColors.secondary,
-    surface: darkColors.surface,
-    background: 'transparent',
-    error: darkColors.danger,
-  },
-  roundness: 12,
-};
-
-export const theme = lightTheme; // Default for now
+/** @deprecated Never import a static theme — it ignores dark mode and accent. */
+export const theme = lightTheme;

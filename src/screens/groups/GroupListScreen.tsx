@@ -1,7 +1,9 @@
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
+import { StickyHeaderPill } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { PrimaryButton } from '@/components/PrimaryButton';
+import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { GroupCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableGroupCard } from '@/components/SwipeableGroupCard';
 import { GroupFilterSortSheet, GroupSortField, GroupSortOrder } from '@/components/GroupFilterSortSheet';
@@ -10,15 +12,17 @@ import {
   getFloatingTabBarEnvelopeHeight,
 } from '@/components/tabbar/tabBarMetrics';
 import { CURRENCIES } from '@/constants/currencies';
+import { ROUTES } from '@/constants/routes';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import type { Group } from '@/models';
 import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Keyboard, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Keyboard, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Modal, Portal, Text, IconButton, Chip, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -27,10 +31,14 @@ interface GroupListScreenProps {
 }
 
 export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { groups, loading, createGroup, joinGroup } = useGroups();
+  const { isOnline } = useOfflineSync();
   const { theme, isDark } = useTheme();
+  const { isShielded: guardIsShielded } = usePrivacyGuard();
+  // Creating/joining expense groups is blocked while expenses are hidden.
+  const groupsShielded = guardIsShielded('expenses');
   const [dialog, setDialog] = useState<'create' | 'join' | null>(null);
   const [name, setName] = useState('');
   const [currencyInput, setCurrencyInput] = useState('USD');
@@ -54,9 +62,11 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     });
   }, [navigation]);
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 40],
-    outputRange: [0, 1],
+  // Slide the glass pill in with a TRANSFORM (not opacity): fractional alpha
+  // on an ancestor kills UIVisualEffectView materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
   const tabBarEnvelopeHeight = getFloatingTabBarEnvelopeHeight(insets.bottom);
@@ -142,6 +152,11 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       return;
     }
 
+    if (!isOnline) {
+      // createGroup is a direct Firestore write — offline it never resolves.
+      Alert.alert("You're offline", 'Creating a group needs an internet connection. Try again when you reconnect.');
+      return;
+    }
     try {
       await createGroup(name.trim(), selectedCurrency.code, requestId);
       successHaptic();
@@ -156,6 +171,10 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   };
 
   const handleJoin = async (requestId: string) => {
+    if (!isOnline) {
+      Alert.alert("You're offline", 'Joining a group needs an internet connection. Try again when you reconnect.');
+      return;
+    }
     try {
       await joinGroup(inviteCode.trim().toUpperCase(), requestId);
       successHaptic();
@@ -210,12 +229,12 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
       <Animated.View
         style={[
           styles.stickyHeader,
-          { opacity: headerOpacity, paddingTop: insets.top + 8 },
+          { transform: [{ translateY: headerTranslate }], paddingTop: insets.top + 8 },
         ]}
       >
-        <GlassView style={styles.stickyHeaderGlass}>
-          <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Groups</Text>
-        </GlassView>
+        <StickyHeaderPill style={styles.stickyHeaderGlass}>
+          <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Expenses</Text>
+        </StickyHeaderPill>
       </Animated.View>
 
       <Animated.FlatList
@@ -237,7 +256,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         ListHeaderComponent={
           <View style={styles.headerContainer}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Groups</Text>
+              <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Expenses</Text>
               <TouchableRipple
                 onPress={() => { lightHaptic(); setFilterVisible(true); }}
                 style={styles.filterButton}
@@ -275,35 +294,38 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
             </View>
           ) : (
             <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
-              {groups.length > 0 ? 'No groups match your filters.' : 'No groups yet. Create one!'}
+              {groups.length > 0 ? 'No expense groups match your filters.' : 'No expenses yet. Create a group to start splitting.'}
             </Text>
           )
         }
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} tintColor={theme.colors.primary} />}
       />
 
-      <View style={[styles.actions, { bottom: tabBarEnvelopeHeight + 12 }]}>
-        <Button mode="contained" onPress={() => { lightHaptic(); setDialog('create'); }}>
+      {!groupsShielded && <View style={[styles.actions, { bottom: tabBarEnvelopeHeight + 12 }]}>
+        <Button mode="contained" compact style={styles.primaryAction} onPress={() => { lightHaptic(); setDialog('create'); }}>
           New group
         </Button>
 
         <TouchableOpacity
+          onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.FRIENDS, { backTitle: 'Expenses' }); }}
+          activeOpacity={0.8}
+          style={styles.glassAction}
+        >
+          <GlassView style={styles.glassActionInner}>
+            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Friends</Text>
+          </GlassView>
+        </TouchableOpacity>
+
+        <TouchableOpacity
           onPress={() => { lightHaptic(); setDialog('join'); }}
           activeOpacity={0.8}
-          style={{
-            borderRadius: 15,
-            overflow: 'hidden',
-            borderWidth: 0,
-            borderColor: 'rgba(0,0,0,0.08)',
-            minWidth: 100,
-          }}
+          style={styles.glassAction}
         >
           {/* GlassView provides the blurred/frosted fill inside the button */}
-          <GlassView style={{ paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' }}>
+          <GlassView style={styles.glassActionInner}>
             <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Join via code</Text>
           </GlassView>
         </TouchableOpacity>
-      </View>
+      </View>}
 
       <Portal>
         <GroupFilterSortSheet
@@ -403,12 +425,12 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
               <Button onPress={() => setDialog(null)} textColor={theme.colors.primary}>Cancel</Button>
               <PrimaryButton
                 onPress={handleJoin}
-                disabled={!inviteCode}
+                disabled={!inviteCode || !isOnline}
                 requestKey="group-join"
                 loadingMessage="Joining group..."
                 showGlobalOverlay
               >
-                Join
+                {isOnline ? 'Join' : 'Offline'}
               </PrimaryButton>
             </View>
           </GlassView>
@@ -429,7 +451,27 @@ const styles = StyleSheet.create({
     right: 20,
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
     zIndex: 10,
+  },
+  primaryAction: {
+    flex: 1,
+    minWidth: 0,
+  },
+  glassAction: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 15,
+    overflow: 'hidden',
+    borderWidth: 0,
+    borderColor: 'rgba(0,0,0,0.08)',
+  },
+  glassActionInner: {
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyContainer: {
     flex: 1,

@@ -6,7 +6,13 @@ export const formatRelativeTime = (timestamp: number): string => {
   const deltaHours = Math.floor(deltaMinutes / 60);
   if (deltaHours < 24) return `${deltaHours}h ago`;
   const deltaDays = Math.floor(deltaHours / 24);
-  return `${deltaDays}d ago`;
+  if (deltaDays < 7) return `${deltaDays}d ago`;
+  const deltaWeeks = Math.floor(deltaDays / 7);
+  if (deltaWeeks < 5) return `${deltaWeeks}w ago`;
+  const deltaMonths = Math.floor(deltaDays / 30);
+  if (deltaMonths < 12) return `${deltaMonths}mo ago`;
+  const deltaYears = Math.floor(deltaDays / 365);
+  return `${deltaYears}y ago`;
 };
 
 export const formatDate = (timestamp: number): string =>

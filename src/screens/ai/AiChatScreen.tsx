@@ -11,6 +11,7 @@
 
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
@@ -337,6 +338,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
 
   return (
     <LiquidBackground>
+      <GuardedScreen target="expenses" label="Assistant hidden">
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -388,6 +390,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+    </GuardedScreen>
     </LiquidBackground>
   );
 };

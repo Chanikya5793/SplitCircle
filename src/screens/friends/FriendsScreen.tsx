@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { StickyHeaderPill } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { ROUTES } from '@/constants';
@@ -21,8 +22,9 @@ import { computeFriendBalances, type CurrencyAmount } from '@/utils/friendBalanc
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, RefreshControl, StyleSheet, View } from 'react-native';
+import { Alert, Animated, StyleSheet, View } from 'react-native';
 import { Avatar, IconButton, Text } from 'react-native-paper';
+import { Shield } from '@/components/ui';
 import { TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -72,11 +74,18 @@ export const FriendsScreen = () => {
       return;
     }
     setLoading(true);
+    // Offline cold start: RTDB may never call back — stop the spinner after a
+    // grace period so the screen shows its empty state instead of hanging.
+    const timeout = setTimeout(() => setLoading(false), 8000);
     const unsubscribe = subscribeToFriends(user.userId, (next) => {
       setFriends(next.filter((f) => !f.hidden));
       setLoading(false);
+      clearTimeout(timeout);
     });
-    return unsubscribe;
+    return () => {
+      clearTimeout(timeout);
+      unsubscribe();
+    };
   }, [user?.userId]);
 
   // Lookup name + photo for each friend across ALL groups, including
@@ -161,7 +170,10 @@ export const FriendsScreen = () => {
     const youOwe: FriendRow[] = [];
     const settled: FriendRow[] = [];
     for (const row of rows) {
-      if (row.friend.isPinned) pinned.push(row);
+      if (row.friend.isPinned) {
+        pinned.push(row);
+        continue;
+      }
       const sum = row.balances.reduce((s, b) => s + b.amount, 0);
       if (Math.abs(sum) < 0.01) settled.push(row);
       else if (sum > 0) owesYou.push(row);
@@ -175,7 +187,13 @@ export const FriendsScreen = () => {
     };
   }, [rows]);
 
-  const headerOpacity = scrollY.interpolate({ inputRange: [0, 40], outputRange: [0, 1], extrapolate: 'clamp' });
+  // Slide the glass pill in with a TRANSFORM (not opacity): fractional alpha
+  // on an ancestor kills UIVisualEffectView materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
+    extrapolate: 'clamp',
+  });
 
   const openDirectChat = async (row: FriendRow) => {
     if (!user) return;
@@ -249,8 +267,8 @@ export const FriendsScreen = () => {
     const balanceColor = Math.abs(sum) < 0.01
       ? theme.colors.onSurfaceVariant
       : sum > 0
-        ? '#10B981'
-        : '#EF4444';
+        ? theme.colors.moneyPositive
+        : theme.colors.moneyNegative;
     const balanceText = row.balances.length === 0
       ? 'Settled up'
       : row.balances.map((b) => formatBalance(b.amount, b.currency)).join(' · ');
@@ -259,16 +277,34 @@ export const FriendsScreen = () => {
       <GlassView key={row.friend.userId} style={styles.rowCard}>
         <TouchableRipple onPress={() => openDirectChat(row)} onLongPress={() => handleRemove(row)} borderless>
           <View style={styles.row}>
-            {row.photoURL ? (
-              <Avatar.Image size={48} source={{ uri: row.photoURL }} />
-            ) : (
-              <Avatar.Text
-                size={48}
-                label={(row.displayName || 'F').slice(0, 2).toUpperCase()}
-                style={{ backgroundColor: theme.colors.primary }}
-                color={theme.colors.onPrimary}
-              />
-            )}
+            {/* Avatar opens the friend profile — previously FriendInfoScreen
+                had no entry point from this list at all. */}
+            <TouchableRipple
+              onPress={() => {
+                lightHaptic();
+                navigation.navigate(ROUTES.APP.FRIEND_INFO, {
+                  userId: row.friend.userId,
+                  displayName: row.displayName,
+                  photoURL: row.photoURL,
+                  backTitle: ROOT_SCREEN_TITLES.friends,
+                });
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`View ${row.displayName}'s profile`}
+              borderless
+              style={{ borderRadius: 24 }}
+            >
+              {row.photoURL ? (
+                <Avatar.Image size={48} source={{ uri: row.photoURL }} />
+              ) : (
+                <Avatar.Text
+                  size={48}
+                  label={(row.displayName || 'F').slice(0, 2).toUpperCase()}
+                  style={{ backgroundColor: theme.colors.primary }}
+                  color={theme.colors.onPrimary}
+                />
+              )}
+            </TouchableRipple>
             <View style={styles.rowText}>
               <Text variant="titleMedium" style={[styles.rowName, { color: theme.colors.onSurface }]} numberOfLines={1}>
                 {row.displayName}
@@ -318,15 +354,16 @@ export const FriendsScreen = () => {
   return (
     <LiquidBackground>
       <Animated.View
-        style={[styles.stickyHeader, { opacity: headerOpacity, paddingTop: insets.top + 8 }]}
+        style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }], paddingTop: insets.top + 8 }]}
       >
-        <GlassView style={styles.stickyHeaderGlass}>
+        <StickyHeaderPill style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
             Friends
           </Text>
-        </GlassView>
+        </StickyHeaderPill>
       </Animated.View>
 
+      <Shield target="friends">
       <Animated.ScrollView
         contentContainerStyle={[
           styles.container,
@@ -337,7 +374,6 @@ export const FriendsScreen = () => {
           { useNativeDriver: true },
         )}
         scrollEventThrottle={16}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} tintColor={theme.colors.primary} />}
       >
         <View style={styles.headerContainer}>
           <Text variant="displaySmall" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
@@ -361,6 +397,7 @@ export const FriendsScreen = () => {
           </>
         )}
       </Animated.ScrollView>
+      </Shield>
     </LiquidBackground>
   );
 };

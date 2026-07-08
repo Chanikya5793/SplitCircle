@@ -37,6 +37,20 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid in request.resource.data.participantIds;
     }
 
+    // Members may refresh the denormalized displayName/photoURL copies inside
+    // `members` / `archivedMembers` (profile-photo propagation). Membership
+    // itself is immutable here: memberIds and both array sizes must not change.
+    function isGroupProfileSync(groupId) {
+      return isGroupMemberById(groupId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'members',
+          'archivedMembers',
+          'updatedAt',
+        ])
+        && request.resource.data.memberIds == resource.data.memberIds
+        && request.resource.data.members.size() == resource.data.members.size();
+    }
+
     function isGroupJoinUpdate() {
       return isSignedIn()
         && !(request.auth.uid in resource.data.memberIds)
@@ -55,6 +69,8 @@ service cloud.firestore {
       return isGroupMemberById(groupId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'name',
+          'description',
+          'photoURL',
           'currency',
           'expenses',
           'settlements',
@@ -114,8 +130,11 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.createdBy == request.auth.uid
         && request.auth.uid in request.resource.data.memberIds;
-      allow read: if isGroupMemberById(groupId);
-      allow update: if isGroupMutableUpdate(groupId) || isGroupJoinUpdate();
+      // Must use resource.data (not get()) so membership is provable for
+      // collection queries like where('memberIds', 'array-contains', uid) —
+      // get()-based rules deny list operations outright.
+      allow read: if isSignedIn() && request.auth.uid in resource.data.memberIds;
+      allow update: if isGroupMutableUpdate(groupId) || isGroupJoinUpdate() || isGroupProfileSync(groupId);
       allow delete: if isSignedIn() && resource.data.createdBy == request.auth.uid;
     }
 
@@ -133,6 +152,13 @@ service cloud.firestore {
     match /chats/{chatId}/messages/{messageId} {
       allow read, create: if isChatParticipantById(chatId);
       allow update, delete: if false;
+    }
+
+    // Cross-device mutation sync (reactions, edits, delete-for-everyone).
+    // Without this match the default deny blocks the messageState listener.
+    match /chats/{chatId}/messageState/{messageId} {
+      allow read, create, update: if isChatParticipantById(chatId);
+      allow delete: if false;
     }
 
     match /expenses/{expenseId} {

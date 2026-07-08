@@ -14,6 +14,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import { v4 as uuid } from 'uuid';
 import {
   applyRemoteMessageState,
@@ -235,7 +236,13 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     let wasOffline = false;
     const NetInfo = require('@react-native-community/netinfo').default;
     const unsubscribe = NetInfo.addEventListener((state: { isConnected: boolean | null; isInternetReachable: boolean | null }) => {
-      const online = Boolean(state.isConnected && state.isInternetReachable);
+      // On web, `isInternetReachable` stays `null` while the reachability
+      // probe is pending — only treat an explicit `false` as offline there.
+      // Native platforms keep the original stricter check unchanged.
+      const online =
+        Platform.OS === 'web'
+          ? Boolean(state.isConnected) && state.isInternetReachable !== false
+          : Boolean(state.isConnected && state.isInternetReachable);
       if (online && wasOffline) {
         void import('@/services/pendingStateQueue').then(({ drain }) => drain());
       }
@@ -269,6 +276,11 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       });
 
       setThreads(payload);
+      setLoading(false);
+    }, (error) => {
+      // Without this handler a rules rejection (e.g. permission-denied)
+      // becomes an uncaught snapshot error and a full-screen dev crash.
+      console.warn('Chat threads subscription failed.', error);
       setLoading(false);
     });
 

@@ -1,4 +1,5 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GlassBackButton, GuardedScreen } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { lightHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -36,6 +37,8 @@ interface FilePreviewParams {
   fileName?: string;
   mimeType?: string;
   fileSize?: number;
+  /** Owning chat — lets the privacy guard scope the preview. */
+  chatId?: string;
 }
 
 type PreviewKind = 'image' | 'pdf' | 'text' | 'video' | 'audio' | 'unsupported';
@@ -207,15 +210,9 @@ export const FilePreviewScreen = () => {
         },
       ]}
     >
-      <TouchableOpacity
-        onPress={() => navigation.goBack()}
-        hitSlop={10}
-        style={styles.headerBtn}
-        accessibilityRole="button"
-        accessibilityLabel="Go back"
-      >
-        <Ionicons name="chevron-back" size={26} color={theme.colors.onSurface} />
-      </TouchableOpacity>
+      <View style={styles.headerBtn}>
+        <GlassBackButton />
+      </View>
       <View style={styles.headerCenter}>
         <Text numberOfLines={1} style={[styles.headerTitle, { color: theme.colors.onSurface }]}>
           {params.fileName || 'File'}
@@ -435,7 +432,11 @@ export const FilePreviewScreen = () => {
     <LiquidBackground>
       <View style={styles.root}>
         {renderHeader()}
-        <View style={{ flex: 1 }}>{renderContent()}</View>
+        <View style={{ flex: 1 }}>
+          <GuardedScreen target="chats" entityId={params.chatId} label="Hidden">
+            {renderContent()}
+          </GuardedScreen>
+        </View>
       </View>
     </LiquidBackground>
   );

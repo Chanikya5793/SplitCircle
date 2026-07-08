@@ -35,6 +35,8 @@ export interface Group {
   requestId?: string;
   inviteCode: string;
   name: string;
+  /** Group photo (Firebase Storage URL) — set by admins in Group Info. */
+  photoURL?: string;
   description?: string;
   currency: string;
   members: GroupMember[];

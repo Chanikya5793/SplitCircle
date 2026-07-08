@@ -1,7 +1,10 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GlassBackButton } from '@/components/ui';
+import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useTheme } from '@/context/ThemeContext';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import type { ChatMessage, MessageType } from '@/models';
 import { getChatMessages } from '@/services/localMessageStorage';
 import { formatRelativeTime } from '@/utils/format';
@@ -34,11 +37,13 @@ const iconForType = (type: MessageType): keyof typeof Ionicons.glyphMap => {
 };
 
 export const StarredMessagesScreen = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const route = useRoute();
   const params = (route.params as StarredScreenParams) ?? {};
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useTheme();
+  const { isShielded: guardIsShielded } = usePrivacyGuard();
+  const starredShielded = guardIsShielded('chats');
   const { threads } = useChat();
   const { user } = useAuth();
 
@@ -99,15 +104,9 @@ export const StarredMessagesScreen = () => {
           },
         ]}
       >
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.headerBtn}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="chevron-back" size={26} color={theme.colors.onSurface} />
-        </TouchableOpacity>
+        <View style={styles.headerBtn}>
+          <GlassBackButton />
+        </View>
         <Text
           numberOfLines={1}
           style={[styles.titleText, { color: theme.colors.onSurface }]}
@@ -118,21 +117,35 @@ export const StarredMessagesScreen = () => {
       </View>
 
       <FlatList
-        data={items}
+        data={starredShielded ? [] : items}
         keyExtractor={(item) => `${item.message.chatId}_${item.message.messageId || item.message.id}`}
         contentContainerStyle={[styles.list, { paddingTop: HEADER_HEIGHT + 12 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={theme.colors.primary} />}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Ionicons name="star-outline" size={56} color={theme.colors.onSurfaceVariant} />
-            <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>No starred messages</Text>
+            <Ionicons name={starredShielded ? 'lock-closed-outline' : 'star-outline'} size={56} color={theme.colors.onSurfaceVariant} />
+            <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>
+              {starredShielded ? 'Hidden' : 'No starred messages'}
+            </Text>
             <Text style={[styles.emptySub, { color: theme.colors.onSurfaceVariant }]}>
-              Long-press a message and tap Star to keep it here.
+              {starredShielded ? 'Shake again or enter your code to reveal.' : 'Long-press a message and tap Star to keep it here.'}
             </Text>
           </View>
         }
         renderItem={({ item }) => (
-          <View style={[styles.card, { backgroundColor: surface }]}>
+          <TouchableOpacity
+            style={[styles.card, { backgroundColor: surface }]}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={`Open chat ${item.chatTitle}`}
+            onPress={() =>
+              navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+                chatId: item.message.chatId,
+                initialTitle: item.chatTitle,
+                backTitle: 'Starred',
+              })
+            }
+          >
             <View style={styles.cardHeaderRow}>
               <Text style={[styles.cardChat, { color: theme.colors.primary }]} numberOfLines={1}>
                 {item.chatTitle}
@@ -155,7 +168,7 @@ export const StarredMessagesScreen = () => {
                 {item.message.content || '(no text)'}
               </Text>
             </View>
-          </View>
+          </TouchableOpacity>
         )}
       />
     </LiquidBackground>
