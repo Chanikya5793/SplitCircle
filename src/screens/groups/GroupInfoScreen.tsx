@@ -1,5 +1,8 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GroupAvatar, GroupPhotoUploader, GuardedScreen} from '@/components/ui';
+import { CurrencyConvertSheet, WallpaperPickerSheet } from '@/components/ui';
+import { getWallpaperSync } from '@/services/wallpaperService';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -9,9 +12,10 @@ import type { GroupMember } from '@/models';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
 import { errorHaptic, lightHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
+import * as Clipboard from 'expo-clipboard';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Share, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Avatar, Button, Divider, IconButton, List, Text, TextInput } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -70,13 +74,17 @@ export const GroupInfoScreen = () => {
     const me = group.members.find((m) => m.userId === user?.userId);
     const isOwner = me?.role === 'owner';
     const isAdmin = isOwner || me?.role === 'admin';
+    const [wallpaperSheetOpen, setWallpaperSheetOpen] = useState(false);
+    const [currencySheetOpen, setCurrencySheetOpen] = useState(false);
     const groupInitials = group.name.slice(0, 2).toUpperCase();
 
-    const headerOpacity = scrollY.interpolate({
-        inputRange: [0, 100],
-        outputRange: [0, 1],
-        extrapolate: 'clamp',
-    });
+    // Transform slide-in, not opacity — fractional alpha on an ancestor kills
+  // UIVisualEffectView glass materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
+    extrapolate: 'clamp',
+  });
     const titleOpacity = scrollY.interpolate({
         inputRange: [0, 100],
         outputRange: [1, 0],
@@ -309,9 +317,9 @@ export const GroupInfoScreen = () => {
         const items: React.ReactNode[] = [];
         if (member.userId === group.createdBy) {
             items.push(
-                <View key="owner" style={styles.roleBadge}>
-                    <MaterialCommunityIcons name="crown" size={14} color="#FFD700" />
-                    <Text variant="labelSmall" style={[styles.roleBadgeText, { color: '#B8860B' }]}>
+                <View key="owner" style={[styles.roleBadge, { backgroundColor: theme.colors.warningContainer }]}>
+                    <MaterialCommunityIcons name="crown" size={14} color={theme.colors.warning} />
+                    <Text variant="labelSmall" style={[styles.roleBadgeText, { color: theme.colors.onWarningContainer }]}>
                         Owner
                     </Text>
                 </View>,
@@ -345,19 +353,15 @@ export const GroupInfoScreen = () => {
 
     return (
         <LiquidBackground>
+            <GuardedScreen target="expenses" entityId={group.groupId} label="Group hidden">
             <SafeAreaView style={styles.container} edges={['bottom']}>
                 <Animated.View
-                    style={[styles.stickyHeader, { opacity: headerOpacity, paddingTop: insets.top }]}
+                    style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }], paddingTop: insets.top }]}
                     pointerEvents="none"
                 >
                     <GlassView style={styles.stickyHeaderGlass}>
                         <View style={styles.stickyHeaderContent}>
-                            <Avatar.Text
-                                size={32}
-                                label={groupInitials}
-                                style={{ backgroundColor: theme.colors.primary }}
-                                color={theme.colors.onPrimary}
-                            />
+                            <GroupAvatar photoURL={group.photoURL} name={group.name} size={32} />
                             <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
                                 {group.name}
                             </Text>
@@ -381,12 +385,7 @@ export const GroupInfoScreen = () => {
                     </Animated.View>
 
                     <View style={styles.profileSection}>
-                        <Avatar.Text
-                            size={120}
-                            label={groupInitials}
-                            style={{ backgroundColor: theme.colors.primary }}
-                            color={theme.colors.onPrimary}
-                        />
+                        <GroupPhotoUploader group={group} size={120} editable={isAdmin} />
 
                         <View style={styles.nameSection}>
                             {isEditingName ? (
@@ -526,6 +525,18 @@ export const GroupInfoScreen = () => {
                             Group Information
                         </Text>
                         <List.Item
+                            title="Group wallpaper"
+                            description={getWallpaperSync(`group:${group.groupId}`)
+                                ? 'Custom photo behind this group · only on this device'
+                                : 'Use a photo behind this group\u2019s screens'}
+                            left={(props) => <List.Icon {...props} icon="image-outline" />}
+                            onPress={() => {
+                                lightHaptic();
+                                setWallpaperSheetOpen(true);
+                            }}
+                        />
+                        <Divider />
+                        <List.Item
                             title="Created by"
                             description={group.members.find((m) => m.userId === group.createdBy)?.displayName || 'Unknown'}
                             left={(props) => <List.Icon {...props} icon="account" />}
@@ -539,14 +550,33 @@ export const GroupInfoScreen = () => {
                         <Divider />
                         <List.Item
                             title="Currency"
-                            description={group.currency}
+                            description={isAdmin ? `${group.currency} · tap to convert` : group.currency}
                             left={(props) => <List.Icon {...props} icon="currency-usd" />}
+                            onPress={isAdmin ? () => { lightHaptic(); setCurrencySheetOpen(true); } : undefined}
+                            right={isAdmin ? (props) => <List.Icon {...props} icon="chevron-right" /> : undefined}
                         />
                         <Divider />
                         <List.Item
                             title="Invite code"
-                            description={group.inviteCode}
+                            description={`${group.inviteCode} · tap to copy`}
                             left={(props) => <List.Icon {...props} icon="ticket-confirmation-outline" />}
+                            onPress={async () => {
+                                successHaptic();
+                                await Clipboard.setStringAsync(group.inviteCode);
+                            }}
+                            right={(props) => (
+                                <IconButton
+                                    {...props}
+                                    icon="share-variant"
+                                    accessibilityLabel="Share invite code"
+                                    onPress={() => {
+                                        lightHaptic();
+                                        void Share.share({
+                                            message: `Join "${group.name}" — use invite code ${group.inviteCode}`,
+                                        });
+                                    }}
+                                />
+                            )}
                         />
                     </GlassView>
 
@@ -657,6 +687,18 @@ export const GroupInfoScreen = () => {
                     </GlassView>
                 </Animated.ScrollView>
             </SafeAreaView>
+            <WallpaperPickerSheet
+                visible={wallpaperSheetOpen}
+                slot={`group:${group.groupId}`}
+                title="Group wallpaper"
+                onClose={() => setWallpaperSheetOpen(false)}
+            />
+            <CurrencyConvertSheet
+                visible={currencySheetOpen}
+                group={group}
+                onClose={() => setCurrencySheetOpen(false)}
+            />
+        </GuardedScreen>
         </LiquidBackground>
     );
 };
@@ -792,7 +834,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 10,
         paddingVertical: 4,
         borderRadius: 12,
-        backgroundColor: 'rgba(255, 215, 0, 0.18)',
     },
     roleBadgeText: {
         fontWeight: '700',

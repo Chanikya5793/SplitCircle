@@ -521,5 +521,10 @@ export const subscribeToCurrentDeviceRecord = async (
     }
 
     onChange(normalizeDeviceRecord(userId, deviceId, snapshot.data()));
+  }, (error) => {
+    // Without this handler a rules rejection (e.g. permission-denied)
+    // becomes an uncaught snapshot error and a full-screen dev crash.
+    console.warn('Notification device subscription failed.', error);
+    onChange(null);
   });
 };

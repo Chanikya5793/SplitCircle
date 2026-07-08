@@ -1,10 +1,12 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { EmptyState, GuardedScreen } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { ROUTES } from '@/constants';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { getExpenseDetailsTitle } from '@/navigation/screenTitles';
+import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { formatCurrency } from '@/utils/currency';
 import { getExpenseSplitDetails } from '@/utils/expenseSplit';
 import { buildReceiptInsightRows } from '@/utils/receiptInsights';
@@ -59,9 +61,11 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
     }
   }, [navigation, groups, groupId]);
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [40, 80],
-    outputRange: [0, 1],
+  // Transform slide-in, not opacity — fractional alpha on an ancestor kills
+  // UIVisualEffectView glass materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
 
@@ -84,11 +88,55 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
     [group],
   );
 
+  // Hoisted above the early return below: when a deep link renders the
+  // "waiting for sync" fallback first and the group then syncs in, this same
+  // component instance re-renders with MORE hooks if any hook lives past the
+  // early return — React crashes with "Rendered more hooks than during the
+  // previous render". Keep every hook above the fallback branch.
+  const splitDetails = useMemo(
+    () => (group && expense ? getExpenseSplitDetails(expense, memberMap, group.currency) : null),
+    [expense, group?.currency, memberMap],
+  );
+
   if (!group || !expense) {
+    // Deep links (expense notifications) can land here before Firestore
+    // syncs, or after the group/expense was deleted. Wait briefly for sync,
+    // then time out into a "not found" state with a way back. If the group
+    // is already synced but the expense is missing, it was deleted — show
+    // the empty state immediately.
+    const handleBack = () => {
+      if (typeof navigation.canGoBack === 'function' && navigation.canGoBack()) {
+        navigation.goBack();
+        return;
+      }
+      navigation.navigate(ROUTES.APP.ROOT, { screen: ROUTES.APP.GROUPS_TAB });
+    };
+
+    if (group) {
+      return (
+        <LiquidBackground>
+          <View style={styles.center}>
+            <EmptyState
+              icon="receipt-text-outline"
+              title="Expense not found"
+              hint="This expense may have been deleted."
+              actionLabel="Go back"
+              onAction={handleBack}
+            />
+          </View>
+        </LiquidBackground>
+      );
+    }
+
     return (
-      <View style={styles.center}>
-        <Text style={{ color: theme.colors.onSurface }}>Expense not found</Text>
-      </View>
+      <LoadingScreen
+        timeoutMs={10000}
+        timeoutIcon="receipt-text-outline"
+        timeoutTitle="Expense not found"
+        timeoutHint="This expense may have been deleted or isn't available on this device."
+        timeoutActionLabel="Go back"
+        onTimeoutAction={handleBack}
+      />
     );
   }
 
@@ -115,14 +163,11 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   };
 
   const payerName = memberMap[expense.paidBy] || 'Unknown';
-  const splitDetails = useMemo(
-    () => getExpenseSplitDetails(expense, memberMap, group.currency),
-    [expense, group.currency, memberMap],
-  );
 
   return (
     <LiquidBackground>
-      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+      <GuardedScreen target="expenses" entityId={groupId} label="Expense hidden">
+      <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }] }]}>
         <GlassView style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
             {expense.title}
@@ -293,33 +338,35 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
 
           <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
 
-          <View style={styles.section}>
-            <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-              Split mode
-            </Text>
-            <View style={styles.splitModeHeader}>
-              <Chip
-                icon="tune-variant"
-                style={{ backgroundColor: theme.colors.secondaryContainer }}
-                textStyle={{ color: theme.colors.onSecondaryContainer }}
-              >
-                {splitDetails.label}
-              </Chip>
-            </View>
-            <Text variant="bodySmall" style={[styles.splitModeNote, { color: theme.colors.onSurfaceVariant }]}>
-              {splitDetails.note}
-            </Text>
-            {splitDetails.rows.map((row) => (
-              <View key={`${row.label}-${row.value}`} style={styles.row}>
-                <Text variant="bodyMedium" style={[styles.detailLabel, { color: theme.colors.onSurfaceVariant }]}>
-                  {row.label}
-                </Text>
-                <Text variant="bodyMedium" style={[styles.detailValue, { color: theme.colors.onSurface }]}>
-                  {row.value}
-                </Text>
+          {splitDetails ? (
+            <View style={styles.section}>
+              <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+                Split mode
+              </Text>
+              <View style={styles.splitModeHeader}>
+                <Chip
+                  icon="tune-variant"
+                  style={{ backgroundColor: theme.colors.secondaryContainer }}
+                  textStyle={{ color: theme.colors.onSecondaryContainer }}
+                >
+                  {splitDetails.label}
+                </Chip>
               </View>
-            ))}
-          </View>
+              <Text variant="bodySmall" style={[styles.splitModeNote, { color: theme.colors.onSurfaceVariant }]}>
+                {splitDetails.note}
+              </Text>
+              {splitDetails.rows.map((row) => (
+                <View key={`${row.label}-${row.value}`} style={styles.row}>
+                  <Text variant="bodyMedium" style={[styles.detailLabel, { color: theme.colors.onSurfaceVariant }]}>
+                    {row.label}
+                  </Text>
+                  <Text variant="bodyMedium" style={[styles.detailValue, { color: theme.colors.onSurface }]}>
+                    {row.value}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
 
           <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
 
@@ -422,6 +469,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
           </View>
         </Modal>
       </Animated.ScrollView>
+    </GuardedScreen>
     </LiquidBackground>
   );
 };

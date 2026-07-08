@@ -1,6 +1,6 @@
 import { getInfoAsync } from 'expo-file-system/legacy';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { Image } from 'react-native';
+import { Image, Platform } from 'react-native';
 import {
   Video as VideoCompressor,
   getVideoMetaData,
@@ -33,6 +33,12 @@ export const ensureMediaSourceAvailable = async (uri: string): Promise<void> => 
   if (!uri) {
     throw new MediaSourceUnavailableError('Missing media path.');
   }
+  // Web: blob:/data: URIs aren't backed by a file system — getInfoAsync is
+  // unavailable. The upload path reads them via fetch() and surfaces errors
+  // there instead.
+  if (Platform.OS === 'web') {
+    return;
+  }
   // Photos-framework URIs are virtual — getInfoAsync doesn't apply. The
   // picker has already (best-effort) materialized them via
   // shouldDownloadFromNetwork. If iCloud still can't deliver, the next
@@ -57,6 +63,25 @@ export const ensureMediaSourceAvailable = async (uri: string): Promise<void> => 
     throw new MediaSourceUnavailableError(
       'Could not read the source file. Pick it again or check your network.',
     );
+  }
+};
+
+/** Best-effort byte size of a URI. Web reads blob:/data: URIs via fetch();
+ *  native uses the file system. Never throws — returns 0 when unknown. */
+const getUriByteSize = async (uri: string): Promise<number> => {
+  if (Platform.OS === 'web') {
+    try {
+      const blob = await (await fetch(uri)).blob();
+      return blob.size;
+    } catch {
+      return 0;
+    }
+  }
+  try {
+    const info = await getInfoAsync(uri);
+    return info.exists && 'size' in info ? info.size : 0;
+  } catch {
+    return 0;
   }
 };
 
@@ -164,12 +189,7 @@ export const readImageSourceMetadata = async (
     } catch {
       // Leave at 0 — caller handles missing dimensions.
     }
-    try {
-      const info = await getInfoAsync(uri);
-      sourceFileSize = info.exists && 'size' in info ? info.size : 0;
-    } catch {
-      /* swallow */
-    }
+    sourceFileSize = await getUriByteSize(uri);
   }
 
   const oriented = orient(rawWidth, rawHeight, orientation);
@@ -229,8 +249,7 @@ export const processImage = async (
       compress: compressQuality,
       format: ImageManipulator.SaveFormat.JPEG,
     });
-    const fileInfo = await getInfoAsync(result.uri);
-    const size = fileInfo.exists && 'size' in fileInfo ? fileInfo.size : 0;
+    const size = await getUriByteSize(result.uri);
     return {
       uri: result.uri,
       width: result.width,
@@ -265,6 +284,34 @@ export const processVideo = async (
   onProgress?: (fraction: number) => void,
 ): Promise<ProcessedVideo> => {
   await ensureMediaSourceAvailable(uri);
+
+  // Web: react-native-compressor is native-only — send the original file.
+  // Dimensions are read best-effort from an off-screen <video> element.
+  if (Platform.OS === 'web') {
+    const size = await getUriByteSize(uri);
+    const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+      try {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.onloadedmetadata = () =>
+          resolve({ w: video.videoWidth ?? 0, h: video.videoHeight ?? 0 });
+        video.onerror = () => resolve({ w: 0, h: 0 });
+        video.src = uri;
+      } catch {
+        resolve({ w: 0, h: 0 });
+      }
+    });
+    onProgress?.(1);
+    return {
+      uri,
+      width: dims.w,
+      height: dims.h,
+      size,
+      sourceWidth: dims.w,
+      sourceHeight: dims.h,
+      sourceFileSize: size,
+    };
+  }
 
   const maxEdge = quality === 'HD' ? 1280 : 854;
 

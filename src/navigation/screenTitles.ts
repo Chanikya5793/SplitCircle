@@ -6,7 +6,7 @@ import type { CallHistoryEntry } from '@/services/localCallStorage';
 type NamedGroup = Pick<Group, 'groupId' | 'name'>;
 
 export const ROOT_SCREEN_TITLES = {
-  groups: 'Groups',
+  groups: 'Expenses',
   friends: 'Friends',
   chats: 'Chats',
   calls: 'Calls',
@@ -17,6 +17,7 @@ export const SCREEN_TITLES = {
   groupDetailsFallback: 'Group',
   groupChatFallback: 'Chat',
   groupInfo: 'Group Info',
+  friends: 'Friends',
   messageInfo: 'Message Info',
   expenseDetailsFallback: 'Expense Details',
   groupStats: 'Group Stats',
@@ -123,6 +124,8 @@ export const getRouteBackLabel = (route: RouteLike | undefined): string | undefi
     case ROUTES.APP.GROUPS_TAB:
     case ROUTES.APP.GROUPS:
       return ROOT_SCREEN_TITLES.groups;
+    case ROUTES.APP.FRIENDS:
+      return ROOT_SCREEN_TITLES.friends;
     case ROUTES.APP.CHAT_TAB:
       return ROOT_SCREEN_TITLES.chats;
     case ROUTES.APP.CALLS_TAB:

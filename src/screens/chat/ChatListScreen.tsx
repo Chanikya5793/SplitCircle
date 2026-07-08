@@ -10,17 +10,68 @@ import type { ChatMessage, ChatThread } from '@/models';
 import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import { getChatMessages, subscribeToLocalMessages } from '@/services/localMessageStorage';
-import { lightHaptic } from '@/utils/haptics';
+import { archiveChat, isChatArchived, unarchiveChat } from '@/services/archiveService';
+import { useNotificationContext } from '@/context/NotificationContext';
+import { heavyHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, RefreshControl, StyleSheet, View } from 'react-native';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, StyleSheet, View } from 'react-native';
+import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
+import { GroupAvatar, UserAvatar, StickyHeaderPill} from '@/components/ui';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
 interface ChatListScreenProps {
   onOpenThread: (thread: ChatThread) => void;
 }
+
+/**
+ * Swipe-left wrapper for a chat row. Archive on active rows, Restore on
+ * archived rows — mirrors the group-list gesture so the whole app speaks the
+ * same swipe language.
+ */
+const SwipeableChatRow = ({
+  archived,
+  onArchiveToggle,
+  children,
+}: {
+  archived: boolean;
+  onArchiveToggle: () => void;
+  children: React.ReactNode;
+}) => {
+  const swipeableRef = useRef<Swipeable>(null);
+
+  const renderRightActions = () => (
+    <View style={styles.rowAction}>
+      <RectButton
+        style={[styles.rowActionButton, { backgroundColor: archived ? '#34C759' : '#FF9500' }]}
+        onPress={() => {
+          heavyHaptic();
+          swipeableRef.current?.close();
+          onArchiveToggle();
+        }}
+      >
+        <IconButton icon={archived ? 'archive-arrow-up' : 'archive'} iconColor="#fff" size={22} style={{ margin: 0 }} />
+        <Text style={styles.rowActionText}>{archived ? 'Restore' : 'Archive'}</Text>
+      </RectButton>
+    </View>
+  );
+
+  return (
+    <Swipeable
+      ref={swipeableRef}
+      renderRightActions={renderRightActions}
+      friction={2}
+      rightThreshold={40}
+      overshootRight={false}
+    >
+      {children}
+    </Swipeable>
+  );
+};
 
 export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const navigation = useNavigation();
@@ -36,6 +87,8 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const [filterVisible, setFilterVisible] = useState(false);
   const [sortField, setSortField] = useState<ChatSortField>('updatedAt');
   const [sortOrder, setSortOrder] = useState<ChatSortOrder>('desc');
+  const [showArchived, setShowArchived] = useState(false);
+  const { preferences, updatePreference } = useNotificationContext();
   useSyncRootStackTitle(ROOT_SCREEN_TITLES.chats);
 
   useLayoutEffect(() => {
@@ -45,9 +98,11 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     });
   }, [navigation]);
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 40],
-    outputRange: [0, 1],
+  // Slide the glass pill in with a TRANSFORM (not opacity): fractional alpha
+  // on an ancestor kills UIVisualEffectView materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
 
@@ -59,6 +114,25 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     }
     const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
     return otherParticipant?.displayName || 'Direct Chat';
+  }, [groups, user?.userId]);
+
+  // Photo + kind for the row avatar: group photo for group threads, the other
+  // participant's profile photo for DMs; initials render as the fallback.
+  const { isShielded, action, settings: guardSettings } = usePrivacyGuard();
+  const { maskChatTitle, maskPreview } = usePrivacyMask();
+  // Full-list vanish only when the user chose "vanish" AND every chat is in
+  // scope; otherwise render the list and disguise rows per-scope below.
+  const vanishAllChats =
+    action === 'vanish' && isShielded('chats') && guardSettings.chatScope.mode === 'all';
+  const chatsAnyShielded = isShielded('chats');
+
+  const getChatAvatar = useMemo(() => (thread: ChatThread): { kind: 'group' | 'user'; photoURL?: string; name: string } => {
+    if (thread.type === 'group' && thread.groupId) {
+      const group = groups.find(g => g.groupId === thread.groupId);
+      return { kind: 'group', photoURL: group?.photoURL, name: group?.name || 'Group Chat' };
+    }
+    const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
+    return { kind: 'user', photoURL: otherParticipant?.photoURL, name: otherParticipant?.displayName || 'Direct Chat' };
   }, [groups, user?.userId]);
 
   // Helper to get chat initials for avatar
@@ -166,59 +240,160 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     return result;
   }, [threads, sortField, sortOrder, getChatTitle, localUnreadCounts]);
 
+  // Per-user chat archive with WhatsApp-style auto-unarchive: a thread whose
+  // last message is newer than its archivedAt renders as active again.
+  const archivedChats = user?.archivedChats;
+  const activeThreads = useMemo(
+    () => processedThreads.filter(t => !isChatArchived(archivedChats, t)),
+    [processedThreads, archivedChats],
+  );
+  const archivedThreads = useMemo(
+    () => processedThreads.filter(t => isChatArchived(archivedChats, t)),
+    [processedThreads, archivedChats],
+  );
+
   const handleOpenThread = (thread: ChatThread) => {
     lightHaptic();
+    // Lazy cleanup: if this chat auto-unarchived (new message arrived after
+    // archiving), drop the stale map entry now that the user is opening it.
+    if (user && archivedChats?.[thread.chatId] && !isChatArchived(archivedChats, thread)) {
+      void unarchiveChat(user.userId, thread.chatId).catch(() => { /* cosmetic cleanup; safe to ignore */ });
+    }
     onOpenThread(thread);
   };
+
+  const handleArchiveToggle = async (thread: ChatThread, archived: boolean) => {
+    if (!user) return;
+    try {
+      if (archived) {
+        await unarchiveChat(user.userId, thread.chatId);
+      } else {
+        await archiveChat(user.userId, thread.chatId);
+      }
+      successHaptic();
+    } catch (error) {
+      console.error('Failed to toggle chat archive', error);
+      Alert.alert('Error', `Failed to ${archived ? 'restore' : 'archive'} chat. Please try again.`);
+    }
+  };
+
+  const isChatMuted = (chatId: string) => (preferences.muteChatIds ?? []).includes(chatId);
+
+  const handleToggleMute = (thread: ChatThread) => {
+    const current = preferences.muteChatIds ?? [];
+    const next = current.includes(thread.chatId)
+      ? current.filter(id => id !== thread.chatId)
+      : [...current, thread.chatId];
+    void updatePreference('muteChatIds', next);
+    successHaptic();
+  };
+
+  const handleLongPressThread = (thread: ChatThread, archived: boolean) => {
+    heavyHaptic();
+    const muted = isChatMuted(thread.chatId);
+    Alert.alert(
+      maskChatTitle(getChatTitle(thread), thread.chatId),
+      undefined,
+      [
+        {
+          text: muted ? 'Unmute notifications' : 'Mute notifications',
+          onPress: () => handleToggleMute(thread),
+        },
+        {
+          text: archived ? 'Restore chat' : 'Archive chat',
+          onPress: () => void handleArchiveToggle(thread, archived),
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
+  };
+
+  const renderThreadRow = (item: ChatThread, archived: boolean) => (
+    <SwipeableChatRow archived={archived} onArchiveToggle={() => void handleArchiveToggle(item, archived)}>
+      <GlassView style={styles.chatItem} contentStyle={styles.chatItemContent}>
+        <List.Item
+          title={maskChatTitle(getChatTitle(item), item.chatId)}
+          description={maskPreview(lastPreviewFor(item), item.chatId)}
+          left={() => (
+            <View>
+              {(() => {
+                const avatar = getChatAvatar(item);
+                return avatar.kind === 'group' ? (
+                  <GroupAvatar photoURL={avatar.photoURL} name={maskChatTitle(avatar.name, item.chatId)} size={48} />
+                ) : (
+                  <UserAvatar photoURL={avatar.photoURL} displayName={maskChatTitle(avatar.name, item.chatId)} size={48} />
+                );
+              })()}
+              {!chatsAnyShielded && (localUnreadCounts[item.chatId] ?? 0) > 0 && (
+                <View style={[styles.unreadBadge, { backgroundColor: theme.colors.error, borderColor: theme.colors.background }]}>
+                  <Text style={{ color: theme.colors.onError, fontSize: 10, fontWeight: 'bold' }}>
+                    {(localUnreadCounts[item.chatId] ?? 0) > 9 ? '9+' : localUnreadCounts[item.chatId]}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+          right={isChatMuted(item.chatId) ? () => (
+            <IconButton icon="bell-off-outline" size={16} iconColor={theme.colors.onSurfaceVariant} style={styles.mutedIcon} />
+          ) : undefined}
+          onPress={() => handleOpenThread(item)}
+          onLongPress={() => handleLongPressThread(item, archived)}
+          style={styles.chatItemRow}
+          titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
+          descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
+          descriptionNumberOfLines={1}
+        />
+      </GlassView>
+    </SwipeableChatRow>
+  );
 
   return (
     <LiquidBackground>
       <Animated.View
         style={[
           styles.stickyHeader,
-          { opacity: headerOpacity, paddingTop: insets.top + 8 },
+          { transform: [{ translateY: headerTranslate }], paddingTop: insets.top + 8 },
         ]}
       >
-        <GlassView style={styles.stickyHeaderGlass}>
+        <StickyHeaderPill style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>Chats</Text>
-        </GlassView>
+        </StickyHeaderPill>
       </Animated.View>
 
       <View style={styles.container}>
         <Animated.FlatList
-          data={processedThreads}
+          data={vanishAllChats ? [] : activeThreads}
           keyExtractor={(item) => item.chatId}
-          renderItem={({ item }) => (
-            <GlassView style={styles.chatItem} contentStyle={styles.chatItemContent}>
-              <List.Item
-                title={getChatTitle(item)}
-                description={lastPreviewFor(item)}
-                left={() => (
-                  <View>
-                    <Avatar.Text
-                      size={48}
-                      label={getChatInitials(item)}
-                      style={{ backgroundColor: theme.colors.primary }}
-                      color={theme.colors.onPrimary}
+          renderItem={({ item }) => renderThreadRow(item, false)}
+          ListFooterComponent={
+            !vanishAllChats && archivedThreads.length > 0 ? (
+              <View style={styles.archivedSection}>
+                <TouchableRipple
+                  onPress={() => { lightHaptic(); setShowArchived(prev => !prev); }}
+                  style={styles.archivedToggle}
+                  borderless
+                >
+                  <View style={styles.archivedToggleRow}>
+                    <IconButton icon="archive-outline" size={20} iconColor={theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
+                    <Text variant="titleSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }}>
+                      Archived ({archivedThreads.length})
+                    </Text>
+                    <IconButton
+                      icon={showArchived ? 'chevron-up' : 'chevron-down'}
+                      size={20}
+                      iconColor={theme.colors.onSurfaceVariant}
+                      style={{ margin: 0 }}
                     />
-                    {(localUnreadCounts[item.chatId] ?? 0) > 0 && (
-                      <View style={[styles.unreadBadge, { backgroundColor: theme.colors.error, borderColor: theme.colors.background }]}>
-                        <Text style={{ color: theme.colors.onError, fontSize: 10, fontWeight: 'bold' }}>
-                          {(localUnreadCounts[item.chatId] ?? 0) > 9 ? '9+' : localUnreadCounts[item.chatId]}
-                        </Text>
-                      </View>
-                    )}
                   </View>
-                )}
-                onPress={() => handleOpenThread(item)}
-                style={styles.chatItemRow}
-                titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
-                descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
-                descriptionNumberOfLines={1}
-              />
-            </GlassView>
-          )}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={() => undefined} />}
+                </TouchableRipple>
+                {showArchived && archivedThreads.map((item) => (
+                  <React.Fragment key={item.chatId}>
+                    {renderThreadRow(item, true)}
+                  </React.Fragment>
+                ))}
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             loading ? (
               <View>
@@ -227,7 +402,9 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                 <ChatListSkeleton />
               </View>
             ) : (
-              <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No chats yet.</Text>
+              <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
+                {archivedThreads.length > 0 && !vanishAllChats ? 'All your chats are archived.' : 'No chats yet.'}
+              </Text>
             )
           }
           contentContainerStyle={{ padding: 16, paddingTop: insets.top + 24, paddingBottom: listBottomPadding }}
@@ -239,7 +416,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                 <View>
                   <TouchableRipple
                     onPress={() => { lightHaptic(); setFilterVisible(true); }}
-                    style={[styles.filterButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}
+                    style={[styles.filterButton, { backgroundColor: theme.colors.skeleton }]}
                     borderless
                   >
                     <View style={styles.filterButtonContent}>
@@ -306,6 +483,40 @@ const styles = StyleSheet.create({
   empty: {
     textAlign: 'center',
     marginTop: 32,
+  },
+  rowAction: {
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  rowActionButton: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 84,
+    borderRadius: 16,
+  },
+  rowActionText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: -4,
+  },
+  mutedIcon: {
+    margin: 0,
+    alignSelf: 'center',
+  },
+  archivedSection: {
+    marginTop: 16,
+  },
+  archivedToggle: {
+    borderRadius: 16,
+    marginBottom: 12,
+  },
+  archivedToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   stickyHeader: {
     position: 'absolute',

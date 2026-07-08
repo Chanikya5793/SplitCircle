@@ -54,3 +54,9 @@ google-service-account.json
 
 # Spike (fm-ios27) local Xcode-beta build output
 ios/build-s0/
+
+# EAS local build artifacts
+*.ipa
+build-output/
+credentials/
+SplitCircle*.ipa

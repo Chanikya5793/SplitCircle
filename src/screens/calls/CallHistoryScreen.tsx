@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { StickyHeaderPill } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { useAuth } from '@/context/AuthContext';
@@ -35,6 +36,7 @@ import {
 import { Gesture, GestureDetector, GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, Text, TextInput, TouchableRipple } from 'react-native-paper';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import Animated, {
     FadeIn,
     FadeOut,
@@ -69,6 +71,11 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const { isShielded } = usePrivacyGuard();
+  const callsShielded = isShielded('calls');
+  // The New Call sheet lists conversations by name — block it whenever calls
+  // OR chats are hidden so it can't reveal who you talk to.
+  const newCallBlocked = callsShielded || isShielded('chats');
   const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
 
   const [callHistory, setCallHistory] = useState<CallHistoryEntry[]>([]);
@@ -136,9 +143,11 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
     }
   }, [showNewCallSheet]);
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 40],
-    outputRange: [0, 1],
+  // Slide the glass pill in with a TRANSFORM (not opacity): fractional alpha
+  // on an ancestor kills UIVisualEffectView materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
 
@@ -462,22 +471,22 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
         pointerEvents="none"
         style={[
           styles.stickyHeader,
-          { opacity: headerOpacity, paddingTop: insets.top + 8 },
+          { transform: [{ translateY: headerTranslate }], paddingTop: insets.top + 8 },
         ]}
       >
-        <GlassView style={styles.stickyHeaderGlass}>
+        <StickyHeaderPill style={styles.stickyHeaderGlass}>
           <Text
             variant="titleMedium"
             style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}
           >
             Calls
           </Text>
-        </GlassView>
+        </StickyHeaderPill>
       </RNAnimated.View>
 
       <View style={styles.container}>
         <RNAnimated.SectionList
-          sections={sections}
+          sections={callsShielded ? [] : sections}
           keyExtractor={(item) => item.callId}
           renderItem={renderCallItem}
           renderSectionHeader={renderSectionHeader}
@@ -758,16 +767,18 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
 
                   {/* Thread list */}
                   <FlatList
-                    data={filteredThreads}
+                    data={newCallBlocked ? [] : filteredThreads}
                     keyExtractor={(item) => item.chatId}
                     keyboardShouldPersistTaps="handled"
                     contentContainerStyle={styles.sheetListContent}
                     ListEmptyComponent={
                       <View style={styles.sheetEmpty}>
                         <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                          {searchQuery
-                            ? 'No contacts found.'
-                            : 'No conversations yet. Start a chat first.'}
+                          {newCallBlocked
+                            ? 'Hidden — shake again or enter your code to reveal.'
+                            : searchQuery
+                              ? 'No contacts found.'
+                              : 'No conversations yet. Start a chat first.'}
                         </Text>
                       </View>
                     }

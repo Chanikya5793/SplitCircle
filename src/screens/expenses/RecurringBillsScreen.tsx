@@ -1,6 +1,7 @@
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { Group } from '@/models';
@@ -19,8 +20,15 @@ import { findNextOccurrenceAt, getRecurrenceSummary, normalizeRecurrenceRule } f
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, IconButton, Modal, Portal, Switch, Text } from 'react-native-paper';
+import { ALL_EXPENSE_CATEGORIES } from '@/utils/categoryMatch';
 
-const BILL_CATEGORIES = ['Utilities', 'Rent', 'Subscriptions', 'Food', 'Transport', 'Health', 'Entertainment', 'Shopping', 'Travel', 'General', 'Other'];
+// Same canonical set as everywhere else (utils/categoryMatch.ts), ordered
+// bill-first for this screen's picker.
+const BILL_FIRST = ['Utilities', 'Rent', 'Subscriptions'] as const;
+const BILL_CATEGORIES = [
+    ...BILL_FIRST,
+    ...ALL_EXPENSE_CATEGORIES.filter((c) => !(BILL_FIRST as readonly string[]).includes(c)),
+];
 
 
 type FrequencyPreset =
@@ -442,6 +450,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
 
     return (
         <LiquidBackground>
+      <GuardedScreen target="expenses" entityId={group.groupId} label="Bills hidden">
             <ScrollView contentContainerStyle={styles.container}>
                 <GlassView style={styles.headerCard}>
                     <Text variant="headlineSmall" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
@@ -770,7 +779,8 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     </GlassView>
                 </Modal>
             </Portal>
-        </LiquidBackground>
+        </GuardedScreen>
+    </LiquidBackground>
     );
 };
 

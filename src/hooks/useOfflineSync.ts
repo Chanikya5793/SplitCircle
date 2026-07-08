@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 
 interface OfflineSyncOptions {
@@ -10,7 +11,13 @@ export const useOfflineSync = ({ onReconnect }: OfflineSyncOptions = {}) => {
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
-      const nextOnlineState = Boolean(state.isConnected && state.isInternetReachable);
+      // On web, `isInternetReachable` stays `null` while the reachability
+      // probe is pending — only treat an explicit `false` as offline there.
+      // Native platforms keep the original stricter check unchanged.
+      const nextOnlineState =
+        Platform.OS === 'web'
+          ? Boolean(state.isConnected) && state.isInternetReachable !== false
+          : Boolean(state.isConnected && state.isInternetReachable);
       setIsOnline(nextOnlineState);
       if (nextOnlineState && onReconnect) {
         onReconnect();

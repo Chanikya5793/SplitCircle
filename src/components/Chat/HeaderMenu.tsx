@@ -78,8 +78,11 @@ export const HeaderMenu = ({ visible, topInset, items, onClose }: HeaderMenuProp
               activeOpacity={0.7}
               onPress={() => {
                 lightHaptic();
-                item.onPress();
+                // Close FIRST, run the action after the Modal is fully gone:
+                // actions that present native UI (image picker, share sheet)
+                // silently fail if invoked while this Modal is dismissing.
                 handleClose();
+                setTimeout(() => item.onPress(), 320);
               }}
               style={[
                 styles.row,

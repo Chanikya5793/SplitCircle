@@ -57,6 +57,14 @@ let lastToken: string | null = null;
 let isRegistered = false;
 let bufferedPushesFlushed = false;
 
+// Recent pushes are replayed to listeners that subscribe AFTER the push was
+// emitted. On a VoIP cold start initialize() drains the native buffer during
+// the first mount effect, but the consumer (CallContext) only subscribes once
+// auth has restored — without a replay the wake-up push would be lost and the
+// CallKit call could never be reconciled against RTDB.
+const RECENT_PUSH_TTL_MS = 2 * 60 * 1000;
+const recentPushes: { push: VoipIncomingPush; receivedAt: number }[] = [];
+
 const extractCallId = (payload: Record<string, unknown>): string | null => {
   const candidates = ['callId', 'uuid', 'callUUID'];
   for (const key of candidates) {
@@ -80,8 +88,25 @@ const emitPush = (rawPayload: Record<string, unknown>) => {
     payload: rawPayload,
     callId: extractCallId(rawPayload),
   };
+
+  const now = Date.now();
+  while (recentPushes.length > 0 && now - recentPushes[0].receivedAt > RECENT_PUSH_TTL_MS) {
+    recentPushes.shift();
+  }
+
   for (const listener of pushListeners) {
     try { listener(push); } catch (error) { console.warn('voip push listener failed', error); }
+  }
+
+  // Retain for replay ONLY when nobody was listening (the cold-start gap:
+  // native buffer drained before CallContext subscribes). If a live listener
+  // already consumed the push, replaying it to a re-subscribing consumer
+  // later (e.g. the CallContext effect re-runs because the auth user object
+  // was recreated by a Firestore snapshot) would re-synthesize an incoming
+  // call AFTER it was answered/declined — the RTDB "answered elsewhere"
+  // branch would then hang up the live call.
+  if (pushListeners.size === 0) {
+    recentPushes.push({ push, receivedAt: now });
   }
 };
 
@@ -157,6 +182,19 @@ export function onToken(listener: TokenListener): () => void {
 
 export function onIncomingPush(listener: PushListener): () => void {
   pushListeners.add(listener);
+
+  // Replay pushes that arrived while NOBODY was listening (cold-start race:
+  // the native buffer is drained before CallContext subscribes). Replay is
+  // strictly one-shot — each push is handed to exactly one subscriber and
+  // dropped, so a later re-subscription (auth user object recreated, remount)
+  // can never resurrect a call that was already answered or declined.
+  const now = Date.now();
+  const toReplay = recentPushes.splice(0, recentPushes.length);
+  for (const { push, receivedAt } of toReplay) {
+    if (now - receivedAt > RECENT_PUSH_TTL_MS) continue;
+    try { listener(push); } catch (error) { console.warn('voip push listener failed', error); }
+  }
+
   return () => { pushListeners.delete(listener); };
 }
 

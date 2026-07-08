@@ -1,8 +1,10 @@
+import { ALL_EXPENSE_CATEGORIES } from '@/utils/categoryMatch';
 import { BillSplitScreen } from '@/components/BillSplit';
 import type { Participant, SplitMethod } from '@/components/BillSplit/types';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GuardedScreen } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { ReceiptScannerSheet, type ReceiptScannerResult } from '@/components/ReceiptScannerSheet';
 import { useAuth } from '@/context/AuthContext';
@@ -39,7 +41,9 @@ interface AddExpenseScreenProps {
   onClose: () => void;
 }
 
-const CATEGORIES = ['General', 'Food', 'Transport', 'Utilities', 'Entertainment', 'Shopping', 'Travel', 'Health'];
+// Canonical shared list (utils/categoryMatch.ts) so manual expenses can use
+// every category the app understands, incl. the recurring-bill ones.
+const CATEGORIES = ALL_EXPENSE_CATEGORIES;
 const MAX_RECEIPT_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
 // Category to Icon mapping
@@ -53,6 +57,9 @@ const getCategoryIcon = (cat: string): string => {
     'Shopping': 'cart',
     'Travel': 'airplane',
     'Health': 'medical-bag',
+    'Rent': 'home',
+    'Subscriptions': 'autorenew',
+    'Other': 'dots-horizontal',
   };
   return iconMap[cat] || 'tag';
 };
@@ -652,6 +659,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
   return (
     <PaperProvider theme={theme}>
       <LiquidBackground>
+      <GuardedScreen target="expenses" entityId={group.groupId} label="Hidden">
         <ScrollView contentContainerStyle={styles.container}>
           <GlassView style={styles.card}>
             <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>{expenseId ? 'Edit expense' : 'Add expense'}</Text>
@@ -914,7 +922,8 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
             </View>
           </GlassView>
         </ScrollView>
-      </LiquidBackground>
+      </GuardedScreen>
+    </LiquidBackground>
 
       {/* Receipt Scanner Modal */}
       <Modal

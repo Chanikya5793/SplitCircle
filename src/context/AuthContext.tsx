@@ -50,10 +50,19 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const buildUserProfile = (firebaseUser: FirebaseUser, existing?: UserProfile): UserProfile => ({
   userId: firebaseUser.uid,
   email: firebaseUser.email ?? '',
-  displayName: firebaseUser.displayName ?? existing?.displayName ?? '',
-  photoURL: firebaseUser.photoURL ?? existing?.photoURL ?? null,  // Must be null, not undefined for Firestore
+  // App profile (Firestore/cache) wins over the Firebase Auth copy: the photo
+  // uploader and name edits write to Firestore, while the Auth profile keeps
+  // whatever the provider set at sign-up (e.g. the Google avatar). Auth-first
+  // ordering silently reverted every uploaded photo on the next snapshot.
+  displayName: existing?.displayName?.trim() || firebaseUser.displayName || '',
+  photoURL: existing?.photoURL ?? firebaseUser.photoURL ?? null,  // Must be null, not undefined for Firestore
   groups: existing?.groups ?? [],
   status: 'online',
+  // Carry archive state through: buildUserProfile constructs the in-memory
+  // profile from a fixed key list, so any field omitted here would be
+  // silently stripped from `user` even though Firestore has it.
+  archivedGroupIds: existing?.archivedGroupIds ?? [],
+  archivedChats: existing?.archivedChats ?? {},
   createdAt: existing?.createdAt ?? Date.now(),
   updatedAt: Date.now(),
   preferences: existing?.preferences ?? {
@@ -91,6 +100,9 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const googleConfig = Constants.expoConfig?.extra?.google ?? legacyExtra?.google ?? {};
 
   const [request, response, promptAsync] = Google.useAuthRequest({
+    webClientId: googleConfig.webClientId
+      ?? process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
+      ?? '',
     expoClientId: googleConfig.webClientId
       ?? process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
       ?? process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID

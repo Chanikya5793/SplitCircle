@@ -17,6 +17,22 @@ export const EXPENSE_CATEGORIES = [
 
 export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
 
+/**
+ * Superset of every category an expense can actually carry: manual expenses
+ * (EXPENSE_CATEGORIES) plus the extra categories recurring bills generate
+ * ('Rent', 'Subscriptions', 'Other'). Filter UIs must consume THIS list —
+ * filtering against EXPENSE_CATEGORIES alone silently hides bill-generated
+ * expenses (e.g. 'Subscriptions') from category filters.
+ */
+export const ALL_EXPENSE_CATEGORIES = [
+  ...EXPENSE_CATEGORIES,
+  'Rent',
+  'Subscriptions',
+  'Other',
+] as const;
+
+export type AnyExpenseCategory = (typeof ALL_EXPENSE_CATEGORIES)[number];
+
 const norm = (s: string): string => s.toLowerCase().replace(/[^a-z]/g, '');
 
 /**

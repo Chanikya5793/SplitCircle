@@ -1,6 +1,10 @@
+import { APP_NAME } from '@/constants/appInfo';
 import { useAuth } from '@/context/AuthContext';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
-import { db, storage } from '@/firebase';
+import { auth, db, storage } from '@/firebase';
+import { propagateProfileToGroups } from '@/services/profilePropagation';
+import { updateProfile } from 'firebase/auth';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -16,12 +20,18 @@ interface ProfilePhotoUploaderProps {
 
 export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhotoUploaderProps) => {
   const { user } = useAuth();
+  const { groups } = useGroups();
   const { theme } = useTheme();
   const [uploading, setUploading] = useState(false);
   const [localUri, setLocalUri] = useState<string | null>(null);
 
   const photoUrl = localUri || user?.photoURL;
-  const initials = user?.displayName?.slice(0, 2).toUpperCase() || 'SC';
+  const initials = (() => {
+    const words = user?.displayName?.trim().split(/\s+/).filter(Boolean) ?? [];
+    if (words.length >= 2) return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+    return APP_NAME.slice(0, 2).toUpperCase();
+  })();
 
   const handlePickImage = async () => {
     if (!editable || !user) return;
@@ -35,7 +45,7 @@ export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhot
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.7,
@@ -57,9 +67,19 @@ export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhot
       
       const downloadUrl = await getDownloadURL(storageRef);
 
-      // Update Firestore user profile
+      // Update Firestore user profile (authoritative)
       const userRef = doc(db, 'users', user.userId);
       await updateDoc(userRef, { photoURL: downloadUrl });
+
+      // Keep the Firebase Auth profile in step so auth-derived surfaces
+      // (fresh installs before the first snapshot) show the same photo.
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, { photoURL: downloadUrl }).catch(() => {});
+      }
+
+      // Push the new photo into every group's denormalized member entry —
+      // that's where friends lists, chats, and expense rows read it from.
+      void propagateProfileToGroups(user.userId, { photoURL: downloadUrl }, groups);
 
       successHaptic();
     } catch (error) {
@@ -76,6 +96,8 @@ export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhot
       <TouchableRipple
         onPress={handlePickImage}
         disabled={!editable || uploading}
+        accessibilityRole="button"
+        accessibilityLabel="Change profile photo"
         style={[styles.avatarContainer, { width: size, height: size, borderRadius: size / 2 }]}
         borderless
       >
@@ -96,7 +118,7 @@ export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhot
           
           {uploading && (
             <View style={[styles.uploadingOverlay, { borderRadius: size / 2 }]}>
-              <ActivityIndicator color="#fff" size="small" />
+              <ActivityIndicator color={theme.colors.onPrimary} size="small" />
             </View>
           )}
         </View>
@@ -106,9 +128,11 @@ export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhot
         <View style={[styles.editBadge, { backgroundColor: theme.colors.primary }]}>
           <IconButton
             icon="camera"
-            size={14}
-            iconColor="#fff"
+            size={16}
+            iconColor={theme.colors.onPrimary}
             onPress={handlePickImage}
+            accessibilityLabel="Change profile photo"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             style={styles.editIcon}
           />
         </View>
@@ -131,7 +155,7 @@ const styles = StyleSheet.create({
   },
   uploadingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',  // scrim over arbitrary photos — intentionally scheme-independent
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -139,9 +163,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 0,
     right: 0,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
   },

@@ -75,4 +75,17 @@ export interface UserProfile {
   createdAt: number;
   updatedAt: number;
   preferences: NotificationPreference;
+  /**
+   * Per-user group archive (Splitwise-style). Lives on the user doc because
+   * firestore.rules key-restricts group doc updates — clients cannot add an
+   * `archived` flag there without a rules deploy. Archived groups stay fully
+   * functional (balances still count); they are just tucked away in the UI.
+   */
+  archivedGroupIds?: string[];
+  /**
+   * Per-user chat archive: chatId → ms epoch when archived. Stored as a map
+   * (not an array) so chats can auto-unarchive WhatsApp-style: a thread whose
+   * lastMessage.timestamp is newer than its archivedAt renders as unarchived.
+   */
+  archivedChats?: Record<string, number>;
 }

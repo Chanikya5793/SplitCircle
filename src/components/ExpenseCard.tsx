@@ -1,7 +1,10 @@
 import { GlassView } from '@/components/GlassView';
+import { SyncBadge } from '@/components/ui/SyncBadge';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
-import { formatCurrency } from '@/utils/currency';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { getExpenseSplitLabel } from '@/utils/expenseSplit';
 import { StyleSheet, View } from 'react-native';
 import { IconButton, Text, TouchableRipple } from 'react-native-paper';
@@ -13,11 +16,16 @@ interface ExpenseCardProps {
   memberMap: Record<string, string>;
   onPress: () => void;
   index?: number;
+  groupId?: string;
 }
 
-export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0 }: ExpenseCardProps) => {
+export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0, groupId }: ExpenseCardProps) => {
+  const fmtMoney = useMoneyDisplay(groupId);
+  const { maskGroupText } = usePrivacyMask();
   const { theme, isDark } = useTheme();
-  const payerName = memberMap[expense.paidBy] || 'Unknown';
+  const { pendingSyncIds } = useGroups();
+  const isPendingSync = pendingSyncIds.has(expense.expenseId);
+  const payerName = maskGroupText(memberMap[expense.paidBy] || 'Unknown', groupId);
   const isSettlement = expense.category === 'Settlement';
   const splitLabel = getExpenseSplitLabel(expense);
 
@@ -28,19 +36,20 @@ export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0 }
           <View style={styles.content}>
             <View style={styles.header}>
               <View style={styles.titleRow}>
-                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{expense.title}</Text>
+                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{maskGroupText(expense.title, groupId)}</Text>
                 <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
                   {isSettlement
-                    ? `${expense.category} · Paid by ${payerName}`
-                    : `${expense.category} · ${splitLabel} · Paid by ${payerName}`}
+                    ? `${maskGroupText(expense.category, groupId)} · Paid by ${payerName}`
+                    : `${maskGroupText(expense.category, groupId)} · ${maskGroupText(splitLabel, groupId)} · Paid by ${payerName}`}
                 </Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                  {new Date(expense.createdAt).toLocaleDateString()}
+                  {maskGroupText(new Date(expense.createdAt).toLocaleDateString(), groupId)}
                 </Text>
+                {isPendingSync ? <SyncBadge style={{ marginTop: 4 }} /> : null}
               </View>
               <View style={styles.amountContainer}>
                 <Text variant="titleLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                  {formatCurrency(expense.amount, currency)}
+                  {fmtMoney(expense.amount, currency)}
                 </Text>
                 {isSettlement && <IconButton icon="check-circle" size={20} iconColor={theme.colors.primary} />}
               </View>

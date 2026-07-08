@@ -3,6 +3,8 @@ import { DebtsList } from '@/components/DebtsList';
 import { ActivityTypeFilter, DateRange, FilterSortSheet, SortField, SortOrder } from '@/components/FilterSortSheet';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GroupAvatar } from '@/components/ui';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { SettlementCard } from '@/components/SettlementCard';
 import { ExpenseCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableExpenseCard } from '@/components/SwipeableExpenseCard';
@@ -12,7 +14,8 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense, Group, Settlement } from '@/models';
 import { syncRecurringBillsForGroupWithFallback } from '@/services/recurringBillService';
-import { errorHaptic, lightHaptic } from '@/utils/haptics';
+import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
+import * as Clipboard from 'expo-clipboard';
 import { useNavigation } from '@react-navigation/native';
 import { BlurView } from 'expo-blur';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -33,6 +36,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   const insets = useSafeAreaInsets();
   const { deleteExpense, deleteSettlement, loading } = useGroups();
   const { theme, isDark } = useTheme();
+  const { maskGroupName, maskGroupText } = usePrivacyMask();
+  const groupDisplayName = maskGroupName(group.name, group.groupId);
   const scrollY = useRef(new Animated.Value(0)).current;
   const compactStateRef = useRef(false);
   const lastScrollYRef = useRef(0);
@@ -152,7 +157,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               lightHaptic();
               navigation.navigate(ROUTES.APP.ASK_AI, {
                 groupId: group.groupId,
-                backTitle: group.name,
+                backTitle: groupDisplayName,
               });
             }}
             accessibilityLabel="Ask AI about this group"
@@ -167,7 +172,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               navigation.navigate(ROUTES.APP.GROUP_INFO, {
                 groupId: group.groupId,
                 initialTitle: SCREEN_TITLES.groupInfo,
-                backTitle: group.name,
+                backTitle: groupDisplayName,
               });
             }}
             accessibilityLabel="Group info and admin"
@@ -202,9 +207,11 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
     [group.members, group.archivedMembers]
   );
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [90, 130],
-    outputRange: [0, 1],
+  // Transform slide-in, not opacity — fractional alpha on an ancestor kills
+  // UIVisualEffectView glass materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
 
@@ -466,10 +473,10 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
 
   return (
-    <LiquidBackground>
-      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
+    <LiquidBackground wallpaperSlots={[`group:${group.groupId}`, 'app']}>
+      <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }] }]}>
         <GlassView style={styles.stickyHeaderGlass}>
-          <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>{group.name}</Text>
+          <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>{groupDisplayName}</Text>
         </GlassView>
       </Animated.View>
 
@@ -565,9 +572,23 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
         <View style={{ height: 110 }} />
         <GlassView style={styles.headerCard}>
           <View style={styles.header}>
-            <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{group.name}</Text>
-            <Text variant="bodyMedium" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
-              Invite code: <Text style={{ fontWeight: 'bold', color: theme.colors.primary }}>{group.inviteCode}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <GroupAvatar photoURL={group.photoURL} name={group.name} size={44} />
+              <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface, flexShrink: 1 }} numberOfLines={1}>{groupDisplayName}</Text>
+            </View>
+            <Text
+              variant="bodyMedium"
+              style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}
+              onPress={async () => {
+                successHaptic();
+                await Clipboard.setStringAsync(group.inviteCode);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Copy invite code"
+            >
+              Invite code: <Text style={{ fontWeight: 'bold', color: theme.colors.primary }}>{maskGroupText(group.inviteCode, group.groupId)}</Text>
+              {'  '}
+              <Text style={{ color: theme.colors.muted, fontSize: 12 }}>(tap to copy)</Text>
             </Text>
           </View>
 
@@ -690,6 +711,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                         <SwipeableExpenseCard
                           key={`expense-${activity.data.expenseId}`}
                           expense={activity.data}
+                          groupId={group.groupId}
                           currency={group.currency}
                           memberMap={memberMap}
                           index={yearIndex * 100 + monthIndex * 10 + index}
@@ -699,7 +721,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                               groupId: group.groupId,
                               expenseId: activity.data.expenseId,
                               expenseTitle: activity.data.title,
-                              backTitle: group.name,
+                              backTitle: groupDisplayName,
                             });
                           }}
                           onDelete={handleDeleteExpense}
@@ -710,6 +732,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                         <SettlementCard
                           key={`settlement-${activity.data.settlementId}`}
                           settlement={activity.data}
+                          groupId={group.groupId}
                           currency={group.currency}
                           memberMap={memberMap}
                           index={yearIndex * 100 + monthIndex * 10 + index}
@@ -746,7 +769,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 style={styles.compactButton}
                 borderless
               >
-                <View style={[styles.compactButtonInner, { backgroundColor: '#10b981' }]}>
+                <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.success }]}>
                   <IconButton icon="handshake" size={20} iconColor="#fff" style={{ margin: 0 }} />
                   <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Settle Up</Text>
                 </View>
@@ -766,7 +789,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
             <View style={styles.actionGrid}>
               <TouchableRipple
-                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: group.name }); }}
+                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: groupDisplayName }); }}
                 style={styles.compactButtonSmall}
                 borderless
               >
@@ -794,7 +817,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               </TouchableRipple>
 
               <TouchableRipple
-                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: group.name }); }}
+                onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: groupDisplayName }); }}
                 style={styles.compactButtonSmall}
                 borderless
               >
@@ -822,13 +845,13 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               pointerEvents={isCompact ? 'auto' : 'none'}
             >
               <View style={[styles.androidDock, { backgroundColor: isDark ? 'rgba(18,22,30,0.96)' : 'rgba(252,252,255,0.98)', borderColor: isDark ? 'rgba(148,163,184,0.24)' : 'rgba(15,23,42,0.14)' }]}>
-                <TouchableRipple onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: '#10b981' }]} borderless>
+                <TouchableRipple onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.success }]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="handshake" size={18} color="#fff" />
                     <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Settle</Text>
                   </View>
                 </TouchableRipple>
-                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: group.name })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: groupDisplayName })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="chart-pie" size={18} color={theme.colors.primary} />
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
@@ -840,7 +863,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
                   </View>
                 </TouchableRipple>
-                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: group.name })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: groupDisplayName })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="repeat" size={18} color={theme.colors.primary} />
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>

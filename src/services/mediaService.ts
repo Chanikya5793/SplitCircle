@@ -17,7 +17,8 @@ import {
   makeDirectoryAsync,
   uploadAsync,
 } from 'expo-file-system/legacy';
-import { getDownloadURL, getStorage, ref as storageRef } from 'firebase/storage';
+import { getDownloadURL, getStorage, ref as storageRef, uploadBytes } from 'firebase/storage';
+import { Platform } from 'react-native';
 
 const storage = getStorage();
 
@@ -80,6 +81,10 @@ const sanitizeFileName = (value: string): string => {
 
 const isAllowedUploadUri = (value: string): boolean => {
   const lower = value.toLowerCase();
+  if (Platform.OS === 'web') {
+    // Browser object URLs (drag-drop / paste / file input on web).
+    return lower.startsWith('blob:') || lower.startsWith('data:');
+  }
   return lower.startsWith('file:')
     || lower.startsWith('content:')
     || lower.startsWith('ph:')
@@ -121,6 +126,9 @@ export interface MediaDownloadResult {
  * Initialize the media storage directory
  */
 export const initMediaDirectory = async (): Promise<void> => {
+  // No file-system directory on web — media is uploaded straight from blobs
+  // and rendered from download URLs.
+  if (Platform.OS === 'web') return;
   try {
     const dirInfo = await getInfoAsync(MEDIA_DIRECTORY);
     if (!dirInfo.exists) {
@@ -187,6 +195,12 @@ export const copyToLocalStorage = async (
 ): Promise<string> => {
   if (!isAllowedUploadUri(sourceUri)) {
     throw new MediaCopyFailedError('Unsupported media source URI.');
+  }
+
+  // Web has no app file system — blob:/data: URIs stay as-is and uploads
+  // read them via fetch() in uploadMedia.
+  if (Platform.OS === 'web') {
+    return sourceUri;
   }
 
   const safeChatId = sanitizePathSegment(chatId, 'chat');
@@ -272,16 +286,40 @@ export const uploadMedia = async (
     
     // Use the local copy for upload (handles ph:// and content:// URIs)
     const fileUri = localPath;
-    
+
+    // Create storage reference and get upload URL
+    const storagePath = `chat_media/${safeChatId}/${safeMessageId}/${safeFileName}`;
+    const fileRef = storageRef(storage, storagePath);
+
+    // Web: no expo-file-system — read the blob/data URI via fetch and upload
+    // through the Firebase JS SDK directly.
+    if (Platform.OS === 'web') {
+      console.log('📤 Uploading to Firebase Storage (web)...');
+      onProgress?.(10);
+      const blob = await (await fetch(fileUri)).blob();
+      if (blob.size === 0) {
+        throw new Error('The selected file is empty or could not be read.');
+      }
+      if (blob.size > MAX_FILE_SIZE) {
+        throw new Error(`File too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB`);
+      }
+      await uploadBytes(fileRef, blob, { contentType: safeMimeType });
+      onProgress?.(90);
+      const webDownloadUrl = await getDownloadURL(fileRef);
+      console.log('✅ Upload complete:', webDownloadUrl);
+      onProgress?.(100);
+      return {
+        downloadUrl: webDownloadUrl,
+        storagePath,
+        localPath: fileUri,
+      };
+    }
+
     // Check file size
     const fileInfo = await getInfoAsync(fileUri);
     if (fileInfo.exists && 'size' in fileInfo && fileInfo.size > MAX_FILE_SIZE) {
       throw new Error(`File too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB`);
     }
-    
-    // Create storage reference and get upload URL
-    const storagePath = `chat_media/${safeChatId}/${safeMessageId}/${safeFileName}`;
-    const fileRef = storageRef(storage, storagePath);
     
     // Get the upload URL for direct upload
     // We'll use Firebase Storage REST API through expo-file-system
@@ -403,6 +441,12 @@ export const getOrDownloadMedia = async (
   fileName: string
 ): Promise<string | null> => {
   try {
+    // Web: no local file system — render straight from the remote URL
+    // (browsers cache it). Blob URLs from the current session also work.
+    if (Platform.OS === 'web') {
+      return downloadUrl ?? localPath ?? null;
+    }
+
     // First check if we have a local path and it exists
     if (localPath) {
       const exists = await mediaExistsLocally(localPath);

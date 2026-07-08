@@ -24,6 +24,12 @@ export interface CallSession {
   status: CallStatus;
   startedAt: number;
   endedAt?: number;
+  /**
+   * Set by the server after the VoIP push is dispatched: 'ringing' = the
+   * callee's device accepted the push (reachable → their phone is ringing),
+   * 'calling' = it wasn't (offline). Drives the WhatsApp-style caller label.
+   */
+  deliveryState?: 'calling' | 'ringing';
   offer?: SessionDescriptionInit;
   answer?: SessionDescriptionInit;
   iceCandidates?: RTCIceCandidateInit[];

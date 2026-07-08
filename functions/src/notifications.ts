@@ -788,6 +788,10 @@ export const sendPushToUsers = async (
     channelId?: string,
     options?: {
         subtitle?: string;
+        // iOS/Android notification category — enables action buttons (e.g. the
+        // "missed_call" category carries a text-input quick-reply action that
+        // the client registers at startup via setNotificationCategoryAsync).
+        categoryId?: string;
     },
 ): Promise<NotificationDispatchResult> => {
     const db = getFirestore();
@@ -845,6 +849,7 @@ export const sendPushToUsers = async (
             sound: "default",
             priority: "high",
             channelId: channelId ?? mapCategoryToChannel(category),
+            ...(options?.categoryId ? { categoryId: options.categoryId } : {}),
         };
     });
 

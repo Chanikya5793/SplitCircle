@@ -120,9 +120,11 @@ export const NotificationSettingsScreen = () => {
     });
   }, [navigation]);
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 40],
-    outputRange: [0, 1],
+  // Transform slide-in, not opacity — fractional alpha on an ancestor kills
+  // UIVisualEffectView glass materials (see StickyHeaderPill).
+  const headerTranslate = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [-160, 0],
     extrapolate: 'clamp',
   });
 
@@ -355,7 +357,7 @@ export const NotificationSettingsScreen = () => {
       <Animated.View
         style={[
           styles.stickyHeader,
-          { opacity: headerOpacity, paddingTop: insets.top + 8 },
+          { transform: [{ translateY: headerTranslate }], paddingTop: insets.top + 8 },
         ]}
         pointerEvents="none"
       >

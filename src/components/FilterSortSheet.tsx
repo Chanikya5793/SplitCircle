@@ -5,24 +5,37 @@ import { BlurView } from 'expo-blur';
 import { useTheme } from '@/context/ThemeContext';
 import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutDown, useSharedValue, useAnimatedStyle, withSpring, withTiming, runOnJS } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { ALL_EXPENSE_CATEGORIES } from '@/utils/categoryMatch';
 
 export type SortField = 'date' | 'amount' | 'title';
 export type SortOrder = 'desc' | 'asc';
 export type ActivityTypeFilter = 'all' | 'expenses' | 'settlements';
 export type DateRange = 'all' | 'this-month' | 'last-month' | 'last-3-months';
 
+const CATEGORY_ICONS: Record<string, string> = {
+    General: 'tag',
+    Food: 'food',
+    Transport: 'car',
+    Utilities: 'flash',
+    Entertainment: 'movie-open',
+    Shopping: 'shopping',
+    Travel: 'airplane',
+    Health: 'hospital',
+    Rent: 'home',
+    Subscriptions: 'autorenew',
+    Other: 'dots-horizontal',
+};
+
+// Derived from the canonical category list so every category an expense can
+// carry (manual or recurring-bill-generated) is filterable. Ids stay
+// lowercase — GroupDetailsScreen matches with exp.category.toLowerCase().
 const CATEGORIES = [
     { id: 'all', label: 'All', icon: 'view-grid' },
-    { id: 'general', label: 'General', icon: 'tag' },
-    { id: 'food', label: 'Food', icon: 'food' },
-    { id: 'transport', label: 'Transport', icon: 'car' },
-    { id: 'entertainment', label: 'Entertainment', icon: 'movie-open' },
-    { id: 'shopping', label: 'Shopping', icon: 'shopping' },
-    { id: 'utilities', label: 'Utilities', icon: 'flash' },
-    { id: 'rent', label: 'Rent', icon: 'home' },
-    { id: 'travel', label: 'Travel', icon: 'airplane' },
-    { id: 'health', label: 'Health', icon: 'hospital' },
-    { id: 'other', label: 'Other', icon: 'dots-horizontal' },
+    ...ALL_EXPENSE_CATEGORIES.map((category) => ({
+        id: category.toLowerCase(),
+        label: category,
+        icon: CATEGORY_ICONS[category] ?? 'tag',
+    })),
 ];
 
 interface FilterSortSheetProps {

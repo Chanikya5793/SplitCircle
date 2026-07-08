@@ -260,6 +260,12 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
     });
 
     responseListenerRef.current = Notifications.addNotificationResponseReceivedListener((response) => {
+      // Action-button responses (e.g. the missed-call quick reply) are handled
+      // by MissedCallQuickReply inside ChatProvider — navigating here too would
+      // yank the user into the app for a background reply.
+      if (response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) {
+        return;
+      }
       const data = response.notification.request.content.data as NotificationData | undefined;
       if (data?.type) {
         setPendingNavigation(data);
@@ -267,7 +273,14 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
     });
 
     const checkInitialNotification = async () => {
+      // Not available on web — calling it rejects with an UnavailabilityError.
+      if (Platform.OS === 'web') {
+        return;
+      }
       const lastResponse = await Notifications.getLastNotificationResponseAsync();
+      if (lastResponse && lastResponse.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) {
+        return;
+      }
       const data = lastResponse?.notification.request.content.data as NotificationData | undefined;
       if (data?.type) {
         setPendingNavigation(data);

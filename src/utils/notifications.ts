@@ -4,6 +4,10 @@ import {
   getNotificationPermissionSnapshot,
   requestNotificationPermissionSnapshot,
 } from '@/services/notificationService';
+import {
+  notificationMatchesEntity,
+  type EntityNotificationFilter,
+} from './notificationEntityMatch';
 
 // ─────────────────────────────────────────────────────────────
 // Notification Channels (Android)
@@ -29,6 +33,8 @@ export type NotificationType =
   | 'settlement'
   | 'group_join'
   | 'call'
+  | 'missed_call'
+  | 'reply_failed'
   | 'general';
 
 export interface NotificationData {
@@ -41,6 +47,9 @@ export interface NotificationData {
   callType?: 'audio' | 'video';
   senderId?: string;
   senderName?: string;
+  // Original message text carried by a 'reply_failed' notice so tapping it
+  // can reopen the chat with the composer prefilled.
+  text?: string;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -58,10 +67,55 @@ Notifications.setNotificationHandler({
 });
 
 // ─────────────────────────────────────────────────────────────
+// Notification Categories (action buttons — iOS + Android)
+// ─────────────────────────────────────────────────────────────
+// iOS has no customizable "Message" button on the CallKit lock-screen UI for
+// third-party apps (that button is reserved for SMS on phone-number handles).
+// The closest platform-sanctioned equivalent: the missed-call push carries
+// this category, so pulling the notification down (or long-pressing it)
+// reveals a quick-reply text field that sends an in-app chat message back to
+// the caller without fully opening the app.
+
+export const MISSED_CALL_CATEGORY_ID = 'missed_call';
+export const MISSED_CALL_REPLY_ACTION_ID = 'reply_message';
+
+export const setupNotificationCategories = async (): Promise<void> => {
+  if (Platform.OS === 'web') {
+    return;
+  }
+
+  try {
+    await Notifications.setNotificationCategoryAsync(MISSED_CALL_CATEGORY_ID, [
+      {
+        identifier: MISSED_CALL_REPLY_ACTION_ID,
+        buttonTitle: 'Reply',
+        textInput: {
+          submitButtonTitle: 'Send',
+          placeholder: 'Type a message…',
+        },
+        options: {
+          // Handle the reply in the background — WhatsApp-style, no app open.
+          // If the app process is dead, iOS wakes it; the reply is delivered
+          // via the notification-response listener (or the last-response check
+          // on next launch as the fallback).
+          opensAppToForeground: false,
+        },
+      },
+    ]);
+  } catch (error) {
+    console.warn('Failed to register notification categories:', error);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
 // Setup Android Notification Channels
 // ─────────────────────────────────────────────────────────────
 
 export const setupNotificationChannels = async (): Promise<void> => {
+  // Categories apply to iOS AND Android — register them on every platform
+  // before the Android-only channel setup below.
+  await setupNotificationCategories();
+
   if (Platform.OS !== 'android') {
     return;
   }
@@ -161,6 +215,7 @@ export const scheduleLocalNotification = async (
   body: string,
   data?: NotificationData,
   channelId?: NotificationChannel,
+  categoryId?: string,
 ): Promise<string> => {
   return Notifications.scheduleNotificationAsync({
     content: {
@@ -168,6 +223,7 @@ export const scheduleLocalNotification = async (
       body,
       data: (data as unknown) as Record<string, unknown>,
       sound: 'default',
+      ...(categoryId ? { categoryIdentifier: categoryId } : {}),
       ...(Platform.OS === 'android' && channelId
         ? { channelId }
         : {}),
@@ -183,4 +239,59 @@ export const scheduleLocalNotification = async (
 export const dismissAllNotifications = async (): Promise<void> => {
   await Notifications.dismissAllNotificationsAsync();
   await clearBadgeCount();
+};
+
+// ─────────────────────────────────────────────────────────────
+// Dismiss stale notifications for deleted entities
+// ─────────────────────────────────────────────────────────────
+// When a group, expense, or settlement is deleted, any delivered notification
+// that deep-links to it becomes a dead end. iOS/Android let us withdraw
+// notifications that are still in the tray, so we match on the push payload's
+// data fields and dismiss them.
+
+export type { EntityNotificationFilter } from './notificationEntityMatch';
+
+/**
+ * Withdraws delivered (tray) notifications whose payload references any of
+ * the given entity ids. Best-effort: never throws — a failure to tidy the
+ * tray must not break the delete flow that triggered it.
+ */
+export const dismissNotificationsForEntity = async (
+  filter: EntityNotificationFilter,
+): Promise<number> => {
+  if (Platform.OS === 'web') {
+    return 0;
+  }
+
+  if (!filter.groupId && !filter.expenseId && !filter.settlementId && !filter.chatId) {
+    return 0;
+  }
+
+  try {
+    const presented = await Notifications.getPresentedNotificationsAsync();
+    let dismissed = 0;
+
+    for (const notification of presented) {
+      const data = notification.request?.content?.data as
+        | Record<string, unknown>
+        | null
+        | undefined;
+
+      if (!notificationMatchesEntity(data, filter)) {
+        continue;
+      }
+
+      try {
+        await Notifications.dismissNotificationAsync(notification.request.identifier);
+        dismissed += 1;
+      } catch {
+        // Keep going — dismissing the rest still helps.
+      }
+    }
+
+    return dismissed;
+  } catch {
+    // getPresentedNotificationsAsync can fail on some platforms/simulators.
+    return 0;
+  }
 };

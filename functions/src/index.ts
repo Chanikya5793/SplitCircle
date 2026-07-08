@@ -27,7 +27,8 @@ import {
     materializeGroupFriendships,
     touchFriendInteraction,
 } from "./friends";
-export { cleanupOldRtdbData } from "./cleanup";
+import { verifyGroupEntityExists } from "./entityGuards";
+export { cleanupOldRtdbData, reapStaleRingingCalls } from "./cleanup";
 // Consolidated AI-layer ingestion fan-out (gated by AI_LAYER_ENABLED; no-op until
 // activated — see aiLayer.ts and ai_layer/docs/08_self_review.md).
 export { onGroupWritten } from "./aiLayer";
@@ -524,6 +525,19 @@ export const onGroupUpdated = onDocumentUpdated(
 
                 const recipientIds = memberIds.filter((id) => id !== paidBy);
                 if (recipientIds.length > 0) {
+                    // The group or expense may have been deleted between the
+                    // trigger event and now — never notify about a dead link.
+                    const guard = await verifyGroupEntityExists(groupId, {
+                        expenseId: expense.expenseId as string,
+                    });
+                    if (!guard.ok) {
+                        logger.info("Skipping expense notification for deleted entity", {
+                            groupId,
+                            expenseId: expense.expenseId,
+                            reason: guard.reason,
+                        });
+                        continue;
+                    }
                     try {
                         const notificationCopy = buildExpenseNotificationCopy({
                             groupName,
@@ -593,6 +607,20 @@ export const onGroupUpdated = onDocumentUpdated(
                     // Use fallback
                 }
 
+                // The group or settlement may have been deleted between the
+                // trigger event and now — never notify about a dead link.
+                const guard = await verifyGroupEntityExists(groupId, {
+                    settlementId: settlement.settlementId as string,
+                });
+                if (!guard.ok) {
+                    logger.info("Skipping settlement notification for deleted entity", {
+                        groupId,
+                        settlementId: settlement.settlementId,
+                        reason: guard.reason,
+                    });
+                    continue;
+                }
+
                 // Notify the person being paid
                 try {
                     const notificationCopy = buildSettlementNotificationCopy({
@@ -637,6 +665,17 @@ export const onGroupUpdated = onDocumentUpdated(
             // idempotent so existing edges are kept and only new edges get
             // written. Fire-and-forget — must not block the notification path.
             void materializeGroupFriendships(memberIds);
+
+            // If the group was deleted right after the join was recorded,
+            // skip the whole member fan-out — the deep link is already dead.
+            const groupGuard = await verifyGroupEntityExists(groupId);
+            if (!groupGuard.ok) {
+                logger.info("Skipping group-join notifications for deleted group", {
+                    groupId,
+                    reason: groupGuard.reason,
+                });
+                return;
+            }
 
             for (const newMemberId of newMemberIds) {
                 let memberName = "Someone";
@@ -702,6 +741,15 @@ export const onCallCreated = onValueCreated(
         }
 
         if (callData.status !== "ringing") {
+            return;
+        }
+
+        // Never ring for a node that's already stale by the time this fires.
+        // onValueCreated is normally near-instant, so an old startedAt means a
+        // replay/backfill or a badly delayed event — don't wake a device for it.
+        const startedAtRaw = typeof callData.startedAt === "number" ? callData.startedAt : 0;
+        if (startedAtRaw > 0 && Date.now() - startedAtRaw > 60_000) {
+            logger.warn("Skipping call push for stale node", { callId, ageMs: Date.now() - startedAtRaw });
             return;
         }
 
@@ -815,6 +863,14 @@ export const onCallCreated = onValueCreated(
                 accepted: voipResult.accepted,
                 failed: voipResult.failed,
             });
+
+            // NOTE: deliveryState is intentionally NOT written here. APNs
+            // "accepted" only means the push was queued — it accepts pushes
+            // for offline devices too, which made the caller see "Ringing"
+            // for unreachable callees. The callee's DEVICE now writes
+            // calls/{callId}/deliveryState = 'ringing' itself when it has
+            // actually presented the incoming call (see callService
+            // ackCallRinging + the deliveryState rule in database.rules.json).
         } catch (error) {
             logger.error("VoIP call push failed", {
                 callId,
@@ -862,6 +918,82 @@ export const registerVoipPushToken = onCall(
         return { ok: true };
     },
 );
+
+// ─────────────────────────────────────────────────────────────
+// Missed-call notification (callable)
+// ─────────────────────────────────────────────────────────────
+// The caller invokes this when an outgoing call is never answered (ring
+// timeout or manual cancel before connect). It notifies the CALLEE(s) with a
+// "Missed voice/video call" push. Idempotent via a `missedNotified` flag so a
+// retry (or the server reaper) can't double-notify.
+
+export const reportMissedCall = onCall({ cors: true }, async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const callId = getStringValue((request.data as Record<string, unknown> | undefined)?.callId);
+    if (!callId) {
+        throw new HttpsError("invalid-argument", "callId is required.");
+    }
+
+    const callRef = getDatabase().ref(`calls/${callId}`);
+    const snap = await callRef.get();
+    if (!snap.exists()) return { ok: false, reason: "not-found" };
+
+    const call = snap.val() as MaybeCall;
+    const initiatorId = getStringValue(call?.initiatorId);
+    // Only the caller can report a missed call, and never for a connected one.
+    if (initiatorId !== uid) return { ok: false, reason: "not-initiator" };
+    if (snap.child("missedNotified").val() === true) return { ok: false, reason: "already-notified" };
+
+    const recipientIds = getAllowedUserIds(call?.allowedUserIds).filter((u) => u !== initiatorId);
+    if (recipientIds.length === 0) return { ok: false, reason: "no-recipients" };
+
+    // Claim the flag first (idempotency) before sending.
+    await callRef.child("missedNotified").set(true);
+
+    const callType = call?.type === "video" ? "video" : "audio";
+    const chatId = getStringValue(call?.chatId);
+    const groupId = getStringValue(call?.groupId);
+    let callerName = "Someone";
+    try {
+        const doc = await getFirestore().collection("users").doc(initiatorId).get();
+        callerName = sanitizeParticipantName(getStringValue(doc.data()?.displayName), "Someone");
+    } catch {
+        // best-effort caller name
+    }
+
+    const body = callType === "video" ? "📹 Missed video call" : "📞 Missed voice call";
+    try {
+        await sendPushToUsers(
+            recipientIds,
+            callerName,
+            body,
+            {
+                type: "missed_call",
+                chatId,
+                callId,
+                callType,
+                senderId: initiatorId,
+                senderName: callerName,
+                ...(groupId ? { groupId } : {}),
+            },
+            "calls",
+            undefined,
+            "calls",
+            // Attach the quick-reply category: on iOS, long-pressing (or pulling
+            // down) the missed-call notification reveals a "Reply" text field
+            // that sends an in-app chat message back to the caller.
+            { categoryId: "missed_call" },
+        );
+    } catch (error) {
+        logger.error("Failed to send missed-call notification", { callId, error: toSafeError(error) });
+        throw new HttpsError("internal", "Failed to notify.");
+    }
+
+    return { ok: true };
+});
 
 // ─────────────────────────────────────────────────────────────
 // Scheduler — Recurring Bills

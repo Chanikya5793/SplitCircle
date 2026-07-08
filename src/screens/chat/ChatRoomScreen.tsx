@@ -21,6 +21,10 @@ import type { SelectionAction } from '@/components/Chat/SelectionToolbar';
 import { AlbumBubble } from '@/components/AlbumBubble';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GroupAvatar, UserAvatar } from '@/components/ui';
+import { usePrivacyMask } from '@/hooks/usePrivacyMask';
+import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { WallpaperPickerSheet } from '@/components/ui';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -49,6 +53,7 @@ import {
   hydrateChatRenderCache,
 } from '@/services/messageRenderCache';
 import { publishMessageState } from '@/services/messageStateService';
+import { clearChatDraft, getChatDraft, saveChatDraft } from '@/utils/chatDrafts';
 import { lightHaptic, mediumHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
@@ -131,9 +136,13 @@ const buildChatRows = (messages: ChatMessage[], userId?: string): ChatRow[] => {
 
 interface ChatRoomScreenProps {
   thread: ChatThread;
+  // One-shot composer prefill (e.g. recovering a failed quick reply from a
+  // tapped notification). Applied once on arrival; the user can still edit
+  // or clear the text before sending.
+  initialComposerText?: string;
 }
 
-export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
+export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenProps) => {
   const navigation = useNavigation();
   const {
     subscribeToMessages,
@@ -186,10 +195,79 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   // Edit state — when set, the composer text replaces the message content on send.
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const inputRef = useRef<any>(null);
+  // True once the initial draft load (or prefill) has settled. The sync
+  // effect below must not run before hydration, or the mount-time empty
+  // composer would delete the stored draft before it can be restored.
+  const draftHydratedRef = useRef(false);
+  // Composer text stashed when entering message-edit mode, restored when the
+  // edit is sent or cancelled — so editing a message never eats a half-typed
+  // draft.
+  const editStashRef = useRef<string | null>(null);
+  // Apply the one-shot composer prefill (failed quick-reply recovery). The
+  // parent route consumes the param after mount, so this only fires once per
+  // notification tap — never overwriting text the user has since typed.
+  useEffect(() => {
+    if (initialComposerText) {
+      draftHydratedRef.current = true;
+      setText(initialComposerText);
+      // Focus after a tick so the composer mounts with the text.
+      setTimeout(() => inputRef.current?.focus?.(), 50);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialComposerText]);
+  // Restore a persisted draft on entry — half-typed messages saved when the
+  // user left the chat, or a quick reply that failed to send while the app
+  // was backgrounded (the draft outlives the failure notification). Skipped
+  // when a prefill param already carries the text, and never overwrites text
+  // the user has typed.
+  useEffect(() => {
+    if (initialComposerText) {
+      return;
+    }
+    let cancelled = false;
+    void getChatDraft(thread.chatId).then((draft) => {
+      if (cancelled) {
+        return;
+      }
+      if (!draft) {
+        draftHydratedRef.current = true;
+        return;
+      }
+      setText((current) => {
+        draftHydratedRef.current = true;
+        if (current.length > 0) {
+          return current;
+        }
+        return draft;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread.chatId]);
+  // Keep the stored draft in sync with the composer: every edit updates it,
+  // so leaving the chat (or the app being killed) never loses typed text.
+  // Emptying the composer (backspace-to-blank, send, or the clear button)
+  // deletes it. Paused during message editing so an edited message's content
+  // is never saved as a draft, and until hydration so the mount-time empty
+  // composer can't wipe a stored draft before it is restored.
+  useEffect(() => {
+    if (!draftHydratedRef.current || editingMessage) {
+      return;
+    }
+    if (text.trim().length === 0) {
+      void clearChatDraft(thread.chatId);
+    } else {
+      void saveChatDraft(thread.chatId, text);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, thread.chatId]);
   // Long-press action sheet state
   const [actionTarget, setActionTarget] = useState<ChatMessage | null>(null);
   // Header overflow menu (search, gallery, starred)
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [wallpaperSheetOpen, setWallpaperSheetOpen] = useState(false);
   // Forward picker state — separate from the action sheet so it can stay open while the picker animates in.
   const [forwardSource, setForwardSource] = useState<ChatMessage[] | null>(null);
   // Attachment menu state
@@ -471,7 +549,10 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     if (editingMessage) {
       const targetId = editingMessage.messageId || editingMessage.id;
       const editedAt = Date.now();
-      setText('');
+      // Restore the half-typed text stashed when edit mode began.
+      const stashed = editStashRef.current;
+      editStashRef.current = null;
+      setText(stashed ?? '');
       const editTarget = editingMessage;
       setEditingMessage(null);
 
@@ -496,6 +577,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
           successHaptic();
         } catch (error) {
           console.error('Failed to edit message:', error);
+          // Re-enter edit mode; re-stash the draft that was just restored so
+          // it survives the retry/cancel path too.
+          editStashRef.current = stashed;
           setText(trimmed);
           setEditingMessage(editTarget);
           alert(error instanceof Error ? error.message : 'Failed to edit message');
@@ -562,7 +646,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   const handleSwipeInfo = (message: ChatMessage) => {
     lightHaptic();
     // @ts-ignore - navigation route typing is intentionally loose in this app
-    navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread, initialTitle: 'Message Info', backTitle: title });
+    navigation.navigate(ROUTES.APP.MESSAGE_INFO, { message, thread, initialTitle: 'Message Info', backTitle: displayTitle });
   };
 
   const titleRef = useRef('');
@@ -572,7 +656,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     navigation.navigate(ROUTES.APP.CHAT_MEDIA_GALLERY, {
       chatId: thread.chatId,
       title: 'Media',
-      backTitle: titleRef.current,
+      backTitle: displayTitle,
       participants: thread.participants,
       initialMessageId: message.messageId || message.id,
     });
@@ -721,7 +805,12 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       case 'edit': {
         setEditingMessage(target);
         setReplyingTo(null);
-        setText(target.content);
+        // Stash the half-typed composer text so finishing (or cancelling)
+        // the edit restores it instead of discarding it.
+        setText((prev) => {
+          editStashRef.current = prev;
+          return target.content;
+        });
         // Focus after a tick so the composer mounts with the text.
         setTimeout(() => inputRef.current?.focus?.(), 50);
         break;
@@ -966,6 +1055,87 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     });
   };
 
+  // --- Web only: drag-and-drop and clipboard-paste media into the chat. ---
+  // Files are wrapped in session-scoped object URLs and fed into the same
+  // preview → process → upload pipeline the attachment menu uses.
+  const handleMediaSelectedRef = useRef(handleMediaSelected);
+  handleMediaSelectedRef.current = handleMediaSelected;
+  const [isDropTargetActive, setIsDropTargetActive] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+
+    const filesToSelectedMedia = (files: File[]): SelectedMedia[] =>
+      files.map((file) => {
+        const mime = file.type || 'application/octet-stream';
+        const type: SelectedMedia['type'] = mime.startsWith('image/')
+          ? 'image'
+          : mime.startsWith('video/')
+            ? 'video'
+            : mime.startsWith('audio/')
+              ? 'audio'
+              : 'document';
+        return {
+          type,
+          uri: URL.createObjectURL(file),
+          fileName: file.name || `${type}_${Date.now()}`,
+          fileSize: file.size,
+          mimeType: mime,
+        };
+      });
+
+    // dragenter/dragleave fire for every nested element — track depth so the
+    // overlay doesn't flicker while moving across children.
+    let dragDepth = 0;
+    const hasFiles = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types ?? []).includes('Files');
+
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth += 1;
+      setIsDropTargetActive(true);
+    };
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) setIsDropTargetActive(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth = 0;
+      setIsDropTargetActive(false);
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length === 0) return;
+      void handleMediaSelectedRef.current(filesToSelectedMedia(files));
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (files.length === 0) return; // plain text paste — let it through
+      e.preventDefault();
+      void handleMediaSelectedRef.current(filesToSelectedMedia(files));
+    };
+
+    document.addEventListener('dragenter', onDragEnter);
+    document.addEventListener('dragover', onDragOver);
+    document.addEventListener('dragleave', onDragLeave);
+    document.addEventListener('drop', onDrop);
+    document.addEventListener('paste', onPaste);
+    return () => {
+      document.removeEventListener('dragenter', onDragEnter);
+      document.removeEventListener('dragover', onDragOver);
+      document.removeEventListener('dragleave', onDragLeave);
+      document.removeEventListener('drop', onDrop);
+      document.removeEventListener('paste', onPaste);
+    };
+  }, []);
+
 
   // Media pipeline (sendOneMedia, buildFailedItem, handleSendMedia, etc.)
   // moved to useMediaSendPipeline hook.
@@ -1028,12 +1198,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
     ? groupName || 'Group Chat'
     : directParticipant?.displayName || 'Direct Chat';
   titleRef.current = title;
+  // Masked title for the header pill only — navigation params keep the real
+  // title so back buttons and Group Info still read correctly.
+  const { maskChatTitle } = usePrivacyMask();
+  const displayTitle = maskChatTitle(title, thread.chatId);
+  const { isShielded: guardIsShielded } = usePrivacyGuard();
+  const chatShielded = guardIsShielded('chats', thread.chatId);
 
   const handleHeaderPress = () => {
     lightHaptic();
     if (thread.type === 'group' && thread.groupId) {
       // @ts-ignore - navigation types
-      navigation.navigate(ROUTES.APP.GROUP_INFO, { groupId: thread.groupId, initialTitle: 'Group Info', backTitle: title });
+      navigation.navigate(ROUTES.APP.GROUP_INFO, { groupId: thread.groupId, initialTitle: 'Group Info', backTitle: displayTitle });
       return;
     }
     if (thread.type === 'direct' && directParticipant?.userId) {
@@ -1042,7 +1218,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         userId: directParticipant.userId,
         displayName: directParticipant.displayName,
         photoURL: directParticipant.photoURL,
-        backTitle: title,
+        backTitle: displayTitle,
       });
     }
   };
@@ -1141,7 +1317,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
       userId: participant.userId,
       displayName: participant.displayName,
       photoURL: participant.photoURL,
-      backTitle: title,
+      backTitle: displayTitle,
     });
   }, [navigation, thread.participants, thread.type]);
 
@@ -1244,7 +1420,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
   ]);
 
   return (
-    <LiquidBackground>
+    <LiquidBackground wallpaperChatId={thread.chatId}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -1273,27 +1449,28 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             >
               <GlassView style={styles.headerPill} intensity={40}>
                 <View style={styles.headerPillContent}>
-                  {thread.type === 'direct' && directParticipant?.photoURL ? (
-                    <Avatar.Image
-                      size={36}
-                      source={{ uri: directParticipant.photoURL }}
-                      style={{ marginRight: 10 }}
-                    />
-                  ) : (
-                    <Avatar.Text
-                      size={36}
-                      label={groupInitials}
-                      style={{ backgroundColor: theme.colors.primary, marginRight: 10 }}
-                      color={theme.colors.onPrimary}
-                    />
-                  )}
+                  <View style={{ marginRight: 10 }}>
+                    {thread.type === 'direct' ? (
+                      <UserAvatar
+                        photoURL={directParticipant?.photoURL}
+                        displayName={directParticipant?.displayName ?? title}
+                        size={36}
+                      />
+                    ) : (
+                      <GroupAvatar
+                        photoURL={groups.find((g) => g.groupId === thread.groupId)?.photoURL}
+                        name={displayTitle}
+                        size={36}
+                      />
+                    )}
+                  </View>
                   <View style={{ flexShrink: 1 }}>
                     <Text
                       variant="titleMedium"
                       style={[styles.headerTitle, { color: theme.colors.onSurface }]}
                       numberOfLines={1}
                     >
-                      {title}
+                      {displayTitle}
                     </Text>
                     {typingNames.length > 0 && (
                       <Text
@@ -1312,16 +1489,20 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               </GlassView>
             </TouchableOpacity>
             <View style={styles.headerCallActions}>
-              <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
-                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
-                  <Icon source="phone" size={18} color={theme.colors.primary} />
-                </GlassView>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Video call">
-                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
-                  <Icon source="video" size={18} color={theme.colors.primary} />
-                </GlassView>
-              </TouchableOpacity>
+              {!chatShielded && (
+                <>
+                  <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
+                    <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                      <Icon source="phone" size={18} color={theme.colors.primary} />
+                    </GlassView>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Video call">
+                    <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                      <Icon source="video" size={18} color={theme.colors.primary} />
+                    </GlassView>
+                  </TouchableOpacity>
+                </>
+              )}
               <TouchableOpacity
                 onPress={() => {
                   lightHaptic();
@@ -1342,7 +1523,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
 
         <Animated.FlatList
           ref={listRef as any}
-          data={rows as readonly ChatRow[] as any}
+          data={(chatShielded ? [] : rows) as readonly ChatRow[] as any}
           keyExtractor={(row: ChatRow) =>
             row.kind === 'album'
               ? `album:${row.albumId}`
@@ -1390,6 +1571,18 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
             });
           }}
         />
+
+        {chatShielded && (
+          <View style={[styles.chatLockOverlay, { backgroundColor: theme.colors.appBackground }]} pointerEvents="auto">
+            <Icon source="lock-outline" size={40} color={theme.colors.onSurfaceVariant} />
+            <Text style={{ color: theme.colors.onSurface, fontWeight: '600', marginTop: 12, fontSize: 16 }}>
+              Messages hidden
+            </Text>
+            <Text style={{ color: theme.colors.onSurfaceVariant, fontSize: 13, marginTop: 4 }}>
+              Shake again or enter your code to reveal.
+            </Text>
+          </View>
+        )}
 
         {/* Mention autocomplete — floats just above the composer when active */}
         {isGroupChat && mentionQuery !== null && (
@@ -1445,7 +1638,9 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               <TouchableOpacity
                 onPress={() => {
                   setEditingMessage(null);
-                  setText('');
+                  // Bring back whatever was half-typed before edit mode began.
+                  setText(editStashRef.current ?? '');
+                  editStashRef.current = null;
                 }}
                 style={[styles.replyCloseButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }]}
                 activeOpacity={0.6}
@@ -1525,7 +1720,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
                 styles.sendButtonTouchable,
                 {
                   backgroundColor: !text.trim()
-                    ? (isDark ? '#555' : '#ccc')
+                    ? theme.colors.surfaceDisabled
                     : theme.colors.primary,
                 },
               ]}
@@ -1601,7 +1796,7 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               navigation.navigate(ROUTES.APP.CHAT_MEDIA_GALLERY, {
                 chatId: thread.chatId,
                 title: 'Media',
-                backTitle: title,
+                backTitle: displayTitle,
                 participants: thread.participants,
               });
             },
@@ -1628,7 +1823,20 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
               enterSelectionMode();
             },
           },
+          {
+            key: 'wallpaper',
+            label: 'Change wallpaper',
+            icon: 'image-outline',
+            onPress: () => setWallpaperSheetOpen(true),
+          },
         ] satisfies HeaderMenuItem[]}
+      />
+
+      <WallpaperPickerSheet
+        visible={wallpaperSheetOpen}
+        slot={`chat:${thread.chatId}`}
+        title="Chat wallpaper"
+        onClose={() => setWallpaperSheetOpen(false)}
       />
 
       {/* Pinned messages bar — anchored under the header pill, above the message list */}
@@ -1794,11 +2002,44 @@ export const ChatRoomScreen = ({ thread }: ChatRoomScreenProps) => {
         </TouchableOpacity>
       )}
 
+      {/* Web drag-and-drop target overlay */}
+      {isDropTargetActive && (
+        <View style={styles.dropOverlay} pointerEvents="none">
+          <View style={[styles.dropOverlayCard, { backgroundColor: theme.colors.elevation?.level3 ?? theme.colors.surface }]}>
+            <Icon source="tray-arrow-down" size={40} color={theme.colors.primary} />
+            <Text style={[styles.dropOverlayText, { color: theme.colors.onSurface }]}>
+              Drop files to send
+            </Text>
+          </View>
+        </View>
+      )}
+
     </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
+  dropOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
+  dropOverlayCard: {
+    paddingVertical: 28,
+    paddingHorizontal: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(128,128,128,0.5)',
+  },
+  dropOverlayText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
   container: {
     flex: 1,
   },
@@ -1942,6 +2183,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
+  },
+  chatLockOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    zIndex: 5,
   },
   headerTitle: {
     fontWeight: '700',
