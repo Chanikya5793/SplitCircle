@@ -1,4 +1,3 @@
-import { BillSplitScreen } from '@/components/BillSplit';
 import { GlassView } from '@/components/GlassView';
 import { IncomingCallModal } from '@/components/IncomingCallModal';
 import { ROUTES } from '@/constants';
@@ -1039,11 +1038,6 @@ const AppStackNavigator = () => {
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}
-      />
-      <AppStack.Screen
-        name={ROUTES.APP.BILL_SPLIT}
-        component={BillSplitScreen}
-        options={{ presentation: 'modal', headerShown: false }}
       />
       <AppStack.Screen
         name={ROUTES.APP.RECURRING_BILLS}

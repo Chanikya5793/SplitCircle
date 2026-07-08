@@ -21,8 +21,9 @@ import {
 import { computeFriendBalances, type CurrencyAmount } from '@/utils/friendBalances';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, Animated, StyleSheet, View } from 'react-native';
+import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
 import { Shield } from '@/components/ui';
 import { TouchableRipple } from 'react-native-paper';
@@ -46,6 +47,66 @@ const compareLastInteraction = (a: FriendRow, b: FriendRow): number => {
   const ax = a.friend.lastInteractionAt ?? a.friend.since;
   const bx = b.friend.lastInteractionAt ?? b.friend.since;
   return bx - ax;
+};
+
+/**
+ * Swipe-left wrapper for a friend row. Reveals Pin/Unpin and Remove actions —
+ * mirrors the SwipeableChatRow gesture so the whole app speaks the same swipe
+ * language. Both actions call the exact same handlers as the inline UI.
+ */
+const SwipeableFriendRow = ({
+  isPinned,
+  onTogglePin,
+  onRemove,
+  primaryColor,
+  children,
+}: {
+  isPinned: boolean;
+  onTogglePin: () => void;
+  onRemove: () => void;
+  primaryColor: string;
+  children: ReactNode;
+}) => {
+  const swipeableRef = useRef<Swipeable>(null);
+
+  const renderRightActions = () => (
+    <View style={styles.rowActionContainer}>
+      <RectButton
+        style={[styles.rowActionButton, { backgroundColor: primaryColor }]}
+        accessibilityLabel={isPinned ? 'Unpin friend' : 'Pin friend'}
+        onPress={() => {
+          swipeableRef.current?.close();
+          onTogglePin();
+        }}
+      >
+        <IconButton icon={isPinned ? 'pin' : 'pin-outline'} iconColor="#fff" size={22} style={{ margin: 0 }} />
+        <Text style={styles.rowActionText}>{isPinned ? 'Unpin' : 'Pin'}</Text>
+      </RectButton>
+      <RectButton
+        style={[styles.rowActionButton, { backgroundColor: '#FF3B30' }]}
+        accessibilityLabel="Remove friend"
+        onPress={() => {
+          swipeableRef.current?.close();
+          onRemove();
+        }}
+      >
+        <IconButton icon="trash-can-outline" iconColor="#fff" size={22} style={{ margin: 0 }} />
+        <Text style={styles.rowActionText}>Remove</Text>
+      </RectButton>
+    </View>
+  );
+
+  return (
+    <Swipeable
+      ref={swipeableRef}
+      renderRightActions={renderRightActions}
+      friction={2}
+      rightThreshold={40}
+      overshootRight={false}
+    >
+      {children}
+    </Swipeable>
+  );
 };
 
 export const FriendsScreen = () => {
@@ -274,7 +335,14 @@ export const FriendsScreen = () => {
       : row.balances.map((b) => formatBalance(b.amount, b.currency)).join(' · ');
 
     return (
-      <GlassView key={row.friend.userId} style={styles.rowCard}>
+      <SwipeableFriendRow
+        key={row.friend.userId}
+        isPinned={!!row.friend.isPinned}
+        onTogglePin={() => togglePin(row)}
+        onRemove={() => handleRemove(row)}
+        primaryColor={theme.colors.primary}
+      >
+      <GlassView style={styles.rowCard}>
         <TouchableRipple onPress={() => openDirectChat(row)} onLongPress={() => handleRemove(row)} borderless>
           <View style={styles.row}>
             {/* Avatar opens the friend profile — previously FriendInfoScreen
@@ -336,6 +404,7 @@ export const FriendsScreen = () => {
           </View>
         </TouchableRipple>
       </GlassView>
+      </SwipeableFriendRow>
     );
   };
 
@@ -460,6 +529,23 @@ const styles = StyleSheet.create({
   rowActions: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  rowActionContainer: {
+    flexDirection: 'row',
+    marginBottom: 8,
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  rowActionButton: {
+    width: 76,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rowActionText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: -4,
   },
   emptyCard: {
     borderRadius: 18,

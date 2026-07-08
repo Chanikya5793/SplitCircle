@@ -17,8 +17,9 @@ import {
 import { formatCurrency } from '@/utils/currency';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { findNextOccurrenceAt, getRecurrenceSummary, normalizeRecurrenceRule } from '@/utils/recurrence';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { Button, IconButton, Modal, Portal, Switch, Text } from 'react-native-paper';
 import { ALL_EXPENSE_CATEGORIES } from '@/utils/categoryMatch';
 
@@ -148,6 +149,62 @@ const toggleInList = (list: number[], value: number): number[] => {
         return list.filter((item) => item !== value);
     }
     return [...list, value].sort((a, b) => a - b);
+};
+
+const SwipeableBillCard = ({
+    editColor,
+    onEdit,
+    onDelete,
+    children,
+}: {
+    editColor: string;
+    onEdit: () => void;
+    onDelete: () => void;
+    children: React.ReactNode;
+}) => {
+    const swipeableRef = useRef<Swipeable>(null);
+
+    const renderRightActions = () => (
+        <View style={styles.rowActions}>
+            <RectButton
+                style={[styles.rowActionButton, { backgroundColor: editColor }]}
+                onPress={() => {
+                    lightHaptic();
+                    swipeableRef.current?.close();
+                    onEdit();
+                }}
+                accessibilityLabel="Edit recurring bill"
+            >
+                <IconButton icon="pencil" iconColor="#fff" size={22} style={{ margin: 0 }} />
+                <Text style={styles.rowActionText}>Edit</Text>
+            </RectButton>
+            <RectButton
+                style={[styles.rowActionButton, { backgroundColor: '#FF3B30' }]}
+                onPress={() => {
+                    errorHaptic();
+                    swipeableRef.current?.close();
+                    onDelete();
+                }}
+                accessibilityLabel="Delete recurring bill"
+            >
+                <IconButton icon="trash-can-outline" iconColor="#fff" size={22} style={{ margin: 0 }} />
+                <Text style={styles.rowActionText}>Delete</Text>
+            </RectButton>
+        </View>
+    );
+
+    return (
+        <Swipeable
+            ref={swipeableRef}
+            renderRightActions={renderRightActions}
+            friction={2}
+            rightThreshold={40}
+            overshootRight={false}
+            containerStyle={styles.swipeableContainer}
+        >
+            {children}
+        </Swipeable>
+    );
 };
 
 export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
@@ -469,39 +526,46 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     </GlassView>
                 ) : (
                     bills.map((bill) => (
-                        <GlassView key={bill.billId} style={styles.billCard}>
-                            <View style={styles.billRow}>
-                                <View style={{ flex: 1 }}>
-                                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                                        {bill.title}
-                                    </Text>
-                                    <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                                        {formatCurrency(bill.amount, group.currency)} • {getRecurrenceSummary(bill.recurrenceRule)}
-                                    </Text>
-                                    <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
-                                        Paid by {memberMap[bill.paidBy] ?? 'Unknown'} • {bill.participants.length} participant{bill.participants.length === 1 ? '' : 's'}
-                                    </Text>
-                                    <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                                        Next run: {new Date(bill.nextDueAt).toLocaleString()}
-                                    </Text>
+                        <SwipeableBillCard
+                            key={bill.billId}
+                            editColor={theme.colors.primary}
+                            onEdit={() => handleEdit(bill)}
+                            onDelete={() => handleDelete(bill)}
+                        >
+                            <GlassView style={styles.billCard}>
+                                <View style={styles.billRow}>
+                                    <View style={{ flex: 1 }}>
+                                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
+                                            {bill.title}
+                                        </Text>
+                                        <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                                            {formatCurrency(bill.amount, group.currency)} • {getRecurrenceSummary(bill.recurrenceRule)}
+                                        </Text>
+                                        <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
+                                            Paid by {memberMap[bill.paidBy] ?? 'Unknown'} • {bill.participants.length} participant{bill.participants.length === 1 ? '' : 's'}
+                                        </Text>
+                                        <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                                            Next run: {new Date(bill.nextDueAt).toLocaleString()}
+                                        </Text>
+                                    </View>
+                                    <Switch
+                                        value={bill.isActive}
+                                        onValueChange={() => handleToggle(bill)}
+                                        color={theme.colors.primary}
+                                    />
+                                    <IconButton
+                                        icon="pencil-outline"
+                                        iconColor={theme.colors.primary}
+                                        onPress={() => handleEdit(bill)}
+                                    />
+                                    <IconButton
+                                        icon="delete-outline"
+                                        iconColor={theme.colors.error}
+                                        onPress={() => handleDelete(bill)}
+                                    />
                                 </View>
-                                <Switch
-                                    value={bill.isActive}
-                                    onValueChange={() => handleToggle(bill)}
-                                    color={theme.colors.primary}
-                                />
-                                <IconButton
-                                    icon="pencil-outline"
-                                    iconColor={theme.colors.primary}
-                                    onPress={() => handleEdit(bill)}
-                                />
-                                <IconButton
-                                    icon="delete-outline"
-                                    iconColor={theme.colors.error}
-                                    onPress={() => handleDelete(bill)}
-                                />
-                            </View>
-                        </GlassView>
+                            </GlassView>
+                        </SwipeableBillCard>
                     ))
                 )}
 
@@ -797,7 +861,25 @@ const styles = StyleSheet.create({
     billCard: {
         padding: 16,
         borderRadius: 20,
+    },
+    swipeableContainer: {
+        borderRadius: 20,
+        overflow: 'hidden',
         marginBottom: 10,
+    },
+    rowActions: {
+        flexDirection: 'row',
+    },
+    rowActionButton: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: 84,
+    },
+    rowActionText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '600',
+        marginTop: -4,
     },
     emptyCard: {
         padding: 30,

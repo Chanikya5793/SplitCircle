@@ -16,12 +16,54 @@ import * as Clipboard from 'expo-clipboard';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Share, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { Avatar, Button, Divider, IconButton, List, Text, TextInput } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const errorMessage = (error: unknown, fallback: string): string => {
     if (error instanceof Error && error.message.trim()) return error.message;
     return fallback;
+};
+
+const SwipeableMemberRow = ({
+    onRemove,
+    accessibilityLabel,
+    children,
+}: {
+    onRemove: () => void;
+    accessibilityLabel: string;
+    children: React.ReactNode;
+}) => {
+    const swipeableRef = useRef<Swipeable>(null);
+
+    const renderRightActions = () => (
+        <View style={styles.memberSwipeAction}>
+            <RectButton
+                style={styles.memberSwipeButton}
+                accessibilityLabel={accessibilityLabel}
+                onPress={() => {
+                    errorHaptic();
+                    swipeableRef.current?.close();
+                    onRemove();
+                }}
+            >
+                <IconButton icon="account-remove" iconColor="#fff" size={22} style={{ margin: 0 }} />
+                <Text style={styles.memberSwipeText}>Remove</Text>
+            </RectButton>
+        </View>
+    );
+
+    return (
+        <Swipeable
+            ref={swipeableRef}
+            renderRightActions={renderRightActions}
+            friction={2}
+            rightThreshold={40}
+            overshootRight={false}
+        >
+            {children}
+        </Swipeable>
+    );
 };
 
 export const GroupInfoScreen = () => {
@@ -198,6 +240,30 @@ export const GroupInfoScreen = () => {
         }
     };
 
+    // Single source of truth for "may the current user remove this member" —
+    // gates both the menu item and the swipe-to-remove action.
+    const canRemoveMember = (member: GroupMember): boolean => {
+        if (!me) return false;
+        if (member.userId === user?.userId) return false; // Self-row
+        if (!isAdmin) return false; // Non-admins: viewing only
+        return member.role !== 'owner' && !(me.role === 'admin' && member.role === 'admin');
+    };
+
+    const confirmRemoveMember = (member: GroupMember) => {
+        Alert.alert(
+            'Remove member',
+            `Remove ${member.displayName} from "${group.name}"? Their balance history stays in the group ledger.`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Remove',
+                    style: 'destructive',
+                    onPress: () => void performMemberAction(member, 'remove'),
+                },
+            ],
+        );
+    };
+
     const openMemberMenu = (member: GroupMember) => {
         if (!me) return;
         if (member.userId === user?.userId) return; // Self-row → no-op
@@ -218,24 +284,11 @@ export const GroupInfoScreen = () => {
             });
         }
 
-        const canRemove = member.role !== 'owner' && !(me.role === 'admin' && member.role === 'admin');
-        if (canRemove) {
+        if (canRemoveMember(member)) {
             options.push({
                 text: 'Remove from group',
                 style: 'destructive',
-                onPress: () =>
-                    Alert.alert(
-                        'Remove member',
-                        `Remove ${member.displayName} from "${group.name}"? Their balance history stays in the group ledger.`,
-                        [
-                            { text: 'Cancel', style: 'cancel' },
-                            {
-                                text: 'Remove',
-                                style: 'destructive',
-                                onPress: () => void performMemberAction(member, 'remove'),
-                            },
-                        ],
-                    ),
+                onPress: () => confirmRemoveMember(member),
             });
         }
 
@@ -587,22 +640,35 @@ export const GroupInfoScreen = () => {
                         {group.members.map((member, index) => {
                             const isSelf = member.userId === user?.userId;
                             const isInteractive = isAdmin && !isSelf && member.role !== 'owner';
+                            const removable = canRemoveMember(member);
+                            const memberRow = (
+                                <List.Item
+                                    title={isSelf ? `${member.displayName} (you)` : member.displayName}
+                                    description={member.role.charAt(0).toUpperCase() + member.role.slice(1)}
+                                    onPress={isInteractive ? () => openMemberMenu(member) : undefined}
+                                    left={() => (
+                                        <Avatar.Text
+                                            size={40}
+                                            label={member.displayName.slice(0, 2).toUpperCase()}
+                                            style={{ backgroundColor: theme.colors.primary }}
+                                            color={theme.colors.onPrimary}
+                                        />
+                                    )}
+                                    right={() => renderMemberRight(member)}
+                                />
+                            );
                             return (
                                 <View key={member.userId}>
-                                    <List.Item
-                                        title={isSelf ? `${member.displayName} (you)` : member.displayName}
-                                        description={member.role.charAt(0).toUpperCase() + member.role.slice(1)}
-                                        onPress={isInteractive ? () => openMemberMenu(member) : undefined}
-                                        left={() => (
-                                            <Avatar.Text
-                                                size={40}
-                                                label={member.displayName.slice(0, 2).toUpperCase()}
-                                                style={{ backgroundColor: theme.colors.primary }}
-                                                color={theme.colors.onPrimary}
-                                            />
-                                        )}
-                                        right={() => renderMemberRight(member)}
-                                    />
+                                    {removable ? (
+                                        <SwipeableMemberRow
+                                            onRemove={() => confirmRemoveMember(member)}
+                                            accessibilityLabel={`Remove ${member.displayName}`}
+                                        >
+                                            {memberRow}
+                                        </SwipeableMemberRow>
+                                    ) : (
+                                        memberRow
+                                    )}
                                     {index < group.members.length - 1 && <Divider />}
                                 </View>
                             );
@@ -826,6 +892,23 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 4,
+    },
+    memberSwipeAction: {
+        justifyContent: 'center',
+    },
+    memberSwipeButton: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: 84,
+        borderRadius: 16,
+        backgroundColor: '#FF3B30',
+    },
+    memberSwipeText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '600',
+        marginTop: -4,
     },
     roleBadge: {
         flexDirection: 'row',

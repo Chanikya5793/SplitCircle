@@ -28,7 +28,6 @@ export const ROUTES = {
     RECURRING_BILLS: 'RecurringBills',
     GROUP_STATS: 'GroupStats',
     ASK_AI: 'AskAi',
-    BILL_SPLIT: 'BillSplit',
     SETTINGS: 'Settings',
     NOTIFICATION_SETTINGS: 'NotificationSettings',
     AI_INDEX: 'AiIndex',
