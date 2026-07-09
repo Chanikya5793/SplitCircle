@@ -1,6 +1,6 @@
 import { GlassView } from '@/components/GlassView';
-import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
+import { radius, spacing } from '@/theme';
 import { formatCurrency, getCurrencySymbol } from '@/utils/currency';
 import React, { useEffect, useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -46,8 +46,7 @@ export const SplitFooter = React.memo(({
   onSpin,
   onDone,
 }: SplitFooterProps) => {
-  const { isDark, theme } = useTheme();
-  const palette = isDark ? darkColors : colors;
+  const { theme } = useTheme();
   const included = participants.filter((p) => p.included);
 
   const canSpinFromFooter = currentMethod === 'gamified' && gamifiedMode === 'roulette' && !loserId && !isSpinning;
@@ -112,7 +111,7 @@ export const SplitFooter = React.memo(({
         <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.onSurface }]}>
           {formatCurrency(perPerson, currency)}/person
         </Text>
-        <Text variant="bodySmall" style={{ color: palette.muted }}>
+        <Text variant="bodySmall" style={{ color: theme.colors.muted }}>
           {includedCount} {includedCount === 1 ? 'person' : 'people'} · Total {formatCurrency(totalAmount, currency)}
         </Text>
       </View>
@@ -125,9 +124,9 @@ export const SplitFooter = React.memo(({
     const isOver = remaining < -0.01;
     const isUnder = remaining > 0.01;
     const progressColor = isOver
-      ? colors.danger
+      ? theme.colors.danger
       : validation.isValid
-        ? colors.success
+        ? theme.colors.success
         : theme.colors.primary;
 
     return (
@@ -136,12 +135,12 @@ export const SplitFooter = React.memo(({
           <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.onSurface }]}>
             {formatCurrency(allocatedTotal, currency)}
           </Text>
-          <Text variant="bodySmall" style={{ color: palette.muted }}>
+          <Text variant="bodySmall" style={{ color: theme.colors.muted }}>
             {' / '}{formatCurrency(totalAmount, currency)}
           </Text>
         </View>
         {/* Progress bar */}
-        <View style={[styles.progressTrack, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
+        <View style={[styles.progressTrack, { backgroundColor: theme.colors.pressed }]}>
           <View
             style={[
               styles.progressFill,
@@ -152,7 +151,7 @@ export const SplitFooter = React.memo(({
             ]}
           />
         </View>
-        <Text variant="bodySmall" style={{ color: isOver ? colors.danger : isUnder ? palette.muted : colors.success }}>
+        <Text variant="bodySmall" style={{ color: isOver ? theme.colors.danger : isUnder ? theme.colors.muted : theme.colors.success }}>
           {isOver
             ? `${getCurrencySymbol(currency)}${Math.abs(remaining).toFixed(2)} over`
             : isUnder
@@ -172,7 +171,7 @@ export const SplitFooter = React.memo(({
           <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.primary }]}>
             🎰 Spinning...
           </Text>
-          <Text variant="bodySmall" style={{ color: palette.muted }}>
+          <Text variant="bodySmall" style={{ color: theme.colors.muted }}>
             Total {formatCurrency(totalAmount, currency)}
           </Text>
         </View>
@@ -185,7 +184,7 @@ export const SplitFooter = React.memo(({
           <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.onSurface }]}>
             🎯 {loser.name} pays {formatCurrency(loser.computedAmount, currency)}
           </Text>
-          <Text variant="bodySmall" style={{ color: palette.muted }}>
+          <Text variant="bodySmall" style={{ color: theme.colors.muted }}>
             {gamifiedMode === 'roulette' ? 'Roulette' : gamifiedMode === 'weightedRoulette' ? 'Weighted' : 'Karma'} · {includedCount} players
           </Text>
         </View>
@@ -204,7 +203,7 @@ export const SplitFooter = React.memo(({
         <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.primary }]}>
           {modeLabels[gamifiedMode ?? 'roulette']}
         </Text>
-        <Text variant="bodySmall" style={{ color: palette.muted }}>
+        <Text variant="bodySmall" style={{ color: theme.colors.muted }}>
           {includedCount} players · Total {formatCurrency(totalAmount, currency)}
         </Text>
       </View>
@@ -223,7 +222,7 @@ export const SplitFooter = React.memo(({
           <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.onSurface }]}>
             {formatCurrency(allocatedTotal, currency)} allocated
           </Text>
-          <Text variant="bodySmall" style={{ color: palette.muted }}>
+          <Text variant="bodySmall" style={{ color: theme.colors.muted }}>
             {includedCount} {includedCount === 1 ? 'person' : 'people'} · Items + Tax + Tip
           </Text>
         </View>
@@ -238,7 +237,7 @@ export const SplitFooter = React.memo(({
             ? `${formatCurrency(minAmt, currency)}/person`
             : `${formatCurrency(minAmt, currency)} — ${formatCurrency(maxAmt, currency)}`}
         </Text>
-        <Text variant="bodySmall" style={{ color: palette.muted }}>
+        <Text variant="bodySmall" style={{ color: theme.colors.muted }}>
           {includedCount} {includedCount === 1 ? 'person' : 'people'} · Total {formatCurrency(totalAmount, currency)}
         </Text>
       </View>
@@ -267,8 +266,8 @@ export const SplitFooter = React.memo(({
   const helperColor = canSpinFromFooter
     ? theme.colors.primary
     : validation.isValid
-      ? colors.success
-      : colors.danger;
+      ? theme.colors.success
+      : theme.colors.danger;
 
   const handlePrimaryAction = () => {
     if (!canApply) return;
@@ -281,11 +280,11 @@ export const SplitFooter = React.memo(({
 
   return (
     <Animated.View entering={FadeInUp.springify()} style={pulseStyle}>
-      <GlassView style={[styles.footer, canApply && styles.footerValid]} intensity={40}>
+      <GlassView style={[styles.footer, canApply && [styles.footerValid, { borderColor: `${theme.colors.success}40` }]]} intensity={40}>
         <View style={styles.footerContent}>
           <View style={styles.footerLeft}>
             <View style={styles.metaRow}>
-              <View style={[styles.methodChip, { borderColor: palette.border, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}>
+              <View style={[styles.methodChip, { borderColor: theme.colors.outline, backgroundColor: theme.colors.pressed }]}>
                 <Text style={{ color: theme.colors.onSurface, fontSize: 11, fontWeight: '700' }}>{methodLabel[currentMethod]}</Text>
               </View>
               {payerName && (
@@ -310,7 +309,7 @@ export const SplitFooter = React.memo(({
               style={({ pressed }) => [
                 styles.doneBadge,
                 {
-                  backgroundColor: canApply ? colors.success : palette.border,
+                  backgroundColor: canApply ? theme.colors.success : theme.colors.outline,
                   opacity: pressed && canApply ? 0.8 : 1,
                 },
               ]}
@@ -322,7 +321,7 @@ export const SplitFooter = React.memo(({
             {onManagePayer && (
               <Pressable
                 onPress={onManagePayer}
-                style={({ pressed }) => [styles.secondaryAction, { borderColor: palette.border, opacity: pressed ? 0.75 : 1 }]}
+                style={({ pressed }) => [styles.secondaryAction, { borderColor: theme.colors.outline, opacity: pressed ? 0.75 : 1 }]}
               >
                 <Text style={{ color: theme.colors.onSurface, fontSize: 11, fontWeight: '700' }}>Payer</Text>
               </Pressable>
@@ -336,13 +335,12 @@ export const SplitFooter = React.memo(({
 
 const styles = StyleSheet.create({
   footer: {
-    borderRadius: 20,
+    borderRadius: radius.lg,
     marginHorizontal: spacing.md,
     marginBottom: spacing.sm,
   },
   footerValid: {
     borderWidth: 1,
-    borderColor: `${colors.success}40`,
   },
   footerContent: {
     flexDirection: 'row',
@@ -363,8 +361,8 @@ const styles = StyleSheet.create({
   },
   methodChip: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 8,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
     paddingVertical: 2,
   },
   allocationRow: {
@@ -387,8 +385,8 @@ const styles = StyleSheet.create({
   helperBadge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.pill,
   },
   helperText: {
     fontSize: 11,
@@ -404,8 +402,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
   },
   doneText: {
     color: '#FFF',

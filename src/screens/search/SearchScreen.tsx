@@ -10,7 +10,7 @@ import { ROUTES } from '@/constants/routes';
 import { useTheme } from '@/context/ThemeContext';
 import { useAppSearch } from '@/hooks/useAppSearch';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
-import { groupByType, looksLikeQuestion, SECTION_LABELS, type RankedItem } from '@/services/searchService';
+import { groupByType, highlightSegments, looksLikeQuestion, SECTION_LABELS, type RankedItem } from '@/services/searchService';
 import { getLastSearchScope, subscribeSearchScope, type AppSearchScope } from '@/services/searchScope';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -18,7 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
-import { Text } from 'react-native-paper';
+import { Icon, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const RECENTS_KEY = 'search_recents_v1';
@@ -30,19 +30,94 @@ const SCOPE_LABELS: Record<AppSearchScope, string> = {
   all: 'All',
 };
 
-const SCOPE_SUGGESTIONS: Record<AppSearchScope, string[]> = {
-  expenses: ['Dinner', 'Rent', 'Groceries', 'Maya paid', 'Settle up'],
-  chat: ['photos', 'location', 'invoice', 'yesterday', 'from Maya'],
-  calls: ['missed', 'video', 'outgoing', 'Maya', 'yesterday'],
+// Fallback "try this" chips, used only until (or when) the user has no real
+// data to draw dynamic suggestions from. See useAppSearch.getSuggestions.
+const FALLBACK_SUGGESTIONS: Record<AppSearchScope, string[]> = {
+  expenses: ['Dinner', 'Rent', 'Groceries', 'Settle up'],
+  chat: ['photos', 'location', 'invoice', 'yesterday'],
+  calls: ['missed', 'video', 'outgoing', 'yesterday'],
   settings: ['privacy', 'notifications', 'AI index', 'theme', 'account'],
-  all: ['Dinner', 'Maya', 'notifications', 'missed call', 'AI index'],
+  all: ['Dinner', 'notifications', 'missed call', 'AI index'],
+};
+
+// Renders text with the query's matched substrings emphasised (bold + accent),
+// so results make it obvious *why* they matched. ListRow only accepts a plain
+// string title, so result rows are rendered locally to support rich highlights.
+const HighlightedText = ({
+  text,
+  query,
+  color,
+  highlightColor,
+  fontSize,
+  fontWeight,
+  numberOfLines,
+  marginTop,
+}: {
+  text: string;
+  query: string;
+  color: string;
+  highlightColor: string;
+  fontSize: number;
+  fontWeight?: '400' | '500' | '600' | '700';
+  numberOfLines?: number;
+  marginTop?: number;
+}) => {
+  const segments = useMemo(() => highlightSegments(text, query), [text, query]);
+  return (
+    <Text numberOfLines={numberOfLines} style={{ color, fontSize, fontWeight, marginTop }}>
+      {segments.map((seg, i) =>
+        seg.match ? (
+          <Text key={i} style={{ color: highlightColor, fontWeight: '700' }}>
+            {seg.text}
+          </Text>
+        ) : (
+          <Text key={i}>{seg.text}</Text>
+        ),
+      )}
+    </Text>
+  );
+};
+
+// Local search-result row (mirrors ListRow's look) with highlighted title/subtitle.
+const ResultRow = ({ item, query, onPress }: { item: RankedItem; query: string; onPress: () => void }) => {
+  const { theme } = useTheme();
+  return (
+    <TouchableOpacity onPress={onPress} accessibilityRole="button" accessibilityLabel={item.title} style={styles.resultRow}>
+      <View style={[styles.resultIcon, { backgroundColor: theme.colors.primaryContainer, borderRadius: theme.radius.pill }]}>
+        <Icon source={item.icon} size={18} color={theme.colors.primary} />
+      </View>
+      <View style={styles.resultCopy}>
+        <HighlightedText
+          text={item.title}
+          query={query}
+          color={theme.colors.onSurface}
+          highlightColor={theme.colors.primary}
+          fontSize={theme.typography.body.fontSize}
+          fontWeight="500"
+          numberOfLines={1}
+        />
+        {item.subtitle ? (
+          <HighlightedText
+            text={item.subtitle}
+            query={query}
+            color={theme.colors.muted}
+            highlightColor={theme.colors.primary}
+            fontSize={theme.typography.caption.fontSize}
+            numberOfLines={2}
+            marginTop={1}
+          />
+        ) : null}
+      </View>
+      <Icon source="chevron-right" size={20} color={theme.colors.muted} />
+    </TouchableOpacity>
+  );
 };
 
 export const SearchScreen = () => {
   const navigation = useNavigation<any>();
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  const { search, firstSearchableGroupId } = useAppSearch();
+  const { search, firstSearchableGroupId, getSuggestions } = useAppSearch();
 
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -111,7 +186,10 @@ export const SearchScreen = () => {
   const fieldBg = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)';
   const selectedChipBg = isDark ? 'rgba(88,166,255,0.24)' : 'rgba(0,122,255,0.14)';
   const bottomPad = getFloatingTabBarContentPadding(insets.bottom, 56);
-  const suggestions = SCOPE_SUGGESTIONS[selectedScope];
+  const suggestions = useMemo(() => {
+    const dynamic = getSuggestions(selectedScope);
+    return dynamic.length > 0 ? dynamic : FALLBACK_SUGGESTIONS[selectedScope];
+  }, [getSuggestions, selectedScope]);
   const scopeOptions = useMemo<AppSearchScope[]>(
     () => ([defaultScope, 'all', 'expenses', 'chat', 'calls', 'settings'] as AppSearchScope[])
       .filter((scope, index, arr) => arr.indexOf(scope) === index),
@@ -228,13 +306,7 @@ export const SearchScreen = () => {
                     {SECTION_LABELS[section.type]}
                   </Text>
                   {section.items.map((item) => (
-                    <ListRow
-                      key={item.id}
-                      title={item.title}
-                      subtitle={item.subtitle}
-                      icon={item.icon}
-                      onPress={() => open(item)}
-                    />
+                    <ResultRow key={item.id} item={item} query={debounced} onPress={() => open(item)} />
                   ))}
                 </GlassCard>
               ))}
@@ -268,4 +340,7 @@ const styles = StyleSheet.create({
   card: { paddingVertical: 6, paddingHorizontal: 8, gap: 2 },
   aiCard: { paddingVertical: 4, paddingHorizontal: 8 },
   empty: { alignItems: 'center', gap: 10, paddingVertical: 48 },
+  resultRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingHorizontal: 4 },
+  resultIcon: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+  resultCopy: { flex: 1 },
 });

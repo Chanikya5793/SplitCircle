@@ -92,14 +92,26 @@ const handledBufferedEvents = new Set<string>();
 // activating the session itself so the call isn't silent.
 let audioSessionActivated = false;
 
+// True only when JS (the watchdog fallback), NOT CallKit, activated the
+// session. CallKit balances its own activation with a later
+// didDeactivateAudioSession; a JS-owned activation has no such counterpart, so
+// teardown must deactivate it explicitly or the next call inherits a live but
+// orphaned session and is silent.
+let audioSessionActivatedByFallback = false;
+
 const handleAudioSessionActivated = (source: 'live' | 'buffered') => {
   audioSessionActivated = true;
+  // A genuine CallKit activation means CallKit now owns deactivation — even if
+  // the watchdog fallback already fired, CallKit's later didDeactivate will
+  // tear the session down, so JS must not also deactivate it.
+  audioSessionActivatedByFallback = false;
   debugLog(`nativeCallService: didActivateAudioSession (${source})`);
   RTCAudioSession?.audioSessionDidActivate();
 };
 
 const handleAudioSessionDeactivated = (source: 'live' | 'buffered') => {
   audioSessionActivated = false;
+  audioSessionActivatedByFallback = false;
   debugLog(`nativeCallService: didDeactivateAudioSession (${source})`);
   RTCAudioSession?.audioSessionDidDeactivate();
 };
@@ -673,11 +685,67 @@ function hasActivatedAudioSession(): boolean {
   return audioSessionActivated;
 }
 
+/**
+ * iOS watchdog fallback (see useCallManager.setupCallAudio). When CallKit's
+ * provider:didActivateAudioSession never arrives, JS activates the
+ * AVAudioSession itself — but AudioSession.startAudioSession() alone leaves
+ * WebRTC's audio unit wired to a session it still believes is inactive: the
+ * classic silent call. This notifies the WebRTC layer that the session is now
+ * live and records that JS (not CallKit) owns the activation, so teardown
+ * deactivates it. Idempotent: a no-op once the session is already active
+ * (CallKit beat the watchdog, or the fallback already ran). iOS-only — the
+ * platform guard stays here so callers never branch on Platform.OS.
+ */
+function activateAudioSessionFallback(): void {
+  if (Platform.OS !== 'ios') {
+    return;
+  }
+  if (audioSessionActivated) {
+    return;
+  }
+  audioSessionActivated = true;
+  audioSessionActivatedByFallback = true;
+  debugLog('nativeCallService: activateAudioSessionFallback (watchdog took over)');
+  RTCAudioSession?.audioSessionDidActivate();
+}
+
+/**
+ * Whether JS — not CallKit — must tear down the AVAudioSession. True on Android
+ * (no CallKit), on iOS when the session was never activated, and on iOS when
+ * the watchdog fallback activated it (CallKit won't deactivate a session it
+ * never activated). Callers must snapshot this BEFORE resetAudioSession()
+ * clears the underlying flags.
+ */
+function jsOwnsAudioSession(): boolean {
+  return !managesAudioSession() || !audioSessionActivated || audioSessionActivatedByFallback;
+}
+
+/**
+ * Tear down audio-session state at the end of a call. CallKit balances its own
+ * activation with provider:didDeactivateAudioSession, but a JS (watchdog)
+ * activation has no such counterpart — so when JS owned it we notify WebRTC the
+ * session is going away. Either way the activation flags are cleared
+ * defensively: a stuck `true` (e.g. a missed CallKit deactivation on a
+ * backgrounded teardown) would otherwise make the NEXT call silent until an app
+ * restart. iOS-guarded; elsewhere it only clears the flags. Idempotent.
+ */
+function resetAudioSession(): void {
+  if (Platform.OS === 'ios' && audioSessionActivatedByFallback) {
+    debugLog('nativeCallService: deactivating JS-activated audio session (teardown)');
+    RTCAudioSession?.audioSessionDidDeactivate();
+  }
+  audioSessionActivated = false;
+  audioSessionActivatedByFallback = false;
+}
+
 export const nativeCallService = {
   initialize,
   setAvailability,
   managesAudioSession,
   hasActivatedAudioSession,
+  activateAudioSessionFallback,
+  jsOwnsAudioSession,
+  resetAudioSession,
   isAppInitiatedNativeCall,
   startOutgoingCall,
   displayIncomingCall,

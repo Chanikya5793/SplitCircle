@@ -77,7 +77,8 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, archi
         renderRightActions={onArchive ? renderRightActions : undefined}
         friction={2}
         rightThreshold={40}
-        overshootRight={false}
+        overshootFriction={8}
+        onSwipeableWillOpen={lightHaptic}
       >
         <GlassView style={styles.container}>
           <TouchableRipple onPress={loading ? undefined : handlePress} style={{ flex: 1 }} disabled={loading}>

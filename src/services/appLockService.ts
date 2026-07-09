@@ -22,11 +22,18 @@ export interface AppLockSettings {
   enabled: boolean;
   /** Auto-lock delay in ms after backgrounding. */
   autoLockMs: number;
+  /**
+   * Require a biometric (Face ID / Touch ID) confirmation before finalizing a
+   * settlement. Independent of the whole-app lock — stored here to reuse the
+   * same device-local AsyncStorage record. Defaults OFF.
+   */
+  confirmSettlements: boolean;
 }
 
 export const DEFAULT_APP_LOCK: AppLockSettings = {
   enabled: false,
   autoLockMs: 0,
+  confirmSettlements: false,
 };
 
 let cache: AppLockSettings | null = null;

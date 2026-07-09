@@ -1,7 +1,7 @@
-import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
+import { spacing } from '@/theme';
 import { formatCurrency, getCurrencySymbol } from '@/utils/currency';
-import { selectionHaptic } from '@/utils/haptics';
+import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import React, { useCallback } from 'react';
 import { StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Checkbox, Text } from 'react-native-paper';
@@ -20,8 +20,6 @@ onSharesChange: (id: string, value: string) => void;
 onAdjustmentChange: (id: string, value: string) => void;
 }
 
-const AVATAR_COLORS = ['#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626', '#7C3AED'];
-
 function getInitials(name: string): string {
 return name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 }
@@ -37,16 +35,15 @@ export const ParticipantRow = React.memo(({
   onSharesChange,
   onAdjustmentChange,
 }: ParticipantRowProps) => {
-  const { isDark, theme } = useTheme();
-  const palette = isDark ? darkColors : colors;
-  const avatarColor = AVATAR_COLORS[index % AVATAR_COLORS.length];
+  const { theme } = useTheme();
+  const avatarColor = theme.colors.chart[index % theme.colors.chart.length];
 
   const [localExact, setLocalExact] = React.useState<string | null>(null);
   const [localPercentage, setLocalPercentage] = React.useState<string | null>(null);
   const [localAdjustment, setLocalAdjustment] = React.useState<string | null>(null);
 
   const handleToggle = useCallback(() => {
-    selectionHaptic();
+    lightHaptic();
     onToggle(p.id);
   }, [p.id, onToggle]);
 
@@ -57,9 +54,9 @@ switch (activeMethod) {
     case 'exact':
     return (
         <View style={styles.inputRow}>
-        <Text style={[styles.prefix, { color: palette.muted }]}>{getCurrencySymbol(currency)}</Text>
+        <Text style={[styles.prefix, { color: theme.colors.muted }]}>{getCurrencySymbol(currency)}</Text>
         <TextInput
-            style={[styles.input, { color: theme.colors.onSurface, borderColor: palette.border }]}
+            style={[styles.input, { color: theme.colors.onSurface, borderColor: theme.colors.outline }]}
             value={localExact !== null ? localExact : (p.exactAmount > 0 ? p.exactAmount.toString() : '')}
             onChangeText={(v) => {
               setLocalExact(v);
@@ -68,7 +65,7 @@ switch (activeMethod) {
             onBlur={() => setLocalExact(null)}
             keyboardType="decimal-pad"
             placeholder="0.00"
-            placeholderTextColor={palette.muted}
+            placeholderTextColor={theme.colors.muted}
         />
         </View>
     );
@@ -76,7 +73,7 @@ switch (activeMethod) {
     return (
         <View style={styles.inputRow}>
         <TextInput
-            style={[styles.input, { color: theme.colors.onSurface, borderColor: palette.border }]}
+            style={[styles.input, { color: theme.colors.onSurface, borderColor: theme.colors.outline }]}
             value={localPercentage !== null ? localPercentage : (p.percentage > 0 ? p.percentage.toString() : '')}
             onChangeText={(v) => {
               setLocalPercentage(v);
@@ -85,16 +82,16 @@ switch (activeMethod) {
             onBlur={() => setLocalPercentage(null)}
             keyboardType="decimal-pad"
             placeholder="0"
-            placeholderTextColor={palette.muted}
+            placeholderTextColor={theme.colors.muted}
         />
-        <Text style={[styles.suffix, { color: palette.muted }]}>%</Text>
+        <Text style={[styles.suffix, { color: theme.colors.muted }]}>%</Text>
         </View>
     );
     case 'shares':
     return (
         <View style={styles.shareControls}>
         <TouchableOpacity
-            style={[styles.shareBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+            style={[styles.shareBtn, { backgroundColor: theme.colors.pressed }]}
             onPress={() => {
             selectionHaptic();
             onSharesChange(p.id, Math.max(0, p.shares - 1).toString());
@@ -106,7 +103,7 @@ switch (activeMethod) {
         </TouchableOpacity>
         <Text style={[styles.shareValue, { color: theme.colors.onSurface }]}>{p.shares}</Text>
         <TouchableOpacity
-            style={[styles.shareBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+            style={[styles.shareBtn, { backgroundColor: theme.colors.pressed }]}
             onPress={() => {
             selectionHaptic();
             onSharesChange(p.id, (p.shares + 1).toString());
@@ -119,9 +116,9 @@ switch (activeMethod) {
     case 'adjustment':
     return (
         <View style={styles.inputRow}>
-        <Text style={[styles.prefix, { color: palette.muted }]}>{`±${getCurrencySymbol(currency)}`}</Text>
+        <Text style={[styles.prefix, { color: theme.colors.muted }]}>{`±${getCurrencySymbol(currency)}`}</Text>
         <TextInput
-            style={[styles.input, { color: theme.colors.onSurface, borderColor: palette.border }]}
+            style={[styles.input, { color: theme.colors.onSurface, borderColor: theme.colors.outline }]}
             value={localAdjustment !== null ? localAdjustment : (p.adjustment !== 0 ? p.adjustment.toString() : '')}
             onChangeText={(v) => {
               setLocalAdjustment(v);
@@ -130,7 +127,7 @@ switch (activeMethod) {
             onBlur={() => setLocalAdjustment(null)}
             keyboardType="numeric"
             placeholder="0.00"
-            placeholderTextColor={palette.muted}
+            placeholderTextColor={theme.colors.muted}
         />
         </View>
     );
@@ -154,7 +151,7 @@ return (
             {p.name}
         </Text>
         {p.included && p.computedAmount > 0 && (
-            <Text variant="bodySmall" style={{ color: palette.muted }}>
+            <Text variant="bodySmall" style={{ color: theme.colors.muted }}>
             {formatCurrency(p.computedAmount, currency)}
             </Text>
         )}
@@ -200,13 +197,12 @@ onAdjustmentChange,
 onSelectAll,
 allSelected,
 }: ParticipantListProps) => {
-const { theme, isDark } = useTheme();
-const palette = isDark ? darkColors : colors;
+const { theme } = useTheme();
 
 return (
 <View style={styles.listContainer}>
     <View style={styles.listHeader}>
-    <Text variant="titleSmall" style={{ color: palette.muted, fontWeight: '600' }}>
+    <Text variant="titleSmall" style={{ color: theme.colors.muted, fontWeight: '600' }}>
         Split between
     </Text>
     <TouchableOpacity onPress={onSelectAll} activeOpacity={0.7}>

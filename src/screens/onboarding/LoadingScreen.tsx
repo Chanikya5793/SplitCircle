@@ -7,8 +7,9 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { EmptyState } from '@/components/ui';
 import { APP_NAME } from '@/constants/appInfo';
 import { useTheme } from '@/context/ThemeContext';
-import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { animation, spacing } from '@/theme';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Text } from 'react-native-paper';
 
 interface LoadingScreenProps {
@@ -38,30 +39,60 @@ export const LoadingScreen = ({
   const { theme } = useTheme();
   const [timedOut, setTimedOut] = useState(false);
 
+  // Crossfade the spinner out and the timeout state in so the swap reads as a
+  // smooth dissolve instead of an abrupt flicker. The spinner stays mounted
+  // (fading to 0) while the EmptyState mounts only once we've timed out and
+  // fades up from 0 — layered on top via absolute positioning.
+  const spinnerOpacity = useRef(new Animated.Value(1)).current;
+  const timeoutOpacity = useRef(new Animated.Value(0)).current;
+
   useEffect(() => {
     if (!timeoutMs) return;
     const timer = setTimeout(() => setTimedOut(true), timeoutMs);
     return () => clearTimeout(timer);
   }, [timeoutMs]);
 
+  useEffect(() => {
+    if (!timedOut) return;
+    Animated.parallel([
+      Animated.timing(spinnerOpacity, {
+        toValue: 0,
+        duration: animation.quickMs,
+        useNativeDriver: true,
+      }),
+      Animated.timing(timeoutOpacity, {
+        toValue: 1,
+        duration: animation.quickMs,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [timedOut, spinnerOpacity, timeoutOpacity]);
+
   return (
     <LiquidBackground>
       <View style={styles.container}>
-        {timedOut ? (
-          <EmptyState
-            icon={timeoutIcon}
-            title={timeoutTitle}
-            hint={timeoutHint}
-            actionLabel={onTimeoutAction ? timeoutActionLabel : undefined}
-            onAction={onTimeoutAction}
-          />
-        ) : (
-          <>
-            <ActivityIndicator animating size="large" color={theme.colors.primary} />
-            <Text style={{ color: theme.colors.muted }}>
-              {message ?? `Preparing ${APP_NAME}…`}
-            </Text>
-          </>
+        <Animated.View
+          style={[styles.layer, { opacity: spinnerOpacity }]}
+          pointerEvents="none"
+        >
+          <ActivityIndicator animating size="large" color={theme.colors.primary} />
+          <Text style={{ color: theme.colors.muted }}>
+            {message ?? `Preparing ${APP_NAME}…`}
+          </Text>
+        </Animated.View>
+        {timedOut && (
+          <Animated.View
+            style={[styles.layer, { opacity: timeoutOpacity }]}
+            pointerEvents="auto"
+          >
+            <EmptyState
+              icon={timeoutIcon}
+              title={timeoutTitle}
+              hint={timeoutHint}
+              actionLabel={onTimeoutAction ? timeoutActionLabel : undefined}
+              onAction={onTimeoutAction}
+            />
+          </Animated.View>
         )}
       </View>
     </LiquidBackground>
@@ -73,6 +104,11 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 16,
+  },
+  layer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: spacing.md,
   },
 });

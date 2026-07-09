@@ -51,11 +51,23 @@ export const startRingback = (): void => {
 };
 
 export const stopRingback = (): void => {
+  // Null the handle FIRST so a re-entrant stop (or a start racing this) can
+  // never touch a half-removed player, and so a throw from pause() can't skip
+  // remove(). Each teardown step is guarded independently and swallows its
+  // error — stopping the ringback must never throw into the call path.
+  const current = player;
+  player = null;
+  if (!current) {
+    return;
+  }
   try {
-    player?.pause();
-    player?.remove();
+    current.pause();
   } catch {
     // best-effort teardown
   }
-  player = null;
+  try {
+    current.remove();
+  } catch {
+    // best-effort teardown
+  }
 };

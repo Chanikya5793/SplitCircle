@@ -24,7 +24,11 @@ export const EmptyState = ({ icon, title, hint, actionLabel, onAction, style }: 
       <View
         style={[
           styles.iconCircle,
-          { backgroundColor: theme.colors.primaryContainer, borderRadius: theme.radius.pill },
+          {
+            backgroundColor: theme.colors.primaryContainer,
+            borderRadius: theme.radius.pill,
+            marginBottom: theme.spacing.xs,
+          },
         ]}
       >
         <Icon source={icon} size={30} color={theme.colors.primary} />
@@ -88,6 +92,5 @@ const styles = StyleSheet.create({
     height: 64,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
   },
 });

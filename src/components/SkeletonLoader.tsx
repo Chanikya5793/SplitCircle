@@ -57,10 +57,10 @@ export const SkeletonLoader = ({
 // Preset skeleton components for common use cases
 
 export const GroupCardSkeleton = () => {
-  const { isDark } = useTheme();
+  const { theme } = useTheme();
   
   return (
-    <View style={[styles.groupCard, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.3)' }]}>
+    <View style={[styles.groupCard, { backgroundColor: theme.colors.skeleton }]}>
       <View style={styles.groupCardContent}>
         <SkeletonLoader width={48} height={48} borderRadius={24} />
         <View style={styles.groupCardMeta}>
@@ -74,10 +74,10 @@ export const GroupCardSkeleton = () => {
 };
 
 export const ExpenseCardSkeleton = () => {
-  const { isDark } = useTheme();
+  const { theme } = useTheme();
   
   return (
-    <View style={[styles.expenseCard, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.3)' }]}>
+    <View style={[styles.expenseCard, { backgroundColor: theme.colors.skeleton }]}>
       <View style={styles.expenseCardContent}>
         <View style={styles.expenseCardLeft}>
           <SkeletonLoader width="70%" height={18} />
@@ -91,10 +91,10 @@ export const ExpenseCardSkeleton = () => {
 };
 
 export const ChatListSkeleton = () => {
-  const { isDark } = useTheme();
+  const { theme } = useTheme();
   
   return (
-    <View style={[styles.chatItem, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.3)' }]}>
+    <View style={[styles.chatItem, { backgroundColor: theme.colors.skeleton }]}>
       <SkeletonLoader width={50} height={50} borderRadius={25} />
       <View style={styles.chatMeta}>
         <SkeletonLoader width="50%" height={16} />
@@ -106,10 +106,10 @@ export const ChatListSkeleton = () => {
 };
 
 export const ProfileSkeleton = () => {
-  const { isDark } = useTheme();
+  const { theme } = useTheme();
   
   return (
-    <View style={[styles.profileCard, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.3)' }]}>
+    <View style={[styles.profileCard, { backgroundColor: theme.colors.skeleton }]}>
       <SkeletonLoader width={80} height={80} borderRadius={40} />
       <SkeletonLoader width={150} height={20} style={{ marginTop: 16 }} />
       <SkeletonLoader width={200} height={14} style={{ marginTop: 8 }} />

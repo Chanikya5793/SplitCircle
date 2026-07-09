@@ -1,7 +1,9 @@
 import { auth, db } from '@/firebase';
 import type { UserProfile } from '@/models';
+import { clearLockSession } from '@/services/chatLockService';
 import { unregisterCurrentDevice } from '@/services/notificationService';
 import { clearCachedProfile, loadCachedProfile, persistProfile } from '@/services/profileCache';
+import { setLockedChatIds } from '@/utils/lockedChatRegistry';
 import * as Google from 'expo-auth-session/providers/google';
 import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
@@ -63,6 +65,8 @@ const buildUserProfile = (firebaseUser: FirebaseUser, existing?: UserProfile): U
   // silently stripped from `user` even though Firestore has it.
   archivedGroupIds: existing?.archivedGroupIds ?? [],
   archivedChats: existing?.archivedChats ?? {},
+  pinnedChats: existing?.pinnedChats ?? {},
+  lockedChats: existing?.lockedChats ?? {},
   createdAt: existing?.createdAt ?? Date.now(),
   updatedAt: Date.now(),
   preferences: existing?.preferences ?? {
@@ -187,6 +191,17 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       if (unsubscribeSnapshot) unsubscribeSnapshot();
     };
   }, []);
+
+  // Keep the dependency-free locked-chat registry in sync so the module-scope
+  // notification handler can suppress foreground banners for locked chats.
+  // Also re-arm the biometric lock session whenever the account changes —
+  // an unlock must never carry across sign-out/sign-in.
+  useEffect(() => {
+    setLockedChatIds(Object.keys(user?.lockedChats ?? {}));
+    if (!user) {
+      clearLockSession();
+    }
+  }, [user, user?.lockedChats]);
 
   useEffect(() => {
     const handleGoogleResponse = async () => {

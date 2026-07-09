@@ -2,8 +2,10 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GuardedScreen } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
+import { useAppLock } from '@/context/AppLockContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { authenticate, isBiometricAvailable } from '@/services/biometrics';
 import type { Group, GroupMember } from '@/models';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
@@ -27,6 +29,7 @@ export const SettlementsScreen = ({
   initialAmount
 }: SettlementsScreenProps) => {
   const { settleUp, updateSettlement } = useGroups();
+  const { settings: appLock } = useAppLock();
   const { theme, isDark } = useTheme();
 
   // Find existing settlement if editing
@@ -51,6 +54,14 @@ export const SettlementsScreen = ({
   const isEditMode = !!settlementId && !!existingSettlement;
 
   const handleSettle = async (requestId: string) => {
+    // Optional Face ID confirmation before money moves. Gated behind the
+    // per-device setting AND available biometrics — on web (no module) the
+    // check is skipped so settlements still work. Device fallback allowed so
+    // the user can never be permanently blocked from settling.
+    if (appLock.confirmSettlements && (await isBiometricAvailable())) {
+      const ok = await authenticate('Confirm settlement', true);
+      if (!ok) return;
+    }
     if (isEditMode && existingSettlement) {
       // Update existing settlement
       await updateSettlement(group.groupId, {

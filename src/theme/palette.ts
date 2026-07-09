@@ -177,6 +177,12 @@ export const NEUTRALS = {
     glassBorderAndroid: 'rgba(15, 23, 42, 0.08)',
     glassFallback: 'rgba(252, 252, 254, 0.86)',
     skeleton: 'rgba(15, 23, 42, 0.08)',
+    // Semantic scrims/fills so screens stop hand-rolling rgba(0,0,0,x) literals.
+    // overlay: full modal backdrop · backdrop: subtle content scrim ·
+    // pressed: neutral interactive/divider fill.
+    overlay: 'rgba(0, 0, 0, 0.5)',
+    backdrop: 'rgba(0, 0, 0, 0.08)',
+    pressed: 'rgba(0, 0, 0, 0.05)',
     blobSettled: ['#84fab0', '#a8edea', '#b8f6e6'] as [string, string, string],
     blobDebts: ['#ff6b6b', '#ffa07a', '#ff7f50'] as [string, string, string],
   },
@@ -206,6 +212,12 @@ export const NEUTRALS = {
     glassBorderAndroid: 'rgba(255, 255, 255, 0.08)',
     glassFallback: 'rgba(28, 30, 36, 0.86)',
     skeleton: 'rgba(255, 255, 255, 0.10)',
+    // Semantic scrims/fills so screens stop hand-rolling rgba(0,0,0,x) literals.
+    // overlay: full modal backdrop · backdrop: subtle content scrim ·
+    // pressed: neutral interactive/divider fill.
+    overlay: 'rgba(0, 0, 0, 0.6)',
+    backdrop: 'rgba(0, 0, 0, 0.25)',
+    pressed: 'rgba(255, 255, 255, 0.08)',
     blobSettled: ['#00695C', '#00897B', '#26A69A'] as [string, string, string],
     blobDebts: ['#B71C1C', '#C62828', '#D84315'] as [string, string, string],
   },

@@ -103,7 +103,8 @@ const SwipeableFriendRow = ({
       renderRightActions={renderRightActions}
       friction={2}
       rightThreshold={40}
-      overshootRight={false}
+      overshootFriction={8}
+      onSwipeableWillOpen={lightHaptic}
     >
       {children}
     </Swipeable>

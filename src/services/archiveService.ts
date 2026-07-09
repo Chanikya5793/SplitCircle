@@ -35,6 +35,9 @@ export async function unarchiveGroup(userId: string, groupId: string): Promise<v
 export async function archiveChat(userId: string, chatId: string): Promise<void> {
   await updateDoc(doc(db, 'users', userId), {
     [`archivedChats.${chatId}`]: Date.now(),
+    // Archiving supersedes pinning — a chat can't be both pinned to the top
+    // and tucked away, so drop any stale pin as we archive.
+    [`pinnedChats.${chatId}`]: deleteField(),
     updatedAt: Date.now(),
   });
 }
@@ -42,6 +45,26 @@ export async function archiveChat(userId: string, chatId: string): Promise<void>
 export async function unarchiveChat(userId: string, chatId: string): Promise<void> {
   await updateDoc(doc(db, 'users', userId), {
     [`archivedChats.${chatId}`]: deleteField(),
+    updatedAt: Date.now(),
+  });
+}
+
+/**
+ * Pin a chat to the top of the active list. Pinning removes any archive entry
+ * (a pinned chat is, by definition, active) and stores the pin timestamp so
+ * the pinned cluster can order most-recently-pinned first.
+ */
+export async function pinChat(userId: string, chatId: string): Promise<void> {
+  await updateDoc(doc(db, 'users', userId), {
+    [`pinnedChats.${chatId}`]: Date.now(),
+    [`archivedChats.${chatId}`]: deleteField(),
+    updatedAt: Date.now(),
+  });
+}
+
+export async function unpinChat(userId: string, chatId: string): Promise<void> {
+  await updateDoc(doc(db, 'users', userId), {
+    [`pinnedChats.${chatId}`]: deleteField(),
     updatedAt: Date.now(),
   });
 }

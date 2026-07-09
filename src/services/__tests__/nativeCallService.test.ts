@@ -596,3 +596,155 @@ describe('isAppInitiatedNativeCall', () => {
     ).toBe(false);
   });
 });
+
+/**
+ * Audio-session lifecycle: the fix for silent SplitCircle calls. CallKit is
+ * supposed to activate the AVAudioSession (provider:didActivateAudioSession →
+ * RTCAudioSession.audioSessionDidActivate); when it doesn't, the JS watchdog
+ * falls back to activating it. These tests pin the ownership handoff so JS
+ * deactivates exactly the sessions CallKit won't, and never double-deactivates
+ * — and that activation state can't leak from one call into the next (which
+ * would silence the following call until an app restart).
+ */
+describe('audio session activation lifecycle', () => {
+  it('activateAudioSessionFallback activates the WebRTC session exactly once (idempotent)', async () => {
+    const { nativeCallService } = await initializedService();
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(false);
+
+    nativeCallService.activateAudioSessionFallback();
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(true);
+    expect(mocks.RTCAudioSession.audioSessionDidActivate).toHaveBeenCalledTimes(1);
+
+    // A second fallback (e.g. a retriggered watchdog) is a no-op — the session
+    // is already live, and re-notifying WebRTC would be wrong.
+    nativeCallService.activateAudioSessionFallback();
+    expect(mocks.RTCAudioSession.audioSessionDidActivate).toHaveBeenCalledTimes(1);
+  });
+
+  it('activateAudioSessionFallback is a no-op once CallKit has already activated', async () => {
+    const { nativeCallService } = await initializedService();
+
+    fireCallKeepEvent('didActivateAudioSession', {});
+    expect(mocks.RTCAudioSession.audioSessionDidActivate).toHaveBeenCalledTimes(1);
+
+    // CallKit beat the watchdog: the fallback must not re-activate.
+    nativeCallService.activateAudioSessionFallback();
+    expect(mocks.RTCAudioSession.audioSessionDidActivate).toHaveBeenCalledTimes(1);
+    expect(nativeCallService.jsOwnsAudioSession()).toBe(false);
+  });
+
+  it('jsOwnsAudioSession: true when never activated, false after a CallKit activation', async () => {
+    const { nativeCallService } = await initializedService();
+
+    // Nothing activated → there is nothing for CallKit to hand off; JS owns.
+    expect(nativeCallService.jsOwnsAudioSession()).toBe(true);
+
+    fireCallKeepEvent('didActivateAudioSession', {});
+    expect(nativeCallService.jsOwnsAudioSession()).toBe(false);
+  });
+
+  it('jsOwnsAudioSession stays true when the watchdog fallback activated the session', async () => {
+    const { nativeCallService } = await initializedService();
+
+    nativeCallService.activateAudioSessionFallback();
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(true);
+    // CallKit never activated, so it will never deactivate: JS must own teardown.
+    expect(nativeCallService.jsOwnsAudioSession()).toBe(true);
+  });
+
+  it('resetAudioSession deactivates a JS-activated session and clears activation state', async () => {
+    const { nativeCallService } = await initializedService();
+    nativeCallService.activateAudioSessionFallback();
+
+    nativeCallService.resetAudioSession();
+    expect(mocks.RTCAudioSession.audioSessionDidDeactivate).toHaveBeenCalledTimes(1);
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(false);
+
+    // Idempotent: a second reset must not deactivate again.
+    nativeCallService.resetAudioSession();
+    expect(mocks.RTCAudioSession.audioSessionDidDeactivate).toHaveBeenCalledTimes(1);
+  });
+
+  it('resetAudioSession does NOT deactivate a CallKit-owned session but still clears state', async () => {
+    const { nativeCallService } = await initializedService();
+    fireCallKeepEvent('didActivateAudioSession', {});
+
+    nativeCallService.resetAudioSession();
+    // CallKit balances its own activation with didDeactivate — JS must not race it.
+    expect(mocks.RTCAudioSession.audioSessionDidDeactivate).not.toHaveBeenCalled();
+    // Flags cleared defensively so a missed CallKit deactivation can't silence
+    // the next call.
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(false);
+  });
+
+  it('a real CallKit activation after the fallback hands ownership back to CallKit', async () => {
+    const { nativeCallService } = await initializedService();
+
+    nativeCallService.activateAudioSessionFallback();
+    expect(nativeCallService.jsOwnsAudioSession()).toBe(true);
+
+    // CallKit's activation finally arrives — it now owns deactivation.
+    fireCallKeepEvent('didActivateAudioSession', {});
+    expect(nativeCallService.jsOwnsAudioSession()).toBe(false);
+
+    nativeCallService.resetAudioSession();
+    // JS must not deactivate a session CallKit will tear down itself.
+    expect(mocks.RTCAudioSession.audioSessionDidDeactivate).not.toHaveBeenCalled();
+  });
+
+  it('routes a buffered RNCallKeepDidActivateAudioSession to WebRTC even before any subscriber', async () => {
+    const { nativeCallService } = await initializedService();
+
+    // Lock-screen answers deliver activation buffered, before live listeners bind.
+    fireCallKeepEvent('didLoadWithEvents', [
+      { name: 'RNCallKeepDidActivateAudioSession', data: {} },
+    ]);
+
+    expect(mocks.RTCAudioSession.audioSessionDidActivate).toHaveBeenCalledTimes(1);
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(true);
+    // A buffered CallKit activation is still CallKit-owned.
+    expect(nativeCallService.jsOwnsAudioSession()).toBe(false);
+  });
+
+  it('routes a buffered RNCallKeepDidDeactivateAudioSession to WebRTC', async () => {
+    const { nativeCallService } = await initializedService();
+    fireCallKeepEvent('didActivateAudioSession', {});
+
+    fireCallKeepEvent('didLoadWithEvents', [
+      { name: 'RNCallKeepDidDeactivateAudioSession', data: {} },
+    ]);
+
+    expect(mocks.RTCAudioSession.audioSessionDidDeactivate).toHaveBeenCalledTimes(1);
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(false);
+  });
+
+  it('processes buffered audio activations delivered during setup and does not dedup duplicates', async () => {
+    const { nativeCallService } = await initializedService();
+
+    // Buffered audio events carry no payload, so they bypass the dedup set:
+    // each duplicate activation must still reach WebRTC (they are benign).
+    fireCallKeepEvent('didLoadWithEvents', [
+      { name: 'RNCallKeepDidActivateAudioSession', data: {} },
+      { name: 'RNCallKeepDidActivateAudioSession', data: {} },
+    ]);
+
+    expect(mocks.RTCAudioSession.audioSessionDidActivate).toHaveBeenCalledTimes(2);
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(true);
+  });
+
+  it('resets activation state between calls so the next call is not left silent', async () => {
+    const { nativeCallService } = await initializedService();
+
+    // Call 1: CallKit activates, then the call tears down.
+    fireCallKeepEvent('didActivateAudioSession', {});
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(true);
+    nativeCallService.resetAudioSession();
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(false);
+
+    // Call 2: the watchdog fallback must be free to activate again — a leaked
+    // `true` here would skip activation and silence the second call.
+    nativeCallService.activateAudioSessionFallback();
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(true);
+    expect(nativeCallService.jsOwnsAudioSession()).toBe(true);
+  });
+});

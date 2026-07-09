@@ -6,6 +6,7 @@ import { PrimaryButton } from '@/components/PrimaryButton';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { GroupCardSkeleton } from '@/components/SkeletonLoader';
 import { SwipeableGroupCard } from '@/components/SwipeableGroupCard';
+import { ArchivedFolderRow } from '@/components/ArchivedFolderRow';
 import { GroupFilterSortSheet, GroupSortField, GroupSortOrder } from '@/components/GroupFilterSortSheet';
 import {
   getFloatingTabBarContentPadding,
@@ -294,66 +295,56 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
             loading={openingGroupId === item.groupId}
           />
         )}
-        ListFooterComponent={
-          archivedGroups.length > 0 ? (
-            <View style={styles.archivedSection}>
-              <TouchableRipple
-                onPress={() => { lightHaptic(); setShowArchived(prev => !prev); }}
-                style={styles.archivedToggle}
-                borderless
-              >
-                <View style={styles.archivedToggleRow}>
-                  <IconButton icon="archive-outline" size={20} iconColor={theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
-                  <Text variant="titleSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }}>
-                    Archived ({archivedGroups.length})
-                  </Text>
-                  <IconButton
-                    icon={showArchived ? 'chevron-up' : 'chevron-down'}
-                    size={20}
-                    iconColor={theme.colors.onSurfaceVariant}
-                    style={{ margin: 0 }}
-                  />
-                </View>
-              </TouchableRipple>
-              {showArchived && archivedGroups.map((item, index) => (
-                <SwipeableGroupCard
-                  key={item.groupId}
-                  group={item}
-                  onPress={openingGroupId ? undefined : () => handleOpenGroup(item)}
-                  onArchive={handleUnarchive}
-                  archived
-                  index={index}
-                  loading={openingGroupId === item.groupId}
-                />
-              ))}
-            </View>
-          ) : null
-        }
         contentContainerStyle={[
           groups.length === 0 && !loading ? styles.emptyContainer : undefined,
           { paddingTop: insets.top + 32, paddingBottom: listBottomPadding, paddingHorizontal: 16 }
         ]}
         ListHeaderComponent={
-          <View style={styles.headerContainer}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Expenses</Text>
-              <TouchableRipple
-                onPress={() => { lightHaptic(); setFilterVisible(true); }}
-                style={styles.filterButton}
-                borderless
-              >
-                <GlassView intensity={40} style={styles.filterButtonContent}>
-                  <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
-                  {(selectedCurrencies.length > 0) && (
-                    <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary, borderColor: theme.colors.background }]}>
-                      <Text style={{ color: theme.colors.onPrimary, fontSize: 10, fontWeight: 'bold' }}>
-                        {selectedCurrencies.length}
-                      </Text>
-                    </View>
-                  )}
-                </GlassView>
-              </TouchableRipple>
+          <View>
+            <View style={styles.headerContainer}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Expenses</Text>
+                <TouchableRipple
+                  onPress={() => { lightHaptic(); setFilterVisible(true); }}
+                  style={styles.filterButton}
+                  borderless
+                >
+                  <GlassView intensity={40} style={styles.filterButtonContent}>
+                    <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
+                    {(selectedCurrencies.length > 0) && (
+                      <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary, borderColor: theme.colors.background }]}>
+                        <Text style={{ color: theme.colors.onPrimary, fontSize: 10, fontWeight: 'bold' }}>
+                          {selectedCurrencies.length}
+                        </Text>
+                      </View>
+                    )}
+                  </GlassView>
+                </TouchableRipple>
+              </View>
             </View>
+
+            {archivedGroups.length > 0 && (
+              <View style={styles.archivedSection}>
+                <ArchivedFolderRow
+                  icon="archive-outline"
+                  label="Archived"
+                  count={archivedGroups.length}
+                  expanded={showArchived}
+                  onPress={() => { lightHaptic(); setShowArchived((prev) => !prev); }}
+                />
+                {showArchived && archivedGroups.map((item, index) => (
+                  <SwipeableGroupCard
+                    key={item.groupId}
+                    group={item}
+                    onPress={openingGroupId ? undefined : () => handleOpenGroup(item)}
+                    onArchive={handleUnarchive}
+                    archived
+                    index={index}
+                    loading={openingGroupId === item.groupId}
+                  />
+                ))}
+              </View>
+            )}
           </View>
         }
         onScroll={Animated.event(
@@ -565,17 +556,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   archivedSection: {
-    marginTop: 16,
-  },
-  archivedToggle: {
-    borderRadius: 16,
-    marginBottom: 12,
-  },
-  archivedToggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    marginTop: 4,
   },
   field: {
     marginBottom: 0,

@@ -48,6 +48,8 @@ import {
   unmarkMessageDeletedForUser,
   updateMessageContent,
 } from '@/services/localMessageStorage';
+import { authenticate } from '@/services/biometrics';
+import { isLockSessionUnlocked, markLockSessionUnlocked } from '@/services/chatLockService';
 import { getOrDownloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import {
   flushAllPendingRenderCaches,
@@ -159,6 +161,59 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+
+  // ── Locked-chat biometric gate (defense in depth) ──────────────────────
+  // The Locked folder in ChatListScreen is the normal entrance, but this room
+  // can also be reached via search deep-links or notification taps. Whatever
+  // the path, a locked chat's content must stay hidden behind an opaque
+  // overlay until the shared lock session has passed Face ID.
+  const chatIsLocked = !!user?.lockedChats?.[thread.chatId];
+  const [lockGatePassed, setLockGatePassed] = useState(
+    () => !chatIsLocked || isLockSessionUnlocked(),
+  );
+  const lockPromptInFlight = useRef(false);
+  // Re-engage the gate if `lockedChats` arrives AFTER mount: cold-start
+  // deep-links can render before the Firestore user snapshot delivers the
+  // locked set, and a chat can be locked remotely from another device while
+  // this room is open. The initializer alone would miss both.
+  useEffect(() => {
+    if (chatIsLocked && !isLockSessionUnlocked()) {
+      setLockGatePassed(false);
+    }
+  }, [chatIsLocked]);
+  useEffect(() => {
+    if (lockGatePassed) return;
+    if (Platform.OS === 'web') {
+      appAlert('Locked chat', 'Locked chats can only be opened on your phone.');
+      navigation.goBack();
+      return;
+    }
+    if (lockPromptInFlight.current) return;
+    lockPromptInFlight.current = true;
+    void (async () => {
+      const ok = await authenticate('Unlock your locked chats', true);
+      lockPromptInFlight.current = false;
+      if (ok) {
+        markLockSessionUnlocked();
+        setLockGatePassed(true);
+      } else {
+        navigation.goBack();
+      }
+    })();
+  }, [lockGatePassed, navigation]);
+  // Re-arm when the app returns from a real background: the module session is
+  // cleared on 'background' (see ChatListScreen), so on 'active' we re-gate.
+  // 'inactive' is ignored — the Face ID prompt itself fires it and re-gating
+  // there would loop the prompt forever.
+  useEffect(() => {
+    if (!chatIsLocked || Platform.OS === 'web') return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && !isLockSessionUnlocked()) {
+        setLockGatePassed(false);
+      }
+    });
+    return () => sub.remove();
+  }, [chatIsLocked]);
   // Messages for this chat (inverted list - newest first)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
@@ -2015,6 +2070,20 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
         </View>
       )}
 
+      {/* Locked-chat gate: fully opaque so no message content can be seen
+          (or screenshotted) until Face ID passes. Sits above everything. */}
+      {!lockGatePassed && (
+        <View style={[styles.lockGateOverlay, { backgroundColor: theme.colors.background }]}>
+          <Icon source="lock" size={44} color={theme.colors.primary} />
+          <Text style={[styles.lockGateTitle, { color: theme.colors.onSurface }]}>
+            Locked chat
+          </Text>
+          <Text style={[styles.lockGateSubtitle, { color: theme.colors.onSurfaceVariant }]}>
+            Unlock with Face ID to view this conversation
+          </Text>
+        </View>
+      )}
+
     </LiquidBackground>
   );
 };
@@ -2058,10 +2127,11 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   composerWrapper: {
-    marginTop: -20,
+    marginTop: 0,
     paddingHorizontal: 12,
     paddingVertical: 16,
     marginBottom: -2,
+    overflow: 'hidden',
   },
   inputRow: {
     flexDirection: 'row',
@@ -2121,6 +2191,24 @@ const styles = StyleSheet.create({
   composerFocused: {
     borderWidth: 2,
     // borderColor handled dynamically
+  },
+  lockGateOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 10000,
+    elevation: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  lockGateTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: 16,
+  },
+  lockGateSubtitle: {
+    fontSize: 14,
+    marginTop: 6,
+    textAlign: 'center',
   },
   stickyHeader: {
     position: 'absolute',

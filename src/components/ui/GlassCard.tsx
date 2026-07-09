@@ -88,7 +88,7 @@ export const GlassCard = React.memo(
           <BlurView
             intensity={intensity}
             tint={isDark ? 'dark' : 'light'}
-            style={StyleSheet.absoluteFill}
+            style={[StyleSheet.absoluteFill, { borderRadius }]}
             pointerEvents="none"
           />
         )}
@@ -102,6 +102,15 @@ const styles = StyleSheet.create({
   container: {
     overflow: 'hidden',
     borderWidth: 1,
+    // Android can't render BlurView, so the flat tinted card needs elevation to
+    // read as a raised glass surface instead of a painted-on rectangle. iOS
+    // depth comes from the blur/liquid-glass material, so scope this to Android.
+    ...Platform.select({
+      android: {
+        elevation: 4,
+        shadowColor: '#000',
+      },
+    }),
   },
   nativeGlass: {
     overflow: 'hidden',

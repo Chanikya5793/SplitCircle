@@ -117,6 +117,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const lastStartAtRef = useRef(0);
   const unsubscribes = useRef<Array<() => void>>([]);
   const audioWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const videoModeReapplyRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Cleanup subscriptions
   const cleanupSubscriptions = useCallback(() => {
@@ -142,6 +143,42 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     };
   }, [chatId, threads, user?.userId]);
 
+  // CallKit activates the AVAudioSession with the (speaker-less, voiceChat)
+  // setup config, so a VIDEO call — especially one answered from the lock
+  // screen — can get stuck in voiceChat mode on the earpiece. Once activation
+  // is actually in effect (CallKit's event OR the JS watchdog fallback),
+  // re-apply videoChat mode + the speaker route. Polling for activation first
+  // guarantees we never fight CallKit mid-negotiation. Bails after 5s so a
+  // never-activated session can't leak the interval.
+  const reapplyVideoAudioModeAfterActivation = useCallback(() => {
+    if (!nativeCallService.managesAudioSession()) {
+      return;
+    }
+    if (videoModeReapplyRef.current) {
+      clearInterval(videoModeReapplyRef.current);
+      videoModeReapplyRef.current = null;
+    }
+    const startedAt = Date.now();
+    const stop = () => {
+      if (videoModeReapplyRef.current) {
+        clearInterval(videoModeReapplyRef.current);
+        videoModeReapplyRef.current = null;
+      }
+    };
+    videoModeReapplyRef.current = setInterval(() => {
+      if (!nativeCallService.hasActivatedAudioSession()) {
+        if (Date.now() - startedAt > 5000) {
+          stop();
+        }
+        return;
+      }
+      stop();
+      void preferBluetoothAudio(true).catch((err) =>
+        console.warn('useCallManager: reapply video audio mode failed', err),
+      );
+    }, 250);
+  }, []);
+
   // Configure call audio for the platform. On iOS with CallKit, the session
   // is activated by CallKit itself (provider:didActivateAudioSession →
   // RTCAudioSession.audioSessionDidActivate). Activating from JS here races
@@ -164,15 +201,27 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         }
         console.warn('useCallManager: CallKit never activated the audio session — activating manually');
         AudioSession.startAudioSession()
-          .then(() => preferBluetoothAudio(isVideo))
+          .then(() => {
+            // CRITICAL: startAudioSession() alone leaves WebRTC's audio unit
+            // wired to a session it believes is inactive — a silent call.
+            // Notify the WebRTC layer (RTCAudioSession.audioSessionDidActivate)
+            // so the audio unit actually starts. Idempotent no-op if CallKit
+            // activated in the meantime.
+            nativeCallService.activateAudioSessionFallback();
+            return preferBluetoothAudio(isVideo);
+          })
           .catch((err) => console.warn('useCallManager: fallback startAudioSession failed', err));
       }, AUDIO_ACTIVATION_WATCHDOG_MS);
       await preferBluetoothAudio(isVideo);
+      // Video: re-apply videoChat/speaker AFTER activation (see helper).
+      if (isVideo) {
+        reapplyVideoAudioModeAfterActivation();
+      }
     } else {
       await AudioSession.startAudioSession();
       await preferBluetoothAudio(isVideo);
     }
-  }, []);
+  }, [reapplyVideoAudioModeAfterActivation]);
 
   // Start a new call (as initiator)
   const startCall = useCallback(async (type: CallType = 'video') => {
@@ -356,6 +405,18 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         await nativeCallService.endCall(callIdRef.current);
         nativeCallService.clearCall(callIdRef.current);
       }
+      // Setup may have armed the activation watchdog / video-reapply poll and
+      // (via the fallback) activated the session — tear all of that down so a
+      // failed start can't leak a timer or leave the next call silent.
+      if (audioWatchdogRef.current) {
+        clearTimeout(audioWatchdogRef.current);
+        audioWatchdogRef.current = null;
+      }
+      if (videoModeReapplyRef.current) {
+        clearInterval(videoModeReapplyRef.current);
+        videoModeReapplyRef.current = null;
+      }
+      nativeCallService.resetAudioSession();
       callIdRef.current = null;
       setCallId(null);
       setError(err instanceof Error ? err.message : 'Failed to start call');
@@ -490,6 +551,18 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       console.error('Error joining call', err);
       await nativeCallService.endCall(existingCallId);
       nativeCallService.clearCall(existingCallId);
+      // Setup may have armed the activation watchdog / video-reapply poll (and
+      // activated the session via the fallback) before the join failed — clean
+      // it up so the next call isn't left silent or leaking a timer.
+      if (audioWatchdogRef.current) {
+        clearTimeout(audioWatchdogRef.current);
+        audioWatchdogRef.current = null;
+      }
+      if (videoModeReapplyRef.current) {
+        clearInterval(videoModeReapplyRef.current);
+        videoModeReapplyRef.current = null;
+      }
+      nativeCallService.resetAudioSession();
       setError(err instanceof Error ? err.message : 'Failed to join call');
       setStatus('failed');
     }
@@ -597,19 +670,25 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       hasSessionToCleanupRef.current = false;
       hasReportedConnectedNativeRef.current = false;
 
+      // Kill the pending audio timers FIRST so a late watchdog/video-reapply
+      // fire can't re-activate the session we're tearing down.
       if (audioWatchdogRef.current) {
         clearTimeout(audioWatchdogRef.current);
         audioWatchdogRef.current = null;
       }
+      if (videoModeReapplyRef.current) {
+        clearInterval(videoModeReapplyRef.current);
+        videoModeReapplyRef.current = null;
+      }
 
       // With CallKit, deactivation is CallKit's job (didDeactivateAudioSession
       // → audioSessionDidDeactivate); a JS setActive(false) here races it.
-      // Exception: if the watchdog fallback had to activate from JS (CallKit's
-      // activation never arrived — flag still false), CallKit won't deactivate
-      // either, so deactivate ourselves or the mic indicator stays on.
-      const jsOwnsActivation =
-        !nativeCallService.managesAudioSession()
-        || !nativeCallService.hasActivatedAudioSession();
+      // Exception: when JS owns activation (Android, a never-activated session,
+      // or the watchdog fallback that activated from JS) CallKit won't
+      // deactivate — so JS must, or the mic indicator stays on AND the next
+      // call inherits a live session and is silent. Snapshot ownership BEFORE
+      // resetAudioSession() clears the flags.
+      const jsOwnsActivation = nativeCallService.jsOwnsAudioSession();
       if (jsOwnsActivation) {
         try {
           await AudioSession.stopAudioSession();
@@ -617,6 +696,10 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
           console.warn('useCallManager: AudioSession.stopAudioSession failed', audioErr);
         }
       }
+      // Notify WebRTC (for a JS-activated session) and defensively clear the
+      // activation flags so a missed CallKit deactivation can't silence the
+      // next call until an app restart.
+      nativeCallService.resetAudioSession();
       debugLog('useCallManager call ended');
 
     } catch (err) {

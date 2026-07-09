@@ -27,6 +27,9 @@ export interface SemanticColors {
   glassBorderAndroid: string;
   glassFallback: string;
   skeleton: string;
+  overlay: string;
+  backdrop: string;
+  pressed: string;
   muted: string;
   chart: string[];
 }
@@ -95,6 +98,9 @@ export const buildTheme = (scheme: ColorScheme, accentId: AccentId): AppTheme =>
       glassBorderAndroid: neutral.glassBorderAndroid,
       glassFallback: neutral.glassFallback,
       skeleton: neutral.skeleton,
+      overlay: neutral.overlay,
+      backdrop: neutral.backdrop,
+      pressed: neutral.pressed,
       muted: neutral.muted,
       chart,
     },

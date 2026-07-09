@@ -440,29 +440,81 @@ export const onChatUpdated = onDocumentUpdated(
             return;
         }
 
+        // Recipients who LOCKED this chat (users/{uid}.lockedChats.<chatId>)
+        // must not receive sender name or message content in the push — the
+        // chat sits behind a biometric gate on their device, so the lock
+        // screen/notification tray must stay just as opaque. They get a
+        // generic copy instead; the data payload is identical so tapping it
+        // still deep-links into the (client-side gated) chat.
+        const normalRecipientIds: string[] = [];
+        const lockedRecipientIds: string[] = [];
+        await Promise.all(
+            recipientIds.map(async (recipientId) => {
+                try {
+                    const recipientDoc = await getFirestore()
+                        .collection("users")
+                        .doc(recipientId)
+                        .get();
+                    const lockedChats = recipientDoc.data()?.lockedChats as
+                        | Record<string, unknown>
+                        | undefined;
+                    if (lockedChats && lockedChats[chatId] !== undefined) {
+                        lockedRecipientIds.push(recipientId);
+                    } else {
+                        normalRecipientIds.push(recipientId);
+                    }
+                } catch {
+                    // If the lookup fails, fail CLOSED for privacy: deliver
+                    // the generic copy rather than risking a locked preview.
+                    lockedRecipientIds.push(recipientId);
+                }
+            }),
+        );
+
+        const dataPayload = {
+            type: "message",
+            chatId,
+            ...(groupId ? { groupId } : {}),
+            senderId,
+            senderName,
+        };
+
         try {
-            const dispatch = await sendPushToUsers(
-                recipientIds,
-                notificationCopy.title,
-                notificationCopy.body,
-                {
-                    type: "message",
+            if (normalRecipientIds.length > 0) {
+                const dispatch = await sendPushToUsers(
+                    normalRecipientIds,
+                    notificationCopy.title,
+                    notificationCopy.body,
+                    dataPayload,
+                    "messages",
                     chatId,
-                    ...(groupId ? { groupId } : {}),
-                    senderId,
-                    senderName,
-                },
-                "messages",
-                chatId,
-                "messages",
-                { subtitle: notificationCopy.subtitle },
-            );
-            logger.info("Queued message notifications", {
-                chatId,
-                deliveryId: dispatch.deliveryId,
-                acceptedCount: dispatch.acceptedCount,
-                targetedDeviceCount: dispatch.targetedDeviceCount,
-            });
+                    "messages",
+                    { subtitle: notificationCopy.subtitle },
+                );
+                logger.info("Queued message notifications", {
+                    chatId,
+                    deliveryId: dispatch.deliveryId,
+                    acceptedCount: dispatch.acceptedCount,
+                    targetedDeviceCount: dispatch.targetedDeviceCount,
+                });
+            }
+            if (lockedRecipientIds.length > 0) {
+                const dispatch = await sendPushToUsers(
+                    lockedRecipientIds,
+                    "ManaSplit",
+                    "New message",
+                    dataPayload,
+                    "messages",
+                    chatId,
+                    "messages",
+                );
+                logger.info("Queued locked-chat message notifications", {
+                    chatId,
+                    deliveryId: dispatch.deliveryId,
+                    acceptedCount: dispatch.acceptedCount,
+                    targetedDeviceCount: dispatch.targetedDeviceCount,
+                });
+            }
         } catch (error) {
             logger.error("Failed to send message notifications", toSafeError(error));
         }

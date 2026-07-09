@@ -1,7 +1,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
-import { lightHaptic, mediumHaptic } from '@/utils/haptics';
+import { errorHaptic, lightHaptic, mediumHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { BlurView } from 'expo-blur';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -69,7 +69,7 @@ const MessagePreviewBubble = React.memo(({ message, isMine, theme, isDark }: {
 
   const hasAnyRead = (message.readBy?.length ?? 0) > 0 || message.status === 'read';
   const hasAnyDelivered = hasAnyRead || (message.deliveredTo?.length ?? 0) > 0 || message.status === 'delivered';
-  const tickColor = hasAnyRead ? '#35C6FF' : 'rgba(255,255,255,0.7)';
+  const tickColor = hasAnyRead ? theme.colors.secondary : 'rgba(255,255,255,0.7)';
 
   let previewText = message.content || '';
   if (message.type === 'image') previewText = previewText || '📷 Photo';
@@ -201,7 +201,11 @@ export const MessageActionSheet = ({
   };
 
   const handleAction = (action: MessageAction) => {
-    lightHaptic();
+    if (action === 'delete' || action === 'deleteForEveryone') {
+      errorHaptic();
+    } else {
+      lightHaptic();
+    }
     onAction(action);
     handleClose();
   };

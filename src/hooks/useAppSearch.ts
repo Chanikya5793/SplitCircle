@@ -13,10 +13,19 @@ import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { ROUTES } from '@/constants/routes';
 import { getCallHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { subscribeToFriends, type Friend } from '@/services/friendsService';
+import { getChatMessagesPaginated } from '@/services/localMessageStorage';
 import { searchIndex, type SearchItem } from '@/services/searchService';
 import type { AppSearchScope } from '@/services/searchScope';
 import { formatCurrency } from '@/utils/currency';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+// How many recent messages per thread are folded into global search. Capped so
+// the index stays small and the async build never blocks typing.
+const MESSAGE_INDEX_PER_THREAD = 200;
+// Longest message snippet kept as a result title — keeps rows tidy and scoring cheap.
+const MESSAGE_SNIPPET_MAX = 140;
+// Debounce for rebuilding the (non-message) index when underlying data churns.
+const INDEX_BUILD_DEBOUNCE_MS = 150;
 
 const STATIC_ACTIONS: SearchItem[] = [
   { id: 'act-settings', type: 'action', title: 'Settings', subtitle: 'Appearance, security, account', icon: 'cog-outline', keywords: 'preferences account theme wallpaper', route: ROUTES.APP.SETTINGS },
@@ -44,7 +53,17 @@ export const useAppSearch = () => {
     void getCallHistory().then(setCalls);
   }, []);
 
-  const index = useMemo<SearchItem[]>(() => {
+  // Keep the latest groups reachable from the async message-index build without
+  // making that effect re-run on every unrelated group change (e.g. an expense
+  // edit) — the ref is read only to resolve group-chat titles.
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
+
+  // Base index (everything except messages) — built off the render path in a
+  // debounced effect keyed on the underlying data, then stored in state. This
+  // replaces the old per-render useMemo flatten so typing never triggers a
+  // full rebuild.
+  const buildBaseIndex = useCallback((): SearchItem[] => {
     const items: SearchItem[] = [...STATIC_ACTIONS];
     const shielded = (target: 'expenses' | 'chats' | 'calls' | 'friends', entityId?: string) =>
       guard.active && guard.isShielded(target, entityId);
@@ -196,6 +215,9 @@ export const useAppSearch = () => {
     // Chats
     for (const t of threads) {
       if (shielded('chats', t.chatId)) continue;
+      // Locked chats live behind the biometric folder — they must never leak
+      // through global search (title, preview, or navigability).
+      if (user?.lockedChats?.[t.chatId]) continue;
       const title =
         t.type === 'group'
           ? groups.find((g) => g.groupId === t.groupId)?.name ?? 'Group chat'
@@ -239,7 +261,81 @@ export const useAppSearch = () => {
     }
 
     return items;
-  }, [groups, threads, friends, calls, user?.userId, guard.active, guard.settings]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, threads, friends, calls, user?.userId, user?.lockedChats, guard.active, guard.settings]);
+
+  const [baseIndex, setBaseIndex] = useState<SearchItem[]>([]);
+  const [messageIndex, setMessageIndex] = useState<SearchItem[]>([]);
+
+  // Debounced base-index build: coalesces bursts of data changes into a single
+  // off-render rebuild instead of reflattening on every keystroke/render.
+  useEffect(() => {
+    const t = setTimeout(() => setBaseIndex(buildBaseIndex()), INDEX_BUILD_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [buildBaseIndex]);
+
+  // Message tier: cached history folded into search, capped per thread and built
+  // asynchronously (awaiting AsyncStorage yields between threads) so it never
+  // stutters the UI. Results publish progressively as threads are scanned.
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      const collected: SearchItem[] = [];
+      for (const t of threads) {
+        if (cancelled) return;
+        // Never index a chat the privacy guard is actively shielding.
+        if (guard.active && guard.isShielded('chats', t.chatId)) continue;
+        // Never index message bodies of a locked chat — the biometric gate
+        // would be meaningless if its content surfaced in search results.
+        if (user?.lockedChats?.[t.chatId]) continue;
+
+        let page: { messages: import('@/models').ChatMessage[] };
+        try {
+          page = await getChatMessagesPaginated(t.chatId, { limit: MESSAGE_INDEX_PER_THREAD });
+        } catch {
+          continue;
+        }
+        if (cancelled) return;
+
+        const chatTitle =
+          t.type === 'group'
+            ? groupsRef.current.find((g) => g.groupId === t.groupId)?.name ?? 'Group chat'
+            : t.participants.find((p) => p.userId !== user?.userId)?.displayName ?? 'Chat';
+
+        for (const m of page.messages) {
+          if (m.type !== 'text') continue;
+          if (m.deletedForEveryone) continue;
+          if (user?.userId && m.deletedFor?.includes(user.userId)) continue;
+          const content = (m.content ?? '').trim();
+          if (!content) continue;
+          const msgId = m.messageId || m.id;
+          collected.push({
+            id: `message-${msgId}`,
+            type: 'message',
+            title: content.length > MESSAGE_SNIPPET_MAX ? `${content.slice(0, MESSAGE_SNIPPET_MAX)}…` : content,
+            subtitle: chatTitle,
+            icon: 'message-text-outline',
+            route: ROUTES.APP.GROUP_CHAT,
+            params: { chatId: t.chatId, initialTitle: chatTitle, backTitle: 'Search', messageId: msgId },
+            recency: m.createdAt,
+            guardTarget: 'chats',
+            guardEntityId: t.chatId,
+          });
+        }
+
+        if (!cancelled) setMessageIndex([...collected]);
+      }
+      if (!cancelled) setMessageIndex(collected);
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threads, user?.userId, user?.lockedChats, guard.active]);
+
+  // Full index is a cheap concat of the two tiers — no expensive reflatten.
+  const index = useMemo<SearchItem[]>(() => [...baseIndex, ...messageIndex], [baseIndex, messageIndex]);
 
   const itemMatchesScope = useCallback((item: SearchItem, scope: AppSearchScope) => {
     if (scope === 'all') return true;
@@ -255,7 +351,12 @@ export const useAppSearch = () => {
       );
     }
     if (scope === 'chat') {
-      return item.type === 'chat' || item.route === ROUTES.APP.CHAT_TAB || item.route === ROUTES.APP.GROUP_CHAT;
+      return (
+        item.type === 'chat' ||
+        item.type === 'message' ||
+        item.route === ROUTES.APP.CHAT_TAB ||
+        item.route === ROUTES.APP.GROUP_CHAT
+      );
     }
     if (scope === 'calls') {
       return item.type === 'call' || item.route === ROUTES.APP.CALLS_TAB;
@@ -278,5 +379,57 @@ export const useAppSearch = () => {
     [index],
   );
 
-  return { search, indexSize: index.length, firstSearchableGroupId };
+  // Dynamic, scope-aware "try this" suggestions drawn from the user's real data
+  // (recent groups, frequently-contacted friends, recent call peers) instead of
+  // a hardcoded list. Privacy-guard-shielded entities are never suggested.
+  const getSuggestions = useCallback(
+    (scope: AppSearchScope): string[] => {
+      const byRecency = (a?: number, b?: number) => (b ?? 0) - (a ?? 0);
+      const shielded = (target: 'expenses' | 'chats' | 'calls' | 'friends', entityId?: string) =>
+        guard.active && guard.isShielded(target, entityId);
+      const uniq = (arr: string[]) =>
+        Array.from(new Set(arr.map((s) => s.trim()).filter(Boolean)));
+
+      const groupNames = shielded('expenses')
+        ? []
+        : uniq(
+            [...groups]
+              .filter((g) => !shielded('expenses', g.groupId))
+              .sort((a, b) => byRecency(a.updatedAt, b.updatedAt))
+              .map((g) => g.name),
+          );
+      const friendNames = shielded('friends')
+        ? []
+        : uniq(
+            [...friends]
+              .filter((f) => !f.hidden && !shielded('friends', f.userId))
+              .sort((a, b) => byRecency(a.lastInteractionAt, b.lastInteractionAt))
+              .map((f) => f.displayName ?? ''),
+          );
+      const callNames = shielded('calls')
+        ? []
+        : uniq(
+            [...calls]
+              .sort((a, b) => byRecency(a.startedAt, b.startedAt))
+              .map((c) => c.otherParticipant?.displayName ?? ''),
+          );
+
+      switch (scope) {
+        case 'expenses':
+          return uniq([...groupNames, ...friendNames]).slice(0, 6);
+        case 'chat':
+          return uniq([...friendNames, ...groupNames]).slice(0, 6);
+        case 'calls':
+          return callNames.slice(0, 6);
+        case 'settings':
+          return ['Privacy', 'Notifications', 'AI index', 'Theme', 'Account'];
+        default:
+          return uniq([...groupNames.slice(0, 3), ...friendNames.slice(0, 3)]).slice(0, 6);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [groups, friends, calls, guard.active],
+  );
+
+  return { search, indexSize: index.length, firstSearchableGroupId, getSuggestions };
 };

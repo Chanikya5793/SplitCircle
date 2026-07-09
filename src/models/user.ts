@@ -88,4 +88,17 @@ export interface UserProfile {
    * lastMessage.timestamp is newer than its archivedAt renders as unarchived.
    */
   archivedChats?: Record<string, number>;
+  /**
+   * Per-user pinned chats: chatId → ms epoch when pinned. Pinned chats float
+   * in a cluster at the top of the active list, ordered by pin time (most
+   * recently pinned first). Same user-doc storage rationale as archivedChats.
+   */
+  pinnedChats?: Record<string, number>;
+  /**
+   * Per-user locked chats: chatId → ms epoch when locked. Locked chats never
+   * render in the normal list; they live behind a biometric-gated "Locked"
+   * folder. Stored on the user doc so the state syncs across the user's
+   * devices (the biometric unlock itself is always device-local).
+   */
+  lockedChats?: Record<string, number>;
 }

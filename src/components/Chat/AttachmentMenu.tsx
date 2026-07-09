@@ -1,11 +1,12 @@
 import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
+import { lightHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { createAudioPlayer, type AudioStatus } from 'expo-audio';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -96,42 +97,15 @@ const readAudioDurationMillis = async (uri: string): Promise<number | undefined>
   }
 };
 
-const ATTACHMENT_OPTIONS: AttachmentOption[] = [
-  {
-    id: 'camera',
-    icon: 'camera',
-    label: 'Camera',
-    color: '#FFFFFF',
-    backgroundColor: '#E91E63',
-  },
-  {
-    id: 'image',
-    icon: 'images',
-    label: 'Photos & Videos',
-    color: '#FFFFFF',
-    backgroundColor: '#9C27B0',
-  },
-  {
-    id: 'document',
-    icon: 'document',
-    label: 'Document',
-    color: '#FFFFFF',
-    backgroundColor: '#3F51B5',
-  },
-  {
-    id: 'audio',
-    icon: 'musical-notes',
-    label: 'Audio',
-    color: '#FFFFFF',
-    backgroundColor: '#FF9800',
-  },
-  {
-    id: 'location',
-    icon: 'location',
-    label: 'Location',
-    color: '#FFFFFF',
-    backgroundColor: '#4CAF50',
-  },
+// Icon/label only — the vivid accent backgrounds are derived from the active
+// theme at render time (see `attachmentOptions` below) instead of ignoring the
+// user's accent with hardcoded hexes.
+const ATTACHMENT_OPTIONS: Pick<AttachmentOption, 'id' | 'icon' | 'label'>[] = [
+  { id: 'camera', icon: 'camera', label: 'Camera' },
+  { id: 'image', icon: 'images', label: 'Photos & Videos' },
+  { id: 'document', icon: 'document', label: 'Document' },
+  { id: 'audio', icon: 'musical-notes', label: 'Audio' },
+  { id: 'location', icon: 'location', label: 'Location' },
 ];
 
 // Loading messages shown inside the menu after native picker returns
@@ -177,6 +151,20 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
   const { loading: selectingAttachment, run: runAttachmentSelection } = usePreventDoubleSubmit();
   const [status, setStatus] = useState<{ type: AttachmentType; message: string } | null>(null);
   const isProcessing = status !== null;
+
+  // Vivid, theme-aware chips. Each option maps to a semantic accent role so the
+  // grid follows the user's accent + light/dark scheme instead of fixed hexes.
+  const attachmentOptions = useMemo<AttachmentOption[]>(() => {
+    const palette: Record<AttachmentType, { color: string; backgroundColor: string }> = {
+      camera: { color: theme.colors.onError, backgroundColor: theme.colors.error },
+      image: { color: theme.colors.onSecondary, backgroundColor: theme.colors.secondary },
+      video: { color: theme.colors.onPrimary, backgroundColor: theme.colors.primary },
+      document: { color: theme.colors.onPrimary, backgroundColor: theme.colors.primary },
+      audio: { color: theme.colors.onWarning, backgroundColor: theme.colors.warning },
+      location: { color: theme.colors.onSuccess, backgroundColor: theme.colors.success },
+    };
+    return ATTACHMENT_OPTIONS.map((option) => ({ ...option, ...palette[option.id] }));
+  }, [theme]);
 
   // Reanimated shared values
   const slideAnim = useSharedValue(300);
@@ -467,6 +455,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
   }, [onMediaSelected]);
 
   const handleOptionPress = useCallback((option: AttachmentOption) => {
+    lightHaptic();
     void runAttachmentSelection(async () => {
       setStatus({ type: option.id, message: getSelectionMessage(option.id) });
 
@@ -573,7 +562,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
               <>
                 {/* Options Grid */}
                 <View style={styles.optionsGrid}>
-                  {ATTACHMENT_OPTIONS.map((option) => renderOption(option))}
+                  {attachmentOptions.map((option) => renderOption(option))}
                 </View>
 
                 {/* Cancel Button */}

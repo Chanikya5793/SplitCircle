@@ -1,6 +1,7 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ChatListSkeleton } from '@/components/SkeletonLoader';
+import { ArchivedFolderRow } from '@/components/ArchivedFolderRow';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -11,15 +12,23 @@ import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import { appAlert } from '@/utils/appAlert';
 import { getChatMessages, subscribeToLocalMessages } from '@/services/localMessageStorage';
-import { archiveChat, isChatArchived, unarchiveChat } from '@/services/archiveService';
+import { archiveChat, isChatArchived, pinChat, unarchiveChat, unpinChat } from '@/services/archiveService';
+import {
+  isLockSessionUnlocked,
+  lockChat,
+  markLockSessionUnlocked,
+  unlockChat,
+} from '@/services/chatLockService';
+import { authenticate } from '@/services/biometrics';
+import { isInChatMap, partitionChats } from '@/utils/chatOrganization';
 import { useNotificationContext } from '@/context/NotificationContext';
 import { heavyHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, StyleSheet, View } from 'react-native';
+import { Animated, AppState, Platform, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Avatar, List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
+import { List, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
 import { GroupAvatar, UserAvatar, StickyHeaderPill} from '@/components/ui';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
@@ -29,45 +38,121 @@ interface ChatListScreenProps {
   onOpenThread: (thread: ChatThread) => void;
 }
 
+type RowVariant = 'active' | 'archived' | 'locked';
+
+// iOS-standard swipe-action colors — these are affordance colors (like the
+// system Mail/Messages actions), intentionally consistent across light/dark.
+const ACTION_COLOR = {
+  archive: '#FF9500',
+  restore: '#34C759',
+  pin: '#0A84FF',
+  lock: '#5E5CE6',
+  unlock: '#34C759',
+} as const;
+
+const SwipeActionButton = ({
+  color,
+  icon,
+  label,
+  grouped,
+  onPress,
+}: {
+  color: string;
+  icon: string;
+  label: string;
+  grouped?: boolean;
+  onPress: () => void;
+}) => (
+  <RectButton
+    style={[grouped ? styles.rowActionButtonGrouped : styles.rowActionButton, { backgroundColor: color }]}
+    onPress={onPress}
+  >
+    <IconButton icon={icon} iconColor="#fff" size={22} style={{ margin: 0 }} />
+    <Text style={styles.rowActionText}>{label}</Text>
+  </RectButton>
+);
+
 /**
- * Swipe-left wrapper for a chat row. Archive on active rows, Restore on
- * archived rows — mirrors the group-list gesture so the whole app speaks the
- * same swipe language.
+ * Swipe wrapper for a chat row. The gesture language matches WhatsApp / iOS:
+ *   • active rows  — swipe RIGHT (left actions) = Pin/Unpin, swipe LEFT
+ *                    (right actions) = Lock + Archive
+ *   • archived rows — swipe LEFT = Restore
+ *   • locked rows   — swipe LEFT = Unlock
+ * Buttons are full-height with real touch targets; opening fires a light
+ * haptic and rows spring closed after an action.
  */
 const SwipeableChatRow = ({
-  archived,
+  variant,
+  pinned,
+  onPin,
   onArchiveToggle,
+  onLock,
+  onUnlock,
   children,
 }: {
-  archived: boolean;
-  onArchiveToggle: () => void;
+  variant: RowVariant;
+  pinned?: boolean;
+  onPin?: () => void;
+  onArchiveToggle?: () => void;
+  onLock?: () => void;
+  onUnlock?: () => void;
   children: React.ReactNode;
 }) => {
   const swipeableRef = useRef<Swipeable>(null);
 
-  const renderRightActions = () => (
-    <View style={styles.rowAction}>
-      <RectButton
-        style={[styles.rowActionButton, { backgroundColor: archived ? '#34C759' : '#FF9500' }]}
-        onPress={() => {
-          heavyHaptic();
-          swipeableRef.current?.close();
-          onArchiveToggle();
-        }}
-      >
-        <IconButton icon={archived ? 'archive-arrow-up' : 'archive'} iconColor="#fff" size={22} style={{ margin: 0 }} />
-        <Text style={styles.rowActionText}>{archived ? 'Restore' : 'Archive'}</Text>
-      </RectButton>
-    </View>
-  );
+  const runAction = (fn?: () => void) => {
+    heavyHaptic();
+    swipeableRef.current?.close();
+    fn?.();
+  };
+
+  const renderLeftActions =
+    variant === 'active' && onPin
+      ? () => (
+          <View style={styles.rowActionLeft}>
+            <SwipeActionButton
+              color={ACTION_COLOR.pin}
+              icon={pinned ? 'pin-off' : 'pin'}
+              label={pinned ? 'Unpin' : 'Pin'}
+              onPress={() => runAction(onPin)}
+            />
+          </View>
+        )
+      : undefined;
+
+  const renderRightActions = () => {
+    if (variant === 'locked') {
+      return (
+        <View style={styles.rowAction}>
+          <SwipeActionButton color={ACTION_COLOR.unlock} icon="lock-open-variant" label="Unlock" onPress={() => runAction(onUnlock)} />
+        </View>
+      );
+    }
+    if (variant === 'archived') {
+      return (
+        <View style={styles.rowAction}>
+          <SwipeActionButton color={ACTION_COLOR.restore} icon="archive-arrow-up" label="Restore" onPress={() => runAction(onArchiveToggle)} />
+        </View>
+      );
+    }
+    return (
+      <View style={styles.rowActionRow}>
+        <SwipeActionButton grouped color={ACTION_COLOR.lock} icon="lock" label="Lock" onPress={() => runAction(onLock)} />
+        <SwipeActionButton grouped color={ACTION_COLOR.archive} icon="archive" label="Archive" onPress={() => runAction(onArchiveToggle)} />
+      </View>
+    );
+  };
 
   return (
     <Swipeable
       ref={swipeableRef}
+      renderLeftActions={renderLeftActions}
       renderRightActions={renderRightActions}
       friction={2}
+      leftThreshold={40}
       rightThreshold={40}
-      overshootRight={false}
+      overshootFriction={8}
+      onSwipeableWillOpen={lightHaptic}
     >
       {children}
     </Swipeable>
@@ -79,7 +164,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const { threads, loading } = useChat();
   const { user } = useAuth();
   const { groups } = useGroups();
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
   const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
@@ -89,6 +174,11 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
   const [sortField, setSortField] = useState<ChatSortField>('updatedAt');
   const [sortOrder, setSortOrder] = useState<ChatSortOrder>('desc');
   const [showArchived, setShowArchived] = useState(false);
+  // Locked folder: a successful biometric unlock reveals it for this session
+  // only (re-armed when the app backgrounds). Seeded from the shared module
+  // session so an unlock performed elsewhere (e.g. the in-room gate) carries.
+  const [lockedUnlocked, setLockedUnlocked] = useState(isLockSessionUnlocked());
+  const [lockedExpanded, setLockedExpanded] = useState(false);
   const { preferences, updatePreference } = useNotificationContext();
   useSyncRootStackTitle(ROOT_SCREEN_TITLES.chats);
 
@@ -98,6 +188,20 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
       headerTransparent: true,
     });
   }, [navigation]);
+
+  // Re-arm the locked folder whenever the app goes to the background so a
+  // borrowed/unlocked phone can't reveal locked chats after a real switch away.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') {
+        // chatLockService's own module-scope listener clears the shared
+        // session; this listener only resets the folder's local UI state.
+        setLockedUnlocked(false);
+        setLockedExpanded(false);
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   // Slide the glass pill in with a TRANSFORM (not opacity): fractional alpha
   // on an ancestor kills UIVisualEffectView materials (see StickyHeaderPill).
@@ -134,16 +238,6 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     }
     const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
     return { kind: 'user', photoURL: otherParticipant?.photoURL, name: otherParticipant?.displayName || 'Direct Chat' };
-  }, [groups, user?.userId]);
-
-  // Helper to get chat initials for avatar
-  const getChatInitials = useMemo(() => (thread: ChatThread) => {
-    if (thread.type === 'group' && thread.groupId) {
-      const group = groups.find(g => g.groupId === thread.groupId);
-      return (group?.name || 'GC').slice(0, 2).toUpperCase();
-    }
-    const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
-    return (otherParticipant?.displayName || 'SC').slice(0, 2).toUpperCase();
   }, [groups, user?.userId]);
 
   // Per-chat *visible* last message — derived from local storage so a deleted
@@ -241,17 +335,26 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     return result;
   }, [threads, sortField, sortOrder, getChatTitle, localUnreadCounts]);
 
-  // Per-user chat archive with WhatsApp-style auto-unarchive: a thread whose
-  // last message is newer than its archivedAt renders as active again.
+  // Per-user organization: locked chats hide entirely behind a biometric
+  // folder (locked wins), archived collapse into a folder, pinned float atop
+  // the active list. Archive uses WhatsApp-style auto-unarchive.
   const archivedChats = user?.archivedChats;
-  const activeThreads = useMemo(
-    () => processedThreads.filter(t => !isChatArchived(archivedChats, t)),
-    [processedThreads, archivedChats],
+  const pinnedChats = user?.pinnedChats;
+  const lockedChats = user?.lockedChats;
+  const buckets = useMemo(
+    () =>
+      partitionChats(processedThreads, {
+        getId: (t) => t.chatId,
+        isArchived: (t) => isChatArchived(archivedChats, t),
+        pinnedChats,
+        lockedChats,
+      }),
+    [processedThreads, archivedChats, pinnedChats, lockedChats],
   );
-  const archivedThreads = useMemo(
-    () => processedThreads.filter(t => isChatArchived(archivedChats, t)),
-    [processedThreads, archivedChats],
-  );
+  const pinnedThreads = buckets.pinned;
+  const activeThreads = buckets.active;
+  const archivedThreads = buckets.archived;
+  const lockedThreads = buckets.locked;
 
   const handleOpenThread = (thread: ChatThread) => {
     lightHaptic();
@@ -278,6 +381,63 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     }
   };
 
+  const handleTogglePin = async (thread: ChatThread, pinned: boolean) => {
+    if (!user) return;
+    try {
+      if (pinned) {
+        await unpinChat(user.userId, thread.chatId);
+      } else {
+        await pinChat(user.userId, thread.chatId);
+      }
+      successHaptic();
+    } catch (error) {
+      console.error('Failed to toggle chat pin', error);
+      appAlert('Error', `Failed to ${pinned ? 'unpin' : 'pin'} chat. Please try again.`);
+    }
+  };
+
+  const handleLock = async (thread: ChatThread) => {
+    if (!user) return;
+    try {
+      await lockChat(user.userId, thread.chatId);
+      successHaptic();
+    } catch (error) {
+      console.error('Failed to lock chat', error);
+      appAlert('Error', 'Failed to lock chat. Please try again.');
+    }
+  };
+
+  const handleUnlock = async (thread: ChatThread) => {
+    if (!user) return;
+    try {
+      await unlockChat(user.userId, thread.chatId);
+      successHaptic();
+    } catch (error) {
+      console.error('Failed to unlock chat', error);
+      appAlert('Error', 'Failed to unlock chat. Please try again.');
+    }
+  };
+
+  // Opening the Locked folder requires biometrics (device fallback allowed).
+  // On web there is no secure unlock — surface a notice instead.
+  const handleOpenLockedFolder = async () => {
+    lightHaptic();
+    if (Platform.OS === 'web') {
+      appAlert('Locked chats', 'Locked chats can be opened on your phone.');
+      return;
+    }
+    if (lockedUnlocked) {
+      setLockedExpanded((prev) => !prev);
+      return;
+    }
+    const ok = await authenticate('Unlock your locked chats', true);
+    if (ok) {
+      markLockSessionUnlocked();
+      setLockedUnlocked(true);
+      setLockedExpanded(true);
+    }
+  };
+
   const isChatMuted = (chatId: string) => (preferences.muteChatIds ?? []).includes(chatId);
 
   const handleToggleMute = (thread: ChatThread) => {
@@ -289,64 +449,94 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     successHaptic();
   };
 
-  const handleLongPressThread = (thread: ChatThread, archived: boolean) => {
+  const handleLongPressThread = (thread: ChatThread, variant: RowVariant) => {
     heavyHaptic();
-    const muted = isChatMuted(thread.chatId);
-    appAlert(
-      maskChatTitle(getChatTitle(thread), thread.chatId),
-      undefined,
-      [
-        {
-          text: muted ? 'Unmute notifications' : 'Mute notifications',
-          onPress: () => handleToggleMute(thread),
-        },
-        {
-          text: archived ? 'Restore chat' : 'Archive chat',
-          onPress: () => void handleArchiveToggle(thread, archived),
-        },
+    if (variant === 'locked') {
+      appAlert(maskChatTitle(getChatTitle(thread), thread.chatId), undefined, [
+        { text: 'Unlock chat', onPress: () => void handleUnlock(thread) },
         { text: 'Cancel', style: 'cancel' },
-      ],
+      ]);
+      return;
+    }
+    const muted = isChatMuted(thread.chatId);
+    const pinned = isInChatMap(pinnedChats, thread.chatId);
+    const options: Array<{ text: string; onPress?: () => void; style?: 'cancel' | 'destructive' }> = [
+      {
+        text: muted ? 'Unmute notifications' : 'Mute notifications',
+        onPress: () => handleToggleMute(thread),
+      },
+    ];
+    if (variant === 'active') {
+      options.push({
+        text: pinned ? 'Unpin chat' : 'Pin chat',
+        onPress: () => void handleTogglePin(thread, pinned),
+      });
+      options.push({ text: 'Lock chat', onPress: () => void handleLock(thread) });
+    }
+    options.push({
+      text: variant === 'archived' ? 'Restore chat' : 'Archive chat',
+      onPress: () => void handleArchiveToggle(thread, variant === 'archived'),
+    });
+    options.push({ text: 'Cancel', style: 'cancel' });
+    appAlert(maskChatTitle(getChatTitle(thread), thread.chatId), undefined, options);
+  };
+
+  const renderThreadRow = (item: ChatThread, variant: RowVariant) => {
+    const pinned = isInChatMap(pinnedChats, item.chatId);
+    const locked = variant === 'locked';
+    const muted = isChatMuted(item.chatId);
+    const showRight = muted || (pinned && !locked);
+    return (
+      <SwipeableChatRow
+        variant={variant}
+        pinned={pinned}
+        onPin={() => void handleTogglePin(item, pinned)}
+        onArchiveToggle={() => void handleArchiveToggle(item, variant === 'archived')}
+        onLock={() => void handleLock(item)}
+        onUnlock={() => void handleUnlock(item)}
+      >
+        <GlassView style={styles.chatItem} contentStyle={styles.chatItemContent}>
+          <List.Item
+            title={maskChatTitle(getChatTitle(item), item.chatId)}
+            description={locked ? 'Locked chat' : maskPreview(lastPreviewFor(item), item.chatId)}
+            left={() => (
+              <View>
+                {(() => {
+                  const avatar = getChatAvatar(item);
+                  return avatar.kind === 'group' ? (
+                    <GroupAvatar photoURL={avatar.photoURL} name={maskChatTitle(avatar.name, item.chatId)} size={48} />
+                  ) : (
+                    <UserAvatar photoURL={avatar.photoURL} displayName={maskChatTitle(avatar.name, item.chatId)} size={48} />
+                  );
+                })()}
+                {!locked && !chatsAnyShielded && (localUnreadCounts[item.chatId] ?? 0) > 0 && (
+                  <View style={[styles.unreadBadge, { backgroundColor: theme.colors.error, borderColor: theme.colors.background }]}>
+                    <Text style={{ color: theme.colors.onError, fontSize: 10, fontWeight: 'bold' }}>
+                      {(localUnreadCounts[item.chatId] ?? 0) > 9 ? '9+' : localUnreadCounts[item.chatId]}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
+            right={showRight ? () => (
+              <View style={styles.rightAccessory}>
+                {muted && <IconButton icon="bell-off-outline" size={16} iconColor={theme.colors.onSurfaceVariant} style={styles.accessoryIcon} />}
+                {pinned && !locked && <IconButton icon="pin" size={16} iconColor={theme.colors.onSurfaceVariant} style={styles.accessoryIcon} />}
+              </View>
+            ) : undefined}
+            onPress={() => handleOpenThread(item)}
+            onLongPress={() => handleLongPressThread(item, variant)}
+            style={styles.chatItemRow}
+            titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
+            descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
+            descriptionNumberOfLines={1}
+          />
+        </GlassView>
+      </SwipeableChatRow>
     );
   };
 
-  const renderThreadRow = (item: ChatThread, archived: boolean) => (
-    <SwipeableChatRow archived={archived} onArchiveToggle={() => void handleArchiveToggle(item, archived)}>
-      <GlassView style={styles.chatItem} contentStyle={styles.chatItemContent}>
-        <List.Item
-          title={maskChatTitle(getChatTitle(item), item.chatId)}
-          description={maskPreview(lastPreviewFor(item), item.chatId)}
-          left={() => (
-            <View>
-              {(() => {
-                const avatar = getChatAvatar(item);
-                return avatar.kind === 'group' ? (
-                  <GroupAvatar photoURL={avatar.photoURL} name={maskChatTitle(avatar.name, item.chatId)} size={48} />
-                ) : (
-                  <UserAvatar photoURL={avatar.photoURL} displayName={maskChatTitle(avatar.name, item.chatId)} size={48} />
-                );
-              })()}
-              {!chatsAnyShielded && (localUnreadCounts[item.chatId] ?? 0) > 0 && (
-                <View style={[styles.unreadBadge, { backgroundColor: theme.colors.error, borderColor: theme.colors.background }]}>
-                  <Text style={{ color: theme.colors.onError, fontSize: 10, fontWeight: 'bold' }}>
-                    {(localUnreadCounts[item.chatId] ?? 0) > 9 ? '9+' : localUnreadCounts[item.chatId]}
-                  </Text>
-                </View>
-              )}
-            </View>
-          )}
-          right={isChatMuted(item.chatId) ? () => (
-            <IconButton icon="bell-off-outline" size={16} iconColor={theme.colors.onSurfaceVariant} style={styles.mutedIcon} />
-          ) : undefined}
-          onPress={() => handleOpenThread(item)}
-          onLongPress={() => handleLongPressThread(item, archived)}
-          style={styles.chatItemRow}
-          titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
-          descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
-          descriptionNumberOfLines={1}
-        />
-      </GlassView>
-    </SwipeableChatRow>
-  );
+  const otherBucketCount = pinnedThreads.length + archivedThreads.length + lockedThreads.length;
 
   return (
     <LiquidBackground>
@@ -365,36 +555,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
         <Animated.FlatList
           data={vanishAllChats ? [] : activeThreads}
           keyExtractor={(item) => item.chatId}
-          renderItem={({ item }) => renderThreadRow(item, false)}
-          ListFooterComponent={
-            !vanishAllChats && archivedThreads.length > 0 ? (
-              <View style={styles.archivedSection}>
-                <TouchableRipple
-                  onPress={() => { lightHaptic(); setShowArchived(prev => !prev); }}
-                  style={styles.archivedToggle}
-                  borderless
-                >
-                  <View style={styles.archivedToggleRow}>
-                    <IconButton icon="archive-outline" size={20} iconColor={theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
-                    <Text variant="titleSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }}>
-                      Archived ({archivedThreads.length})
-                    </Text>
-                    <IconButton
-                      icon={showArchived ? 'chevron-up' : 'chevron-down'}
-                      size={20}
-                      iconColor={theme.colors.onSurfaceVariant}
-                      style={{ margin: 0 }}
-                    />
-                  </View>
-                </TouchableRipple>
-                {showArchived && archivedThreads.map((item) => (
-                  <React.Fragment key={item.chatId}>
-                    {renderThreadRow(item, true)}
-                  </React.Fragment>
-                ))}
-              </View>
-            ) : null
-          }
+          renderItem={({ item }) => renderThreadRow(item, 'active')}
           ListEmptyComponent={
             loading ? (
               <View>
@@ -402,33 +563,79 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                 <ChatListSkeleton />
                 <ChatListSkeleton />
               </View>
-            ) : (
+            ) : vanishAllChats || otherBucketCount > 0 ? null : (
               <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
-                {archivedThreads.length > 0 && !vanishAllChats ? 'All your chats are archived.' : 'No chats yet.'}
+                No chats yet.
               </Text>
             )
           }
           contentContainerStyle={{ padding: 16, paddingTop: insets.top + 24, paddingBottom: listBottomPadding }}
           ListHeaderComponent={
-            <View style={styles.headerContainer}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Chats</Text>
+            <View>
+              <View style={styles.headerContainer}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Chats</Text>
 
-                <View>
-                  <TouchableRipple
-                    onPress={() => { lightHaptic(); setFilterVisible(true); }}
-                    style={[styles.filterButton, { backgroundColor: theme.colors.skeleton }]}
-                    borderless
-                  >
-                    <View style={styles.filterButtonContent}>
-                      <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
-                    </View>
-                  </TouchableRipple>
-                  {/* Badge can show if non-default sort is active? Or maybe just sorting doesn't need a badge. 
-                      User only had Badge for currency filter count in groups. 
-                      Let's stick to simple button for now unless we add filtering logic later. */}
+                  <View>
+                    <TouchableRipple
+                      onPress={() => { lightHaptic(); setFilterVisible(true); }}
+                      style={[styles.filterButton, { backgroundColor: theme.colors.skeleton }]}
+                      borderless
+                    >
+                      <View style={styles.filterButtonContent}>
+                        <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
+                      </View>
+                    </TouchableRipple>
+                  </View>
                 </View>
               </View>
+
+              {!vanishAllChats && (
+                <>
+                  {archivedThreads.length > 0 && (
+                    <View style={styles.folderSection}>
+                      <ArchivedFolderRow
+                        icon="archive-outline"
+                        label="Archived"
+                        count={archivedThreads.length}
+                        expanded={showArchived}
+                        onPress={() => { lightHaptic(); setShowArchived((prev) => !prev); }}
+                      />
+                      {showArchived && archivedThreads.map((item) => (
+                        <React.Fragment key={item.chatId}>{renderThreadRow(item, 'archived')}</React.Fragment>
+                      ))}
+                    </View>
+                  )}
+
+                  {lockedThreads.length > 0 && (
+                    <View style={styles.folderSection}>
+                      <ArchivedFolderRow
+                        icon="lock-outline"
+                        label="Locked"
+                        count={lockedThreads.length}
+                        expanded={lockedExpanded}
+                        locked
+                        tint={theme.colors.primary}
+                        onPress={() => void handleOpenLockedFolder()}
+                      />
+                      {lockedUnlocked && lockedExpanded && lockedThreads.map((item) => (
+                        <React.Fragment key={item.chatId}>{renderThreadRow(item, 'locked')}</React.Fragment>
+                      ))}
+                    </View>
+                  )}
+
+                  {pinnedThreads.length > 0 && (
+                    <View style={styles.pinnedSection}>
+                      <Text variant="labelMedium" style={[styles.pinnedLabel, { color: theme.colors.onSurfaceVariant }]}>
+                        Pinned
+                      </Text>
+                      {pinnedThreads.map((item) => (
+                        <React.Fragment key={item.chatId}>{renderThreadRow(item, 'active')}</React.Fragment>
+                      ))}
+                    </View>
+                  )}
+                </>
+              )}
             </View>
           }
           onScroll={Animated.event(
@@ -489,6 +696,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 12,
   },
+  rowActionLeft: {
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  rowActionRow: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
   rowActionButton: {
     flex: 1,
     justifyContent: 'center',
@@ -496,28 +711,38 @@ const styles = StyleSheet.create({
     width: 84,
     borderRadius: 16,
   },
+  rowActionButtonGrouped: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+    borderRadius: 16,
+    marginLeft: 6,
+  },
   rowActionText: {
     color: '#fff',
     fontSize: 12,
     fontWeight: '600',
     marginTop: -4,
   },
-  mutedIcon: {
-    margin: 0,
-    alignSelf: 'center',
-  },
-  archivedSection: {
-    marginTop: 16,
-  },
-  archivedToggle: {
-    borderRadius: 16,
-    marginBottom: 12,
-  },
-  archivedToggleRow: {
+  rightAccessory: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    alignSelf: 'center',
+  },
+  accessoryIcon: {
+    margin: 0,
+  },
+  folderSection: {
+    marginTop: 4,
+  },
+  pinnedSection: {
+    marginTop: 4,
+  },
+  pinnedLabel: {
+    marginLeft: 8,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   stickyHeader: {
     position: 'absolute',

@@ -9,6 +9,7 @@ import {
   type EntityNotificationFilter,
 } from './notificationEntityMatch';
 import { extractRevokeFilters } from './notificationRevoke';
+import { isChatIdLocked } from './lockedChatRegistry';
 
 // ─────────────────────────────────────────────────────────────
 // Notification Channels (Android)
@@ -78,6 +79,19 @@ Notifications.setNotificationHandler({
         shouldShowAlert: false,
         shouldPlaySound: false,
         shouldSetBadge: false,
+        shouldShowBanner: false,
+        shouldShowList: false,
+      };
+    }
+
+    // Messages for LOCKED chats must never flash sender/content on screen
+    // while the app is foregrounded — the chat sits behind a Face ID gate.
+    // (The server already genericizes the copy; this hides even that.)
+    if (data?.type === 'message' && isChatIdLocked(data?.chatId as string | undefined)) {
+      return {
+        shouldShowAlert: false,
+        shouldPlaySound: false,
+        shouldSetBadge: true,
         shouldShowBanner: false,
         shouldShowList: false,
       };

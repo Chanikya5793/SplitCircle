@@ -1,9 +1,9 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import type { ExpenseSplitMetadata } from '@/models';
-import { heavyHaptic, mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
+import { spacing } from '@/theme';
+import { heavyHaptic, lightHaptic, mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Icon, PaperProvider, Text } from 'react-native-paper';
@@ -90,8 +90,7 @@ export const BillSplitScreen = ({
   onDone,
   onCancel,
 }: BillSplitScreenProps) => {
-  const { theme, isDark } = useTheme();
-  const palette = isDark ? darkColors : colors;
+  const { theme } = useTheme();
   const seedParticipants = initialParticipants ?? MOCK_PARTICIPANTS;
   const initialMethod = initialSplitMetadata?.method;
 
@@ -196,7 +195,7 @@ export const BillSplitScreen = ({
   }, [fullPeriodDates, timePeriodDays]);
 
   const handleSelectAll = useCallback(() => {
-    selectionHaptic();
+    lightHaptic();
     setParticipants((prev) => {
       const allSelected = prev.every((p) => p.included);
       return prev.map((p) => ({
@@ -558,7 +557,7 @@ export const BillSplitScreen = ({
   }, []);
 
   const handleToggleAdvanced = useCallback(() => {
-    mediumHaptic();
+    lightHaptic();
     setShowAdvanced((prev) => !prev);
     if (showAdvanced) {
       setActiveAdvancedMethod(null);
@@ -671,7 +670,7 @@ export const BillSplitScreen = ({
               <Text
                 variant="labelLarge"
                 style={{
-                  color: canDone ? theme.colors.primary : palette.muted,
+                  color: canDone ? theme.colors.primary : theme.colors.muted,
                   fontWeight: '700',
                 }}
               >
@@ -792,7 +791,7 @@ export const BillSplitScreen = ({
                     onPress={() => { setActiveAdvancedMethod(null); setShowAdvanced(false); }}
                     activeOpacity={0.7}
                   >
-                    <Text variant="labelMedium" style={{ color: palette.muted }}>Back to basic</Text>
+                    <Text variant="labelMedium" style={{ color: theme.colors.muted }}>Back to basic</Text>
                   </TouchableOpacity>
                 </View>
               </Animated.View>

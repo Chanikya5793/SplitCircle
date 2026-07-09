@@ -7,6 +7,7 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { getExpenseDetailsTitle } from '@/navigation/screenTitles';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
+import { radius, spacing } from '@/theme';
 import { formatCurrency } from '@/utils/currency';
 import { getExpenseSplitDetails } from '@/utils/expenseSplit';
 import { buildReceiptInsightRows } from '@/utils/receiptInsights';
@@ -216,7 +217,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
                 expense.receipt.fileName?.toLowerCase().endsWith('.doc') ||
                 expense.receipt.fileName?.toLowerCase().endsWith('.docx') ? (
                 <TouchableOpacity
-                  style={[styles.documentContainer, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#f0f0f0' }]}
+                  style={[styles.documentContainer, { backgroundColor: theme.colors.surfaceVariant }]}
                   onPress={() => Linking.openURL(expense.receipt!.url!)}
                 >
                   <IconButton icon="file-document" size={40} iconColor={theme.colors.primary} />
@@ -227,7 +228,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
                 </TouchableOpacity>
               ) : (
                 <TouchableOpacity onPress={() => setShowImageModal(true)}>
-                  <Image source={{ uri: expense.receipt.url }} style={[styles.receiptThumbnail, { backgroundColor: isDark ? '#333' : '#f0f0f0' }]} resizeMode="cover" />
+                  <Image source={{ uri: expense.receipt.url }} style={[styles.receiptThumbnail, { backgroundColor: theme.colors.surfaceVariant }]} resizeMode="cover" />
                 </TouchableOpacity>
               )}
             </View>
@@ -236,7 +237,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
           {/* Receipt Items Section (from itemized split / scan) */}
           {expense.splitMetadata?.method === 'itemized' && expense.splitMetadata.receiptItems && expense.splitMetadata.receiptItems.length > 0 && (
             <>
-              <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
+              <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />
               <View style={styles.section}>
                 <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
                   Scanned Items
@@ -289,7 +290,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             if (insightRows.length === 0) return null;
             return (
               <>
-                <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
+                <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />
                 <View style={styles.section}>
                   <TouchableOpacity
                     onPress={() => setShowMoreInfo((v) => !v)}
@@ -323,7 +324,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             );
           })()}
 
-          <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
+          <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />
 
           <View style={styles.section}>
             <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
@@ -337,7 +338,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             </View>
           </View>
 
-          <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
+          <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />
 
           {splitDetails ? (
             <View style={styles.section}>
@@ -369,7 +370,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             </View>
           ) : null}
 
-          <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
+          <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />
 
           <View style={styles.section}>
             <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
@@ -383,7 +384,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             ))}
           </View>
 
-          <Divider style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
+          <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />
 
           <View style={styles.section}>
             <View style={styles.row}>
@@ -477,13 +478,13 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 16,
+    padding: spacing.md,
     paddingBottom: 180,
     flexGrow: 1,
   },
   card: {
-    padding: 24,
-    borderRadius: 24,
+    padding: spacing.lg,
+    borderRadius: radius.xl,
   },
   center: {
     flex: 1,
@@ -494,30 +495,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 8,
+    marginBottom: spacing.sm,
   },
   amount: {
     fontWeight: 'bold',
     fontSize: 24,
-    marginTop: 4,
+    marginTop: spacing.xs,
   },
   meta: {
-    marginBottom: 16,
+    marginBottom: spacing.md,
   },
   recurringBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12,
-    paddingVertical: 8,
+    borderRadius: radius.sm,
+    paddingVertical: spacing.sm,
     paddingHorizontal: 10,
-    marginBottom: 16,
-    gap: 4,
+    marginBottom: spacing.md,
+    gap: spacing.xs,
   },
   divider: {
-    marginVertical: 16,
+    marginVertical: spacing.md,
   },
   section: {
-    marginBottom: 8,
+    marginBottom: spacing.sm,
   },
   sectionTitle: {
     marginBottom: 12,
@@ -533,9 +534,9 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: spacing.sm,
     alignItems: 'center',
-    gap: 16,
+    gap: spacing.md,
   },
   detailLabel: {
     flex: 1,
@@ -547,32 +548,32 @@ const styles = StyleSheet.create({
   noteActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    gap: 8,
+    gap: spacing.sm,
   },
   actions: {
-    marginTop: 32,
+    marginTop: spacing.xl,
     flexDirection: 'row',
-    gap: 16,
-    marginBottom: 32,
+    gap: spacing.md,
+    marginBottom: spacing.xl,
   },
   receiptThumbnail: {
     width: '100%',
     height: 200,
-    borderRadius: 8,
+    borderRadius: radius.xs,
   },
   documentContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 8,
-    padding: 8,
+    borderRadius: radius.xs,
+    padding: spacing.sm,
   },
   receiptItemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    gap: 16,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    gap: spacing.md,
   },
   modalContainer: {
     flex: 1,
@@ -598,15 +599,15 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 100,
     paddingTop: 50,
-    paddingHorizontal: 16,
+    paddingHorizontal: spacing.md,
     paddingBottom: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   stickyHeaderGlass: {
-    paddingVertical: 8,
+    paddingVertical: spacing.sm,
     paddingHorizontal: 20,
-    borderRadius: 20,
+    borderRadius: radius.lg,
     maxWidth: '80%',
   },
   stickyHeaderTitle: {

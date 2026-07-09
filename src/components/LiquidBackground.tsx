@@ -58,11 +58,11 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, 
   // them (the old bug) restarted animation phases whenever the tree updated.
   const motion = useMemo(
     () => ({
-      durationX: 12000 + Math.random() * 6000,
-      durationY: 10000 + Math.random() * 8000,
-      durationScale: 9000 + Math.random() * 6000,
-      rangeX: 60 + Math.random() * 60,
-      rangeY: 60 + Math.random() * 60,
+      durationX: 16000 + Math.random() * 8000,
+      durationY: 14000 + Math.random() * 8000,
+      durationScale: 12000 + Math.random() * 6000,
+      rangeX: 36 + Math.random() * 40,
+      rangeY: 36 + Math.random() * 40,
     }),
     [],
   );
@@ -75,8 +75,8 @@ const Blob = ({ lightColor, darkColor, themeProgress, size, initialX, initialY, 
 
     scaleSv.value = withRepeat(
       withSequence(
-        withTiming(1.3, { duration: motion.durationScale, easing: Easing.inOut(Easing.ease) }),
-        withTiming(0.8, { duration: motion.durationScale, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1.15, { duration: motion.durationScale, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0.9, { duration: motion.durationScale, easing: Easing.inOut(Easing.ease) }),
         withTiming(1, { duration: motion.durationScale, easing: Easing.inOut(Easing.ease) })
       ),
       -1,
@@ -241,9 +241,9 @@ export const LiquidBackground = ({
         lightColor={lightBlobColors[2]}
         darkColor={darkBlobColors[2]}
         themeProgress={themeProgress}
-        size={250}
-        initialX={-50}
-        initialY={height / 2}
+        size={240}
+        initialX={width - 180}
+        initialY={-40}
         animate={animate}
       />
 
@@ -265,6 +265,6 @@ const styles = StyleSheet.create({
   },
   blob: {
     position: 'absolute',
-    opacity: 0.5,
+    opacity: 0.35,
   },
 });

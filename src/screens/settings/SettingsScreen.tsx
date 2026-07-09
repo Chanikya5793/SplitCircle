@@ -236,6 +236,13 @@ export const SettingsScreen = () => {
     );
   };
 
+  // Independent of the whole-app lock: gate finalizing a settlement behind a
+  // biometric confirmation. Default OFF; only offer it when biometrics exist.
+  const toggleConfirmSettlements = (enable: boolean) => {
+    lightHaptic();
+    void updateAppLock({ confirmSettlements: enable });
+  };
+
   const handleToggleStrictReviewMode = async (enabled: boolean) => {
     selectionHaptic();
     setStrictReviewModeState(enabled);
@@ -501,6 +508,23 @@ export const SettingsScreen = () => {
               />
             </>
           )}
+          {divider}
+          <ListRow
+            title="Confirm settlements"
+            subtitle={
+              !bioAvailable
+                ? `Set up ${bioLabel} in iOS Settings to use this`
+                : `Require ${bioLabel} before recording a settlement`
+            }
+            icon="shield-check-outline"
+            trailing={
+              <Switch
+                value={appLock.confirmSettlements}
+                disabled={!bioAvailable}
+                onValueChange={toggleConfirmSettlements}
+              />
+            }
+          />
         </GlassCard>
 
         <SectionLabel style={styles.sectionLabel}>General</SectionLabel>
