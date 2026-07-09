@@ -137,6 +137,35 @@ const buildChatRows = (messages: ChatMessage[], userId?: string): ChatRow[] => {
   return rows;
 };
 
+// Animated three-dot "typing…" indicator (WhatsApp style). Each dot pulses on
+// a staggered loop; native-driver opacity/scale keeps it off the JS thread.
+const TypingDots = ({ color }: { color: string }) => {
+  const dots = useRef([new Animated.Value(0.3), new Animated.Value(0.3), new Animated.Value(0.3)]).current;
+  useEffect(() => {
+    const animations = dots.map((dot, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 160),
+          Animated.timing(dot, { toValue: 1, duration: 320, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0.3, duration: 320, useNativeDriver: true }),
+        ]),
+      ),
+    );
+    animations.forEach((a) => a.start());
+    return () => animations.forEach((a) => a.stop());
+  }, [dots]);
+  return (
+    <View style={styles.typingDotsRow}>
+      {dots.map((dot, i) => (
+        <Animated.View
+          key={i}
+          style={[styles.typingDot, { backgroundColor: color, opacity: dot, transform: [{ scale: dot }] }]}
+        />
+      ))}
+    </View>
+  );
+};
+
 interface ChatRoomScreenProps {
   thread: ChatThread;
   // One-shot composer prefill (e.g. recovering a failed quick reply from a
@@ -1651,12 +1680,29 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
           />
         )}
 
-        <GlassView style={styles.composerWrapper}>
+        {/* Prominent in-room typing indicator: an animated three-dot bubble
+            pinned just above the composer (the header also shows a "typing…"
+            subtitle). Hidden while the chat is privacy-shielded. */}
+        {!chatShielded && typingNames.length > 0 && (
+          <View style={styles.typingBubbleWrap} pointerEvents="none">
+            <View style={[styles.typingBubble, { backgroundColor: theme.colors.skeleton }]}>
+              <TypingDots color={theme.colors.onSurfaceVariant} />
+            </View>
+          </View>
+        )}
+
+        {/* Plain transparent strip — the old full-width GlassView here rendered
+            native liquid glass that refracted the blob background (worst when
+            the keyboard pushed it up). Only the composer pill keeps its glass. */}
+        <View style={styles.composerWrapper}>
           {/* Reply preview bar */}
           {replyingTo && !editingMessage && (
             <View style={styles.replyPreviewContainer}>
               <View style={[styles.replyPreview, {
-                borderLeftColor: getSenderColor(replyingTo.senderId)
+                borderLeftColor: getSenderColor(replyingTo.senderId),
+                // Subtle theme tint so the bar stays legible on the blob
+                // background now that the wrapper glass is gone.
+                backgroundColor: theme.colors.skeleton,
               }]}>
                 <Text style={[styles.replyPreviewSender, { color: getSenderColor(replyingTo.senderId) }]}>
                   {thread.participants.find(p => p.userId === replyingTo.senderId)?.displayName || 'Unknown'}
@@ -1683,7 +1729,11 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
           {/* Edit preview bar */}
           {editingMessage && (
             <View style={styles.replyPreviewContainer}>
-              <View style={[styles.replyPreview, { borderLeftColor: theme.colors.primary }]}>
+              <View style={[styles.replyPreview, {
+                borderLeftColor: theme.colors.primary,
+                // Match the reply bar's subtle tint for legibility.
+                backgroundColor: theme.colors.skeleton,
+              }]}>
                 <Text style={[styles.replyPreviewSender, { color: theme.colors.primary }]}>
                   Editing message
                 </Text>
@@ -1788,7 +1838,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               <Icon source="send" size={24} color={theme.colors.onPrimary} />
             </TouchableOpacity>
           </View>
-        </GlassView>
+        </View>
       </KeyboardAvoidingView>
 
       {/* Attachment Menu (WhatsApp-style bottom sheet) */}
@@ -2127,11 +2177,32 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   composerWrapper: {
-    marginTop: 0,
+    // Plain transparent strip (no glass): keep only the layout padding so the
+    // composer pill and preview bars keep their spacing.
     paddingHorizontal: 12,
     paddingVertical: 16,
-    marginBottom: -2,
-    overflow: 'hidden',
+  },
+  typingBubbleWrap: {
+    paddingHorizontal: 20,
+    paddingBottom: 2,
+    alignItems: 'flex-start',
+  },
+  typingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  typingDotsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  typingDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    marginHorizontal: 2.5,
   },
   inputRow: {
     flexDirection: 'row',

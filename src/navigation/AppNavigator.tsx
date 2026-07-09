@@ -22,6 +22,8 @@ import { MessageInfoScreen } from '@/screens/chat/MessageInfoScreen';
 import { ChatMediaGalleryScreen } from '@/screens/chat/ChatMediaGalleryScreen';
 import { FilePreviewScreen } from '@/screens/chat/FilePreviewScreen';
 import { StarredMessagesScreen } from '@/screens/chat/StarredMessagesScreen';
+import { ArchivedChatsScreen } from '@/screens/chat/ArchivedChatsScreen';
+import { LockedChatsScreen } from '@/screens/chat/LockedChatsScreen';
 import { AddExpenseScreen } from '@/screens/expenses/AddExpenseScreen';
 import { ExpenseDetailsScreen } from '@/screens/expenses/ExpenseDetailsScreen';
 import { RecurringBillsScreen } from '@/screens/expenses/RecurringBillsScreen';
@@ -29,11 +31,13 @@ import { SettlementsScreen } from '@/screens/expenses/SettlementsScreen';
 import { GroupDetailsScreen } from '@/screens/groups/GroupDetailsScreen';
 import { GroupInfoScreen } from '@/screens/groups/GroupInfoScreen';
 import { GroupListScreen } from '@/screens/groups/GroupListScreen';
+import { ArchivedGroupsScreen } from '@/screens/groups/ArchivedGroupsScreen';
 import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
 import { AiChatScreen } from '@/screens/ai/AiChatScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { NotificationSettingsScreen } from '@/screens/settings/NotificationSettingsScreen';
 import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
+import { OfflineSyncScreen } from '@/screens/settings/OfflineSyncScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { SearchScreen } from '@/screens/search/SearchScreen';
 import type { NotificationData } from '@/utils/notifications';
@@ -1071,6 +1075,11 @@ const AppStackNavigator = () => {
         options={{ title: SCREEN_TITLES.aiIndex }}
       />
       <AppStack.Screen
+        name={ROUTES.APP.OFFLINE_SYNC}
+        component={OfflineSyncScreen}
+        options={{ title: 'Offline sync' }}
+      />
+      <AppStack.Screen
         name={ROUTES.APP.CHAT_MEDIA_GALLERY}
         component={ChatMediaGalleryScreen}
         options={({ route }: any) => ({
@@ -1087,6 +1096,21 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.STARRED_MESSAGES}
         component={StarredMessagesScreen}
+        options={{ headerShown: false }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.ARCHIVED_CHATS}
+        component={ArchivedChatsScreen}
+        options={{ headerShown: false }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.LOCKED_CHATS}
+        component={LockedChatsScreen}
+        options={{ headerShown: false }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.ARCHIVED_GROUPS}
+        component={ArchivedGroupsScreen}
         options={{ headerShown: false }}
       />
     </AppStack.Navigator>

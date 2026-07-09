@@ -11,6 +11,7 @@ import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { ROUTES } from '@/constants/routes';
+import { SETTINGS_REGISTRY } from '@/constants/settingsRegistry';
 import { getCallHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { subscribeToFriends, type Friend } from '@/services/friendsService';
 import { getChatMessagesPaginated } from '@/services/localMessageStorage';
@@ -34,6 +35,23 @@ const STATIC_ACTIONS: SearchItem[] = [
   { id: 'act-friends', type: 'action', title: 'Friends', subtitle: 'People you split with', icon: 'account-multiple-outline', keywords: 'contacts people balances', route: ROUTES.APP.FRIENDS },
   { id: 'act-calls', type: 'action', title: 'Calls', subtitle: 'Call history', icon: 'phone-outline', keywords: 'phone video history', route: ROUTES.APP.CALLS_TAB },
 ];
+
+// Per-item settings tier: every individual setting (toggle/row) drawn from the
+// declarative registry so users can search a specific preference and deep-link
+// straight to it. Each carries a `highlight` param the target screen uses to
+// scroll the row into view and pulse it. Always available (no user data). These
+// use the existing 'action' item type so no changes to searchService are needed;
+// the settings scope narrows them to the right screens.
+const SETTINGS_ACTIONS: SearchItem[] = SETTINGS_REGISTRY.map((entry) => ({
+  id: `setting-${entry.id}`,
+  type: 'action',
+  title: entry.title,
+  subtitle: entry.subtitle,
+  icon: entry.icon,
+  keywords: `${entry.keywords.join(' ')} ${entry.section} setting settings`,
+  route: entry.route,
+  params: { highlight: entry.id, backTitle: 'Search' },
+}));
 
 export const useAppSearch = () => {
   const { groups } = useGroups();
@@ -64,7 +82,7 @@ export const useAppSearch = () => {
   // replaces the old per-render useMemo flatten so typing never triggers a
   // full rebuild.
   const buildBaseIndex = useCallback((): SearchItem[] => {
-    const items: SearchItem[] = [...STATIC_ACTIONS];
+    const items: SearchItem[] = [...STATIC_ACTIONS, ...SETTINGS_ACTIONS];
     const shielded = (target: 'expenses' | 'chats' | 'calls' | 'friends', entityId?: string) =>
       guard.active && guard.isShielded(target, entityId);
 
@@ -365,7 +383,8 @@ export const useAppSearch = () => {
       item.type === 'action' &&
       (item.route === ROUTES.APP.SETTINGS ||
         item.route === ROUTES.APP.NOTIFICATION_SETTINGS ||
-        item.route === ROUTES.APP.AI_INDEX)
+        item.route === ROUTES.APP.AI_INDEX ||
+        item.route === ROUTES.APP.OFFLINE_SYNC)
     );
   }, []);
 

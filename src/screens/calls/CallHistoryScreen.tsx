@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { StickyHeaderPill } from '@/components/ui';
+import { ChatListSkeleton } from '@/components/SkeletonLoader';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { useAuth } from '@/context/AuthContext';
@@ -20,7 +21,7 @@ import { lightHaptic, mediumHaptic, warningHaptic } from '@/utils/haptics';
 import { appAlert } from '@/utils/appAlert';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
     ActionSheetIOS,
     FlatList,
@@ -64,6 +65,196 @@ interface CallHistoryScreenProps {
   onOpenCallInfo: (entry: CallHistoryEntry) => void;
 }
 
+type AppTheme = ReturnType<typeof useTheme>['theme'];
+
+// -- Pure row helpers (module scope so the memoized row can reuse them) --
+
+const isMissedOrDeclined = (entry: CallHistoryEntry) =>
+  entry.status === 'missed' || entry.status === 'declined';
+
+const getCallIcon = (entry: CallHistoryEntry): IconName => {
+  if (isMissedOrDeclined(entry)) {
+    return 'phone-missed';
+  }
+  if (entry.direction === 'incoming') return 'phone-incoming';
+  return 'phone-outgoing';
+};
+
+const getCallIconColor = (entry: CallHistoryEntry, theme: AppTheme): string => {
+  if (isMissedOrDeclined(entry)) return theme.colors.error;
+  return theme.colors.primary;
+};
+
+const getCallStatusLabel = (entry: CallHistoryEntry): string => {
+  if (entry.status === 'missed') return 'Missed';
+  if (entry.status === 'declined') return 'Declined';
+  if (entry.status === 'failed') return 'Failed';
+  return entry.direction === 'incoming' ? 'Incoming' : 'Outgoing';
+};
+
+const getSubtitle = (entry: CallHistoryEntry): string => {
+  const direction = getCallStatusLabel(entry);
+  const typeIcon = entry.type === 'video' ? 'Video' : 'Audio';
+  if (entry.status === 'completed' && entry.duration > 0) {
+    return `${direction} ${typeIcon} \u00B7 ${formatCallDuration(entry.duration)}`;
+  }
+  return `${direction} ${typeIcon}`;
+};
+
+interface CallHistoryRowProps {
+  entry: CallHistoryEntry;
+  isEditing: boolean;
+  theme: AppTheme;
+  onPressInfo: (entry: CallHistoryEntry) => void;
+  onCallBack: (entry: CallHistoryEntry) => void;
+  onDelete: (callId: string) => void;
+  onOpen: (callId: string, swipeable: Swipeable) => void;
+  onRegister: (callId: string, ref: Swipeable | null) => void;
+}
+
+// Memoized so an unrelated state change (opening the New Call sheet, a refetch
+// that returns identical data) does not re-render every row. The parent passes
+// stable callbacks so React.memo's shallow compare actually holds.
+const CallHistoryRow = memo(function CallHistoryRow({
+  entry,
+  isEditing,
+  theme,
+  onPressInfo,
+  onCallBack,
+  onDelete,
+  onOpen,
+  onRegister,
+}: CallHistoryRowProps) {
+  const missed = isMissedOrDeclined(entry);
+  const nameColor = missed ? theme.colors.error : theme.colors.onSurface;
+  const initials = (entry.otherParticipant.displayName || 'U').slice(0, 2).toUpperCase();
+
+  return (
+    <Swipeable
+      ref={(ref) => onRegister(entry.callId, ref)}
+      onSwipeableOpen={(_direction, swipeable) => onOpen(entry.callId, swipeable)}
+      renderRightActions={() => (
+        <TouchableOpacity
+          style={styles.deleteAction}
+          onPress={() => onDelete(entry.callId)}
+          activeOpacity={0.7}
+        >
+          <MaterialCommunityIcons name="delete" size={24} color="#fff" />
+          <Text style={styles.deleteActionText}>Delete</Text>
+        </TouchableOpacity>
+      )}
+      overshootRight={false}
+      friction={2}
+    >
+      <Animated.View
+        entering={FadeIn.duration(200)}
+        exiting={FadeOut.duration(150)}
+        layout={Layout.springify()}
+      >
+        <GlassView style={styles.callItem}>
+          <TouchableRipple
+            onPress={() => onPressInfo(entry)}
+            style={styles.callItemContent}
+            borderless
+          >
+            <View style={styles.callRow}>
+              {/* Left: Avatar + Delete button in edit mode */}
+              <View style={styles.leftSection}>
+                {isEditing && (
+                  <Animated.View
+                    entering={FadeIn.duration(200)}
+                    exiting={FadeOut.duration(150)}
+                  >
+                    <TouchableOpacity
+                      onPress={() => onDelete(entry.callId)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      style={styles.deleteCircle}
+                    >
+                      <MaterialCommunityIcons
+                        name="minus-circle"
+                        size={22}
+                        color={theme.colors.error}
+                      />
+                    </TouchableOpacity>
+                  </Animated.View>
+                )}
+
+                {entry.otherParticipant.photoURL ? (
+                  <Avatar.Image
+                    size={44}
+                    source={{ uri: entry.otherParticipant.photoURL }}
+                  />
+                ) : (
+                  <Avatar.Text
+                    size={44}
+                    label={initials}
+                    style={{ backgroundColor: theme.colors.primary }}
+                    color={theme.colors.onPrimary}
+                  />
+                )}
+              </View>
+
+              {/* Center: Name + call info */}
+              <View style={styles.centerSection}>
+                <Text
+                  style={[styles.callName, { color: nameColor }]}
+                  numberOfLines={1}
+                >
+                  {entry.otherParticipant.displayName || 'Unknown'}
+                </Text>
+                <View style={styles.callMeta}>
+                  <MaterialCommunityIcons
+                    name={getCallIcon(entry)}
+                    size={14}
+                    color={getCallIconColor(entry, theme)}
+                  />
+                  <Text
+                    style={[styles.callSubtitle, { color: theme.colors.onSurfaceVariant }]}
+                    numberOfLines={1}
+                  >
+                    {getSubtitle(entry)}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Right: Time + callback button */}
+              <View style={styles.rightSection}>
+                <Text style={[styles.callTime, { color: theme.colors.onSurfaceVariant }]}>
+                  {formatCallTime(entry.startedAt)}
+                </Text>
+                {!isEditing && (
+                  <TouchableOpacity
+                    onPress={() => onCallBack(entry)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <MaterialCommunityIcons
+                      name={entry.type === 'video' ? 'video-outline' : 'phone-outline'}
+                      size={22}
+                      color={theme.colors.primary}
+                    />
+                  </TouchableOpacity>
+                )}
+                {!isEditing && (
+                  <TouchableOpacity
+                    onPress={() => onPressInfo(entry)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <MaterialCommunityIcons
+                      name="information-outline"
+                      size={20}
+                      color={theme.colors.primary}
+                    />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          </TouchableRipple>
+        </GlassView>
+      </Animated.View>
+    </Swipeable>
+  );
+});
+
 export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistoryScreenProps) => {
   const navigation = useNavigation();
   const { user } = useAuth();
@@ -88,6 +279,13 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
 
   const scrollY = useRef(new RNAnimated.Value(0)).current;
   const openSwipeableRef = useRef<Swipeable | null>(null);
+  // Every mounted row's Swipeable, keyed by callId — lets us close the open one
+  // when another opens and force-close all on unmount (stale open refs on a
+  // recycled FlatList row leak the delete action into the next call).
+  const swipeableRefs = useRef<Map<string, Swipeable>>(new Map());
+  // Mirror of callHistory length read inside loadHistory without stale-closure
+  // issues, so we can decide whether a focus refetch should show the skeleton.
+  const callHistoryLengthRef = useRef(0);
   const sheetTranslateY = useSharedValue(0);
   const sheetContext = useSharedValue({ y: 0 });
 
@@ -116,19 +314,43 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
     transform: [{ translateY: sheetTranslateY.value }],
   }));
 
+  // Refetch on focus WITHOUT blanking the list: only surface the loading
+  // skeleton when there is nothing to show yet. On a refetch we keep the
+  // previously loaded rows on screen and swap them once fresh data arrives, so
+  // returning to the tab never flashes an empty/skeleton state.
+  const loadHistory = useCallback(async () => {
+    if (callHistoryLengthRef.current === 0) {
+      setIsLoading(true);
+    }
+    const history = await getCallHistory();
+    callHistoryLengthRef.current = history.length;
+    setCallHistory(history);
+    setIsLoading(false);
+  }, []);
+
   // Load call history on screen focus
   useFocusEffect(
     useCallback(() => {
       loadHistory();
-    }, [])
+    }, [loadHistory])
   );
 
-  const loadHistory = async () => {
-    setIsLoading(true);
-    const history = await getCallHistory();
-    setCallHistory(history);
-    setIsLoading(false);
-  };
+  // Force-close and drop every tracked Swipeable when the screen unmounts so a
+  // half-open row can't linger against a recycled row on the next mount.
+  useEffect(() => {
+    const refs = swipeableRefs.current;
+    return () => {
+      refs.forEach((swipeable) => {
+        try {
+          swipeable.close();
+        } catch {
+          // Row already unmounted — nothing to close.
+        }
+      });
+      refs.clear();
+      openSwipeableRef.current = null;
+    };
+  }, []);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -176,42 +398,14 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
 
   // -- Helpers --
 
-  const isMissedOrDeclined = (entry: CallHistoryEntry) =>
-    entry.status === 'missed' || entry.status === 'declined';
-
-  const getCallIcon = (entry: CallHistoryEntry): IconName => {
-    if (isMissedOrDeclined(entry)) {
-      return 'phone-missed';
-    }
-    if (entry.direction === 'incoming') return 'phone-incoming';
-    return 'phone-outgoing';
-  };
-
-  const getCallIconColor = (entry: CallHistoryEntry): string => {
-    if (isMissedOrDeclined(entry)) return theme.colors.error;
-    return theme.colors.primary;
-  };
-
-  const getCallStatusLabel = (entry: CallHistoryEntry): string => {
-    if (entry.status === 'missed') return 'Missed';
-    if (entry.status === 'declined') return 'Declined';
-    if (entry.status === 'failed') return 'Failed';
-    return entry.direction === 'incoming' ? 'Incoming' : 'Outgoing';
-  };
-
-  const getSubtitle = (entry: CallHistoryEntry): string => {
-    const direction = getCallStatusLabel(entry);
-    const typeIcon = entry.type === 'video' ? 'Video' : 'Audio';
-    if (entry.status === 'completed' && entry.duration > 0) {
-      return `${direction} ${typeIcon} \u00B7 ${formatCallDuration(entry.duration)}`;
-    }
-    return `${direction} ${typeIcon}`;
-  };
-
-  // Find matching thread to initiate a callback
-  const findThread = (entry: CallHistoryEntry): ChatThread | undefined => {
-    return threads.find((t) => t.chatId === entry.chatId);
-  };
+  // Small chatId -> thread lookup so callbacks (and any row that needs it) can
+  // resolve without depending on the whole threads array — narrows re-renders
+  // to when the set of chats actually changes, not on every ChatContext tick.
+  const threadByChatId = useMemo(() => {
+    const map = new Map<string, ChatThread>();
+    for (const t of threads) map.set(t.chatId, t);
+    return map;
+  }, [threads]);
 
   // Get display name for a thread (other participant's name, or group name)
   const getThreadDisplayName = (thread: ChatThread): string => {
@@ -240,25 +434,60 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
     return threads.filter((t) => getThreadDisplayName(t).toLowerCase().includes(q));
   }, [threads, searchQuery, user, groups]);
 
-  const handleCallBack = (entry: CallHistoryEntry) => {
-    lightHaptic();
-    const thread = findThread(entry);
-    if (thread) {
-      onStartCall(thread, entry.type);
-    }
-  };
+  const handleCallBack = useCallback(
+    (entry: CallHistoryEntry) => {
+      lightHaptic();
+      const thread = threadByChatId.get(entry.chatId);
+      if (thread) {
+        onStartCall(thread, entry.type);
+      }
+    },
+    [threadByChatId, onStartCall]
+  );
 
-  const handleDeleteCall = async (callId: string) => {
+  const handleDeleteCall = useCallback(async (callId: string) => {
     mediumHaptic();
     await deleteCallFromHistory(callId);
     setCallHistory((prev) => prev.filter((c) => c.callId !== callId));
-  };
+    callHistoryLengthRef.current = Math.max(0, callHistoryLengthRef.current - 1);
+  }, []);
+
+  const handleOpenInfo = useCallback(
+    (entry: CallHistoryEntry) => {
+      lightHaptic();
+      onOpenCallInfo(entry);
+    },
+    [onOpenCallInfo]
+  );
+
+  // Keep only one row's delete action open at a time.
+  const handleSwipeableOpen = useCallback((_callId: string, swipeable: Swipeable) => {
+    if (openSwipeableRef.current && openSwipeableRef.current !== swipeable) {
+      openSwipeableRef.current.close();
+    }
+    openSwipeableRef.current = swipeable;
+  }, []);
+
+  // Track/untrack a row's Swipeable as it mounts/unmounts so we can close the
+  // open one and force-close all on screen unmount.
+  const registerSwipeable = useCallback((callId: string, ref: Swipeable | null) => {
+    if (ref) {
+      swipeableRefs.current.set(callId, ref);
+      return;
+    }
+    const existing = swipeableRefs.current.get(callId);
+    if (existing && existing === openSwipeableRef.current) {
+      openSwipeableRef.current = null;
+    }
+    swipeableRefs.current.delete(callId);
+  }, []);
 
   const handleClearAll = () => {
     const performClear = async () => {
       warningHaptic();
       await clearCallHistory();
       setCallHistory([]);
+      callHistoryLengthRef.current = 0;
       setIsEditing(false);
     };
 
@@ -300,168 +529,48 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
 
   // -- Render Helpers --
 
-  const renderRightActions = (
-    _progress: RNAnimated.AnimatedInterpolation<number>,
-    _dragX: RNAnimated.AnimatedInterpolation<number>,
-    callId: string
-  ) => {
-    return (
-      <TouchableOpacity
-        style={styles.deleteAction}
-        onPress={() => handleDeleteCall(callId)}
-        activeOpacity={0.7}
-      >
-        <MaterialCommunityIcons name="delete" size={24} color="#fff" />
-        <Text style={styles.deleteActionText}>Delete</Text>
-      </TouchableOpacity>
-    );
-  };
+  const renderCallItem = useCallback(
+    ({ item }: { item: CallHistoryEntry }) => (
+      <CallHistoryRow
+        entry={item}
+        isEditing={isEditing}
+        theme={theme}
+        onPressInfo={handleOpenInfo}
+        onCallBack={handleCallBack}
+        onDelete={handleDeleteCall}
+        onOpen={handleSwipeableOpen}
+        onRegister={registerSwipeable}
+      />
+    ),
+    [
+      isEditing,
+      theme,
+      handleOpenInfo,
+      handleCallBack,
+      handleDeleteCall,
+      handleSwipeableOpen,
+      registerSwipeable,
+    ]
+  );
 
-  const renderCallItem = ({ item }: { item: CallHistoryEntry }) => {
-    const missed = isMissedOrDeclined(item);
-    const nameColor = missed ? theme.colors.error : theme.colors.onSurface;
-    const initials = (item.otherParticipant.displayName || 'U').slice(0, 2).toUpperCase();
+  // Stable key: callId is the natural id; fall back to startedAt for the rare
+  // legacy record persisted without one so keys never collide/change.
+  const keyExtractor = useCallback(
+    (item: CallHistoryEntry) => item.callId || `call-${item.startedAt}`,
+    []
+  );
 
-    return (
-      <Swipeable
-        ref={(ref) => {
-          // Close previous if opening a new one
-          if (ref && openSwipeableRef.current && openSwipeableRef.current !== ref) {
-            openSwipeableRef.current.close();
-          }
-        }}
-        onSwipeableOpen={(_direction, swipeable) => {
-          openSwipeableRef.current = swipeable;
-        }}
-        renderRightActions={(progress, dragX) =>
-          renderRightActions(progress, dragX, item.callId)
-        }
-        overshootRight={false}
-        friction={2}
-      >
-        <Animated.View
-          entering={FadeIn.duration(200)}
-          exiting={FadeOut.duration(150)}
-          layout={Layout.springify()}
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: CallHistorySection }) => (
+      <View style={styles.sectionHeader}>
+        <Text
+          style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}
         >
-          <GlassView style={styles.callItem}>
-            <TouchableRipple
-              onPress={() => {
-                lightHaptic();
-                onOpenCallInfo(item);
-              }}
-              style={styles.callItemContent}
-              borderless
-            >
-              <View style={styles.callRow}>
-                {/* Left: Avatar + Delete button in edit mode */}
-                <View style={styles.leftSection}>
-                  {isEditing && (
-                    <Animated.View
-                      entering={FadeIn.duration(200)}
-                      exiting={FadeOut.duration(150)}
-                    >
-                      <TouchableOpacity
-                        onPress={() => handleDeleteCall(item.callId)}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        style={styles.deleteCircle}
-                      >
-                        <MaterialCommunityIcons
-                          name="minus-circle"
-                          size={22}
-                          color={theme.colors.error}
-                        />
-                      </TouchableOpacity>
-                    </Animated.View>
-                  )}
-
-                  {item.otherParticipant.photoURL ? (
-                    <Avatar.Image
-                      size={44}
-                      source={{ uri: item.otherParticipant.photoURL }}
-                    />
-                  ) : (
-                    <Avatar.Text
-                      size={44}
-                      label={initials}
-                      style={{ backgroundColor: theme.colors.primary }}
-                      color={theme.colors.onPrimary}
-                    />
-                  )}
-                </View>
-
-                {/* Center: Name + call info */}
-                <View style={styles.centerSection}>
-                  <Text
-                    style={[styles.callName, { color: nameColor }]}
-                    numberOfLines={1}
-                  >
-                    {item.otherParticipant.displayName || 'Unknown'}
-                  </Text>
-                  <View style={styles.callMeta}>
-                    <MaterialCommunityIcons
-                      name={getCallIcon(item)}
-                      size={14}
-                      color={getCallIconColor(item)}
-                    />
-                    <Text
-                      style={[styles.callSubtitle, { color: theme.colors.onSurfaceVariant }]}
-                      numberOfLines={1}
-                    >
-                      {getSubtitle(item)}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Right: Time + callback button */}
-                <View style={styles.rightSection}>
-                  <Text style={[styles.callTime, { color: theme.colors.onSurfaceVariant }]}>
-                    {formatCallTime(item.startedAt)}
-                  </Text>
-                  {!isEditing && (
-                    <TouchableOpacity
-                      onPress={() => handleCallBack(item)}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <MaterialCommunityIcons
-                        name={item.type === 'video' ? 'video-outline' : 'phone-outline'}
-                        size={22}
-                        color={theme.colors.primary}
-                      />
-                    </TouchableOpacity>
-                  )}
-                  {!isEditing && (
-                    <TouchableOpacity
-                      onPress={() => {
-                        lightHaptic();
-                        onOpenCallInfo(item);
-                      }}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <MaterialCommunityIcons
-                        name="information-outline"
-                        size={20}
-                        color={theme.colors.primary}
-                      />
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            </TouchableRipple>
-          </GlassView>
-        </Animated.View>
-      </Swipeable>
-    );
-  };
-
-  const renderSectionHeader = ({ section }: { section: CallHistorySection }) => (
-    <View style={styles.sectionHeader}>
-      <Text
-        style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}
-      >
-        {section.title}
-      </Text>
-    </View>
+          {section.title}
+        </Text>
+      </View>
+    ),
+    [theme]
   );
 
   return (
@@ -487,7 +596,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
       <View style={styles.container}>
         <RNAnimated.SectionList
           sections={callsShielded ? [] : sections}
-          keyExtractor={(item) => item.callId}
+          keyExtractor={keyExtractor}
           renderItem={renderCallItem}
           renderSectionHeader={renderSectionHeader}
           stickySectionHeadersEnabled={false}
@@ -651,29 +760,39 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
           )}
           scrollEventThrottle={16}
           ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <MaterialCommunityIcons
-                name="phone-off"
-                size={64}
-                color={theme.colors.onSurfaceVariant}
-                style={{ opacity: 0.5 }}
-              />
-              <Text
-                style={[styles.emptyTitle, { color: theme.colors.onSurface }]}
-              >
-                No Recent Calls
-              </Text>
-              <Text
-                style={[
-                  styles.emptySubtitle,
-                  { color: theme.colors.onSurfaceVariant },
-                ]}
-              >
-                {filter === 'missed'
-                  ? 'No missed calls to show.'
-                  : 'Your call history will appear here.'}
-              </Text>
-            </View>
+            isLoading ? (
+              // Only reached on a first/empty load — a refetch keeps prior rows
+              // mounted, so this skeleton never replaces existing history.
+              <View style={styles.skeletonContainer}>
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <ChatListSkeleton key={`call-skeleton-${i}`} />
+                ))}
+              </View>
+            ) : (
+              <View style={styles.emptyContainer}>
+                <MaterialCommunityIcons
+                  name="phone-off"
+                  size={64}
+                  color={theme.colors.onSurfaceVariant}
+                  style={{ opacity: 0.5 }}
+                />
+                <Text
+                  style={[styles.emptyTitle, { color: theme.colors.onSurface }]}
+                >
+                  No Recent Calls
+                </Text>
+                <Text
+                  style={[
+                    styles.emptySubtitle,
+                    { color: theme.colors.onSurfaceVariant },
+                  ]}
+                >
+                  {filter === 'missed'
+                    ? 'No missed calls to show.'
+                    : 'Your call history will appear here.'}
+                </Text>
+              </View>
+            )
           }
         />
       </View>
@@ -1043,6 +1162,10 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   // -- Empty State --
+  skeletonContainer: {
+    paddingTop: 8,
+    gap: 8,
+  },
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',

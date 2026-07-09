@@ -26,6 +26,8 @@ type Mocks = {
   RTCAudioSession: {
     audioSessionDidActivate: ReturnType<typeof vi.fn>;
     audioSessionDidDeactivate: ReturnType<typeof vi.fn>;
+    setManualAudio: ReturnType<typeof vi.fn>;
+    setAudioEnabled: ReturnType<typeof vi.fn>;
   };
   asyncStorageStore: Map<string, string>;
 };
@@ -74,6 +76,8 @@ beforeEach(() => {
   mocks.RNCallKeep.getInitialEvents.mockImplementation(async () => []);
   mocks.RTCAudioSession.audioSessionDidActivate.mockClear();
   mocks.RTCAudioSession.audioSessionDidDeactivate.mockClear();
+  mocks.RTCAudioSession.setManualAudio.mockClear();
+  mocks.RTCAudioSession.setAudioEnabled.mockClear();
   mocks.asyncStorageStore.clear();
 });
 
@@ -746,5 +750,106 @@ describe('audio session activation lifecycle', () => {
     nativeCallService.activateAudioSessionFallback();
     expect(nativeCallService.hasActivatedAudioSession()).toBe(true);
     expect(nativeCallService.jsOwnsAudioSession()).toBe(true);
+  });
+});
+
+/**
+ * Manual-audio bridge + teardown flag reset. With WebRTC in manual-audio mode
+ * the audio unit starts/stops ONLY on setAudioEnabled — gated on CallKit's
+ * session activation — which is what stops calls that connect but stay silent.
+ * And every teardown path (endCall / dismissNativeCall) MUST clear the
+ * activation flags: CallKit may never fire didDeactivateAudioSession on an
+ * abnormal end, and a stuck `true` silences the next call until an app restart.
+ */
+describe('manual-audio bridge and teardown flag reset', () => {
+  it('puts WebRTC into manual-audio mode once during initialize', async () => {
+    await initializedService();
+    expect(mocks.RTCAudioSession.setManualAudio).toHaveBeenCalledWith(true);
+  });
+
+  it('starts the WebRTC audio unit (setAudioEnabled true) on a CallKit activation', async () => {
+    await initializedService();
+
+    fireCallKeepEvent('didActivateAudioSession', {});
+    expect(mocks.RTCAudioSession.setAudioEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it('starts the WebRTC audio unit (setAudioEnabled true) on the watchdog fallback', async () => {
+    const { nativeCallService } = await initializedService();
+
+    nativeCallService.activateAudioSessionFallback();
+    expect(mocks.RTCAudioSession.setAudioEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it('stops the WebRTC audio unit (setAudioEnabled false) on a CallKit deactivation', async () => {
+    await initializedService();
+    fireCallKeepEvent('didActivateAudioSession', {});
+    mocks.RTCAudioSession.setAudioEnabled.mockClear();
+
+    fireCallKeepEvent('didDeactivateAudioSession', {});
+    expect(mocks.RTCAudioSession.setAudioEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it('stops the WebRTC audio unit (setAudioEnabled false) when JS tears down its own activation', async () => {
+    const { nativeCallService } = await initializedService();
+    nativeCallService.activateAudioSessionFallback();
+    mocks.RTCAudioSession.setAudioEnabled.mockClear();
+
+    nativeCallService.resetAudioSession();
+    expect(mocks.RTCAudioSession.setAudioEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it('endCall clears activation flags so the next call activates even if CallKit never deactivated', async () => {
+    const { nativeCallService } = await initializedService();
+
+    // Call 1: CallKit activated but never fired didDeactivate (abnormal end).
+    fireCallKeepEvent('didActivateAudioSession', {});
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(true);
+
+    await nativeCallService.endCall('call_end_audio');
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(false);
+
+    // Call 2: the watchdog fallback must be free to activate again.
+    nativeCallService.activateAudioSessionFallback();
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(true);
+  });
+
+  it('endCall deactivates a JS-owned session on teardown (setAudioEnabled false)', async () => {
+    const { nativeCallService } = await initializedService();
+    nativeCallService.activateAudioSessionFallback();
+    mocks.RTCAudioSession.setAudioEnabled.mockClear();
+    mocks.RTCAudioSession.audioSessionDidDeactivate.mockClear();
+
+    await nativeCallService.endCall('call_js_owned');
+    expect(mocks.RTCAudioSession.setAudioEnabled).toHaveBeenCalledWith(false);
+    expect(mocks.RTCAudioSession.audioSessionDidDeactivate).toHaveBeenCalledTimes(1);
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(false);
+  });
+
+  it('dismissNativeCall ends the placeholder and clears activation flags', async () => {
+    const { nativeCallService } = await initializedService();
+
+    // A stray placeholder redial call left the session active, and CallKit
+    // never deactivated it.
+    fireCallKeepEvent('didActivateAudioSession', {});
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(true);
+
+    const placeholder = '11111111-2222-3333-4444-555555555555';
+    await nativeCallService.dismissNativeCall(placeholder);
+    expect(mocks.RNCallKeep.endCall).toHaveBeenCalledWith(placeholder);
+    expect(nativeCallService.hasActivatedAudioSession()).toBe(false);
+  });
+
+  it('dismissNativeCall refuses to end an app-initiated call (never hangs up our own outgoing call)', async () => {
+    const { nativeCallService, nativeUuidForCall } = await initializedService();
+
+    await nativeCallService.startOutgoingCall('call_dismiss_guard', 'peer', 'Peer', false);
+    const ourUuid = nativeUuidForCall('call_dismiss_guard');
+    mocks.RNCallKeep.endCall.mockClear();
+
+    // The redial flow only ever dismisses placeholder UUIDs, but the guard is
+    // belt-and-braces: dismissing our OWN outgoing call would hang it up.
+    await nativeCallService.dismissNativeCall(ourUuid);
+    expect(mocks.RNCallKeep.endCall).not.toHaveBeenCalled();
   });
 });

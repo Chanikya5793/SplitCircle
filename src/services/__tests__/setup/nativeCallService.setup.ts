@@ -53,6 +53,10 @@ const callKeepModuleMock = {
 const RTCAudioSessionMock = {
   audioSessionDidActivate: vi.fn(),
   audioSessionDidDeactivate: vi.fn(),
+  // WebRTC manual-audio bridge (patched into @livekit/react-native-webrtc):
+  // nativeCallService toggles these on CallKit activation/teardown.
+  setManualAudio: vi.fn(),
+  setAudioEnabled: vi.fn(),
 };
 
 (globalThis as Record<string, unknown>).__nativeCallTestMocks = {

@@ -27,13 +27,14 @@ export interface ExpenseContext {
 }
 
 /**
- * Hard ceiling on context lines regardless of how big the window is — beyond
- * this, on-device latency and answer quality stop improving. Capable hardware
+ * Absolute latency guard on context lines. The EFFECTIVE cap is now adaptive —
+ * driven by the device's real token window via `maxExpensesForContext` — rather
+ * than a hard 120. This ceiling only bites on very large windows where added
+ * grounding stops improving answers and only costs latency. Capable hardware
  * (iPhone Air / 17 Pro running Apple's larger "Core Advanced" model) reports a
- * bigger `contextSize` and so packs closer to this ceiling; base devices stay
- * well below it.
+ * bigger `contextSize` and so packs closer to it; base devices stay well below.
  */
-export const MAX_CONTEXT_EXPENSES = 120;
+export const MAX_CONTEXT_EXPENSES = 300;
 /** Floor so even a tiny window still grounds the answer in some history. */
 export const MIN_CONTEXT_EXPENSES = 15;
 /** Conservative default window (tokens) when the device can't report one. */

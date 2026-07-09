@@ -126,16 +126,26 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     unsubscribes.current = [];
   }, []);
 
+  // NOTE: the handle we report here is exactly what iOS hands back on a
+  // Recents redial (CallContext.resolveRedialThread). For DIRECT calls the
+  // peer's userId is unambiguous. For GROUP calls a member userId is NOT — the
+  // member can belong to several groups — so report the group's chatId as the
+  // handle instead; the redial resolver matches chatId first, making group
+  // redials deterministic. Display name is unaffected (CallKit shows
+  // localizedCallerName, not the handle).
   const buildNativeHandle = useCallback((
     fallbackDisplayName?: string,
     fallbackUserId?: string,
   ) => {
     const thread = threads.find((item) => item.chatId === chatId);
+    const isGroup = thread?.type === 'group';
     const directParticipant = thread?.participants.find((participant) => participant.userId !== user?.userId);
     const displayName = directParticipant?.displayName
       || fallbackDisplayName
-      || (thread?.type === 'group' ? 'Group Call' : 'SplitCircle Contact');
-    const handle = directParticipant?.userId || fallbackUserId || chatId || displayName;
+      || (isGroup ? 'Group Call' : 'SplitCircle Contact');
+    const handle = isGroup
+      ? (chatId || displayName)
+      : (directParticipant?.userId || fallbackUserId || chatId || displayName);
 
     return {
       displayName,
@@ -658,20 +668,9 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
         await leaveCall(endingCallId, user.userId);
       }
 
-      if (endingCallId) {
-        await nativeCallService.endCall(endingCallId);
-        nativeCallService.clearCall(endingCallId);
-      }
-
-      callIdRef.current = null;
-      callStartedAtRef.current = null;
-      connectedAtRef.current = null;
-      otherParticipantRef.current = null;
-      hasSessionToCleanupRef.current = false;
-      hasReportedConnectedNativeRef.current = false;
-
       // Kill the pending audio timers FIRST so a late watchdog/video-reapply
-      // fire can't re-activate the session we're tearing down.
+      // fire can't re-activate the session we're tearing down (which would also
+      // flip the ownership flags after we snapshot them just below).
       if (audioWatchdogRef.current) {
         clearTimeout(audioWatchdogRef.current);
         audioWatchdogRef.current = null;
@@ -687,18 +686,36 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       // or the watchdog fallback that activated from JS) CallKit won't
       // deactivate — so JS must, or the mic indicator stays on AND the next
       // call inherits a live session and is silent. Snapshot ownership BEFORE
-      // resetAudioSession() clears the flags.
+      // nativeCallService.endCall(), which now clears the activation flags as
+      // part of teardown (so an abnormal end that never triggers CallKit's
+      // didDeactivate can't leave a stale `true` that silences the next call).
       const jsOwnsActivation = nativeCallService.jsOwnsAudioSession();
       if (jsOwnsActivation) {
         try {
+          // Deactivate the OS session BEFORE endCall notifies WebRTC
+          // (audioSessionDidDeactivate) so the teardown order stays canonical:
+          // session inactive first, then the WebRTC handoff.
           await AudioSession.stopAudioSession();
         } catch (audioErr) {
           console.warn('useCallManager: AudioSession.stopAudioSession failed', audioErr);
         }
       }
-      // Notify WebRTC (for a JS-activated session) and defensively clear the
-      // activation flags so a missed CallKit deactivation can't silence the
-      // next call until an app restart.
+
+      if (endingCallId) {
+        await nativeCallService.endCall(endingCallId);
+        nativeCallService.clearCall(endingCallId);
+      }
+
+      callIdRef.current = null;
+      callStartedAtRef.current = null;
+      connectedAtRef.current = null;
+      otherParticipantRef.current = null;
+      hasSessionToCleanupRef.current = false;
+      hasReportedConnectedNativeRef.current = false;
+
+      // Defensive belt-and-suspenders: endCall already reset the activation
+      // flags (and, for a JS-owned session, notified WebRTC). This idempotent
+      // clear also covers the endingCallId===null path where endCall never ran.
       nativeCallService.resetAudioSession();
       debugLog('useCallManager call ended');
 

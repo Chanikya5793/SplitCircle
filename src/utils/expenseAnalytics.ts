@@ -176,12 +176,16 @@ export function pairwiseNet(
   return cents(aOwesB);
 }
 
-// ── Memoized index (cache) ───────────────────────────────────────────────────
+// ── Persistent, incremental index (cache) ────────────────────────────────────
 //
 // The group's expenses already live in memory (GroupContext's live snapshot), so
 // this caches the *derived* index and recomputes only when the group's data
-// actually changes — keyed by a cheap signature. Reusable across Ask AI, Group
-// Stats, etc. In-memory per session; a disk-persisted layer can build on this.
+// actually changes. Two layers back the cache:
+//   1. a session Map (hot path — same reference for repeated asks), and
+//   2. a persistent SQLite store (survives app restarts) plugged in via
+//      `setIndexPersistence` by `services/aiIndexStore`.
+// This module stays PURE (no native/expo-sqlite import) so it remains fully
+// unit-testable — the SQLite layer is injected as a dependency instead.
 
 interface GroupLike {
   groupId: string;
@@ -190,7 +194,77 @@ interface GroupLike {
   updatedAt?: number;
 }
 
-/** Cheap change-signature: invalidates the cache when expenses/settlements change. */
+/**
+ * Index schema/analytics-shape version. Bump when `ExpenseAnalytics` or the way
+ * it's computed changes so persisted rows from an older app build are treated as
+ * stale and rebuilt lazily (see `isIndexFresh` + the store's version sweep).
+ */
+export const INDEX_VERSION = 1;
+
+/** The staleness fingerprint persisted alongside each group's analytics. */
+export interface IndexMeta {
+  version: number;
+  /** Newest change timestamp across the group, its expenses, and settlements. */
+  updatedAt: number;
+  expenseCount: number;
+}
+
+/** A persisted group index: staleness fingerprint + the computed analytics. */
+export interface StoredGroupIndex extends IndexMeta {
+  analytics: ExpenseAnalytics;
+}
+
+/**
+ * Persistence provider for the on-device index. Implemented by the SQLite-backed
+ * `aiIndexStore` and injected here so this module needs no native import. Null
+ * on web / before registration ⇒ memory-only behavior (exactly as before the
+ * persistent layer existed). Implementations must never throw across this
+ * boundary in a way that breaks the AI path — callers guard, but keep it safe.
+ */
+export interface IndexPersistence {
+  read(groupId: string, userId: string): StoredGroupIndex | null;
+  write(groupId: string, userId: string, entry: StoredGroupIndex): void;
+  clear(): void;
+}
+
+let persistence: IndexPersistence | null = null;
+
+/** Wire in (or clear) the persistent SQLite index layer. */
+export function setIndexPersistence(p: IndexPersistence | null): void {
+  persistence = p;
+}
+
+/**
+ * Compute the current staleness fingerprint for a group. This is the SINGLE
+ * source of truth for "did the group change since we indexed it": both the
+ * memory cache and the SQLite store compare against it via `isIndexFresh`.
+ * `updatedAt` folds in expense edits and settlement additions (their
+ * `createdAt`) so recorded payments also invalidate the persisted balances.
+ */
+export function computeIndexMeta(group: GroupLike): IndexMeta {
+  const ex = group.expenses ?? [];
+  const st = group.settlements ?? [];
+  let updatedAt = group.updatedAt ?? 0;
+  for (const e of ex) updatedAt = Math.max(updatedAt, e.updatedAt ?? 0);
+  for (const s of st) updatedAt = Math.max(updatedAt, s.createdAt ?? 0);
+  return { version: INDEX_VERSION, updatedAt, expenseCount: ex.length };
+}
+
+/** True when a stored fingerprint still matches the group's current state. */
+export function isIndexFresh(stored: IndexMeta | null | undefined, current: IndexMeta): boolean {
+  return (
+    !!stored &&
+    stored.version === current.version &&
+    stored.updatedAt === current.updatedAt &&
+    stored.expenseCount === current.expenseCount
+  );
+}
+
+/**
+ * Legacy cheap change-signature (string form of the fingerprint). Retained as a
+ * public helper; staleness decisions now go through `computeIndexMeta` +
+ * `isIndexFresh` so memory and disk agree.
+ */
 export function analyticsSignature(group: GroupLike): string {
   const ex = group.expenses ?? [];
   const st = group.settlements ?? [];
@@ -199,27 +273,67 @@ export function analyticsSignature(group: GroupLike): string {
   return `${ex.length}:${maxUpdated}:${st.length}:${group.updatedAt ?? 0}`;
 }
 
-const analyticsCache = new Map<string, { sig: string; value: ExpenseAnalytics; indexedAt: number }>();
+const analyticsCache = new Map<string, { meta: IndexMeta; value: ExpenseAnalytics; indexedAt: number }>();
 
-/** Memoized `buildExpenseAnalytics` keyed by group + user + change-signature. */
+/**
+ * Incremental `buildExpenseAnalytics` keyed by group + user. Resolution order:
+ *   1) session memory (fresh) → return the same reference,
+ *   2) persistent SQLite store (fresh) → hydrate memory + return,
+ *   3) recompute → write back to BOTH layers.
+ * Every persistence touch is guarded: a SQLite failure falls back to in-memory
+ * compute so the AI path can never crash on a bad/locked/missing database.
+ */
 export function getGroupAnalytics(group: GroupLike, currentUserId: string): ExpenseAnalytics {
   const key = `${group.groupId}:${currentUserId}`;
-  const sig = analyticsSignature(group);
+  const meta = computeIndexMeta(group);
+
+  // 1) Hot path — repeated asks in a session return the identical object.
   const hit = analyticsCache.get(key);
-  if (hit && hit.sig === sig) return hit.value;
+  if (hit && isIndexFresh(hit.meta, meta)) return hit.value;
+
+  // 2) Persistent index (survives restarts). A fresh hit hydrates memory so the
+  //    next ask is instant; any store error just falls through to recompute.
+  if (persistence) {
+    try {
+      const stored = persistence.read(group.groupId, currentUserId);
+      if (stored && isIndexFresh(stored, meta)) {
+        analyticsCache.set(key, { meta, value: stored.analytics, indexedAt: Date.now() });
+        return stored.analytics;
+      }
+    } catch {
+      // Persistence must never break the AI path — recompute in memory instead.
+    }
+  }
+
+  // 3) Recompute and write back to both layers.
   const value = buildExpenseAnalytics(group.expenses ?? [], group.settlements ?? [], currentUserId);
-  analyticsCache.set(key, { sig, value, indexedAt: Date.now() });
+  analyticsCache.set(key, { meta, value, indexedAt: Date.now() });
+  if (persistence) {
+    try {
+      persistence.write(group.groupId, currentUserId, { ...meta, analytics: value });
+    } catch {
+      // Best-effort persistence; a failed write just means we recompute later.
+    }
+  }
   return value;
 }
 
-/** Which group indexes are currently cached on-device (for the Settings view). */
+/** Which group indexes are currently cached in session memory (Settings view). */
 export function getAnalyticsCacheInfo(): { key: string; indexedAt: number }[] {
   return [...analyticsCache.entries()].map(([key, v]) => ({ key, indexedAt: v.indexedAt }));
 }
 
-/** Test/maintenance hook to clear the in-memory analytics cache. */
+/**
+ * Clear the session cache AND the persistent store (best-effort). Backs the
+ * AiIndexScreen "Rebuild index" action; the next `getGroupAnalytics` recomputes.
+ */
 export function clearAnalyticsCache(): void {
   analyticsCache.clear();
+  try {
+    persistence?.clear();
+  } catch {
+    // Clearing the persistent store is best-effort — ignore failures.
+  }
 }
 
 // ── Filters for the query engine (pure) ──────────────────────────────────────

@@ -4,8 +4,9 @@
  * Shows what's indexed on the device (per-group expense/settlement counts), that
  * indexing + Q&A run entirely on-device (nothing leaves the phone), the Apple
  * Intelligence status for conversational chat, and a Rebuild action. The index
- * is the deterministic analytics cache (signature-keyed, recomputed only on
- * change), surfaced here so users can see the process.
+ * is the deterministic analytics persisted in SQLite (see `aiIndexStore`) — it
+ * survives app restarts and is recomputed only when a group changes. Freshness,
+ * the index version, and the on-disk footprint are surfaced so users can see it.
  */
 
 import { GlassView } from '@/components/GlassView';
@@ -15,12 +16,23 @@ import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { getOnDeviceAiAvailability, ON_DEVICE_UNAVAILABLE_COPY } from '@/services/onDeviceAiService';
+import { getIndexStoreEntries, getIndexStoreFootprint } from '@/services/aiIndexStore';
 import { buildIndexStatus, type IndexStatus } from '@/utils/aiIndexStatus';
-import { clearAnalyticsCache, getAnalyticsCacheInfo, getGroupAnalytics } from '@/utils/expenseAnalytics';
+import {
+  clearAnalyticsCache,
+  computeIndexMeta,
+  getGroupAnalytics,
+  INDEX_VERSION,
+  isIndexFresh,
+} from '@/utils/expenseAnalytics';
 import { mediumHaptic, successHaptic } from '@/utils/haptics';
 import { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Icon, Text } from 'react-native-paper';
+
+/** Human-readable byte size for the storage footprint line. */
+const formatBytes = (bytes: number): string =>
+  bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
 
 export const AiIndexScreen = () => {
   const { theme } = useTheme();
@@ -29,21 +41,33 @@ export const AiIndexScreen = () => {
   const userId = user?.userId ?? '';
   const availability = getOnDeviceAiAvailability();
   const [status, setStatus] = useState<IndexStatus | null>(null);
+  const [footprint, setFootprint] = useState(0);
 
-  // Index every group on-device, then summarize.
+  // Index every group on-device (persisting to SQLite), then summarize from the
+  // persistent store so freshness reflects what actually survives a restart.
   const reindex = useCallback(() => {
     for (const g of groups) {
       try { getGroupAnalytics(g, userId); } catch { /* never block the view */ }
     }
-    const keys = new Set(getAnalyticsCacheInfo().map((i) => i.key));
-    setStatus(buildIndexStatus(groups, userId, keys));
+    const metaByGroup = new Map(groups.map((g) => [g.groupId, computeIndexMeta(g)]));
+    const fresh = new Set(
+      getIndexStoreEntries()
+        .filter((e) => {
+          if (e.userId !== userId) return false;
+          const meta = metaByGroup.get(e.groupId);
+          return meta ? isIndexFresh(e, meta) : false;
+        })
+        .map((e) => `${e.groupId}:${e.userId}`),
+    );
+    setStatus(buildIndexStatus(groups, userId, fresh));
+    setFootprint(getIndexStoreFootprint());
   }, [groups, userId]);
 
   useEffect(() => { reindex(); }, [reindex]);
 
   const rebuild = () => {
     mediumHaptic();
-    clearAnalyticsCache();
+    clearAnalyticsCache(); // clears session memory AND the persistent store
     reindex();
     successHaptic();
   };
@@ -85,6 +109,10 @@ export const AiIndexScreen = () => {
               {status ? `${status.totalExpenses} expenses · ${status.totalGroups} groups` : '…'}
             </Text>
           </View>
+
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
+            Saved on device · v{INDEX_VERSION} · {formatBytes(footprint)}
+          </Text>
 
           <View style={{ marginTop: 10, gap: 8 }}>
             {(status?.groups ?? []).map((g) => (

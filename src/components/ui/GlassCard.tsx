@@ -58,7 +58,7 @@ export interface GlassCardProps {
 type AppRadius = ReturnType<typeof useTheme>['theme']['radius'];
 
 export const GlassCard = React.memo(
-  ({ children, style, contentStyle, intensity = 30, radius = 'lg', forceBlur = false }: GlassCardProps) => {
+  ({ children, style, contentStyle, intensity = 38, radius = 'lg', forceBlur = false }: GlassCardProps) => {
     const { isDark, theme, themeProgress } = useTheme();
     const borderRadius = typeof radius === 'number' ? radius : theme.radius[radius];
 

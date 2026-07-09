@@ -1,8 +1,10 @@
 /**
  * aiIndexStatus.ts — pure summary of what the on-device AI has indexed, for the
  * Settings transparency view. The "index" is the deterministic analytics built
- * from each group's local data; this reports counts + whether a group's index is
- * currently cached. No RN/native imports (unit-tested).
+ * from each group's local data and persisted in SQLite (see `aiIndexStore`);
+ * this reports counts + whether each group has a FRESH persisted index. No
+ * RN/native imports (unit-tested) — the caller passes in the set of freshly
+ * indexed keys derived from the store.
  */
 
 export interface GroupIndexStatus {
@@ -10,7 +12,7 @@ export interface GroupIndexStatus {
   name: string;
   expenseCount: number;
   settlementCount: number;
-  /** True when this group's analytics index is cached this session. */
+  /** True when this group has a fresh index in the persistent store. */
   cached: boolean;
 }
 

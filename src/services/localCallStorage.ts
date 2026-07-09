@@ -22,6 +22,79 @@ export interface CallHistoryEntry {
     status: 'completed' | 'missed' | 'declined' | 'failed';
 }
 
+// Two persisted records describe the SAME physical call when they started
+// within this window. A single call can be saved under two different ids — the
+// CallKit-generated placeholder UUID (temp) and the Firebase call-session id
+// (final) — so callId equality alone is not enough to dedup.
+export const DEDUP_WINDOW_MS = 2000;
+
+/**
+ * True when two history records represent the same physical call. Matches on
+ * callId (exact) OR same conversation + peer started within DEDUP_WINDOW_MS,
+ * which collapses the temp/final id duplicate rows the Recents flow can create.
+ */
+export const isSameCall = (a: CallHistoryEntry, b: CallHistoryEntry): boolean => {
+    if (a.callId === b.callId) return true;
+    return (
+        a.chatId === b.chatId &&
+        a.otherParticipant.userId === b.otherParticipant.userId &&
+        Math.abs(a.startedAt - b.startedAt) <= DEDUP_WINDOW_MS
+    );
+};
+
+/**
+ * Merge two records for the same call. Newest wins: the record with the later
+ * endedAt reflects the final outcome (status/duration/final id); ties go to the
+ * incoming write. The earliest startedAt and the most complete peer identity
+ * (real display name + photo) are preserved across both records.
+ */
+export const mergeCallEntries = (
+    existing: CallHistoryEntry,
+    incoming: CallHistoryEntry,
+): CallHistoryEntry => {
+    const newer = incoming.endedAt >= existing.endedAt ? incoming : existing;
+    const older = newer === incoming ? existing : incoming;
+
+    const named = [newer, older].find(
+        (e) => e.otherParticipant.displayName && e.otherParticipant.displayName !== 'Unknown',
+    );
+    const withPhoto = [newer, older].find((e) => e.otherParticipant.photoURL);
+
+    return {
+        ...older,
+        ...newer,
+        startedAt: Math.min(existing.startedAt, incoming.startedAt),
+        otherParticipant: {
+            userId: newer.otherParticipant.userId || older.otherParticipant.userId,
+            displayName:
+                named?.otherParticipant.displayName || newer.otherParticipant.displayName,
+            photoURL: withPhoto?.otherParticipant.photoURL,
+        },
+    };
+};
+
+/**
+ * Pure upsert: fold `entry` into `history`, deduping temp/final id duplicates
+ * and merging fields (newest wins). Trims to the last 100 records. Extracted so
+ * the dedup/merge logic is unit-testable without touching AsyncStorage.
+ */
+export const upsertCallHistory = (
+    history: CallHistoryEntry[],
+    entry: CallHistoryEntry,
+): CallHistoryEntry[] => {
+    const index = history.findIndex((existing) => isSameCall(existing, entry));
+    if (index >= 0) {
+        // Merge in place so the record keeps its position in the recency-sorted
+        // list (a temp record is typically already at the top when the final
+        // save lands).
+        const next = history.slice();
+        next[index] = mergeCallEntries(history[index], entry);
+        return next.slice(0, 100);
+    }
+    // Add new entry at the beginning (most recent first).
+    return [entry, ...history].slice(0, 100);
+};
+
 /**
  * Save a call to local history
  */
@@ -30,18 +103,7 @@ export const saveCallToHistory = async (entry: CallHistoryEntry): Promise<void> 
         const existingData = await AsyncStorage.getItem(CALL_HISTORY_KEY);
         const history: CallHistoryEntry[] = existingData ? JSON.parse(existingData) : [];
 
-        // Check if call already exists (avoid duplicates)
-        const existingIndex = history.findIndex(h => h.callId === entry.callId);
-        if (existingIndex >= 0) {
-            // Update existing entry
-            history[existingIndex] = entry;
-        } else {
-            // Add new entry at the beginning (most recent first)
-            history.unshift(entry);
-        }
-
-        // Keep only last 100 calls to prevent storage bloat
-        const trimmedHistory = history.slice(0, 100);
+        const trimmedHistory = upsertCallHistory(history, entry);
 
         await AsyncStorage.setItem(CALL_HISTORY_KEY, JSON.stringify(trimmedHistory));
         console.log('📞 Call saved to history:', entry.callId);

@@ -29,6 +29,9 @@ import {
 } from '@/utils/onDeviceAiContext';
 import { getGroupAnalytics } from '@/utils/expenseAnalytics';
 import { answerExpenseQuery, type QueryContext } from '@/utils/expenseQuery';
+// Side-effect import: wires the persistent SQLite index into `getGroupAnalytics`
+// so on-device answers are grounded from the index that survives app restarts.
+import '@/services/aiIndexStore';
 
 export type { OnDeviceAiAvailability };
 export { getOnDeviceAiAvailability };

@@ -265,6 +265,9 @@ const styles = StyleSheet.create({
   },
   blob: {
     position: 'absolute',
-    opacity: 0.35,
+    // Bumped from 0.35 for a more vibrant, airy backdrop — the ambient accent
+    // blobs now read clearly against the brighter appBackground instead of
+    // fading into it. Still soft enough to keep foreground text legible.
+    opacity: 0.45,
   },
 });

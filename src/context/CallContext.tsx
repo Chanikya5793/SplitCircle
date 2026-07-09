@@ -1,4 +1,6 @@
+import type { ChatThread } from '@/models/chat';
 import { ackCallRinging, declineCall, getCallSessionOutcome, subscribeToIncomingCallForUser } from '@/services/callService';
+import { appendCallDebug } from '@/services/callDebugLedger';
 import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { nativeCallService } from '@/services/nativeCallService';
 import { voipPushService } from '@/services/voipPushService';
@@ -53,11 +55,53 @@ const CallContext = createContext<CallContextValue | null>(null);
 // no/flaky network) so the CallKit ring can't spin forever.
 const CALLEE_RING_TIMEOUT_MS = 60_000;
 
+// How long to keep retrying to resolve a Recents redial's handle to a chat
+// before giving up. Cold starts deliver the buffered redial event long before
+// ChatContext has loaded any threads, so a SINGLE resolve attempt (the old
+// behavior) permanently dropped the redial. Retry on an interval until this
+// deadline instead so a slow thread load can't silently lose the call.
+const RECENTS_REDIAL_RESOLVE_DEADLINE_MS = 30_000;
+const RECENTS_REDIAL_RETRY_INTERVAL_MS = 1_000;
+
 interface RecentsStartCallRequest {
   handle: string;
   nativeCallId: string | null;
   hasVideo: boolean;
 }
+
+// Resolve the handle a Recents/Siri redial arrives with back to a chat thread.
+// The handle is whatever the ORIGINAL call reported: peer userId for 1:1, and
+// (see NOTE) currently a member userId for groups. Try, in order: an exact
+// chatId match (future-proof — matches the moment a group reports its chatId as
+// the handle), a direct thread whose peer is the handle, then a group thread
+// that contains the handle as a participant.
+const resolveRedialThread = (
+  handle: string,
+  threads: ChatThread[],
+  currentUserId: string,
+): ChatThread | undefined => {
+  const byChatId = threads.find((candidate) => candidate.chatId === handle);
+  if (byChatId) {
+    return byChatId;
+  }
+
+  const byDirectPeer = threads.find((candidate) =>
+    candidate.type === 'direct'
+    && handle !== currentUserId
+    && candidate.participantIds.includes(handle));
+  if (byDirectPeer) {
+    return byDirectPeer;
+  }
+
+  // Best-effort group fallback: ambiguous when the member belongs to several
+  // groups (so it is tried LAST, after the direct match). The unambiguous fix
+  // is to report the group chatId as the redial handle — see the NOTE on
+  // useCallManager.buildNativeHandle.
+  return threads.find((candidate) =>
+    candidate.type === 'group'
+    && handle !== currentUserId
+    && candidate.participantIds.includes(handle));
+};
 
 const isSameActiveCall = (
   left: ActiveCallRequest | null,
@@ -83,6 +127,10 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
   const incomingCallRef = useRef<IncomingCall | null>(null);
   const displayedIncomingCallIdRef = useRef<string | null>(null);
+  // Recents-redial resolution: the deadline after which we stop retrying, and
+  // the handle to the pending retry timer.
+  const recentsRedialDeadlineRef = useRef<number | null>(null);
+  const recentsRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     incomingCallRef.current = incomingCall;
@@ -220,8 +268,26 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     setIsCallUiVisible(false);
   }, []);
 
+  // Tear down all Recents-redial resolution state (deadline + pending retry)
+  // and drop the parked request. Called once resolution succeeds, is abandoned,
+  // or is recognized as an echo.
+  const clearRecentsRedial = useCallback(() => {
+    recentsRedialDeadlineRef.current = null;
+    if (recentsRetryTimerRef.current) {
+      clearTimeout(recentsRetryTimerRef.current);
+      recentsRetryTimerRef.current = null;
+    }
+    setRecentsStartCall(null);
+  }, []);
+
   const startCallSession = useCallback((request: ActiveCallRequest) => {
     debugLog('CallContext: opening call session UI');
+    appendCallDebug('startCallSession', {
+      chatId: request.chatId,
+      groupId: request.groupId,
+      type: request.type,
+      joinCallId: request.joinCallId,
+    });
     setIncomingCall(null);
     setActiveCallRequest((current) => {
       if (!current) {
@@ -488,14 +554,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
 
-    if (threads.length === 0) {
-      // Threads not loaded yet (cold start) — keep the request parked; this
-      // effect re-runs when ChatContext delivers them.
-      return;
-    }
-
     const { handle, nativeCallId, hasVideo } = recentsStartCall;
-    setRecentsStartCall(null);
 
     // Belt-and-braces (the service already filters this): never touch a
     // CallKit call the app itself initiated. CallKit echoes our own outgoing
@@ -503,41 +562,82 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     // would hang up the live call the moment it starts.
     if (nativeCallId && nativeCallService.isAppInitiatedNativeCall(nativeCallId)) {
       debugLog('CallContext: ignoring start-call echo for an app-initiated call');
+      appendCallDebug('recents.echoIgnored', { nativeCallId });
+      clearRecentsRedial();
       return;
     }
 
-    // CXStartCallAction path creates a placeholder CallKit call; dismiss it —
-    // the normal outgoing flow below reports its own call with the app's
-    // deterministic UUID. (The Recents/INStartCallIntent path has no UUID.)
-    // Safe even when another call is active: this UUID is known to NOT belong
-    // to an app-initiated call, so at worst it ends a stray placeholder.
-    if (nativeCallId) {
-      void nativeCallService.dismissNativeCall(nativeCallId);
+    // First sighting of this redial: arm the resolution deadline and dismiss
+    // the placeholder CallKit call ONCE. Retries re-run this effect with the
+    // same request (deadline already set), so the dismiss must not repeat.
+    if (recentsRedialDeadlineRef.current === null) {
+      recentsRedialDeadlineRef.current = Date.now() + RECENTS_REDIAL_RESOLVE_DEADLINE_MS;
+      appendCallDebug('recents.request', { handle, nativeCallId, hasVideo });
+
+      // CXStartCallAction path creates a placeholder CallKit call; dismiss it —
+      // the normal outgoing flow below reports its own call with the app's
+      // deterministic UUID. (The Recents/INStartCallIntent path has no UUID.)
+      // Safe even when another call is active: this UUID is known to NOT belong
+      // to an app-initiated call, so at worst it ends a stray placeholder.
+      if (nativeCallId) {
+        void nativeCallService.dismissNativeCall(nativeCallId);
+      }
     }
 
     if (activeCallRequest) {
       debugLog('CallContext: ignoring Recents redial — a call is already active');
+      appendCallDebug('recents.ignoredActiveCall', { handle });
+      clearRecentsRedial();
       return;
     }
 
-    const thread = threads.find((candidate) => candidate.chatId === handle)
-      ?? threads.find((candidate) =>
-        candidate.type === 'direct'
-        && handle !== user.userId
-        && candidate.participantIds.includes(handle));
+    const thread = resolveRedialThread(handle, threads, user.userId);
 
-    if (!thread) {
+    if (thread) {
+      appendCallDebug('recents.resolved', {
+        handle,
+        chatId: thread.chatId,
+        kind: thread.type,
+        threadCount: threads.length,
+      });
+      clearRecentsRedial();
+      debugLog('CallContext: launching call from Recents redial');
+      startCallSession({
+        chatId: thread.chatId,
+        groupId: thread.groupId,
+        type: hasVideo ? 'video' : 'audio',
+      });
+      return;
+    }
+
+    // Unresolved. Threads may still be loading on a cold start (the buffered
+    // redial arrives long before ChatContext) — retry until the deadline
+    // instead of dropping the call after a single attempt.
+    if (Date.now() >= recentsRedialDeadlineRef.current) {
       console.warn('CallContext: could not resolve Recents redial handle to a chat');
+      appendCallDebug('recents.resolveFailed', { handle, threadCount: threads.length });
+      clearRecentsRedial();
       return;
     }
 
-    debugLog('CallContext: launching call from Recents redial');
-    startCallSession({
-      chatId: thread.chatId,
-      groupId: thread.groupId,
-      type: hasVideo ? 'video' : 'audio',
-    });
-  }, [recentsStartCall, threads, user, activeCallRequest, startCallSession]);
+    appendCallDebug('recents.retry', { handle, threadCount: threads.length });
+    if (recentsRetryTimerRef.current) {
+      clearTimeout(recentsRetryTimerRef.current);
+    }
+    recentsRetryTimerRef.current = setTimeout(() => {
+      recentsRetryTimerRef.current = null;
+      // Re-run this effect. A thread update re-runs it too, but a stalled
+      // thread list must still trigger a retry — bump the request identity.
+      setRecentsStartCall((current) => (current ? { ...current } : current));
+    }, RECENTS_REDIAL_RETRY_INTERVAL_MS);
+
+    return () => {
+      if (recentsRetryTimerRef.current) {
+        clearTimeout(recentsRetryTimerRef.current);
+        recentsRetryTimerRef.current = null;
+      }
+    };
+  }, [recentsStartCall, threads, user, activeCallRequest, startCallSession, clearRecentsRedial]);
 
   useEffect(() => {
     const unsubscribeAnswer = nativeCallService.subscribe('answer', ({ appCallId }) => {

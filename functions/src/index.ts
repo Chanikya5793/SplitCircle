@@ -489,7 +489,12 @@ export const onChatUpdated = onDocumentUpdated(
                     "messages",
                     chatId,
                     "messages",
-                    { subtitle: notificationCopy.subtitle },
+                    // Attach the message quick-reply category so UNLOCKED
+                    // recipients get lock-screen Reply + Mark-as-read actions.
+                    // Locked recipients (dispatched below) intentionally omit
+                    // it — their generic push carries no chat context and must
+                    // never expose a reply field for a gated chat.
+                    { subtitle: notificationCopy.subtitle, categoryId: "message" },
                 );
                 logger.info("Queued message notifications", {
                     chatId,

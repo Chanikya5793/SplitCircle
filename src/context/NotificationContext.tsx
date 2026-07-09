@@ -14,6 +14,7 @@ import {
 import {
   clearBadgeCount,
   scheduleLocalNotification,
+  setupNotificationCategories,
   type NotificationData,
   type NotificationType,
 } from '@/utils/notifications';
@@ -255,14 +256,21 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
   }, [refreshRegistration, user?.userId]);
 
   useEffect(() => {
+    // Register notification action categories (missed-call + message
+    // quick-reply / mark-as-read) once on mount. Without this the OS renders
+    // pushes that carry a categoryIdentifier with no action buttons, so the
+    // lock-screen reply field never appears. Idempotent; no-op on web.
+    void setupNotificationCategories();
+
     notificationListenerRef.current = Notifications.addNotificationReceivedListener((notification) => {
       console.log('Notification received (foreground):', notification.request.content.title);
     });
 
     responseListenerRef.current = Notifications.addNotificationResponseReceivedListener((response) => {
-      // Action-button responses (e.g. the missed-call quick reply) are handled
-      // by MissedCallQuickReply inside ChatProvider — navigating here too would
-      // yank the user into the app for a background reply.
+      // Action-button responses (missed-call and message quick replies, plus
+      // "Mark as read") are handled by MissedCallQuickReply inside ChatProvider
+      // — navigating here too would yank the user into the app for what is a
+      // background action.
       if (response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) {
         return;
       }

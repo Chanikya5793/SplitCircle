@@ -16,7 +16,7 @@ import { CURRENCIES } from '@/constants/currencies';
 import { ROUTES } from '@/constants/routes';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
-import { archiveGroup, unarchiveGroup } from '@/services/archiveService';
+import { archiveGroup } from '@/services/archiveService';
 import { useTheme } from '@/context/ThemeContext';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import type { Group } from '@/models';
@@ -58,7 +58,6 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const [sortField, setSortField] = useState<GroupSortField>('updatedAt');
   const [sortOrder, setSortOrder] = useState<GroupSortOrder>('desc');
   const [selectedCurrencies, setSelectedCurrencies] = useState<string[]>([]);
-  const [showArchived, setShowArchived] = useState(false);
   useSyncRootStackTitle(ROOT_SCREEN_TITLES.groups);
 
   useLayoutEffect(() => {
@@ -234,21 +233,6 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     );
   };
 
-  const handleUnarchive = async (group: Group) => {
-    if (!user) return;
-    if (!isOnline) {
-      appAlert("You're offline", 'Restoring needs an internet connection. Try again when you reconnect.');
-      return;
-    }
-    try {
-      await unarchiveGroup(user.userId, group.groupId);
-      successHaptic();
-    } catch (error) {
-      console.error('Failed to unarchive group', error);
-      appAlert('Error', 'Failed to restore group. Please try again.');
-    }
-  };
-
   const toggleCurrency = (currency: string) => {
     setSelectedCurrencies(prev =>
       prev.includes(currency)
@@ -325,24 +309,17 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
 
             {archivedGroups.length > 0 && (
               <View style={styles.archivedSection}>
+                {/* WhatsApp-style: navigate to a dedicated Archived screen
+                    instead of expanding inline, so archived groups never
+                    mingle with the active list. */}
                 <ArchivedFolderRow
                   icon="archive-outline"
                   label="Archived"
                   count={archivedGroups.length}
-                  expanded={showArchived}
-                  onPress={() => { lightHaptic(); setShowArchived((prev) => !prev); }}
+                  expanded={false}
+                  locked
+                  onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.ARCHIVED_GROUPS); }}
                 />
-                {showArchived && archivedGroups.map((item, index) => (
-                  <SwipeableGroupCard
-                    key={item.groupId}
-                    group={item}
-                    onPress={openingGroupId ? undefined : () => handleOpenGroup(item)}
-                    onArchive={handleUnarchive}
-                    archived
-                    index={index}
-                    loading={openingGroupId === item.groupId}
-                  />
-                ))}
               </View>
             )}
           </View>

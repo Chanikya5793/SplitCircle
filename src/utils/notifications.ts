@@ -120,6 +120,16 @@ Notifications.setNotificationHandler({
 export const MISSED_CALL_CATEGORY_ID = 'missed_call';
 export const MISSED_CALL_REPLY_ACTION_ID = 'reply_message';
 
+// Message pushes (from onChatUpdated) carry this category for UNLOCKED
+// recipients so the notification exposes a lock-screen quick-reply text field
+// plus a "Mark as read" action — the sanctioned equivalent of a lock-screen
+// reply, since iOS reserves the CallKit "Message" button for SMS handles.
+// Locked-chat recipients deliberately DON'T get this category server-side:
+// their generic push carries no chat context to reply into (fail closed).
+export const MESSAGE_CATEGORY_ID = 'message';
+export const MESSAGE_REPLY_ACTION_ID = 'message_reply';
+export const MESSAGE_MARK_READ_ACTION_ID = 'message_mark_read';
+
 export const setupNotificationCategories = async (): Promise<void> => {
   if (Platform.OS === 'web') {
     return;
@@ -139,6 +149,32 @@ export const setupNotificationCategories = async (): Promise<void> => {
           // If the app process is dead, iOS wakes it; the reply is delivered
           // via the notification-response listener (or the last-response check
           // on next launch as the fallback).
+          opensAppToForeground: false,
+        },
+      },
+    ]);
+
+    // Message pushes get the same background quick-reply field plus a
+    // "Mark as read" action so both work straight from the lock screen.
+    await Notifications.setNotificationCategoryAsync(MESSAGE_CATEGORY_ID, [
+      {
+        identifier: MESSAGE_REPLY_ACTION_ID,
+        buttonTitle: 'Reply',
+        textInput: {
+          submitButtonTitle: 'Send',
+          placeholder: 'Type a message…',
+        },
+        options: {
+          // Same rationale as the missed-call reply: deliver in the background
+          // via the notification-response listener without opening the app.
+          opensAppToForeground: false,
+        },
+      },
+      {
+        identifier: MESSAGE_MARK_READ_ACTION_ID,
+        buttonTitle: 'Mark as read',
+        options: {
+          // Marks the thread read in the background — no app open.
           opensAppToForeground: false,
         },
       },

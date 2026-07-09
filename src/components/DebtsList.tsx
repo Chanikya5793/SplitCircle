@@ -1,14 +1,136 @@
 import { GlassView } from '@/components/GlassView';
 import { ROUTES } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
-import type { Group } from '@/models';
+import type { Group, GroupMember } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { minimizeDebts, type Debt } from '@/utils/debtMinimizer';
-import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { lightHaptic } from '@/utils/haptics';
+import { useMemo, useRef, useState } from 'react';
+import { Animated as RNAnimated, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Modal, Portal, Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
+
+interface SwipeableDebtRowProps {
+    debt: Debt;
+    fromMember: GroupMember;
+    toMember: GroupMember;
+    groupId: string;
+    currency: string;
+    onOpenBreakdown: () => void;
+    onSettle: () => void;
+}
+
+// Swipe-right on a debt row triggers the same "record payment" action as the
+// inline handshake button. Mirrors the Swipeable pattern from
+// SwipeableExpenseCard (RectButton pill + dragX interpolation) so the gesture
+// feels consistent with the rest of the app. Tap still opens the breakdown.
+const SwipeableDebtRow = ({
+    debt,
+    fromMember,
+    toMember,
+    groupId,
+    currency,
+    onOpenBreakdown,
+    onSettle,
+}: SwipeableDebtRowProps) => {
+    const { theme } = useTheme();
+    const fmtMoney = useMoneyDisplay(groupId);
+    const { maskGroupText } = usePrivacyMask();
+    const swipeableRef = useRef<Swipeable>(null);
+
+    const renderLeftActions = (
+        progress: RNAnimated.AnimatedInterpolation<number>,
+        dragX: RNAnimated.AnimatedInterpolation<number>,
+    ) => {
+        const translateX = dragX.interpolate({
+            inputRange: [0, 120],
+            outputRange: [-120, 0],
+            extrapolate: 'clamp',
+        });
+
+        const scale = progress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.8, 1],
+            extrapolate: 'clamp',
+        });
+
+        return (
+            <RNAnimated.View style={[styles.leftAction, { transform: [{ translateX }, { scale }] }]}>
+                <RectButton
+                    style={styles.leftActionPressable}
+                    onPress={() => {
+                        lightHaptic();
+                        swipeableRef.current?.close();
+                        onSettle();
+                    }}
+                >
+                    <View style={[styles.settleButtonPill, { backgroundColor: theme.colors.primary }]}>
+                        <IconButton icon="handshake" iconColor="#fff" size={22} style={{ margin: 0 }} />
+                        <Text style={styles.actionText}>Settle</Text>
+                    </View>
+                </RectButton>
+            </RNAnimated.View>
+        );
+    };
+
+    return (
+        <Swipeable
+            ref={swipeableRef}
+            renderLeftActions={renderLeftActions}
+            friction={2}
+            leftThreshold={40}
+            overshootLeft={false}
+            containerStyle={styles.swipeContainer}
+        >
+            <TouchableOpacity
+                style={styles.row}
+                onPress={onOpenBreakdown}
+                activeOpacity={0.7}
+            >
+                <View style={styles.member}>
+                    <Avatar.Text
+                        size={28}
+                        label={maskGroupText(fromMember.displayName, groupId).slice(0, 2).toUpperCase()}
+                        style={{ backgroundColor: theme.colors.errorContainer }}
+                        color={theme.colors.onErrorContainer}
+                    />
+                    <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
+                        {maskGroupText(fromMember.displayName, groupId)}
+                    </Text>
+                </View>
+
+                <View style={styles.amountContainer}>
+                    <Text style={[styles.amount, { color: theme.colors.error }]}>
+                        {fmtMoney(debt.amount, currency)}
+                    </Text>
+                    <IconButton icon="arrow-right" size={16} iconColor={theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
+                </View>
+
+                <View style={styles.member}>
+                    <Avatar.Text
+                        size={28}
+                        label={maskGroupText(toMember.displayName, groupId).slice(0, 2).toUpperCase()}
+                        style={{ backgroundColor: theme.colors.primaryContainer }}
+                        color={theme.colors.onPrimaryContainer}
+                    />
+                    <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
+                        {maskGroupText(toMember.displayName, groupId)}
+                    </Text>
+                </View>
+
+                <IconButton
+                    icon="handshake"
+                    size={20}
+                    iconColor={theme.colors.primary}
+                    style={{ margin: 0, marginLeft: 8 }}
+                    onPress={onSettle}
+                />
+            </TouchableOpacity>
+        </Swipeable>
+    );
+};
 
 interface DebtsListProps {
     group: Group;
@@ -143,58 +265,23 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                             if (!fromMember || !toMember) return null;
 
                             return (
-                                <TouchableOpacity
+                                <SwipeableDebtRow
                                     key={`${debt.from}-${debt.to}-${index}`}
-                                    style={styles.row}
-                                    onPress={() => setSelectedDebt(debt)}
-                                    activeOpacity={0.7}
-                                >
-                                    <View style={styles.member}>
-                                        <Avatar.Text
-                                            size={28}
-                                            label={maskGroupText(fromMember.displayName, group.groupId).slice(0, 2).toUpperCase()}
-                                            style={{ backgroundColor: theme.colors.errorContainer }}
-                                            color={theme.colors.onErrorContainer}
-                                        />
-                                        <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                                            {maskGroupText(fromMember.displayName, group.groupId)}
-                                        </Text>
-                                    </View>
-
-                                    <View style={styles.amountContainer}>
-                                        <Text style={[styles.amount, { color: theme.colors.error }]}>
-                                            {fmtMoney(debt.amount, group.currency)}
-                                        </Text>
-                                        <IconButton icon="arrow-right" size={16} iconColor={theme.colors.onSurfaceVariant} style={{ margin: 0 }} />
-                                    </View>
-
-                                    <View style={styles.member}>
-                                        <Avatar.Text
-                                            size={28}
-                                            label={maskGroupText(toMember.displayName, group.groupId).slice(0, 2).toUpperCase()}
-                                            style={{ backgroundColor: theme.colors.primaryContainer }}
-                                            color={theme.colors.onPrimaryContainer}
-                                        />
-                                        <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                                            {maskGroupText(toMember.displayName, group.groupId)}
-                                        </Text>
-                                    </View>
-
-                                    <IconButton
-                                        icon="handshake"
-                                        size={20}
-                                        iconColor={theme.colors.primary}
-                                        style={{ margin: 0, marginLeft: 8 }}
-                                        onPress={() => {
-                                            navigation.navigate(ROUTES.APP.SETTLEMENTS, {
-                                                groupId: group.groupId,
-                                                initialFromUserId: debt.from,
-                                                initialToUserId: debt.to,
-                                                initialAmount: debt.amount,
-                                            });
-                                        }}
-                                    />
-                                </TouchableOpacity>
+                                    debt={debt}
+                                    fromMember={fromMember}
+                                    toMember={toMember}
+                                    groupId={group.groupId}
+                                    currency={group.currency}
+                                    onOpenBreakdown={() => setSelectedDebt(debt)}
+                                    onSettle={() => {
+                                        navigation.navigate(ROUTES.APP.SETTLEMENTS, {
+                                            groupId: group.groupId,
+                                            initialFromUserId: debt.from,
+                                            initialToUserId: debt.to,
+                                            initialAmount: debt.amount,
+                                        });
+                                    }}
+                                />
                             );
                         })}
                     </View>
@@ -335,5 +422,40 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: 12,
         borderBottomWidth: 0.5,
+    },
+    swipeContainer: {
+        borderRadius: 12,
+        overflow: 'hidden',
+    },
+    leftAction: {
+        width: 120,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    leftActionPressable: {
+        flex: 1,
+        width: '100%',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    settleButtonPill: {
+        width: 104,
+        height: 44,
+        borderRadius: 100,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    actionText: {
+        color: '#fff',
+        fontSize: 13,
+        fontWeight: 'bold',
+        marginRight: 8,
     },
 });

@@ -152,7 +152,10 @@ export const DEFAULT_ACCENT: AccentId = 'ocean';
  *  existing backdrop DNA — it replaces every '#FDFBFB'/'#121212' literal. */
 export const NEUTRALS = {
   light: {
-    appBackground: '#FDFBFB',
+    // Brighter, cooler near-white backdrop (was warm '#FDFBFB'). The cool hint
+    // reads airier and lets the ambient blobs pop instead of muddying into a
+    // beige wash. Text tokens below still clear WCAG AA on this brighter base.
+    appBackground: '#F9FBFF',
     surface: '#FFFFFF',
     text: '#1F2937',
     muted: '#64748B',
@@ -172,10 +175,13 @@ export const NEUTRALS = {
     moneyPositive: '#059669',
     moneyNegative: '#DC2626',
     moneyNeutral: '#64748B',
-    glassTint: 'rgba(255, 255, 255, 0.01)',
-    glassBorder: 'rgba(255, 255, 255, 0.2)',
+    // Brighter glass: a higher-alpha white lift under the blur/liquid material
+    // (was a near-invisible 0.01) so light-mode surfaces read luminous and airy
+    // rather than dim. Border gets a crisper white rim to match.
+    glassTint: 'rgba(255, 255, 255, 0.18)',
+    glassBorder: 'rgba(255, 255, 255, 0.35)',
     glassBorderAndroid: 'rgba(15, 23, 42, 0.08)',
-    glassFallback: 'rgba(252, 252, 254, 0.86)',
+    glassFallback: 'rgba(255, 255, 255, 0.9)',
     skeleton: 'rgba(15, 23, 42, 0.08)',
     // Semantic scrims/fills so screens stop hand-rolling rgba(0,0,0,x) literals.
     // overlay: full modal backdrop · backdrop: subtle content scrim ·
@@ -188,7 +194,10 @@ export const NEUTRALS = {
   },
   dark: {
     appBackground: '#121212',
-    surface: '#1E1E1E',
+    // Lift the raised surface a touch off the near-black backdrop (was
+    // '#1E1E1E') so dark-mode cards stop reading muddy — still a deep charcoal,
+    // not gray, and it keeps clear separation from appBackground.
+    surface: '#242427',
     text: '#F3F4F6',
     muted: '#9CA3AF',
     border: '#374151',
@@ -210,7 +219,9 @@ export const NEUTRALS = {
     glassTint: 'rgba(30, 30, 30, 0.15)',
     glassBorder: 'rgba(255, 255, 255, 0.05)',
     glassBorderAndroid: 'rgba(255, 255, 255, 0.08)',
-    glassFallback: 'rgba(28, 30, 36, 0.86)',
+    // Nudged up in step with the lifted dark surface so Android dark cards match
+    // (was 'rgba(28, 30, 36, 0.86)') — still deep, avoids the muddy look.
+    glassFallback: 'rgba(36, 36, 40, 0.86)',
     skeleton: 'rgba(255, 255, 255, 0.10)',
     // Semantic scrims/fills so screens stop hand-rolling rgba(0,0,0,x) literals.
     // overlay: full modal backdrop · backdrop: subtle content scrim ·

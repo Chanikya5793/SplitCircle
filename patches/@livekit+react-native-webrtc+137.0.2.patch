@@ -1,0 +1,156 @@
+diff --git a/node_modules/@livekit/react-native-webrtc/ios/RCTWebRTC/WebRTCModule+RTCAudioSession.m b/node_modules/@livekit/react-native-webrtc/ios/RCTWebRTC/WebRTCModule+RTCAudioSession.m
+index cd4fa13..cfa000e 100644
+--- a/node_modules/@livekit/react-native-webrtc/ios/RCTWebRTC/WebRTCModule+RTCAudioSession.m
++++ b/node_modules/@livekit/react-native-webrtc/ios/RCTWebRTC/WebRTCModule+RTCAudioSession.m
+@@ -17,4 +17,22 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioSessionDidDeactivate) {
+     return nil;
+ }
+ 
++// Manual-audio mode: when enabled, WebRTC never starts/stops the audio unit on
++// its own — the app drives it via setAudioEnabled, gated on CallKit's
++// audio-session activation events. This is the canonical CallKit + WebRTC fix
++// for calls that connect but stay silent (WebRTC otherwise starts the audio
++// unit against a session CallKit hasn't activated yet).
++RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(setManualAudio:(BOOL)enabled) {
++    [RTCAudioSession sharedInstance].useManualAudio = enabled;
++    return nil;
++}
++
++// Start (enabled=YES) or stop (enabled=NO) the WebRTC audio unit. Only takes
++// effect while useManualAudio is on. Call YES from
++// provider:didActivateAudioSession and NO from the deactivate/teardown path.
++RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(setAudioEnabled:(BOOL)enabled) {
++    [RTCAudioSession sharedInstance].isAudioEnabled = enabled;
++    return nil;
++}
++
+ @end
+diff --git a/node_modules/@livekit/react-native-webrtc/lib/commonjs/RTCAudioSession.js b/node_modules/@livekit/react-native-webrtc/lib/commonjs/RTCAudioSession.js
+index 4d4eafd..2aedfc3 100644
+--- a/node_modules/@livekit/react-native-webrtc/lib/commonjs/RTCAudioSession.js
++++ b/node_modules/@livekit/react-native-webrtc/lib/commonjs/RTCAudioSession.js
+@@ -28,6 +28,32 @@ class RTCAudioSession {
+       WebRTCModule.audioSessionDidDeactivate();
+     }
+   }
++
++  /**
++   * Enable/disable WebRTC manual-audio mode (iOS). When enabled, WebRTC never
++   * starts/stops the audio unit on its own — the app drives it via
++   * setAudioEnabled, gated on CallKit's activation events. Fixes calls that
++   * connect but stay silent. The typeof guard keeps this a no-op on binaries
++   * built before the native method was added, so JS never crashes.
++   */
++  static setManualAudio(enabled) {
++    // Only valid for iOS
++    if (_reactNative.Platform.OS === 'ios' && typeof WebRTCModule?.setManualAudio === 'function') {
++      WebRTCModule.setManualAudio(enabled);
++    }
++  }
++
++  /**
++   * Start (true) or stop (false) the WebRTC audio unit. Only takes effect
++   * while manual-audio mode is on. Guarded like setManualAudio so older
++   * binaries no-op instead of throwing.
++   */
++  static setAudioEnabled(enabled) {
++    // Only valid for iOS
++    if (_reactNative.Platform.OS === 'ios' && typeof WebRTCModule?.setAudioEnabled === 'function') {
++      WebRTCModule.setAudioEnabled(enabled);
++    }
++  }
+ }
+ exports.default = RTCAudioSession;
+ //# sourceMappingURL=RTCAudioSession.js.map
+\ No newline at end of file
+diff --git a/node_modules/@livekit/react-native-webrtc/lib/module/RTCAudioSession.js b/node_modules/@livekit/react-native-webrtc/lib/module/RTCAudioSession.js
+index 1de961e..1873199 100644
+--- a/node_modules/@livekit/react-native-webrtc/lib/module/RTCAudioSession.js
++++ b/node_modules/@livekit/react-native-webrtc/lib/module/RTCAudioSession.js
+@@ -22,5 +22,31 @@ export default class RTCAudioSession {
+       WebRTCModule.audioSessionDidDeactivate();
+     }
+   }
++
++  /**
++   * Enable/disable WebRTC manual-audio mode (iOS). When enabled, WebRTC never
++   * starts/stops the audio unit on its own — the app drives it via
++   * setAudioEnabled, gated on CallKit's activation events. Fixes calls that
++   * connect but stay silent. The typeof guard keeps this a no-op on binaries
++   * built before the native method was added, so JS never crashes.
++   */
++  static setManualAudio(enabled) {
++    // Only valid for iOS
++    if (Platform.OS === 'ios' && typeof WebRTCModule?.setManualAudio === 'function') {
++      WebRTCModule.setManualAudio(enabled);
++    }
++  }
++
++  /**
++   * Start (true) or stop (false) the WebRTC audio unit. Only takes effect
++   * while manual-audio mode is on. Guarded like setManualAudio so older
++   * binaries no-op instead of throwing.
++   */
++  static setAudioEnabled(enabled) {
++    // Only valid for iOS
++    if (Platform.OS === 'ios' && typeof WebRTCModule?.setAudioEnabled === 'function') {
++      WebRTCModule.setAudioEnabled(enabled);
++    }
++  }
+ }
+ //# sourceMappingURL=RTCAudioSession.js.map
+\ No newline at end of file
+diff --git a/node_modules/@livekit/react-native-webrtc/lib/typescript/RTCAudioSession.d.ts b/node_modules/@livekit/react-native-webrtc/lib/typescript/RTCAudioSession.d.ts
+index 38acc3b..ac90962 100644
+--- a/node_modules/@livekit/react-native-webrtc/lib/typescript/RTCAudioSession.d.ts
++++ b/node_modules/@livekit/react-native-webrtc/lib/typescript/RTCAudioSession.d.ts
+@@ -7,4 +7,14 @@ export default class RTCAudioSession {
+      * To be called when CallKit deactivates the audio session.
+      */
+     static audioSessionDidDeactivate(): void;
++    /**
++     * Enable/disable WebRTC manual-audio mode (iOS). No-op on non-iOS or on
++     * binaries built before this native method existed.
++     */
++    static setManualAudio(enabled: boolean): void;
++    /**
++     * Start (true) or stop (false) the WebRTC audio unit. No-op on non-iOS or
++     * on binaries built before this native method existed.
++     */
++    static setAudioEnabled(enabled: boolean): void;
+ }
+diff --git a/node_modules/@livekit/react-native-webrtc/src/RTCAudioSession.ts b/node_modules/@livekit/react-native-webrtc/src/RTCAudioSession.ts
+index f2996e7..db3fbba 100644
+--- a/node_modules/@livekit/react-native-webrtc/src/RTCAudioSession.ts
++++ b/node_modules/@livekit/react-native-webrtc/src/RTCAudioSession.ts
+@@ -22,4 +22,30 @@ export default class RTCAudioSession {
+             WebRTCModule.audioSessionDidDeactivate();
+         }
+     }
++
++    /**
++     * Enable/disable WebRTC manual-audio mode (iOS). When enabled, WebRTC never
++     * starts/stops the audio unit on its own — the app drives it via
++     * setAudioEnabled, gated on CallKit's activation events. Fixes calls that
++     * connect but stay silent. The typeof guard keeps this a no-op on binaries
++     * built before the native method was added, so JS never crashes.
++     */
++    static setManualAudio(enabled: boolean) {
++        // Only valid for iOS
++        if (Platform.OS === 'ios' && typeof WebRTCModule?.setManualAudio === 'function') {
++            WebRTCModule.setManualAudio(enabled);
++        }
++    }
++
++    /**
++     * Start (true) or stop (false) the WebRTC audio unit. Only takes effect
++     * while manual-audio mode is on. Guarded like setManualAudio so older
++     * binaries no-op instead of throwing.
++     */
++    static setAudioEnabled(enabled: boolean) {
++        // Only valid for iOS
++        if (Platform.OS === 'ios' && typeof WebRTCModule?.setAudioEnabled === 'function') {
++            WebRTCModule.setAudioEnabled(enabled);
++        }
++    }
+ }

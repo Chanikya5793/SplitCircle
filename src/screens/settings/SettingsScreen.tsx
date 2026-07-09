@@ -12,6 +12,8 @@ import { AUTO_LOCK_OPTIONS, updateAppLock } from '@/services/appLockService';
 import { authenticate, biometricLabel, isBiometricAvailable } from '@/services/biometrics';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { APP_NAME, APP_VERSION } from '@/constants/appInfo';
+import { ROUTES } from '@/constants/routes';
+import { SETTING_IDS } from '@/constants/settingsRegistry';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useWallpaperSlot } from '@/hooks/useWallpaper';
@@ -36,8 +38,8 @@ import {
 } from '@/services/wallpaperService';
 import { ACCENT_IDS, ACCENTS } from '@/theme';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
-import { useNavigation } from '@react-navigation/native';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Animated, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, SegmentedButtons, Switch, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -53,8 +55,17 @@ export const SettingsScreen = () => {
   const { maskPersonName } = usePrivacyMask();
   const hideOwnProfile = guardActive && guardSettings.hideProfile;
   const insets = useSafeAreaInsets();
+  const route = useRoute<any>();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const scrollRef = useRef<any>(null);
   const bottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
+
+  // Deep-link highlight: search results into a specific setting arrive with a
+  // `highlight` param (the registry id). We scroll that row into view and pulse
+  // a tinted overlay so the user can see exactly which setting they landed on.
+  const anchorRefs = useRef<Record<string, View | null>>({});
+  const highlightOpacity = useRef(new Animated.Value(0)).current;
+  const [highlightId, setHighlightId] = useState<string | null>(null);
 
   const [wallpaperSlot, setWallpaperSlot] = useState<WallpaperSlot | null>(null);
   const [guardSheetOpen, setGuardSheetOpen] = useState(false);
@@ -205,6 +216,70 @@ export const SettingsScreen = () => {
     void isBiometricAvailable().then(setBioAvailable);
   }, []);
 
+  // Scroll a registered anchor into view, measured relative to the scroll view
+  // so nested cards/sections are handled correctly. Best-effort — if the row
+  // isn't mounted (e.g. auto-lock while App Lock is off) it simply no-ops.
+  const scrollToAnchor = (id: string) => {
+    const node = anchorRefs.current[id];
+    const scroll = scrollRef.current;
+    if (!node || !scroll) return;
+    const scrollNode =
+      typeof scroll.getScrollableNode === 'function' ? scroll.getScrollableNode() : scroll;
+    try {
+      node.measureLayout(
+        scrollNode,
+        (_x: number, y: number) => scroll.scrollTo({ y: Math.max(0, y - 90), animated: true }),
+        () => { /* measure failed — leave the scroll position as-is */ },
+      );
+    } catch { /* measureLayout unavailable — non-fatal */ }
+  };
+
+  // React to a `highlight` deep-link param: scroll to and pulse the target row.
+  // The param is consumed *inside* the timeout (after the pulse starts) so the
+  // resulting re-render doesn't cancel the pending timer via effect cleanup.
+  useEffect(() => {
+    const target = route.params?.highlight as string | undefined;
+    if (!target) return;
+    const timer = setTimeout(() => {
+      setHighlightId(target);
+      scrollToAnchor(target);
+      highlightOpacity.setValue(0.18);
+      Animated.timing(highlightOpacity, {
+        toValue: 0,
+        duration: 1600,
+        delay: 400,
+        useNativeDriver: false,
+      }).start(({ finished }) => {
+        if (finished) setHighlightId(null);
+      });
+      (navigation as any).setParams({ highlight: undefined });
+    }, 350);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.params?.highlight]);
+
+  // Wraps a row so it can be scrolled to and briefly tinted. Written as a plain
+  // render helper (not a component) so wrapping never remounts the row's ListRow
+  // / Switch subtree on re-render.
+  const wrapAnchor = (id: string, node: ReactNode) => (
+    <View
+      ref={(r) => {
+        anchorRefs.current[id] = r;
+      }}
+    >
+      {node}
+      {highlightId === id ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            { backgroundColor: theme.colors.primary, borderRadius: 12, opacity: highlightOpacity },
+          ]}
+        />
+      ) : null}
+    </View>
+  );
+
   const toggleAppLock = (enable: boolean) => {
     lightHaptic();
     if (!enable) {
@@ -318,6 +393,7 @@ export const SettingsScreen = () => {
       </Animated.View>
 
       <Animated.ScrollView
+        ref={scrollRef}
         contentContainerStyle={[styles.container, { paddingTop: insets.top + 24, paddingBottom: bottomPadding }]}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
           useNativeDriver: true,
@@ -353,6 +429,7 @@ export const SettingsScreen = () => {
 
         <SectionLabel style={styles.sectionLabel}>Appearance</SectionLabel>
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+          {wrapAnchor(SETTING_IDS.appearance, (
           <View style={styles.appearanceBlock}>
             <SegmentedButtons
               value={mode}
@@ -395,7 +472,9 @@ export const SettingsScreen = () => {
               {ACCENTS[accent].label} accent · saved on this device, works offline
             </Text>
           </View>
+          ))}
           {divider}
+          {wrapAnchor(SETTING_IDS.wallpaperApp, (
           <ListRow
             title="App background"
             subtitle={
@@ -409,7 +488,9 @@ export const SettingsScreen = () => {
             trailing={wallpaperPreview(appWallpaper)}
             onPress={() => openWallpaper('app')}
           />
+          ))}
           {divider}
+          {wrapAnchor(SETTING_IDS.wallpaperChat, (
           <ListRow
             title="Chat wallpaper"
             subtitle={
@@ -423,24 +504,30 @@ export const SettingsScreen = () => {
             trailing={wallpaperPreview(chatDefaultWallpaper)}
             onPress={() => openWallpaper('chat-default')}
           />
+          ))}
         </GlassCard>
 
         <SectionLabel style={styles.sectionLabel}>Receipts & AI</SectionLabel>
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+          {wrapAnchor(SETTING_IDS.aiReceipts, (
           <ListRow
             title="AI receipt parsing"
             subtitle="Cloud AI sharpens OCR accuracy"
             icon="creation"
             trailing={<Switch value={useAIForReceipts} onValueChange={handleToggleUseAI} />}
           />
+          ))}
           {divider}
+          {wrapAnchor(SETTING_IDS.receiptStrict, (
           <ListRow
             title="Strict receipt review"
             subtitle="Review low-confidence rows before saving"
             icon="shield-check-outline"
             trailing={<Switch value={strictReviewMode} onValueChange={handleToggleStrictReviewMode} />}
           />
+          ))}
           {divider}
+          {wrapAnchor(SETTING_IDS.onDeviceAi, (
           <ListRow
             title="On-device AI"
             subtitle="What's indexed on this device"
@@ -450,6 +537,7 @@ export const SettingsScreen = () => {
               (navigation as any).navigate('AiIndex', { backTitle: ROOT_SCREEN_TITLES.settings });
             }}
           />
+          ))}
           {merchantLearning.length > 0 && (
             <>
               {divider}
@@ -479,6 +567,7 @@ export const SettingsScreen = () => {
 
         <SectionLabel style={styles.sectionLabel}>Security</SectionLabel>
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+          {wrapAnchor(SETTING_IDS.appLock, (
           <ListRow
             title={`App Lock (${bioLabel})`}
             subtitle={
@@ -497,18 +586,22 @@ export const SettingsScreen = () => {
               />
             }
           />
+          ))}
           {appLock.enabled && (
             <>
               {divider}
+              {wrapAnchor(SETTING_IDS.autoLock, (
               <ListRow
                 title="Auto-lock"
                 subtitle={AUTO_LOCK_OPTIONS.find((o) => o.value === appLock.autoLockMs)?.label ?? 'Immediately'}
                 icon="timer-outline"
                 onPress={pickAutoLock}
               />
+              ))}
             </>
           )}
           {divider}
+          {wrapAnchor(SETTING_IDS.confirmSettlements, (
           <ListRow
             title="Confirm settlements"
             subtitle={
@@ -525,10 +618,12 @@ export const SettingsScreen = () => {
               />
             }
           />
+          ))}
         </GlassCard>
 
         <SectionLabel style={styles.sectionLabel}>General</SectionLabel>
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+          {wrapAnchor(SETTING_IDS.notifications, (
           <ListRow
             title="Notifications"
             subtitle="Messages, expenses, sounds & more"
@@ -538,13 +633,21 @@ export const SettingsScreen = () => {
               (navigation as any).navigate('NotificationSettings', { backTitle: ROOT_SCREEN_TITLES.settings });
             }}
           />
+          ))}
           {divider}
+          {wrapAnchor(SETTING_IDS.offlineSync, (
           <ListRow
             title="Offline sync"
-            subtitle="Changes save locally and sync when online"
+            subtitle="Connectivity and pending changes"
             icon="cloud-check-outline"
-            trailing={<Ionicons name="checkmark-circle" size={20} color={theme.colors.success} />}
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate(ROUTES.APP.OFFLINE_SYNC, {
+                backTitle: ROOT_SCREEN_TITLES.settings,
+              });
+            }}
           />
+          ))}
         </GlassCard>
 
         <GlassCard style={[styles.card, styles.signOutCard]} contentStyle={styles.cardContent}>

@@ -2,11 +2,15 @@ import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useNotificationContext } from '@/context/NotificationContext';
 import { useTheme } from '@/context/ThemeContext';
+import { clearCallDebugLedger, formatCallDebugEntries, getCallDebugEntries } from '@/services/callDebugLedger';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, StyleSheet, View } from 'react-native';
+import { SETTING_IDS } from '@/constants/settingsRegistry';
+import type { ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Animated, ScrollView, StyleSheet, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { Button, Divider, List, Switch, Text } from 'react-native-paper';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { appAlert } from '@/utils/appAlert';
@@ -111,7 +115,84 @@ export const NotificationSettingsScreen = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSendingRemoteTest, setIsSendingRemoteTest] = useState(false);
   const [isSendingLocalTest, setIsSendingLocalTest] = useState(false);
+  // Persistent call-debug ledger viewer. null = collapsed (not loaded yet).
+  const [callDebugText, setCallDebugText] = useState<string | null>(null);
+  const [callDebugCount, setCallDebugCount] = useState(0);
+  const [isLoadingCallDebug, setIsLoadingCallDebug] = useState(false);
   const scrollY = useRef(new Animated.Value(0)).current;
+  const route = useRoute<any>();
+  const scrollRef = useRef<any>(null);
+
+  // Deep-link highlight: search results into a specific setting arrive with a
+  // `highlight` param (the registry id). We scroll that row into view and pulse
+  // a tinted overlay so the user can see exactly which setting they landed on.
+  const anchorRefs = useRef<Record<string, View | null>>({});
+  const highlightOpacity = useRef(new Animated.Value(0)).current;
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+
+  // Scroll a registered anchor into view, measured relative to the scroll view
+  // so nested cards/sections are handled correctly. Best-effort — if the row
+  // isn't mounted it simply no-ops.
+  const scrollToAnchor = (id: string) => {
+    const node = anchorRefs.current[id];
+    const scroll = scrollRef.current;
+    if (!node || !scroll) return;
+    const scrollNode =
+      typeof scroll.getScrollableNode === 'function' ? scroll.getScrollableNode() : scroll;
+    try {
+      node.measureLayout(
+        scrollNode,
+        (_x: number, y: number) => scroll.scrollTo({ y: Math.max(0, y - 90), animated: true }),
+        () => { /* measure failed — leave the scroll position as-is */ },
+      );
+    } catch { /* measureLayout unavailable — non-fatal */ }
+  };
+
+  // React to a `highlight` deep-link param: scroll to and pulse the target row.
+  // The param is consumed *inside* the timeout (after the pulse starts) so the
+  // resulting re-render doesn't cancel the pending timer via effect cleanup.
+  useEffect(() => {
+    const target = route.params?.highlight as string | undefined;
+    if (!target) return;
+    const timer = setTimeout(() => {
+      setHighlightId(target);
+      scrollToAnchor(target);
+      highlightOpacity.setValue(0.18);
+      Animated.timing(highlightOpacity, {
+        toValue: 0,
+        duration: 1600,
+        delay: 400,
+        useNativeDriver: false,
+      }).start(({ finished }) => {
+        if (finished) setHighlightId(null);
+      });
+      (navigation as any).setParams({ highlight: undefined });
+    }, 350);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.params?.highlight]);
+
+  // Wraps a row so it can be scrolled to and briefly tinted. Written as a plain
+  // render helper (not a component) so wrapping never remounts the row's
+  // ToggleRow / Switch subtree on re-render.
+  const wrapAnchor = (id: string, node: ReactNode) => (
+    <View
+      ref={(r) => {
+        anchorRefs.current[id] = r;
+      }}
+    >
+      {node}
+      {highlightId === id ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            { backgroundColor: theme.colors.primary, borderRadius: 12, opacity: highlightOpacity },
+          ]}
+        />
+      ) : null}
+    </View>
+  );
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -347,6 +428,44 @@ export const NotificationSettingsScreen = () => {
     }
   };
 
+  const handleLoadCallDebug = async () => {
+    lightHaptic();
+    setIsLoadingCallDebug(true);
+    try {
+      const entries = await getCallDebugEntries();
+      setCallDebugCount(entries.length);
+      setCallDebugText(formatCallDebugEntries(entries));
+    } catch (error) {
+      appAlert('Call debug log', getErrorMessage(error));
+    } finally {
+      setIsLoadingCallDebug(false);
+    }
+  };
+
+  const handleCopyCallDebug = async () => {
+    if (!callDebugText) {
+      return;
+    }
+    lightHaptic();
+    try {
+      await Clipboard.setStringAsync(callDebugText);
+      appAlert('Copied', 'The call debug log was copied to your clipboard.');
+    } catch (error) {
+      appAlert('Copy failed', getErrorMessage(error));
+    }
+  };
+
+  const handleClearCallDebug = async () => {
+    lightHaptic();
+    try {
+      await clearCallDebugLedger();
+      setCallDebugText(null);
+      setCallDebugCount(0);
+    } catch (error) {
+      appAlert('Clear failed', getErrorMessage(error));
+    }
+  };
+
   const runtimeLabel = currentDevice
     ? currentDevice.isPhysicalDevice
       ? 'Physical device'
@@ -370,6 +489,7 @@ export const NotificationSettingsScreen = () => {
       </Animated.View>
 
       <Animated.ScrollView
+        ref={scrollRef}
         contentContainerStyle={[
           styles.container,
           {
@@ -471,20 +591,22 @@ export const NotificationSettingsScreen = () => {
             ManaSplit only delivers remote push when both iOS and your in-app preference allow it.
           </Text>
 
-          <ToggleRow
-            title="Allow notifications in ManaSplit"
-            description={
-              permission.state === 'denied'
-                ? 'Blocked by iPhone. Open Settings to allow notifications for this app.'
-                : preferences.pushEnabled
-                  ? 'Remote push is enabled for your account.'
-                  : 'Turn this on to let ManaSplit deliver remote push on your registered devices.'
-            }
-            value={preferences.pushEnabled}
-            icon={preferences.pushEnabled ? 'bell-ring-outline' : 'bell-off-outline'}
-            iconColor={preferences.pushEnabled ? theme.colors.primary : '#F59E0B'}
-            onValueChange={handleMasterToggle}
-          />
+          {wrapAnchor(SETTING_IDS.notifMaster, (
+            <ToggleRow
+              title="Allow notifications in ManaSplit"
+              description={
+                permission.state === 'denied'
+                  ? 'Blocked by iPhone. Open Settings to allow notifications for this app.'
+                  : preferences.pushEnabled
+                    ? 'Remote push is enabled for your account.'
+                    : 'Turn this on to let ManaSplit deliver remote push on your registered devices.'
+              }
+              value={preferences.pushEnabled}
+              icon={preferences.pushEnabled ? 'bell-ring-outline' : 'bell-off-outline'}
+              iconColor={preferences.pushEnabled ? theme.colors.primary : '#F59E0B'}
+              onValueChange={handleMasterToggle}
+            />
+          ))}
 
           <Divider />
 
@@ -529,55 +651,65 @@ export const NotificationSettingsScreen = () => {
             </Text>
           ) : null}
 
-          <ToggleRow
-            title="Messages"
-            description="New chat messages from groups and direct chats"
-            value={preferences.messages !== false}
-            icon="chat-outline"
-            iconColor={theme.colors.primary}
-            disabled={categoryControlsDisabled}
-            onValueChange={(value) => updatePreference('messages', value)}
-          />
+          {wrapAnchor(SETTING_IDS.notifMessages, (
+            <ToggleRow
+              title="Messages"
+              description="New chat messages from groups and direct chats"
+              value={preferences.messages !== false}
+              icon="chat-outline"
+              iconColor={theme.colors.primary}
+              disabled={categoryControlsDisabled}
+              onValueChange={(value) => updatePreference('messages', value)}
+            />
+          ))}
           <Divider />
-          <ToggleRow
-            title="Expenses"
-            description="New expenses and split requests"
-            value={preferences.expenses !== false}
-            icon="currency-usd"
-            iconColor="#10B981"
-            disabled={categoryControlsDisabled}
-            onValueChange={(value) => updatePreference('expenses', value)}
-          />
+          {wrapAnchor(SETTING_IDS.notifExpenses, (
+            <ToggleRow
+              title="Expenses"
+              description="New expenses and split requests"
+              value={preferences.expenses !== false}
+              icon="currency-usd"
+              iconColor="#10B981"
+              disabled={categoryControlsDisabled}
+              onValueChange={(value) => updatePreference('expenses', value)}
+            />
+          ))}
           <Divider />
-          <ToggleRow
-            title="Settlements"
-            description="Payment settlements and confirmations"
-            value={preferences.settlements !== false}
-            icon="handshake-outline"
-            iconColor="#F59E0B"
-            disabled={categoryControlsDisabled}
-            onValueChange={(value) => updatePreference('settlements', value)}
-          />
+          {wrapAnchor(SETTING_IDS.notifSettlements, (
+            <ToggleRow
+              title="Settlements"
+              description="Payment settlements and confirmations"
+              value={preferences.settlements !== false}
+              icon="handshake-outline"
+              iconColor="#F59E0B"
+              disabled={categoryControlsDisabled}
+              onValueChange={(value) => updatePreference('settlements', value)}
+            />
+          ))}
           <Divider />
-          <ToggleRow
-            title="Group Updates"
-            description="Members joining or leaving groups"
-            value={preferences.groupUpdates !== false}
-            icon="account-group-outline"
-            iconColor="#8B5CF6"
-            disabled={categoryControlsDisabled}
-            onValueChange={(value) => updatePreference('groupUpdates', value)}
-          />
+          {wrapAnchor(SETTING_IDS.notifGroup, (
+            <ToggleRow
+              title="Group Updates"
+              description="Members joining or leaving groups"
+              value={preferences.groupUpdates !== false}
+              icon="account-group-outline"
+              iconColor="#8B5CF6"
+              disabled={categoryControlsDisabled}
+              onValueChange={(value) => updatePreference('groupUpdates', value)}
+            />
+          ))}
           <Divider />
-          <ToggleRow
-            title="Calls"
-            description="Incoming voice and video call alerts"
-            value={preferences.calls !== false}
-            icon="phone-ring-outline"
-            iconColor="#EF4444"
-            disabled={categoryControlsDisabled}
-            onValueChange={(value) => updatePreference('calls', value)}
-          />
+          {wrapAnchor(SETTING_IDS.notifCalls, (
+            <ToggleRow
+              title="Calls"
+              description="Incoming voice and video call alerts"
+              value={preferences.calls !== false}
+              icon="phone-ring-outline"
+              iconColor="#EF4444"
+              disabled={categoryControlsDisabled}
+              onValueChange={(value) => updatePreference('calls', value)}
+            />
+          ))}
         </GlassView>
 
         <GlassView
@@ -591,25 +723,29 @@ export const NotificationSettingsScreen = () => {
             These preferences only apply when notifications are enabled in ManaSplit.
           </Text>
 
-          <ToggleRow
-            title="Notification sounds"
-            description="Play sounds for incoming notifications"
-            value={preferences.sounds !== false}
-            icon="volume-high"
-            iconColor={theme.colors.primary}
-            disabled={!preferences.pushEnabled}
-            onValueChange={(value) => updatePreference('sounds', value)}
-          />
+          {wrapAnchor(SETTING_IDS.notifSounds, (
+            <ToggleRow
+              title="Notification sounds"
+              description="Play sounds for incoming notifications"
+              value={preferences.sounds !== false}
+              icon="volume-high"
+              iconColor={theme.colors.primary}
+              disabled={!preferences.pushEnabled}
+              onValueChange={(value) => updatePreference('sounds', value)}
+            />
+          ))}
           <Divider />
-          <ToggleRow
-            title="Vibration"
-            description="Vibrate when notifications arrive"
-            value={preferences.vibration !== false}
-            icon="vibrate"
-            iconColor={theme.colors.primary}
-            disabled={!preferences.pushEnabled}
-            onValueChange={(value) => updatePreference('vibration', value)}
-          />
+          {wrapAnchor(SETTING_IDS.notifVibration, (
+            <ToggleRow
+              title="Vibration"
+              description="Vibrate when notifications arrive"
+              value={preferences.vibration !== false}
+              icon="vibrate"
+              iconColor={theme.colors.primary}
+              disabled={!preferences.pushEnabled}
+              onValueChange={(value) => updatePreference('vibration', value)}
+            />
+          ))}
         </GlassView>
 
         <GlassView style={styles.sectionCard} contentStyle={styles.sectionContent}>
@@ -703,6 +839,56 @@ export const NotificationSettingsScreen = () => {
                 left={() => <List.Icon icon="alert-outline" color="#F97316" />}
               />
             </>
+          ) : null}
+
+          <Divider style={styles.diagnosticsDivider} />
+          <List.Item
+            title="Call debug log"
+            description={
+              callDebugText === null
+                ? 'Persistent breadcrumbs from the Recents redial / CallKit pipeline.'
+                : `${callDebugCount} entr${callDebugCount === 1 ? 'y' : 'ies'} recorded (newest first).`
+            }
+            left={() => <List.Icon icon="phone-log" color={theme.colors.primary} />}
+          />
+          <View style={styles.buttonRow}>
+            <Button
+              mode="contained"
+              onPress={() => {
+                void handleLoadCallDebug();
+              }}
+              loading={isLoadingCallDebug}
+            >
+              {callDebugText === null ? 'View log' : 'Refresh'}
+            </Button>
+            <Button
+              mode="outlined"
+              onPress={() => {
+                void handleCopyCallDebug();
+              }}
+              disabled={!callDebugText}
+            >
+              Copy all
+            </Button>
+            <Button
+              mode="text"
+              onPress={() => {
+                void handleClearCallDebug();
+              }}
+            >
+              Clear
+            </Button>
+          </View>
+          {callDebugText !== null ? (
+            <ScrollView style={styles.callDebugLogBox} nestedScrollEnabled>
+              <Text
+                variant="bodySmall"
+                selectable
+                style={[styles.callDebugLogText, { color: secondaryTextColor }]}
+              >
+                {callDebugText}
+              </Text>
+            </ScrollView>
           ) : null}
         </GlassView>
       </Animated.ScrollView>
@@ -817,5 +1003,19 @@ const styles = StyleSheet.create({
   },
   diagnosticsDivider: {
     marginTop: 12,
+  },
+  callDebugLogBox: {
+    maxHeight: 260,
+    marginHorizontal: 8,
+    marginTop: 8,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(148, 163, 184, 0.4)',
+    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+    padding: 10,
+  },
+  callDebugLogText: {
+    fontFamily: 'Courier',
+    lineHeight: 18,
   },
 });

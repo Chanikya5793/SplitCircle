@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { v5 as uuidv5 } from 'uuid';
+import { appendCallDebug } from './callDebugLedger';
 
 // A FIXED namespace so a callId always maps to the same CallKit UUID on every
 // device AND on the server. This is critical: CallKit requires a valid
@@ -99,6 +100,31 @@ let audioSessionActivated = false;
 // orphaned session and is silent.
 let audioSessionActivatedByFallback = false;
 
+// WebRTC manual-audio bridge. With manual audio on, WebRTC never starts/stops
+// the audio unit itself — it does so only when we call setAudioEnabled, gated
+// on CallKit's audio-session activation. This is the canonical CallKit + WebRTC
+// fix for calls that negotiate media but stay silent (WebRTC otherwise starts
+// the audio unit against a session CallKit hasn't activated yet). Both helpers
+// are wrapped defensively: the patched native methods only exist after the iOS
+// binary is rebuilt, and the JS wrapper additionally no-ops when they are
+// missing — so an older dev-client must degrade to the previous behaviour, not
+// crash. Any failure is logged, never thrown.
+const setWebRtcManualAudio = (enabled: boolean): void => {
+  try {
+    RTCAudioSession?.setManualAudio(enabled);
+  } catch (error) {
+    console.warn('nativeCallService: RTCAudioSession.setManualAudio failed', error);
+  }
+};
+
+const setWebRtcAudioEnabled = (enabled: boolean): void => {
+  try {
+    RTCAudioSession?.setAudioEnabled(enabled);
+  } catch (error) {
+    console.warn('nativeCallService: RTCAudioSession.setAudioEnabled failed', error);
+  }
+};
+
 const handleAudioSessionActivated = (source: 'live' | 'buffered') => {
   audioSessionActivated = true;
   // A genuine CallKit activation means CallKit now owns deactivation — even if
@@ -107,12 +133,18 @@ const handleAudioSessionActivated = (source: 'live' | 'buffered') => {
   audioSessionActivatedByFallback = false;
   debugLog(`nativeCallService: didActivateAudioSession (${source})`);
   RTCAudioSession?.audioSessionDidActivate();
+  // Manual audio: CallKit activating the session is our cue to start the audio
+  // unit. Without this the call negotiates media but stays silent.
+  setWebRtcAudioEnabled(true);
 };
 
 const handleAudioSessionDeactivated = (source: 'live' | 'buffered') => {
   audioSessionActivated = false;
   audioSessionActivatedByFallback = false;
   debugLog(`nativeCallService: didDeactivateAudioSession (${source})`);
+  // Manual audio: stop the audio unit BEFORE handing the session back to WebRTC
+  // so it tears down against a still-valid session.
+  setWebRtcAudioEnabled(false);
   RTCAudioSession?.audioSessionDidDeactivate();
 };
 
@@ -132,6 +164,7 @@ const emit = <EventName extends NativeCallEventName>(
 ) => {
   if (eventName === 'startCall' && eventListeners.startCall.size === 0) {
     pendingStartCallEvents.push(payload as NativeCallEventMap['startCall']);
+    appendCallDebug('startCall.parked', { pending: pendingStartCallEvents.length });
     return;
   }
 
@@ -242,10 +275,15 @@ const wasRecentlyAppInitiated = async (nativeCallId: string): Promise<boolean> =
 const emitStartCall = (data: { handle?: string; callUUID?: string; video?: boolean; name?: string }) => {
   const handle = typeof data.handle === 'string' ? data.handle.trim() : '';
   if (!handle) {
+    appendCallDebug('startCall.ignored', { reason: 'blank handle' });
     return;
   }
 
   const nativeCallId = typeof data.callUUID === 'string' && data.callUUID.length > 0 ? data.callUUID : null;
+
+  // Breadcrumb every raw redial event (device-only failures ship blind to
+  // TestFlight — this is how we later see what CallKit actually delivered).
+  appendCallDebug('startCall.received', { handle, nativeCallId, hasVideo: data.video === true });
 
   // CallKit echoes the app's OWN outgoing calls back through
   // didReceiveStartCallAction (RNCallKeep.startCall → CXStartCallAction →
@@ -255,10 +293,19 @@ const emitStartCall = (data: { handle?: string; callUUID?: string; video?: boole
   // UUID (INStartCallIntent user-activity path) or a CallKit-created
   // placeholder UUID that is never in our mapping.
   if (nativeCallId && isAppInitiatedNativeCall(nativeCallId)) {
+    appendCallDebug('startCall.echoFiltered', { nativeCallId, reason: 'in-memory app-initiated uuid' });
     return;
   }
 
+  // ECHO-FILTER FALSE-POSITIVE INVARIANT: a genuine redial can never be
+  // suppressed. The INStartCallIntent path carries NO UUID (emitted
+  // unconditionally just below), and the CXStartCallAction path carries a
+  // random CallKit-generated placeholder UUID. Our app-initiated UUIDs are
+  // deterministic uuidv5 values derived from unique app callIds, so a random
+  // placeholder matches neither the in-memory map above nor the persisted set
+  // below — the filter provably only eats our own echoes.
   if (!nativeCallId) {
+    appendCallDebug('startCall.emit', { handle, reason: 'no-uuid INStartCallIntent redial' });
     emit('startCall', {
       handle,
       nativeCallId,
@@ -276,8 +323,13 @@ const emitStartCall = (data: { handle?: string; callUUID?: string; video?: boole
   void wasRecentlyAppInitiated(nativeCallId).then((appInitiated) => {
     if (appInitiated) {
       debugLog('nativeCallService: ignoring start-call echo persisted from a previous launch');
+      appendCallDebug('startCall.echoFiltered', {
+        nativeCallId,
+        reason: 'persisted app-initiated uuid (previous launch)',
+      });
       return;
     }
+    appendCallDebug('startCall.emit', { handle, nativeCallId, reason: 'unknown uuid — genuine redial' });
     emit('startCall', {
       handle,
       nativeCallId,
@@ -481,6 +533,12 @@ async function initialize(): Promise<boolean> {
       .then(async (accepted) => {
         debugLog(`nativeCallService initialized: ${accepted ? 'ready' : 'permission-pending'}`);
         RNCallKeep.setReachable();
+        // Put WebRTC into manual-audio mode ONCE, before any call: from now on
+        // the audio unit starts/stops solely on CallKit's session events
+        // (setAudioEnabled), never autonomously — the canonical fix for calls
+        // that connect but stay silent. iOS-only + guarded, so it's a no-op on
+        // Android/web and on binaries built before the native method was added.
+        setWebRtcManualAudio(true);
         if (Platform.OS === 'android') {
           RNCallKeep.setAvailable(true);
         }
@@ -614,6 +672,15 @@ async function endCall(appCallId: string): Promise<void> {
   // dismiss that natively-reported call (ending an unknown UUID is a no-op).
   const nativeCallId = ensureMappedNativeCallId(appCallId);
   RNCallKeep.endCall(nativeCallId);
+  // Teardown MUST clear the activation flags. CallKit only fires
+  // didDeactivateAudioSession when it deactivates cleanly; on an abnormal end
+  // (peer drop, crash, force-kill) it may never fire, leaving
+  // audioSessionActivated stuck `true`. The NEXT call's watchdog then sees the
+  // session as already active and skips activation → silent call until restart.
+  // resetAudioSession clears the flags (and, for a JS-owned session, notifies
+  // WebRTC). Callers that also manage the LiveKit AudioSession (useCallManager)
+  // snapshot jsOwnsAudioSession() BEFORE invoking endCall.
+  resetAudioSession();
 }
 
 /**
@@ -627,7 +694,32 @@ async function dismissNativeCall(nativeCallId: string): Promise<void> {
   }
 
   await initialize();
+
+  // SAFETY (UUID separation): this only ever targets the random placeholder
+  // UUID CallKit invents for a Recents CXStartCallAction — never one of our
+  // deterministic app-initiated UUIDs. Guard anyway: if the UUID maps to a call
+  // THIS app placed, refuse to end it, or we'd hang up the real outgoing call
+  // that the redial flow is about to (re)start a moment later.
+  if (isAppInitiatedNativeCall(nativeCallId)) {
+    appendCallDebug('dismissNativeCall.skipped', { nativeCallId, reason: 'app-initiated uuid' });
+    return;
+  }
+
+  appendCallDebug('dismissNativeCall', { nativeCallId });
   RNCallKeep.endCall(nativeCallId);
+  // Same stale-flag guard as endCall: dismissing a call is a teardown path too,
+  // and its CallKit deactivation may never arrive — reset so the next call can
+  // activate audio. BUT only when no app-initiated call is live: dismissing a
+  // Recents placeholder DURING an active call (CallContext dismisses before
+  // its active-call guard) must not clear the LIVE call's activation flags —
+  // for a watchdog-activated session that reset would stop the audio unit and
+  // silence the in-progress call. With a call live, its own teardown
+  // (endCall → resetAudioSession) owns the flag cleanup.
+  if (appToNativeCallIds.size === 0) {
+    resetAudioSession();
+  } else {
+    appendCallDebug('dismissNativeCall.resetSkipped', { reason: 'app call live' });
+  }
 }
 
 function clearCall(appCallId: string): void {
@@ -660,6 +752,7 @@ function subscribe<EventName extends NativeCallEventName>(
 
   if (eventName === 'startCall' && pendingStartCallEvents.length > 0) {
     const parked = pendingStartCallEvents.splice(0, pendingStartCallEvents.length);
+    appendCallDebug('startCall.replay', { count: parked.length });
     for (const payload of parked) {
       (handler as NativeCallEventHandler<'startCall'>)(payload);
     }
@@ -707,6 +800,9 @@ function activateAudioSessionFallback(): void {
   audioSessionActivatedByFallback = true;
   debugLog('nativeCallService: activateAudioSessionFallback (watchdog took over)');
   RTCAudioSession?.audioSessionDidActivate();
+  // Manual audio: the watchdog fallback owns activation, so it must also start
+  // the audio unit — otherwise the fallback path stays silent too.
+  setWebRtcAudioEnabled(true);
 }
 
 /**
@@ -732,6 +828,9 @@ function jsOwnsAudioSession(): boolean {
 function resetAudioSession(): void {
   if (Platform.OS === 'ios' && audioSessionActivatedByFallback) {
     debugLog('nativeCallService: deactivating JS-activated audio session (teardown)');
+    // Manual audio: stop the audio unit before notifying WebRTC the session is
+    // gone (mirrors handleAudioSessionDeactivated).
+    setWebRtcAudioEnabled(false);
     RTCAudioSession?.audioSessionDidDeactivate();
   }
   audioSessionActivated = false;
