@@ -13,6 +13,8 @@ import { ActivityIndicator, IconButton, Text, TouchableRipple } from 'react-nati
 interface SwipeableGroupCardProps {
   group: Group;
   onPress?: () => void;
+  /** Long-press: quick-actions menu (add expense, settle, stats, archive). */
+  onLongPress?: (group: Group) => void;
   /** Swipe-left action. Archives normally; unarchives when `archived` is set. */
   onArchive?: (group: Group) => void;
   /** Renders the card in its archived variant (unarchive swipe action). */
@@ -21,7 +23,7 @@ interface SwipeableGroupCardProps {
   loading?: boolean;
 }
 
-export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, archived = false, index = 0, loading = false }: SwipeableGroupCardProps) => {
+export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onArchive, archived = false, index = 0, loading = false }: SwipeableGroupCardProps) => {
   const fmtMoney = useMoneyDisplay(group.groupId);
   const { maskGroupName } = usePrivacyMask();
   const displayName = maskGroupName(group.name, group.groupId);
@@ -81,7 +83,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onArchive, archi
         onSwipeableWillOpen={lightHaptic}
       >
         <GlassView style={styles.container}>
-          <TouchableRipple onPress={loading ? undefined : handlePress} style={{ flex: 1 }} disabled={loading}>
+          <TouchableRipple onPress={loading ? undefined : handlePress} onLongPress={loading || !onLongPress ? undefined : () => { lightHaptic(); onLongPress(group); }} style={{ flex: 1 }} disabled={loading}>
             <View style={styles.content}>
               <View style={styles.header}>
                 <GroupAvatar photoURL={group.photoURL} name={displayName} size={48} />

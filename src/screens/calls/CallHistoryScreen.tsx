@@ -107,6 +107,8 @@ interface CallHistoryRowProps {
   theme: AppTheme;
   onPressInfo: (entry: CallHistoryEntry) => void;
   onCallBack: (entry: CallHistoryEntry) => void;
+  /** Long-press: quick-actions menu (voice/video call back, delete). */
+  onLongPressRow: (entry: CallHistoryEntry) => void;
   onDelete: (callId: string) => void;
   onOpen: (callId: string, swipeable: Swipeable) => void;
   onRegister: (callId: string, ref: Swipeable | null) => void;
@@ -121,6 +123,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
   theme,
   onPressInfo,
   onCallBack,
+  onLongPressRow,
   onDelete,
   onOpen,
   onRegister,
@@ -154,6 +157,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
         <GlassView style={styles.callItem}>
           <TouchableRipple
             onPress={() => onPressInfo(entry)}
+            onLongPress={() => onLongPressRow(entry)}
             style={styles.callItemContent}
             borderless
           >
@@ -460,6 +464,29 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
     [onOpenCallInfo]
   );
 
+  // Long-press a call row: quick actions without hunting for the inline
+  // buttons — call back either way, open call info, or delete the entry.
+  const handleRowQuickActions = useCallback(
+    (entry: CallHistoryEntry) => {
+      lightHaptic();
+      const thread = threadByChatId.get(entry.chatId);
+      const buttons: Parameters<typeof appAlert>[2] = [];
+      if (thread) {
+        buttons.push(
+          { text: 'Voice call', onPress: () => onStartCall(thread, 'audio') },
+          { text: 'Video call', onPress: () => onStartCall(thread, 'video') },
+        );
+      }
+      buttons.push(
+        { text: 'Call info', onPress: () => handleOpenInfo(entry) },
+        { text: 'Delete from history', style: 'destructive', onPress: () => void handleDeleteCall(entry.callId) },
+        { text: 'Cancel', style: 'cancel' },
+      );
+      appAlert(entry.otherParticipant.displayName || 'Call', undefined, buttons);
+    },
+    [threadByChatId, onStartCall, handleOpenInfo, handleDeleteCall],
+  );
+
   // Keep only one row's delete action open at a time.
   const handleSwipeableOpen = useCallback((_callId: string, swipeable: Swipeable) => {
     if (openSwipeableRef.current && openSwipeableRef.current !== swipeable) {
@@ -537,6 +564,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
         theme={theme}
         onPressInfo={handleOpenInfo}
         onCallBack={handleCallBack}
+        onLongPressRow={handleRowQuickActions}
         onDelete={handleDeleteCall}
         onOpen={handleSwipeableOpen}
         onRegister={registerSwipeable}

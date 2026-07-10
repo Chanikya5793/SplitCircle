@@ -38,8 +38,17 @@ export const startRingback = (): void => {
     if (Platform.OS !== 'ios') {
       void mod.setAudioModeAsync?.({ playsInSilentMode: true }).catch(() => {});
     }
+    // keepAudioSessionActive is CRITICAL: without it, expo-audio's native
+    // pause() deactivates the shared AVAudioSession the moment the ringback
+    // stops — which is exactly when the call connects. CallKit has already
+    // fired didActivateAudioSession and never re-activates, so the live call
+    // is left with an INACTIVE session: WebRTC keeps its mic claim (orange
+    // indicator) but no audio flows either way. This was the "mic in use but
+    // nobody can hear anything" bug.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const created = mod.createAudioPlayer(require('../../assets/sounds/ringback.wav'));
+    const created = mod.createAudioPlayer(require('../../assets/sounds/ringback.wav'), {
+      keepAudioSessionActive: true,
+    });
     created.loop = true;
     created.volume = 0.7;
     created.play();

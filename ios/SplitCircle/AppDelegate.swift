@@ -224,6 +224,23 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
       withModuleName: "main",
       in: window,
       launchOptions: launchOptions)
+
+    // COLD-START user activities. Under the UIScene lifecycle, a Phone-app
+    // Recents redial (INStartCallIntent) or Universal Link that LAUNCHES the
+    // app arrives here in connectionOptions.userActivities — NOT via
+    // scene(_:continue:), which only fires while the scene is already
+    // connected. Dropping these was why tapping a SplitCircle call in Recents
+    // did nothing unless the app happened to be running. Forward each through
+    // the same chain as the warm path; RNCallKeep buffers the resulting
+    // didReceiveStartCallAction until the JS bridge is up (delivered via
+    // didLoadWithEvents → nativeCallService.handleBufferedEvent).
+    for userActivity in connectionOptions.userActivities {
+      _ = appDelegate.application(
+        UIApplication.shared,
+        continue: userActivity,
+        restorationHandler: { _ in }
+      )
+    }
   }
 
   // MARK: - Privacy screen (app-switcher snapshot protection)

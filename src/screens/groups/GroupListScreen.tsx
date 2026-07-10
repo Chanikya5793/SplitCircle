@@ -206,6 +206,31 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     }
   };
 
+  // Long-press a group card: quick-actions menu — the fastest paths into the
+  // things people do most, without opening the group first.
+  const handleGroupQuickActions = (group: Group) => {
+    appAlert(group.name, undefined, [
+      {
+        text: 'Add expense',
+        onPress: () => navigation.navigate(ROUTES.APP.ADD_EXPENSE, { groupId: group.groupId }),
+      },
+      {
+        text: 'Settle up',
+        onPress: () => navigation.navigate(ROUTES.APP.SETTLEMENTS, { groupId: group.groupId }),
+      },
+      {
+        text: 'Stats',
+        onPress: () => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: group.name }),
+      },
+      {
+        text: 'Archive',
+        style: 'destructive',
+        onPress: () => handleArchive(group),
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const handleArchive = (group: Group) => {
     if (!user) return;
     if (!isOnline) {
@@ -274,6 +299,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           <SwipeableGroupCard
             group={item}
             onPress={openingGroupId ? undefined : () => handleOpenGroup(item)}
+            onLongPress={handleGroupQuickActions}
             onArchive={handleArchive}
             index={index}
             loading={openingGroupId === item.groupId}

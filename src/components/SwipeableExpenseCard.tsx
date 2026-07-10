@@ -32,6 +32,8 @@ interface SwipeableExpenseCardProps {
   currency: string;
   memberMap: Record<string, string>;
   onPress: () => void;
+  /** Long-press: quick-actions menu (view, delete). */
+  onLongPress?: () => void;
   onDelete?: (expense: Expense) => void;
   index?: number;
   groupId?: string;
@@ -42,6 +44,7 @@ export const SwipeableExpenseCard = ({
   currency,
   memberMap,
   onPress,
+  onLongPress,
   onDelete,
   index = 0,
   groupId,
@@ -105,7 +108,7 @@ export const SwipeableExpenseCard = ({
         containerStyle={{ borderRadius: 16, overflow: 'hidden' }}
       >
         <GlassView style={styles.container}>
-          <TouchableRipple onPress={handlePress} style={{ flex: 1 }}>
+          <TouchableRipple onPress={handlePress} onLongPress={onLongPress} style={{ flex: 1 }}>
             <View style={styles.content}>
               <View style={styles.header}>
                 <View style={styles.titleRow}>

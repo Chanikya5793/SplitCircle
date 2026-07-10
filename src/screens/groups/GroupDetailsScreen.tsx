@@ -725,6 +725,28 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                               backTitle: groupDisplayName,
                             });
                           }}
+                          onLongPress={() => {
+                            lightHaptic();
+                            const expense = activity.data;
+                            appAlert(expense.title, undefined, [
+                              {
+                                text: 'View details',
+                                onPress: () =>
+                                  navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, {
+                                    groupId: group.groupId,
+                                    expenseId: expense.expenseId,
+                                    expenseTitle: expense.title,
+                                    backTitle: groupDisplayName,
+                                  }),
+                              },
+                              {
+                                text: 'Delete expense',
+                                style: 'destructive',
+                                onPress: () => handleDeleteExpense(expense),
+                              },
+                              { text: 'Cancel', style: 'cancel' },
+                            ]);
+                          }}
                           onDelete={handleDeleteExpense}
                         />
                       );
