@@ -3,6 +3,7 @@ internal import React
 internal import ReactAppDependencyProvider
 import PushKit
 import CallKit
+import Intents
 // RNCallKeep and RNVoipPushNotificationManager are imported through
 // SplitCircle-Bridging-Header.h — they're ObjC pods without Swift modulemaps.
 
@@ -165,6 +166,7 @@ class AppDelegate: ExpoAppDelegate, PKPushRegistryDelegate {
     continue userActivity: NSUserActivity,
     restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void
   ) -> Bool {
+    stashRecentsRedialIfCallIntent(userActivity)
     let callKeepResult = RNCallKeep.application(
       application,
       continue: userActivity,
@@ -172,6 +174,37 @@ class AppDelegate: ExpoAppDelegate, PKPushRegistryDelegate {
     )
     let result = RCTLinkingManager.application(application, continue: userActivity, restorationHandler: restorationHandler)
     return super.application(application, continue: userActivity, restorationHandler: restorationHandler) || result || callKeepResult
+  }
+
+  // Fallback channel for Phone-app Recents redials. RNCallKeep's own intent
+  // parsing has version-specific holes (e.g. INStartCallIntent with
+  // callCapability == .unknown extracted no contact, so no JS event fired).
+  // Parse the intent ourselves and stash it in NSUserDefaults, which JS polls
+  // via the react-native Settings bridge (see CallContext) — so a redial
+  // survives even if the event plumbing drops it. Best-effort by design.
+  private func stashRecentsRedialIfCallIntent(_ userActivity: NSUserActivity) {
+    guard let interaction = userActivity.interaction else { return }
+    var handle: String?
+    var isVideo = false
+    if let intent = interaction.intent as? INStartCallIntent {
+      handle = intent.contacts?.first?.personHandle?.value
+      isVideo = intent.callCapability == .videoCall
+    } else if let intent = interaction.intent as? INStartAudioCallIntent {
+      handle = intent.contacts?.first?.personHandle?.value
+    } else if let intent = interaction.intent as? INStartVideoCallIntent {
+      handle = intent.contacts?.first?.personHandle?.value
+      isVideo = true
+    }
+    guard let resolvedHandle = handle, !resolvedHandle.isEmpty else { return }
+    let payload: [String: Any] = [
+      "handle": resolvedHandle,
+      "video": isVideo,
+      "at": Date().timeIntervalSince1970 * 1000,
+    ]
+    if let data = try? JSONSerialization.data(withJSONObject: payload),
+       let json = String(data: data, encoding: .utf8) {
+      UserDefaults.standard.set(json, forKey: "PendingRecentsRedial")
+    }
   }
 }
 

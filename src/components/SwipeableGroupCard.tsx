@@ -4,10 +4,12 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
+import { usePressScale } from '@/hooks/usePressScale';
 import { heavyHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
+import Animated from 'react-native-reanimated';
 import { ActivityIndicator, IconButton, Text, TouchableRipple } from 'react-native-paper';
 
 interface SwipeableGroupCardProps {
@@ -29,6 +31,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
   const displayName = maskGroupName(group.name, group.groupId);
   const { theme } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
+  const { pressScaleStyle, onPressIn, onPressOut } = usePressScale();
   const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
 
   const handlePress = () => {
@@ -82,8 +85,9 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
         overshootFriction={8}
         onSwipeableWillOpen={lightHaptic}
       >
+        <Animated.View style={pressScaleStyle}>
         <GlassView style={styles.container}>
-          <TouchableRipple onPress={loading ? undefined : handlePress} onLongPress={loading || !onLongPress ? undefined : () => { lightHaptic(); onLongPress(group); }} style={{ flex: 1 }} disabled={loading}>
+          <TouchableRipple onPress={loading ? undefined : handlePress} onLongPress={loading || !onLongPress ? undefined : () => { lightHaptic(); onLongPress(group); }} onPressIn={onPressIn} onPressOut={onPressOut} style={{ flex: 1 }} disabled={loading}>
             <View style={styles.content}>
               <View style={styles.header}>
                 <GroupAvatar photoURL={group.photoURL} name={displayName} size={48} />
@@ -107,6 +111,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
             </View>
           </TouchableRipple>
         </GlassView>
+        </Animated.View>
       </Swipeable>
     </View>
   );

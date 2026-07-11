@@ -7,7 +7,7 @@ import { voipPushService } from '@/services/voipPushService';
 import { startVoipPushRegistration } from '@/services/voipPushRegistration';
 import { MISSED_CALL_CATEGORY_ID, scheduleLocalNotification } from '@/utils/notifications';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform, Settings } from 'react-native';
 import { useAuth } from './AuthContext';
 import { useChat } from './ChatContext';
 
@@ -130,6 +130,8 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
   // Recents-redial resolution: the deadline after which we stop retrying, and
   // the handle to the pending retry timer.
   const recentsRedialDeadlineRef = useRef<number | null>(null);
+  // Last redial processed (either channel) — dedupes event-path vs fallback.
+  const lastRedialRef = useRef<{ handle: string; at: number } | null>(null);
   const recentsRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -549,12 +551,57 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     return unsubscribeStartCall;
   }, []);
 
+  // Fallback channel for Recents redials: AppDelegate parses the
+  // INStartCallIntent itself and stashes {handle, video, at} in NSUserDefaults
+  // (PendingRecentsRedial), independent of RNCallKeep's event plumbing — which
+  // has version-specific parsing holes. Consume it on mount and whenever the
+  // app foregrounds; dedupe against the event path via lastRedialRef so a
+  // redial that arrives through BOTH channels only dials once.
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !user) {
+      return;
+    }
+    const consumePendingRedial = () => {
+      try {
+        const raw = Settings.get('PendingRecentsRedial') as unknown;
+        if (typeof raw !== 'string' || raw.length === 0) {
+          return;
+        }
+        Settings.set({ PendingRecentsRedial: '' });
+        const parsed = JSON.parse(raw) as { handle?: string; video?: boolean; at?: number };
+        if (!parsed.handle || !parsed.at) {
+          return;
+        }
+        if (Date.now() - parsed.at > 90_000) {
+          appendCallDebug('recents.fallbackStale', { ageMs: Date.now() - parsed.at });
+          return;
+        }
+        const last = lastRedialRef.current;
+        if (last && last.handle === parsed.handle && Date.now() - last.at < 8_000) {
+          appendCallDebug('recents.fallbackDeduped', { handle: parsed.handle });
+          return;
+        }
+        appendCallDebug('recents.fallbackConsumed', { handle: parsed.handle, video: Boolean(parsed.video) });
+        setRecentsStartCall({ handle: parsed.handle, nativeCallId: null, hasVideo: Boolean(parsed.video) });
+      } catch {
+        // Malformed stash — drop it rather than looping on it.
+        try { Settings.set({ PendingRecentsRedial: '' }); } catch { /* ignore */ }
+      }
+    };
+    consumePendingRedial();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') consumePendingRedial();
+    });
+    return () => sub.remove();
+  }, [user]);
+
   useEffect(() => {
     if (!recentsStartCall || !user) {
       return;
     }
 
     const { handle, nativeCallId, hasVideo } = recentsStartCall;
+    lastRedialRef.current = { handle, at: Date.now() };
 
     // Belt-and-braces (the service already filters this): never touch a
     // CallKit call the app itself initiated. CallKit echoes our own outgoing

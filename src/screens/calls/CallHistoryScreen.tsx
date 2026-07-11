@@ -18,6 +18,7 @@ import {
 } from '@/services/localCallStorage';
 import { formatCallDuration, formatCallTime, getCallDateSection } from '@/utils/format';
 import { lightHaptic, mediumHaptic, warningHaptic } from '@/utils/haptics';
+import { usePressScale } from '@/hooks/usePressScale';
 import { appAlert } from '@/utils/appAlert';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -128,6 +129,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
   onOpen,
   onRegister,
 }: CallHistoryRowProps) {
+  const { pressScaleStyle, onPressIn, onPressOut } = usePressScale();
   const missed = isMissedOrDeclined(entry);
   const nameColor = missed ? theme.colors.error : theme.colors.onSurface;
   const initials = (entry.otherParticipant.displayName || 'U').slice(0, 2).toUpperCase();
@@ -148,16 +150,20 @@ const CallHistoryRow = memo(function CallHistoryRow({
       )}
       overshootRight={false}
       friction={2}
+      onSwipeableWillOpen={lightHaptic}
     >
       <Animated.View
         entering={FadeIn.duration(200)}
         exiting={FadeOut.duration(150)}
         layout={Layout.springify()}
+        style={pressScaleStyle}
       >
         <GlassView style={styles.callItem}>
           <TouchableRipple
             onPress={() => onPressInfo(entry)}
             onLongPress={() => onLongPressRow(entry)}
+            onPressIn={onPressIn}
+            onPressOut={onPressOut}
             style={styles.callItemContent}
             borderless
           >

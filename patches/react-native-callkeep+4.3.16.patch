@@ -1,0 +1,30 @@
+diff --git a/node_modules/react-native-callkeep/.DS_Store b/node_modules/react-native-callkeep/.DS_Store
+new file mode 100644
+index 0000000..1da164e
+Binary files /dev/null and b/node_modules/react-native-callkeep/.DS_Store differ
+diff --git a/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.m b/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.m
+index 786045f..f0ccd27 100644
+--- a/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.m
++++ b/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.m
+@@ -1013,6 +1013,21 @@ continueUserActivity:(NSUserActivity *)userActivity
+         INStartVideoCallIntent *startVideoCallIntent = (INStartVideoCallIntent *)interaction.intent;
+         contact = [startVideoCallIntent.contacts firstObject];
+     }
++#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 130000
++    else {
++        // iOS 13+ Recents redials arrive as INStartCallIntent. When
++        // callCapability is INCallCapabilityUnknown (typical for third-party
++        // VoIP calls with generic handles), neither isAudioCall nor
++        // isVideoCall is set and the contact was never extracted — the tap
++        // silently did nothing. Fall through to INStartCallIntent.contacts.
++        if (@available(iOS 13, *)) {
++            if ([interaction.intent isKindOfClass:[INStartCallIntent class]]) {
++                INStartCallIntent *startCallIntent = (INStartCallIntent *)interaction.intent;
++                contact = [startCallIntent.contacts firstObject];
++            }
++        }
++    }
++#endif
+ 
+     if (contact != nil) {
+         handle = contact.personHandle.value;

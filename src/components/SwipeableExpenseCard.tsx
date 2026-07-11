@@ -3,6 +3,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
+import { usePressScale } from '@/hooks/usePressScale';
 import { getExpenseSplitLabel } from '@/utils/expenseSplit';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
@@ -53,6 +54,7 @@ export const SwipeableExpenseCard = ({
   const { maskGroupText } = usePrivacyMask();
   const { theme } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
+  const { pressScaleStyle, onPressIn, onPressOut } = usePressScale();
   const payerName = maskGroupText(memberMap[expense.paidBy] || 'Unknown', groupId);
   const isSettlement = expense.category === 'Settlement';
   const splitLabel = getExpenseSplitLabel(expense);
@@ -105,10 +107,12 @@ export const SwipeableExpenseCard = ({
         friction={2}
         rightThreshold={40}
         overshootRight={false}
+        onSwipeableWillOpen={lightHaptic}
         containerStyle={{ borderRadius: 16, overflow: 'hidden' }}
       >
+        <Animated.View style={pressScaleStyle}>
         <GlassView style={styles.container}>
-          <TouchableRipple onPress={handlePress} onLongPress={onLongPress} style={{ flex: 1 }}>
+          <TouchableRipple onPress={handlePress} onLongPress={onLongPress} onPressIn={onPressIn} onPressOut={onPressOut} style={{ flex: 1 }}>
             <View style={styles.content}>
               <View style={styles.header}>
                 <View style={styles.titleRow}>
@@ -141,6 +145,7 @@ export const SwipeableExpenseCard = ({
             </View>
           </TouchableRipple>
         </GlassView>
+        </Animated.View>
       </Swipeable>
     </View>
   );
