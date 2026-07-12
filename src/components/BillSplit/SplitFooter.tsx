@@ -280,21 +280,16 @@ export const SplitFooter = React.memo(({
 
   return (
     <Animated.View entering={FadeInUp.springify()} style={pulseStyle}>
-      <GlassView style={[styles.footer, canApply && [styles.footerValid, { borderColor: `${theme.colors.success}40` }]]} intensity={40}>
+      <GlassView style={[styles.footer, { backgroundColor: theme.dark ? 'rgba(18,20,26,0.92)' : 'rgba(255,255,255,0.94)' }, canApply && [styles.footerValid, { borderColor: `${theme.colors.success}40` }]]} intensity={70}>
         <View style={styles.footerContent}>
           <View style={styles.footerLeft}>
-            <View style={styles.metaRow}>
-              <View style={[styles.methodChip, { borderColor: theme.colors.outline, backgroundColor: theme.colors.pressed }]}>
-                <Text style={{ color: theme.colors.onSurface, fontSize: 11, fontWeight: '700' }}>{methodLabel[currentMethod]}</Text>
-              </View>
-              {payerName && (
-                <Pressable onPress={onManagePayer} style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}>
-                  <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
-                    Paid by {payerName}
-                  </Text>
-                </Pressable>
-              )}
-            </View>
+            {payerName && (
+              <Pressable onPress={onManagePayer} style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}>
+                <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
+                  {methodLabel[currentMethod]} · Paid by {payerName}
+                </Text>
+              </Pressable>
+            )}
 
             {renderContent()}
 
@@ -318,14 +313,7 @@ export const SplitFooter = React.memo(({
               <Text style={styles.doneText}>{ctaLabel}</Text>
             </Pressable>
 
-            {onManagePayer && (
-              <Pressable
-                onPress={onManagePayer}
-                style={({ pressed }) => [styles.secondaryAction, { borderColor: theme.colors.outline, opacity: pressed ? 0.75 : 1 }]}
-              >
-                <Text style={{ color: theme.colors.onSurface, fontSize: 11, fontWeight: '700' }}>Payer</Text>
-              </Pressable>
-            )}
+
           </View>
         </View>
       </GlassView>

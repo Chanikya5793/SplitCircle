@@ -19,9 +19,6 @@ export const SmartSuggestionsBar = React.memo(({ suggestions, onSelect }: SmartS
 
   return (
     <View style={styles.wrapper}>
-      <Text variant="labelSmall" style={[styles.label, { color: palette.muted }]}>
-        Smart suggestions
-      </Text>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}

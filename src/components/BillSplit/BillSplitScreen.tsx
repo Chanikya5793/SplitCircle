@@ -660,7 +660,7 @@ export const BillSplitScreen = ({
   return (
     <PaperProvider theme={theme}>
       <LiquidBackground>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: theme.dark ? 'rgba(10,12,16,0.60)' : 'rgba(250,250,252,0.55)' }]}>
           {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity onPress={onCancel} activeOpacity={0.7}>
@@ -923,6 +923,9 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingTop: spacing.sm,
     gap: spacing.sm,
+    // Clear the absolute-positioned footer — without this the last participant
+    // rows sat UNDER the footer card and could never be scrolled into view.
+    paddingBottom: 220,
   },
   payerCard: {
     borderRadius: 16,
