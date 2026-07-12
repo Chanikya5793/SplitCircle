@@ -958,6 +958,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
           <BillSplitScreen
             totalAmount={Number(amount) || 0}
             currency={group.currency || 'USD'}
+            contextKey={group.groupId}
             initialParticipants={billSplitParticipants}
             initialPayer={paidBy}
             initialSplitMetadata={splitMetadata}

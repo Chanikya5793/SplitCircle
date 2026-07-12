@@ -1,4 +1,3 @@
-import { GlassView } from '@/components/GlassView';
 import { colors, darkColors, spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
@@ -17,6 +16,28 @@ import type { WeightedRouletteWheelRef } from './WeightedRouletteWheel';
 import WeightedRouletteWheel, { generatePercentageOptions } from './WeightedRouletteWheel';
 
 const AVATAR_COLORS = ['#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626', '#7C3AED'];
+
+// §9 DNA: dense editors are SOLID. Every card in every mode shares this one
+// near-opaque surface with a hairline border — blobs whisper through the
+// canvas behind, never through content.
+const SolidCard = ({ style, children }: { style?: any; children: React.ReactNode }) => {
+  const { isDark } = useTheme();
+  return (
+    <View
+      style={[
+        {
+          backgroundColor: isDark ? 'rgba(28,31,38,0.96)' : 'rgba(255,255,255,0.97)',
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)',
+          overflow: 'hidden',
+        },
+        style,
+      ]}
+    >
+      {children}
+    </View>
+  );
+};
 
 function getInitials(name: string): string {
   return name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
@@ -176,7 +197,7 @@ const CalendarMonthGrid = React.memo(({
   const normalizedRangeEnd = rangeStart && rangeEnd ? (rangeStart <= rangeEnd ? rangeEnd : rangeStart) : rangeEnd;
 
   return (
-    <GlassView style={styles.calendarMonthCard} intensity={10}>
+    <SolidCard style={styles.calendarMonthCard}>
       <View style={styles.calendarMonthHeader}>
         <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
           {getCalendarMonthLabel(monthDate)}
@@ -269,7 +290,7 @@ const CalendarMonthGrid = React.memo(({
           );
         })}
       </View>
-    </GlassView>
+    </SolidCard>
   );
 });
 
@@ -474,13 +495,10 @@ const ItemizedReceiptMode = React.memo(({
 
   return (
     <View style={styles.section}>
-      <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-        Receipt Items
-      </Text>
 
       {items.map((item, idx) => (
         <Animated.View key={item.id} entering={FadeInDown.delay(idx * 40).springify()}>
-          <GlassView style={styles.itemCard} intensity={15}>
+          <SolidCard style={styles.itemCard}>
             <View style={styles.itemRow}>
               <TextInput
                 style={[styles.itemNameInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
@@ -525,7 +543,7 @@ const ItemizedReceiptMode = React.memo(({
                 );
               })}
             </ScrollView>
-          </GlassView>
+          </SolidCard>
         </Animated.View>
       ))}
 
@@ -588,18 +606,16 @@ const IncomeProportionalMode = React.memo(({ participants, onWeightChange, curre
 
   return (
     <View style={styles.section}>
-      <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-        Income / Weight Ratios
-      </Text>
       <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
         Enter annual salary or arbitrary weight for each person. The bill is split proportionally.
       </Text>
 
+      <SolidCard style={styles.groupCard}>
       {participants.map((p, index) => {
         const pct = totalWeight > 0 ? ((p.incomeWeight / totalWeight) * 100).toFixed(1) : '0';
         return (
           <Animated.View key={p.id} entering={FadeInDown.delay(index * 40).springify()}>
-            <View style={styles.incomeRow}>
+            <View style={[styles.incomeRow, index === participants.length - 1 && styles.lastRow]}>
               <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[index % AVATAR_COLORS.length] }]}>
                 <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
               </View>
@@ -622,6 +638,7 @@ const IncomeProportionalMode = React.memo(({ participants, onWeightChange, curre
           </Animated.View>
         );
       })}
+      </SolidCard>
     </View>
   );
 });
@@ -644,13 +661,11 @@ const ConsumptionMode = React.memo(({ totalParts, onTotalPartsChange, participan
 
   return (
     <View style={styles.section}>
-      <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-        Consumption Split
-      </Text>
       <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
         How many total parts? Assign how many each person consumed.
       </Text>
 
+      <SolidCard style={styles.groupCard}>
       <View style={styles.totalPartsRow}>
         <Text style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Total parts:</Text>
         <View style={styles.shareControls}>
@@ -676,9 +691,9 @@ const ConsumptionMode = React.memo(({ totalParts, onTotalPartsChange, participan
         </Text>
       )}
 
-      {participants.filter((p) => p.included).map((p, index) => (
+      {participants.filter((p) => p.included).map((p, index, rows) => (
         <Animated.View key={p.id} entering={FadeInDown.delay(index * 40).springify()}>
-          <View style={styles.incomeRow}>
+          <View style={[styles.incomeRow, index === rows.length - 1 && styles.lastRow]}>
             <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[index % AVATAR_COLORS.length] }]}>
               <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
             </View>
@@ -704,6 +719,7 @@ const ConsumptionMode = React.memo(({ totalParts, onTotalPartsChange, participan
           </View>
         </Animated.View>
       ))}
+      </SolidCard>
     </View>
   );
 });
@@ -879,9 +895,6 @@ const TimeBasedMode = React.memo(({
 
   return (
     <View style={styles.section}>
-      <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-        Time-Based Split
-      </Text>
       <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
         Set the full billing period once, then adjust each person's stayed days.
       </Text>
@@ -948,7 +961,7 @@ const TimeBasedMode = React.memo(({
         ))}
       </View>
 
-      <GlassView style={styles.timePeriodCard} intensity={14}>
+      <SolidCard style={styles.timePeriodCard}>
         <View style={styles.timePeriodHeader}>
           <View style={styles.timePeriodHeaderText}>
             <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
@@ -1131,10 +1144,10 @@ const TimeBasedMode = React.memo(({
           </View>
         )}
 
-      </GlassView>
+      </SolidCard>
 
       <Animated.View entering={FadeInDown.springify()}>
-        <GlassView style={styles.timeSummaryCard} intensity={15}>
+        <SolidCard style={styles.timeSummaryCard}>
           <View style={styles.timeSummaryHeader}>
             <View style={styles.timeSummaryHeaderText}>
               <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
@@ -1193,12 +1206,12 @@ const TimeBasedMode = React.memo(({
               ? `Missing days across the group: ${totalMissingDays} day${totalMissingDays === 1 ? '' : 's'}`
               : `Average stay: ${included.length > 0 ? averageStay.toFixed(1) : '0.0'} day${averageStay === 1 ? '' : 's'}`}
           </Text>
-        </GlassView>
+        </SolidCard>
       </Animated.View>
 
       {allZero && (
         <Animated.View entering={FadeIn.duration(300)}>
-          <GlassView style={styles.timeEmptyCard} intensity={10}>
+          <SolidCard style={styles.timeEmptyCard}>
             <View style={styles.timeEmptyContent}>
               <Icon source="calendar-clock" size={32} color={palette.muted} />
               <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center', paddingHorizontal: 16 }}>
@@ -1219,7 +1232,7 @@ const TimeBasedMode = React.memo(({
                 </TouchableOpacity>
               )}
             </View>
-          </GlassView>
+          </SolidCard>
         </Animated.View>
       )}
 
@@ -1287,7 +1300,7 @@ const TimeBasedMode = React.memo(({
 
         return (
           <Animated.View key={participant.id} entering={FadeInDown.delay(index * 50).springify()}>
-            <GlassView style={[
+            <SolidCard style={[
               styles.timeParticipantCard,
               {
                 borderLeftWidth: 3,
@@ -1297,7 +1310,7 @@ const TimeBasedMode = React.memo(({
                     ? avatarColor
                     : `${avatarColor}88`,
               },
-            ]} intensity={12}>
+            ]}>
               <View style={styles.timeCardInner}>
                 <View style={styles.timeRowTop}>
                   <View style={styles.timeRowNameGroup}>
@@ -1825,7 +1838,7 @@ const TimeBasedMode = React.memo(({
                   </View>
                 )}
               </View>
-            </GlassView>
+            </SolidCard>
           </Animated.View>
         );
       })}
@@ -2158,11 +2171,9 @@ const GamifiedMode_ = React.memo(({
 
   return (
     <View style={styles.section}>
-      <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-        Fun Mode 🎲
-      </Text>
 
-      <PotBanner amount={totalAmount} currency={currency} />
+      {/* Roulette shows the pot inside the wheel hub — no banner duplication */}
+      {mode !== 'roulette' && <PotBanner amount={totalAmount} currency={currency} />}
 
       <View style={styles.gameModeRow}>
         {MODES.map((m) => {
@@ -2227,6 +2238,7 @@ const GamifiedMode_ = React.memo(({
             onInnerSpinComplete={handleWeightedInnerComplete}
             disabled={wBusy}
             highlightedUserId={wSelectedUser}
+            remainingPct={wRemainingPct}
           />
 
           {/* Status message */}
@@ -2258,10 +2270,14 @@ const GamifiedMode_ = React.memo(({
 
           {/* Assignment list */}
           {wAssignments.length > 0 && (
-            <View style={styles.wAssignmentList}>
+            <SolidCard style={[styles.wAssignmentList, styles.groupCard]}>
               {wAssignments.map((a, i) => (
                 <Animated.View key={a.userId} entering={FadeInDown.delay(i * 60).springify()}>
-                  <View style={[styles.wAssignmentRow, { borderColor: palette.border }]}>
+                  <View style={[
+                    styles.wAssignmentRow,
+                    { borderColor: palette.border },
+                    i === wAssignments.length - 1 && styles.lastRow,
+                  ]}>
                     <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[i % AVATAR_COLORS.length] }]}>
                       <Text style={styles.miniInitials}>{getInitials(a.name)}</Text>
                     </View>
@@ -2275,13 +2291,13 @@ const GamifiedMode_ = React.memo(({
                   </View>
                 </Animated.View>
               ))}
-            </View>
+            </SolidCard>
           )}
 
           {/* Completion / reset */}
           {wPhase === 'complete' && (
             <Animated.View entering={ZoomIn.springify()}>
-              <GlassView style={styles.resultCard} intensity={25}>
+              <SolidCard style={styles.resultCard}>
                 <View style={styles.resultContent}>
                   <Text style={styles.resultEmoji}>✅</Text>
                   <Text variant="titleMedium" style={[styles.resultName, { color: theme.colors.onSurface }]}>
@@ -2302,7 +2318,7 @@ const GamifiedMode_ = React.memo(({
                     <Text style={{ color: theme.colors.primary, fontSize: 13, fontWeight: '700' }}>Spin Again</Text>
                   </TouchableOpacity>
                 </View>
-              </GlassView>
+              </SolidCard>
             </Animated.View>
           )}
         </View>
@@ -2348,11 +2364,16 @@ const GamifiedMode_ = React.memo(({
           </View>
 
           {/* Karma Breakdown */}
+          <SolidCard style={styles.groupCard}>
           {karmaData.map((item, index) => {
             const equalShare = totalAmount / Math.max(included.length, 1);
             return (
               <Animated.View key={item.id} entering={FadeInDown.delay(index * 60).springify()}>
-                <View style={[styles.karmaRow, { borderBottomColor: palette.border }]}>
+                <View style={[
+                  styles.karmaRow,
+                  { borderBottomColor: palette.border },
+                  index === karmaData.length - 1 && styles.lastRow,
+                ]}>
                   <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[index % AVATAR_COLORS.length] }]}>
                     <Text style={styles.miniInitials}>{getInitials(item.name)}</Text>
                   </View>
@@ -2393,6 +2414,7 @@ const GamifiedMode_ = React.memo(({
               </Animated.View>
             );
           })}
+          </SolidCard>
 
           {/* Equal split reference */}
           {included.length > 0 && (
@@ -2415,7 +2437,7 @@ const GamifiedMode_ = React.memo(({
             </View>
           ) : (
             <Animated.View entering={ZoomIn.springify()}>
-              <GlassView style={styles.resultCard} intensity={25}>
+              <SolidCard style={styles.resultCard}>
                 <View style={styles.resultContent}>
                   <Text style={styles.resultEmoji}>⚖️</Text>
                   <Text variant="titleMedium" style={[styles.resultName, { color: theme.colors.onSurface }]}>
@@ -2432,7 +2454,7 @@ const GamifiedMode_ = React.memo(({
                     <Text style={{ color: theme.colors.primary, fontSize: 13, fontWeight: '700' }}>Adjust &amp; Reapply</Text>
                   </TouchableOpacity>
                 </View>
-              </GlassView>
+              </SolidCard>
             </Animated.View>
           )}
         </View>
@@ -2445,6 +2467,9 @@ const GamifiedMode_ = React.memo(({
           participants={participants}
           onSpinComplete={onSpinComplete}
           disabled={isSpinning}
+          totalAmount={totalAmount}
+          currency={currency}
+          winnerId={!isSpinning ? loserId : null}
         />
       )}
 
@@ -2466,7 +2491,7 @@ const GamifiedMode_ = React.memo(({
         <View>
           <ConfettiBurst key={loserId} />
           <Animated.View entering={ZoomIn.springify().damping(12)}>
-            <GlassView style={[styles.resultCard, { borderWidth: 2, borderColor: '#F59E0B' }]} intensity={25}>
+            <SolidCard style={[styles.resultCard, { borderWidth: 2, borderColor: '#F59E0B' }]}>
               <View style={styles.resultContent}>
                 <Text variant="labelSmall" style={{ color: palette.muted, letterSpacing: 2, fontWeight: '700' }}>
                   THE WHEEL HAS SPOKEN
@@ -2482,7 +2507,7 @@ const GamifiedMode_ = React.memo(({
                   {included.length > 1 ? `${included.length - 1} lucky ${included.length - 1 === 1 ? 'friend eats' : 'friends eat'} free tonight 🎉` : 'Better luck next spin!'}
                 </Text>
               </View>
-            </GlassView>
+            </SolidCard>
           </Animated.View>
         </View>
       )}
@@ -2543,9 +2568,6 @@ const ItemTypeMode = React.memo(({ categories, onCategoriesChange, participants,
 
   return (
     <View style={styles.section}>
-      <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-        Category-Based Exclusions
-      </Text>
       <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
         Non-drinkers skip alcohol, vegetarians skip meat, etc. The remainder is split equally.
       </Text>
@@ -2576,7 +2598,7 @@ const ItemTypeMode = React.memo(({ categories, onCategoriesChange, participants,
 
       {categories.map((cat, ci) => (
         <Animated.View key={cat.id} entering={FadeInDown.delay(ci * 40).springify()}>
-          <GlassView style={styles.itemCard} intensity={15}>
+          <SolidCard style={styles.itemCard}>
             <View style={styles.catHeader}>
               <Text variant="titleSmall" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
                 {cat.label}
@@ -2619,7 +2641,7 @@ const ItemTypeMode = React.memo(({ categories, onCategoriesChange, participants,
                 );
               })}
             </View>
-          </GlassView>
+          </SolidCard>
         </Animated.View>
       ))}
 
@@ -2777,6 +2799,16 @@ const styles = StyleSheet.create({
   section: {
     paddingHorizontal: spacing.md,
     gap: spacing.sm,
+  },
+  // Solid inset group card that hosts stacked participant rows (income,
+  // consumption, karma, weighted assignments) — rows stopped floating naked
+  // on the canvas per the §9 DNA override.
+  groupCard: {
+    borderRadius: 16,
+    paddingHorizontal: 12,
+  },
+  lastRow: {
+    borderBottomWidth: 0,
   },
   sectionTitle: {
     fontWeight: '700',
@@ -3405,8 +3437,9 @@ const styles = StyleSheet.create({
   },
   spinContainer: {
     alignItems: 'center',
-    marginTop: 16,
-    marginBottom: 100,
+    marginTop: 14,
+    // Footer docks in normal flow now — no scroll clearance to reserve.
+    marginBottom: 10,
   },
   spinContainerInline: {
     alignItems: 'center',

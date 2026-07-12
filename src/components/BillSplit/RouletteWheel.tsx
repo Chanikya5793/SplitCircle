@@ -1,4 +1,5 @@
 import { useTheme } from '@/context/ThemeContext';
+import { formatCurrency } from '@/utils/currency';
 import { heavyHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -18,8 +19,8 @@ import type { Participant } from './types';
 // ── Constants ────────────────────────────────────────────────────────────────
 const WHEEL_SIZE = 280;
 const CENTER = WHEEL_SIZE / 2;
-const RADIUS = CENTER - 8;
-const INNER_RADIUS = 40;
+const RADIUS = CENTER - 6;
+const INNER_RADIUS = 52;
 
 /** Crypto-quality random float in [0, 1) — avoids Math.random() bias patterns */
 function cryptoRandom(): number {
@@ -34,19 +35,21 @@ function cryptoRandom(): number {
   return arr[0] / 0x100000000;
 }
 
+// Harmonised, softened hues — distinct enough to tell people apart, calm
+// enough to sit inside the app instead of a casino carpet.
 const SEGMENT_COLORS = [
-  '#6366F1', // indigo
-  '#EC4899', // pink
-  '#14B8A6', // teal
-  '#F59E0B', // amber
-  '#EF4444', // red
-  '#8B5CF6', // violet
-  '#06B6D4', // cyan
-  '#10B981', // emerald
-  '#F97316', // orange
-  '#3B82F6', // blue
-  '#A855F7', // purple
-  '#84CC16', // lime
+  '#6D7CFF', // periwinkle
+  '#3EC1B0', // teal
+  '#F2789F', // rose
+  '#E8B94E', // gold
+  '#7FBF6C', // green
+  '#A78BFA', // violet
+  '#58A6E8', // sky
+  '#E8926B', // coral
+  '#5BC4DC', // cyan
+  '#D98BC5', // orchid
+  '#95B84E', // olive
+  '#F27E6B', // salmon
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -89,11 +92,16 @@ interface RouletteWheelProps {
   participants: Participant[];
   onSpinComplete: (winnerId: string) => void;
   disabled?: boolean;
+  /** The pot shown in the stationary hub — the stake belongs in the middle. */
+  totalAmount: number;
+  currency: string;
+  /** When settled, the winning segment stays lit and the rest recede. */
+  winnerId?: string | null;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
-  ({ participants, onSpinComplete, disabled }, ref) => {
+  ({ participants, onSpinComplete, disabled, totalAmount, currency, winnerId }, ref) => {
     const { theme } = useTheme();
     const included = useMemo(() => participants.filter((p) => p.included), [participants]);
     const segmentCount = included.length;
@@ -101,7 +109,6 @@ const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
     // Rotation state – cumulative degrees (can exceed 360)
     const rotation = useSharedValue(0);
     const isAnimating = useRef(false);
-    const lastTickAngle = useRef(0);
 
     const handleSpinDone = useCallback(
       (winnerId: string) => {
@@ -153,7 +160,6 @@ const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
           const fullSpins = (6 + Math.floor(cryptoRandom() * 7)) * 360;
           const finalTarget = fullSpins + ((landingAngle % 360) + 360) % 360;
 
-          lastTickAngle.current = 0;
           const winnerId = included[winnerIndex].id;
 
           // Variable duration (3.5-5.5s) so timing itself feels random
@@ -186,6 +192,9 @@ const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
 
     // ── Build SVG segments ──────────────────────────────────────────────────
     const segmentAngle = segmentCount > 0 ? 360 / segmentCount : 360;
+    // Separators are strokes in the canvas colour, so segments read as clean
+    // petals instead of a hard-edged pie chart.
+    const separatorColor = theme.dark ? 'rgba(13,15,20,1)' : 'rgba(250,250,252,1)';
 
     const segments = useMemo(() => {
       if (segmentCount < 2) return null;
@@ -194,32 +203,39 @@ const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
         const endAngle = startAngle + segmentAngle;
         const midAngle = startAngle + segmentAngle / 2;
         const color = SEGMENT_COLORS[i % SEGMENT_COLORS.length];
+        const isWinner = winnerId === p.id;
+        const dimmed = Boolean(winnerId) && !isWinner;
 
         // Label position
-        const labelR = (RADIUS + INNER_RADIUS) / 2 + 8;
+        const labelR = (RADIUS + INNER_RADIUS) / 2 + 6;
         const labelPos = polarToCartesian(CENTER, CENTER, labelR, midAngle);
 
         const path = describeArc(CENTER, CENTER, RADIUS, INNER_RADIUS, startAngle, endAngle);
 
         return (
-          <G key={p.id}>
-            <Path d={path} fill={color} stroke="rgba(0,0,0,0.3)" strokeWidth={1.5} />
+          <G key={p.id} opacity={dimmed ? 0.28 : 1}>
+            <Path
+              d={path}
+              fill={color}
+              stroke={isWinner ? '#FFFFFF' : separatorColor}
+              strokeWidth={isWinner ? 3 : 2.5}
+            />
             <SvgText
               x={labelPos.x}
               y={labelPos.y}
               fill="#FFF"
-              fontSize={segmentCount > 6 ? 10 : 13}
+              fontSize={segmentCount > 6 ? 11 : 13}
               fontWeight="700"
               textAnchor="middle"
               alignmentBaseline="central"
               transform={`rotate(${midAngle}, ${labelPos.x}, ${labelPos.y})`}
             >
-              {segmentCount > 8 ? getInitials(p.name) : p.name.length > 8 ? p.name.slice(0, 7) + '…' : p.name}
+              {segmentCount > 8 ? getInitials(p.name) : p.name.length > 8 ? p.name.slice(0, 7) + '…' : p.name.split(' ')[0]}
             </SvgText>
           </G>
         );
       });
-    }, [included, segmentCount, segmentAngle]);
+    }, [included, segmentCount, segmentAngle, winnerId, separatorColor]);
 
     if (segmentCount < 2) {
       return (
@@ -231,61 +247,54 @@ const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
       );
     }
 
+    const hubBg = theme.dark ? '#1C1F26' : '#FFFFFF';
+    const hubBorder = theme.dark ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.10)';
+
     return (
       <View style={styles.container}>
-        {/* Pointer triangle at top */}
+        {/* Pointer at top — accent, rounded, quietly confident */}
         <View style={styles.pointerContainer}>
-          <Svg width={30} height={22} viewBox="0 0 30 22">
-            <Path d="M15 22 L0 0 L30 0 Z" fill={theme.colors.primary} stroke="#FFF" strokeWidth={1.5} />
+          <Svg width={26} height={20} viewBox="0 0 26 20">
+            <Path
+              d="M13 20 L2.5 3 Q1.5 0.5 4.5 0.5 L21.5 0.5 Q24.5 0.5 23.5 3 Z"
+              fill={theme.colors.primary}
+            />
           </Svg>
         </View>
 
-        {/* Wheel area – relative container for wheel + stationary center */}
+        {/* Wheel area – relative container for wheel + stationary hub */}
         <View style={styles.wheelArea}>
-          {/* Spinning wheel + rim dots (both rotate together) */}
           <Animated.View style={[styles.wheelWrapper, wheelStyle]}>
             <Svg width={WHEEL_SIZE} height={WHEEL_SIZE} viewBox={`0 0 ${WHEEL_SIZE} ${WHEEL_SIZE}`}>
-              {/* Outer ring shadow */}
+              {segments}
+              {/* Single hairline outer ring */}
               <Circle
                 cx={CENTER}
                 cy={CENTER}
-                r={RADIUS + 3}
+                r={RADIUS}
                 fill="none"
-                stroke="rgba(255,255,255,0.08)"
-                strokeWidth={6}
+                stroke={theme.dark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)'}
+                strokeWidth={1}
               />
-              {/* Segments */}
-              {segments}
-              {/* Center hub background (spins with wheel) */}
-              <Circle cx={CENTER} cy={CENTER} r={INNER_RADIUS} fill="#1A1A2E" stroke="rgba(255,255,255,0.15)" strokeWidth={2} />
-              <Circle cx={CENTER} cy={CENTER} r={INNER_RADIUS - 6} fill="#0F0F23" />
             </Svg>
-
-            {/* Decorative dots around the rim */}
-            <View style={[styles.dotRing, { opacity: disabled ? 0.3 : 0.6 }]}>
-              {Array.from({ length: 24 }).map((_, i) => {
-                const angle = (i * 360) / 24;
-                const pos = polarToCartesian(WHEEL_SIZE / 2, WHEEL_SIZE / 2, RADIUS + 8, angle);
-                return (
-                  <View
-                    key={i}
-                    style={[
-                      styles.rimDot,
-                      {
-                        left: pos.x - 2.5,
-                        top: pos.y - 2.5,
-                        backgroundColor: i % 2 === 0 ? '#FFD700' : '#FF6B6B',
-                      },
-                    ]}
-                  />
-                );
-              })}
-            </View>
           </Animated.View>
 
-          {/* Center emoji — stays stationary while wheel spins */}
-          <View style={styles.centerEmoji} pointerEvents="none">
-            <Text style={styles.centerEmojiText}>🎰</Text>
+          {/* Stationary hub — the stake sits in the middle of the wheel */}
+          <View
+            style={[
+              styles.hub,
+              { backgroundColor: hubBg, borderColor: hubBorder },
+            ]}
+            pointerEvents="none"
+          >
+            <Text style={[styles.hubLabel, { color: theme.colors.onSurfaceVariant }]}>POT</Text>
+            <Text
+              style={[styles.hubAmount, { color: theme.colors.onSurface }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+            >
+              {formatCurrency(totalAmount, currency)}
+            </Text>
           </View>
         </View>
       </View>
@@ -305,11 +314,11 @@ const styles = StyleSheet.create({
   },
   pointerContainer: {
     zIndex: 10,
-    marginBottom: -6,
+    marginBottom: -8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 4,
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
     elevation: 5,
   },
   wheelArea: {
@@ -322,27 +331,28 @@ const styles = StyleSheet.create({
     width: WHEEL_SIZE,
     height: WHEEL_SIZE,
   },
-  dotRing: {
+  hub: {
     position: 'absolute',
-    width: WHEEL_SIZE,
-    height: WHEEL_SIZE,
-  },
-  rimDot: {
-    position: 'absolute',
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-  },
-  centerEmoji: {
-    position: 'absolute',
-    width: INNER_RADIUS * 2,
-    height: INNER_RADIUS * 2,
-    borderRadius: INNER_RADIUS,
+    width: (INNER_RADIUS - 4) * 2,
+    height: (INNER_RADIUS - 4) * 2,
+    borderRadius: INNER_RADIUS - 4,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 5,
+    paddingHorizontal: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 4,
   },
-  centerEmojiText: {
-    fontSize: 22,
+  hubLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+  },
+  hubAmount: {
+    fontSize: 16,
+    fontWeight: '800',
   },
 });

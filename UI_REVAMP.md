@@ -246,3 +246,26 @@ everything presented from Add Expense ▸ Split options (BillSplitScreen + BillS
 
 Reference patterns: Splitwise split editor (docked total bar), iOS Settings
 inset-grouped lists, iOS 26 sheet chrome.
+
+**2026-07-12 v2 addendum — mode-level DNA (after "modes were missed" verdict):**
+6. **The DNA applies INSIDE every mode.** All six advanced-mode editors share one
+   `SolidCard` primitive (opaque card + hairline border per §9.1). Participant row
+   lists (income, consumption, karma, weighted assignments) live in inset-grouped
+   solid cards with hairline dividers — never floating naked on the canvas.
+7. **The rail is the title.** Modes render NO section heading ("Receipt Items",
+   "Fun Mode 🎲", …) — the selected rail pill already names the surface. First line
+   of a mode is its hint or its content.
+8. **Selection never moves the ground.** Horizontal selectors (MethodRail) scroll
+   ONLY when the selected item is clipped, and only minimally (28px edge peek).
+   Tapping a visible pill must not shift the row.
+9. **Header carries identity.** The sheet header is Cancel / (title + "Paid by X ▾"
+   subtitle) / Done with a hairline bottom border. No separate payer card row; the
+   payer picker is an overlay under the header.
+10. **Suggestions must be earned.** The suggestions row renders only from real
+    on-device history (`splitHistoryService`, per-group, recency-weighted). No
+    hardcoded placeholder chips, ever. Zero history → zero pixels.
+11. **Game hardware is modern iOS, not casino carpet.** Wheels: harmonised muted
+    palette, canvas-coloured separator strokes (petal look), hairline outer ring,
+    accent rounded pointer, stationary SOLID hub that shows live data (pot amount /
+    % left). No rim dots, no emoji hubs, no gold-on-black. Winner state dims losing
+    segments to 28% and strokes the winner white.

@@ -1,7 +1,7 @@
-import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useTheme } from '@/context/ThemeContext';
 import type { ExpenseSplitMetadata } from '@/models';
+import { getSuggestions, recordSplit, type SplitSuggestion } from '@/services/splitHistoryService';
 import { spacing } from '@/theme';
 import { heavyHaptic, lightHaptic, mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -38,7 +38,6 @@ import type {
     ItemCategory,
     Participant,
     ReceiptItem,
-    SmartSuggestion,
     SplitMethod,
     TimeSplitVariant,
     ValidationResult,
@@ -51,6 +50,8 @@ interface BillSplitScreenProps {
   initialParticipants?: Participant[];
   initialPayer?: string;
   initialSplitMetadata?: ExpenseSplitMetadata;
+  /** Stable key (group id) that scopes on-device split history & suggestions. */
+  contextKey?: string;
   onDone?: (result: {
     paidBy: string;
     method: SplitMethod;
@@ -86,6 +87,7 @@ export const BillSplitScreen = ({
   initialParticipants,
   initialPayer,
   initialSplitMetadata,
+  contextKey,
   onDone,
   onCancel,
 }: BillSplitScreenProps) => {
@@ -399,49 +401,67 @@ export const BillSplitScreen = ({
     }
   }, []);
 
-  // ── Smart Suggestions ─────────────────────────────────────────────────────
-  const suggestions: SmartSuggestion[] = useMemo(() => {
-    const secondPerson = participants.length >= 2 ? participants[1].name : 'someone';
-    return [
-      { id: 'last_split', label: 'Use last split: 60/40', icon: 'history' },
-      { id: 'drinks_person', label: `Assign drinks to ${secondPerson}`, icon: 'glass-cocktail' },
-      { id: 'by_income', label: 'Split by income', icon: 'cash-multiple' },
-      { id: 'roulette', label: 'Credit Card Roulette', icon: 'poker-chip' },
-    ];
-  }, [participants]);
+  // ── Smart Suggestions — learned from this group's real split history ──────
+  // No history yet → no chips, no reserved space. Every confirmed split
+  // sharpens what shows up here next time.
+  const [suggestions, setSuggestions] = useState<SplitSuggestion[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getSuggestions(contextKey ?? '', initialPayer ?? '').then((result) => {
+      if (!cancelled) setSuggestions(result);
+    });
+    return () => { cancelled = true; };
+  }, [contextKey, initialPayer]);
+
+  const applyMethod = useCallback((method: SplitMethod) => {
+    if (isBasicMethod(method)) {
+      setActiveBasicMethod(method);
+      setActiveAdvancedMethod(null);
+    } else if (isAdvancedMethod(method)) {
+      setActiveAdvancedMethod(method);
+    }
+  }, []);
 
   const handleSuggestion = useCallback((id: string) => {
     mediumHaptic();
-    switch (id) {
-      case 'last_split':
-        setActiveAdvancedMethod(null);
-        setActiveBasicMethod('percentage');
-        if (participants.length >= 2) {
-          setParticipants((prev) => prev.map((p, i) => ({
-            ...p,
-            percentage: i === 0 ? 60 : i === 1 ? 40 : 0,
-            included: i < 2,
-          })));
-        }
-        break;
-      case 'drinks_person':
-        setActiveAdvancedMethod('itemType');
-        setItemCategories([{
-          id: 'cat_drinks',
-          label: 'Alcohol',
-          amount: 36,
-          excludedParticipants: participants.filter((_, i) => i !== 1).map((p) => p.id),
-        }]);
-        break;
-      case 'by_income':
-        setActiveAdvancedMethod('income');
-        break;
-      case 'roulette':
-        setActiveAdvancedMethod('gamified');
-        setGamifiedMode('roulette');
-        break;
+    const suggestion = suggestions.find((s) => s.id === id);
+    if (!suggestion) return;
+
+    if (suggestion.id === 'usual_payer' && suggestion.payerId) {
+      if (participants.some((p) => p.id === suggestion.payerId)) setPaidBy(suggestion.payerId);
+      return;
     }
-  }, [participants]);
+
+    if (suggestion.id === 'usual_method' && suggestion.method) {
+      applyMethod(suggestion.method);
+      return;
+    }
+
+    const record = suggestion.record;
+    if (!record) return;
+
+    // Repeat last split: restore payer, method, included set, and — where a
+    // ratio meaningfully transfers across bills — each person's proportion.
+    if (participants.some((p) => p.id === record.payerId)) setPaidBy(record.payerId);
+    applyMethod(record.method);
+    const includedSet = new Set(record.includedIds);
+    const anyOverlap = participants.some((p) => includedSet.has(p.id));
+    if (anyOverlap) {
+      setParticipants((prev) => prev.map((p) => {
+        const ratio = record.ratios?.[p.id];
+        return {
+          ...p,
+          included: includedSet.has(p.id),
+          ...(record.method === 'percentage' && ratio !== undefined
+            ? { percentage: Math.round(ratio * 1000) / 10 }
+            : {}),
+          ...(record.method === 'income' && ratio !== undefined
+            ? { incomeWeight: Math.round(ratio * 100) }
+            : {}),
+        };
+      }));
+    }
+  }, [applyMethod, participants, suggestions]);
 
   const timeBasedAutofillDoneRef = useRef(false);
 
@@ -599,6 +619,28 @@ export const BillSplitScreen = ({
     };
 
     successHaptic();
+
+    // Teach the suggestion engine (device-local, fire-and-forget).
+    if (contextKey) {
+      const includedForRecord = displayParticipants.filter((p) => p.included);
+      const ratios: Record<string, number> = {};
+      if (effectiveTotalAmount > 0) {
+        includedForRecord.forEach((p) => {
+          ratios[p.id] = Math.round((p.computedAmount / effectiveTotalAmount) * 1000) / 1000;
+        });
+      }
+      void recordSplit(contextKey, {
+        at: Date.now(),
+        method: currentMethod,
+        gamifiedMode: currentMethod === 'gamified' ? gamifiedMode : undefined,
+        payerId: paidBy,
+        payerName: participants.find((p) => p.id === paidBy)?.name ?? '',
+        includedIds: includedForRecord.map((p) => p.id),
+        totalAmount: effectiveTotalAmount,
+        ratios: effectiveTotalAmount > 0 ? ratios : undefined,
+      });
+    }
+
     onDone?.({
       paidBy,
       method: currentMethod,
@@ -609,6 +651,8 @@ export const BillSplitScreen = ({
       resolvedTotalAmount: effectiveTotalAmount,
     });
   }, [
+    contextKey,
+    participants,
     canDone,
     currentMethod,
     displayParticipants,
@@ -637,18 +681,35 @@ export const BillSplitScreen = ({
     <PaperProvider theme={theme}>
       <LiquidBackground>
         <View style={[styles.container, { backgroundColor: theme.dark ? 'rgba(13,15,20,0.94)' : 'rgba(250,250,252,0.96)' }]}>
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={onCancel} activeOpacity={0.7}>
+          {/* Header — title + payer share one block so no separate payer row
+              burns vertical space below. Tapping the subtitle opens the payer
+              picker as an overlay. */}
+          <View style={[styles.header, { borderBottomColor: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)' }]}>
+            <TouchableOpacity onPress={onCancel} activeOpacity={0.7} style={styles.headerSide}>
               <Text variant="labelLarge" style={{ color: theme.colors.primary }}>Cancel</Text>
             </TouchableOpacity>
-            <Text variant="titleMedium" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>
-              Split options
-            </Text>
+            <Pressable
+              style={({ pressed }) => [styles.headerCenter, pressed && { opacity: 0.6 }]}
+              onPress={() => { selectionHaptic(); setShowPayerMenu((v) => !v); }}
+              accessibilityRole="button"
+              accessibilityLabel={`Paid by ${payerName}. Tap to change payer`}
+            >
+              <Text variant="titleMedium" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>
+                Split options
+              </Text>
+              <View style={styles.headerPayerRow}>
+                <Text variant="labelSmall" style={{ color: theme.colors.muted }}>
+                  Paid by{' '}
+                  <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '700' }}>{payerName}</Text>
+                </Text>
+                <Icon source={showPayerMenu ? 'chevron-up' : 'chevron-down'} size={13} color={theme.colors.primary} />
+              </View>
+            </Pressable>
             <TouchableOpacity
               onPress={handleDone}
               activeOpacity={0.7}
               disabled={!canDone}
+              style={[styles.headerSide, { alignItems: 'flex-end' }]}
             >
               <Text
                 variant="labelLarge"
@@ -662,6 +723,47 @@ export const BillSplitScreen = ({
             </TouchableOpacity>
           </View>
 
+          {/* Payer picker — overlay under the header, solid surface */}
+          {showPayerMenu && (
+            <Animated.View entering={FadeInDown.duration(150)} exiting={FadeOut.duration(120)} style={styles.payerOverlay}>
+              <View style={[
+                styles.payerDropdownInner,
+                {
+                  backgroundColor: theme.dark ? 'rgba(28,31,38,0.99)' : 'rgba(255,255,255,0.99)',
+                  borderColor: theme.dark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)',
+                },
+              ]}>
+                {participants.map((p) => (
+                  <Pressable
+                    key={p.id}
+                    onPress={() => { selectionHaptic(); setPaidBy(p.id); setShowPayerMenu(false); }}
+                    style={({ pressed }) => [
+                      styles.payerDropdownItem,
+                      p.id === paidBy && { backgroundColor: `${theme.colors.primary}15` },
+                      pressed && { opacity: 0.6 },
+                    ]}
+                  >
+                    <View style={styles.payerDropdownItemLeft}>
+                      <Icon source={p.id === paidBy ? 'check-circle' : 'account'} size={20} color={p.id === paidBy ? theme.colors.primary : theme.colors.onSurfaceVariant} />
+                      <Text variant="bodyMedium" style={{ color: p.id === paidBy ? theme.colors.primary : theme.colors.onSurface, fontWeight: p.id === paidBy ? '700' : '400' }}>{p.name}</Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
+            </Animated.View>
+          )}
+
+          {/* Learned suggestions — only when this group has real history.
+              Lives OUTSIDE the ScrollView: the row loads async, and inserting
+              a sibling above Reanimated entering-animated scroll content
+              leaves that content un-shifted (overlap). Out here, insertion
+              just resizes the flex ScrollView — deterministic. */}
+          {suggestions.length > 0 && (
+            <View style={styles.suggestionsRow}>
+              <SmartSuggestionsBar suggestions={suggestions} onSelect={handleSuggestion} />
+            </View>
+          )}
+
           <ScrollView
             style={styles.scrollView}
             contentContainerStyle={styles.scrollContent}
@@ -669,64 +771,12 @@ export const BillSplitScreen = ({
             keyboardShouldPersistTaps="handled"
             automaticallyAdjustKeyboardInsets
           >
-            {/* Payer Section */}
-            <Animated.View entering={FadeInDown.delay(60).springify()}>
-              <Pressable
-                onPress={() => { selectionHaptic(); setShowPayerMenu((v) => !v); }}
-                style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
-              >
-                <GlassView style={[styles.payerCard, { backgroundColor: theme.dark ? 'rgba(28,31,38,0.96)' : 'rgba(255,255,255,0.97)' }]} intensity={60}>
-                  <View style={styles.payerContent}>
-                    <View style={styles.payerLeft}>
-                      <Icon source="account-cash" size={20} color={theme.colors.primary} />
-                      <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>
-                        Paid by{' '}
-                        <Text style={{ fontWeight: '700', color: theme.colors.primary }}>{payerName}</Text>
-                      </Text>
-                    </View>
-                    <View style={styles.changeIndicator}>
-                      <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '600' }}>Change</Text>
-                      <Icon source={showPayerMenu ? 'chevron-up' : 'chevron-down'} size={16} color={theme.colors.primary} />
-                    </View>
-                  </View>
-                </GlassView>
-              </Pressable>
-              {showPayerMenu && (
-                <Animated.View entering={FadeInDown.duration(150)} style={styles.payerDropdown}>
-                  <GlassView style={styles.payerDropdownInner} intensity={40}>
-                    {participants.map((p) => (
-                      <Pressable
-                        key={p.id}
-                        onPress={() => { selectionHaptic(); setPaidBy(p.id); setShowPayerMenu(false); }}
-                        style={({ pressed }) => [
-                          styles.payerDropdownItem,
-                          p.id === paidBy && { backgroundColor: `${theme.colors.primary}15` },
-                          pressed && { opacity: 0.6 },
-                        ]}
-                      >
-                        <View style={styles.payerDropdownItemLeft}>
-                          <Icon source={p.id === paidBy ? 'check-circle' : 'account'} size={20} color={p.id === paidBy ? theme.colors.primary : theme.colors.onSurfaceVariant} />
-                          <Text variant="bodyMedium" style={{ color: p.id === paidBy ? theme.colors.primary : theme.colors.onSurface, fontWeight: p.id === paidBy ? '700' : '400' }}>{p.name}</Text>
-                        </View>
-                      </Pressable>
-                    ))}
-                  </GlassView>
-                </Animated.View>
-              )}
-            </Animated.View>
-
-            {/* Smart Suggestions */}
-            <Animated.View entering={FadeInDown.delay(120).springify()}>
-              <SmartSuggestionsBar suggestions={suggestions} onSelect={handleSuggestion} />
-            </Animated.View>
-
             {/* Method rail — all eleven methods, one line, always visible */}
             <MethodRail
               activeMethod={currentMethod}
               onSelectBasic={handleBasicMethodSelect}
               onSelectAdvanced={handleAdvancedMethodSelect}
             />
-
 
 
             {/* Participant List (shown for basic methods only) */}
@@ -831,11 +881,36 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     // Presented as a pageSheet — the card already sits below the status bar,
     // so the old 56px of top padding was pure dead space.
-    paddingTop: 14,
-    paddingBottom: spacing.sm,
+    paddingTop: 10,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  headerSide: {
+    minWidth: 56,
+  },
+  headerCenter: {
+    alignItems: 'center',
+    gap: 1,
+  },
+  headerPayerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
   },
   headerTitle: {
     fontWeight: '700',
+  },
+  payerOverlay: {
+    position: 'absolute',
+    top: 64,
+    left: spacing.md,
+    right: spacing.md,
+    zIndex: 50,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 12,
   },
   scrollView: {
     flex: 1,
@@ -845,34 +920,14 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingBottom: spacing.lg,
   },
-  payerCard: {
-    borderRadius: 16,
-    marginHorizontal: spacing.md,
-  },
-  payerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-  },
-  payerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  changeIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  payerDropdown: {
-    marginHorizontal: spacing.md,
-    marginTop: 4,
+  suggestionsRow: {
+    minHeight: 34,
+    marginBottom: spacing.sm,
   },
   payerDropdownInner: {
-    borderRadius: 12,
+    borderRadius: 14,
     overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
   },
   payerDropdownItem: {
     flexDirection: 'row',
@@ -885,39 +940,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-  },
-  advancedBreadcrumb: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  breadcrumbBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  advancedToggleSection: {
-    marginTop: spacing.sm,
-    gap: spacing.md,
-  },
-  advancedToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  advancedToggleLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  advancedBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
   },
   footerWrapper: {
     // Docked in normal flow (the ScrollView flexes above it) — nothing can

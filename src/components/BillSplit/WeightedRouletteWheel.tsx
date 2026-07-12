@@ -40,15 +40,18 @@ function cryptoRandom(): number {
   return arr[0] / 0x100000000;
 }
 
+// Same harmonised palette as the main roulette wheel — people get colour.
 const OUTER_COLORS = [
-  '#6366F1', '#EC4899', '#14B8A6', '#F59E0B', '#EF4444',
-  '#8B5CF6', '#06B6D4', '#10B981', '#F97316', '#3B82F6',
-  '#A855F7', '#84CC16',
+  '#6D7CFF', '#3EC1B0', '#F2789F', '#E8B94E', '#7FBF6C',
+  '#A78BFA', '#58A6E8', '#E8926B', '#5BC4DC', '#D98BC5',
+  '#95B84E', '#F27E6B',
 ];
 
+// Percentages ring stays quiet — alternating slate tones so the people ring
+// carries the colour and the two rings read as different instruments.
 const INNER_COLORS = [
-  '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
-  '#F7DC6F', '#BB8FCE', '#85C1E9',
+  '#5C6B8A', '#7C89A8', '#4A5570', '#8E9BB8',
+  '#535E7E', '#6B7896', '#424C66', '#7E8CAD',
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -121,12 +124,15 @@ interface Props {
   onInnerSpinComplete: (percentage: number) => void;
   disabled?: boolean;
   highlightedUserId?: string | null;
+  /** Unallocated share shown in the stationary hub. */
+  remainingPct?: number;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
-  ({ participants, percentages, onOuterSpinComplete, onInnerSpinComplete, disabled, highlightedUserId }, ref) => {
+  ({ participants, percentages, onOuterSpinComplete, onInnerSpinComplete, disabled, highlightedUserId, remainingPct }, ref) => {
     const { theme } = useTheme();
+    const separatorColor = theme.dark ? 'rgba(13,15,20,1)' : 'rgba(250,250,252,1)';
     const included = useMemo(() => participants.filter((p) => p.included), [participants]);
     const outerCount = included.length;
     const innerCount = percentages.length;
@@ -245,11 +251,16 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
 
         return (
           <G key={p.id}>
-            <Path d={path} fill={isHl ? '#FFD700' : color} stroke="rgba(0,0,0,0.35)" strokeWidth={1.5} />
+            <Path
+              d={path}
+              fill={isHl ? theme.colors.primary : color}
+              stroke={isHl ? '#FFFFFF' : separatorColor}
+              strokeWidth={isHl ? 3 : 2.5}
+            />
             <SvgText
               x={labelPos.x}
               y={labelPos.y}
-              fill={isHl ? '#000' : '#FFF'}
+              fill="#FFF"
               fontSize={outerCount > 6 ? 9 : 12}
               fontWeight="700"
               textAnchor="middle"
@@ -261,7 +272,7 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
           </G>
         );
       });
-    }, [included, outerCount, highlightedUserId]);
+    }, [included, outerCount, highlightedUserId, separatorColor, theme.colors.primary]);
 
     // ── Build inner ring segments (percentages) ─────────────────────────
     const innerSegments = useMemo(() => {
@@ -278,7 +289,7 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
 
         return (
           <G key={`pct-${i}`}>
-            <Path d={path} fill={color} stroke="rgba(0,0,0,0.25)" strokeWidth={1} />
+            <Path d={path} fill={color} stroke={separatorColor} strokeWidth={2} />
             <SvgText
               x={labelPos.x}
               y={labelPos.y}
@@ -294,7 +305,7 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
           </G>
         );
       });
-    }, [percentages, innerCount]);
+    }, [percentages, innerCount, separatorColor]);
 
     if (outerCount < 2) {
       return (
@@ -309,12 +320,18 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
       );
     }
 
+    const hubBg = theme.dark ? '#1C1F26' : '#FFFFFF';
+    const hubBorder = theme.dark ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.10)';
+
     return (
       <View style={s.container}>
-        {/* Pointer triangle at top */}
+        {/* Pointer at top — accent, rounded */}
         <View style={s.pointer}>
-          <Svg width={30} height={22} viewBox="0 0 30 22">
-            <Path d="M15 22 L0 0 L30 0 Z" fill={theme.colors.primary} stroke="#FFF" strokeWidth={1.5} />
+          <Svg width={26} height={20} viewBox="0 0 26 20">
+            <Path
+              d="M13 20 L2.5 3 Q1.5 0.5 4.5 0.5 L21.5 0.5 Q24.5 0.5 23.5 3 Z"
+              fill={theme.colors.primary}
+            />
           </Svg>
         </View>
 
@@ -323,58 +340,31 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
           {/* Outer ring (spins independently) */}
           <Animated.View style={[s.ringLayer, outerStyle]}>
             <Svg width={WHEEL_SIZE} height={WHEEL_SIZE} viewBox={`0 0 ${WHEEL_SIZE} ${WHEEL_SIZE}`}>
-              <Circle cx={CX} cy={CY} r={OUTER_R + 3} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={6} />
               {outerSegments}
+              <Circle
+                cx={CX}
+                cy={CY}
+                r={OUTER_R}
+                fill="none"
+                stroke={theme.dark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)'}
+                strokeWidth={1}
+              />
             </Svg>
-            {/* Rim dots */}
-            <View style={[s.dotRing, { opacity: disabled ? 0.3 : 0.6 }]}>
-              {Array.from({ length: 20 }).map((_, i) => {
-                const angle = (i * 360) / 20;
-                const pos = polarToCartesian(WHEEL_SIZE / 2, WHEEL_SIZE / 2, OUTER_R + 8, angle);
-                return (
-                  <View
-                    key={i}
-                    style={[
-                      s.rimDot,
-                      {
-                        left: pos.x - 2,
-                        top: pos.y - 2,
-                        backgroundColor: i % 2 === 0 ? '#FFD700' : '#FF6B6B',
-                      },
-                    ]}
-                  />
-                );
-              })}
-            </View>
           </Animated.View>
 
           {/* Inner ring (spins independently) */}
           <Animated.View style={[s.ringLayer, innerStyle]}>
             <Svg width={WHEEL_SIZE} height={WHEEL_SIZE} viewBox={`0 0 ${WHEEL_SIZE} ${WHEEL_SIZE}`}>
               {innerSegments}
-              {/* Center hub */}
-              <Circle cx={CX} cy={CY} r={HUB_R} fill="#1A1A2E" stroke="rgba(255,255,255,0.2)" strokeWidth={2} />
-              <Circle cx={CX} cy={CY} r={HUB_R - 5} fill="#0F0F23" />
             </Svg>
           </Animated.View>
 
-          {/* Ring separator glow (stationary) */}
-          <View style={s.separatorRing} pointerEvents="none">
-            <Svg width={WHEEL_SIZE} height={WHEEL_SIZE} viewBox={`0 0 ${WHEEL_SIZE} ${WHEEL_SIZE}`}>
-              <Circle
-                cx={CX}
-                cy={CY}
-                r={(OUTER_INNER_R + INNER_R) / 2}
-                fill="none"
-                stroke="rgba(255,255,255,0.15)"
-                strokeWidth={1.5}
-              />
-            </Svg>
-          </View>
-
-          {/* Center emoji — stationary */}
-          <View style={s.centerEmoji} pointerEvents="none">
-            <Text style={s.emojiText}>⚖️</Text>
+          {/* Stationary hub — shows what's still up for grabs */}
+          <View style={[s.hub, { backgroundColor: hubBg, borderColor: hubBorder }]} pointerEvents="none">
+            <Text style={[s.hubLabel, { color: theme.colors.onSurfaceVariant }]}>LEFT</Text>
+            <Text style={[s.hubValue, { color: theme.colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit>
+              {Math.max(0, remainingPct ?? 100)}%
+            </Text>
           </View>
         </View>
 
@@ -419,33 +409,30 @@ const s = StyleSheet.create({
     width: WHEEL_SIZE,
     height: WHEEL_SIZE,
   },
-  separatorRing: {
+  hub: {
     position: 'absolute',
-    width: WHEEL_SIZE,
-    height: WHEEL_SIZE,
-  },
-  dotRing: {
-    position: 'absolute',
-    width: WHEEL_SIZE,
-    height: WHEEL_SIZE,
-  },
-  rimDot: {
-    position: 'absolute',
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-  },
-  centerEmoji: {
-    position: 'absolute',
-    width: HUB_R * 2,
-    height: HUB_R * 2,
-    borderRadius: HUB_R,
+    width: (HUB_R - 2) * 2,
+    height: (HUB_R - 2) * 2,
+    borderRadius: HUB_R - 2,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 6,
     zIndex: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 4,
   },
-  emojiText: {
-    fontSize: 20,
+  hubLabel: {
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+  },
+  hubValue: {
+    fontSize: 17,
+    fontWeight: '800',
   },
   ringLabels: {
     flexDirection: 'row',

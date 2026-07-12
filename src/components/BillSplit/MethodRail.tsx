@@ -8,7 +8,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import { mediumHaptic } from '@/utils/haptics';
 import React, { useEffect, useRef } from 'react';
-import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Icon, Text } from 'react-native-paper';
 import type { AdvancedSplitMethod, BasicSplitMethod, SplitMethod } from './types';
 
@@ -33,28 +33,69 @@ const ITEMS: RailItem[] = [
   { key: 'itemType', label: 'Category', icon: 'tag-multiple', advanced: true },
 ];
 
-const PILL_WIDTH = 86; // approximate, for auto-centering math
-
 interface MethodRailProps {
   activeMethod: SplitMethod;
   onSelectBasic: (method: BasicSplitMethod) => void;
   onSelectAdvanced: (method: AdvancedSplitMethod) => void;
 }
 
+// Margin kept between the active pill and the rail's clipped edges when we do
+// have to scroll — enough to reveal a sliver of the neighbouring pill so the
+// rail still reads as scrollable.
+const EDGE_PEEK = 28;
+
 export const MethodRail = React.memo(({ activeMethod, onSelectBasic, onSelectAdvanced }: MethodRailProps) => {
   const { theme } = useTheme();
   const scrollRef = useRef<ScrollView>(null);
+  const pillLayouts = useRef<Partial<Record<SplitMethod, { x: number; width: number }>>>({});
+  const scrollX = useRef(0);
+  const viewportWidth = useRef(0);
+  const activeMethodRef = useRef(activeMethod);
+  activeMethodRef.current = activeMethod;
+  const didInitialRevealRef = useRef(false);
 
-  // Keep the active pill in view (e.g. reopening an expense saved with an
-  // advanced method that lives off-screen to the right).
-  useEffect(() => {
-    const index = ITEMS.findIndex((item) => item.key === activeMethod);
-    if (index > 3) {
-      scrollRef.current?.scrollTo({ x: index * PILL_WIDTH - PILL_WIDTH * 1.5, animated: true });
-    } else if (index >= 0 && index <= 1) {
-      scrollRef.current?.scrollTo({ x: 0, animated: true });
+  // Scroll ONLY when the active pill is clipped, and only just far enough to
+  // uncover it. Tapping an already-visible pill must never move the rail —
+  // the old "auto-center everything" behaviour yanked the whole row sideways
+  // on every selection.
+  const revealActivePill = () => {
+    const layout = pillLayouts.current[activeMethodRef.current];
+    const viewport = viewportWidth.current;
+    if (!layout || viewport <= 0) return false;
+
+    const visibleLeft = scrollX.current;
+    const visibleRight = scrollX.current + viewport;
+
+    if (layout.x < visibleLeft + EDGE_PEEK) {
+      scrollRef.current?.scrollTo({ x: Math.max(0, layout.x - EDGE_PEEK), animated: true });
+    } else if (layout.x + layout.width > visibleRight - EDGE_PEEK) {
+      scrollRef.current?.scrollTo({ x: layout.x + layout.width - viewport + EDGE_PEEK, animated: true });
     }
+    return true;
+  };
+
+  useEffect(() => {
+    revealActivePill();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMethod]);
+
+  // On first mount the effect above runs before any pill has reported its
+  // layout, so reopening an expense saved with an advanced method would leave
+  // the selection stranded off-screen. Layout callbacks retry the reveal once
+  // measurements exist.
+  const maybeInitialReveal = () => {
+    if (didInitialRevealRef.current) return;
+    if (revealActivePill()) didInitialRevealRef.current = true;
+  };
+
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollX.current = event.nativeEvent.contentOffset.x;
+  };
+
+  const handleViewportLayout = (event: LayoutChangeEvent) => {
+    viewportWidth.current = event.nativeEvent.layout.width;
+    maybeInitialReveal();
+  };
 
   return (
     <ScrollView
@@ -62,6 +103,9 @@ export const MethodRail = React.memo(({ activeMethod, onSelectBasic, onSelectAdv
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.rail}
+      onScroll={handleScroll}
+      scrollEventThrottle={32}
+      onLayout={handleViewportLayout}
     >
       {ITEMS.map((item) => {
         const selected = item.key === activeMethod;
@@ -71,6 +115,13 @@ export const MethodRail = React.memo(({ activeMethod, onSelectBasic, onSelectAdv
             accessibilityRole="button"
             accessibilityState={{ selected }}
             activeOpacity={0.75}
+            onLayout={(event) => {
+              pillLayouts.current[item.key] = {
+                x: event.nativeEvent.layout.x,
+                width: event.nativeEvent.layout.width,
+              };
+              if (item.key === activeMethodRef.current) maybeInitialReveal();
+            }}
             onPress={() => {
               if (selected) return;
               mediumHaptic();
@@ -81,7 +132,9 @@ export const MethodRail = React.memo(({ activeMethod, onSelectBasic, onSelectAdv
               styles.pill,
               {
                 backgroundColor: selected ? theme.colors.primary : theme.colors.pressed,
-                borderColor: selected ? theme.colors.primary : 'transparent',
+                borderColor: selected
+                  ? theme.colors.primary
+                  : theme.dark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)',
               },
             ]}
           >

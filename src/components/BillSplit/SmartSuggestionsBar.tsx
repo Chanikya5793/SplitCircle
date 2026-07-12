@@ -1,81 +1,70 @@
-import { GlassView } from '@/components/GlassView';
-import { colors, darkColors, spacing } from '@/constants';
+// SmartSuggestionsBar — chips learned from this group's real split history
+// (see splitHistoryService). The parent renders this only when suggestions
+// exist, so an empty history costs zero vertical space.
+import { spacing } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
+import type { SplitSuggestion } from '@/services/splitHistoryService';
 import { lightHaptic } from '@/utils/haptics';
 import React from 'react';
 import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Icon, Text } from 'react-native-paper';
 import Animated, { FadeInRight } from 'react-native-reanimated';
-import type { SmartSuggestion } from './types';
 
 interface SmartSuggestionsBarProps {
-  suggestions: SmartSuggestion[];
+  suggestions: SplitSuggestion[];
   onSelect: (id: string) => void;
 }
 
 export const SmartSuggestionsBar = React.memo(({ suggestions, onSelect }: SmartSuggestionsBarProps) => {
-  const { isDark, theme } = useTheme();
-  const palette = isDark ? darkColors : colors;
+  const { theme } = useTheme();
 
   return (
-    <View style={styles.wrapper}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
-        {suggestions.map((s, index) => (
-          <Animated.View key={s.id} entering={FadeInRight.delay(index * 60).springify()}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => { lightHaptic(); onSelect(s.id); }}
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.scrollContent}
+    >
+      {suggestions.map((s, index) => (
+        <Animated.View key={s.id} entering={FadeInRight.delay(index * 60).springify()}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => { lightHaptic(); onSelect(s.id); }}
+            style={[
+              styles.chip,
+              {
+                backgroundColor: theme.dark ? 'rgba(28,31,38,0.96)' : 'rgba(255,255,255,0.97)',
+                borderColor: theme.dark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)',
+              },
+            ]}
+          >
+            <Icon source={s.icon} size={15} color={theme.colors.primary} />
+            <Text
+              variant="labelMedium"
+              style={[styles.chipLabel, { color: theme.colors.onSurface }]}
+              numberOfLines={1}
             >
-              <GlassView style={styles.chip} intensity={20}>
-                <View style={styles.chipInner}>
-                  <Icon source={s.icon} size={16} color={theme.colors.primary} />
-                  <Text
-                    variant="labelMedium"
-                    style={[styles.chipLabel, { color: theme.colors.onSurface }]}
-                    numberOfLines={1}
-                  >
-                    {s.label}
-                  </Text>
-                </View>
-              </GlassView>
-            </TouchableOpacity>
-          </Animated.View>
-        ))}
-      </ScrollView>
-    </View>
+              {s.label}
+            </Text>
+          </TouchableOpacity>
+        </Animated.View>
+      ))}
+    </ScrollView>
   );
 });
 
 const styles = StyleSheet.create({
-  wrapper: {
-    marginBottom: spacing.sm,
-  },
-  label: {
-    marginLeft: spacing.md,
-    marginBottom: spacing.xs,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    fontSize: 10,
-  },
   scrollContent: {
     paddingHorizontal: spacing.md,
     gap: spacing.sm,
   },
   chip: {
-    borderRadius: 20,
-    paddingHorizontal: 0,
-    paddingVertical: 0,
-  },
-  chipInner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   chipLabel: {
     fontSize: 13,
