@@ -10,11 +10,10 @@ import { Icon, PaperProvider, Text } from 'react-native-paper';
 import Animated, { FadeIn, FadeInDown, FadeOut, Layout, SlideInDown, SlideOutDown } from 'react-native-reanimated';
 
 import { AdvancedModeContent } from './AdvancedModeContent';
-import { AdvancedModePicker } from './AdvancedModePicker';
 import { ParticipantList } from './ParticipantList';
 import { SmartSuggestionsBar } from './SmartSuggestionsBar';
 import { SplitFooter } from './SplitFooter';
-import { SplitMethodTabs } from './SplitMethodTabs';
+import { MethodRail } from './MethodRail';
 import {
     computeAdjustment,
     computeConsumption,
@@ -115,11 +114,6 @@ export const BillSplitScreen = ({
   const currentMethod: SplitMethod = activeAdvancedMethod ?? activeBasicMethod;
 
   // ── Advanced Section Toggle ───────────────────────────────────────────────
-  const [showAdvanced, setShowAdvanced] = useState(Boolean(isAdvancedMethod(initialMethod)));
-  // Browsing the mode grid while an advanced method stays ACTIVE — this is how
-  // the picker can highlight the current selection instead of "back" silently
-  // discarding it (the old behavior, which read as selection never showing).
-  const [browsingModes, setBrowsingModes] = useState(false);
 
   // ── Itemized Receipt State ────────────────────────────────────────────────
   const [receiptItems, setReceiptItems] = useState<ReceiptItem[]>(
@@ -432,7 +426,6 @@ export const BillSplitScreen = ({
         break;
       case 'drinks_person':
         setActiveAdvancedMethod('itemType');
-        setShowAdvanced(true);
         setItemCategories([{
           id: 'cat_drinks',
           label: 'Alcohol',
@@ -442,11 +435,9 @@ export const BillSplitScreen = ({
         break;
       case 'by_income':
         setActiveAdvancedMethod('income');
-        setShowAdvanced(true);
         break;
       case 'roulette':
         setActiveAdvancedMethod('gamified');
-        setShowAdvanced(true);
         setGamifiedMode('roulette');
         break;
     }
@@ -554,22 +545,7 @@ export const BillSplitScreen = ({
   const handleAdvancedMethodSelect = useCallback((method: AdvancedSplitMethod) => {
     mediumHaptic();
     setActiveAdvancedMethod(method);
-    setBrowsingModes(false);
   }, []);
-
-  const handleBackToAdvanced = useCallback(() => {
-    // Toggle browse: the active method stays selected (and highlighted in the
-    // grid); "Resume" returns to its content without losing any setup.
-    setBrowsingModes((prev) => !prev);
-  }, []);
-
-  const handleToggleAdvanced = useCallback(() => {
-    lightHaptic();
-    setShowAdvanced((prev) => !prev);
-    if (showAdvanced) {
-      setActiveAdvancedMethod(null);
-    }
-  }, [showAdvanced]);
 
   // ── Done Handler ──────────────────────────────────────────────────────────
   const handleDone = useCallback(() => {
@@ -660,7 +636,7 @@ export const BillSplitScreen = ({
   return (
     <PaperProvider theme={theme}>
       <LiquidBackground>
-        <View style={[styles.container, { backgroundColor: theme.dark ? 'rgba(10,12,16,0.60)' : 'rgba(250,250,252,0.55)' }]}>
+        <View style={[styles.container, { backgroundColor: theme.dark ? 'rgba(13,15,20,0.94)' : 'rgba(250,250,252,0.96)' }]}>
           {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity onPress={onCancel} activeOpacity={0.7}>
@@ -699,7 +675,7 @@ export const BillSplitScreen = ({
                 onPress={() => { selectionHaptic(); setShowPayerMenu((v) => !v); }}
                 style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
               >
-                <GlassView style={styles.payerCard} intensity={20}>
+                <GlassView style={[styles.payerCard, { backgroundColor: theme.dark ? 'rgba(28,31,38,0.96)' : 'rgba(255,255,255,0.97)' }]} intensity={60}>
                   <View style={styles.payerContent}>
                     <View style={styles.payerLeft}>
                       <Icon source="account-cash" size={20} color={theme.colors.primary} />
@@ -744,70 +720,14 @@ export const BillSplitScreen = ({
               <SmartSuggestionsBar suggestions={suggestions} onSelect={handleSuggestion} />
             </Animated.View>
 
-            {/* Basic Method Tabs (hidden when advanced method is active) */}
-            {!activeAdvancedMethod && (
-              <Animated.View entering={FadeIn.duration(200)} layout={Layout.springify()}>
-                <SplitMethodTabs activeMethod={activeBasicMethod} onSelect={handleBasicMethodSelect} />
-              </Animated.View>
-            )}
+            {/* Method rail — all eleven methods, one line, always visible */}
+            <MethodRail
+              activeMethod={currentMethod}
+              onSelectBasic={handleBasicMethodSelect}
+              onSelectAdvanced={handleAdvancedMethodSelect}
+            />
 
-            {/* Advanced Options Accordion - moved up for easier access */}
-            {!activeAdvancedMethod && (
-              <View style={styles.advancedToggleSection}>
-                <TouchableOpacity
-                  onPress={handleToggleAdvanced}
-                  activeOpacity={0.7}
-                  style={styles.advancedToggle}
-                >
-                  <View style={styles.advancedToggleLeft}>
-                    <Icon
-                      source={showAdvanced ? 'chevron-up' : 'chevron-down'}
-                      size={20}
-                      color={theme.colors.primary}
-                    />
-                    <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                      {showAdvanced ? 'Hide Advanced Splits' : 'Advanced Splits'}
-                    </Text>
-                  </View>
-                  <View style={[styles.advancedBadge, { backgroundColor: `${theme.colors.primary}15` }]}>
-                    <Text style={{ color: theme.colors.primary, fontSize: 11, fontWeight: '700' }}>6 modes</Text>
-                  </View>
-                </TouchableOpacity>
 
-                {showAdvanced && (
-                  <Animated.View entering={FadeInDown.springify()} exiting={FadeOut.duration(150)}>
-                    <AdvancedModePicker onSelect={handleAdvancedMethodSelect} activeMethod={activeAdvancedMethod} />
-                  </Animated.View>
-                )}
-              </View>
-            )}
-
-            {/* Back to advanced picker when in an advanced mode */}
-            {activeAdvancedMethod && (
-              <Animated.View entering={FadeIn.duration(200)}>
-                <View style={styles.advancedBreadcrumb}>
-                  <TouchableOpacity
-                    onPress={handleBackToAdvanced}
-                    style={styles.breadcrumbBtn}
-                    activeOpacity={0.7}
-                  >
-                    <Icon source={browsingModes ? 'arrow-u-left-top' : 'arrow-left'} size={18} color={theme.colors.primary} />
-                    <Text variant="labelMedium" style={{ color: theme.colors.primary }}>{browsingModes ? 'Resume' : 'Advanced Modes'}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => { setActiveAdvancedMethod(null); setBrowsingModes(false); setShowAdvanced(false); }}
-                    activeOpacity={0.7}
-                  >
-                    <Text variant="labelMedium" style={{ color: theme.colors.muted }}>Back to basic</Text>
-                  </TouchableOpacity>
-                </View>
-                {browsingModes && (
-                  <Animated.View entering={FadeInDown.springify()} exiting={FadeOut.duration(150)}>
-                    <AdvancedModePicker onSelect={handleAdvancedMethodSelect} activeMethod={activeAdvancedMethod} />
-                  </Animated.View>
-                )}
-              </Animated.View>
-            )}
 
             {/* Participant List (shown for basic methods only) */}
             {!activeAdvancedMethod && (
@@ -828,7 +748,7 @@ export const BillSplitScreen = ({
             )}
 
             {/* Advanced Mode Content */}
-            {activeAdvancedMethod && !browsingModes && (
+            {activeAdvancedMethod && (
               <Animated.View entering={SlideInDown.springify()} exiting={SlideOutDown.springify()}>
                 <AdvancedModeContent
                   method={activeAdvancedMethod}
@@ -874,8 +794,6 @@ export const BillSplitScreen = ({
               </Animated.View>
             )}
 
-            {/* Bottom spacer for footer */}
-            <View style={{ height: 170 }} />
           </ScrollView>
 
           {/* Sticky Footer */}
@@ -911,7 +829,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
-    paddingTop: 56,
+    // Presented as a pageSheet — the card already sits below the status bar,
+    // so the old 56px of top padding was pure dead space.
+    paddingTop: 14,
     paddingBottom: spacing.sm,
   },
   headerTitle: {
@@ -923,9 +843,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingTop: spacing.sm,
     gap: spacing.sm,
-    // Clear the absolute-positioned footer — without this the last participant
-    // rows sat UNDER the footer card and could never be scrolled into view.
-    paddingBottom: 220,
+    paddingBottom: spacing.lg,
   },
   payerCard: {
     borderRadius: 16,
@@ -936,7 +854,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
-    paddingVertical: 14,
+    paddingVertical: 10,
   },
   payerLeft: {
     flexDirection: 'row',
@@ -1002,10 +920,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   footerWrapper: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    paddingBottom: 34,
+    // Docked in normal flow (the ScrollView flexes above it) — nothing can
+    // ever hide underneath, and no bottom padding needs reserving.
+    paddingBottom: 30,
   },
 });

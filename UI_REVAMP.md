@@ -217,3 +217,32 @@ fallback `'SplitCircle'`). All in-app copy uses it (kills the ManaSplit/SplitCir
   clause) — MUST run `firebase deploy --only firestore:rules`.
 - Calls: session screen shows peer identity (avatar/name) everywhere,
   FaceTime-style CallControls, avatar-led lobby rows.
+
+## 9. Split-options surface DNA — 2026-07-12 OVERRIDE (supersedes §1 glass rules for this surface)
+
+User verdict on the v2 glass treatment inside Split options: too transparent, gross
+vertical-space utilization. This section OVERRIDES the global "liquid glass" DNA for
+everything presented from Add Expense ▸ Split options (BillSplitScreen + BillSplit/*).
+
+**Principles (in priority order):**
+1. **Editors are solid.** Dense editing surfaces get a near-opaque canvas
+   (dark `rgba(13,15,20,0.94)`, light `rgba(250,250,252,0.96)`) over the liquid
+   background. Blobs may *whisper* through the canvas, never through cards.
+   Cards on this surface are opaque (dark `rgba(28,31,38,0.96)`, light
+   `rgba(255,255,255,0.97)`). Glass stays for AMBIENT surfaces (lists, home) only.
+2. **Every vertical pixel works.** No absolute-positioned bars over scroll content;
+   footers dock in normal flow (column: header / flex ScrollView / footer) so zero
+   clearance padding is ever reserved. pageSheet modals get 14px top padding, not 56.
+3. **One selector, one level.** Method selection is a single horizontal MethodRail of
+   all 11 methods (basic + advanced, advanced marked with an accent dot). The old
+   two-tier stack (segmented tabs + accordion + grid + breadcrumb) is retired —
+   selection state must always be visible in the rail, never behind navigation.
+4. **Content > chrome.** Participant rows live in one iOS inset-grouped opaque card
+   with hairline dividers. Headers/suggestion rows are single quiet lines; no
+   all-caps section banners.
+5. **The footer is chrome.** Full-bleed docked bar, top-rounded shoulders only,
+   one summary line (method · payer) + per-person figure + inclusion badge + Done.
+   Never a second payer control, never a method chip.
+
+Reference patterns: Splitwise split editor (docked total bar), iOS Settings
+inset-grouped lists, iOS 26 sheet chrome.

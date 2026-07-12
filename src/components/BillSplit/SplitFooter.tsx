@@ -107,7 +107,7 @@ export const SplitFooter = React.memo(({
   const renderEqualContent = () => {
     const perPerson = included.length > 0 ? allocatedTotal / included.length : 0;
     return (
-      <View style={styles.footerLeft}>
+      <View style={styles.contentBlock}>
         <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.onSurface }]}>
           {formatCurrency(perPerson, currency)}/person
         </Text>
@@ -130,7 +130,7 @@ export const SplitFooter = React.memo(({
         : theme.colors.primary;
 
     return (
-      <View style={styles.footerLeft}>
+      <View style={styles.contentBlock}>
         <View style={styles.allocationRow}>
           <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.onSurface }]}>
             {formatCurrency(allocatedTotal, currency)}
@@ -167,7 +167,7 @@ export const SplitFooter = React.memo(({
 
     if (isSpinning) {
       return (
-        <View style={styles.footerLeft}>
+        <View style={styles.contentBlock}>
           <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.primary }]}>
             🎰 Spinning...
           </Text>
@@ -180,7 +180,7 @@ export const SplitFooter = React.memo(({
 
     if (loser) {
       return (
-        <View style={styles.footerLeft}>
+        <View style={styles.contentBlock}>
           <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.onSurface }]}>
             🎯 {loser.name} pays {formatCurrency(loser.computedAmount, currency)}
           </Text>
@@ -199,7 +199,7 @@ export const SplitFooter = React.memo(({
     };
 
     return (
-      <View style={styles.footerLeft}>
+      <View style={styles.contentBlock}>
         <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.primary }]}>
           {modeLabels[gamifiedMode ?? 'roulette']}
         </Text>
@@ -218,7 +218,7 @@ export const SplitFooter = React.memo(({
 
     if (currentMethod === 'itemized') {
       return (
-        <View style={styles.footerLeft}>
+        <View style={styles.contentBlock}>
           <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.onSurface }]}>
             {formatCurrency(allocatedTotal, currency)} allocated
           </Text>
@@ -231,7 +231,7 @@ export const SplitFooter = React.memo(({
 
     const allSame = Math.abs(maxAmt - minAmt) < 0.02;
     return (
-      <View style={styles.footerLeft}>
+      <View style={styles.contentBlock}>
         <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.onSurface }]}>
           {allSame
             ? `${formatCurrency(minAmt, currency)}/person`
@@ -323,9 +323,14 @@ export const SplitFooter = React.memo(({
 
 const styles = StyleSheet.create({
   footer: {
-    borderRadius: radius.lg,
-    marginHorizontal: spacing.md,
-    marginBottom: spacing.sm,
+    // Docked bar: full-bleed with rounded shoulders — reads as part of the
+    // sheet chrome rather than a floating card over content.
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    marginHorizontal: 0,
+    marginBottom: 0,
   },
   footerValid: {
     borderWidth: 1,
@@ -340,6 +345,9 @@ const styles = StyleSheet.create({
   footerLeft: {
     flex: 1,
     gap: 4,
+  },
+  contentBlock: {
+    gap: 2,
   },
   metaRow: {
     flexDirection: 'row',
