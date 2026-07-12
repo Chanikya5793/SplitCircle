@@ -824,16 +824,21 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
               style={[styles.splitOptionsBtn, { borderColor: theme.colors.outline }]}
             >
               <View style={styles.splitOptionsBtnContent}>
-                <Icon source="tune-variant" size={20} color={theme.colors.primary} />
+                <View style={[styles.splitOptionsIconChip, { backgroundColor: `${theme.colors.primary}16` }]}>
+                  <Icon source={splitType === 'equal' ? 'equal' : 'tune-variant'} size={20} color={theme.colors.primary} />
+                </View>
                 <View style={{ flex: 1 }}>
-                  <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                    Split options
+                  <Text variant="labelLarge" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                    {splitMethodLabel}
                   </Text>
                   <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                    {splitMethodLabel} · {selectedMembers.length} {selectedMembers.length === 1 ? 'person' : 'people'}
+                    {selectedMembers.length} {selectedMembers.length === 1 ? 'person' : 'people'} · tap to change
                   </Text>
                 </View>
-                <Icon source="chevron-right" size={20} color={theme.colors.onSurfaceVariant} />
+                <View style={[styles.splitOptionsCta, { backgroundColor: `${theme.colors.primary}16` }]}>
+                  <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>Split</Text>
+                  <Icon source="chevron-right" size={16} color={theme.colors.primary} />
+                </View>
               </View>
             </TouchableOpacity>
 
@@ -1066,6 +1071,22 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     marginBottom: 8,
+  },
+  splitOptionsIconChip: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  splitOptionsCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingLeft: 10,
+    paddingRight: 6,
+    paddingVertical: 6,
+    borderRadius: 14,
   },
   splitOptionsBtnContent: {
     flexDirection: 'row',

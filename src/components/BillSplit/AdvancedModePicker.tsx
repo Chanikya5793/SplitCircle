@@ -26,15 +26,19 @@ const ADVANCED_OPTIONS: AdvancedOption[] = [
 
 interface AdvancedModePickerProps {
   onSelect: (method: AdvancedSplitMethod) => void;
+  /** Currently-active advanced method — its card renders highlighted. */
+  activeMethod?: AdvancedSplitMethod | null;
 }
 
-export const AdvancedModePicker = React.memo(({ onSelect }: AdvancedModePickerProps) => {
+export const AdvancedModePicker = React.memo(({ onSelect, activeMethod = null }: AdvancedModePickerProps) => {
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
 
   return (
     <View style={styles.grid}>
-      {ADVANCED_OPTIONS.map((opt, index) => (
+      {ADVANCED_OPTIONS.map((opt, index) => {
+        const isActive = activeMethod === opt.key;
+        return (
         <Animated.View
           key={opt.key}
           entering={FadeInDown.delay(index * 60).springify()}
@@ -42,14 +46,26 @@ export const AdvancedModePicker = React.memo(({ onSelect }: AdvancedModePickerPr
         >
           <TouchableOpacity
             activeOpacity={0.7}
+            accessibilityState={{ selected: isActive }}
             onPress={() => { mediumHaptic(); onSelect(opt.key); }}
           >
-            <GlassView style={styles.card} intensity={20}>
-              <View style={styles.cardContent}>
-                <View style={[styles.iconCircle, { backgroundColor: `${theme.colors.primary}18` }]}>
-                  <Icon source={opt.icon} size={24} color={theme.colors.primary} />
+            <GlassView
+              style={[
+                styles.card,
+                isActive && { borderWidth: 2, borderColor: theme.colors.primary, backgroundColor: `${theme.colors.primary}10` },
+              ]}
+              intensity={20}
+            >
+              {isActive && (
+                <View style={[styles.activeBadge, { backgroundColor: theme.colors.primary }]}>
+                  <Icon source="check-bold" size={12} color="#FFF" />
                 </View>
-                <Text variant="labelLarge" style={[styles.cardLabel, { color: theme.colors.onSurface }]}>
+              )}
+              <View style={styles.cardContent}>
+                <View style={[styles.iconCircle, { backgroundColor: isActive ? theme.colors.primary : `${theme.colors.primary}18` }]}>
+                  <Icon source={opt.icon} size={24} color={isActive ? '#FFF' : theme.colors.primary} />
+                </View>
+                <Text variant="labelLarge" style={[styles.cardLabel, { color: isActive ? theme.colors.primary : theme.colors.onSurface }]}>
                   {opt.label}
                 </Text>
                 <Text variant="bodySmall" style={[styles.cardDesc, { color: palette.muted }]} numberOfLines={2}>
@@ -59,7 +75,8 @@ export const AdvancedModePicker = React.memo(({ onSelect }: AdvancedModePickerPr
             </GlassView>
           </TouchableOpacity>
         </Animated.View>
-      ))}
+        );
+      })}
     </View>
   );
 });
@@ -76,6 +93,17 @@ const styles = StyleSheet.create({
   },
   card: {
     borderRadius: 16,
+  },
+  activeBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
   },
   cardContent: {
     alignItems: 'center',

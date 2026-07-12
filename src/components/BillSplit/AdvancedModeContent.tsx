@@ -7,7 +7,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LayoutChangeEvent, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Button, Icon, IconButton, Text } from 'react-native-paper';
-import Animated, { FadeIn, FadeInDown, ZoomIn, runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import Animated, { Easing, FadeIn, FadeInDown, ZoomIn, runOnJS, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
+import { ConfettiBurst } from './ConfettiBurst';
 import type { RouletteWheelRef } from './RouletteWheel';
 import RouletteWheel from './RouletteWheel';
 import { computeKarma, listDatesBetween } from './splitMath';
@@ -1841,6 +1842,74 @@ const TimeBasedMode = React.memo(({
 // ═══════════════════════════════════════════════════════════════════════════════
 // E. GAMIFIED / RANDOMIZED SPLITS
 // ═══════════════════════════════════════════════════════════════════════════════
+// ── The Pot — animated stakes banner shared by every Fun Mode game. The coin
+// pulses gently so the money at stake feels alive; the copy sets the table.
+const PotBanner = ({ amount, currency }: { amount: number; currency: string }) => {
+  const { isDark, theme } = useTheme();
+  const palette = isDark ? darkColors : colors;
+  const pulse = useSharedValue(1);
+  useEffect(() => {
+    pulse.value = withRepeat(
+      withSequence(
+        withTiming(1.12, { duration: 900, easing: Easing.inOut(Easing.quad) }),
+        withTiming(1, { duration: 900, easing: Easing.inOut(Easing.quad) }),
+      ),
+      -1,
+      true,
+    );
+  }, [pulse]);
+  const coinStyle = useAnimatedStyle(() => ({ transform: [{ scale: pulse.value }] }));
+
+  return (
+    <View style={[styles.potBanner, { backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.08)', borderColor: 'rgba(245,158,11,0.35)' }]}>
+      <Animated.Text style={[styles.potCoin, coinStyle]}>💰</Animated.Text>
+      <View style={{ flex: 1 }}>
+        <Text variant="labelSmall" style={{ color: palette.muted, letterSpacing: 1, fontWeight: '700' }}>THE POT</Text>
+        <Text variant="headlineSmall" style={{ color: theme.colors.onSurface, fontWeight: '800' }}>
+          {formatCurrency(amount, currency)}
+        </Text>
+      </View>
+      <Text variant="bodySmall" style={{ color: palette.muted, fontStyle: 'italic' }}>Who's paying?</Text>
+    </View>
+  );
+};
+
+// Pulsing SPIN button — breathes while idle so it begs to be pressed, goes
+// static (and translucent) while the wheel runs.
+const SpinButton = ({ onPress, disabled, label, spinning }: { onPress: () => void; disabled?: boolean; label: string; spinning?: boolean }) => {
+  const { theme } = useTheme();
+  const pulse = useSharedValue(1);
+  useEffect(() => {
+    if (spinning || disabled) {
+      pulse.value = withTiming(1, { duration: 150 });
+      return;
+    }
+    pulse.value = withRepeat(
+      withSequence(
+        withTiming(1.05, { duration: 750, easing: Easing.inOut(Easing.quad) }),
+        withTiming(1, { duration: 750, easing: Easing.inOut(Easing.quad) }),
+      ),
+      -1,
+      true,
+    );
+  }, [pulse, spinning, disabled]);
+  const style = useAnimatedStyle(() => ({ transform: [{ scale: pulse.value }] }));
+
+  return (
+    <Animated.View style={style}>
+      <TouchableOpacity
+        style={[styles.spinButton, { backgroundColor: spinning ? `${theme.colors.primary}80` : theme.colors.primary }]}
+        onPress={onPress}
+        disabled={disabled || spinning}
+        activeOpacity={0.8}
+      >
+        <Icon source={spinning ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
+        <Text style={styles.spinText}>{label}</Text>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
+
 interface GamifiedProps {
   mode: GamifiedMode;
   onModeChange: (mode: GamifiedMode) => void;
@@ -1884,10 +1953,10 @@ const GamifiedMode_ = React.memo(({
     }
   }, [spinTargetIndex, mode]);
 
-  const MODES: { key: GamifiedMode; label: string; icon: string }[] = [
-    { key: 'roulette', label: 'Roulette', icon: 'poker-chip' },
-    { key: 'weightedRoulette', label: 'Weighted', icon: 'scale-balance' },
-    { key: 'scrooge', label: 'Karma', icon: 'scale-balance' },
+  const MODES: { key: GamifiedMode; label: string; emoji: string; tagline: string }[] = [
+    { key: 'roulette', label: 'Roulette', emoji: '🎰', tagline: 'One pays all' },
+    { key: 'weightedRoulette', label: 'Double Wheel', emoji: '🎡', tagline: 'Fate picks shares' },
+    { key: 'scrooge', label: 'Karma', emoji: '⚖️', tagline: 'Past evens out' },
   ];
 
   const showWheel = mode === 'roulette';
@@ -2093,25 +2162,38 @@ const GamifiedMode_ = React.memo(({
         Fun Mode 🎲
       </Text>
 
+      <PotBanner amount={totalAmount} currency={currency} />
+
       <View style={styles.gameModeRow}>
-        {MODES.map((m) => (
-          <TouchableOpacity
-            key={m.key}
-            style={[
-              styles.gameModeChip,
-              {
-                backgroundColor: mode === m.key ? `${theme.colors.primary}20` : 'transparent',
-                borderColor: mode === m.key ? theme.colors.primary : palette.border,
-              },
-            ]}
-            onPress={() => { mediumHaptic(); onModeChange(m.key); }}
-          >
-            <Icon source={m.icon} size={18} color={mode === m.key ? theme.colors.primary : palette.muted} />
-            <Text style={{ color: mode === m.key ? theme.colors.primary : palette.muted, fontSize: 12, fontWeight: '600' }}>
-              {m.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {MODES.map((m) => {
+          const selected = mode === m.key;
+          return (
+            <TouchableOpacity
+              key={m.key}
+              accessibilityState={{ selected }}
+              style={[
+                styles.gameCard,
+                {
+                  backgroundColor: selected ? `${theme.colors.primary}16` : 'transparent',
+                  borderColor: selected ? theme.colors.primary : palette.border,
+                  borderWidth: selected ? 2 : 1,
+                  transform: [{ scale: selected ? 1 : 0.96 }],
+                  opacity: selected ? 1 : 0.75,
+                },
+              ]}
+              onPress={() => { mediumHaptic(); onModeChange(m.key); }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.gameCardEmoji}>{m.emoji}</Text>
+              <Text style={{ color: selected ? theme.colors.primary : theme.colors.onSurface, fontSize: 12, fontWeight: '800' }}>
+                {m.label}
+              </Text>
+              <Text style={{ color: palette.muted, fontSize: 9, fontWeight: '600' }} numberOfLines={1}>
+                {m.tagline}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {mode === 'roulette' && (
@@ -2166,22 +2248,11 @@ const GamifiedMode_ = React.memo(({
           {/* Spin Button - placed right after wheel to stay visible */}
           {wPhase !== 'complete' && (
             <View style={styles.spinContainerInline}>
-              <TouchableOpacity
-                style={[
-                  styles.spinButton,
-                  {
-                    backgroundColor: wBusy ? `${theme.colors.primary}80` : theme.colors.primary,
-                  },
-                ]}
+              <SpinButton
                 onPress={handleWeightedSpin}
-                disabled={wBusy}
-                activeOpacity={0.8}
-              >
-                <Icon source={wBusy ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
-                <Text style={styles.spinText}>
-                  {wBusy ? 'Spinning…' : `Spin! (${wRemainingPct}% left)`}
-                </Text>
-              </TouchableOpacity>
+                spinning={wBusy}
+                label={wBusy ? 'Spinning…' : `SPIN (${wRemainingPct}% left)`}
+              />
             </View>
           )}
 
@@ -2380,40 +2451,40 @@ const GamifiedMode_ = React.memo(({
       {/* Spin Button */}
       {mode === 'roulette' && (
         <View style={styles.spinContainer}>
-          <TouchableOpacity
-            style={[
-              styles.spinButton,
-              {
-                backgroundColor: isSpinning ? `${theme.colors.primary}80` : theme.colors.primary,
-              },
-            ]}
+          <SpinButton
             onPress={onSpin}
-            disabled={isSpinning}
-            activeOpacity={0.8}
-          >
-            <Icon source={isSpinning ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
-            <Text style={styles.spinText}>
-              {isSpinning ? 'Spinning…' : 'Spin the wheel!'}
-            </Text>
-          </TouchableOpacity>
+            spinning={isSpinning}
+            label={isSpinning ? 'Spinning…' : loserId ? 'Spin again' : 'SPIN THE WHEEL'}
+          />
         </View>
       )}
 
-      {/* ── Winner Reveal (roulette only) ──────────────────────────────── */}
+      {/* ── Winner Reveal (roulette only) — the payoff moment. Confetti
+             bursts over a staged card: verdict line, the name BIG, the damage,
+             and a consolation line for everyone else. ─────────────────────── */}
       {loserId && !isSpinning && mode === 'roulette' && (
-        <Animated.View entering={ZoomIn.springify()}>
-          <GlassView style={styles.resultCard} intensity={25}>
-            <View style={styles.resultContent}>
-              <Text style={styles.resultEmoji}>🎯</Text>
-              <Text variant="headlineSmall" style={[styles.resultName, { color: theme.colors.onSurface }]}>
-                {loserName} pays!
-              </Text>
-              <Text variant="titleLarge" style={{ color: theme.colors.primary, fontWeight: '800' }}>
-                {formatCurrency(totalAmount, currency)}
-              </Text>
-            </View>
-          </GlassView>
-        </Animated.View>
+        <View>
+          <ConfettiBurst key={loserId} />
+          <Animated.View entering={ZoomIn.springify().damping(12)}>
+            <GlassView style={[styles.resultCard, { borderWidth: 2, borderColor: '#F59E0B' }]} intensity={25}>
+              <View style={styles.resultContent}>
+                <Text variant="labelSmall" style={{ color: palette.muted, letterSpacing: 2, fontWeight: '700' }}>
+                  THE WHEEL HAS SPOKEN
+                </Text>
+                <Text style={styles.resultEmoji}>👑</Text>
+                <Text variant="headlineMedium" style={[styles.resultName, { color: theme.colors.onSurface, fontWeight: '900' }]}>
+                  {loserName}
+                </Text>
+                <Text variant="titleLarge" style={{ color: '#F59E0B', fontWeight: '800' }}>
+                  picks up {formatCurrency(totalAmount, currency)}
+                </Text>
+                <Text variant="bodySmall" style={{ color: palette.muted, marginTop: 2 }}>
+                  {included.length > 1 ? `${included.length - 1} lucky ${included.length - 1 === 1 ? 'friend eats' : 'friends eat'} free tonight 🎉` : 'Better luck next spin!'}
+                </Text>
+              </View>
+            </GlassView>
+          </Animated.View>
+        </View>
       )}
     </View>
   );
@@ -3288,6 +3359,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     marginBottom: 12,
+  },
+  potBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: spacing.md,
+  },
+  potCoin: {
+    fontSize: 30,
+  },
+  gameCard: {
+    flex: 1,
+    alignItems: 'center',
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+    gap: 3,
+  },
+  gameCardEmoji: {
+    fontSize: 26,
   },
   gameModeChip: {
     flex: 1,

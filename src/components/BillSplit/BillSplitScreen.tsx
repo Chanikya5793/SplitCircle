@@ -116,6 +116,10 @@ export const BillSplitScreen = ({
 
   // ── Advanced Section Toggle ───────────────────────────────────────────────
   const [showAdvanced, setShowAdvanced] = useState(Boolean(isAdvancedMethod(initialMethod)));
+  // Browsing the mode grid while an advanced method stays ACTIVE — this is how
+  // the picker can highlight the current selection instead of "back" silently
+  // discarding it (the old behavior, which read as selection never showing).
+  const [browsingModes, setBrowsingModes] = useState(false);
 
   // ── Itemized Receipt State ────────────────────────────────────────────────
   const [receiptItems, setReceiptItems] = useState<ReceiptItem[]>(
@@ -550,10 +554,13 @@ export const BillSplitScreen = ({
   const handleAdvancedMethodSelect = useCallback((method: AdvancedSplitMethod) => {
     mediumHaptic();
     setActiveAdvancedMethod(method);
+    setBrowsingModes(false);
   }, []);
 
   const handleBackToAdvanced = useCallback(() => {
-    setActiveAdvancedMethod(null);
+    // Toggle browse: the active method stays selected (and highlighted in the
+    // grid); "Resume" returns to its content without losing any setup.
+    setBrowsingModes((prev) => !prev);
   }, []);
 
   const handleToggleAdvanced = useCallback(() => {
@@ -769,7 +776,7 @@ export const BillSplitScreen = ({
 
                 {showAdvanced && (
                   <Animated.View entering={FadeInDown.springify()} exiting={FadeOut.duration(150)}>
-                    <AdvancedModePicker onSelect={handleAdvancedMethodSelect} />
+                    <AdvancedModePicker onSelect={handleAdvancedMethodSelect} activeMethod={activeAdvancedMethod} />
                   </Animated.View>
                 )}
               </View>
@@ -784,16 +791,21 @@ export const BillSplitScreen = ({
                     style={styles.breadcrumbBtn}
                     activeOpacity={0.7}
                   >
-                    <Icon source="arrow-left" size={18} color={theme.colors.primary} />
-                    <Text variant="labelMedium" style={{ color: theme.colors.primary }}>Advanced Modes</Text>
+                    <Icon source={browsingModes ? 'arrow-u-left-top' : 'arrow-left'} size={18} color={theme.colors.primary} />
+                    <Text variant="labelMedium" style={{ color: theme.colors.primary }}>{browsingModes ? 'Resume' : 'Advanced Modes'}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    onPress={() => { setActiveAdvancedMethod(null); setShowAdvanced(false); }}
+                    onPress={() => { setActiveAdvancedMethod(null); setBrowsingModes(false); setShowAdvanced(false); }}
                     activeOpacity={0.7}
                   >
                     <Text variant="labelMedium" style={{ color: theme.colors.muted }}>Back to basic</Text>
                   </TouchableOpacity>
                 </View>
+                {browsingModes && (
+                  <Animated.View entering={FadeInDown.springify()} exiting={FadeOut.duration(150)}>
+                    <AdvancedModePicker onSelect={handleAdvancedMethodSelect} activeMethod={activeAdvancedMethod} />
+                  </Animated.View>
+                )}
               </Animated.View>
             )}
 
@@ -816,7 +828,7 @@ export const BillSplitScreen = ({
             )}
 
             {/* Advanced Mode Content */}
-            {activeAdvancedMethod && (
+            {activeAdvancedMethod && !browsingModes && (
               <Animated.View entering={SlideInDown.springify()} exiting={SlideOutDown.springify()}>
                 <AdvancedModeContent
                   method={activeAdvancedMethod}

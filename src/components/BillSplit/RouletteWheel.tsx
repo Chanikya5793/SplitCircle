@@ -1,5 +1,5 @@
 import { useTheme } from '@/context/ThemeContext';
-import { heavyHaptic, successHaptic } from '@/utils/haptics';
+import { heavyHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -7,6 +7,7 @@ import Animated, {
     Easing,
     cancelAnimation,
     runOnJS,
+    useAnimatedReaction,
     useAnimatedStyle,
     useSharedValue,
     withTiming,
@@ -109,6 +110,21 @@ const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
         onSpinComplete(winnerId);
       },
       [onSpinComplete],
+    );
+
+    // Casino "clack" — a light haptic every time a segment boundary passes the
+    // pointer. Fires at most once per frame (the reaction runs per frame, not
+    // per boundary), so the tick rate naturally follows the wheel: a blur of
+    // clicks off the line, slowing to individual clacks as it decides. This is
+    // most of the game feel.
+    useAnimatedReaction(
+      () => (segmentCount > 0 ? Math.floor(rotation.value / (360 / segmentCount)) : 0),
+      (crossed, previous) => {
+        if (previous !== null && crossed !== previous) {
+          runOnJS(selectionHaptic)();
+        }
+      },
+      [segmentCount],
     );
 
     // Imperative handle – parent calls wheel.spin(winnerIndex)
