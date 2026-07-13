@@ -1,7 +1,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import { heavyHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
 import Animated, {
     Easing,
@@ -41,7 +41,7 @@ function cryptoRandom(): number {
 }
 
 // Same harmonised palette as the main roulette wheel — people get colour.
-const OUTER_COLORS = [
+export const OUTER_COLORS = [
   '#6D7CFF', '#3EC1B0', '#F2789F', '#E8B94E', '#7FBF6C',
   '#A78BFA', '#58A6E8', '#E8926B', '#5BC4DC', '#D98BC5',
   '#95B84E', '#F27E6B',
@@ -126,11 +126,16 @@ interface Props {
   highlightedUserId?: string | null;
   /** Unallocated share shown in the stationary hub. */
   remainingPct?: number;
+  /** The hub IS the spin button — tap the center of the wheel to spin. */
+  onHubPress?: () => void;
+  /** Stable palette index per user id, so a person keeps their colour across
+      rounds (and it matches the progress bar) even as the ring shrinks. */
+  colorIndexById?: Record<string, number>;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
-  ({ participants, percentages, onOuterSpinComplete, onInnerSpinComplete, disabled, highlightedUserId, remainingPct }, ref) => {
+  ({ participants, percentages, onOuterSpinComplete, onInnerSpinComplete, disabled, highlightedUserId, remainingPct, onHubPress, colorIndexById }, ref) => {
     const { theme } = useTheme();
     const separatorColor = theme.dark ? 'rgba(13,15,20,1)' : 'rgba(250,250,252,1)';
     const included = useMemo(() => participants.filter((p) => p.included), [participants]);
@@ -243,7 +248,7 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
         const start = i * segAngle;
         const end = start + segAngle;
         const mid = start + segAngle / 2;
-        const color = OUTER_COLORS[i % OUTER_COLORS.length];
+        const color = OUTER_COLORS[(colorIndexById?.[p.id] ?? i) % OUTER_COLORS.length];
         const isHl = highlightedUserId === p.id;
         const labelR = (OUTER_R + OUTER_INNER_R) / 2;
         const labelPos = polarToCartesian(CX, CY, labelR, mid);
@@ -272,7 +277,7 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
           </G>
         );
       });
-    }, [included, outerCount, highlightedUserId, separatorColor, theme.colors.primary]);
+    }, [included, outerCount, highlightedUserId, separatorColor, theme.colors.primary, colorIndexById]);
 
     // ── Build inner ring segments (percentages) ─────────────────────────
     const innerSegments = useMemo(() => {
@@ -359,13 +364,36 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
             </Svg>
           </Animated.View>
 
-          {/* Stationary hub — shows what's still up for grabs */}
-          <View style={[s.hub, { backgroundColor: hubBg, borderColor: hubBorder }]} pointerEvents="none">
-            <Text style={[s.hubLabel, { color: theme.colors.onSurfaceVariant }]}>LEFT</Text>
-            <Text style={[s.hubValue, { color: theme.colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit>
-              {Math.max(0, remainingPct ?? 100)}%
-            </Text>
-          </View>
+          {/* Stationary hub — the spin button, showing what's up for grabs */}
+          {(() => {
+            const actionable = Boolean(onHubPress) && !disabled && (remainingPct ?? 100) > 0;
+            return (
+              <Pressable
+                onPress={actionable ? onHubPress : undefined}
+                disabled={!actionable}
+                accessibilityRole="button"
+                accessibilityLabel={actionable ? 'Spin the wheels' : undefined}
+                style={({ pressed }) => [
+                  s.hub,
+                  actionable
+                    ? { backgroundColor: theme.colors.primary, borderColor: 'rgba(255,255,255,0.25)' }
+                    : { backgroundColor: hubBg, borderColor: hubBorder },
+                  pressed && actionable && { transform: [{ scale: 0.94 }] },
+                ]}
+              >
+                <Text style={[s.hubLabel, { color: actionable ? 'rgba(255,255,255,0.85)' : theme.colors.onSurfaceVariant }]}>
+                  {actionable ? 'SPIN' : 'LEFT'}
+                </Text>
+                <Text
+                  style={[s.hubValue, { color: actionable ? '#FFFFFF' : theme.colors.onSurface }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                >
+                  {Math.max(0, remainingPct ?? 100)}%
+                </Text>
+              </Pressable>
+            );
+          })()}
         </View>
 
         {/* Ring legend */}

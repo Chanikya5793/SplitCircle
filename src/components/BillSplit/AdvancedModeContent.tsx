@@ -3,16 +3,16 @@ import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
 import { heavyHaptic, lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LayoutChangeEvent, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { LayoutChangeEvent, Pressable, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Button, Icon, IconButton, Text } from 'react-native-paper';
-import Animated, { Easing, FadeIn, FadeInDown, ZoomIn, runOnJS, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, ZoomIn, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import type { RouletteWheelRef } from './RouletteWheel';
 import RouletteWheel from './RouletteWheel';
 import { computeKarma, listDatesBetween } from './splitMath';
 import type { AdvancedSplitMethod, GamifiedMode, ItemCategory, Participant, ReceiptItem, TimeSplitVariant } from './types';
 import type { WeightedRouletteWheelRef } from './WeightedRouletteWheel';
-import WeightedRouletteWheel, { generatePercentageOptions } from './WeightedRouletteWheel';
+import WeightedRouletteWheel, { generatePercentageOptions, OUTER_COLORS } from './WeightedRouletteWheel';
 
 const AVATAR_COLORS = ['#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626', '#7C3AED'];
 
@@ -594,10 +594,11 @@ const ItemizedReceiptMode = React.memo(({
 interface IncomeProps {
   participants: Participant[];
   onWeightChange: (id: string, weight: string) => void;
+  onToggle?: (id: string) => void;
   currency: string;
 }
 
-const IncomeProportionalMode = React.memo(({ participants, onWeightChange, currency }: IncomeProps) => {
+const IncomeProportionalMode = React.memo(({ participants, onWeightChange, onToggle, currency }: IncomeProps) => {
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
   const included = participants.filter((p) => p.included);
@@ -606,7 +607,7 @@ const IncomeProportionalMode = React.memo(({ participants, onWeightChange, curre
   return (
     <View style={styles.section}>
       <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-        Enter annual salary or arbitrary weight for each person. The bill is split proportionally.
+        Enter each person's salary (or any weight) — the bill splits proportionally. Tap a name to include or exclude them.
       </Text>
 
       <SolidCard style={styles.groupCard}>
@@ -615,24 +616,47 @@ const IncomeProportionalMode = React.memo(({ participants, onWeightChange, curre
         return (
           <Animated.View key={p.id} entering={FadeInDown.delay(index * 40).springify()}>
             <View style={[styles.incomeRow, index === participants.length - 1 && styles.lastRow]}>
-              <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[index % AVATAR_COLORS.length] }]}>
-                <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
-              </View>
-              <Text style={[styles.incomeName, { color: theme.colors.onSurface }]}>{p.name}</Text>
-              <DecimalInput
-                style={[styles.incomeInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
-                value={p.incomeWeight > 0 ? p.incomeWeight : ''}
-                onChange={(v: string) => onWeightChange(p.id, v)}
-                keyboardType="numeric"
-                placeholder="0"
-                placeholderTextColor={palette.muted}
-              />
-              <Text variant="bodySmall" style={[styles.incomePct, { color: palette.muted }]}>
-                {pct}%
-              </Text>
-              <Text variant="bodySmall" style={{ color: theme.colors.primary, fontWeight: '600', minWidth: 60, textAlign: 'right' }}>
-                {formatCurrency(p.computedAmount, currency)}
-              </Text>
+              <Pressable
+                onPress={onToggle ? () => { lightHaptic(); onToggle(p.id); } : undefined}
+                accessibilityRole="button"
+                accessibilityState={{ selected: p.included }}
+                style={({ pressed }) => [styles.incomeIdentity, pressed && { opacity: 0.6 }]}
+              >
+                <View style={[
+                  styles.miniAvatar,
+                  { backgroundColor: p.included ? AVATAR_COLORS[index % AVATAR_COLORS.length] : palette.border },
+                ]}>
+                  <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
+                </View>
+                <Text
+                  style={[styles.incomeName, { color: p.included ? theme.colors.onSurface : palette.muted }]}
+                  numberOfLines={1}
+                >
+                  {p.name}
+                </Text>
+              </Pressable>
+              {p.included ? (
+                <>
+                  <DecimalInput
+                    style={[styles.incomeInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
+                    value={p.incomeWeight > 0 ? p.incomeWeight : ''}
+                    onChange={(v: string) => onWeightChange(p.id, v)}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    placeholderTextColor={palette.muted}
+                  />
+                  <Text variant="bodySmall" style={[styles.incomePct, { color: palette.muted }]}>
+                    {pct}%
+                  </Text>
+                  <Text variant="bodySmall" style={{ color: theme.colors.primary, fontWeight: '600', minWidth: 60, textAlign: 'right' }}>
+                    {formatCurrency(p.computedAmount, currency)}
+                  </Text>
+                </>
+              ) : (
+                <Text variant="bodySmall" style={{ color: palette.muted, fontStyle: 'italic' }}>
+                  Not splitting · tap to add
+                </Text>
+              )}
             </View>
           </Animated.View>
         );
@@ -1854,47 +1878,12 @@ const TimeBasedMode = React.memo(({
 // ═══════════════════════════════════════════════════════════════════════════════
 // E. GAMIFIED / RANDOMIZED SPLITS
 // ═══════════════════════════════════════════════════════════════════════════════
-// Pulsing SPIN button — breathes while idle so it begs to be pressed, goes
-// static (and translucent) while the wheel runs.
-const SpinButton = ({ onPress, disabled, label, spinning }: { onPress: () => void; disabled?: boolean; label: string; spinning?: boolean }) => {
-  const { theme } = useTheme();
-  const pulse = useSharedValue(1);
-  useEffect(() => {
-    if (spinning || disabled) {
-      pulse.value = withTiming(1, { duration: 150 });
-      return;
-    }
-    pulse.value = withRepeat(
-      withSequence(
-        withTiming(1.05, { duration: 750, easing: Easing.inOut(Easing.quad) }),
-        withTiming(1, { duration: 750, easing: Easing.inOut(Easing.quad) }),
-      ),
-      -1,
-      true,
-    );
-  }, [pulse, spinning, disabled]);
-  const style = useAnimatedStyle(() => ({ transform: [{ scale: pulse.value }] }));
-
-  return (
-    <Animated.View style={style}>
-      <TouchableOpacity
-        style={[styles.spinButton, { backgroundColor: spinning ? `${theme.colors.primary}80` : theme.colors.primary }]}
-        onPress={onPress}
-        disabled={disabled || spinning}
-        activeOpacity={0.8}
-      >
-        <Icon source={spinning ? 'loading' : 'rotate-right'} size={24} color="#FFF" />
-        <Text style={styles.spinText}>{label}</Text>
-      </TouchableOpacity>
-    </Animated.View>
-  );
-};
-
 interface GamifiedProps {
   mode: GamifiedMode;
   onModeChange: (mode: GamifiedMode) => void;
   participants: Participant[];
   onWeightChange: (id: string, weight: string) => void;
+  onToggleParticipant?: (id: string) => void;
   loserId: string | null;
   onSpin: () => void;
   spinTargetIndex: number | null;
@@ -1911,7 +1900,7 @@ interface GamifiedProps {
 }
 
 const GamifiedMode_ = React.memo(({
-  mode, onModeChange, participants, onWeightChange, loserId, onSpin,
+  mode, onModeChange, participants, onWeightChange, onToggleParticipant, loserId, onSpin,
   spinTargetIndex, onSpinComplete, isSpinning, currency, totalAmount, initialWeightedAssignments,
   onWeightedComplete, initialKarmaIntensity, initialKarmaApplied, onKarmaIntensityChange, onKarmaComplete,
 }: GamifiedProps) => {
@@ -1921,6 +1910,14 @@ const GamifiedMode_ = React.memo(({
     () => participants.filter((participant) => participant.included),
     [participants],
   );
+
+  // Stable palette slot per person (full roster order) — a player keeps their
+  // colour on the wheel AND the progress bar across rounds and toggles.
+  const colorIndexById = useMemo(() => {
+    const map: Record<string, number> = {};
+    participants.forEach((p, i) => { map[p.id] = i; });
+    return map;
+  }, [participants]);
 
   // Wheel ref for roulette / weighted modes
   const wheelRef = useRef<RouletteWheelRef>(null);
@@ -2040,17 +2037,13 @@ const GamifiedMode_ = React.memo(({
   );
   const wBusy = wPhase === 'spinning-user' || wPhase === 'user-selected' || wPhase === 'spinning-pct';
 
-  // Reset weighted state when switching modes
-  useEffect(() => {
-    if (mode !== 'weightedRoulette') {
-      lastWeightedSeedRef.current = null;
-      return;
-    }
-
-    if (lastWeightedSeedRef.current === seededWeightedKey) {
-      return;
-    }
-
+  // Re-seed weighted state on (re)entry or when saved assignments change.
+  // Adjusted DURING render (React's supported set-state-on-prop-change
+  // pattern): a useEffect fires a frame late, flashing the previous visit's
+  // stale assignments (phantom "100% allocated") before resetting.
+  if (mode !== 'weightedRoulette') {
+    lastWeightedSeedRef.current = null;
+  } else if (lastWeightedSeedRef.current !== seededWeightedKey) {
     lastWeightedSeedRef.current = seededWeightedKey;
     setWAssignments(seededWeightedAssignments);
     setWPhase(seededWeightedAssignments.length ? 'complete' : 'idle');
@@ -2058,7 +2051,33 @@ const GamifiedMode_ = React.memo(({
     setWPercentOptions(generatePercentageOptions(
       Math.max(0, 100 - seededWeightedAssignments.reduce((sum, assignment) => sum + assignment.percentage, 0)),
     ));
-  }, [mode, seededWeightedAssignments, seededWeightedKey]);
+  }
+
+  // Changing WHO plays invalidates any partial/complete game. Reset locally
+  // during render (no stale frame) and sync the parent's saved assignments
+  // from an effect (parent state must not be set mid-render).
+  const rosterKey = useMemo(() => included.map((p) => p.id).join(','), [included]);
+  const prevRosterKeyRef = useRef(rosterKey);
+  const parentNeedsClearRef = useRef(false);
+  if (prevRosterKeyRef.current !== rosterKey) {
+    prevRosterKeyRef.current = rosterKey;
+    if (mode === 'weightedRoulette' && (wAssignments.length > 0 || wPhase !== 'idle')) {
+      setWAssignments([]);
+      setWPhase('idle');
+      setWSelectedUser(null);
+      setWPercentOptions(generatePercentageOptions(100));
+      parentNeedsClearRef.current = true;
+    }
+    if (mode === 'scrooge' && karmaApplied) {
+      setKarmaApplied(false);
+    }
+  }
+  useEffect(() => {
+    if (parentNeedsClearRef.current) {
+      parentNeedsClearRef.current = false;
+      onWeightedComplete?.([]);
+    }
+  });
 
   // Store references for async callbacks
   const wSelectedUserRef = useRef<string | null>(null);
@@ -2168,29 +2187,74 @@ const GamifiedMode_ = React.memo(({
         })}
       </View>
 
+      {/* Players — choose who's in the game, same spirit as picking the payer.
+          Toggling resets any in-flight result (handled upstream + roster key). */}
+      {onToggleParticipant && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.playersRow}>
+          {participants.map((p) => {
+            const color = OUTER_COLORS[(colorIndexById[p.id] ?? 0) % OUTER_COLORS.length];
+            return (
+              <TouchableOpacity
+                key={p.id}
+                accessibilityState={{ selected: p.included }}
+                onPress={() => { lightHaptic(); onToggleParticipant(p.id); }}
+                activeOpacity={0.7}
+                style={[
+                  styles.playerChip,
+                  {
+                    borderColor: p.included ? color : palette.border,
+                    backgroundColor: p.included ? `${color}1F` : 'transparent',
+                    opacity: p.included ? 1 : 0.55,
+                  },
+                ]}
+              >
+                <View style={[styles.miniAvatar, styles.playerAvatar, { backgroundColor: p.included ? color : palette.border }]}>
+                  <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
+                </View>
+                <Text
+                  style={{ color: p.included ? theme.colors.onSurface : palette.muted, fontSize: 12, fontWeight: '600' }}
+                  numberOfLines={1}
+                >
+                  {p.name.split(' ')[0]}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
+
       {mode === 'roulette' && (
         <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-          Loser pays it all — spin to decide.
+          Loser pays it all — tap the wheel's center to spin.
         </Text>
       )}
 
       {mode === 'weightedRoulette' && (
         <View>
           <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-            Outer ring picks who, inner ring picks their share — spin until 100% is assigned.
+            Outer ring picks who, inner picks their share — tap the center to spin.
           </Text>
 
-          {/* Progress bar */}
+          {/* Progress bar — stacked per-person segments in wheel colours, so
+              the results read at a glance without scrolling to the list. */}
           <View style={styles.wProgressContainer}>
             <View style={styles.wProgressBar}>
-              <View style={[styles.wProgressFill, { width: `${wAllocated}%`, backgroundColor: theme.colors.primary }]} />
+              {wAssignments.map((a) => (
+                <View
+                  key={a.userId}
+                  style={{
+                    width: `${a.percentage}%`,
+                    backgroundColor: OUTER_COLORS[(colorIndexById[a.userId] ?? 0) % OUTER_COLORS.length],
+                  }}
+                />
+              ))}
             </View>
             <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '700' }}>
               {wAllocated}% / 100%
             </Text>
           </View>
 
-          {/* The dual-ring wheel */}
+          {/* The dual-ring wheel — its hub is the spin button */}
           <WeightedRouletteWheel
             ref={weightedWheelRef}
             participants={wRemainingParticipants.map((p) => ({ ...p }))}
@@ -2200,36 +2264,27 @@ const GamifiedMode_ = React.memo(({
             disabled={wBusy}
             highlightedUserId={wSelectedUser}
             remainingPct={wRemainingPct}
+            onHubPress={handleWeightedSpin}
+            colorIndexById={colorIndexById}
           />
 
           {/* Status message */}
           {wPhase === 'spinning-user' && (
             <Animated.View entering={FadeIn.duration(200)}>
               <Text variant="bodySmall" style={{ color: '#F59E0B', textAlign: 'center', fontWeight: '700', marginTop: 4 }}>
-                🎯 Selecting who's next…
+                Selecting who pays next…
               </Text>
             </Animated.View>
           )}
           {(wPhase === 'user-selected' || wPhase === 'spinning-pct') && (
             <Animated.View entering={FadeIn.duration(200)}>
               <Text variant="bodySmall" style={{ color: '#14B8A6', textAlign: 'center', fontWeight: '700', marginTop: 4 }}>
-                📊 Selecting their share…
+                Selecting their share…
               </Text>
             </Animated.View>
           )}
 
-          {/* Spin Button - placed right after wheel to stay visible */}
-          {wPhase !== 'complete' && (
-            <View style={styles.spinContainerInline}>
-              <SpinButton
-                onPress={handleWeightedSpin}
-                spinning={wBusy}
-                label={wBusy ? 'Spinning…' : `SPIN (${wRemainingPct}% left)`}
-              />
-            </View>
-          )}
-
-          {/* Assignment list */}
+          {/* Assignment list — colours match the wheel & progress bar */}
           {wAssignments.length > 0 && (
             <SolidCard style={[styles.wAssignmentList, styles.groupCard]}>
               {wAssignments.map((a, i) => (
@@ -2239,7 +2294,7 @@ const GamifiedMode_ = React.memo(({
                     { borderColor: palette.border },
                     i === wAssignments.length - 1 && styles.lastRow,
                   ]}>
-                    <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[i % AVATAR_COLORS.length] }]}>
+                    <View style={[styles.miniAvatar, { backgroundColor: OUTER_COLORS[(colorIndexById[a.userId] ?? 0) % OUTER_COLORS.length] }]}>
                       <Text style={styles.miniInitials}>{getInitials(a.name)}</Text>
                     </View>
                     <Text style={[styles.incomeName, { color: theme.colors.onSurface }]}>{a.name}</Text>
@@ -2432,6 +2487,7 @@ const GamifiedMode_ = React.memo(({
           totalAmount={totalAmount}
           currency={currency}
           winnerId={!isSpinning ? loserId : null}
+          onHubPress={onSpin}
         />
       )}
 
@@ -2595,6 +2651,8 @@ interface AdvancedModeContentProps {
   onTipChange: (v: number) => void;
   // Income
   onIncomeWeightChange: (id: string, weight: string) => void;
+  // Shared: include/exclude a participant (income + gamified modes)
+  onToggleParticipant?: (id: string) => void;
   // Consumption
   totalParts: number;
   onTotalPartsChange: (v: number) => void;
@@ -2649,6 +2707,7 @@ export const AdvancedModeContent = React.memo((props: AdvancedModeContentProps) 
         <IncomeProportionalMode
           participants={props.participants}
           onWeightChange={props.onIncomeWeightChange}
+          onToggle={props.onToggleParticipant}
           currency={props.currency}
         />
       );
@@ -2686,6 +2745,7 @@ export const AdvancedModeContent = React.memo((props: AdvancedModeContentProps) 
           onModeChange={props.onGamifiedModeChange}
           participants={props.participants}
           onWeightChange={props.onRouletteWeightChange}
+          onToggleParticipant={props.onToggleParticipant}
           loserId={props.loserId}
           onSpin={props.onSpin}
           spinTargetIndex={props.spinTargetIndex}
@@ -2853,6 +2913,12 @@ const styles = StyleSheet.create({
     flex: 1,
     fontWeight: '600',
     fontSize: 14,
+  },
+  incomeIdentity: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   incomeInput: {
     width: 80,
@@ -3327,6 +3393,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 8,
   },
+  playersRow: {
+    gap: 8,
+    paddingVertical: 2,
+    marginBottom: 6,
+  },
+  playerChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 17,
+    paddingLeft: 4,
+    paddingRight: 10,
+    height: 34,
+  },
+  playerAvatar: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+  },
   gameModeChip: {
     flex: 1,
     flexDirection: 'row',
@@ -3351,11 +3437,6 @@ const styles = StyleSheet.create({
     marginTop: 14,
     // Footer docks in normal flow now — no scroll clearance to reserve.
     marginBottom: 10,
-  },
-  spinContainerInline: {
-    alignItems: 'center',
-    marginTop: 16,
-    marginBottom: 16,
   },
   spinButton: {
     flexDirection: 'row',
@@ -3448,10 +3529,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: 'rgba(128,128,128,0.15)',
     overflow: 'hidden',
-  },
-  wProgressFill: {
-    height: '100%',
-    borderRadius: 4,
+    flexDirection: 'row',
   },
   wAssignmentList: {
     marginTop: 12,

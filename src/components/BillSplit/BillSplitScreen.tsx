@@ -387,6 +387,19 @@ export const BillSplitScreen = ({
     setIsSpinning(false);
   }, []);
 
+  // Toggling who's in from an advanced editor (income rows, game player
+  // chips). For games, changing the roster invalidates any spun result.
+  const handleAdvancedToggleParticipant = useCallback((id: string) => {
+    handleToggle(id);
+    if (activeAdvancedMethod === 'gamified') {
+      setLoserId(null);
+      setSpinTargetIndex(null);
+      setIsSpinning(false);
+      setRevealDismissed(false);
+      setWeightedAssignments([]);
+    }
+  }, [activeAdvancedMethod, handleToggle]);
+
   const handleGamifiedModeChange = useCallback((mode: GamifiedMode) => {
     setGamifiedMode(mode);
     setLoserId(null);
@@ -818,6 +831,7 @@ export const BillSplitScreen = ({
                   tipAmount={tipAmount}
                   onTipChange={setTipAmount}
                   onIncomeWeightChange={handleIncomeWeightChange}
+                  onToggleParticipant={handleAdvancedToggleParticipant}
                   totalParts={totalParts}
                   onTotalPartsChange={setTotalParts}
                   onPartsConsumedChange={handlePartsConsumedChange}

@@ -2,7 +2,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
 import { heavyHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
 import Animated, {
     Easing,
@@ -97,11 +97,13 @@ interface RouletteWheelProps {
   currency: string;
   /** When settled, the winning segment stays lit and the rest recede. */
   winnerId?: string | null;
+  /** The hub IS the spin button — tap the center of the wheel to spin. */
+  onHubPress?: () => void;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
-  ({ participants, onSpinComplete, disabled, totalAmount, currency, winnerId }, ref) => {
+  ({ participants, onSpinComplete, disabled, totalAmount, currency, winnerId, onHubPress }, ref) => {
     const { theme } = useTheme();
     const included = useMemo(() => participants.filter((p) => p.included), [participants]);
     const segmentCount = included.length;
@@ -279,23 +281,37 @@ const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
             </Svg>
           </Animated.View>
 
-          {/* Stationary hub — the stake sits in the middle of the wheel */}
-          <View
-            style={[
-              styles.hub,
-              { backgroundColor: hubBg, borderColor: hubBorder },
-            ]}
-            pointerEvents="none"
-          >
-            <Text style={[styles.hubLabel, { color: theme.colors.onSurfaceVariant }]}>POT</Text>
-            <Text
-              style={[styles.hubAmount, { color: theme.colors.onSurface }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-            >
-              {formatCurrency(totalAmount, currency)}
-            </Text>
-          </View>
+          {/* Stationary hub — the stake sits in the middle of the wheel, and
+              the hub itself is the spin button whenever a spin is possible. */}
+          {(() => {
+            const actionable = Boolean(onHubPress) && !disabled;
+            return (
+              <Pressable
+                onPress={actionable ? onHubPress : undefined}
+                disabled={!actionable}
+                accessibilityRole="button"
+                accessibilityLabel={actionable ? 'Spin the wheel' : undefined}
+                style={({ pressed }) => [
+                  styles.hub,
+                  actionable
+                    ? { backgroundColor: theme.colors.primary, borderColor: 'rgba(255,255,255,0.25)' }
+                    : { backgroundColor: hubBg, borderColor: hubBorder },
+                  pressed && actionable && { transform: [{ scale: 0.94 }] },
+                ]}
+              >
+                <Text style={[styles.hubLabel, { color: actionable ? 'rgba(255,255,255,0.85)' : theme.colors.onSurfaceVariant }]}>
+                  {actionable ? (winnerId ? 'RESPIN' : 'SPIN') : 'POT'}
+                </Text>
+                <Text
+                  style={[styles.hubAmount, { color: actionable ? '#FFFFFF' : theme.colors.onSurface }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                >
+                  {formatCurrency(totalAmount, currency)}
+                </Text>
+              </Pressable>
+            );
+          })()}
         </View>
       </View>
     );
