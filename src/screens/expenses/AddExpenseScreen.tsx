@@ -709,6 +709,9 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                   placeholder="e.g. $40 dinner with Alex & Sam, split equally"
                   multiline
                   onSubmitEditing={handleNlParse}
+                  outlineColor={`${theme.colors.primary}${isDark ? '85' : '70'}`}
+                  activeOutlineColor={theme.colors.primary}
+                  outlineStyle={{ borderWidth: 1.5, borderRadius: 12 }}
                   style={{ backgroundColor: 'transparent' }}
                   right={
                     <TextInput.Icon
@@ -753,7 +756,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                 visible={showCategoryMenu}
                 onDismiss={() => setShowCategoryMenu(false)}
                 anchor={
-                  <Button mode="outlined" onPress={() => setShowCategoryMenu(true)} icon={getCategoryIcon(category)} style={{ borderColor: theme.colors.outline }}>
+                  <Button mode="outlined" onPress={() => setShowCategoryMenu(true)} icon={getCategoryIcon(category)} style={{ borderColor: `${theme.colors.primary}55` }}>
                     {category}
                   </Button>
                 }
@@ -763,7 +766,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                 ))}
               </Menu>
 
-              <Button mode="outlined" onPress={() => setShowPayerDialog(true)} icon="account-cash" style={{ borderColor: theme.colors.outline }}>
+              <Button mode="outlined" onPress={() => setShowPayerDialog(true)} icon="account-cash" style={{ borderColor: `${theme.colors.primary}55` }}>
                 Paid by {memberDisplayNames[paidBy] ?? 'Unknown'}
               </Button>
             </View>
@@ -800,7 +803,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                 visible={showReceiptMenu}
                 onDismiss={() => setShowReceiptMenu(false)}
                 anchor={
-                  <Button mode="outlined" icon="paperclip" onPress={() => setShowReceiptMenu(true)} style={{ borderColor: theme.colors.outline }}>
+                  <Button mode="outlined" icon="paperclip" onPress={() => setShowReceiptMenu(true)} style={{ borderColor: `${theme.colors.primary}55` }}>
                     {receiptUri ? 'Change Receipt' : 'Add Receipt'}
                   </Button>
                 }
@@ -841,7 +844,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                 setShowBillSplit(true);
               }}
               activeOpacity={0.7}
-              style={[styles.splitOptionsBtn, { borderColor: theme.colors.outline }]}
+              style={[styles.splitOptionsBtn, { borderColor: `${theme.colors.primary}55` }]}
             >
               <View style={styles.splitOptionsBtnContent}>
                 <View style={[styles.splitOptionsIconChip, { backgroundColor: `${theme.colors.primary}16` }]}>
@@ -942,7 +945,7 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
             ) : null}
 
             <View style={styles.actions}>
-              <Button mode="outlined" onPress={onClose} style={{ borderColor: theme.colors.outline }}>
+              <Button mode="outlined" onPress={onClose} style={{ borderColor: `${theme.colors.primary}55` }}>
                 Cancel
               </Button>
               <PrimaryButton

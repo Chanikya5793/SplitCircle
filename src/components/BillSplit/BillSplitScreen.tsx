@@ -10,7 +10,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Icon, PaperProvider, Text } from 'react-native-paper';
-import Animated, { FadeIn, FadeInDown, FadeOut, Layout, SlideInDown, SlideOutDown, runOnJS } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, FadeOut, SlideInLeft, SlideInRight, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 // Canonical method order — matches MethodRail. Swiping steps through this list,
 // so the rail and the swipe gesture always agree.
@@ -115,6 +115,9 @@ export const BillSplitScreen = ({
   const [timePeriodEndDate, setTimePeriodEndDate] = useState(initialSplitMetadata?.timePeriodEndDate ?? '');
   const [paidBy, setPaidBy] = useState(initialPayer ?? participants[0]?.id ?? '');
   const [showPayerMenu, setShowPayerMenu] = useState(false);
+  // Global roster selector (header, beside Paid by) — one place to include /
+  // exclude anyone regardless of the active mode.
+  const [showParticipantMenu, setShowParticipantMenu] = useState(false);
 
   // ── Method State ──────────────────────────────────────────────────────────
   const [activeBasicMethod, setActiveBasicMethod] = useState<BasicSplitMethod>(
@@ -477,27 +480,53 @@ export const BillSplitScreen = ({
   }, []);
 
   // Swipe left/right across the whole editor to move between modes, like
-  // flicking between stocks. Steps one method along METHOD_ORDER (clamped).
+  // flicking between stocks. The content follows the finger (dragX) and the
+  // incoming mode slides in from the swipe direction (pageDir). Steps one
+  // method along METHOD_ORDER (clamped).
+  const [pageDir, setPageDir] = useState<1 | -1>(1);
+  const dragX = useSharedValue(0);
+  const pageStyle = useAnimatedStyle(() => ({ transform: [{ translateX: dragX.value }] }));
+
   const currentMethodRef = useRef(currentMethod);
   currentMethodRef.current = currentMethod;
   const stepMethod = useCallback((delta: number) => {
     const idx = METHOD_ORDER.indexOf(currentMethodRef.current);
     const next = METHOD_ORDER[Math.min(METHOD_ORDER.length - 1, Math.max(0, idx + delta))];
     if (next === currentMethodRef.current) return;
+    setPageDir(delta > 0 ? 1 : -1);
     selectionHaptic();
     applyMethod(next);
   }, [applyMethod]);
+
+  // Record swipe direction for a rail tap too, so tapping a farther/nearer
+  // method slides consistently with where it sits relative to the current one.
+  const setDirTo = useCallback((method: SplitMethod) => {
+    const from = METHOD_ORDER.indexOf(currentMethodRef.current);
+    const to = METHOD_ORDER.indexOf(method);
+    if (from >= 0 && to >= 0 && to !== from) setPageDir(to > from ? 1 : -1);
+  }, []);
 
   const swipeGesture = useMemo(
     () => Gesture.Pan()
       .activeOffsetX([-24, 24])
       .failOffsetY([-16, 16])
+      .onUpdate((e) => {
+        'worklet';
+        // Follow the finger with mild resistance so it reads as a real drag.
+        dragX.value = e.translationX * 0.6;
+      })
       .onEnd((e) => {
         'worklet';
-        if (Math.abs(e.translationX) < 60 && Math.abs(e.velocityX) < 500) return;
-        runOnJS(stepMethod)(e.translationX < 0 ? 1 : -1);
+        const commit = Math.abs(e.translationX) > 60 || Math.abs(e.velocityX) > 500;
+        if (commit) {
+          // Snap back instantly; the incoming keyed content plays the slide.
+          dragX.value = 0;
+          runOnJS(stepMethod)(e.translationX < 0 ? 1 : -1);
+        } else {
+          dragX.value = withTiming(0, { duration: 180 });
+        }
       }),
-    [stepMethod],
+    [stepMethod, dragX],
   );
 
   const handleSuggestion = useCallback((id: string) => {
@@ -652,14 +681,16 @@ export const BillSplitScreen = ({
 
   // ── Method Selection ──────────────────────────────────────────────────────
   const handleBasicMethodSelect = useCallback((method: BasicSplitMethod) => {
+    setDirTo(method);
     setActiveBasicMethod(method);
     setActiveAdvancedMethod(null);
-  }, []);
+  }, [setDirTo]);
 
   const handleAdvancedMethodSelect = useCallback((method: AdvancedSplitMethod) => {
     mediumHaptic();
+    setDirTo(method);
     setActiveAdvancedMethod(method);
-  }, []);
+  }, [setDirTo]);
 
   // ── Done Handler ──────────────────────────────────────────────────────────
   const handleDone = useCallback(() => {
@@ -784,7 +815,7 @@ export const BillSplitScreen = ({
             </TouchableOpacity>
             <Pressable
               style={({ pressed }) => [styles.headerCenter, pressed && { opacity: 0.6 }]}
-              onPress={() => { selectionHaptic(); setShowPayerMenu((v) => !v); }}
+              onPress={() => { selectionHaptic(); setShowParticipantMenu(false); setShowPayerMenu((v) => !v); }}
               accessibilityRole="button"
               accessibilityLabel={`Paid by ${payerName}. Tap to change payer`}
             >
@@ -799,9 +830,20 @@ export const BillSplitScreen = ({
                 <Icon source={showPayerMenu ? 'chevron-up' : 'chevron-down'} size={13} color={theme.colors.primary} />
               </View>
             </Pressable>
-            {/* Right side balances the header; the commit lives in the docked
-                footer so there's exactly one Done, and it's thumb-reachable. */}
-            <View style={styles.headerSide} />
+            {/* Global roster selector — one tap to include/exclude anyone, in
+                any mode. Balances the header opposite Cancel. */}
+            <Pressable
+              style={({ pressed }) => [styles.headerRight, pressed && { opacity: 0.6 }]}
+              onPress={() => { selectionHaptic(); setShowPayerMenu(false); setShowParticipantMenu((v) => !v); }}
+              accessibilityRole="button"
+              accessibilityLabel={`${included.length} of ${participants.length} people in the split. Tap to change`}
+            >
+              <Icon source="account-multiple" size={16} color={theme.colors.primary} />
+              <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '800' }}>
+                {included.length}/{participants.length}
+              </Text>
+              <Icon source={showParticipantMenu ? 'chevron-up' : 'chevron-down'} size={13} color={theme.colors.primary} />
+            </Pressable>
           </View>
 
           {/* Payer picker — overlay under the header, solid surface */}
@@ -827,6 +869,48 @@ export const BillSplitScreen = ({
                     <View style={styles.payerDropdownItemLeft}>
                       <Icon source={p.id === paidBy ? 'check-circle' : 'account'} size={20} color={p.id === paidBy ? theme.colors.primary : theme.colors.onSurfaceVariant} />
                       <Text variant="bodyMedium" style={{ color: p.id === paidBy ? theme.colors.primary : theme.colors.onSurface, fontWeight: p.id === paidBy ? '700' : '400' }}>{p.name}</Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
+            </Animated.View>
+          )}
+
+          {/* Participant roster — global multi-select overlay under the header.
+              Stays open while you toggle several; the header chevron closes it. */}
+          {showParticipantMenu && (
+            <Animated.View entering={FadeInDown.duration(150)} exiting={FadeOut.duration(120)} style={styles.payerOverlay}>
+              <View style={[
+                styles.payerDropdownInner,
+                {
+                  backgroundColor: theme.dark ? 'rgba(28,31,38,0.99)' : 'rgba(255,255,255,0.99)',
+                  borderColor: theme.dark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)',
+                },
+              ]}>
+                <Pressable
+                  onPress={handleSelectAll}
+                  style={({ pressed }) => [
+                    styles.payerDropdownItem,
+                    { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)' },
+                    pressed && { opacity: 0.6 },
+                  ]}
+                >
+                  <View style={styles.payerDropdownItemLeft}>
+                    <Icon source={allSelected ? 'checkbox-multiple-marked' : 'checkbox-multiple-blank-outline'} size={20} color={theme.colors.primary} />
+                    <Text variant="bodyMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                      {allSelected ? 'Clear everyone' : 'Select everyone'}
+                    </Text>
+                  </View>
+                </Pressable>
+                {participants.map((p) => (
+                  <Pressable
+                    key={p.id}
+                    onPress={() => { selectionHaptic(); handleAdvancedToggleParticipant(p.id); }}
+                    style={({ pressed }) => [styles.payerDropdownItem, pressed && { opacity: 0.6 }]}
+                  >
+                    <View style={styles.payerDropdownItemLeft}>
+                      <Icon source={p.included ? 'checkbox-marked' : 'checkbox-blank-outline'} size={20} color={p.included ? theme.colors.primary : theme.colors.onSurfaceVariant} />
+                      <Text variant="bodyMedium" style={{ color: p.included ? theme.colors.onSurface : theme.colors.muted, fontWeight: p.included ? '600' : '400' }}>{p.name}</Text>
                     </View>
                   </Pressable>
                 ))}
@@ -864,72 +948,74 @@ export const BillSplitScreen = ({
               onSelectAdvanced={handleAdvancedMethodSelect}
             />
 
-            {/* Participant List (shown for basic methods only) */}
-            {!activeAdvancedMethod && (
-              <Animated.View entering={FadeInDown.delay(180).springify()} layout={Layout.springify()}>
-                <ParticipantList
-                  participants={displayParticipants}
-                  activeMethod={activeBasicMethod}
-                  currency={currency}
-                  onToggle={handleToggle}
-                  onExactChange={handleExactChange}
-                  onPercentageChange={handlePercentageChange}
-                  onSharesChange={handleSharesChange}
-                  onAdjustmentChange={handleAdjustmentChange}
-                  onSelectAll={handleSelectAll}
-                  allSelected={allSelected}
-                />
+            {/* Paged mode content — follows the finger horizontally (pageStyle)
+                and the incoming mode slides in from the swipe direction. Keyed
+                by method so each change mounts a fresh directional slide. */}
+            <Animated.View style={pageStyle}>
+              <Animated.View
+                key={currentMethod}
+                entering={(pageDir === 1 ? SlideInRight : SlideInLeft).duration(240)}
+              >
+                {!activeAdvancedMethod ? (
+                  <ParticipantList
+                    participants={displayParticipants}
+                    activeMethod={activeBasicMethod}
+                    currency={currency}
+                    onToggle={handleToggle}
+                    onExactChange={handleExactChange}
+                    onPercentageChange={handlePercentageChange}
+                    onSharesChange={handleSharesChange}
+                    onAdjustmentChange={handleAdjustmentChange}
+                    onSelectAll={handleSelectAll}
+                    allSelected={allSelected}
+                  />
+                ) : (
+                  <AdvancedModeContent
+                    method={activeAdvancedMethod}
+                    participants={displayParticipants}
+                    currency={currency}
+                    totalAmount={totalAmount}
+                    receiptItems={receiptItems}
+                    onReceiptItemsChange={setReceiptItems}
+                    taxAmount={taxAmount}
+                    onTaxChange={setTaxAmount}
+                    tipAmount={tipAmount}
+                    onTipChange={setTipAmount}
+                    onIncomeWeightChange={handleIncomeWeightChange}
+                    onToggleParticipant={handleAdvancedToggleParticipant}
+                    totalParts={totalParts}
+                    onTotalPartsChange={setTotalParts}
+                    onPartsConsumedChange={handlePartsConsumedChange}
+                    onDaysChange={handleDaysChange}
+                    onSetAllDays={handleSetAllDays}
+                    onStayDatesChange={handleStayDatesChange}
+                    timeSplitVariant={timeSplitVariant}
+                    onTimeSplitVariantChange={setTimeSplitVariant}
+                    timePeriodDays={timePeriodDays}
+                    timePeriodStartDate={timePeriodStartDate}
+                    timePeriodEndDate={timePeriodEndDate}
+                    onTimePeriodRangeChange={handleTimePeriodRangeChange}
+                    gamifiedMode={gamifiedMode}
+                    onGamifiedModeChange={handleGamifiedModeChange}
+                    onRouletteWeightChange={handleRouletteWeightChange}
+                    loserId={loserId}
+                    onSpin={handleSpin}
+                    spinTargetIndex={spinTargetIndex}
+                    onSpinComplete={handleWheelSpinComplete}
+                    isSpinning={isSpinning}
+                    initialWeightedAssignments={weightedAssignments}
+                    onWeightedComplete={handleWeightedComplete}
+                    initialKarmaIntensity={karmaIntensity}
+                    initialKarmaApplied={Boolean(initialSplitMetadata && initialSplitMetadata.gamifiedMode === 'scrooge')}
+                    karmaResetKey={karmaResetKey}
+                    onKarmaIntensityChange={setKarmaIntensity}
+                    onKarmaComplete={handleKarmaComplete}
+                    itemCategories={itemCategories}
+                    onItemCategoriesChange={setItemCategories}
+                  />
+                )}
               </Animated.View>
-            )}
-
-            {/* Advanced Mode Content */}
-            {activeAdvancedMethod && (
-              <Animated.View entering={SlideInDown.springify()} exiting={SlideOutDown.springify()}>
-                <AdvancedModeContent
-                  method={activeAdvancedMethod}
-                  participants={displayParticipants}
-                  currency={currency}
-                  totalAmount={totalAmount}
-                  receiptItems={receiptItems}
-                  onReceiptItemsChange={setReceiptItems}
-                  taxAmount={taxAmount}
-                  onTaxChange={setTaxAmount}
-                  tipAmount={tipAmount}
-                  onTipChange={setTipAmount}
-                  onIncomeWeightChange={handleIncomeWeightChange}
-                  onToggleParticipant={handleAdvancedToggleParticipant}
-                  totalParts={totalParts}
-                  onTotalPartsChange={setTotalParts}
-                  onPartsConsumedChange={handlePartsConsumedChange}
-                  onDaysChange={handleDaysChange}
-                  onSetAllDays={handleSetAllDays}
-                  onStayDatesChange={handleStayDatesChange}
-                  timeSplitVariant={timeSplitVariant}
-                  onTimeSplitVariantChange={setTimeSplitVariant}
-                  timePeriodDays={timePeriodDays}
-                  timePeriodStartDate={timePeriodStartDate}
-                  timePeriodEndDate={timePeriodEndDate}
-                  onTimePeriodRangeChange={handleTimePeriodRangeChange}
-                  gamifiedMode={gamifiedMode}
-                  onGamifiedModeChange={handleGamifiedModeChange}
-                  onRouletteWeightChange={handleRouletteWeightChange}
-                  loserId={loserId}
-                  onSpin={handleSpin}
-                  spinTargetIndex={spinTargetIndex}
-                  onSpinComplete={handleWheelSpinComplete}
-                  isSpinning={isSpinning}
-                  initialWeightedAssignments={weightedAssignments}
-                  onWeightedComplete={handleWeightedComplete}
-                  initialKarmaIntensity={karmaIntensity}
-                  initialKarmaApplied={Boolean(initialSplitMetadata && initialSplitMetadata.gamifiedMode === 'scrooge')}
-                  karmaResetKey={karmaResetKey}
-                  onKarmaIntensityChange={setKarmaIntensity}
-                  onKarmaComplete={handleKarmaComplete}
-                  itemCategories={itemCategories}
-                  onItemCategoriesChange={setItemCategories}
-                />
-              </Animated.View>
-            )}
+            </Animated.View>
 
           </ScrollView>
           </GestureDetector>
@@ -1148,6 +1234,13 @@ const styles = StyleSheet.create({
   },
   headerSide: {
     minWidth: 56,
+  },
+  headerRight: {
+    minWidth: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 3,
   },
   headerCenter: {
     alignItems: 'center',

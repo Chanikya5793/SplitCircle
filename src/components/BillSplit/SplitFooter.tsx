@@ -38,6 +38,7 @@ export const SplitFooter = React.memo(({
   gamifiedMode,
   loserId,
   isSpinning,
+  onSpin,
   onDone,
 }: SplitFooterProps) => {
   const { theme } = useTheme();
@@ -45,8 +46,17 @@ export const SplitFooter = React.memo(({
   const allocatedTotal = included.reduce((s, p) => s + p.computedAmount, 0);
 
   const isGame = currentMethod === 'gamified';
+  const isWheel = isGame && (gamifiedMode === 'roulette' || gamifiedMode === 'weightedRoulette');
+  const isKarma = isGame && gamifiedMode === 'scrooge';
   const gameResolved = isGame && (gamifiedMode === 'roulette' ? Boolean(loserId) : validation.isValid);
+  // The footer's CTA is a *working* button, never a dead disabled one:
+  //  • an un-landed wheel game → it spins (same trigger as the hub);
+  //  • karma is applied on its own slider, so the footer just commits;
+  //  • otherwise it's Done, enabled only once the split is valid.
+  const canSpin = isWheel && !gameResolved && !isSpinning;
   const canDone = !isSpinning && (isGame ? gameResolved : validation.isValid);
+  const ctaEnabled = canSpin || canDone;
+  const onCta = canSpin ? onSpin : canDone ? onDone : undefined;
 
   // ── Headline figure (the number people actually want) ────────────────────
   const headline = useMemo(() => {
@@ -76,7 +86,8 @@ export const SplitFooter = React.memo(({
   const remaining = totalAmount - allocatedTotal;
   const sub = useMemo(() => {
     if (isGame && !validation.isValid) {
-      return `${includedCount} ${includedCount === 1 ? 'player' : 'players'} · tap the wheel`;
+      if (isKarma) return 'Set the karma below to finish';
+      return `${includedCount} ${includedCount === 1 ? 'player' : 'players'} · tap Spin`;
     }
     if (!validation.isValid && !isGame) {
       if (remaining > 0.01) return `${getCurrencySymbol(currency)}${remaining.toFixed(2)} left to assign`;
@@ -84,10 +95,11 @@ export const SplitFooter = React.memo(({
       return validation.message;
     }
     return `${includedCount} of ${participants.length} included`;
-  }, [isGame, validation.isValid, validation.message, remaining, currency, includedCount, participants.length]);
+  }, [isGame, isKarma, validation.isValid, validation.message, remaining, currency, includedCount, participants.length]);
 
   const subColor = !validation.isValid && !isGame ? theme.colors.danger : theme.colors.muted;
-  const ctaLabel = isSpinning ? 'Spinning…' : isGame && !gameResolved ? 'Spin' : 'Done';
+  const ctaLabel = isSpinning ? 'Spinning…' : canSpin ? 'Spin' : 'Done';
+  const ctaIcon = isSpinning ? 'timer-sand' : canSpin ? 'rotate-right' : 'check';
 
   return (
     <View style={[
@@ -107,19 +119,19 @@ export const SplitFooter = React.memo(({
       </View>
 
       <Pressable
-        onPress={canDone ? onDone : undefined}
-        disabled={!canDone}
+        onPress={onCta}
+        disabled={!ctaEnabled}
         accessibilityRole="button"
         style={({ pressed }) => [
           styles.cta,
           {
-            backgroundColor: canDone ? theme.colors.primary : theme.colors.pressed,
-            opacity: pressed && canDone ? 0.85 : 1,
+            backgroundColor: ctaEnabled ? theme.colors.primary : theme.colors.pressed,
+            opacity: pressed && ctaEnabled ? 0.85 : 1,
           },
         ]}
       >
-        <Icon source={canDone ? 'check' : 'gesture-tap'} size={17} color={canDone ? '#FFF' : theme.colors.muted} />
-        <Text style={{ color: canDone ? '#FFF' : theme.colors.muted, fontSize: 15, fontWeight: '800' }}>
+        <Icon source={ctaIcon} size={17} color={ctaEnabled ? '#FFF' : theme.colors.muted} />
+        <Text style={{ color: ctaEnabled ? '#FFF' : theme.colors.muted, fontSize: 15, fontWeight: '800' }}>
           {ctaLabel}
         </Text>
       </Pressable>

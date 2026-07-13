@@ -52,7 +52,9 @@ export const FloatingLabelInput = ({ label, value, style, containerStyle, onFocu
           onBlur?.(e);
         }}
         mode="outlined"
-        outlineColor={isDark ? 'rgba(255,255,255,0.28)' : 'rgba(15,23,42,0.24)'}
+        // Resting outline is a real accent tint, not a near-black hairline —
+        // a field you must tap should look tappable and on-brand.
+        outlineColor={`${theme.colors.primary}${isDark ? '85' : '70'}`}
         activeOutlineColor={theme.colors.primary}
         outlineStyle={{ borderWidth: 1.5, borderRadius: 12 }}
         theme={{ colors: { background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.6)' } }}
