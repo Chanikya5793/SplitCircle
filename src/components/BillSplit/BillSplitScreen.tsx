@@ -147,6 +147,11 @@ export const BillSplitScreen = ({
   const [weightedAssignments, setWeightedAssignments] = useState<{ userId: string; percentage: number }[]>(
     initialSplitMetadata?.weightedAssignments ?? [],
   );
+  // A saved weighted split is already known, so it must not replay its result
+  // screen. A new completed game explicitly opens the outcome overlay.
+  const [weightedRevealDismissed, setWeightedRevealDismissed] = useState(
+    Boolean(initialSplitMetadata?.weightedAssignments?.length),
+  );
   const [karmaIntensity, setKarmaIntensity] = useState(initialSplitMetadata?.karmaIntensity ?? 0.5);
 
   // ── Item Type State ───────────────────────────────────────────────────────
@@ -371,9 +376,21 @@ export const BillSplitScreen = ({
         };
       }),
     );
+    setWeightedRevealDismissed(assignments.reduce((sum, assignment) => sum + assignment.percentage, 0) < 100);
     setLoserId(null);
     setIsSpinning(false);
   }, [totalAmount]);
+
+  const handleWeightedRestart = useCallback(() => {
+    mediumHaptic();
+    setWeightedRevealDismissed(true);
+    setWeightedAssignments([]);
+    setParticipants((prev) => prev.map((participant) => ({
+      ...participant,
+      percentage: 0,
+      computedAmount: 0,
+    })));
+  }, []);
 
   // ── Karma Complete ────────────────────────────────────────────────────────
   const handleKarmaComplete = useCallback((results: { userId: string; amount: number }[]) => {
@@ -397,6 +414,7 @@ export const BillSplitScreen = ({
       setIsSpinning(false);
       setRevealDismissed(false);
       setWeightedAssignments([]);
+      setWeightedRevealDismissed(true);
     }
   }, [activeAdvancedMethod, handleToggle]);
 
@@ -405,6 +423,7 @@ export const BillSplitScreen = ({
     setLoserId(null);
     setSpinTargetIndex(null);
     setIsSpinning(false);
+    setWeightedRevealDismissed(true);
     setParticipants((prev) => prev.map((participant) => ({
       ...participant,
       percentage: 0,
@@ -567,6 +586,18 @@ export const BillSplitScreen = ({
   }, [displayParticipants, effectiveTotalAmount, currentMethod, gamifiedMode, loserId]);
 
   const included = displayParticipants.filter((p) => p.included);
+  const weightedOutcomeRows = useMemo(() => weightedAssignments
+    .map((assignment) => {
+      const participant = participants.find((item) => item.id === assignment.userId);
+      return {
+        id: assignment.userId,
+        name: participant?.name ?? 'Unknown',
+        percentage: assignment.percentage,
+        amount: totalAmount * assignment.percentage / 100,
+      };
+    })
+    .sort((a, b) => b.percentage - a.percentage), [participants, totalAmount, weightedAssignments]);
+  const weightedSplitComplete = weightedOutcomeRows.reduce((sum, row) => sum + row.percentage, 0) >= 100;
 
   const canDone = useMemo(() => {
     if (isSpinning) return false;
@@ -919,6 +950,66 @@ export const BillSplitScreen = ({
             </Animated.View>
           )}
 
+          {/* Double Wheel uses the same payoff rule as Roulette: completion is
+              a destination, not a card stranded below a scrolling editor. */}
+          {currentMethod === 'gamified' && gamifiedMode === 'weightedRoulette' && weightedSplitComplete && !weightedRevealDismissed && (
+            <Animated.View
+              entering={FadeIn.duration(220)}
+              exiting={FadeOut.duration(150)}
+              style={[styles.winnerOverlay, { backgroundColor: theme.dark ? 'rgba(13,15,20,0.98)' : 'rgba(250,250,252,0.99)' }]}
+            >
+              <ConfettiBurst key={weightedOutcomeRows.map((row) => `${row.id}:${row.percentage}`).join('|')} />
+              <TouchableOpacity
+                style={styles.winnerClose}
+                onPress={() => { lightHaptic(); setWeightedRevealDismissed(true); }}
+                accessibilityLabel="Close split result"
+              >
+                <Icon source="close" size={22} color={theme.colors.muted} />
+              </TouchableOpacity>
+
+              <View style={styles.weightedOutcomeHeader}>
+                <Text style={[styles.winnerKicker, { color: theme.colors.muted }]}>SHARES ASSIGNED</Text>
+                <Text style={[styles.weightedOutcomeTitle, { color: theme.colors.onSurface }]}>The split is set</Text>
+                <Text variant="bodyMedium" style={{ color: theme.colors.muted }}>Everyone can see their final share.</Text>
+              </View>
+
+              <ScrollView style={[
+                styles.weightedOutcomeList,
+                { backgroundColor: theme.dark ? 'rgba(28,31,38,0.98)' : 'rgba(255,255,255,0.98)', borderColor: theme.dark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)' },
+              ]} showsVerticalScrollIndicator={false}>
+                {weightedOutcomeRows.map((row, index) => (
+                  <View key={row.id} style={[
+                    styles.weightedOutcomeRow,
+                    index < weightedOutcomeRows.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)' },
+                  ]}>
+                    <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '700', flex: 1 }} numberOfLines={1}>{row.name}</Text>
+                    <Text variant="titleMedium" style={{ color: theme.colors.primary, fontWeight: '800' }}>{row.percentage}%</Text>
+                    <Text variant="bodyMedium" style={{ color: theme.colors.muted, width: 78, textAlign: 'right' }}>{formatCurrency(row.amount, currency)}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+
+              <View style={styles.winnerActions}>
+                <TouchableOpacity
+                  style={[styles.winnerSecondaryBtn, { borderColor: theme.dark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.16)' }]}
+                  onPress={handleWeightedRestart}
+                  activeOpacity={0.8}
+                >
+                  <Icon source="rotate-right" size={17} color={theme.colors.onSurface} />
+                  <Text style={{ color: theme.colors.onSurface, fontSize: 15, fontWeight: '700' }}>Spin again</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.winnerPrimaryBtn, { backgroundColor: theme.colors.success }]}
+                  onPress={handleDone}
+                  activeOpacity={0.8}
+                >
+                  <Icon source="check" size={17} color="#FFF" />
+                  <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '800' }}>Lock it in</Text>
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+          )}
+
           {/* Sticky Footer */}
           <View style={styles.footerWrapper}>
             <SplitFooter
@@ -1024,6 +1115,8 @@ const styles = StyleSheet.create({
     zIndex: 100,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingTop: 56,
+    paddingBottom: 124,
   },
   winnerClose: {
     position: 'absolute',
@@ -1039,6 +1132,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: spacing.xl,
+  },
+  weightedOutcomeHeader: {
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: spacing.xl,
+    marginBottom: spacing.lg,
+  },
+  weightedOutcomeTitle: {
+    fontSize: 32,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  weightedOutcomeList: {
+    alignSelf: 'stretch',
+    marginHorizontal: spacing.md,
+    maxHeight: '52%',
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+  },
+  weightedOutcomeRow: {
+    minHeight: 58,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   winnerKicker: {
     fontSize: 12,

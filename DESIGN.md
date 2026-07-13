@@ -49,6 +49,11 @@ Current design contract. Rules only — history lives in git.
 
 - Payoff moments own the FULL screen (overlay above all chrome incl. footer) — never a
   card that scrolls behind the bottom bar.
+- Multi-step game outcomes (including Double Wheel) keep intermediate state on the
+  game hardware; the final allocation is a full-screen result with its own bounded
+  list and fixed actions. Never substitute a progress bar or an editor-scrolling
+  result list for the final outcome.
+- Never visually reveal a preselected random target before its animation has landed.
 - Game hardware is modern iOS, not casino: harmonized muted palette, canvas-colored
   separator strokes, hairline outer ring, accent rounded pointer, solid hubs showing
   live data (pot / % left). No rim dots, no emoji hubs, no gold-on-black. Winner state:
