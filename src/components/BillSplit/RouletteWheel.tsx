@@ -218,7 +218,7 @@ const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
               d={path}
               fill={color}
               stroke={isWinner ? '#FFFFFF' : separatorColor}
-              strokeWidth={isWinner ? 3 : 2.5}
+              strokeWidth={isWinner ? 2.5 : 1.5}
             />
             <SvgText
               x={labelPos.x}

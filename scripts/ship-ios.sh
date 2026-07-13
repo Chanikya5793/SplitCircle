@@ -8,7 +8,7 @@
 #   bash scripts/ship-ios.sh --profile preview   # use a different eas.json build/submit profile
 #   bash scripts/ship-ios.sh --build-only        # build the .ipa but don't submit
 #
-# One-time setup (see SHIP.md): store an App Store Connect API key on EAS with
+# One-time setup (see OPS.md): store an App Store Connect API key on EAS with
 #   `eas credentials` → iOS → App Store Connect API Key, or run `eas submit -p ios`
 # once interactively. After that this script is fully non-interactive.
 

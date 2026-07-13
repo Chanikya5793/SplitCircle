@@ -1,5 +1,5 @@
 // Non-color design tokens. Screens consume these via useTheme().theme —
-// never as literals. Adding a step? Update UI_REVAMP.md.
+// never as literals. Adding a step? Update DESIGN.md.
 
 import type { TextStyle } from 'react-native';
 

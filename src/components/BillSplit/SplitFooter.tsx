@@ -96,12 +96,14 @@ export const SplitFooter = React.memo(({
   const needsSpin = currentMethod === 'gamified' && gamifiedMode === 'roulette' && !loserId;
 
   const ctaLabel = isSpinning
-    ? 'Spinning...'
+    ? 'Spinning…'
     : canSpinFromFooter
       ? 'Spin'
       : validation.isValid
         ? 'Done'
-        : 'Fix Split';
+        : currentMethod === 'gamified'
+          ? 'Done'
+          : 'Fix Split';
 
   // ── Content Renderers ─────────────────────────────────────────────────
   const renderEqualContent = () => {
@@ -169,7 +171,7 @@ export const SplitFooter = React.memo(({
       return (
         <View style={styles.contentBlock}>
           <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.primary }]}>
-            🎰 Spinning...
+            Spinning…
           </Text>
           <Text variant="bodySmall" style={{ color: theme.colors.muted }}>
             Total {formatCurrency(totalAmount, currency)}
@@ -182,7 +184,7 @@ export const SplitFooter = React.memo(({
       return (
         <View style={styles.contentBlock}>
           <Text variant="titleMedium" style={[styles.totalLabel, { color: theme.colors.onSurface }]}>
-            🎯 {loser.name} pays {formatCurrency(loser.computedAmount, currency)}
+            {loser.name} pays {formatCurrency(loser.computedAmount, currency)}
           </Text>
           <Text variant="bodySmall" style={{ color: theme.colors.muted }}>
             {gamifiedMode === 'roulette' ? 'Roulette' : gamifiedMode === 'weightedRoulette' ? 'Weighted' : 'Karma'} · {includedCount} players
@@ -193,9 +195,9 @@ export const SplitFooter = React.memo(({
 
     // Pre-spin state
     const modeLabels: Record<GamifiedMode, string> = {
-      roulette: '🎰 Spin to decide!',
-      weightedRoulette: '⚖️ Spin the weighted wheel!',
-      scrooge: '🧮 Karma split ready',
+      roulette: 'Spin to decide',
+      weightedRoulette: 'Fate assigns the shares',
+      scrooge: 'Karma split ready',
     };
 
     return (
@@ -255,16 +257,26 @@ export const SplitFooter = React.memo(({
     return renderAdvancedContent();
   };
 
+  // Mid-game states are guidance, not failures — never bleed red while the
+  // player simply hasn't finished spinning/applying yet.
+  const gameInProgress = currentMethod === 'gamified' && !validation.isValid && !canSpinFromFooter;
+
   const helperText = canSpinFromFooter
     ? 'Spin to lock the result'
-    : currentMethod === 'gamified' && gamifiedMode === 'weightedRoulette' && !validation.isValid
-      ? 'Use the wheel button to complete all assignments'
+    : gameInProgress
+      ? gamifiedMode === 'weightedRoulette'
+        ? 'Spin until 100% is assigned'
+        : gamifiedMode === 'scrooge'
+          ? 'Apply the karma split to lock it'
+          : validation.message
     : validation.isValid
       ? `${includedCount} of ${participants.length} included`
       : validation.message;
 
   const helperColor = canSpinFromFooter
     ? theme.colors.primary
+    : gameInProgress
+      ? theme.colors.muted
     : validation.isValid
       ? theme.colors.success
       : theme.colors.danger;
@@ -309,7 +321,7 @@ export const SplitFooter = React.memo(({
                 },
               ]}
             >
-              <Icon source={canSpinFromFooter ? 'rotate-right' : canApply ? 'check' : 'alert-circle-outline'} size={15} color="#FFF" />
+              <Icon source={canSpinFromFooter ? 'rotate-right' : canApply || currentMethod === 'gamified' ? 'check' : 'alert-circle-outline'} size={15} color="#FFF" />
               <Text style={styles.doneText}>{ctaLabel}</Text>
             </Pressable>
 

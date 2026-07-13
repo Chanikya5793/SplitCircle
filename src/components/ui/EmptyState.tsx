@@ -1,6 +1,6 @@
 // Empty/offline/error state primitives so screens stop hand-rolling these
 // (or worse, spinning forever). OfflineState is the standard "offline and
-// nothing cached" treatment per UI_REVAMP.md convention 2.
+// nothing cached" treatment per DESIGN.md convention 2.
 
 import { useTheme } from '@/context/ThemeContext';
 import React from 'react';

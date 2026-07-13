@@ -289,7 +289,7 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
 
         return (
           <G key={`pct-${i}`}>
-            <Path d={path} fill={color} stroke={separatorColor} strokeWidth={2} />
+            <Path d={path} fill={color} stroke={separatorColor} strokeWidth={1.5} />
             <SvgText
               x={labelPos.x}
               y={labelPos.y}

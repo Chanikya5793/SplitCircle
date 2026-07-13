@@ -1,6 +1,6 @@
 // DEPRECATED compat layer — the real design system lives in src/theme/.
 // These exports keep legacy imports compiling while screens migrate to
-// useTheme() tokens (see UI_REVAMP.md). Do not add new imports of this file.
+// useTheme() tokens (see DESIGN.md). Do not add new imports of this file.
 
 import { buildTheme, DEFAULT_ACCENT } from '@/theme';
 

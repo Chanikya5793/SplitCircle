@@ -3,6 +3,8 @@ import { useTheme } from '@/context/ThemeContext';
 import type { ExpenseSplitMetadata } from '@/models';
 import { getSuggestions, recordSplit, type SplitSuggestion } from '@/services/splitHistoryService';
 import { spacing } from '@/theme';
+import { formatCurrency } from '@/utils/currency';
+import { ConfettiBurst } from './ConfettiBurst';
 import { heavyHaptic, lightHaptic, mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -138,6 +140,9 @@ export const BillSplitScreen = ({
   const [gamifiedMode, setGamifiedMode] = useState<GamifiedMode>(initialSplitMetadata?.gamifiedMode ?? 'roulette');
   const [loserId, setLoserId] = useState<string | null>(initialSplitMetadata?.rouletteLoserId ?? null);
   const [isSpinning, setIsSpinning] = useState(false);
+  // Full-screen winner reveal — dismissible so the result can still be
+  // reviewed/tweaked underneath. A reopened saved spin doesn't re-celebrate.
+  const [revealDismissed, setRevealDismissed] = useState(Boolean(initialSplitMetadata?.rouletteLoserId));
   const [spinTargetIndex, setSpinTargetIndex] = useState<number | null>(null);
   const [weightedAssignments, setWeightedAssignments] = useState<{ userId: string; percentage: number }[]>(
     initialSplitMetadata?.weightedAssignments ?? [],
@@ -296,6 +301,7 @@ export const BillSplitScreen = ({
     heavyHaptic();
     setLoserId(null);
     setSpinTargetIndex(null);
+    setRevealDismissed(false);
     setIsSpinning(true);
 
     // Karma mode doesn't use spin – it's handled internally
@@ -846,6 +852,59 @@ export const BillSplitScreen = ({
 
           </ScrollView>
 
+          {/* Full-screen winner reveal — the payoff owns the WHOLE screen,
+              footer included. Nothing celebratory ever hides behind chrome. */}
+          {currentMethod === 'gamified' && gamifiedMode === 'roulette' && loserId && !isSpinning && !revealDismissed && (
+            <Animated.View
+              entering={FadeIn.duration(220)}
+              exiting={FadeOut.duration(150)}
+              style={[styles.winnerOverlay, { backgroundColor: theme.dark ? 'rgba(13,15,20,0.98)' : 'rgba(250,250,252,0.99)' }]}
+            >
+              <ConfettiBurst key={loserId} />
+              <TouchableOpacity
+                style={styles.winnerClose}
+                onPress={() => { lightHaptic(); setRevealDismissed(true); }}
+                accessibilityLabel="Close winner reveal"
+              >
+                <Icon source="close" size={22} color={theme.colors.muted} />
+              </TouchableOpacity>
+
+              <View style={styles.winnerCenter}>
+                <Text style={[styles.winnerKicker, { color: theme.colors.muted }]}>THE WHEEL HAS SPOKEN</Text>
+                <Text style={[styles.winnerName, { color: theme.colors.onSurface }]} numberOfLines={1} adjustsFontSizeToFit>
+                  {participants.find((p) => p.id === loserId)?.name ?? '—'}
+                </Text>
+                <Text style={[styles.winnerAmount, { color: theme.colors.primary }]}>
+                  pays {formatCurrency(effectiveTotalAmount, currency)}
+                </Text>
+                {included.length > 1 && (
+                  <Text variant="bodyMedium" style={{ color: theme.colors.muted }}>
+                    {included.length - 1} {included.length - 1 === 1 ? 'friend eats' : 'friends eat'} free tonight
+                  </Text>
+                )}
+              </View>
+
+              <View style={styles.winnerActions}>
+                <TouchableOpacity
+                  style={[styles.winnerSecondaryBtn, { borderColor: theme.dark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.16)' }]}
+                  onPress={handleSpin}
+                  activeOpacity={0.8}
+                >
+                  <Icon source="rotate-right" size={17} color={theme.colors.onSurface} />
+                  <Text style={{ color: theme.colors.onSurface, fontSize: 15, fontWeight: '700' }}>Spin again</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.winnerPrimaryBtn, { backgroundColor: theme.colors.success }]}
+                  onPress={handleDone}
+                  activeOpacity={0.8}
+                >
+                  <Icon source="check" size={17} color="#FFF" />
+                  <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '800' }}>Lock it in</Text>
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+          )}
+
           {/* Sticky Footer */}
           <View style={styles.footerWrapper}>
             <SplitFooter
@@ -945,5 +1004,67 @@ const styles = StyleSheet.create({
     // Docked in normal flow (the ScrollView flexes above it) — nothing can
     // ever hide underneath, and no bottom padding needs reserving.
     paddingBottom: 30,
+  },
+  winnerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  winnerClose: {
+    position: 'absolute',
+    top: 18,
+    right: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  winnerCenter: {
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: spacing.xl,
+  },
+  winnerKicker: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 3,
+  },
+  winnerName: {
+    fontSize: 44,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  winnerAmount: {
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  winnerActions: {
+    position: 'absolute',
+    bottom: 44,
+    left: spacing.md,
+    right: spacing.md,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  winnerSecondaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 1,
+  },
+  winnerPrimaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 52,
+    borderRadius: 26,
   },
 });
