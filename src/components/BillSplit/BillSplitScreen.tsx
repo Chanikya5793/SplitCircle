@@ -147,12 +147,16 @@ export const BillSplitScreen = ({
   const [weightedAssignments, setWeightedAssignments] = useState<{ userId: string; percentage: number }[]>(
     initialSplitMetadata?.weightedAssignments ?? [],
   );
-  // A saved weighted split is already known, so it must not replay its result
-  // screen. A new completed game explicitly opens the outcome overlay.
+  // A locked game reopens at its completed result, not at an empty remainder
+  // wheel. That makes Edit a real handoff rather than a broken re-entry.
   const [weightedRevealDismissed, setWeightedRevealDismissed] = useState(
-    Boolean(initialSplitMetadata?.weightedAssignments?.length),
+    (initialSplitMetadata?.weightedAssignments ?? []).reduce((sum, assignment) => sum + assignment.percentage, 0) < 100,
   );
   const [karmaIntensity, setKarmaIntensity] = useState(initialSplitMetadata?.karmaIntensity ?? 0.5);
+  const [karmaResultActive, setKarmaResultActive] = useState(
+    initialSplitMetadata?.gamifiedMode === 'scrooge',
+  );
+  const [karmaResetKey, setKarmaResetKey] = useState(0);
 
   // ── Item Type State ───────────────────────────────────────────────────────
   const [itemCategories, setItemCategories] = useState<ItemCategory[]>(initialSplitMetadata?.itemCategories ?? []);
@@ -400,8 +404,16 @@ export const BillSplitScreen = ({
         return { ...p, computedAmount: r ? r.amount : 0 };
       }),
     );
+    setKarmaResultActive(true);
     setLoserId(null);
     setIsSpinning(false);
+  }, []);
+
+  const handleKarmaRestart = useCallback(() => {
+    mediumHaptic();
+    setKarmaResultActive(false);
+    setKarmaResetKey((value) => value + 1);
+    setParticipants((prev) => prev.map((participant) => ({ ...participant, computedAmount: 0 })));
   }, []);
 
   // Toggling who's in from an advanced editor (income rows, game player
@@ -415,6 +427,7 @@ export const BillSplitScreen = ({
       setRevealDismissed(false);
       setWeightedAssignments([]);
       setWeightedRevealDismissed(true);
+      setKarmaResultActive(false);
     }
   }, [activeAdvancedMethod, handleToggle]);
 
@@ -424,6 +437,7 @@ export const BillSplitScreen = ({
     setSpinTargetIndex(null);
     setIsSpinning(false);
     setWeightedRevealDismissed(true);
+    setKarmaResultActive(false);
     setParticipants((prev) => prev.map((participant) => ({
       ...participant,
       percentage: 0,
@@ -598,6 +612,10 @@ export const BillSplitScreen = ({
     })
     .sort((a, b) => b.percentage - a.percentage), [participants, totalAmount, weightedAssignments]);
   const weightedSplitComplete = weightedOutcomeRows.reduce((sum, row) => sum + row.percentage, 0) >= 100;
+  const karmaOutcomeRows = useMemo(() => displayParticipants
+    .filter((participant) => participant.included)
+    .map((participant) => ({ id: participant.id, name: participant.name, amount: participant.computedAmount }))
+    .sort((a, b) => b.amount - a.amount), [displayParticipants]);
 
   const canDone = useMemo(() => {
     if (isSpinning) return false;
@@ -887,6 +905,7 @@ export const BillSplitScreen = ({
                   onWeightedComplete={handleWeightedComplete}
                   initialKarmaIntensity={karmaIntensity}
                   initialKarmaApplied={Boolean(initialSplitMetadata && initialSplitMetadata.gamifiedMode === 'scrooge')}
+                  karmaResetKey={karmaResetKey}
                   onKarmaIntensityChange={setKarmaIntensity}
                   onKarmaComplete={handleKarmaComplete}
                   itemCategories={itemCategories}
@@ -997,6 +1016,66 @@ export const BillSplitScreen = ({
                 >
                   <Icon source="rotate-right" size={17} color={theme.colors.onSurface} />
                   <Text style={{ color: theme.colors.onSurface, fontSize: 15, fontWeight: '700' }}>Spin again</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.winnerPrimaryBtn, { backgroundColor: theme.colors.success }]}
+                  onPress={handleDone}
+                  activeOpacity={0.8}
+                >
+                  <Icon source="check" size={17} color="#FFF" />
+                  <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '800' }}>Lock it in</Text>
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+          )}
+
+          {/* Karma has the same result contract as the two wheels. Its applied
+              split is reviewed in a dedicated result layer, never an inline
+              card that competes with the editor or footer. */}
+          {currentMethod === 'gamified' && gamifiedMode === 'scrooge' && karmaResultActive && (
+            <Animated.View
+              entering={FadeIn.duration(220)}
+              exiting={FadeOut.duration(150)}
+              style={[styles.winnerOverlay, { backgroundColor: theme.dark ? 'rgba(13,15,20,0.98)' : 'rgba(250,250,252,0.99)' }]}
+            >
+              <ConfettiBurst key={karmaOutcomeRows.map((row) => `${row.id}:${row.amount}`).join('|')} />
+              <TouchableOpacity
+                style={styles.winnerClose}
+                onPress={() => { lightHaptic(); setKarmaResultActive(false); }}
+                accessibilityLabel="Close karma result"
+              >
+                <Icon source="close" size={22} color={theme.colors.muted} />
+              </TouchableOpacity>
+
+              <View style={styles.weightedOutcomeHeader}>
+                <Text style={[styles.winnerKicker, { color: theme.colors.muted }]}>KARMA APPLIED</Text>
+                <Text style={[styles.weightedOutcomeTitle, { color: theme.colors.onSurface }]}>The split is balanced</Text>
+                <Text variant="bodyMedium" style={{ color: theme.colors.muted }}>Past contributions are reflected in every share.</Text>
+              </View>
+
+              <ScrollView style={[
+                styles.weightedOutcomeList,
+                { backgroundColor: theme.dark ? 'rgba(28,31,38,0.98)' : 'rgba(255,255,255,0.98)', borderColor: theme.dark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)' },
+              ]} showsVerticalScrollIndicator={false}>
+                {karmaOutcomeRows.map((row, index) => (
+                  <View key={row.id} style={[
+                    styles.weightedOutcomeRow,
+                    index < karmaOutcomeRows.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)' },
+                  ]}>
+                    <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '700', flex: 1 }} numberOfLines={1}>{row.name}</Text>
+                    <Text variant="titleMedium" style={{ color: theme.colors.primary, fontWeight: '800' }}>{formatCurrency(row.amount, currency)}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+
+              <View style={styles.winnerActions}>
+                <TouchableOpacity
+                  style={[styles.winnerSecondaryBtn, { borderColor: theme.dark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.16)' }]}
+                  onPress={handleKarmaRestart}
+                  activeOpacity={0.8}
+                >
+                  <Icon source="tune-variant" size={17} color={theme.colors.onSurface} />
+                  <Text style={{ color: theme.colors.onSurface, fontSize: 15, fontWeight: '700' }}>Adjust split</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.winnerPrimaryBtn, { backgroundColor: theme.colors.success }]}

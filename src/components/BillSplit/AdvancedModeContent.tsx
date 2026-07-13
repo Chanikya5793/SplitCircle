@@ -6,7 +6,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LayoutChangeEvent, Pressable, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Button, Icon, IconButton, Text } from 'react-native-paper';
-import Animated, { FadeIn, FadeInDown, ZoomIn, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import type { RouletteWheelRef } from './RouletteWheel';
 import RouletteWheel from './RouletteWheel';
 import { computeKarma, listDatesBetween } from './splitMath';
@@ -1895,6 +1895,8 @@ interface GamifiedProps {
   onWeightedComplete?: (assignments: { userId: string; percentage: number }[]) => void;
   initialKarmaIntensity?: number;
   initialKarmaApplied?: boolean;
+  /** Bumps when the full-screen Karma result asks to edit/reapply. */
+  karmaResetKey?: number;
   onKarmaIntensityChange?: (value: number) => void;
   onKarmaComplete?: (results: { userId: string; amount: number }[]) => void;
 }
@@ -1902,7 +1904,7 @@ interface GamifiedProps {
 const GamifiedMode_ = React.memo(({
   mode, onModeChange, participants, onWeightChange, onToggleParticipant, loserId, onSpin,
   spinTargetIndex, onSpinComplete, isSpinning, currency, totalAmount, initialWeightedAssignments,
-  onWeightedComplete, initialKarmaIntensity, initialKarmaApplied, onKarmaIntensityChange, onKarmaComplete,
+  onWeightedComplete, initialKarmaIntensity, initialKarmaApplied, karmaResetKey, onKarmaIntensityChange, onKarmaComplete,
 }: GamifiedProps) => {
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
@@ -1946,6 +1948,7 @@ const GamifiedMode_ = React.memo(({
   ];
   const [karmaIntensity, setKarmaIntensity] = useState(initialKarmaIntensity ?? 0.5);
   const [karmaApplied, setKarmaApplied] = useState(initialKarmaApplied ?? false);
+  const previousKarmaResetKeyRef = useRef(karmaResetKey);
 
   const karmaComputed = useMemo(() => {
     if (mode !== 'scrooge') return [];
@@ -1982,6 +1985,12 @@ const GamifiedMode_ = React.memo(({
     }
   }, [initialKarmaApplied, initialKarmaIntensity, mode]);
 
+  useEffect(() => {
+    if (previousKarmaResetKeyRef.current === karmaResetKey) return;
+    previousKarmaResetKeyRef.current = karmaResetKey;
+    if (mode === 'scrooge') setKarmaApplied(false);
+  }, [karmaResetKey, mode]);
+
   const handleApplyKarma = useCallback(() => {
     successHaptic();
     setKarmaApplied(true);
@@ -1990,13 +1999,6 @@ const GamifiedMode_ = React.memo(({
       .map((p) => ({ userId: p.id, amount: p.computedAmount }));
     onKarmaComplete?.(results);
   }, [karmaComputed, onKarmaComplete]);
-
-  const handleResetKarma = useCallback(() => {
-    mediumHaptic();
-    setKarmaApplied(false);
-    setKarmaIntensity(initialKarmaIntensity ?? 0.5);
-    onKarmaIntensityChange?.(initialKarmaIntensity ?? 0.5);
-  }, [initialKarmaIntensity, onKarmaIntensityChange]);
 
   // ── Weighted Roulette State ─────────────────────────────────────────
   const weightedWheelRef = useRef<WeightedRouletteWheelRef>(null);
@@ -2366,8 +2368,8 @@ const GamifiedMode_ = React.memo(({
             </Text>
           )}
 
-          {/* Apply / Reset */}
-          {!karmaApplied ? (
+          {/* Applying exits to the parent-owned full-screen result. */}
+          {!karmaApplied && (
             <View style={styles.spinContainer}>
               <TouchableOpacity
                 style={[styles.spinButton, { backgroundColor: theme.colors.primary }]}
@@ -2378,27 +2380,6 @@ const GamifiedMode_ = React.memo(({
                 <Text style={styles.spinText}>Apply Karma Split</Text>
               </TouchableOpacity>
             </View>
-          ) : (
-            <Animated.View entering={ZoomIn.springify()}>
-              <SolidCard style={styles.resultCard}>
-                <View style={styles.resultContent}>
-                  <Text style={styles.resultEmoji}>⚖️</Text>
-                  <Text variant="titleMedium" style={[styles.resultName, { color: theme.colors.onSurface }]}>
-                    Karma split applied!
-                  </Text>
-                  <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center' }}>
-                    Balanced based on past payments
-                  </Text>
-                  <TouchableOpacity
-                    style={[styles.wResetBtn, { borderColor: theme.colors.primary }]}
-                    onPress={handleResetKarma}
-                  >
-                    <Icon source="refresh" size={16} color={theme.colors.primary} />
-                    <Text style={{ color: theme.colors.primary, fontSize: 13, fontWeight: '700' }}>Adjust &amp; Reapply</Text>
-                  </TouchableOpacity>
-                </View>
-              </SolidCard>
-            </Animated.View>
           )}
         </View>
       )}
@@ -2607,6 +2588,7 @@ interface AdvancedModeContentProps {
   onWeightedComplete?: (assignments: { userId: string; percentage: number }[]) => void;
   initialKarmaIntensity?: number;
   initialKarmaApplied?: boolean;
+  karmaResetKey?: number;
   onKarmaIntensityChange?: (value: number) => void;
   onKarmaComplete?: (results: { userId: string; amount: number }[]) => void;
   // Item Type
@@ -2684,6 +2666,7 @@ export const AdvancedModeContent = React.memo((props: AdvancedModeContentProps) 
           onWeightedComplete={props.onWeightedComplete}
           initialKarmaIntensity={props.initialKarmaIntensity}
           initialKarmaApplied={props.initialKarmaApplied}
+          karmaResetKey={props.karmaResetKey}
           onKarmaIntensityChange={props.onKarmaIntensityChange}
           onKarmaComplete={props.onKarmaComplete}
         />
@@ -3442,16 +3425,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 6,
-  },
-  wResetBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginTop: 12,
   },
   // Karma
   karmaPresetsRow: {
