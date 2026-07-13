@@ -229,6 +229,43 @@ export const setWallpaperFromBundled = async (
   return storeAsWallpaper(slot, asset.localUri, 'copy');
 };
 
+/**
+ * Make one surface use the exact wallpaper of another surface. Photos are
+ * copied into a distinct durable file (so clearing one slot cannot delete the
+ * other); animated/blob entries retain their palette and adaptive behavior.
+ * If the source has no explicit wallpaper, clearing the target restores its
+ * natural fallback chain instead.
+ */
+export const copyWallpaper = async (
+  sourceSlot: WallpaperSlot,
+  targetSlot: WallpaperSlot,
+): Promise<WallpaperEntry | null> => {
+  if (sourceSlot === targetSlot) return getWallpaperSync(targetSlot);
+  const map = await loadMap();
+  const source = map[sourceSlot];
+
+  if (!source) {
+    await clearWallpaper(targetSlot);
+    return null;
+  }
+
+  if (source.kind === 'photo') {
+    return storeAsWallpaper(targetSlot, resolveUri(source.file), 'copy');
+  }
+
+  const previous = map[targetSlot];
+  const next = { ...map, [targetSlot]: {
+    kind: 'blob' as const,
+    light: [...source.light] as BlobTrio,
+    dark: [...source.dark] as BlobTrio,
+    adaptive: source.adaptive,
+    setAt: Date.now(),
+  } };
+  await persistMap(next);
+  deletePreviousFile(previous);
+  return toEntry(next[targetSlot]!);
+};
+
 /** Chat slots the user has individually customized (excludes the default). */
 export const listChatOverrideSlots = (): WallpaperSlot[] =>
   Object.keys(cache ?? {}).filter((k): k is WallpaperSlot => k.startsWith('chat:'));

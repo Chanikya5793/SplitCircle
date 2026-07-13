@@ -675,6 +675,8 @@ export const SettingsScreen = () => {
         visible={wallpaperSlot !== null}
         slot={wallpaperSlot}
         title={wallpaperSlot === 'app' ? 'App background' : 'Chat wallpaper'}
+        mirrorSlot={wallpaperSlot === 'app' ? 'chat-default' : 'app'}
+        mirrorLabel={wallpaperSlot === 'app' ? 'Use chat wallpaper' : 'Use app background'}
         onClose={() => setWallpaperSlot(null)}
         onChanged={(slot) => {
           if (slot === 'chat-default') offerOverrideReset();

@@ -762,6 +762,10 @@ export const GroupInfoScreen = () => {
                 visible={wallpaperSheetOpen}
                 slot={`group:${group.groupId}`}
                 title="Group wallpaper"
+                mirrorSlot="app"
+                mirrorLabel="Use app background"
+                copyToSlot="app"
+                copyToLabel="Set as app background"
                 onClose={() => setWallpaperSheetOpen(false)}
             />
             <CurrencyConvertSheet

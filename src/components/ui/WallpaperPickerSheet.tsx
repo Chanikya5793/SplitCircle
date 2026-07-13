@@ -11,6 +11,7 @@ import { appAlert } from '@/utils/appAlert';
 import { WALLPAPER_CATALOG, type CatalogWallpaper } from '@/constants/wallpaperCatalog';
 import {
   clearWallpaper,
+  copyWallpaper,
   getWallpaperSync,
   pickAndSetWallpaper,
   setWallpaperBlob,
@@ -39,6 +40,12 @@ export interface WallpaperPickerSheetProps {
   /** Slot being edited; null while hidden. */
   slot: WallpaperSlot | null;
   title?: string;
+  /** Optional existing slot this picker can match in one tap. */
+  mirrorSlot?: WallpaperSlot;
+  mirrorLabel?: string;
+  /** Optional destination that receives this slot's explicitly saved wallpaper. */
+  copyToSlot?: WallpaperSlot;
+  copyToLabel?: string;
   onClose: () => void;
   /** Fired after the slot actually changed (set or removed). */
   onChanged?: (slot: WallpaperSlot) => void;
@@ -48,6 +55,10 @@ export const WallpaperPickerSheet = ({
   visible,
   slot,
   title = 'Wallpaper',
+  mirrorSlot,
+  mirrorLabel,
+  copyToSlot,
+  copyToLabel,
   onClose,
   onChanged,
 }: WallpaperPickerSheetProps) => {
@@ -112,6 +123,38 @@ export const WallpaperPickerSheet = ({
     onClose();
   };
 
+  const applyMirror = async () => {
+    if (!mirrorSlot) return;
+    lightHaptic();
+    setBusyId('mirror');
+    try {
+      await copyWallpaper(mirrorSlot, slot);
+      successHaptic();
+      onChanged?.(slot);
+      onClose();
+    } catch (error) {
+      appAlert('Wallpaper', error instanceof Error ? error.message : 'Could not match the wallpaper.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const copyCurrentTo = async () => {
+    if (!copyToSlot) return;
+    lightHaptic();
+    setBusyId('copy-out');
+    try {
+      await copyWallpaper(slot, copyToSlot);
+      successHaptic();
+      onChanged?.(copyToSlot);
+      onClose();
+    } catch (error) {
+      appAlert('Wallpaper', error instanceof Error ? error.message : 'Could not share the wallpaper.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   // Slides UP from the bottom while the Modal's fade brings in the scrim.
   const translateY = slide.interpolate({ inputRange: [0, 1], outputRange: [sheetH + 60, 0] });
 
@@ -129,6 +172,42 @@ export const WallpaperPickerSheet = ({
         <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
           {title}
         </Text>
+
+        {mirrorSlot && mirrorLabel && (
+          <TouchableOpacity
+            onPress={() => void applyMirror()}
+            disabled={busyId !== null}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel={mirrorLabel}
+            style={[styles.matchRow, { borderColor: theme.colors.outline, backgroundColor: `${theme.colors.primary}10` }]}
+          >
+            <Ionicons name="copy-outline" size={19} color={theme.colors.primary} />
+            <View style={styles.matchCopy}>
+              <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>{mirrorLabel}</Text>
+              <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>Keeps photos and animated colors in sync</Text>
+            </View>
+            {busyId === 'mirror' ? <ActivityIndicator size="small" color={theme.colors.primary} /> : <Ionicons name="chevron-forward" size={18} color={theme.colors.onSurfaceVariant} />}
+          </TouchableOpacity>
+        )}
+
+        {copyToSlot && copyToLabel && hasCurrent && (
+          <TouchableOpacity
+            onPress={() => void copyCurrentTo()}
+            disabled={busyId !== null}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel={copyToLabel}
+            style={[styles.matchRow, { borderColor: theme.colors.outline, backgroundColor: `${theme.colors.primary}10` }]}
+          >
+            <Ionicons name="arrow-up-outline" size={19} color={theme.colors.primary} />
+            <View style={styles.matchCopy}>
+              <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>{copyToLabel}</Text>
+              <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>Copies this conversation’s saved wallpaper</Text>
+            </View>
+            {busyId === 'copy-out' ? <ActivityIndicator size="small" color={theme.colors.primary} /> : <Ionicons name="chevron-forward" size={18} color={theme.colors.onSurfaceVariant} />}
+          </TouchableOpacity>
+        )}
 
         <ScrollView
           horizontal
@@ -234,6 +313,21 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
     marginBottom: 12,
+  },
+  matchRow: {
+    minHeight: 54,
+    marginHorizontal: 16,
+    marginBottom: 14,
+    paddingHorizontal: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  matchCopy: {
+    flex: 1,
+    gap: 1,
   },
   rail: {
     paddingHorizontal: 16,

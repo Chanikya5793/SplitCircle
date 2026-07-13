@@ -1942,6 +1942,10 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
         visible={wallpaperSheetOpen}
         slot={`chat:${thread.chatId}`}
         title="Chat wallpaper"
+        mirrorSlot="app"
+        mirrorLabel="Use app background"
+        copyToSlot="app"
+        copyToLabel="Set as app background"
         onClose={() => setWallpaperSheetOpen(false)}
       />
 
