@@ -16,6 +16,12 @@ import WeightedRouletteWheel, { generatePercentageOptions, OUTER_COLORS } from '
 
 const AVATAR_COLORS = ['#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626', '#7C3AED'];
 
+// Visible hairline border for inputs/steppers — the faint palette.border read
+// as "no border" against solid cards, so editors get a stronger, theme-aware one.
+function inputBorder(isDark: boolean): string {
+  return isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)';
+}
+
 // §9 DNA: dense editors are SOLID. Every card in every mode shares this one
 // near-opaque surface with a hairline border — blobs whisper through the
 // canvas behind, never through content.
@@ -451,10 +457,12 @@ const ItemizedReceiptMode = React.memo(({
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
 
+  // New items default to everyone who's in — the common case is "we shared it".
+  const includedIds = useMemo(() => participants.filter((p) => p.included).map((p) => p.id), [participants]);
   const addItem = useCallback(() => {
     lightHaptic();
-    onItemsChange([...items, { id: `item_${Date.now()}`, name: '', price: 0, assignedTo: [] }]);
-  }, [items, onItemsChange]);
+    onItemsChange([...items, { id: `item_${Date.now()}`, name: '', price: 0, assignedTo: [...includedIds] }]);
+  }, [items, onItemsChange, includedIds]);
 
   const updateItem = useCallback((id: string, field: keyof ReceiptItem, value: string | number | string[]) => {
     onItemsChange(items.map((it) => (it.id === id ? { ...it, [field]: value } : it)));
@@ -495,12 +503,24 @@ const ItemizedReceiptMode = React.memo(({
   return (
     <View style={styles.section}>
 
+      {items.length === 0 && (
+        <SolidCard style={styles.receiptEmpty}>
+          <Icon source="receipt-text-outline" size={30} color={palette.muted} />
+          <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+            No items yet
+          </Text>
+          <Text variant="bodySmall" style={{ color: palette.muted, textAlign: 'center', paddingHorizontal: 20 }}>
+            Add each line off the receipt and tap who shared it — or scan the receipt from the previous screen.
+          </Text>
+        </SolidCard>
+      )}
+
       {items.map((item, idx) => (
         <Animated.View key={item.id} entering={FadeInDown.delay(idx * 40).springify()}>
           <SolidCard style={styles.itemCard}>
             <View style={styles.itemRow}>
               <TextInput
-                style={[styles.itemNameInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
+                style={[styles.itemNameInput, { color: theme.colors.onSurface, borderColor: inputBorder(isDark) }]}
                 value={item.name}
                 onChangeText={(v) => updateItem(item.id, 'name', v)}
                 placeholder="Item name"
@@ -509,7 +529,7 @@ const ItemizedReceiptMode = React.memo(({
               <View style={styles.itemPriceRow}>
                 <Text style={{ color: palette.muted }}>$</Text>
                 <DecimalInput
-                  style={[styles.itemPriceInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
+                  style={[styles.itemPriceInput, { color: theme.colors.onSurface, borderColor: inputBorder(isDark) }]}
                   value={item.price}
                   onChange={(v: string) => updateItem(item.id, 'price', parseFloat(v) || 0)}
                   keyboardType="decimal-pad"
@@ -546,44 +566,54 @@ const ItemizedReceiptMode = React.memo(({
         </Animated.View>
       ))}
 
-      <Button mode="outlined" icon="plus" onPress={addItem} style={styles.addBtn}>
-        Add Item
+      <Button
+        mode="outlined"
+        icon="plus"
+        onPress={addItem}
+        style={[styles.addBtn, { borderColor: inputBorder(isDark) }]}
+        textColor={theme.colors.primary}
+      >
+        Add item
       </Button>
 
-      <View style={styles.extraRow}>
-        <View style={styles.extraField}>
-          <Text variant="bodySmall" style={{ color: palette.muted }}>Tax</Text>
-          <View style={styles.inputRow}>
-            <Text style={{ color: palette.muted }}>$</Text>
-            <DecimalInput
-              style={[styles.extraInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
-              value={taxAmount}
-              onChange={(v: string) => onTaxChange(parseFloat(v) || 0)}
-              keyboardType="decimal-pad"
-              placeholder="0.00"
-              placeholderTextColor={palette.muted}
-            />
+      {items.length > 0 && (
+        <>
+          <View style={styles.extraRow}>
+            <View style={styles.extraField}>
+              <Text variant="bodySmall" style={{ color: palette.muted }}>Tax</Text>
+              <View style={[styles.inputRow, styles.extraInputWrap, { borderColor: inputBorder(isDark) }]}>
+                <Text style={{ color: palette.muted }}>$</Text>
+                <DecimalInput
+                  style={[styles.extraInput, { color: theme.colors.onSurface }]}
+                  value={taxAmount}
+                  onChange={(v: string) => onTaxChange(parseFloat(v) || 0)}
+                  keyboardType="decimal-pad"
+                  placeholder="0.00"
+                  placeholderTextColor={palette.muted}
+                />
+              </View>
+            </View>
+            <View style={styles.extraField}>
+              <Text variant="bodySmall" style={{ color: palette.muted }}>Tip</Text>
+              <View style={[styles.inputRow, styles.extraInputWrap, { borderColor: inputBorder(isDark) }]}>
+                <Text style={{ color: palette.muted }}>$</Text>
+                <DecimalInput
+                  style={[styles.extraInput, { color: theme.colors.onSurface }]}
+                  value={tipAmount}
+                  onChange={(v: string) => onTipChange(parseFloat(v) || 0)}
+                  keyboardType="decimal-pad"
+                  placeholder="0.00"
+                  placeholderTextColor={palette.muted}
+                />
+              </View>
+            </View>
           </View>
-        </View>
-        <View style={styles.extraField}>
-          <Text variant="bodySmall" style={{ color: palette.muted }}>Tip</Text>
-          <View style={styles.inputRow}>
-            <Text style={{ color: palette.muted }}>$</Text>
-            <DecimalInput
-              style={[styles.extraInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
-              value={tipAmount}
-              onChange={(v: string) => onTipChange(parseFloat(v) || 0)}
-              keyboardType="decimal-pad"
-              placeholder="0.00"
-              placeholderTextColor={palette.muted}
-            />
-          </View>
-        </View>
-      </View>
 
-      <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-        Subtotal: {formatCurrency(subtotal, currency)} · Tax & tip are prorated by each person's subtotal share.
-      </Text>
+          <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
+            Subtotal {formatCurrency(subtotal, currency)} · tax & tip are prorated by each person's share.
+          </Text>
+        </>
+      )}
     </View>
   );
 });
@@ -613,32 +643,36 @@ const IncomeProportionalMode = React.memo(({ participants, onWeightChange, onTog
       <SolidCard style={styles.groupCard}>
       {participants.map((p, index) => {
         const pct = totalWeight > 0 ? ((p.incomeWeight / totalWeight) * 100).toFixed(1) : '0';
+        // The WHOLE row toggles inclusion; the weight input is the one child
+        // that captures its own tap (so editing never flips the row).
         return (
           <Animated.View key={p.id} entering={FadeInDown.delay(index * 40).springify()}>
-            <View style={[styles.incomeRow, index === participants.length - 1 && styles.lastRow]}>
-              <Pressable
-                onPress={onToggle ? () => { lightHaptic(); onToggle(p.id); } : undefined}
-                accessibilityRole="button"
-                accessibilityState={{ selected: p.included }}
-                style={({ pressed }) => [styles.incomeIdentity, pressed && { opacity: 0.6 }]}
+            <Pressable
+              onPress={onToggle ? () => { lightHaptic(); onToggle(p.id); } : undefined}
+              accessibilityRole="button"
+              accessibilityState={{ selected: p.included }}
+              style={({ pressed }) => [
+                styles.incomeRow,
+                index === participants.length - 1 && styles.lastRow,
+                pressed && { opacity: 0.6 },
+              ]}
+            >
+              <View style={[
+                styles.miniAvatar,
+                { backgroundColor: p.included ? AVATAR_COLORS[index % AVATAR_COLORS.length] : palette.border },
+              ]}>
+                <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
+              </View>
+              <Text
+                style={[styles.incomeName, { color: p.included ? theme.colors.onSurface : palette.muted }]}
+                numberOfLines={1}
               >
-                <View style={[
-                  styles.miniAvatar,
-                  { backgroundColor: p.included ? AVATAR_COLORS[index % AVATAR_COLORS.length] : palette.border },
-                ]}>
-                  <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
-                </View>
-                <Text
-                  style={[styles.incomeName, { color: p.included ? theme.colors.onSurface : palette.muted }]}
-                  numberOfLines={1}
-                >
-                  {p.name}
-                </Text>
-              </Pressable>
+                {p.name}
+              </Text>
               {p.included ? (
                 <>
                   <DecimalInput
-                    style={[styles.incomeInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
+                    style={[styles.incomeInput, { color: theme.colors.onSurface, borderColor: inputBorder(isDark) }]}
                     value={p.incomeWeight > 0 ? p.incomeWeight : ''}
                     onChange={(v: string) => onWeightChange(p.id, v)}
                     keyboardType="numeric"
@@ -648,16 +682,17 @@ const IncomeProportionalMode = React.memo(({ participants, onWeightChange, onTog
                   <Text variant="bodySmall" style={[styles.incomePct, { color: palette.muted }]}>
                     {pct}%
                   </Text>
-                  <Text variant="bodySmall" style={{ color: theme.colors.primary, fontWeight: '600', minWidth: 60, textAlign: 'right' }}>
+                  <Text variant="bodySmall" style={{ color: theme.colors.primary, fontWeight: '700', minWidth: 58, textAlign: 'right' }}>
                     {formatCurrency(p.computedAmount, currency)}
                   </Text>
                 </>
               ) : (
-                <Text variant="bodySmall" style={{ color: palette.muted, fontStyle: 'italic' }}>
-                  Not splitting · tap to add
-                </Text>
+                <View style={styles.rowAddCue}>
+                  <Text variant="bodySmall" style={{ color: palette.muted }}>Not splitting</Text>
+                  <Icon source="plus-circle-outline" size={18} color={theme.colors.primary} />
+                </View>
               )}
-            </View>
+            </Pressable>
           </Animated.View>
         );
       })}
@@ -674,33 +709,36 @@ interface ConsumptionProps {
   onTotalPartsChange: (v: number) => void;
   participants: Participant[];
   onPartsChange: (id: string, parts: string) => void;
+  onToggle?: (id: string) => void;
   currency: string;
 }
 
-const ConsumptionMode = React.memo(({ totalParts, onTotalPartsChange, participants, onPartsChange, currency }: ConsumptionProps) => {
+const ConsumptionMode = React.memo(({ totalParts, onTotalPartsChange, participants, onPartsChange, onToggle, currency }: ConsumptionProps) => {
   const { isDark, theme } = useTheme();
   const palette = isDark ? darkColors : colors;
   const consumed = participants.filter((p) => p.included).reduce((s, p) => s + p.partsConsumed, 0);
+  const stepperBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)';
+  const stepperBorder = { borderWidth: StyleSheet.hairlineWidth, borderColor: inputBorder(isDark) };
 
   return (
     <View style={styles.section}>
       <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
-        How many total parts? Assign how many each person consumed.
+        Set the total parts, then how many each person had. Tap a name to include or exclude them.
       </Text>
 
       <SolidCard style={styles.groupCard}>
       <View style={styles.totalPartsRow}>
-        <Text style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Total parts:</Text>
+        <Text style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Total parts</Text>
         <View style={styles.shareControls}>
           <TouchableOpacity
-            style={[styles.shareBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+            style={[styles.shareBtn, stepperBorder, { backgroundColor: stepperBg }]}
             onPress={() => { lightHaptic(); onTotalPartsChange(Math.max(1, totalParts - 1)); }}
           >
             <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>−</Text>
           </TouchableOpacity>
           <Text style={[styles.shareValue, { color: theme.colors.onSurface }]}>{totalParts}</Text>
           <TouchableOpacity
-            style={[styles.shareBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+            style={[styles.shareBtn, stepperBorder, { backgroundColor: stepperBg }]}
             onPress={() => { lightHaptic(); onTotalPartsChange(totalParts + 1); }}
           >
             <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
@@ -710,36 +748,62 @@ const ConsumptionMode = React.memo(({ totalParts, onTotalPartsChange, participan
 
       {consumed > totalParts && (
         <Text style={[styles.warningText, { color: colors.danger }]}>
-          ⚠ Consumed parts ({consumed}) exceed total ({totalParts})
+          Consumed parts ({consumed}) exceed total ({totalParts})
         </Text>
       )}
 
-      {participants.filter((p) => p.included).map((p, index, rows) => (
+      {participants.map((p, index) => (
         <Animated.View key={p.id} entering={FadeInDown.delay(index * 40).springify()}>
-          <View style={[styles.incomeRow, index === rows.length - 1 && styles.lastRow]}>
-            <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[index % AVATAR_COLORS.length] }]}>
+          <Pressable
+            onPress={onToggle ? () => { lightHaptic(); onToggle(p.id); } : undefined}
+            accessibilityRole="button"
+            accessibilityState={{ selected: p.included }}
+            style={({ pressed }) => [
+              styles.incomeRow,
+              index === participants.length - 1 && styles.lastRow,
+              pressed && { opacity: 0.6 },
+            ]}
+          >
+            <View style={[
+              styles.miniAvatar,
+              { backgroundColor: p.included ? AVATAR_COLORS[index % AVATAR_COLORS.length] : palette.border },
+            ]}>
               <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
             </View>
-            <Text style={[styles.incomeName, { color: theme.colors.onSurface }]}>{p.name}</Text>
-            <View style={styles.shareControls}>
-              <TouchableOpacity
-                style={[styles.shareBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
-                onPress={() => { lightHaptic(); onPartsChange(p.id, Math.max(0, p.partsConsumed - 1).toString()); }}
-              >
-                <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>−</Text>
-              </TouchableOpacity>
-              <Text style={[styles.shareValue, { color: theme.colors.onSurface }]}>{p.partsConsumed}</Text>
-              <TouchableOpacity
-                style={[styles.shareBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
-                onPress={() => { lightHaptic(); onPartsChange(p.id, (p.partsConsumed + 1).toString()); }}
-              >
-                <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
-              </TouchableOpacity>
-            </View>
-            <Text variant="bodySmall" style={{ color: theme.colors.primary, fontWeight: '600', minWidth: 60, textAlign: 'right' }}>
-              {formatCurrency(p.computedAmount, currency)}
+            <Text
+              style={[styles.incomeName, { color: p.included ? theme.colors.onSurface : palette.muted }]}
+              numberOfLines={1}
+            >
+              {p.name}
             </Text>
-          </View>
+            {p.included ? (
+              <>
+                <View style={styles.shareControls}>
+                  <TouchableOpacity
+                    style={[styles.shareBtn, stepperBorder, { backgroundColor: stepperBg }]}
+                    onPress={() => { lightHaptic(); onPartsChange(p.id, Math.max(0, p.partsConsumed - 1).toString()); }}
+                  >
+                    <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>−</Text>
+                  </TouchableOpacity>
+                  <Text style={[styles.shareValue, { color: theme.colors.onSurface }]}>{p.partsConsumed}</Text>
+                  <TouchableOpacity
+                    style={[styles.shareBtn, stepperBorder, { backgroundColor: stepperBg }]}
+                    onPress={() => { lightHaptic(); onPartsChange(p.id, (p.partsConsumed + 1).toString()); }}
+                  >
+                    <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>+</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text variant="bodySmall" style={{ color: theme.colors.primary, fontWeight: '700', minWidth: 58, textAlign: 'right' }}>
+                  {formatCurrency(p.computedAmount, currency)}
+                </Text>
+              </>
+            ) : (
+              <View style={styles.rowAddCue}>
+                <Text variant="bodySmall" style={{ color: palette.muted }}>Not splitting</Text>
+                <Icon source="plus-circle-outline" size={18} color={theme.colors.primary} />
+              </View>
+            )}
+          </Pressable>
         </Animated.View>
       ))}
       </SolidCard>
@@ -1019,7 +1083,7 @@ const TimeBasedMode = React.memo(({
                 <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>-</Text>
               </TouchableOpacity>
               <TextInput
-                style={[styles.timePeriodInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
+                style={[styles.timePeriodInput, { color: theme.colors.onSurface, borderColor: inputBorder(isDark) }]}
                 value={periodInputValue}
                 onChangeText={setPeriodInputValue}
                 onBlur={() => applyPeriodDays(periodInputValue)}
@@ -1412,7 +1476,7 @@ const TimeBasedMode = React.memo(({
                         <Text style={[styles.shareBtnText, { color: theme.colors.onSurface }]}>-</Text>
                       </TouchableOpacity>
                       <TextInput
-                        style={[styles.timeDaysInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
+                        style={[styles.timeDaysInput, { color: theme.colors.onSurface, borderColor: inputBorder(isDark) }]}
                         value={participant.daysStayed.toString()}
                         onChangeText={(value) => onDaysChange(participant.id, value)}
                         keyboardType="number-pad"
@@ -2494,7 +2558,7 @@ const ItemTypeMode = React.memo(({ categories, onCategoriesChange, participants,
               <View style={styles.inputRow}>
                 <Text style={{ color: palette.muted }}>$</Text>
                 <DecimalInput
-                  style={[styles.catAmountInput, { color: theme.colors.onSurface, borderColor: palette.border }]}
+                  style={[styles.catAmountInput, { color: theme.colors.onSurface, borderColor: inputBorder(isDark) }]}
                   value={cat.amount}
                   onChange={(v: string) => updateCategory(cat.id, 'amount', parseFloat(v) || 0)}
                   keyboardType="decimal-pad"
@@ -2627,6 +2691,7 @@ export const AdvancedModeContent = React.memo((props: AdvancedModeContentProps) 
           onTotalPartsChange={props.onTotalPartsChange}
           participants={props.participants}
           onPartsChange={props.onPartsConsumedChange}
+          onToggle={props.onToggleParticipant}
           currency={props.currency}
         />
       );
@@ -2786,6 +2851,15 @@ const styles = StyleSheet.create({
   addBtn: {
     alignSelf: 'flex-start',
     borderRadius: 12,
+    borderWidth: 1,
+  },
+  receiptEmpty: {
+    borderRadius: 16,
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 26,
+    paddingHorizontal: 12,
+    marginBottom: 4,
   },
   extraRow: {
     flexDirection: 'row',
@@ -2801,11 +2875,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
   },
+  extraInputWrap: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+  },
   extraInput: {
     flex: 1,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 10,
     paddingVertical: 6,
     fontSize: 14,
     textAlign: 'right',
@@ -2829,6 +2906,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  rowAddCue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   incomeInput: {
     width: 80,

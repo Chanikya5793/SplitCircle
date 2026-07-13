@@ -52,8 +52,10 @@ export const FloatingLabelInput = ({ label, value, style, containerStyle, onFocu
           onBlur?.(e);
         }}
         mode="outlined"
-        outlineColor={isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)'}
-        theme={{ colors: { background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.5)' } }}
+        outlineColor={isDark ? 'rgba(255,255,255,0.28)' : 'rgba(15,23,42,0.24)'}
+        activeOutlineColor={theme.colors.primary}
+        outlineStyle={{ borderWidth: 1.5, borderRadius: 12 }}
+        theme={{ colors: { background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.6)' } }}
         textColor={theme.colors.onSurface}
         keyboardAppearance={isDark ? 'dark' : 'light'}
       />

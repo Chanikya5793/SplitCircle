@@ -24,14 +24,14 @@ import {
   getExpenseSplitLabel,
   inferExpenseSplitMetadata,
 } from '@/utils/expenseSplit';
-import { mediumHaptic, successHaptic } from '@/utils/haptics';
+import { lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
 import { buildSplitHistory, recommendSplit } from '@/utils/smartSplitRecommender';
 import { detectExpenseAnomalies } from '@/utils/expenseAnomaly';
 import { isOnDeviceExpenseNlAvailable, parseExpenseFromTextOnDevice } from '@/services/onDeviceExpenseNlService';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Image, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
 import { Button, Chip, Dialog, Icon, Menu, PaperProvider, Portal, Text, TextInput, TouchableRipple } from 'react-native-paper';
@@ -222,6 +222,26 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     participantShares.length &&
     (splitType !== 'custom' || (participantShares.every((entry) => entry.share >= 0) && matchesAmount))
   );
+
+  // Toggle a member in/out directly from the summary chips. Keeps selectedMembers
+  // and any active splitMetadata's participantConfig in sync so the preview and
+  // the split editor never disagree about who's included.
+  const toggleMember = useCallback((userId: string) => {
+    lightHaptic();
+    setSelectedMembers((prev) => (
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    ));
+    setSplitMetadata((prev) => {
+      if (!prev) return prev;
+      const nowIncluded = !selectedMembers.includes(userId);
+      return {
+        ...prev,
+        participantConfig: (prev.participantConfig ?? []).map((c) => (
+          c.userId === userId ? { ...c, included: nowIncluded } : c
+        )),
+      };
+    });
+  }, [selectedMembers]);
 
   const handleBillSplitDone = (result: {
     paidBy: string;
@@ -872,24 +892,33 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
               </TouchableOpacity>
             ) : null}
 
-            {/* Split Summary Preview */}
+            {/* Split Summary Preview — every member is a toggle. Tap to add or
+                drop them from the split right here, no need to open the editor. */}
             <View style={styles.splitPreview}>
               <View style={styles.members}>
-                {group.members.filter((m) => selectedMembers.includes(m.userId)).map((member) => {
+                {group.members.map((member) => {
+                  const isIn = selectedMembers.includes(member.userId);
                   const share = participantShares.find((participant) => participant.userId === member.userId)?.share;
                   return (
                     <Chip
                       key={member.userId}
-                      style={{ backgroundColor: theme.colors.secondaryContainer }}
-                      textStyle={{ color: theme.colors.onSecondaryContainer }}
+                      onPress={() => toggleMember(member.userId)}
+                      showSelectedCheck={false}
+                      style={{
+                        backgroundColor: isIn ? theme.colors.secondaryContainer : 'transparent',
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: isIn ? 'transparent' : theme.colors.outline,
+                        opacity: isIn ? 1 : 0.7,
+                      }}
+                      textStyle={{ color: isIn ? theme.colors.onSecondaryContainer : theme.colors.onSurfaceVariant }}
                     >
-                      {member.displayName}{typeof share === 'number' ? ` · ${formatCurrency(share, group.currency)}` : ''}
+                      {member.displayName}{isIn && typeof share === 'number' ? ` · ${formatCurrency(share, group.currency)}` : ''}
                     </Chip>
                   );
                 })}
               </View>
               <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                Reopen split options any time to adjust the mode, included people, or split inputs.
+                Tap a name to include or exclude them. Open split options to change the mode or amounts.
               </Text>
             </View>
 

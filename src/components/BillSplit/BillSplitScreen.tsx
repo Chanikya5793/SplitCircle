@@ -8,8 +8,16 @@ import { ConfettiBurst } from './ConfettiBurst';
 import { heavyHaptic, lightHaptic, mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Icon, PaperProvider, Text } from 'react-native-paper';
-import Animated, { FadeIn, FadeInDown, FadeOut, Layout, SlideInDown, SlideOutDown } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, FadeOut, Layout, SlideInDown, SlideOutDown, runOnJS } from 'react-native-reanimated';
+
+// Canonical method order — matches MethodRail. Swiping steps through this list,
+// so the rail and the swipe gesture always agree.
+const METHOD_ORDER: SplitMethod[] = [
+  'equal', 'exact', 'percentage', 'shares', 'adjustment',
+  'itemized', 'income', 'consumption', 'timeBased', 'gamified', 'itemType',
+];
 
 import { AdvancedModeContent } from './AdvancedModeContent';
 import { ParticipantList } from './ParticipantList';
@@ -120,18 +128,12 @@ export const BillSplitScreen = ({
   // ── Advanced Section Toggle ───────────────────────────────────────────────
 
   // ── Itemized Receipt State ────────────────────────────────────────────────
+  // Real bills start empty — no invented "Pasta / Steak" placeholders.
   const [receiptItems, setReceiptItems] = useState<ReceiptItem[]>(
-    initialSplitMetadata?.receiptItems?.length
-      ? initialSplitMetadata.receiptItems
-      : [
-        { id: 'item_1', name: 'Pasta', price: 24.0, assignedTo: ['u1', 'u3'] },
-        { id: 'item_2', name: 'Steak', price: 42.0, assignedTo: ['u2'] },
-        { id: 'item_3', name: 'Salad', price: 16.0, assignedTo: ['u1', 'u3', 'u4'] },
-        { id: 'item_4', name: 'Cocktails', price: 36.0, assignedTo: ['u1', 'u2'] },
-      ],
+    initialSplitMetadata?.receiptItems ?? [],
   );
-  const [taxAmount, setTaxAmount] = useState(initialSplitMetadata?.taxAmount ?? 12.5);
-  const [tipAmount, setTipAmount] = useState(initialSplitMetadata?.tipAmount ?? 19.5);
+  const [taxAmount, setTaxAmount] = useState(initialSplitMetadata?.taxAmount ?? 0);
+  const [tipAmount, setTipAmount] = useState(initialSplitMetadata?.tipAmount ?? 0);
 
   // ── Consumption State ─────────────────────────────────────────────────────
   const [totalParts, setTotalParts] = useState(initialSplitMetadata?.totalParts ?? 8);
@@ -474,6 +476,30 @@ export const BillSplitScreen = ({
     }
   }, []);
 
+  // Swipe left/right across the whole editor to move between modes, like
+  // flicking between stocks. Steps one method along METHOD_ORDER (clamped).
+  const currentMethodRef = useRef(currentMethod);
+  currentMethodRef.current = currentMethod;
+  const stepMethod = useCallback((delta: number) => {
+    const idx = METHOD_ORDER.indexOf(currentMethodRef.current);
+    const next = METHOD_ORDER[Math.min(METHOD_ORDER.length - 1, Math.max(0, idx + delta))];
+    if (next === currentMethodRef.current) return;
+    selectionHaptic();
+    applyMethod(next);
+  }, [applyMethod]);
+
+  const swipeGesture = useMemo(
+    () => Gesture.Pan()
+      .activeOffsetX([-24, 24])
+      .failOffsetY([-16, 16])
+      .onEnd((e) => {
+        'worklet';
+        if (Math.abs(e.translationX) < 60 && Math.abs(e.velocityX) < 500) return;
+        runOnJS(stepMethod)(e.translationX < 0 ? 1 : -1);
+      }),
+    [stepMethod],
+  );
+
   const handleSuggestion = useCallback((id: string) => {
     mediumHaptic();
     const suggestion = suggestions.find((s) => s.id === id);
@@ -773,22 +799,9 @@ export const BillSplitScreen = ({
                 <Icon source={showPayerMenu ? 'chevron-up' : 'chevron-down'} size={13} color={theme.colors.primary} />
               </View>
             </Pressable>
-            <TouchableOpacity
-              onPress={handleDone}
-              activeOpacity={0.7}
-              disabled={!canDone}
-              style={[styles.headerSide, { alignItems: 'flex-end' }]}
-            >
-              <Text
-                variant="labelLarge"
-                style={{
-                  color: canDone ? theme.colors.primary : theme.colors.muted,
-                  fontWeight: '700',
-                }}
-              >
-                Done
-              </Text>
-            </TouchableOpacity>
+            {/* Right side balances the header; the commit lives in the docked
+                footer so there's exactly one Done, and it's thumb-reachable. */}
+            <View style={styles.headerSide} />
           </View>
 
           {/* Payer picker — overlay under the header, solid surface */}
@@ -832,6 +845,11 @@ export const BillSplitScreen = ({
             </View>
           )}
 
+          {/* Swipe anywhere across the editor to page between modes
+              (Robinhood-style). Wrapping the whole ScrollView means short modes
+              (empty receipt) still catch the swipe; the Pan only claims
+              deliberate horizontal drags so vertical scroll keeps working. */}
+          <GestureDetector gesture={swipeGesture}>
           <ScrollView
             style={styles.scrollView}
             contentContainerStyle={styles.scrollContent}
@@ -845,7 +863,6 @@ export const BillSplitScreen = ({
               onSelectBasic={handleBasicMethodSelect}
               onSelectAdvanced={handleAdvancedMethodSelect}
             />
-
 
             {/* Participant List (shown for basic methods only) */}
             {!activeAdvancedMethod && (
@@ -915,6 +932,7 @@ export const BillSplitScreen = ({
             )}
 
           </ScrollView>
+          </GestureDetector>
 
           {/* Full-screen winner reveal — the payoff owns the WHOLE screen,
               footer included. Nothing celebratory ever hides behind chrome. */}
@@ -1186,8 +1204,8 @@ const styles = StyleSheet.create({
   },
   footerWrapper: {
     // Docked in normal flow (the ScrollView flexes above it) — nothing can
-    // ever hide underneath, and no bottom padding needs reserving.
-    paddingBottom: 30,
+    // ever hide underneath. Small bottom pad clears the home indicator.
+    paddingBottom: 16,
   },
   winnerOverlay: {
     ...StyleSheet.absoluteFillObject,

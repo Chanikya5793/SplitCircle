@@ -32,14 +32,33 @@ Current design contract. Rules only — history lives in git.
   on the canvas. Last row drops its divider.
 - Content > chrome: no per-section title banners when a selector already names the
   surface; hints are single quiet lines.
-- The footer is chrome: one summary line (method · payer), the key figure, a status
-  badge, one CTA. Never duplicate controls that exist elsewhere.
+- **The footer earns its place or it's gone.** It is the ONE docked commit: a compact
+  bar with the live headline figure + inclusion/validity subline on the left and the
+  single primary CTA (Done / Spin) on the right. The header therefore carries NO Done —
+  exactly one commit exists, and it's thumb-reachable. Never a second payer control,
+  method chip, or duplicate action.
+- **Real data only, never placeholders.** Editors start empty (no invented "Pasta /
+  Steak" receipt rows, no seeded tax/tip). Empty modes show a purposeful empty state,
+  not fake content. New sub-items default to the sensible common case (e.g. a new
+  receipt line is shared by everyone currently included).
+- **Visible borders.** Inputs, steppers, and outlined buttons carry a real hairline
+  (`inputBorder(isDark)` = `rgba(255,255,255,0.16)` / `rgba(15,23,42,0.18)`), not the
+  near-invisible `palette.border`. A field the user must tap must look tappable.
 
 ## Selection & interaction
 
 - Selectors are single-level; selection state always visible (e.g. MethodRail).
 - Horizontal selectors scroll ONLY when the selection is clipped, minimally (28px edge
   peek). Tapping a visible item never shifts the row. Reveal on mount via onLayout retry.
+- **Swipe between modes.** The whole editor pages between modes on a horizontal swipe
+  (Robinhood-stock feel) via a Pan that only claims deliberate horizontal drags
+  (`activeOffsetX ±24`, `failOffsetY ±16`) so vertical scroll and in-mode controls keep
+  working. Swipe order == the rail order == `METHOD_ORDER`.
+- **Include/exclude is a whole-row (or whole-chip) tap, everywhere.** Anywhere a person
+  can be in or out of the split — the Add Expense summary chips, income rows, consumption
+  rows, game player chips — the entire row/chip toggles it. Excluded rows stay visible
+  and dimmed with a "Not splitting" + add cue; the one editable child (a weight/amount
+  input) captures its own tap so editing never flips the row.
 - Haptics on every meaningful interaction (selection/medium/heavy/success — `utils/haptics`).
 - Press feedback: `usePressScale` squish on cards.
 - Mid-flow game/wizard states are guidance (muted), never red errors; red is reserved
