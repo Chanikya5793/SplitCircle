@@ -24,7 +24,7 @@ enum SplitCircleIndexReader {
     let currency: String?
   }
 
-  struct MemberBalance { let name: String; let balance: Double }
+  struct MemberBalance { let id: String; let name: String; let balance: Double }
   struct CategoryTotal { let category: String; let total: Double }
   struct OwedEntry { let name: String; let amount: Double }
 
@@ -109,6 +109,25 @@ enum SplitCircleIndexReader {
     return (owe, owed, g.currency)
   }
 
+  /// Members of one group (id + display name), for the Siri "who's in the split"
+  /// participant picker and for defaulting a headless expense to everyone. Members
+  /// without a resolvable id (pre-id snapshots) are dropped — they can't be split to.
+  static func members(forGroup groupId: String, userId: String) -> [(id: String, name: String)] {
+    guard let g = richGroups(forUser: userId).first(where: { $0.id == groupId }) else { return [] }
+    return g.members.filter { !$0.id.isEmpty }.map { (id: $0.id, name: $0.name) }
+  }
+
+  /// Every member across all the user's groups, as (personId "groupId::userId",
+  /// name, groupName). Backs the participant EntityQuery (union across groups; the
+  /// intent filters to the chosen group at perform time).
+  static func allPeople(forUser userId: String) -> [(personId: String, name: String, groupName: String)] {
+    richGroups(forUser: userId).flatMap { g in
+      g.members.filter { !$0.id.isEmpty }.map {
+        (personId: "\(g.id)::\($0.id)", name: $0.name, groupName: g.name)
+      }
+    }
+  }
+
   static func categorySpend(groupId: String, userId: String, category: String) -> (total: Double, currency: String)? {
     guard let g = richGroups(forUser: userId).first(where: { $0.id == groupId }) else { return nil }
     let needle = category.lowercased()
@@ -178,7 +197,11 @@ enum SplitCircleIndexReader {
       }
       let members: [MemberBalance] = ((g["members"] as? [[String: Any]]) ?? []).compactMap {
         guard let n = $0["name"] as? String else { return nil }
-        return MemberBalance(name: n, balance: ($0["balance"] as? NSNumber)?.doubleValue ?? 0)
+        return MemberBalance(
+          id: ($0["id"] as? String) ?? "",
+          name: n,
+          balance: ($0["balance"] as? NSNumber)?.doubleValue ?? 0
+        )
       }
       let categories: [CategoryTotal] = ((g["categories"] as? [[String: Any]]) ?? []).compactMap {
         guard let c = $0["category"] as? String else { return nil }

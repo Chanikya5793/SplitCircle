@@ -64,6 +64,7 @@ import { Icon, Text, TouchableRipple } from 'react-native-paper';
 import { AppStack, AuthStack, NativeTab } from './stacks';
 import { navigationRef } from './navigationRef';
 import { useDeepLinks } from '@/services/deepLinkService';
+import { usePendingExpenseFlush } from '@/services/pendingExpenseService';
 
 type GroupWithFallback = Group | undefined;
 type TabIconKey = 'expenses' | 'chat' | 'calls' | 'settings' | 'search';
@@ -508,6 +509,7 @@ const AddExpenseRoute = ({ route, navigation }: any) => {
       initialAmount={route.params?.initialAmount}
       initialTitle={route.params?.initialTitle}
       initialSplitMethod={route.params?.initialSplitMethod}
+      initialParticipants={route.params?.initialParticipants}
       onClose={handleClose}
     />
   );
@@ -1463,6 +1465,11 @@ const styles = StyleSheet.create({
 });
 
 /** Drives Siri/App-Intent/widget deep links once the signed-in nav tree is mounted. */
+const PendingExpenseHandler = () => {
+  usePendingExpenseFlush();
+  return null;
+};
+
 const DeepLinkHandler = () => {
   useDeepLinks();
   return null;
@@ -1497,6 +1504,7 @@ export const AppNavigator = () => {
         {user && <MinimizedCallBanner />}
         {user && <ActiveCallHost />}
         {user && <DeepLinkHandler />}
+        {user && <PendingExpenseHandler />}
       </View>
     </NavigationContainer>
   );

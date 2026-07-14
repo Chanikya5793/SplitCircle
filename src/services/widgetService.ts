@@ -42,6 +42,7 @@ export function publishWidgetSnapshot(userId: string, groups: Group[]): void {
       };
 
       const members = g.members.map((m) => ({
+        id: m.userId,
         name: m.displayName || 'Someone',
         balance: a.balances[m.userId] ?? 0,
       }));

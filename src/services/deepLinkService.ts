@@ -14,7 +14,7 @@
  * Supported URLs (authored in SplitCircleIntents.swift + BalanceWidget.swift):
  *   splitcircle://group/<groupId>
  *   splitcircle://groups
- *   splitcircle://add-expense?group=<id>&amount=<n>&title=<t>
+ *   splitcircle://add-expense?group=<id>&amount=<n>&title=<t>&split=<method>&participants=<uid,uid>
  *   splitcircle://settle?group=<id>
  *   splitcircle://ask?group=<id>&q=<question>
  *
@@ -111,6 +111,9 @@ export function handleUrl(rawUrl: string): boolean {
           initialAmount: query.amount,
           initialTitle: query.title,
           initialSplitMethod: query.split,
+          initialParticipants: query.participants
+            ? query.participants.split(',').filter(Boolean)
+            : undefined,
         });
         return true;
       }

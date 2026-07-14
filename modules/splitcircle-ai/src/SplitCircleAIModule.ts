@@ -116,7 +116,7 @@ export interface WidgetGroupBalance {
   totalSpend?: number;
   count?: number;
   /** Per-member net balance in this group (+ve owed to them, -ve they owe). */
-  members?: { name: string; balance: number }[];
+  members?: { id: string; name: string; balance: number }[];
   categories?: { category: string; total: number }[];
   /** Relative to the current user (from the minimized settle-up plan). */
   youOwe?: { name: string; amount: number }[];

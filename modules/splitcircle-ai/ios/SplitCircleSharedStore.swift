@@ -31,6 +31,7 @@ public enum SplitCircleSharedStore {
   public static let appGroupId = "group.com.splitcircle.app"
   public static let widgetSnapshotFile = "widget.json"
   public static let pendingDeepLinkKey = "SplitCirclePendingDeepLink"
+  public static let pendingExpensesKey = "SplitCirclePendingExpenses"
 
   private static var appGroupURL: URL? {
     FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId)
@@ -67,5 +68,26 @@ public enum SplitCircleSharedStore {
   /// need it — never the widget.
   public static func setPendingDeepLink(_ url: String) {
     UserDefaults.standard.set(url, forKey: pendingDeepLinkKey)
+  }
+
+  // MARK: - Pending headless expenses (UserDefaults.standard, in-process only)
+
+  /// Append one queued expense (authored by AddExpenseIntent, which runs in the app
+  /// process) to `SplitCirclePendingExpenses`. Stored as a JSON-array STRING because
+  /// react-native `Settings` round-trips strings reliably across the New Arch bridge.
+  /// The JS side (pendingExpenseService) drains + commits these on next foreground and
+  /// clears the key. Each record carries a stable `requestId`, so even if a drain
+  /// races a write, `GroupContext.addExpense` de-dupes by requestId — no double-add.
+  public static func enqueuePendingExpense(_ record: [String: Any]) {
+    var arr: [[String: Any]] = []
+    if let existing = UserDefaults.standard.string(forKey: pendingExpensesKey),
+       let data = existing.data(using: .utf8),
+       let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+      arr = parsed
+    }
+    arr.append(record)
+    guard let out = try? JSONSerialization.data(withJSONObject: arr),
+          let str = String(data: out, encoding: .utf8) else { return }
+    UserDefaults.standard.set(str, forKey: pendingExpensesKey)
   }
 }

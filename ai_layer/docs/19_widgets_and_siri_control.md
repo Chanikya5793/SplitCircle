@@ -121,9 +121,10 @@ validated outbox path. Rationale: (a) the confirmation happens in known-good UI,
 version-sensitive `requestConfirmation` API we can't compile-check against the pinned Xcode
 26.4 SDK; (b) an expense needs payer/participants/split-method that a one-line Siri phrase
 doesn't carry — the prefilled screen lets the user complete them; (c) it reuses the whole
-offline outbox + validation stack unchanged. **Truly-headless queued writes** (Siri adds an
-expense with the app fully closed, syncing later) remain the documented Phase 2 in doc 18 §4
-— defer until the open-app path proves its value.
+offline outbox + validation stack unchanged. **UPDATE (§5d):** truly-headless queued writes now
+ship for the *equal-split* case — `AddExpenseIntent` writes with the app closed and syncs on next
+launch. Non-equal methods still open the app (they need per-person values on a screen), now via
+`AddExpenseWithSplitIntent`.
 
 ### 3.2 Widget refresh is push, not poll
 The app calls `WidgetCenter.reloadAllTimelines()` inside `writeWidgetSnapshot` every time
@@ -136,8 +137,13 @@ the next production build **requires** that capability provisioned on the `com.s
 App ID or **signing fails** — which would break `ship:ios`. Since the widget target doesn't
 exist in `pbxproj` until §4 anyway, nothing widget-related can build regardless. So the app
 entitlement addition is deferred into §4, kept as a comment in the entitlements file. Until
-then: `writeWidgetSnapshot` finds no App Group container and no-ops; Siri intents fall back to
-the SQLite index; everything degrades gracefully and the ship pipeline is untouched.
+then: `writeWidgetSnapshot` finds no App Group container and no-ops for the widget process, but
+the **same rich snapshot is also mirrored into a SQLite `widget_snapshot` table**
+(`aiIndexStore.writeWidgetSnapshotMirror`, read by `SplitCircleIndexReader.sqliteSnapshotData`).
+In-process headless Siri/Shortcuts intents read the app's own Documents DB, so balances, recent
+expenses, who-you-owe, category spend, and the participant picker all work **today without the App
+Group**. When the entitlement lands, the widget process reads the App Group copy and this mirror
+just keeps the intents fast. The ship pipeline is untouched.
 
 ---
 
@@ -260,14 +266,46 @@ spoken option for Siri. Note the AppShortcut phrase still only carries the group
 one-entity-per-phrase rule); the method is chosen in the Shortcuts UI / Siri follow-up.
 Keep the enum's raw values in sync with `ExpenseSplitMethod` (src/models/expense.ts).
 
-Deferred: per-participant selection (who's in) + inline custom amounts via voice — the
-method + landing on the editor covers the "customize" need; gathering N people's
-percentages by voice isn't sensible, so that stays in-app.
+## 5d. Headless queued writes + participant selection (added 2026-07-14)
+
+The big one: a full expense created entirely from Siri/Shortcuts, **no app UI**. Two intents now:
+
+- **`AddExpenseIntent`** — HEADLESS. `openAppWhenRun` is OFF. Params: group, amount, description,
+  and **`participants: [SplitCirclePersonEntity]?`** ("split with X and Y"; empty ⇒ everyone).
+  It splits **equally** among the chosen members, appends a compact record to the
+  `SplitCirclePendingExpenses` key in `UserDefaults.standard`
+  (`SplitCircleSharedStore.enqueuePendingExpense`), and speaks a confirmation. No app launch.
+- **`AddExpenseWithSplitIntent`** — opens the app (as before) for non-equal methods, because
+  percentages/shares/roulette need per-person values entered on a screen. Now also carries
+  `&participants=<uid,uid>` so the editor pre-selects who's in. Took the Siri-phrase slot that
+  was Category Spend (provider caps at 10; Category Spend stays a usable Shortcuts action).
+
+**Why equal-only is headless:** "who's in + method" fully specifies an *equal* split, so it can be
+written blind. Any other method is under-specified without per-person numbers, so it routes to the
+app. This is the honest line between "Siri did it" and "Siri set it up for you."
+
+**The write path (contract):** the headless intent runs in the app process but never boots RN, so
+it can't touch Firestore. It queues to `UserDefaults.standard`; the JS side
+(`src/services/pendingExpenseService.ts` → `usePendingExpenseFlush`, mounted as
+`PendingExpenseHandler` in `AppNavigator`) drains on foreground / when groups load and replays each
+record through the **same** `GroupContext.addExpense` — idempotent by `requestId`, durable via the
+offline outbox, so double-drains never double-add. A record whose group isn't loaded yet is kept
+for the next pass.
+
+**Participant picker data:** `SplitCirclePersonEntity` + `allPeople(forUser:)` read members
+(now carrying `id = userId`, added to the snapshot in `widgetService.ts`) from the SQLite snapshot
+mirror — so the picker and the equal split work **without** the App Group. The entity id is
+`"<groupId>::<userId>"`; the query is a union across the user's groups and the intent filters to the
+chosen group at perform time (avoids relying on cross-intent parameter-dependency APIs).
+
+Tradeoff the user accepted: a queued expense syncs to other members only after the app is next
+opened once. Instant-sync alternative = use `AddExpenseWithSplitIntent` (opens the app).
 
 ## 6. Deferred (documented, not built)
 
-- **Headless queued writes** (Phase 2, doc 18 §4) — Siri adds an expense with the app closed,
-  synced on next launch via a `siri_inbox` App Group table → existing outbox.
+- ~~**Headless queued writes**~~ — DONE for the equal-split case (§5d). Remaining Phase 2: writing a
+  non-equal split headlessly (needs per-person capture) and flushing without an app foreground
+  (BGTaskScheduler), both lower value.
 - **Interactive widget actions** beyond deep-link taps (e.g. an in-widget "add expense" Button
   running an AppIntent without leaving the home screen) — needs a shared AppIntent target the
   widget links; revisit if users want it.

@@ -44,6 +44,8 @@ interface AddExpenseScreenProps {
   initialTitle?: string;
   /** Split method id chosen via Siri/Shortcuts (ExpenseSplitMethod); opens Split Options on it. */
   initialSplitMethod?: string;
+  /** Participant userIds chosen via Siri/Shortcuts ("split with X and Y"); pre-selects them. */
+  initialParticipants?: string[];
   onClose: () => void;
 }
 
@@ -76,7 +78,7 @@ const getCategoryIcon = (cat: string): string => {
   return iconMap[cat] || 'tag';
 };
 
-export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle, initialSplitMethod, onClose }: AddExpenseScreenProps) => {
+export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle, initialSplitMethod, initialParticipants, onClose }: AddExpenseScreenProps) => {
   const navigation = useNavigation();
   const { user } = useAuth();
   const { addExpense, updateExpense } = useGroups();
@@ -177,6 +179,16 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
     // don't stack a modal mid-navigation-transition.
     const t = setTimeout(() => setShowBillSplit(true), 450);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Siri/Shortcuts "split with <people>": pre-select those members. New expense only,
+  // once on mount. Filtered to real members so a stale id can't shrink the split.
+  useEffect(() => {
+    if (expenseId) return;
+    if (!initialParticipants || initialParticipants.length === 0) return;
+    const valid = initialParticipants.filter((id) => group.members.some((m) => m.userId === id));
+    if (valid.length) setSelectedMembers(valid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const isRecurringExpense = expenseId ? group.expenses.find((e) => e.expenseId === expenseId)?.recurring : undefined;
