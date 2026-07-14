@@ -6,12 +6,12 @@ import Foundation
 /// on-disk snapshot as everything else (SplitCircleIndexReader), so Siri can offer
 /// real group members WITHOUT launching the app.
 ///
-/// `id` encodes `"<groupId>::<userId>"` so a chosen person unambiguously maps back
-/// to both its group and its user id. The query is a UNION across all the user's
-/// groups (App Intents entity queries don't reliably receive sibling parameter
-/// values across every intent that reuses this entity, so we filter to the chosen
-/// group at `perform` time instead of trying to scope the query). The group name is
-/// shown as the subtitle to disambiguate same-named members across groups.
+/// `id` encodes `"<groupId>::<userId>"` so a chosen person unambiguously maps back to
+/// both its group and its user id. The query scopes to the group already chosen in the
+/// intent via `@IntentParameterDependency` (iOS 17+) — so the picker shows ONLY that
+/// group's members — and falls back to a union across all groups (with the group name as
+/// subtitle) only when no group is set yet. The intent also re-filters to the chosen
+/// group at `perform` time defensively.
 ///
 /// `public` for the same cross-module-visibility reason as the other entities here
 /// (see the note atop SplitCircleEntities.swift).
