@@ -26,12 +26,14 @@ public struct GetGroupBalanceIntent: AppIntent {
 
   public init() {}
 
-  public func perform() async throws -> some IntentResult & ProvidesDialog {
+  // Returns the signed balance (+ owed to you, − you owe) so Shortcuts can use the
+  // number in a later action, plus a spoken dialog for Siri.
+  public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<Double> {
     guard let userId = SplitCircleCurrentUser.read() else {
-      return .result(dialog: "Sign in to SplitCircle first, then ask me again.")
+      return .result(value: 0, dialog: "Sign in to SplitCircle first, then ask me again.")
     }
     guard let balance = SplitCircleIndexReader.balance(groupId: group.id, userId: userId) else {
-      return .result(dialog: "I don't have \(group.name) indexed yet — open SplitCircle once, then ask me again.")
+      return .result(value: 0, dialog: "I don't have \(group.name) indexed yet — open SplitCircle once, then ask me again.")
     }
     let amount = SplitCircleFormat.money(abs(balance.userBalance), currency: balance.currency)
     let dialog: String
@@ -42,7 +44,139 @@ public struct GetGroupBalanceIntent: AppIntent {
     } else {
       dialog = "You're owed \(amount) in \(group.name)."
     }
-    return .result(dialog: IntentDialog(stringLiteral: dialog))
+    return .result(value: balance.userBalance, dialog: IntentDialog(stringLiteral: dialog))
+  }
+}
+
+/// "What's my overall SplitCircle balance?" — net across every group. Returns the
+/// number + a spoken summary. Headless.
+@available(iOS 16.0, *)
+public struct GetNetBalanceIntent: AppIntent {
+  public static var title: LocalizedStringResource = "Check Overall SplitCircle Balance"
+  public static var description = IntentDescription("Your net balance across all SplitCircle groups.")
+
+  public init() {}
+
+  public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<Double> {
+    guard let userId = SplitCircleCurrentUser.read() else {
+      return .result(value: 0, dialog: "Sign in to SplitCircle first, then ask me again.")
+    }
+    guard let net = SplitCircleIndexReader.netBalance(userId: userId) else {
+      return .result(value: 0, dialog: "Open SplitCircle once so I can total up your groups, then ask me again.")
+    }
+    let amount = SplitCircleFormat.money(abs(net.userBalance), currency: net.currency)
+    let dialog: String
+    if abs(net.userBalance) < 0.01 {
+      dialog = "You're all settled up across your groups."
+    } else if net.userBalance < 0 {
+      dialog = "Overall you owe \(amount)."
+    } else {
+      dialog = "Overall you're owed \(amount)."
+    }
+    return .result(value: net.userBalance, dialog: IntentDialog(stringLiteral: dialog))
+  }
+}
+
+/// "Show my recent SplitCircle expenses" (optionally in one group). Returns a list of
+/// Expense entities Shortcuts can loop over. Headless.
+@available(iOS 16.0, *)
+public struct GetRecentExpensesIntent: AppIntent {
+  public static var title: LocalizedStringResource = "Get Recent SplitCircle Expenses"
+  public static var description = IntentDescription("The most recent expenses, across all groups or one group.")
+
+  @Parameter(title: "Group (optional)")
+  public var group: SplitCircleGroupEntity?
+
+  @Parameter(title: "How many", default: 5, controlStyle: .field, inclusiveRange: (1, 25))
+  public var limit: Int
+
+  public static var parameterSummary: some ParameterSummary {
+    Summary("Get \(\.$limit) recent expenses in \(\.$group)")
+  }
+
+  public init() {}
+
+  public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<[SplitCircleExpenseEntity]> {
+    guard let userId = SplitCircleCurrentUser.read() else {
+      return .result(value: [], dialog: "Sign in to SplitCircle first, then ask me again.")
+    }
+    let expenses = SplitCircleIndexReader
+      .recentExpenses(userId: userId, groupId: group?.id, limit: limit)
+      .map(SplitCircleExpenseEntity.init)
+    let dialog = expenses.isEmpty ? "I don't see any recent expenses." : "Here are your \(expenses.count) most recent expenses."
+    return .result(value: expenses, dialog: IntentDialog(stringLiteral: dialog))
+  }
+}
+
+/// "How much do I owe <person> in <group>?" Returns the signed amount (+ you owe them).
+@available(iOS 16.0, *)
+public struct GetAmountOwedIntent: AppIntent {
+  public static var title: LocalizedStringResource = "Check What You Owe Someone"
+  public static var description = IntentDescription("How much you owe or are owed by a specific person in a group.")
+
+  @Parameter(title: "Group")
+  public var group: SplitCircleGroupEntity
+
+  @Parameter(title: "Person")
+  public var person: String
+
+  public static var parameterSummary: some ParameterSummary {
+    Summary("Check what you owe \(\.$person) in \(\.$group)")
+  }
+
+  public init() {}
+
+  public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<Double> {
+    guard let userId = SplitCircleCurrentUser.read() else {
+      return .result(value: 0, dialog: "Sign in to SplitCircle first, then ask me again.")
+    }
+    guard let r = SplitCircleIndexReader.amountOwed(groupId: group.id, userId: userId, personName: person) else {
+      return .result(value: 0, dialog: "Open SplitCircle once, then ask me again.")
+    }
+    let net = r.owe - r.owed // + = you owe them, − = they owe you
+    let money = SplitCircleFormat.money(abs(net), currency: r.currency)
+    let dialog: String
+    if abs(net) < 0.01 {
+      dialog = "You're settled up with \(person) in \(group.name)."
+    } else if net > 0 {
+      dialog = "You owe \(person) \(money) in \(group.name)."
+    } else {
+      dialog = "\(person) owes you \(money) in \(group.name)."
+    }
+    return .result(value: net, dialog: IntentDialog(stringLiteral: dialog))
+  }
+}
+
+/// "How much have I spent on <category> in <group>?" Returns the category total.
+@available(iOS 16.0, *)
+public struct GetCategorySpendIntent: AppIntent {
+  public static var title: LocalizedStringResource = "Check Category Spending"
+  public static var description = IntentDescription("Total spent in a category within a SplitCircle group.")
+
+  @Parameter(title: "Group")
+  public var group: SplitCircleGroupEntity
+
+  @Parameter(title: "Category")
+  public var category: String
+
+  public static var parameterSummary: some ParameterSummary {
+    Summary("Check \(\.$category) spending in \(\.$group)")
+  }
+
+  public init() {}
+
+  public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<Double> {
+    guard let userId = SplitCircleCurrentUser.read() else {
+      return .result(value: 0, dialog: "Sign in to SplitCircle first, then ask me again.")
+    }
+    guard let r = SplitCircleIndexReader.categorySpend(groupId: group.id, userId: userId, category: category) else {
+      return .result(value: 0, dialog: "Open SplitCircle once, then ask me again.")
+    }
+    let money = SplitCircleFormat.money(r.total, currency: r.currency)
+    let dialog = r.total < 0.01
+      ? "No \(category) spending recorded in \(group.name) yet."
+      : "\(group.name) has \(money) of \(category) spending."
+    return .result(value: r.total, dialog: IntentDialog(stringLiteral: dialog))
   }
 }
 
@@ -200,6 +334,37 @@ public struct SplitCircleShortcuts: AppShortcutsProvider {
       phrases: ["List my \(.applicationName) groups", "Show my \(.applicationName) groups"],
       shortTitle: "My Groups",
       systemImageName: "person.3"
+    )
+    AppShortcut(
+      intent: GetNetBalanceIntent(),
+      phrases: [
+        "What's my overall \(.applicationName) balance",
+        "Am I up or down on \(.applicationName)",
+      ],
+      shortTitle: "Overall Balance",
+      systemImageName: "chart.line.uptrend.xyaxis"
+    )
+    // NOTE: AppShortcut phrases may interpolate at most ONE parameter and it must be
+    // an AppEntity/AppEnum (not a String, not an optional). So these phrases stay
+    // param-free or reference only the required group entity; Siri prompts for the
+    // rest (person, category, count) when the shortcut runs.
+    AppShortcut(
+      intent: GetRecentExpensesIntent(),
+      phrases: ["Show my recent \(.applicationName) expenses"],
+      shortTitle: "Recent Expenses",
+      systemImageName: "list.bullet.rectangle"
+    )
+    AppShortcut(
+      intent: GetAmountOwedIntent(),
+      phrases: ["What do I owe in \(\.$group) on \(.applicationName)"],
+      shortTitle: "What You Owe",
+      systemImageName: "arrow.left.arrow.right"
+    )
+    AppShortcut(
+      intent: GetCategorySpendIntent(),
+      phrases: ["Check category spending in \(\.$group) on \(.applicationName)"],
+      shortTitle: "Category Spend",
+      systemImageName: "chart.pie"
     )
     AppShortcut(
       intent: AddExpenseIntent(),

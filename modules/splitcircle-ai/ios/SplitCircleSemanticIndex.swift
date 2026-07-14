@@ -31,6 +31,8 @@ public enum SplitCircleSemanticIndex {
   /// `public`: AppDelegate.swift lives in the app target, a DIFFERENT compiled
   /// module from this pod, and can only see `public` symbols across that boundary
   /// (the same reason `SplitCircleAIModule` below is declared `public class`).
+  private static let expenseDomainIdentifier = "com.splitcircle.expense"
+
   public static func reindexCurrentUserGroups() {
     guard let userId = SplitCircleCurrentUser.read() else { return }
     let groups = SplitCircleIndexReader.groups(forUser: userId)
@@ -38,11 +40,34 @@ public enum SplitCircleSemanticIndex {
 
     indexViaCSSearchableItem(groups)
 
+    // Also index recent expenses (the ones already in the snapshot — small, capped)
+    // so Siri/Spotlight can find "the dinner expense". Best-effort.
+    let expenses = SplitCircleIndexReader.recentExpenses(userId: userId, limit: 50)
+    indexExpensesViaCSSearchableItem(expenses)
+
     #if compiler(>=6.4)
     if #available(iOS 27.0, *) {
       indexViaIndexedEntity(groups)
+      indexExpensesViaIndexedEntity(expenses)
     }
     #endif
+  }
+
+  private static func indexExpensesViaCSSearchableItem(_ expenses: [SplitCircleIndexReader.ExpenseSummary]) {
+    guard !expenses.isEmpty else { return }
+    let items = expenses.map { e -> CSSearchableItem in
+      let attributes = CSSearchableItemAttributeSet(contentType: .content)
+      attributes.title = e.title
+      attributes.contentDescription = "\(SplitCircleFormat.money(e.amount, currency: e.currency)) · \(e.category) · \(e.groupName)"
+      let item = CSSearchableItem(uniqueIdentifier: "expense:\(e.id)", domainIdentifier: expenseDomainIdentifier, attributeSet: attributes)
+      item.expirationDate = .distantFuture
+      return item
+    }
+    CSSearchableIndex.default().indexSearchableItems(items) { error in
+      if let error {
+        print("[SplitCircleSemanticIndex] expense CSSearchableItem index failed: \(error)")
+      }
+    }
   }
 
   private static func indexViaCSSearchableItem(_ groups: [SplitCircleIndexReader.GroupSummary]) {
@@ -74,10 +99,23 @@ public enum SplitCircleSemanticIndex {
       }
     }
   }
+
+  @available(iOS 27.0, *)
+  private static func indexExpensesViaIndexedEntity(_ expenses: [SplitCircleIndexReader.ExpenseSummary]) {
+    guard !expenses.isEmpty else { return }
+    let entities = expenses.map(SplitCircleExpenseEntity.init)
+    Task {
+      do {
+        try await CSSearchableIndex.default().indexAppEntities(entities)
+      } catch {
+        print("[SplitCircleSemanticIndex] expense indexAppEntities failed: \(error)")
+      }
+    }
+  }
   #endif
 }
 
-// MARK: - iOS 27 semantic-index conformance (additive extension, guarded)
+// MARK: - iOS 27 semantic-index conformance (additive extensions, guarded)
 
 #if compiler(>=6.4)
 @available(iOS 27.0, *)

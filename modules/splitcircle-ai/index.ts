@@ -13,6 +13,7 @@ import NativeModule, {
   type OnDeviceReceiptItem,
   type OnDeviceReceiptResult,
   type OnDeviceRouterDecisionRaw,
+  type WidgetExpense,
   type WidgetGroupBalance,
   type WidgetSnapshot,
 } from './src/SplitCircleAIModule';
@@ -225,6 +226,7 @@ export type {
   OnDeviceReceiptItem,
   OnDeviceReceiptResult,
   OnDeviceRouterDecisionRaw,
+  WidgetExpense,
   WidgetGroupBalance,
   WidgetSnapshot,
 };

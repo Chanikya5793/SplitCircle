@@ -1,24 +1,16 @@
 import Foundation
 import SQLite3
 
-/// Read side of the Siri/App-Intents data layer. Two sources, tried in order:
-///
-/// 1. **App Group `widget.json`** (primary) — the compact snapshot `widgetService.ts`
-///    publishes on every group refresh: id, name, memberCount, balance, currency,
-///    per current user. This is the preferred source because it (a) already carries
-///    the balance, (b) is readable from BOTH the in-process intents AND a widget
-///    extension, and (c) needs no SQLite linkage. Written via
-///    `SplitCircleSharedStore.writeWidgetSnapshot`.
-///
-/// 2. **`<Documents>/SQLite/ai_index.db`** (fallback) — the richer expo-sqlite index
-///    `aiIndexStore.ts` writes (`groups_meta` + `ai_index`). Covers the window before
-///    the first widget snapshot exists (e.g. right after this build first installs,
-///    before any group refresh has run). Only reachable from the in-process app, not
-///    a widget extension.
-///
-/// Everything is best-effort/read-only: a headless intent degrades to "unavailable"
-/// rather than crashing Siri's process. Currency comes through on the snapshot path.
+/// Read side of the Siri/App-Intents/widget data layer. Primary source is the App
+/// Group `widget.json` snapshot `widgetService.ts` publishes (rich per-group data:
+/// balances, per-member, categories, who-you-owe, recent expenses). Falls back to the
+/// expo-sqlite `ai_index.db` for the basic group list/balance when no snapshot exists
+/// yet (e.g. right after this build first installs). Read-only, best-effort — a
+/// headless intent degrades to "no data" rather than crashing Siri's process. Numbers
+/// are authored by the JS `expenseAnalytics` engine; nothing is recomputed here.
 enum SplitCircleIndexReader {
+  // MARK: - Models
+
   struct GroupSummary: Identifiable {
     let id: String
     let name: String
@@ -32,10 +24,43 @@ enum SplitCircleIndexReader {
     let currency: String?
   }
 
-  // MARK: - Public API (source-agnostic)
+  struct MemberBalance { let name: String; let balance: Double }
+  struct CategoryTotal { let category: String; let total: Double }
+  struct OwedEntry { let name: String; let amount: Double }
+
+  struct ExpenseSummary: Identifiable {
+    let id: String            // "<groupId>::<expenseId>"
+    let title: String
+    let amount: Double
+    let category: String
+    let date: Double          // epoch ms
+    let paidByName: String
+    let groupName: String
+    let currency: String
+  }
+
+  struct RichGroup {
+    let id: String
+    let name: String
+    let memberCount: Int
+    let balance: Double
+    let currency: String
+    let totalSpend: Double
+    let count: Int
+    let members: [MemberBalance]
+    let categories: [CategoryTotal]
+    let youOwe: [OwedEntry]
+    let owesYou: [OwedEntry]
+    let recent: [ExpenseSummary]
+  }
+
+  // MARK: - Public API
 
   static func groups(forUser userId: String) -> [GroupSummary] {
-    if let snap = snapshotGroups(forUser: userId), !snap.isEmpty { return snap }
+    let rich = richGroups(forUser: userId)
+    if !rich.isEmpty {
+      return rich.map { GroupSummary(id: $0.id, name: $0.name, memberCount: $0.memberCount, balance: $0.balance, currency: $0.currency) }
+    }
     return sqliteGroups(forUser: userId)
   }
 
@@ -43,42 +68,118 @@ enum SplitCircleIndexReader {
     groups(forUser: userId).first { $0.id == groupId }
   }
 
-  /// Deterministic balance — NEVER computed here; read from the snapshot (or the
-  /// SQLite analytics JSON), both authored by the JS `expenseAnalytics` engine.
   static func balance(groupId: String, userId: String) -> Balance? {
-    if let g = snapshotGroups(forUser: userId)?.first(where: { $0.id == groupId }),
-       let b = g.balance {
-      return Balance(userBalance: b, currency: g.currency)
+    if let g = richGroups(forUser: userId).first(where: { $0.id == groupId }) {
+      return Balance(userBalance: g.balance, currency: g.currency)
     }
     return sqliteBalance(groupId: groupId, userId: userId)
   }
 
-  // MARK: - Source 1: App Group snapshot (widget.json)
+  /// Net position across ALL groups (sum of per-group balances). Currency is taken
+  /// from the first group — a mixed-currency total is only meaningful as a hint.
+  static func netBalance(userId: String) -> Balance? {
+    let rich = richGroups(forUser: userId)
+    guard !rich.isEmpty else { return nil }
+    let sum = rich.reduce(0.0) { $0 + $1.balance }
+    return Balance(userBalance: sum, currency: rich.first?.currency)
+  }
 
-  private static func snapshotGroups(forUser userId: String) -> [GroupSummary]? {
+  /// Recent expenses, optionally scoped to one group, newest first.
+  static func recentExpenses(userId: String, groupId: String? = nil, limit: Int = 10) -> [ExpenseSummary] {
+    let groups = richGroups(forUser: userId)
+    let pool: [ExpenseSummary]
+    if let groupId {
+      pool = groups.first(where: { $0.id == groupId })?.recent ?? []
+    } else {
+      pool = groups.flatMap { $0.recent }.sorted { $0.date > $1.date }
+    }
+    return Array(pool.prefix(max(0, limit)))
+  }
+
+  static func expense(id: String, userId: String) -> ExpenseSummary? {
+    richGroups(forUser: userId).flatMap { $0.recent }.first { $0.id == id }
+  }
+
+  /// (amount you owe them, amount they owe you, currency) for a person by name.
+  static func amountOwed(groupId: String, userId: String, personName: String) -> (owe: Double, owed: Double, currency: String)? {
+    guard let g = richGroups(forUser: userId).first(where: { $0.id == groupId }) else { return nil }
+    let needle = personName.lowercased()
+    let owe = g.youOwe.first { $0.name.lowercased() == needle }?.amount ?? 0
+    let owed = g.owesYou.first { $0.name.lowercased() == needle }?.amount ?? 0
+    return (owe, owed, g.currency)
+  }
+
+  static func categorySpend(groupId: String, userId: String, category: String) -> (total: Double, currency: String)? {
+    guard let g = richGroups(forUser: userId).first(where: { $0.id == groupId }) else { return nil }
+    let needle = category.lowercased()
+    guard let match = g.categories.first(where: { $0.category.lowercased() == needle }) else {
+      return (0, g.currency)
+    }
+    return (match.total, g.currency)
+  }
+
+  // MARK: - Source 1: App Group snapshot (rich parse)
+
+  static func richGroups(forUser userId: String) -> [RichGroup] {
     guard let dir = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: SplitCircleSharedStore.appGroupId
-    ) else { return nil }
+    ) else { return [] }
     let url = dir.appendingPathComponent(SplitCircleSharedStore.widgetSnapshotFile)
     guard let data = try? Data(contentsOf: url),
-          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    else { return nil }
-    // Only trust the snapshot if it belongs to the currently signed-in user.
-    guard (obj["userId"] as? String) == userId else { return nil }
-    guard let rawGroups = obj["groups"] as? [[String: Any]] else { return nil }
-    return rawGroups.compactMap { g in
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          (obj["userId"] as? String) == userId,
+          let rawGroups = obj["groups"] as? [[String: Any]]
+    else { return [] }
+
+    return rawGroups.compactMap { g -> RichGroup? in
       guard let id = g["id"] as? String, let name = g["name"] as? String else { return nil }
-      return GroupSummary(
+      let currency = (g["currency"] as? String) ?? "USD"
+      let entries = (g["recentExpenses"] as? [[String: Any]]) ?? []
+      let recent: [ExpenseSummary] = entries.compactMap { e in
+        guard let eid = e["id"] as? String, let title = e["title"] as? String else { return nil }
+        return ExpenseSummary(
+          id: eid,
+          title: title,
+          amount: (e["amount"] as? NSNumber)?.doubleValue ?? 0,
+          category: (e["category"] as? String) ?? "General",
+          date: (e["date"] as? NSNumber)?.doubleValue ?? 0,
+          paidByName: (e["paidByName"] as? String) ?? "Someone",
+          groupName: name,
+          currency: currency
+        )
+      }
+      func owed(_ key: String) -> [OwedEntry] {
+        ((g[key] as? [[String: Any]]) ?? []).compactMap {
+          guard let n = $0["name"] as? String else { return nil }
+          return OwedEntry(name: n, amount: ($0["amount"] as? NSNumber)?.doubleValue ?? 0)
+        }
+      }
+      let members: [MemberBalance] = ((g["members"] as? [[String: Any]]) ?? []).compactMap {
+        guard let n = $0["name"] as? String else { return nil }
+        return MemberBalance(name: n, balance: ($0["balance"] as? NSNumber)?.doubleValue ?? 0)
+      }
+      let categories: [CategoryTotal] = ((g["categories"] as? [[String: Any]]) ?? []).compactMap {
+        guard let c = $0["category"] as? String else { return nil }
+        return CategoryTotal(category: c, total: ($0["total"] as? NSNumber)?.doubleValue ?? 0)
+      }
+      return RichGroup(
         id: id,
         name: name,
-        memberCount: (g["memberCount"] as? NSNumber)?.intValue ?? 0,
-        balance: (g["balance"] as? NSNumber)?.doubleValue,
-        currency: g["currency"] as? String
+        memberCount: (g["memberCount"] as? NSNumber)?.intValue ?? members.count,
+        balance: (g["balance"] as? NSNumber)?.doubleValue ?? 0,
+        currency: currency,
+        totalSpend: (g["totalSpend"] as? NSNumber)?.doubleValue ?? 0,
+        count: (g["count"] as? NSNumber)?.intValue ?? 0,
+        members: members,
+        categories: categories,
+        youOwe: owed("youOwe"),
+        owesYou: owed("owesYou"),
+        recent: recent
       )
     }
   }
 
-  // MARK: - Source 2: expo-sqlite ai_index.db (Documents)
+  // MARK: - Source 2: expo-sqlite ai_index.db fallback (basic only)
 
   private static var dbPath: String? = {
     guard let docs = try? FileManager.default.url(

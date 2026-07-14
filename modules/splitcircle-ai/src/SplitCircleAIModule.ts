@@ -89,7 +89,23 @@ export interface SplitCircleAINativeModule {
   getAppGroupId(): string;
 }
 
-/** One group's compact balance, projected into the widget snapshot. */
+/** A recent expense projected into the snapshot for Siri/Shortcuts entities. */
+export interface WidgetExpense {
+  id: string; // "<groupId>::<expenseId>"
+  title: string;
+  amount: number;
+  category: string;
+  /** epoch ms. */
+  date: number;
+  paidByName: string;
+}
+
+/**
+ * One group's data projected into the shared snapshot. The widget uses only the
+ * top block (id/name/memberCount/balance/currency); the rest powers the headless
+ * Siri/Shortcuts read intents (net balance, who you owe, category spend, recent
+ * expenses). All rich fields optional so the widget + older snapshots still parse.
+ */
 export interface WidgetGroupBalance {
   id: string;
   name: string;
@@ -97,9 +113,18 @@ export interface WidgetGroupBalance {
   /** +ve = you're owed, -ve = you owe, ~0 = settled. */
   balance: number;
   currency: string;
+  totalSpend?: number;
+  count?: number;
+  /** Per-member net balance in this group (+ve owed to them, -ve they owe). */
+  members?: { name: string; balance: number }[];
+  categories?: { category: string; total: number }[];
+  /** Relative to the current user (from the minimized settle-up plan). */
+  youOwe?: { name: string; amount: number }[];
+  owesYou?: { name: string; amount: number }[];
+  recentExpenses?: WidgetExpense[];
 }
 
-/** The full snapshot the widget renders (also the shape written to widget.json). */
+/** The full snapshot the widget renders + Siri reads (written to widget.json). */
 export interface WidgetSnapshot {
   userId: string;
   updatedAt: number;

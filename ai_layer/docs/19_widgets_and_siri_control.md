@@ -206,6 +206,43 @@ Do these in order. Steps A–B are the developer portal; C–E are Xcode; F is t
 
 ---
 
+## 5b. Advanced Shortcuts / Siri intents (added 2026-07-14)
+
+The read surface was expanded from "open the app" + basic balance into a set of
+**data-returning** intents that Shortcuts can chain and Siri can reason over. All
+headless, all sourced from the enriched App Group snapshot (below).
+
+**Enriched snapshot** — `widget.json` now carries, per group (all optional, widget
+ignores extras): `totalSpend`, `count`, `members[{name,balance}]`,
+`categories[{category,total}]`, `youOwe[{name,amount}]`, `owesYou[{name,amount}]`,
+`recentExpenses[{id,title,amount,category,date,paidByName}]`. Built in
+`widgetService.ts` from `getGroupAnalytics` (`debts` split into you-owe / owes-you
+relative to the current user; ids as `<groupId>::<expenseId>`). Capped: 12 groups,
+8 recent expenses, 8 categories.
+
+**New intents** (`SplitCircleIntents.swift`) — all `ReturnsValue` so they compose:
+| Intent | Returns | Siri phrase |
+|---|---|---|
+| `GetGroupBalanceIntent` (upgraded) | `Double` (signed) + dialog | "what do I owe in \<group\>" |
+| `GetNetBalanceIntent` | `Double` net across groups | "what's my overall balance" |
+| `GetRecentExpensesIntent` | `[SplitCircleExpenseEntity]` | "show my recent expenses" |
+| `GetAmountOwedIntent` | `Double` (+ you owe them) | "what do I owe in \<group\>" (asks who) |
+| `GetCategorySpendIntent` | `Double` | "check category spending in \<group\>" |
+
+**New entity** — `SplitCircleExpenseEntity` (`SplitCircleExpenseEntity.swift`):
+`AppEntity` + `EntityQuery`/`EntityStringQuery` (Shortcuts "Find", by-id, text search)
++ `IndexedEntity` (iOS 27, Spotlight semantic index). Recent expenses are now also
+Spotlight-indexed (`SplitCircleSemanticIndex.indexExpenses…`), so Siri can resolve
+"the dinner expense".
+
+**Two constraints learned/enforced:**
+- `AppShortcutsProvider` allows **max 10** shortcuts — we're now at exactly 10.
+- An `AppShortcut` phrase may interpolate **one AppEntity/AppEnum** parameter, never a
+  `String` or an optional — so `person`/`category`/`count` are prompted at run time,
+  not spoken inline. (This was a build-blocking rule; phrases were adjusted.)
+- Access-level trap: a `public` AppEntity init can't take an `internal` parameter type
+  (`SplitCircleExpenseEntity.init(from:)` is `internal`; the type stays `public`).
+
 ## 6. Deferred (documented, not built)
 
 - **Headless queued writes** (Phase 2, doc 18 §4) — Siri adds an expense with the app closed,
