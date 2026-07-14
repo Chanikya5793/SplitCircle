@@ -28,6 +28,9 @@ Current design contract. Rules only — history lives in git.
   only, never through cards.
 - Every vertical pixel works: footers dock in normal flow (header / flex ScrollView /
   footer), zero reserved clearance; pageSheets get ~14px top padding, not 56.
+- **Primary actions dock, never scroll away.** A form's commit/cancel (e.g. Add Expense
+  Save/Cancel) lives in a docked bar below a flex ScrollView, always in reach — the user
+  never scrolls to the bottom of the fields to find Save.
 - Row lists live in iOS inset-grouped solid cards with hairline dividers — never naked
   on the canvas. Last row drops its divider.
 - Content > chrome: no per-section title banners when a selector already names the
@@ -92,8 +95,15 @@ Current design contract. Rules only — history lives in git.
   result list for the final outcome.
 - A multi-round game (Double Wheel) offers an **Auto** toggle that fires each round on
   its own until the split is complete — the user opts into the whole run, never taps
-  Spin per person. Randomness stays crypto-grade (`crypto.getRandomValues`) with a long
-  deceleration; a preselected target is never revealed before its animation lands.
+  Spin per person. Auto must engage the moment it's checked (drive the loop off a ref so
+  an incidental re-render can't cancel the queued spin). Randomness stays crypto-grade
+  (`crypto.getRandomValues`) with a long deceleration; a preselected target is never
+  revealed before its animation lands.
+- A multi-round game shows its **running tally live** during play — each share as it
+  lands plus what's left — not only at the end. Progress is never invisible.
+- The full-screen result list **fills the space between the header and the actions**
+  (`flex: 1`), never a fixed slice that strands rows behind a scroll while the screen
+  sits half-empty.
 - Never visually reveal a preselected random target before its animation has landed.
 - Game hardware is modern iOS, not casino: harmonized muted palette, canvas-colored
   separator strokes, hairline outer ring, accent rounded pointer, solid hubs showing

@@ -681,7 +681,8 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
     <PaperProvider theme={theme}>
       <LiquidBackground>
       <GuardedScreen target="expenses" entityId={group.groupId} label="Hidden">
-        <ScrollView contentContainerStyle={styles.container}>
+        <View style={styles.screenFill}>
+        <ScrollView style={styles.scrollFill} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <GlassView style={styles.card}>
             <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>{expenseId ? 'Edit expense' : 'Add expense'}</Text>
 
@@ -943,23 +944,27 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
                 </View>
               </View>
             ) : null}
-
-            <View style={styles.actions}>
-              <Button mode="outlined" onPress={onClose} style={{ borderColor: `${theme.colors.primary}55` }}>
-                Cancel
-              </Button>
-              <PrimaryButton
-                onPress={handleSubmit}
-                disabled={!formValid}
-                requestKey={expenseId ? `expense-update-${expenseId}` : `expense-create-${group.groupId}`}
-                loadingMessage={expenseId ? 'Saving expense...' : 'Creating expense...'}
-                showGlobalOverlay
-              >
-                {expenseId ? 'Save changes' : 'Save expense'}
-              </PrimaryButton>
-            </View>
           </GlassView>
         </ScrollView>
+
+        {/* Docked action bar — Cancel / Save are always in reach, no scroll to
+            the bottom of the form required. */}
+        <View style={[styles.dockedActions, { backgroundColor: isDark ? 'rgba(18,20,26,0.98)' : 'rgba(255,255,255,0.98)', borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)' }]}>
+          <Button mode="outlined" onPress={onClose} style={[styles.dockedCancel, { borderColor: `${theme.colors.primary}55` }]}>
+            Cancel
+          </Button>
+          <PrimaryButton
+            onPress={handleSubmit}
+            disabled={!formValid}
+            requestKey={expenseId ? `expense-update-${expenseId}` : `expense-create-${group.groupId}`}
+            loadingMessage={expenseId ? 'Saving expense...' : 'Creating expense...'}
+            showGlobalOverlay
+            style={styles.dockedSave}
+          >
+            {expenseId ? 'Save changes' : 'Save expense'}
+          </PrimaryButton>
+        </View>
+        </View>
       </GuardedScreen>
     </LiquidBackground>
 
@@ -1031,9 +1036,30 @@ export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreen
 };
 
 const styles = StyleSheet.create({
+  screenFill: {
+    flex: 1,
+  },
+  scrollFill: {
+    flex: 1,
+  },
   container: {
     padding: 16,
-    paddingBottom: 50,
+    paddingBottom: 24,
+  },
+  dockedActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 28,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  dockedCancel: {
+    minWidth: 104,
+  },
+  dockedSave: {
+    flex: 1,
   },
   card: {
     padding: 24,
@@ -1072,11 +1098,6 @@ const styles = StyleSheet.create({
   },
   customSplitContainer: {
     marginTop: 8,
-  },
-  actions: {
-    marginTop: 24,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
   },
   scanReceiptBtn: {
     borderWidth: 1.5,

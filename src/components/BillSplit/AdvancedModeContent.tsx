@@ -2223,13 +2223,18 @@ const GamifiedMode_ = React.memo(({
   );
 
   // Auto mode drives the next spin as soon as the wheel is idle with work left.
+  // Call through a ref so the scheduled timer is never cancelled/re-armed by an
+  // incidental re-render (that would leave Auto "stuck" until a manual spin) —
+  // the effect only re-runs when the primitive gate values actually change.
+  const handleWeightedSpinRef = useRef(handleWeightedSpin);
+  handleWeightedSpinRef.current = handleWeightedSpin;
   useEffect(() => {
     if (mode !== 'weightedRoulette' || !wAuto) return;
     if (wPhase !== 'idle') return;
     if (wRemainingParticipants.length === 0 || wRemainingPct <= 0) return;
-    const timer = setTimeout(() => handleWeightedSpin(), 650);
+    const timer = setTimeout(() => handleWeightedSpinRef.current(), 500);
     return () => clearTimeout(timer);
-  }, [wAuto, wPhase, mode, wRemainingParticipants.length, wRemainingPct, handleWeightedSpin]);
+  }, [wAuto, wPhase, mode, wRemainingParticipants.length, wRemainingPct]);
 
   return (
     <View style={styles.section}>
@@ -2335,6 +2340,28 @@ const GamifiedMode_ = React.memo(({
                 Selecting their share…
               </Text>
             </Animated.View>
+          )}
+
+          {/* Live progress — each assigned share as it lands, plus what's left,
+              so the running split is visible during play, not only at the end. */}
+          {wAssignments.length > 0 && wPhase !== 'complete' && (
+            <View style={[styles.wLiveList, { borderColor: palette.border }]}>
+              {wAssignments.map((a) => (
+                <Animated.View key={a.userId} entering={FadeInDown.springify()} style={styles.wLiveRow}>
+                  <Text style={{ color: theme.colors.onSurface, fontWeight: '600', flex: 1 }} numberOfLines={1}>{a.name}</Text>
+                  <Text style={{ color: theme.colors.primary, fontWeight: '800' }}>{a.percentage}%</Text>
+                  <Text variant="bodySmall" style={{ color: palette.muted, width: 68, textAlign: 'right' }}>
+                    {formatCurrency(totalAmount * a.percentage / 100, currency)}
+                  </Text>
+                </Animated.View>
+              ))}
+              <View style={[styles.wLiveRow, styles.wLiveFooter, { borderTopColor: palette.border }]}>
+                <Text variant="bodySmall" style={{ color: palette.muted, flex: 1 }}>
+                  {wRemainingParticipants.length} still to draw
+                </Text>
+                <Text style={{ color: theme.colors.onSurface, fontWeight: '700' }}>{wRemainingPct}% left</Text>
+              </View>
+            </View>
           )}
 
         </View>
@@ -3401,6 +3428,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     height: 40,
     marginBottom: 8,
+  },
+  wLiveList: {
+    marginTop: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+  },
+  wLiveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    height: 34,
+  },
+  wLiveFooter: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: 2,
   },
   gameModeChip: {
     flex: 1,

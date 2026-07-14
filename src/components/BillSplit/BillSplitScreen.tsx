@@ -1280,7 +1280,9 @@ const styles = StyleSheet.create({
   weightedOutcomeList: {
     alignSelf: 'stretch',
     marginHorizontal: spacing.md,
-    maxHeight: '52%',
+    // Fill the space between the header and the docked actions instead of a
+    // fixed 52% slice — most splits now show every row with no scroll at all.
+    flex: 1,
     borderRadius: 20,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
