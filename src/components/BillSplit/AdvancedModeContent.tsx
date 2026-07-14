@@ -12,7 +12,7 @@ import RouletteWheel from './RouletteWheel';
 import { computeKarma, listDatesBetween } from './splitMath';
 import type { AdvancedSplitMethod, GamifiedMode, ItemCategory, Participant, ReceiptItem, TimeSplitVariant } from './types';
 import type { WeightedRouletteWheelRef } from './WeightedRouletteWheel';
-import WeightedRouletteWheel, { generatePercentageOptions, OUTER_COLORS } from './WeightedRouletteWheel';
+import WeightedRouletteWheel, { generatePercentageOptions } from './WeightedRouletteWheel';
 
 const AVATAR_COLORS = ['#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626', '#7C3AED'];
 
@@ -2081,6 +2081,9 @@ const GamifiedMode_ = React.memo(({
     return generatePercentageOptions(Math.max(0, 100 - allocated));
   });
   const [wSelectedUser, setWSelectedUser] = useState<string | null>(null);
+  // Auto mode: keep firing spins on its own until every share is assigned, so
+  // the user doesn't have to tap Spin once per person.
+  const [wAuto, setWAuto] = useState(false);
   const seededWeightedAssignments = useMemo(
     () => (initialWeightedAssignments ?? []).map((assignment) => ({
       userId: assignment.userId,
@@ -2219,6 +2222,15 @@ const GamifiedMode_ = React.memo(({
     [wAssignments, included, finalizeWeighted],
   );
 
+  // Auto mode drives the next spin as soon as the wheel is idle with work left.
+  useEffect(() => {
+    if (mode !== 'weightedRoulette' || !wAuto) return;
+    if (wPhase !== 'idle') return;
+    if (wRemainingParticipants.length === 0 || wRemainingPct <= 0) return;
+    const timer = setTimeout(() => handleWeightedSpin(), 650);
+    return () => clearTimeout(timer);
+  }, [wAuto, wPhase, mode, wRemainingParticipants.length, wRemainingPct, handleWeightedSpin]);
+
   return (
     <View style={styles.section}>
 
@@ -2252,41 +2264,9 @@ const GamifiedMode_ = React.memo(({
         })}
       </View>
 
-      {/* Players — choose who's in the game, same spirit as picking the payer.
-          Toggling resets any in-flight result (handled upstream + roster key). */}
-      {onToggleParticipant && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.playersRow}>
-          {participants.map((p) => {
-            const color = OUTER_COLORS[(colorIndexById[p.id] ?? 0) % OUTER_COLORS.length];
-            return (
-              <TouchableOpacity
-                key={p.id}
-                accessibilityState={{ selected: p.included }}
-                onPress={() => { lightHaptic(); onToggleParticipant(p.id); }}
-                activeOpacity={0.7}
-                style={[
-                  styles.playerChip,
-                  {
-                    borderColor: p.included ? color : palette.border,
-                    backgroundColor: p.included ? `${color}1F` : 'transparent',
-                    opacity: p.included ? 1 : 0.55,
-                  },
-                ]}
-              >
-                <View style={[styles.miniAvatar, styles.playerAvatar, { backgroundColor: p.included ? color : palette.border }]}>
-                  <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
-                </View>
-                <Text
-                  style={{ color: p.included ? theme.colors.onSurface : palette.muted, fontSize: 12, fontWeight: '600' }}
-                  numberOfLines={1}
-                >
-                  {p.name.split(' ')[0]}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      )}
+      {/* No in-mode player rail — the split's global roster selector (header,
+          beside Paid by) owns who's in, in every mode. The wheel already shows
+          the players. */}
 
       {mode === 'roulette' && (
         <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
@@ -2299,6 +2279,33 @@ const GamifiedMode_ = React.memo(({
           <Text variant="bodySmall" style={[styles.hint, { color: palette.muted }]}>
             Outer ring picks who, inner picks their share — the final split appears full-screen.
           </Text>
+
+          {/* Auto — spin every remaining share without tapping each time. */}
+          <TouchableOpacity
+            accessibilityRole="switch"
+            accessibilityState={{ checked: wAuto }}
+            onPress={() => { lightHaptic(); setWAuto((v) => !v); }}
+            activeOpacity={0.8}
+            style={[
+              styles.autoToggle,
+              {
+                borderColor: wAuto ? theme.colors.primary : palette.border,
+                backgroundColor: wAuto ? `${theme.colors.primary}18` : 'transparent',
+              },
+            ]}
+          >
+            <Icon
+              source={wAuto ? 'checkbox-marked' : 'checkbox-blank-outline'}
+              size={18}
+              color={wAuto ? theme.colors.primary : palette.muted}
+            />
+            <Text style={{ color: wAuto ? theme.colors.primary : theme.colors.onSurface, fontSize: 13, fontWeight: '700' }}>
+              Auto-spin
+            </Text>
+            <Text style={{ color: palette.muted, fontSize: 12 }} numberOfLines={1}>
+              runs the wheel until every share is set
+            </Text>
+          </TouchableOpacity>
 
           {/* The dual-ring wheel — its hub is the spin button */}
           <WeightedRouletteWheel
@@ -3385,25 +3392,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 8,
   },
-  playersRow: {
-    gap: 8,
-    paddingVertical: 2,
-    marginBottom: 6,
-  },
-  playerChip: {
+  autoToggle: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
     borderWidth: 1,
-    borderRadius: 17,
-    paddingLeft: 4,
-    paddingRight: 10,
-    height: 34,
-  },
-  playerAvatar: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 40,
+    marginBottom: 8,
   },
   gameModeChip: {
     flex: 1,

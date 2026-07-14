@@ -34,13 +34,13 @@ Current design contract. Rules only — history lives in git.
   surface; hints are single quiet lines.
 - **The footer earns its place or it's gone.** It is the ONE docked commit: a compact
   bar with the live headline figure + inclusion/validity subline on the left and a
-  single, *always-working* CTA on the right — never a dead disabled control. An
-  un-landed wheel game shows **Spin** and actually spins (same trigger as the hub);
-  karma is applied on its own slider so the footer only ever shows **Done** for it
-  (never "Spin"); otherwise it's **Done**, enabled the moment the split is valid with
-  the left subline naming what's still needed. The header carries NO Done — exactly one
-  commit exists, and it's thumb-reachable. Never a second payer control, method chip,
-  or duplicate action.
+  single, *always-working* CTA on the right — never a dead disabled control. It shows
+  **Done**, enabled the moment the split is valid, with the left subline naming what's
+  still needed. Roulette is the one game that keeps the footer: its **Spin** drives the
+  wheel (same trigger as the hub). The **Double Wheel and Karma HIDE the footer
+  entirely** — they spin/apply on their own hardware and commit via the full-screen
+  result's "Lock it in", so a docked Spin/Done there is dead weight. The header carries
+  NO Done. Never a second payer control, method chip, or duplicate action.
 - **Real data only, never placeholders.** Editors start empty (no invented "Pasta /
   Steak" receipt rows, no seeded tax/tip). Empty modes show a purposeful empty state,
   not fake content. New sub-items default to the sensible common case (e.g. a new
@@ -58,11 +58,14 @@ Current design contract. Rules only — history lives in git.
 - Horizontal selectors scroll ONLY when the selection is clipped, minimally (28px edge
   peek). Tapping a visible item never shifts the row. Reveal on mount via onLayout retry.
 - **Swipe between modes.** The whole editor pages between modes on a horizontal swipe
-  (Robinhood-stock feel): the content *follows the finger* (`dragX`) and the incoming
-  mode *slides in* from the swipe direction (`pageDir`, keyed by method), never a hard
-  instant swap. A Pan claims only deliberate horizontal drags (`activeOffsetX ±24`,
-  `failOffsetY ±16`) so vertical scroll and in-mode controls keep working; the method
-  rail stays fixed as the position indicator. Swipe order == rail order == `METHOD_ORDER`.
+  (Robinhood-stock feel): the content tracks the finger 1:1 (`dragX`); on a committed
+  swipe the outgoing mode *flings the rest of the way off-screen*, the mode swaps *in
+  place* (no `key`/remount — so it's one continuous motion, no spring-back, and game
+  state survives a mis-swipe), and the new mode *slides in* from the opposite edge.
+  A Pan claims only deliberate horizontal drags (`activeOffsetX ±24`, `failOffsetY ±16`)
+  so vertical scroll and in-mode controls keep working; a rubber-band resists swiping
+  past the first/last mode; the method rail stays fixed as the position indicator.
+  Swipe order == rail order == `METHOD_ORDER`.
 - **Include/exclude is a whole-row (or whole-chip) tap, everywhere.** Anywhere a person
   can be in or out of the split — the Add Expense summary chips, income rows, consumption
   rows, game player chips — the entire row/chip toggles it. Excluded rows stay visible
@@ -71,7 +74,9 @@ Current design contract. Rules only — history lives in git.
 - **Global roster selector in the editor header.** Beside "Paid by" sits a people-count
   control (`included/total`) that opens a multi-select overlay to include/exclude anyone
   in *any* mode. It stays open across taps (multi-select), leads with Select/Clear
-  everyone, and mirrors the per-row toggles — one place to manage who's in.
+  everyone, and mirrors the per-row toggles — one place to manage who's in. It is the
+  *single* roster control: modes do NOT carry their own player rail (the game modes rely
+  on this selector; the wheel already shows who's playing).
 - Haptics on every meaningful interaction (selection/medium/heavy/success — `utils/haptics`).
 - Press feedback: `usePressScale` squish on cards.
 - Mid-flow game/wizard states are guidance (muted), never red errors; red is reserved
@@ -85,6 +90,10 @@ Current design contract. Rules only — history lives in git.
   game hardware; the final allocation is a full-screen result with its own bounded
   list and fixed actions. Never substitute a progress bar or an editor-scrolling
   result list for the final outcome.
+- A multi-round game (Double Wheel) offers an **Auto** toggle that fires each round on
+  its own until the split is complete — the user opts into the whole run, never taps
+  Spin per person. Randomness stays crypto-grade (`crypto.getRandomValues`) with a long
+  deceleration; a preselected target is never revealed before its animation lands.
 - Never visually reveal a preselected random target before its animation has landed.
 - Game hardware is modern iOS, not casino: harmonized muted palette, canvas-colored
   separator strokes, hairline outer ring, accent rounded pointer, solid hubs showing

@@ -1,16 +1,16 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useTheme } from '@/context/ThemeContext';
 import type { ExpenseSplitMetadata } from '@/models';
-import { getSuggestions, recordSplit, type SplitSuggestion } from '@/services/splitHistoryService';
+import { recordSplit } from '@/services/splitHistoryService';
 import { spacing } from '@/theme';
 import { formatCurrency } from '@/utils/currency';
 import { ConfettiBurst } from './ConfettiBurst';
 import { heavyHaptic, lightHaptic, mediumHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Icon, PaperProvider, Text } from 'react-native-paper';
-import Animated, { FadeIn, FadeInDown, FadeOut, SlideInLeft, SlideInRight, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, FadeIn, FadeInDown, FadeOut, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 // Canonical method order — matches MethodRail. Swiping steps through this list,
 // so the rail and the swipe gesture always agree.
@@ -21,7 +21,6 @@ const METHOD_ORDER: SplitMethod[] = [
 
 import { AdvancedModeContent } from './AdvancedModeContent';
 import { ParticipantList } from './ParticipantList';
-import { SmartSuggestionsBar } from './SmartSuggestionsBar';
 import { SplitFooter } from './SplitFooter';
 import { MethodRail } from './MethodRail';
 import {
@@ -458,18 +457,6 @@ export const BillSplitScreen = ({
     }
   }, []);
 
-  // ── Smart Suggestions — learned from this group's real split history ──────
-  // No history yet → no chips, no reserved space. Every confirmed split
-  // sharpens what shows up here next time.
-  const [suggestions, setSuggestions] = useState<SplitSuggestion[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    getSuggestions(contextKey ?? '', initialPayer ?? '').then((result) => {
-      if (!cancelled) setSuggestions(result);
-    });
-    return () => { cancelled = true; };
-  }, [contextKey, initialPayer]);
-
   const applyMethod = useCallback((method: SplitMethod) => {
     if (isBasicMethod(method)) {
       setActiveBasicMethod(method);
@@ -480,31 +467,38 @@ export const BillSplitScreen = ({
   }, []);
 
   // Swipe left/right across the whole editor to move between modes, like
-  // flicking between stocks. The content follows the finger (dragX) and the
-  // incoming mode slides in from the swipe direction (pageDir). Steps one
-  // method along METHOD_ORDER (clamped).
-  const [pageDir, setPageDir] = useState<1 | -1>(1);
+  // flicking between stocks. The content tracks the finger 1:1 (dragX); on a
+  // committed swipe the current mode flings the rest of the way out and the
+  // next slides in from the opposite edge — one continuous motion, no
+  // spring-back. Rail taps swap instantly.
+  const { width: screenW } = useWindowDimensions();
   const dragX = useSharedValue(0);
   const pageStyle = useAnimatedStyle(() => ({ transform: [{ translateX: dragX.value }] }));
+  const canPrev = useSharedValue(false);
+  const canNext = useSharedValue(false);
 
   const currentMethodRef = useRef(currentMethod);
   currentMethodRef.current = currentMethod;
-  const stepMethod = useCallback((delta: number) => {
+  useEffect(() => {
+    const idx = METHOD_ORDER.indexOf(currentMethod);
+    canPrev.value = idx > 0;
+    canNext.value = idx < METHOD_ORDER.length - 1;
+  }, [currentMethod, canPrev, canNext]);
+
+  // Runs on the JS thread once the outgoing mode has flung off-screen: swap the
+  // mode, drop the incoming one just off the opposite edge, then glide to 0.
+  const commitSwap = useCallback((dir: number) => {
     const idx = METHOD_ORDER.indexOf(currentMethodRef.current);
-    const next = METHOD_ORDER[Math.min(METHOD_ORDER.length - 1, Math.max(0, idx + delta))];
-    if (next === currentMethodRef.current) return;
-    setPageDir(delta > 0 ? 1 : -1);
+    const next = METHOD_ORDER[Math.min(METHOD_ORDER.length - 1, Math.max(0, idx + dir))];
+    if (next === currentMethodRef.current) {
+      dragX.value = withTiming(0, { duration: 180 });
+      return;
+    }
     selectionHaptic();
     applyMethod(next);
-  }, [applyMethod]);
-
-  // Record swipe direction for a rail tap too, so tapping a farther/nearer
-  // method slides consistently with where it sits relative to the current one.
-  const setDirTo = useCallback((method: SplitMethod) => {
-    const from = METHOD_ORDER.indexOf(currentMethodRef.current);
-    const to = METHOD_ORDER.indexOf(method);
-    if (from >= 0 && to >= 0 && to !== from) setPageDir(to > from ? 1 : -1);
-  }, []);
+    dragX.value = dir * screenW;
+    dragX.value = withTiming(0, { duration: 230, easing: Easing.out(Easing.cubic) });
+  }, [applyMethod, dragX, screenW]);
 
   const swipeGesture = useMemo(
     () => Gesture.Pan()
@@ -512,63 +506,28 @@ export const BillSplitScreen = ({
       .failOffsetY([-16, 16])
       .onUpdate((e) => {
         'worklet';
-        // Follow the finger with mild resistance so it reads as a real drag.
-        dragX.value = e.translationX * 0.6;
+        const t = e.translationX;
+        // Rubber-band when there's no mode to move to in that direction.
+        const beyond = (t > 0 && !canPrev.value) || (t < 0 && !canNext.value);
+        dragX.value = beyond ? t * 0.25 : t;
       })
       .onEnd((e) => {
         'worklet';
         const commit = Math.abs(e.translationX) > 60 || Math.abs(e.velocityX) > 500;
-        if (commit) {
-          // Snap back instantly; the incoming keyed content plays the slide.
-          dragX.value = 0;
-          runOnJS(stepMethod)(e.translationX < 0 ? 1 : -1);
+        const dir = e.translationX < 0 ? 1 : -1;
+        const allowed = dir > 0 ? canNext.value : canPrev.value;
+        if (commit && allowed) {
+          dragX.value = withTiming(
+            -dir * screenW,
+            { duration: 150, easing: Easing.in(Easing.cubic) },
+            (finished) => { if (finished) runOnJS(commitSwap)(dir); },
+          );
         } else {
-          dragX.value = withTiming(0, { duration: 180 });
+          dragX.value = withTiming(0, { duration: 200, easing: Easing.out(Easing.quad) });
         }
       }),
-    [stepMethod, dragX],
+    [commitSwap, dragX, screenW, canPrev, canNext],
   );
-
-  const handleSuggestion = useCallback((id: string) => {
-    mediumHaptic();
-    const suggestion = suggestions.find((s) => s.id === id);
-    if (!suggestion) return;
-
-    if (suggestion.id === 'usual_payer' && suggestion.payerId) {
-      if (participants.some((p) => p.id === suggestion.payerId)) setPaidBy(suggestion.payerId);
-      return;
-    }
-
-    if (suggestion.id === 'usual_method' && suggestion.method) {
-      applyMethod(suggestion.method);
-      return;
-    }
-
-    const record = suggestion.record;
-    if (!record) return;
-
-    // Repeat last split: restore payer, method, included set, and — where a
-    // ratio meaningfully transfers across bills — each person's proportion.
-    if (participants.some((p) => p.id === record.payerId)) setPaidBy(record.payerId);
-    applyMethod(record.method);
-    const includedSet = new Set(record.includedIds);
-    const anyOverlap = participants.some((p) => includedSet.has(p.id));
-    if (anyOverlap) {
-      setParticipants((prev) => prev.map((p) => {
-        const ratio = record.ratios?.[p.id];
-        return {
-          ...p,
-          included: includedSet.has(p.id),
-          ...(record.method === 'percentage' && ratio !== undefined
-            ? { percentage: Math.round(ratio * 1000) / 10 }
-            : {}),
-          ...(record.method === 'income' && ratio !== undefined
-            ? { incomeWeight: Math.round(ratio * 100) }
-            : {}),
-        };
-      }));
-    }
-  }, [applyMethod, participants, suggestions]);
 
   const timeBasedAutofillDoneRef = useRef(false);
 
@@ -681,16 +640,14 @@ export const BillSplitScreen = ({
 
   // ── Method Selection ──────────────────────────────────────────────────────
   const handleBasicMethodSelect = useCallback((method: BasicSplitMethod) => {
-    setDirTo(method);
     setActiveBasicMethod(method);
     setActiveAdvancedMethod(null);
-  }, [setDirTo]);
+  }, []);
 
   const handleAdvancedMethodSelect = useCallback((method: AdvancedSplitMethod) => {
     mediumHaptic();
-    setDirTo(method);
     setActiveAdvancedMethod(method);
-  }, [setDirTo]);
+  }, []);
 
   // ── Done Handler ──────────────────────────────────────────────────────────
   const handleDone = useCallback(() => {
@@ -918,17 +875,6 @@ export const BillSplitScreen = ({
             </Animated.View>
           )}
 
-          {/* Learned suggestions — only when this group has real history.
-              Lives OUTSIDE the ScrollView: the row loads async, and inserting
-              a sibling above Reanimated entering-animated scroll content
-              leaves that content un-shifted (overlap). Out here, insertion
-              just resizes the flex ScrollView — deterministic. */}
-          {suggestions.length > 0 && (
-            <View style={styles.suggestionsRow}>
-              <SmartSuggestionsBar suggestions={suggestions} onSelect={handleSuggestion} />
-            </View>
-          )}
-
           {/* Swipe anywhere across the editor to page between modes
               (Robinhood-style). Wrapping the whole ScrollView means short modes
               (empty receipt) still catch the swipe; the Pan only claims
@@ -948,15 +894,12 @@ export const BillSplitScreen = ({
               onSelectAdvanced={handleAdvancedMethodSelect}
             />
 
-            {/* Paged mode content — follows the finger horizontally (pageStyle)
-                and the incoming mode slides in from the swipe direction. Keyed
-                by method so each change mounts a fresh directional slide. */}
+            {/* Paged mode content — tracks the finger horizontally (pageStyle);
+                the gesture handler flings out and slides the next mode in. The
+                content swaps in place (no key/remount) so the slide is one
+                continuous motion and game state survives a mis-swipe. */}
             <Animated.View style={pageStyle}>
-              <Animated.View
-                key={currentMethod}
-                entering={(pageDir === 1 ? SlideInRight : SlideInLeft).duration(240)}
-              >
-                {!activeAdvancedMethod ? (
+              {!activeAdvancedMethod ? (
                   <ParticipantList
                     participants={displayParticipants}
                     activeMethod={activeBasicMethod}
@@ -1014,7 +957,6 @@ export const BillSplitScreen = ({
                     onItemCategoriesChange={setItemCategories}
                   />
                 )}
-              </Animated.View>
             </Animated.View>
 
           </ScrollView>
@@ -1193,24 +1135,29 @@ export const BillSplitScreen = ({
             </Animated.View>
           )}
 
-          {/* Sticky Footer */}
-          <View style={styles.footerWrapper}>
-            <SplitFooter
-              totalAmount={effectiveTotalAmount}
-              currency={currency}
-              includedCount={included.length}
-              participants={displayParticipants}
-              currentMethod={currentMethod}
-              validation={validation}
-              gamifiedMode={gamifiedMode}
-              loserId={loserId}
-              isSpinning={isSpinning}
-              payerName={payerName}
-              onManagePayer={() => setShowPayerMenu(true)}
-              onSpin={handleSpin}
-              onDone={handleDone}
-            />
-          </View>
+          {/* Sticky Footer — hidden for the Double Wheel and Karma: those games
+              spin/apply on their own hardware and commit via the full-screen
+              result's "Lock it in", so a docked Spin/Done there is dead weight.
+              Roulette keeps it (its footer Spin drives the wheel). */}
+          {!(currentMethod === 'gamified' && (gamifiedMode === 'weightedRoulette' || gamifiedMode === 'scrooge')) && (
+            <View style={styles.footerWrapper}>
+              <SplitFooter
+                totalAmount={effectiveTotalAmount}
+                currency={currency}
+                includedCount={included.length}
+                participants={displayParticipants}
+                currentMethod={currentMethod}
+                validation={validation}
+                gamifiedMode={gamifiedMode}
+                loserId={loserId}
+                isSpinning={isSpinning}
+                payerName={payerName}
+                onManagePayer={() => setShowPayerMenu(true)}
+                onSpin={handleSpin}
+                onDone={handleDone}
+              />
+            </View>
+          )}
         </View>
       </LiquidBackground>
     </PaperProvider>
@@ -1273,10 +1220,6 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     gap: spacing.sm,
     paddingBottom: spacing.lg,
-  },
-  suggestionsRow: {
-    minHeight: 34,
-    marginBottom: spacing.sm,
   },
   payerDropdownInner: {
     borderRadius: 14,
