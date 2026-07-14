@@ -16,6 +16,7 @@
 
 import { writeWidgetSnapshot, type WidgetGroupBalance } from '../../modules/splitcircle-ai';
 import { getGroupAnalytics } from '@/utils/expenseAnalytics';
+import { writeWidgetSnapshotMirror } from '@/services/aiIndexStore';
 import type { Group } from '@/models';
 
 /** Cap so the snapshot stays small — Siri/widgets only ever show a handful. */
@@ -86,7 +87,14 @@ export function publishWidgetSnapshot(userId: string, groups: Group[]): void {
         recentExpenses,
       };
     });
-    writeWidgetSnapshot({ userId, updatedAt: Date.now(), groups: balances });
+    const snapshot = { userId, updatedAt: Date.now(), groups: balances };
+    // Channel 1: App Group container — the widget process's only readable source
+    // (no-ops until the App Group capability is provisioned; see docs/19).
+    writeWidgetSnapshot(snapshot);
+    // Channel 2: SQLite mirror in the app's own container — readable by in-process
+    // headless Siri/Shortcuts intents TODAY, without the App Group entitlement. This
+    // is what makes "check my balance", "recent expenses", "what do I owe X" work.
+    writeWidgetSnapshotMirror(userId, JSON.stringify(snapshot));
   } catch {
     // Best-effort — never break the cache-write path over a snapshot refresh.
   }

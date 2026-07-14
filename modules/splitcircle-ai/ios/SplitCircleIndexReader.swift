@@ -121,15 +121,37 @@ enum SplitCircleIndexReader {
   // MARK: - Source 1: App Group snapshot (rich parse)
 
   static func richGroups(forUser userId: String) -> [RichGroup] {
+    // 1. App Group snapshot — the ONLY source the SEPARATE widget process can read,
+    //    so it stays primary. Requires the App Group entitlement (docs/19 runbook).
+    if let data = appGroupSnapshotData(),
+       let groups = parseRichSnapshot(data, expectedUser: userId), !groups.isEmpty {
+      return groups
+    }
+    // 2. SQLite mirror in the app's OWN container — written alongside the App Group
+    //    copy by widgetService.ts (`widget_snapshot` table). A headless App Intent
+    //    runs in the app process and can read its Documents DB, so this makes reads
+    //    ("balance", "recent expenses", "what do I owe X") work BEFORE the App Group
+    //    capability is provisioned — the current state.
+    if let data = sqliteSnapshotData(forUser: userId),
+       let groups = parseRichSnapshot(data, expectedUser: userId) {
+      return groups
+    }
+    return []
+  }
+
+  private static func appGroupSnapshotData() -> Data? {
     guard let dir = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: SplitCircleSharedStore.appGroupId
-    ) else { return [] }
+    ) else { return nil }
     let url = dir.appendingPathComponent(SplitCircleSharedStore.widgetSnapshotFile)
-    guard let data = try? Data(contentsOf: url),
-          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+    return try? Data(contentsOf: url)
+  }
+
+  private static func parseRichSnapshot(_ data: Data, expectedUser userId: String) -> [RichGroup]? {
+    guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           (obj["userId"] as? String) == userId,
           let rawGroups = obj["groups"] as? [[String: Any]]
-    else { return [] }
+    else { return nil }
 
     return rawGroups.compactMap { g -> RichGroup? in
       guard let id = g["id"] as? String, let name = g["name"] as? String else { return nil }
@@ -221,6 +243,21 @@ enum SplitCircleIndexReader {
       }
       return results
     } ?? []
+  }
+
+  /// Read the full rich snapshot JSON (published by widgetService.ts) for a user.
+  /// Returns raw bytes so `parseRichSnapshot` handles it identically to the App
+  /// Group copy. Missing table (first run, before any snapshot write) → nil.
+  private static func sqliteSnapshotData(forUser userId: String) -> Data? {
+    withReadOnlyDb { db -> Data? in
+      var stmt: OpaquePointer?
+      let sql = "SELECT json FROM widget_snapshot WHERE userId = ?;"
+      guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let statement = stmt else { return nil }
+      defer { sqlite3_finalize(statement) }
+      sqlite3_bind_text(statement, 1, userId, -1, SQLITE_TRANSIENT_STATIC)
+      guard sqlite3_step(statement) == SQLITE_ROW, let jsonC = sqlite3_column_text(statement, 0) else { return nil }
+      return String(cString: jsonC).data(using: .utf8)
+    } ?? nil
   }
 
   private static func sqliteBalance(groupId: String, userId: String) -> Balance? {

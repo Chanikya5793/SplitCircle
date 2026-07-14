@@ -28,7 +28,7 @@ public struct SplitCircleGroupEntity: AppEntity {
     self.memberCount = memberCount
   }
 
-  public static var typeDisplayRepresentation: TypeDisplayRepresentation = "SplitCircle Group"
+  public static var typeDisplayRepresentation: TypeDisplayRepresentation = "ManaSplit Group"
 
   public var displayRepresentation: DisplayRepresentation {
     DisplayRepresentation(

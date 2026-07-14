@@ -26,6 +26,7 @@ import {
 const DB_NAME = 'ai_index.db';
 const TABLE = 'ai_index';
 const GROUPS_TABLE = 'groups_meta';
+const SNAPSHOT_TABLE = 'widget_snapshot';
 
 // Analytics are per-(group, user) because user share/balance are baked into
 // them. One device usually has a single user, but we still key defensively to
@@ -85,6 +86,20 @@ function getDb(): SQLite.SQLiteDatabase | null {
         userId TEXT NOT NULL,
         name TEXT NOT NULL,
         memberCount INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL
+      );`,
+    );
+    // Full rich snapshot (the SAME JSON published to the App Group `widget.json`),
+    // one row per user. This is the SQLite mirror the headless Siri/Shortcuts read
+    // intents read (SplitCircleIndexReader.sqliteSnapshotData) so balances, per-member,
+    // categories and recent expenses answer WITHOUT the App Group entitlement — which
+    // isn't provisioned yet. Once it is, the widget process reads the App Group copy
+    // and this row just keeps the in-process intents fast. Cross-runtime contract with
+    // widgetService.ts (writer) + SplitCircleIndexReader.swift (reader).
+    database.execSync(
+      `CREATE TABLE IF NOT EXISTS ${SNAPSHOT_TABLE} (
+        userId TEXT PRIMARY KEY NOT NULL,
+        json TEXT NOT NULL,
         updatedAt INTEGER NOT NULL
       );`,
     );
@@ -220,6 +235,27 @@ export function upsertGroupMeta(
     );
   } catch (e) {
     console.log('[aiIndexStore] upsertGroupMeta failed', e);
+  }
+}
+
+/**
+ * Persist the full rich snapshot JSON (as published to the widget App Group) into
+ * the SQLite mirror so headless Siri/Shortcuts intents can read balances/expenses
+ * without the App Group entitlement. `json` is the already-serialized
+ * `{ userId, updatedAt, groups }` object from widgetService. Best-effort.
+ */
+export function writeWidgetSnapshotMirror(userId: string, json: string): void {
+  const database = getDb();
+  if (!database || !userId || !json) return;
+  try {
+    database.runSync(
+      `INSERT OR REPLACE INTO ${SNAPSHOT_TABLE} (userId, json, updatedAt) VALUES (?, ?, ?);`,
+      userId,
+      json,
+      Date.now(),
+    );
+  } catch (e) {
+    console.log('[aiIndexStore] writeWidgetSnapshotMirror failed', e);
   }
 }
 

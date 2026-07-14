@@ -14,8 +14,8 @@ import Foundation
 /// available anyway.
 @available(iOS 16.0, *)
 public struct GetGroupBalanceIntent: AppIntent {
-  public static var title: LocalizedStringResource = "Check SplitCircle Balance"
-  public static var description = IntentDescription("Ask what you owe or are owed in a SplitCircle group.")
+  public static var title: LocalizedStringResource = "Check ManaSplit Balance"
+  public static var description = IntentDescription("Ask what you owe or are owed in a ManaSplit group.")
 
   @Parameter(title: "Group")
   public var group: SplitCircleGroupEntity
@@ -30,10 +30,10 @@ public struct GetGroupBalanceIntent: AppIntent {
   // number in a later action, plus a spoken dialog for Siri.
   public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<Double> {
     guard let userId = SplitCircleCurrentUser.read() else {
-      return .result(value: 0, dialog: "Sign in to SplitCircle first, then ask me again.")
+      return .result(value: 0, dialog: "Sign in to ManaSplit first, then ask me again.")
     }
     guard let balance = SplitCircleIndexReader.balance(groupId: group.id, userId: userId) else {
-      return .result(value: 0, dialog: "I don't have \(group.name) indexed yet — open SplitCircle once, then ask me again.")
+      return .result(value: 0, dialog: "I don't have \(group.name) indexed yet — open ManaSplit once, then ask me again.")
     }
     let amount = SplitCircleFormat.money(abs(balance.userBalance), currency: balance.currency)
     let dialog: String
@@ -48,21 +48,21 @@ public struct GetGroupBalanceIntent: AppIntent {
   }
 }
 
-/// "What's my overall SplitCircle balance?" — net across every group. Returns the
+/// "What's my overall ManaSplit balance?" — net across every group. Returns the
 /// number + a spoken summary. Headless.
 @available(iOS 16.0, *)
 public struct GetNetBalanceIntent: AppIntent {
-  public static var title: LocalizedStringResource = "Check Overall SplitCircle Balance"
-  public static var description = IntentDescription("Your net balance across all SplitCircle groups.")
+  public static var title: LocalizedStringResource = "Check Overall ManaSplit Balance"
+  public static var description = IntentDescription("Your net balance across all ManaSplit groups.")
 
   public init() {}
 
   public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<Double> {
     guard let userId = SplitCircleCurrentUser.read() else {
-      return .result(value: 0, dialog: "Sign in to SplitCircle first, then ask me again.")
+      return .result(value: 0, dialog: "Sign in to ManaSplit first, then ask me again.")
     }
     guard let net = SplitCircleIndexReader.netBalance(userId: userId) else {
-      return .result(value: 0, dialog: "Open SplitCircle once so I can total up your groups, then ask me again.")
+      return .result(value: 0, dialog: "Open ManaSplit once so I can total up your groups, then ask me again.")
     }
     let amount = SplitCircleFormat.money(abs(net.userBalance), currency: net.currency)
     let dialog: String
@@ -77,11 +77,11 @@ public struct GetNetBalanceIntent: AppIntent {
   }
 }
 
-/// "Show my recent SplitCircle expenses" (optionally in one group). Returns a list of
+/// "Show my recent ManaSplit expenses" (optionally in one group). Returns a list of
 /// Expense entities Shortcuts can loop over. Headless.
 @available(iOS 16.0, *)
 public struct GetRecentExpensesIntent: AppIntent {
-  public static var title: LocalizedStringResource = "Get Recent SplitCircle Expenses"
+  public static var title: LocalizedStringResource = "Get Recent ManaSplit Expenses"
   public static var description = IntentDescription("The most recent expenses, across all groups or one group.")
 
   @Parameter(title: "Group (optional)")
@@ -98,7 +98,7 @@ public struct GetRecentExpensesIntent: AppIntent {
 
   public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<[SplitCircleExpenseEntity]> {
     guard let userId = SplitCircleCurrentUser.read() else {
-      return .result(value: [], dialog: "Sign in to SplitCircle first, then ask me again.")
+      return .result(value: [], dialog: "Sign in to ManaSplit first, then ask me again.")
     }
     let expenses = SplitCircleIndexReader
       .recentExpenses(userId: userId, groupId: group?.id, limit: limit)
@@ -128,10 +128,10 @@ public struct GetAmountOwedIntent: AppIntent {
 
   public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<Double> {
     guard let userId = SplitCircleCurrentUser.read() else {
-      return .result(value: 0, dialog: "Sign in to SplitCircle first, then ask me again.")
+      return .result(value: 0, dialog: "Sign in to ManaSplit first, then ask me again.")
     }
     guard let r = SplitCircleIndexReader.amountOwed(groupId: group.id, userId: userId, personName: person) else {
-      return .result(value: 0, dialog: "Open SplitCircle once, then ask me again.")
+      return .result(value: 0, dialog: "Open ManaSplit once, then ask me again.")
     }
     let net = r.owe - r.owed // + = you owe them, − = they owe you
     let money = SplitCircleFormat.money(abs(net), currency: r.currency)
@@ -151,7 +151,7 @@ public struct GetAmountOwedIntent: AppIntent {
 @available(iOS 16.0, *)
 public struct GetCategorySpendIntent: AppIntent {
   public static var title: LocalizedStringResource = "Check Category Spending"
-  public static var description = IntentDescription("Total spent in a category within a SplitCircle group.")
+  public static var description = IntentDescription("Total spent in a category within a ManaSplit group.")
 
   @Parameter(title: "Group")
   public var group: SplitCircleGroupEntity
@@ -167,10 +167,10 @@ public struct GetCategorySpendIntent: AppIntent {
 
   public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<Double> {
     guard let userId = SplitCircleCurrentUser.read() else {
-      return .result(value: 0, dialog: "Sign in to SplitCircle first, then ask me again.")
+      return .result(value: 0, dialog: "Sign in to ManaSplit first, then ask me again.")
     }
     guard let r = SplitCircleIndexReader.categorySpend(groupId: group.id, userId: userId, category: category) else {
-      return .result(value: 0, dialog: "Open SplitCircle once, then ask me again.")
+      return .result(value: 0, dialog: "Open ManaSplit once, then ask me again.")
     }
     let money = SplitCircleFormat.money(r.total, currency: r.currency)
     let dialog = r.total < 0.01
@@ -180,23 +180,23 @@ public struct GetCategorySpendIntent: AppIntent {
   }
 }
 
-/// "List my SplitCircle groups" — headless enumeration; also a Shortcuts building block.
+/// "List my ManaSplit groups" — headless enumeration; also a Shortcuts building block.
 @available(iOS 16.0, *)
 public struct ListSplitCircleGroupsIntent: AppIntent {
-  public static var title: LocalizedStringResource = "List SplitCircle Groups"
-  public static var description = IntentDescription("See your SplitCircle groups and what you owe in each.")
+  public static var title: LocalizedStringResource = "List ManaSplit Groups"
+  public static var description = IntentDescription("See your ManaSplit groups and what you owe in each.")
 
   public init() {}
 
   public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<[SplitCircleGroupEntity]> {
     guard let userId = SplitCircleCurrentUser.read() else {
-      return .result(value: [], dialog: "Sign in to SplitCircle first, then ask me again.")
+      return .result(value: [], dialog: "Sign in to ManaSplit first, then ask me again.")
     }
     let groups = SplitCircleIndexReader.groups(forUser: userId)
       .map { SplitCircleGroupEntity(id: $0.id, name: $0.name, memberCount: $0.memberCount) }
     let dialog = groups.isEmpty
-      ? "You don't have any SplitCircle groups yet."
-      : "You're in \(groups.count) SplitCircle \(groups.count == 1 ? "group" : "groups")."
+      ? "You don't have any ManaSplit groups yet."
+      : "You're in \(groups.count) ManaSplit \(groups.count == 1 ? "group" : "groups")."
     return .result(value: groups, dialog: IntentDialog(stringLiteral: dialog))
   }
 }
@@ -216,8 +216,8 @@ public struct ListSplitCircleGroupsIntent: AppIntent {
 /// "Open [group] in SplitCircle."
 @available(iOS 16.0, *)
 public struct OpenGroupIntent: AppIntent {
-  public static var title: LocalizedStringResource = "Open SplitCircle Group"
-  public static var description = IntentDescription("Open one of your SplitCircle groups.")
+  public static var title: LocalizedStringResource = "Open ManaSplit Group"
+  public static var description = IntentDescription("Open one of your ManaSplit groups.")
   public static var openAppWhenRun = true
 
   @Parameter(title: "Group")
@@ -236,8 +236,8 @@ public struct OpenGroupIntent: AppIntent {
 /// "Add a $20 dinner to [group]." Opens Add-Expense prefilled; the user saves.
 @available(iOS 16.0, *)
 public struct AddExpenseIntent: AppIntent {
-  public static var title: LocalizedStringResource = "Add SplitCircle Expense"
-  public static var description = IntentDescription("Start a new expense in a SplitCircle group.")
+  public static var title: LocalizedStringResource = "Add ManaSplit Expense"
+  public static var description = IntentDescription("Start a new expense in a ManaSplit group.")
   public static var openAppWhenRun = true
 
   @Parameter(title: "Group")
@@ -279,8 +279,8 @@ public struct AddExpenseIntent: AppIntent {
 /// "Settle up in [group]." Opens the group's settle-up flow.
 @available(iOS 16.0, *)
 public struct SettleUpIntent: AppIntent {
-  public static var title: LocalizedStringResource = "Settle Up in SplitCircle"
-  public static var description = IntentDescription("Open the settle-up flow for a SplitCircle group.")
+  public static var title: LocalizedStringResource = "Settle Up in ManaSplit"
+  public static var description = IntentDescription("Open the settle-up flow for a ManaSplit group.")
   public static var openAppWhenRun = true
 
   @Parameter(title: "Group")
@@ -301,8 +301,8 @@ public struct SettleUpIntent: AppIntent {
 /// `com.splitcircle.ask-ai` NSUserActivity (donateAskActivity path).
 @available(iOS 16.0, *)
 public struct AskSplitCircleIntent: AppIntent {
-  public static var title: LocalizedStringResource = "Ask SplitCircle"
-  public static var description = IntentDescription("Ask SplitCircle a question about a group's shared expenses.")
+  public static var title: LocalizedStringResource = "Ask ManaSplit"
+  public static var description = IntentDescription("Ask ManaSplit a question about a group's shared expenses.")
   public static var openAppWhenRun = true
 
   // SplitCircle's assistant is per-group (it grounds answers in one group's
@@ -314,7 +314,7 @@ public struct AskSplitCircleIntent: AppIntent {
   public var question: String
 
   public static var parameterSummary: some ParameterSummary {
-    Summary("Ask SplitCircle \(\.$question) about \(\.$group)")
+    Summary("Ask ManaSplit \(\.$question) about \(\.$group)")
   }
 
   public init() {}
@@ -398,7 +398,7 @@ public struct SplitCircleShortcuts: AppShortcutsProvider {
     AppShortcut(
       intent: AskSplitCircleIntent(),
       phrases: ["Ask \(.applicationName) about \(\.$group)"],
-      shortTitle: "Ask SplitCircle",
+      shortTitle: "Ask ManaSplit",
       systemImageName: "bubble.left.and.bubble.right"
     )
   }

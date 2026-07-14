@@ -247,7 +247,7 @@ public class SplitCircleAIModule: Module {
         activity.title = "Ask SplitCircle about my spending"
         activity.isEligibleForSearch = true
         activity.isEligibleForPrediction = true
-        activity.suggestedInvocationPhrase = "Ask SplitCircle"
+        activity.suggestedInvocationPhrase = "Ask ManaSplit"
         if let query, !query.isEmpty {
           // Persist only the (already-redacted) query text for resume.
           activity.userInfo = ["query": query]
