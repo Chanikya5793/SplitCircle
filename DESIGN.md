@@ -93,10 +93,11 @@ Current design contract. Rules only — history lives in git.
   game hardware; the final allocation is a full-screen result with its own bounded
   list and fixed actions. Never substitute a progress bar or an editor-scrolling
   result list for the final outcome.
-- A multi-round game (Double Wheel) offers an **Auto** toggle that fires each round on
-  its own until the split is complete — the user opts into the whole run, never taps
-  Spin per person. Auto must engage the moment it's checked (drive the loop off a ref so
-  an incidental re-render can't cancel the queued spin). Randomness stays crypto-grade
+- A multi-round game (Double Wheel) offers an **Auto** toggle that continues the run
+  for the user. Auto does NOT start the game — the user checks it, taps Spin *once*,
+  and from then on every remaining round fires on its own until the split is complete
+  (gated on at least one landed spin). Drive the loop off a ref so an incidental
+  re-render can't cancel the queued spin. Randomness stays crypto-grade
   (`crypto.getRandomValues`) with a long deceleration; a preselected target is never
   revealed before its animation lands.
 - A multi-round game shows its **running tally live** during play — each share as it

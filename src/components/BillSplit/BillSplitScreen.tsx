@@ -525,6 +525,14 @@ export const BillSplitScreen = ({
         } else {
           dragX.value = withTiming(0, { duration: 200, easing: Easing.out(Easing.quad) });
         }
+      })
+      // Safety net: if the gesture is cancelled/interrupted (not a clean end),
+      // snap the page back so content can never be stranded off-screen — that
+      // stranded state is what reads as a stuck/"infinite" scroll you can't
+      // recover from without relaunching.
+      .onFinalize((_e, success) => {
+        'worklet';
+        if (!success) dragX.value = withTiming(0, { duration: 150 });
       }),
     [commitSwap, dragX, screenW, canPrev, canNext],
   );

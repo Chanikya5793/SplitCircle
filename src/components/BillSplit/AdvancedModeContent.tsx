@@ -2222,19 +2222,20 @@ const GamifiedMode_ = React.memo(({
     [wAssignments, included, finalizeWeighted],
   );
 
-  // Auto mode drives the next spin as soon as the wheel is idle with work left.
-  // Call through a ref so the scheduled timer is never cancelled/re-armed by an
-  // incidental re-render (that would leave Auto "stuck" until a manual spin) —
-  // the effect only re-runs when the primitive gate values actually change.
+  // Auto mode CONTINUES the run after the user starts it — it does not start
+  // the game itself. The user checks Auto, taps Spin once, and from then on each
+  // remaining round fires on its own (gated on wAssignments.length > 0, i.e. at
+  // least one manual spin has landed). Call through a ref so an incidental
+  // re-render can't cancel the queued spin.
   const handleWeightedSpinRef = useRef(handleWeightedSpin);
   handleWeightedSpinRef.current = handleWeightedSpin;
   useEffect(() => {
     if (mode !== 'weightedRoulette' || !wAuto) return;
-    if (wPhase !== 'idle') return;
+    if (wPhase !== 'idle' || wAssignments.length === 0) return;
     if (wRemainingParticipants.length === 0 || wRemainingPct <= 0) return;
     const timer = setTimeout(() => handleWeightedSpinRef.current(), 500);
     return () => clearTimeout(timer);
-  }, [wAuto, wPhase, mode, wRemainingParticipants.length, wRemainingPct]);
+  }, [wAuto, wPhase, mode, wAssignments.length, wRemainingParticipants.length, wRemainingPct]);
 
   return (
     <View style={styles.section}>

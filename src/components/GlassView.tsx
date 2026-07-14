@@ -13,11 +13,14 @@ interface GlassViewProps {
   style?: StyleProp<ViewStyle>;
   contentStyle?: StyleProp<ViewStyle>;
   intensity?: number;
+  /** Skip native liquid glass — needed when the card is wrapped in a
+      Reanimated layout/opacity animation, where the native material drops out. */
+  forceBlur?: boolean;
 }
 
 /** @deprecated Use GlassCard from '@/components/ui'. */
-export const GlassView = React.memo(({ children, style, contentStyle, intensity }: GlassViewProps) => (
-  <GlassCard style={style} contentStyle={contentStyle} intensity={intensity}>
+export const GlassView = React.memo(({ children, style, contentStyle, intensity, forceBlur }: GlassViewProps) => (
+  <GlassCard style={style} contentStyle={contentStyle} intensity={intensity} forceBlur={forceBlur}>
     {children}
   </GlassCard>
 ));

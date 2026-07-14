@@ -158,7 +158,10 @@ const CallHistoryRow = memo(function CallHistoryRow({
         layout={Layout.springify()}
         style={pressScaleStyle}
       >
-        <GlassView style={styles.callItem}>
+        {/* forceBlur: native liquid glass vanishes when wrapped in the row's
+            Reanimated FadeIn/FadeOut/Layout animations — the blur material
+            composites reliably under them. */}
+        <GlassView style={styles.callItem} forceBlur>
           <TouchableRipple
             onPress={() => onPressInfo(entry)}
             onLongPress={() => onLongPressRow(entry)}
