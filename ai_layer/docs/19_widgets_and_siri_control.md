@@ -266,40 +266,47 @@ spoken option for Siri. Note the AppShortcut phrase still only carries the group
 one-entity-per-phrase rule); the method is chosen in the Shortcuts UI / Siri follow-up.
 Keep the enum's raw values in sync with `ExpenseSplitMethod` (src/models/expense.ts).
 
-## 5d. Headless queued writes + participant selection (added 2026-07-14)
+## 5d. Fully-headless expense (all modes) + settlements + group-scoped participants (added 2026-07-14)
 
-The big one: a full expense created entirely from Siri/Shortcuts, **no app UI**. Two intents now:
+Everything that creates data now runs **headless — no app UI**. Only OpenGroup and Ask (which are
+*about* viewing/chatting in the app) still foreground it. Superseded the earlier "equal headless /
+custom-split opens the app" split — there is now ONE add intent.
 
-- **`AddExpenseIntent`** — HEADLESS. `openAppWhenRun` is OFF. Params: group, amount, description,
-  and **`participants: [SplitCirclePersonEntity]?`** ("split with X and Y"; empty ⇒ everyone).
-  It splits **equally** among the chosen members, appends a compact record to the
-  `SplitCirclePendingExpenses` key in `UserDefaults.standard`
-  (`SplitCircleSharedStore.enqueuePendingExpense`), and speaks a confirmation. No app launch.
-- **`AddExpenseWithSplitIntent`** — opens the app (as before) for non-equal methods, because
-  percentages/shares/roulette need per-person values entered on a screen. Now also carries
-  `&participants=<uid,uid>` so the editor pre-selects who's in. Took the Siri-phrase slot that
-  was Category Spend (provider caps at 10; Category Spend stays a usable Shortcuts action).
+- **`AddExpenseIntent`** — HEADLESS for ANY of the 11 split methods. Params: group, amount,
+  description, **`splitMethod`** (`SplitCircleSplitMethodAppEnum`, default equal), **`participants`**
+  (group-scoped picker; empty ⇒ everyone), and **`values`** — a comma-separated string of per-person
+  numbers aligned to the chosen participants (percentages / shares / exact / adjustments / income /
+  days / parts). Roulette/Karma (`gamified`) ignores `values` and Siri instead **picks a random
+  member** to cover the bill, announced in the dialog (no in-app spin). Queues to
+  `SplitCirclePendingExpenses`; no app launch. `AddExpenseWithSplitIntent` was **removed**.
+- **`SettleUpIntent`** — now HEADLESS. Params: group, person (group-scoped), amount, direction
+  (`SplitCircleSettleDirectionAppEnum`: I paid / they paid). Builds `fromUserId`/`toUserId` and
+  queues to `SplitCirclePendingSettlements`.
 
-**Why equal-only is headless:** "who's in + method" fully specifies an *equal* split, so it can be
-written blind. Any other method is under-specified without per-person numbers, so it routes to the
-app. This is the honest line between "Siri did it" and "Siri set it up for you."
+**Split math stays in JS.** The native intent only queues raw inputs (method, participant ids,
+per-person `values`, `rouletteLoserId`). `src/services/pendingExpenseService.ts` materializes each
+record with the app's **real** `computeParticipantsFromSplitMetadata` + `toParticipantShares`
+engine, so a Siri-entered percentage/shares/roulette split is byte-identical to the in-app editor's.
+Native never reimplements the 11 methods. `itemized`/`itemType` need receipt structure that a number
+list can't express — they degrade to an exact/equal split headlessly (documented edge).
 
-**The write path (contract):** the headless intent runs in the app process but never boots RN, so
-it can't touch Firestore. It queues to `UserDefaults.standard`; the JS side
-(`src/services/pendingExpenseService.ts` → `usePendingExpenseFlush`, mounted as
-`PendingExpenseHandler` in `AppNavigator`) drains on foreground / when groups load and replays each
-record through the **same** `GroupContext.addExpense` — idempotent by `requestId`, durable via the
-offline outbox, so double-drains never double-add. A record whose group isn't loaded yet is kept
-for the next pass.
+**The write path (contract):** headless intents run in the app process but never boot RN, so they
+queue to `UserDefaults.standard`. The JS side (`usePendingExpenseFlush`, mounted as
+`PendingExpenseHandler` in `AppNavigator`) drains **both** queues on foreground / when groups load
+and replays through the same `GroupContext.addExpense` / `settleUp` — idempotent by `requestId`,
+durable via the offline outbox, so double-drains never double-write. Records whose group isn't
+loaded yet are kept for the next pass.
 
-**Participant picker data:** `SplitCirclePersonEntity` + `allPeople(forUser:)` read members
-(now carrying `id = userId`, added to the snapshot in `widgetService.ts`) from the SQLite snapshot
-mirror — so the picker and the equal split work **without** the App Group. The entity id is
-`"<groupId>::<userId>"`; the query is a union across the user's groups and the intent filters to the
-chosen group at perform time (avoids relying on cross-intent parameter-dependency APIs).
+**Group-scoped participants (fixes the "lists every group's members" bug):** `SplitCirclePersonQuery`
+declares `@IntentParameterDependency` on both `AddExpenseIntent.$group` and `SettleUpIntent.$group`.
+Whichever intent is being configured populates its dependency; the picker then shows ONLY that
+group's members (`members(forGroup:)`). If no group is set yet, it falls back to the union across all
+groups (`allPeople`) so the picker is never empty. Entity id is `"<groupId>::<userId>"`; all of this
+reads the SQLite snapshot mirror, so it works without the App Group.
 
-Tradeoff the user accepted: a queued expense syncs to other members only after the app is next
-opened once. Instant-sync alternative = use `AddExpenseWithSplitIntent` (opens the app).
+Tradeoff the user accepted: a queued write syncs to other members only after the app is next opened
+once (the headless intent can't reach Firestore). Roulette is an instant random pick, not the spin
+game.
 
 ## 6. Deferred (documented, not built)
 

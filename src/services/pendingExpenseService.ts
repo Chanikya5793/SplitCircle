@@ -1,29 +1,34 @@
 /**
- * pendingExpenseService.ts — drains expenses that a HEADLESS Siri/Shortcuts intent
- * created without opening the app.
+ * pendingExpenseService.ts — drains expenses AND settlements that a HEADLESS
+ * Siri/Shortcuts intent created without opening the app.
  *
- * The native `AddExpenseIntent` (modules/splitcircle-ai/ios/SplitCircleIntents.swift)
- * runs in the app process but never spins up React Native, so it can't write to
- * Firestore/AsyncStorage directly. Instead it appends a compact record to the
- * `SplitCirclePendingExpenses` key in `UserDefaults.standard` (via
- * SplitCircleSharedStore.enqueuePendingExpense). Because those intents share the
- * standard defaults domain with the JS runtime, react-native `Settings` reads the
- * same bytes here. On mount, on every foreground, and whenever groups load, we
- * materialize each record into a real equal-split expense through the SAME
- * `GroupContext.addExpense` path the UI uses — which is idempotent by `requestId`
- * and durable via the offline outbox, so replays never double-add.
+ * The native intents (modules/splitcircle-ai/ios/SplitCircleIntents.swift) run in the
+ * app process but never boot React Native, so they can't write to Firestore/AsyncStorage
+ * directly. They append compact records to two keys in `UserDefaults.standard`
+ * (`SplitCirclePendingExpenses`, `SplitCirclePendingSettlements`) via
+ * SplitCircleSharedStore. Those intents share the standard defaults domain with the JS
+ * runtime, so react-native `Settings` reads the same bytes here. On mount, on every
+ * foreground, and whenever groups load, we materialize each record into a real
+ * expense/settlement through the SAME `GroupContext.addExpense` / `settleUp` the UI uses
+ * — both idempotent by `requestId` and durable via the offline outbox, so replays never
+ * double-write.
  *
- * A record whose group isn't loaded yet is kept for the next pass. iOS-only;
- * best-effort (never throws into React).
+ * The split MATH is done here by the app's real `computeParticipantsFromSplitMetadata`
+ * engine (not reimplemented natively) so a Siri-entered percentage/shares/roulette split
+ * matches exactly what the in-app editor would produce. A record whose group isn't
+ * loaded yet is kept for the next pass. iOS-only; best-effort (never throws into React).
  */
 
 import { useCallback, useEffect, useRef } from 'react';
 import { AppState, Platform, Settings } from 'react-native';
 import { useGroups } from '@/context/GroupContext';
 import { computeSplit } from '@/utils/split';
-import type { ExpenseSplitMetadata } from '@/models';
+import { computeParticipantsFromSplitMetadata, toParticipantShares } from '@/utils/expenseSplit';
+import type { Participant } from '@/components/BillSplit/types';
+import type { ExpenseSplitMetadata, Group, SplitType } from '@/models';
 
-const PENDING_KEY = 'SplitCirclePendingExpenses';
+const EXPENSES_KEY = 'SplitCirclePendingExpenses';
+const SETTLEMENTS_KEY = 'SplitCirclePendingSettlements';
 
 /** One queued headless expense (contract with SplitCircleIntents.swift). */
 export interface QueuedExpense {
@@ -34,76 +39,164 @@ export interface QueuedExpense {
   category?: string;
   paidByUserId: string;
   participantUserIds: string[];
-  splitMethod: string; // currently always 'equal' (only fully-specified case)
+  splitMethod: string; // ExpenseSplitMethod id
+  values?: Record<string, number>; // per-person numbers for non-equal methods
+  rouletteLoserId?: string; // gamified: Siri-picked member who covers the bill
   createdAt: number;
 }
 
-function readPending(): QueuedExpense[] {
+/** One queued headless settlement. */
+export interface QueuedSettlement {
+  requestId: string;
+  groupId: string;
+  fromUserId: string;
+  toUserId: string;
+  amount: number;
+  createdAt: number;
+}
+
+function readQueue<T>(key: string): T[] {
   if (Platform.OS !== 'ios') return [];
   try {
-    const raw = Settings.get(PENDING_KEY);
+    const raw = Settings.get(key);
     if (typeof raw !== 'string' || !raw) return [];
     const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? (arr as QueuedExpense[]) : [];
+    return Array.isArray(arr) ? (arr as T[]) : [];
   } catch {
     return [];
   }
 }
 
-function writePending(items: QueuedExpense[]): void {
+function writeQueue<T>(key: string, items: T[]): void {
   if (Platform.OS !== 'ios') return;
   try {
-    Settings.set({ [PENDING_KEY]: items.length ? JSON.stringify(items) : '' });
+    Settings.set({ [key]: items.length ? JSON.stringify(items) : '' });
   } catch {
     // best-effort
   }
 }
 
+function methodToSplitType(method: string): SplitType {
+  if (method === 'equal') return 'equal';
+  if (method === 'percentage') return 'percentage';
+  if (method === 'shares') return 'shares';
+  return 'custom';
+}
+
 /**
- * Wires headless-expense draining for the lifetime of the signed-in nav tree.
- * Mount once (see PendingExpenseHandler in AppNavigator).
+ * Turn a queued expense into the exact `addExpense` payload the in-app editor would,
+ * running the app's real split engine for whatever method Siri chose. Returns null if
+ * the split produced no shares (shouldn't happen once members are known).
+ */
+function materializeExpense(rec: QueuedExpense, group: Group) {
+  const method = rec.splitMethod || 'equal';
+  const known = rec.participantUserIds.filter((id) => group.members.some((m) => m.userId === id));
+  const memberIds = known.length ? known : group.members.map((m) => m.userId);
+  const valueOf = (uid: string) => rec.values?.[uid] ?? 0;
+
+  // Equal is the common fast path — bypass the engine.
+  if (method === 'equal') {
+    const shares = computeSplit(rec.amount, 'equal', memberIds);
+    const shareOf = (uid: string) => shares.find((s) => s.userId === uid)?.share ?? 0;
+    const splitMetadata: ExpenseSplitMetadata = {
+      version: 1,
+      method: 'equal',
+      participantConfig: group.members.map((m) => ({
+        userId: m.userId,
+        included: memberIds.includes(m.userId),
+        exactAmount: shareOf(m.userId),
+        computedAmount: shareOf(m.userId),
+      })),
+    };
+    return { shares, splitType: 'equal' as SplitType, splitMetadata };
+  }
+
+  // Build the engine's Participant[] with per-person values in the right field.
+  const participants: Participant[] = group.members.map((m) => {
+    const included = memberIds.includes(m.userId);
+    const v = valueOf(m.userId);
+    return {
+      id: m.userId,
+      name: m.displayName || '',
+      included,
+      exactAmount: method === 'exact' ? v : 0,
+      percentage: method === 'percentage' ? v : 0,
+      shares: method === 'shares' ? (v || (included ? 1 : 0)) : 0,
+      adjustment: method === 'adjustment' ? v : 0,
+      incomeWeight: method === 'income' ? v : 0,
+      daysStayed: method === 'timeBased' ? v : 0,
+      partsConsumed: method === 'consumption' ? v : 0,
+      rouletteWeight: 0,
+      historicalPaid: 0,
+      computedAmount: 0,
+    };
+  });
+
+  const totalParts = participants.reduce((sum, p) => sum + p.partsConsumed, 0);
+  const splitMetadata: ExpenseSplitMetadata = {
+    version: 1,
+    method: method as ExpenseSplitMetadata['method'],
+    participantConfig: participants.map((p) => ({
+      userId: p.id,
+      included: p.included,
+      exactAmount: p.exactAmount,
+      percentage: p.percentage,
+      shares: p.shares,
+      adjustment: p.adjustment,
+      incomeWeight: p.incomeWeight,
+      daysStayed: p.daysStayed,
+      partsConsumed: p.partsConsumed,
+    })),
+    ...(method === 'consumption' ? { totalParts } : {}),
+    ...(method === 'timeBased' ? { timeSplitVariant: 'dynamic' as const } : {}),
+    ...(method === 'gamified' && rec.rouletteLoserId ? { rouletteLoserId: rec.rouletteLoserId } : {}),
+  };
+
+  const computed = computeParticipantsFromSplitMetadata(rec.amount, participants, splitMetadata);
+  const shares = toParticipantShares(computed);
+  if (!shares.length) return null;
+
+  // Backfill each config row's computedAmount so the stored metadata matches the shares.
+  const computedMap = new Map(computed.map((c) => [c.id, c.computedAmount]));
+  splitMetadata.participantConfig = splitMetadata.participantConfig.map((pc) => ({
+    ...pc,
+    computedAmount: computedMap.get(pc.userId) ?? 0,
+  }));
+
+  return { shares, splitType: methodToSplitType(method), splitMetadata };
+}
+
+/**
+ * Wires headless expense + settlement draining for the lifetime of the signed-in nav
+ * tree. Mount once (see PendingExpenseHandler in AppNavigator).
  */
 export function usePendingExpenseFlush(): void {
-  const { groups, addExpense } = useGroups();
+  const { groups, addExpense, settleUp } = useGroups();
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
   const running = useRef(false);
 
   const flush = useCallback(async () => {
     if (running.current) return;
-    const pending = readPending();
-    if (!pending.length) return;
+    const pendingExpenses = readQueue<QueuedExpense>(EXPENSES_KEY);
+    const pendingSettlements = readQueue<QueuedSettlement>(SETTLEMENTS_KEY);
+    if (!pendingExpenses.length && !pendingSettlements.length) return;
     running.current = true;
     try {
-      const remaining: QueuedExpense[] = [];
-      for (const rec of pending) {
+      // ── Expenses ──
+      const keepExpenses: QueuedExpense[] = [];
+      for (const rec of pendingExpenses) {
         const group = groupsRef.current.find((g) => g.groupId === rec.groupId);
         if (!group) {
-          remaining.push(rec); // group not loaded yet — retry on next pass
+          keepExpenses.push(rec); // group not loaded yet — retry next pass
           continue;
         }
         try {
-          // Keep only ids still in the group; fall back to everyone.
-          const known = rec.participantUserIds.filter((id) =>
-            group.members.some((m) => m.userId === id),
-          );
-          const memberIds = known.length ? known : group.members.map((m) => m.userId);
-          const shares = computeSplit(rec.amount, 'equal', memberIds);
-          const shareOf = (uid: string) => shares.find((s) => s.userId === uid)?.share ?? 0;
-          const splitMetadata: ExpenseSplitMetadata = {
-            version: 1,
-            method: 'equal',
-            participantConfig: group.members.map((m) => ({
-              userId: m.userId,
-              included: memberIds.includes(m.userId),
-              exactAmount: shareOf(m.userId),
-              computedAmount: shareOf(m.userId),
-            })),
-          };
+          const built = materializeExpense(rec, group);
+          if (!built) continue; // nothing to add — drop it
           const paidBy = group.members.some((m) => m.userId === rec.paidByUserId)
             ? rec.paidByUserId
             : group.members[0]?.userId ?? rec.paidByUserId;
-
           await addExpense(
             rec.groupId,
             {
@@ -112,9 +205,9 @@ export function usePendingExpenseFlush(): void {
               category: rec.category || 'General',
               amount: rec.amount,
               paidBy,
-              splitType: 'equal',
-              participants: shares,
-              splitMetadata,
+              splitType: built.splitType,
+              participants: built.shares,
+              splitMetadata: built.splitMetadata,
               settled: false,
               notes: '',
             },
@@ -123,14 +216,34 @@ export function usePendingExpenseFlush(): void {
             rec.requestId,
           );
         } catch {
-          remaining.push(rec); // transient failure — retry later
+          keepExpenses.push(rec); // transient failure — retry later
         }
       }
-      writePending(remaining);
+      writeQueue(EXPENSES_KEY, keepExpenses);
+
+      // ── Settlements ──
+      const keepSettlements: QueuedSettlement[] = [];
+      for (const rec of pendingSettlements) {
+        const group = groupsRef.current.find((g) => g.groupId === rec.groupId);
+        if (!group) {
+          keepSettlements.push(rec);
+          continue;
+        }
+        try {
+          await settleUp(
+            rec.groupId,
+            { fromUserId: rec.fromUserId, toUserId: rec.toUserId, amount: rec.amount },
+            rec.requestId,
+          );
+        } catch {
+          keepSettlements.push(rec);
+        }
+      }
+      writeQueue(SETTLEMENTS_KEY, keepSettlements);
     } finally {
       running.current = false;
     }
-  }, [addExpense]);
+  }, [addExpense, settleUp]);
 
   // Drain on foreground (an intent may have just queued one) ...
   useEffect(() => {
@@ -140,8 +253,8 @@ export function usePendingExpenseFlush(): void {
     return () => sub.remove();
   }, [flush]);
 
-  // ... and whenever groups (re)load, so a queued item commits as soon as its
-  // group is available. Cheap when the queue is empty.
+  // ... and whenever groups (re)load, so a queued item commits as soon as its group is
+  // available. Cheap when both queues are empty.
   useEffect(() => {
     void flush();
   }, [groups, flush]);

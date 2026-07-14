@@ -8,7 +8,7 @@ import AppIntents
 /// deep link and seed the Split Options editor. Keep these in sync with that union.
 ///
 /// `public` for cross-module App-Intents discovery (see SplitCircleEntities.swift).
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public enum SplitCircleSplitMethodAppEnum: String, AppEnum {
   case equal
   case exact

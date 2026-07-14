@@ -12,7 +12,7 @@ import Foundation
 /// SQLite index (`SplitCircleIndexReader`). Deterministic — no LLM does arithmetic,
 /// matching the app-wide rule; a headless intent has no Foundation Models session
 /// available anyway.
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct GetGroupBalanceIntent: AppIntent {
   public static var title: LocalizedStringResource = "Check ManaSplit Balance"
   public static var description = IntentDescription("Ask what you owe or are owed in a ManaSplit group.")
@@ -50,7 +50,7 @@ public struct GetGroupBalanceIntent: AppIntent {
 
 /// "What's my overall ManaSplit balance?" — net across every group. Returns the
 /// number + a spoken summary. Headless.
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct GetNetBalanceIntent: AppIntent {
   public static var title: LocalizedStringResource = "Check Overall ManaSplit Balance"
   public static var description = IntentDescription("Your net balance across all ManaSplit groups.")
@@ -79,7 +79,7 @@ public struct GetNetBalanceIntent: AppIntent {
 
 /// "Show my recent ManaSplit expenses" (optionally in one group). Returns a list of
 /// Expense entities Shortcuts can loop over. Headless.
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct GetRecentExpensesIntent: AppIntent {
   public static var title: LocalizedStringResource = "Get Recent ManaSplit Expenses"
   public static var description = IntentDescription("The most recent expenses, across all groups or one group.")
@@ -109,7 +109,7 @@ public struct GetRecentExpensesIntent: AppIntent {
 }
 
 /// "How much do I owe <person> in <group>?" Returns the signed amount (+ you owe them).
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct GetAmountOwedIntent: AppIntent {
   public static var title: LocalizedStringResource = "Check What You Owe Someone"
   public static var description = IntentDescription("How much you owe or are owed by a specific person in a group.")
@@ -148,7 +148,7 @@ public struct GetAmountOwedIntent: AppIntent {
 }
 
 /// "How much have I spent on <category> in <group>?" Returns the category total.
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct GetCategorySpendIntent: AppIntent {
   public static var title: LocalizedStringResource = "Check Category Spending"
   public static var description = IntentDescription("Total spent in a category within a ManaSplit group.")
@@ -181,7 +181,7 @@ public struct GetCategorySpendIntent: AppIntent {
 }
 
 /// "List my ManaSplit groups" — headless enumeration; also a Shortcuts building block.
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct ListSplitCircleGroupsIntent: AppIntent {
   public static var title: LocalizedStringResource = "List ManaSplit Groups"
   public static var description = IntentDescription("See your ManaSplit groups and what you owe in each.")
@@ -214,7 +214,7 @@ public struct ListSplitCircleGroupsIntent: AppIntent {
 // (ai_layer/docs/18 §4).
 
 /// "Open [group] in SplitCircle."
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct OpenGroupIntent: AppIntent {
   public static var title: LocalizedStringResource = "Open ManaSplit Group"
   public static var description = IntentDescription("Open one of your ManaSplit groups.")
@@ -233,17 +233,21 @@ public struct OpenGroupIntent: AppIntent {
   }
 }
 
-/// "Add a $60 dinner to [group], split with Sarah and Alex." Creates the expense
-/// HEADLESSLY — no app UI. `openAppWhenRun` is deliberately OFF: the expense is
-/// queued on-device (SplitCircleSharedStore.enqueuePendingExpense) and committed the
-/// next time the app runs, where GroupContext.addExpense de-dupes by requestId.
-/// Equal split among the chosen participants (default: everyone in the group). A
-/// non-equal split needs per-person values entered on a screen, so that lives in
-/// `AddExpenseWithSplitIntent`, which opens the app.
-@available(iOS 16.0, *)
+/// "Add a $60 dinner to [group] split by percentage 40, 30, 30." Creates the expense
+/// FULLY HEADLESSLY for ANY split method — no app UI. `openAppWhenRun` is off: the
+/// expense is queued on-device (SplitCircleSharedStore.enqueuePendingExpense) and
+/// committed the next time the app runs, where GroupContext.addExpense de-dupes by
+/// requestId. The actual split math is done JS-side (pendingExpenseService) by the
+/// app's real `computeParticipantsFromSplitMetadata` engine so numbers never diverge.
+///
+/// `values` are the per-person numbers a non-equal method needs (percentages / shares /
+/// exact amounts / adjustments / income weights / days / parts), comma-separated and
+/// aligned to the `participants` order. Equal ignores them; Roulette/Karma ignores them
+/// and Siri instead picks a random member to cover the bill (announced in the dialog).
+@available(iOS 17.0, *)
 public struct AddExpenseIntent: AppIntent {
   public static var title: LocalizedStringResource = "Add ManaSplit Expense"
-  public static var description = IntentDescription("Quickly add an equal-split expense to a ManaSplit group — no app needed.")
+  public static var description = IntentDescription("Add an expense to a ManaSplit group with any split method — no app needed.")
 
   @Parameter(title: "Group")
   public var group: SplitCircleGroupEntity
@@ -254,14 +258,24 @@ public struct AddExpenseIntent: AppIntent {
   @Parameter(title: "Description", default: "")
   public var title: String
 
-  // Who's in the split. Empty ⇒ everyone in the group. Filtered to `group` at run
-  // (the person query is a union across groups; see SplitCirclePersonEntity).
+  @Parameter(title: "Split method", default: .equal)
+  public var splitMethod: SplitCircleSplitMethodAppEnum
+
+  // Who's in the split. Empty ⇒ everyone in the group. Scoped to `group` by the person
+  // query (SplitCirclePersonEntity) and re-filtered here defensively.
   @Parameter(title: "Split with")
   public var participants: [SplitCirclePersonEntity]?
 
+  // Per-person numbers for non-equal methods, comma-separated, aligned to the chosen
+  // participants (e.g. "40, 30, 30" for percentages). Ignored by equal / roulette.
+  @Parameter(title: "Per-person values", default: "")
+  public var values: String
+
   public static var parameterSummary: some ParameterSummary {
     Summary("Add \(\.$amount) for \(\.$title) to \(\.$group)") {
+      \.$splitMethod
       \.$participants
+      \.$values
     }
   }
 
@@ -286,8 +300,23 @@ public struct AddExpenseIntent: AppIntent {
       return .result(dialog: "Open \(group.name) in ManaSplit once so I can see who's in it, then try again.")
     }
 
+    // Parse per-person values aligned to `chosen` order → { userId: value }.
+    var valueMap: [String: Double] = [:]
+    let parsed = values
+      .split(whereSeparator: { $0 == "," || $0 == " " })
+      .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+    for (i, uid) in chosen.enumerated() where i < parsed.count {
+      valueMap[uid] = parsed[i]
+    }
+
+    // Roulette/Karma: pick a random member to cover the whole bill (headless — no spin).
+    var rouletteLoserId: String? = nil
+    if splitMethod == .gamified {
+      rouletteLoserId = chosen.randomElement()
+    }
+
     let cleanTitle = title.isEmpty ? "Expense" : title
-    let record: [String: Any] = [
+    var record: [String: Any] = [
       "requestId": "siri-\(UUID().uuidString)",
       "groupId": group.id,
       "title": cleanTitle,
@@ -295,96 +324,121 @@ public struct AddExpenseIntent: AppIntent {
       "category": "General",
       "paidByUserId": userId,
       "participantUserIds": chosen,
-      "splitMethod": "equal",
+      "splitMethod": splitMethod.rawValue,
+      "values": valueMap,
       "createdAt": Date().timeIntervalSince1970 * 1000,
     ]
+    if let rouletteLoserId { record["rouletteLoserId"] = rouletteLoserId }
     SplitCircleSharedStore.enqueuePendingExpense(record)
 
     let currency = SplitCircleIndexReader.balance(groupId: group.id, userId: userId)?.currency
     let money = SplitCircleFormat.money(amount, currency: currency)
+    if let loser = rouletteLoserId {
+      let name = SplitCircleIndexReader.members(forGroup: group.id, userId: userId)
+        .first(where: { $0.id == loser })?.name ?? "someone"
+      return .result(dialog: "Roulette picked \(name) — they cover the \(money) for \(cleanTitle) in \(group.name). It'll sync next time you open ManaSplit.")
+    }
     let who = chosen.count == 1 ? "1 person" : "\(chosen.count) people"
-    return .result(dialog: "Added \(money) for \(cleanTitle) to \(group.name), split equally between \(who). It'll sync next time you open ManaSplit.")
+    return .result(dialog: "Added \(money) for \(cleanTitle) to \(group.name), split \(splitMethodPhrase(splitMethod)) between \(who). It'll sync next time you open ManaSplit.")
   }
 }
 
-/// "Add a $40 dinner to [group] split by percentage." Opens the Add-Expense screen
-/// prefilled on the chosen split method + participants so the user can set the actual
-/// shares/percentages/roulette (those need a screen), review, and tap Save. Not a
-/// pre-donated Siri phrase by default (the 10 slots are full) but fully usable as a
-/// Shortcuts action; it also takes a phrase slot below in place of Category Spend.
-@available(iOS 16.0, *)
-public struct AddExpenseWithSplitIntent: AppIntent {
-  public static var title: LocalizedStringResource = "Add Expense with Custom Split"
-  public static var description = IntentDescription("Add an expense and choose exactly how it's split — percentages, shares, roulette, and more.")
-  public static var openAppWhenRun = true
+/// A short spoken phrase for the split method, for the Add Expense confirmation dialog.
+@available(iOS 17.0, *)
+private func splitMethodPhrase(_ m: SplitCircleSplitMethodAppEnum) -> String {
+  switch m {
+  case .equal: return "equally"
+  case .percentage: return "by percentage"
+  case .shares: return "by shares"
+  case .exact: return "by exact amounts"
+  case .adjustment: return "with adjustments"
+  case .income: return "by income"
+  case .consumption: return "by consumption"
+  case .timeBased: return "by time"
+  case .itemized: return "by items"
+  case .itemType: return "by item type"
+  case .gamified: return "by roulette"
+  }
+}
+
+/// Direction of a settlement, from the current user's perspective.
+@available(iOS 17.0, *)
+public enum SplitCircleSettleDirectionAppEnum: String, AppEnum {
+  case iPaid
+  case theyPaid
+
+  public static var typeDisplayRepresentation: TypeDisplayRepresentation = "Who Paid"
+  public static var caseDisplayRepresentations: [SplitCircleSettleDirectionAppEnum: DisplayRepresentation] = [
+    .iPaid: "I paid them",
+    .theyPaid: "They paid me",
+  ]
+}
+
+/// "Settle up: I paid Sarah $20 in [group]." Records the settlement HEADLESSLY — no app
+/// UI. Queued on-device (SplitCircleSharedStore.enqueuePendingSettlement) and committed
+/// next launch through GroupContext.settleUp (idempotent by requestId, durable outbox).
+@available(iOS 17.0, *)
+public struct SettleUpIntent: AppIntent {
+  public static var title: LocalizedStringResource = "Settle Up in ManaSplit"
+  public static var description = IntentDescription("Record a settlement in a ManaSplit group — no app needed.")
 
   @Parameter(title: "Group")
   public var group: SplitCircleGroupEntity
+
+  @Parameter(title: "Person")
+  public var person: SplitCirclePersonEntity
 
   @Parameter(title: "Amount")
   public var amount: Double
 
-  @Parameter(title: "Description", default: "")
-  public var title: String
-
-  @Parameter(title: "Split method")
-  public var splitMethod: SplitCircleSplitMethodAppEnum?
-
-  @Parameter(title: "Split with")
-  public var participants: [SplitCirclePersonEntity]?
+  @Parameter(title: "Direction", default: .iPaid)
+  public var direction: SplitCircleSettleDirectionAppEnum
 
   public static var parameterSummary: some ParameterSummary {
-    Summary("Add \(\.$amount) for \(\.$title) to \(\.$group)") {
-      \.$splitMethod
-      \.$participants
+    Summary("Settle \(\.$amount) with \(\.$person) in \(\.$group)") {
+      \.$direction
     }
   }
 
   public init() {}
 
-  public func perform() async throws -> some IntentResult {
-    var url = "splitcircle://add-expense?group=\(SplitCircleFormat.pathSafe(group.id))&amount=\(amount)"
-    if !title.isEmpty {
-      url += "&title=\(SplitCircleFormat.queryEncoded(title))"
+  public func perform() async throws -> some IntentResult & ProvidesDialog {
+    guard let userId = SplitCircleCurrentUser.read() else {
+      return .result(dialog: "Sign in to ManaSplit first, then try again.")
     }
-    if let splitMethod, splitMethod != .equal {
-      url += "&split=\(splitMethod.rawValue)"
+    guard amount > 0 else {
+      return .result(dialog: "That amount doesn't look right — try a positive number.")
     }
-    if let participants, !participants.isEmpty {
-      let ids = participants.filter { $0.groupId == group.id }.map { $0.userId }
-      if !ids.isEmpty {
-        url += "&participants=\(SplitCircleFormat.queryEncoded(ids.joined(separator: ",")))"
-      }
+    guard person.groupId == group.id else {
+      return .result(dialog: "\(person.name) isn't in \(group.name) — pick someone from that group.")
     }
-    SplitCircleSharedStore.setPendingDeepLink(url)
-    return .result()
-  }
-}
+    let other = person.userId
+    let fromUserId = direction == .iPaid ? userId : other
+    let toUserId = direction == .iPaid ? other : userId
 
-/// "Settle up in [group]." Opens the group's settle-up flow.
-@available(iOS 16.0, *)
-public struct SettleUpIntent: AppIntent {
-  public static var title: LocalizedStringResource = "Settle Up in ManaSplit"
-  public static var description = IntentDescription("Open the settle-up flow for a ManaSplit group.")
-  public static var openAppWhenRun = true
+    let record: [String: Any] = [
+      "requestId": "siri-\(UUID().uuidString)",
+      "groupId": group.id,
+      "fromUserId": fromUserId,
+      "toUserId": toUserId,
+      "amount": amount,
+      "createdAt": Date().timeIntervalSince1970 * 1000,
+    ]
+    SplitCircleSharedStore.enqueuePendingSettlement(record)
 
-  @Parameter(title: "Group")
-  public var group: SplitCircleGroupEntity
-
-  public static var parameterSummary: some ParameterSummary { Summary("Settle up in \(\.$group)") }
-
-  public init() {}
-
-  public func perform() async throws -> some IntentResult {
-    SplitCircleSharedStore.setPendingDeepLink("splitcircle://settle?group=\(SplitCircleFormat.pathSafe(group.id))")
-    return .result()
+    let currency = SplitCircleIndexReader.balance(groupId: group.id, userId: userId)?.currency
+    let money = SplitCircleFormat.money(amount, currency: currency)
+    let dialog = direction == .iPaid
+      ? "Recorded: you paid \(person.name) \(money) in \(group.name). It'll sync next time you open ManaSplit."
+      : "Recorded: \(person.name) paid you \(money) in \(group.name). It'll sync next time you open ManaSplit."
+    return .result(dialog: IntentDialog(stringLiteral: dialog))
   }
 }
 
 /// Open-ended Q&A — needs the on-device Foundation Models pipeline, which needs the
 /// app process, so this opens the app and hands the question off via the existing
 /// `com.splitcircle.ask-ai` NSUserActivity (donateAskActivity path).
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct AskSplitCircleIntent: AppIntent {
   public static var title: LocalizedStringResource = "Ask ManaSplit"
   public static var description = IntentDescription("Ask ManaSplit a question about a group's shared expenses.")
@@ -413,7 +467,7 @@ public struct AskSplitCircleIntent: AppIntent {
 
 // MARK: - Shortcuts / Siri phrase donation
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct SplitCircleShortcuts: AppShortcutsProvider {
   public static var appShortcuts: [AppShortcut] {
     AppShortcut(
@@ -456,16 +510,10 @@ public struct SplitCircleShortcuts: AppShortcutsProvider {
       shortTitle: "What You Owe",
       systemImageName: "arrow.left.arrow.right"
     )
-    // AddExpenseWithSplit takes this Siri-phrase slot (the provider is capped at 10
-    // shortcuts). GetCategorySpendIntent stays a fully usable Shortcuts action + a
-    // data-returning intent — it just no longer has a pre-donated Siri phrase.
     AppShortcut(
-      intent: AddExpenseWithSplitIntent(),
-      phrases: [
-        "Add a custom split expense in \(.applicationName)",
-        "Split an expense in \(\.$group) on \(.applicationName)",
-      ],
-      shortTitle: "Custom Split",
+      intent: GetCategorySpendIntent(),
+      phrases: ["Check category spending in \(\.$group) on \(.applicationName)"],
+      shortTitle: "Category Spend",
       systemImageName: "chart.pie"
     )
     AppShortcut(

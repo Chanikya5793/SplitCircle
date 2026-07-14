@@ -16,7 +16,7 @@ import Foundation
 /// AppShortcutsProvider type in this file and SplitCircleIntents.swift is public
 /// for that reason; that reliability claim itself is unverified without a real
 /// device build (see AI_ARCHITECTURE.md).
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct SplitCircleGroupEntity: AppEntity {
   public let id: String
   public let name: String
@@ -43,7 +43,7 @@ public struct SplitCircleGroupEntity: AppEntity {
 /// Resolves `SplitCircleGroupEntity` values for Siri/Shortcuts parameter pickers
 /// and for `entities(for:)` lookups by id. Reads the CURRENT user's groups — see
 /// `SplitCircleCurrentUser` below for how a headless process learns who's signed in.
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct SplitCircleGroupQuery: EntityQuery {
   public init() {}
 
@@ -64,7 +64,7 @@ public struct SplitCircleGroupQuery: EntityQuery {
   }
 }
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 extension SplitCircleGroupQuery: EntityStringQuery {
   /// Powers Siri saying a group name out loud ("what do I owe in Tahoe Trip") and
   /// Spotlight's plain-text search over groups, without a semantic index.

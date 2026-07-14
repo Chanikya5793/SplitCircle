@@ -6,7 +6,7 @@ import Foundation
 /// ("the dinner expense"). Backed by the App Group snapshot (`SplitCircleIndexReader`)
 /// so it resolves headless. `public` for cross-module App-Intents discovery (see the
 /// note atop SplitCircleEntities.swift).
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct SplitCircleExpenseEntity: AppEntity {
   public let id: String            // "<groupId>::<expenseId>"
   public let title: String
@@ -46,7 +46,7 @@ public struct SplitCircleExpenseEntity: AppEntity {
 
 /// Resolves expense entities for Shortcuts pickers, by-id lookups, and text search
 /// ("find the taxi expense"). Reads the current user's recent expenses across groups.
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct SplitCircleExpenseQuery: EntityQuery {
   public init() {}
 
@@ -65,7 +65,7 @@ public struct SplitCircleExpenseQuery: EntityQuery {
   }
 }
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 extension SplitCircleExpenseQuery: EntityStringQuery {
   public func entities(matching string: String) async throws -> [SplitCircleExpenseEntity] {
     guard let userId = SplitCircleCurrentUser.read() else { return [] }

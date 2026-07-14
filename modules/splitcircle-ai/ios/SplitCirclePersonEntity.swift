@@ -15,7 +15,7 @@ import Foundation
 ///
 /// `public` for the same cross-module-visibility reason as the other entities here
 /// (see the note atop SplitCircleEntities.swift).
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct SplitCirclePersonEntity: AppEntity {
   public let id: String        // "<groupId>::<userId>"
   public let name: String
@@ -48,12 +48,33 @@ public struct SplitCirclePersonEntity: AppEntity {
   public static var defaultQuery = SplitCirclePersonQuery()
 }
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct SplitCirclePersonQuery: EntityQuery {
   public init() {}
 
+  // Scope the picker to the group already chosen in the intent being configured. App
+  // Intents populates whichever dependency matches the active intent; the others stay
+  // nil. This is what fixes "Split with lists members from every group" — when a group
+  // is set (it's the parameter above participants), only that group's members show.
+  @IntentParameterDependency<AddExpenseIntent>(\.$group)
+  var addExpenseContext
+
+  @IntentParameterDependency<SettleUpIntent>(\.$group)
+  var settleContext
+
+  private func scopedGroupId() -> String? {
+    addExpenseContext?.group.id ?? settleContext?.group.id
+  }
+
   private func all() -> [SplitCirclePersonEntity] {
     guard let userId = SplitCircleCurrentUser.read() else { return [] }
+    // Group known ⇒ just that group's members. Unknown (group not set yet) ⇒ union
+    // across all groups so the picker is never empty.
+    if let gid = scopedGroupId() {
+      return SplitCircleIndexReader.members(forGroup: gid, userId: userId).map {
+        SplitCirclePersonEntity(id: "\(gid)::\($0.id)", name: $0.name, groupName: "")
+      }
+    }
     return SplitCircleIndexReader.allPeople(forUser: userId).map {
       SplitCirclePersonEntity(id: $0.personId, name: $0.name, groupName: $0.groupName)
     }
@@ -69,7 +90,7 @@ public struct SplitCirclePersonQuery: EntityQuery {
   }
 }
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 extension SplitCirclePersonQuery: EntityStringQuery {
   /// Lets Siri resolve a spoken member name ("split it with Sarah").
   public func entities(matching string: String) async throws -> [SplitCirclePersonEntity] {

@@ -32,6 +32,7 @@ public enum SplitCircleSharedStore {
   public static let widgetSnapshotFile = "widget.json"
   public static let pendingDeepLinkKey = "SplitCirclePendingDeepLink"
   public static let pendingExpensesKey = "SplitCirclePendingExpenses"
+  public static let pendingSettlementsKey = "SplitCirclePendingSettlements"
 
   private static var appGroupURL: URL? {
     FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId)
@@ -79,8 +80,18 @@ public enum SplitCircleSharedStore {
   /// clears the key. Each record carries a stable `requestId`, so even if a drain
   /// races a write, `GroupContext.addExpense` de-dupes by requestId — no double-add.
   public static func enqueuePendingExpense(_ record: [String: Any]) {
+    appendToQueue(record, key: pendingExpensesKey)
+  }
+
+  /// Append one queued settlement (authored by SettleUpIntent). Drained JS-side by
+  /// pendingSettlementService and committed through GroupContext.settleUp.
+  public static func enqueuePendingSettlement(_ record: [String: Any]) {
+    appendToQueue(record, key: pendingSettlementsKey)
+  }
+
+  private static func appendToQueue(_ record: [String: Any], key: String) {
     var arr: [[String: Any]] = []
-    if let existing = UserDefaults.standard.string(forKey: pendingExpensesKey),
+    if let existing = UserDefaults.standard.string(forKey: key),
        let data = existing.data(using: .utf8),
        let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
       arr = parsed
@@ -88,6 +99,6 @@ public enum SplitCircleSharedStore {
     arr.append(record)
     guard let out = try? JSONSerialization.data(withJSONObject: arr),
           let str = String(data: out, encoding: .utf8) else { return }
-    UserDefaults.standard.set(str, forKey: pendingExpensesKey)
+    UserDefaults.standard.set(str, forKey: key)
   }
 }
