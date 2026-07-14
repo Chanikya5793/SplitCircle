@@ -25,6 +25,7 @@ import {
 
 const DB_NAME = 'ai_index.db';
 const TABLE = 'ai_index';
+const GROUPS_TABLE = 'groups_meta';
 
 // Analytics are per-(group, user) because user share/balance are baked into
 // them. One device usually has a single user, but we still key defensively to
@@ -68,6 +69,23 @@ function getDb(): SQLite.SQLiteDatabase | null {
         updatedAt INTEGER NOT NULL,
         expenseCount INTEGER NOT NULL,
         analyticsJson TEXT NOT NULL
+      );`,
+    );
+    // Group display names + member counts, keyed the same way as the analytics
+    // rows above. This table exists SOLELY so native Swift (App Intents /
+    // Spotlight indexing — see modules/splitcircle-ai/ios/SplitCircleEntities.swift)
+    // can resolve a human-readable group identity headlessly, without the JS
+    // runtime running and without reverse-engineering AsyncStorage's private
+    // format. Treat this file's on-disk path/schema as a cross-runtime
+    // contract: change it in both places at once.
+    database.execSync(
+      `CREATE TABLE IF NOT EXISTS ${GROUPS_TABLE} (
+        rowKey TEXT PRIMARY KEY NOT NULL,
+        groupId TEXT NOT NULL,
+        userId TEXT NOT NULL,
+        name TEXT NOT NULL,
+        memberCount INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL
       );`,
     );
     // Version bump ⇒ analytics shape changed ⇒ drop stale rows so they rebuild
@@ -173,4 +191,53 @@ export function getIndexStoreFootprint(): number {
 /** Drop every persisted index row. Backs the "Rebuild index" action. */
 export function clearIndexStore(): void {
   provider.clear();
+}
+
+/**
+ * Mirror a group's display identity into the cross-runtime `groups_meta` table
+ * (see the schema comment in `getDb`). Call this whenever the app's own
+ * `groupCache.persistGroups` runs — same trigger, same data, just a second
+ * consumer (native Swift App Intents / Spotlight indexing on iOS). Best-effort;
+ * never throws into the caller's cache-write path.
+ */
+export function upsertGroupMeta(
+  groupId: string,
+  userId: string,
+  name: string,
+  memberCount: number,
+): void {
+  const database = getDb();
+  if (!database || !groupId || !userId) return;
+  try {
+    database.runSync(
+      `INSERT OR REPLACE INTO ${GROUPS_TABLE} (rowKey, groupId, userId, name, memberCount, updatedAt) VALUES (?, ?, ?, ?, ?, ?);`,
+      rowKey(groupId, userId),
+      groupId,
+      userId,
+      name || 'Group',
+      memberCount,
+      Date.now(),
+    );
+  } catch (e) {
+    console.log('[aiIndexStore] upsertGroupMeta failed', e);
+  }
+}
+
+/** Remove group-identity rows no longer present (e.g. the user left/deleted them). */
+export function pruneGroupMeta(userId: string, keepGroupIds: ReadonlySet<string>): void {
+  const database = getDb();
+  if (!database || !userId) return;
+  try {
+    const rows = database.getAllSync<{ groupId: string }>(
+      `SELECT groupId FROM ${GROUPS_TABLE} WHERE userId = ?;`,
+      userId,
+    );
+    for (const r of rows) {
+      if (!keepGroupIds.has(r.groupId)) {
+        database.runSync(`DELETE FROM ${GROUPS_TABLE} WHERE rowKey = ?;`, rowKey(r.groupId, userId));
+      }
+    }
+  } catch (e) {
+    console.log('[aiIndexStore] pruneGroupMeta failed', e);
+  }
 }

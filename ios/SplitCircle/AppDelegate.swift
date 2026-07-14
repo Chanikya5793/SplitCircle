@@ -4,6 +4,10 @@ internal import ReactAppDependencyProvider
 import PushKit
 import CallKit
 import Intents
+// `internal import` to match this file's other imports — Xcode 27's Swift flags a
+// plain `import` here as an "ambiguous implicit access level" build error because the
+// module is imported at internal access elsewhere in the target.
+internal import SplitCircleAI
 // RNCallKeep and RNVoipPushNotificationManager are imported through
 // SplitCircle-Bridging-Header.h — they're ObjC pods without Swift modulemaps.
 
@@ -306,6 +310,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
   func sceneDidBecomeActive(_ scene: UIScene) {
     hidePrivacyCover()
+    // Best-effort refresh of the Spotlight/Siri entity index from the local
+    // SQLite mirror — see modules/splitcircle-ai/ios/SplitCircleSemanticIndex.swift.
+    // Cheap (local read only) and safe to run on every foreground.
+    if #available(iOS 16.0, *) {
+      SplitCircleSemanticIndex.reindexCurrentUserGroups()
+    }
   }
 
   // Deep links while running (custom scheme — expo-linking, Google auth redirect).

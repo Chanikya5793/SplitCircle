@@ -13,6 +13,8 @@ import NativeModule, {
   type OnDeviceReceiptItem,
   type OnDeviceReceiptResult,
   type OnDeviceRouterDecisionRaw,
+  type WidgetGroupBalance,
+  type WidgetSnapshot,
 } from './src/SplitCircleAIModule';
 import { redactPIIFallback } from './src/redactFallback';
 
@@ -190,6 +192,30 @@ export async function pccProbe(question: string): Promise<OnDevicePccProbeResult
   return NativeModule.pccProbe(question);
 }
 
+/**
+ * Write the widget balance snapshot to the App Group container (native writes
+ * `widget.json`, then reloads WidgetKit timelines). No-op off iOS or when the
+ * App Group entitlement isn't granted yet. Never throws into the caller.
+ */
+export function writeWidgetSnapshot(snapshot: WidgetSnapshot): void {
+  if (!NativeModule?.writeWidgetSnapshot) return;
+  try {
+    NativeModule.writeWidgetSnapshot(JSON.stringify(snapshot));
+  } catch {
+    // Best-effort — widgets are non-critical chrome.
+  }
+}
+
+/** Force a WidgetKit timeline refresh. No-op off iOS. */
+export function reloadWidgets(): void {
+  if (!NativeModule?.reloadWidgets) return;
+  try {
+    NativeModule.reloadWidgets();
+  } catch {
+    // best-effort
+  }
+}
+
 export { redactPIIFallback };
 export type {
   OnDeviceAiAvailability,
@@ -199,4 +225,6 @@ export type {
   OnDeviceReceiptItem,
   OnDeviceReceiptResult,
   OnDeviceRouterDecisionRaw,
+  WidgetGroupBalance,
+  WidgetSnapshot,
 };

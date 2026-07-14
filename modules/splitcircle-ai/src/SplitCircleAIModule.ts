@@ -79,6 +79,31 @@ export interface SplitCircleAINativeModule {
   ): Promise<OnDeviceRouterDecisionRaw>;
   /** S5 — Private Cloud Compute probe (iOS 27). available=false until entitled. */
   pccProbe(question: string): Promise<OnDevicePccProbeResult>;
+
+  // ── Widget / App-Group surface (doc 19) ───────────────────────────────────
+  /** Write the widget balance snapshot to the App Group container + reload widgets. */
+  writeWidgetSnapshot(json: string): void;
+  /** Force a WidgetKit timeline refresh. */
+  reloadWidgets(): void;
+  /** The App Group identifier the widget snapshot lives under. */
+  getAppGroupId(): string;
+}
+
+/** One group's compact balance, projected into the widget snapshot. */
+export interface WidgetGroupBalance {
+  id: string;
+  name: string;
+  memberCount: number;
+  /** +ve = you're owed, -ve = you owe, ~0 = settled. */
+  balance: number;
+  currency: string;
+}
+
+/** The full snapshot the widget renders (also the shape written to widget.json). */
+export interface WidgetSnapshot {
+  userId: string;
+  updatedAt: number;
+  groups: WidgetGroupBalance[];
 }
 
 export interface OnDeviceRouterDecisionRaw {

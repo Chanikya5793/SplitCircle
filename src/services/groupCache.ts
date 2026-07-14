@@ -10,6 +10,8 @@
 
 import type { Group } from '@/models';
 import { getItem, removeItem, setItem } from '@/utils/storage';
+import { pruneGroupMeta, upsertGroupMeta } from '@/services/aiIndexStore';
+import { publishWidgetSnapshot } from '@/services/widgetService';
 
 const cacheKey = (userId: string) => `groups_cache_v1_${userId}`;
 
@@ -32,6 +34,19 @@ export async function persistGroups(userId: string, groups: Group[]): Promise<vo
   } catch {
     // Non-blocking: caching must never break the data flow.
   }
+  // Mirror group identity (name/member count) into the SQLite index so native
+  // Swift (App Intents / Spotlight — see aiIndexStore.upsertGroupMeta) can
+  // resolve "which group" headlessly, without going through AsyncStorage.
+  try {
+    for (const g of groups) {
+      upsertGroupMeta(g.groupId, userId, g.name, g.members?.length ?? 0);
+    }
+    pruneGroupMeta(userId, new Set(groups.map((g) => g.groupId)));
+  } catch {
+    // Best-effort — never break the cache-write path over the Siri index mirror.
+  }
+  // Refresh the home/lock-screen/Control-Center widgets from the same data.
+  publishWidgetSnapshot(userId, groups);
 }
 
 /** Clear the cache (e.g. on sign-out). */

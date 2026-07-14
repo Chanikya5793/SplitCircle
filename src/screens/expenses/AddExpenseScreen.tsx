@@ -39,6 +39,9 @@ import { Button, Chip, Dialog, Icon, Menu, PaperProvider, Portal, Text, TextInpu
 interface AddExpenseScreenProps {
   group: Group;
   expenseId?: string;
+  /** Prefill from a Siri "add expense" App Intent deep link (deepLinkService). */
+  initialAmount?: string;
+  initialTitle?: string;
   onClose: () => void;
 }
 
@@ -65,13 +68,17 @@ const getCategoryIcon = (cat: string): string => {
   return iconMap[cat] || 'tag';
 };
 
-export const AddExpenseScreen = ({ group, expenseId, onClose }: AddExpenseScreenProps) => {
+export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle, onClose }: AddExpenseScreenProps) => {
   const navigation = useNavigation();
   const { user } = useAuth();
   const { addExpense, updateExpense } = useGroups();
   const { theme, isDark } = useTheme();
-  const [title, setTitle] = useState('');
-  const [amount, setAmount] = useState('');
+  // Siri "add expense" prefill — only for a NEW expense (never override an edit,
+  // whose real values load from `expenseId`). Sanitize the amount to digits/decimal.
+  const [title, setTitle] = useState(expenseId ? '' : (initialTitle ?? ''));
+  const [amount, setAmount] = useState(
+    expenseId ? '' : (initialAmount ?? '').replace(/[^0-9.]/g, ''),
+  );
   const [category, setCategory] = useState('General');
   const [paidBy, setPaidBy] = useState(user?.userId ?? group.members[0]?.userId ?? '');
   const [splitType, setSplitType] = useState<SplitType>('equal');

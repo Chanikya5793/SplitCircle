@@ -258,6 +258,24 @@ public class SplitCircleAIModule: Module {
       }
     }
 
+    /// Persist the widget balance snapshot into the App Group container and refresh
+    /// WidgetKit timelines. `json` is built JS-side (widgetService.ts). No-op if the
+    /// App Group entitlement isn't granted yet (widget just shows its empty state).
+    Function("writeWidgetSnapshot") { (json: String) -> Void in
+      SplitCircleSharedStore.writeWidgetSnapshot(json)
+    }
+
+    /// Force a WidgetKit timeline refresh (e.g. after a manual "rebuild index").
+    Function("reloadWidgets") { () -> Void in
+      SplitCircleSharedStore.reloadWidgets()
+    }
+
+    /// The App Group identifier the widget snapshot lives under — exposed so JS can
+    /// surface it on the AI/index transparency screen if desired.
+    Function("getAppGroupId") { () -> String in
+      SplitCircleSharedStore.appGroupId
+    }
+
     /// Availability of the on-device Apple Foundation Models LLM (iOS 26+,
     /// Apple Intelligence-eligible hardware). Returns one of:
     /// "available" | "deviceNotEligible" | "appleIntelligenceNotEnabled" |

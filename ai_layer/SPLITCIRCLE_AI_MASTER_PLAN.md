@@ -3,6 +3,17 @@
 > Compiled from Phases 1–4. Single source of truth for what the AI layer is, why, and how it
 > ships. See `docs/01`–`04` for full detail; this is the executive + roadmap view.
 
+> **⚠️ Partially superseded (2026-07-13).** The GCP/Vertex AI vision below (Gemini generation,
+> Vertex Vector Search, BigQuery ML) was **replaced** by a pivot to **on-device Apple Foundation
+> Models** — "No paid external AI APIs (Gemini fully removed); on-device Foundation Models only"
+> (`docs/16_chatbot_handoff.md` §9). The MCP-server and BigQuery-warehouse sections here did not
+> ship in that form. What's still live and current: the entity-model analysis (§ Current App
+> Analysis), and the general RAG/use-case thinking as historical context. **For current AI-layer
+> state, start at `docs/17_chatbot_pipeline_v2.md`** (chat pipeline + Private Cloud Compute
+> escalation) **and `docs/18_app_intents_siri_pcc_indexing.md`** (Siri/App Intents/Spotlight
+> indexing, corrected PCC facts). Left in place rather than deleted — per project convention,
+> history lives in git/docs, not silent rewrites.
+
 ---
 
 ## Executive Summary

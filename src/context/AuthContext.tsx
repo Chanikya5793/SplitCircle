@@ -20,6 +20,7 @@ import {
 } from 'firebase/auth';
 import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { Platform, Settings } from 'react-native';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -136,6 +137,16 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       if (unsubscribeSnapshot) {
         unsubscribeSnapshot();
         unsubscribeSnapshot = undefined;
+      }
+
+      // Mirror the signed-in uid to NSUserDefaults (same bridge pattern as
+      // RNThemeIsDark/PrivacyGuardEnabled) so headless native code — App Intents
+      // Siri can invoke without launching JS, see modules/splitcircle-ai/ios/
+      // SplitCircleEntities.swift's SplitCircleCurrentUser — knows whose local
+      // SQLite index to read. Cleared on sign-out so a headless intent never
+      // answers with a previous user's data on a shared/handed-down device.
+      if (Platform.OS === 'ios') {
+        Settings.set({ SplitCircleCurrentUserId: firebaseUser?.uid ?? '' });
       }
 
       if (!firebaseUser) {

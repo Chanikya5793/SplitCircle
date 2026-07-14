@@ -51,7 +51,6 @@ import { setLastSearchScopeForRoute } from '@/services/searchScope';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
 import {
-    createNavigationContainerRef,
     DarkTheme,
     DefaultTheme,
     NavigationContainer,
@@ -63,8 +62,8 @@ import { Platform, StyleSheet, TouchableOpacity, View, type ImageSourcePropType 
 import { Icon, Text, TouchableRipple } from 'react-native-paper';
 
 import { AppStack, AuthStack, NativeTab } from './stacks';
-
-const navigationRef = createNavigationContainerRef<any>();
+import { navigationRef } from './navigationRef';
+import { useDeepLinks } from '@/services/deepLinkService';
 
 type GroupWithFallback = Group | undefined;
 type TabIconKey = 'expenses' | 'chat' | 'calls' | 'settings' | 'search';
@@ -502,7 +501,15 @@ const AddExpenseRoute = ({ route, navigation }: any) => {
     });
   };
 
-  return <AddExpenseScreen group={group} expenseId={route.params.expenseId} onClose={handleClose} />;
+  return (
+    <AddExpenseScreen
+      group={group}
+      expenseId={route.params.expenseId}
+      initialAmount={route.params?.initialAmount}
+      initialTitle={route.params?.initialTitle}
+      onClose={handleClose}
+    />
+  );
 };
 
 const SettlementsRoute = ({ route, navigation }: any) => {
@@ -1454,6 +1461,12 @@ const styles = StyleSheet.create({
   },
 });
 
+/** Drives Siri/App-Intent/widget deep links once the signed-in nav tree is mounted. */
+const DeepLinkHandler = () => {
+  useDeepLinks();
+  return null;
+};
+
 export const AppNavigator = () => {
   const { user, loading } = useAuth();
   const { theme, isDark } = useTheme();
@@ -1482,6 +1495,7 @@ export const AppNavigator = () => {
         {user && <NotificationNavigator />}
         {user && <MinimizedCallBanner />}
         {user && <ActiveCallHost />}
+        {user && <DeepLinkHandler />}
       </View>
     </NavigationContainer>
   );
