@@ -243,6 +243,27 @@ Spotlight-indexed (`SplitCircleSemanticIndex.indexExpenses…`), so Siri can res
 - Access-level trap: a `public` AppEntity init can't take an `internal` parameter type
   (`SplitCircleExpenseEntity.init(from:)` is `internal`; the type stays `public`).
 
+## 5c. Split-method selection from Siri/Shortcuts (added 2026-07-14)
+
+`AddExpenseIntent` gained a `splitMethod` parameter — a `SplitCircleSplitMethodAppEnum`
+(`SplitCircleSplitMethod.swift`) whose raw values are the exact `ExpenseSplitMethod`
+ids (equal/exact/percentage/shares/adjustment/itemized/income/consumption/timeBased/
+gamified/itemType). So "add $60 dinner to Tahoe split by percentage" carries
+`&split=percentage` in the deep link. `AddExpenseScreen` (via `initialSplitMethod`)
+seeds `splitMetadata = { version:1, method, participantConfig:[] }`, sets the matching
+`splitType`, and — for any non-equal method — auto-opens the Split Options
+(`BillSplitScreen`) editor after a short defer (avoids stacking a modal mid-transition)
+so the user lands on customization (percentages, shares, the roulette/karma game).
+
+The AppEnum makes this a proper dropdown on the Shortcuts "Add Expense" action and a
+spoken option for Siri. Note the AppShortcut phrase still only carries the group (the
+one-entity-per-phrase rule); the method is chosen in the Shortcuts UI / Siri follow-up.
+Keep the enum's raw values in sync with `ExpenseSplitMethod` (src/models/expense.ts).
+
+Deferred: per-participant selection (who's in) + inline custom amounts via voice — the
+method + landing on the editor covers the "customize" need; gathering N people's
+percentages by voice isn't sensible, so that stays in-app.
+
 ## 6. Deferred (documented, not built)
 
 - **Headless queued writes** (Phase 2, doc 18 §4) — Siri adds an expense with the app closed,

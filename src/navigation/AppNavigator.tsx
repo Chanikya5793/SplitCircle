@@ -507,6 +507,7 @@ const AddExpenseRoute = ({ route, navigation }: any) => {
       expenseId={route.params.expenseId}
       initialAmount={route.params?.initialAmount}
       initialTitle={route.params?.initialTitle}
+      initialSplitMethod={route.params?.initialSplitMethod}
       onClose={handleClose}
     />
   );

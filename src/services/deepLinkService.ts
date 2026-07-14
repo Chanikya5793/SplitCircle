@@ -110,6 +110,7 @@ export function handleUrl(rawUrl: string): boolean {
           groupId,
           initialAmount: query.amount,
           initialTitle: query.title,
+          initialSplitMethod: query.split,
         });
         return true;
       }

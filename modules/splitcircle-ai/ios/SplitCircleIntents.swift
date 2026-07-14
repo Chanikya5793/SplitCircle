@@ -249,8 +249,16 @@ public struct AddExpenseIntent: AppIntent {
   @Parameter(title: "Description", default: "")
   public var title: String
 
+  // How to split it — Siri/Shortcuts picker over the app's 11 split methods. Optional
+  // (defaults to equal). A non-equal choice opens the Split Options editor prefilled
+  // on that method so the user can customize the actual shares/percentages/game.
+  @Parameter(title: "Split method")
+  public var splitMethod: SplitCircleSplitMethodAppEnum?
+
   public static var parameterSummary: some ParameterSummary {
-    Summary("Add \(\.$amount) for \(\.$title) to \(\.$group)")
+    Summary("Add \(\.$amount) for \(\.$title) to \(\.$group)") {
+      \.$splitMethod
+    }
   }
 
   public init() {}
@@ -259,6 +267,9 @@ public struct AddExpenseIntent: AppIntent {
     var url = "splitcircle://add-expense?group=\(SplitCircleFormat.pathSafe(group.id))&amount=\(amount)"
     if !title.isEmpty {
       url += "&title=\(SplitCircleFormat.queryEncoded(title))"
+    }
+    if let splitMethod, splitMethod != .equal {
+      url += "&split=\(splitMethod.rawValue)"
     }
     SplitCircleSharedStore.setPendingDeepLink(url)
     return .result()

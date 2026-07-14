@@ -42,8 +42,16 @@ interface AddExpenseScreenProps {
   /** Prefill from a Siri "add expense" App Intent deep link (deepLinkService). */
   initialAmount?: string;
   initialTitle?: string;
+  /** Split method id chosen via Siri/Shortcuts (ExpenseSplitMethod); opens Split Options on it. */
+  initialSplitMethod?: string;
   onClose: () => void;
 }
+
+/** The 11 canonical split methods (ExpenseSplitMethod) a Siri deep link may request. */
+const SIRI_SPLIT_METHODS = new Set([
+  'equal', 'exact', 'percentage', 'shares', 'adjustment',
+  'itemized', 'income', 'consumption', 'timeBased', 'gamified', 'itemType',
+]);
 
 // Canonical shared list (utils/categoryMatch.ts) so manual expenses can use
 // every category the app understands, incl. the recurring-bill ones.
@@ -68,7 +76,7 @@ const getCategoryIcon = (cat: string): string => {
   return iconMap[cat] || 'tag';
 };
 
-export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle, onClose }: AddExpenseScreenProps) => {
+export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle, initialSplitMethod, onClose }: AddExpenseScreenProps) => {
   const navigation = useNavigation();
   const { user } = useAuth();
   const { addExpense, updateExpense } = useGroups();
@@ -148,6 +156,29 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
       }
     }
   }, [expenseId, group.expenses]);
+
+  // Siri/Shortcuts "add an expense split by <method>": seed the chosen method and
+  // open the Split Options editor so the user lands directly on customizing it
+  // (percentages, shares, the roulette/karma game, etc.). New expense only; once.
+  useEffect(() => {
+    if (expenseId) return;
+    const method = initialSplitMethod;
+    if (!method || !SIRI_SPLIT_METHODS.has(method) || method === 'equal') return;
+    const seeded: ExpenseSplitMetadata = {
+      version: 1,
+      method: method as ExpenseSplitMetadata['method'],
+      participantConfig: [],
+    };
+    setSplitMetadata(seeded);
+    const st: SplitType = method === 'percentage' ? 'percentage' : method === 'shares' ? 'shares' : 'custom';
+    setSplitType(st);
+    setSplitMethodLabel(getExpenseSplitLabel({ splitType: st, splitMetadata: seeded }));
+    // Defer opening the split sheet until after this (modal) screen settles, so we
+    // don't stack a modal mid-navigation-transition.
+    const t = setTimeout(() => setShowBillSplit(true), 450);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const isRecurringExpense = expenseId ? group.expenses.find((e) => e.expenseId === expenseId)?.recurring : undefined;
 
   const memberDisplayNames = useMemo(
