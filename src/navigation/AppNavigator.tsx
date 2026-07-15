@@ -992,18 +992,12 @@ const AppStackNavigator = () => {
         component={AppTabsWithSearch}
         options={{ headerShown: false, title: ROOT_SCREEN_TITLES.groups }}
       />
-      {/* Destination of the iOS prominent search button. A TRANSPARENT modal, not a
-          pushed screen: search should read as a layer ON TOP of the tab you're in
-          (the Phone app keeps its Calls list visible behind the field), not as a
-          separate destination you navigate away to. */}
+      {/* Destination of the iOS prominent search button. Its own screen (not a tab)
+          so tapping the button lands straight in an engaged search field. */}
       <AppStack.Screen
         name={ROUTES.APP.SEARCH}
         component={SearchScreen}
-        options={{
-          headerShown: false,
-          presentation: 'transparentModal',
-          animation: 'fade',
-        }}
+        options={{ headerShown: false }}
       />
       <AppStack.Screen
         name={ROUTES.APP.GROUP_INFO}
