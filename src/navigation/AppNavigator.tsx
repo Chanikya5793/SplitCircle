@@ -40,6 +40,7 @@ import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
 import { OfflineSyncScreen } from '@/screens/settings/OfflineSyncScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { SearchScreen } from '@/screens/search/SearchScreen';
+import { ProminentSearchButton } from '@/components/tabbar/ProminentSearchButton';
 import type { NotificationData } from '@/utils/notifications';
 import { lightHaptic } from '@/utils/haptics';
 // Shared fallback for routes that need a group synced locally — extracted to
@@ -917,26 +918,38 @@ const AppTabs = () => {
           tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('settings', focused),
         }}
       />
-      <NativeTab.Screen
-        name={ROUTES.APP.SEARCH_TAB}
-        component={SearchScreen}
-        // iOS 26 renders `tabBarSystemItem: 'search'` as the native liquid-glass
-        // search tab positioned NEXT TO the tab bar (not a 6th regular tab).
-        // Setting title/tabBarLabel would override that and force a normal tab,
-        // so on iOS we pass ONLY the system item.
-        options={
-          Platform.OS === 'ios'
-            ? { tabBarSystemItem: 'search' as const }
-            : {
-                title: 'Search',
-                tabBarLabel: 'Search',
-                tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('search', focused),
-              }
-        }
-      />
+      {/*
+        Search is NOT a tab on iOS. `tabBarSystemItem: 'search'` only borrows the
+        system icon — react-native-screens builds tabs with the legacy
+        UITabBarController viewControllers/tabBarItem API and has no `UISearchTab`,
+        so search rendered as a plain 5th tab instead of the Phone app's detached
+        button. Per WWDC26 "Design intuitive search experiences", search here should
+        be a PROMINENT BUTTON that engages search immediately, so on iOS we drop the
+        tab and render <ProminentSearchButton/> beside the bar (it pushes
+        ROUTES.APP.SEARCH). Android keeps the ordinary tab.
+      */}
+      {Platform.OS !== 'ios' && (
+        <NativeTab.Screen
+          name={ROUTES.APP.SEARCH_TAB}
+          component={SearchScreen}
+          options={{
+            title: 'Search',
+            tabBarLabel: 'Search',
+            tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('search', focused),
+          }}
+        />
+      )}
     </NativeTab.Navigator>
   );
 };
+
+/** Tab bar + (iOS) the detached prominent search button painted above it. */
+const AppTabsWithSearch = () => (
+  <View style={{ flex: 1 }}>
+    <AppTabs />
+    {Platform.OS === 'ios' && <ProminentSearchButton />}
+  </View>
+);
 
 const AppStackNavigator = () => {
   const { theme } = useTheme();
@@ -976,8 +989,15 @@ const AppStackNavigator = () => {
       >
       <AppStack.Screen
         name={ROUTES.APP.ROOT}
-        component={AppTabs}
+        component={AppTabsWithSearch}
         options={{ headerShown: false, title: ROOT_SCREEN_TITLES.groups }}
+      />
+      {/* Destination of the iOS prominent search button. Its own screen (not a tab)
+          so tapping the button lands straight in an engaged search field. */}
+      <AppStack.Screen
+        name={ROUTES.APP.SEARCH}
+        component={SearchScreen}
+        options={{ headerShown: false }}
       />
       <AppStack.Screen
         name={ROUTES.APP.GROUP_INFO}

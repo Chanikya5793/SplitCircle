@@ -20,6 +20,9 @@ export const ROUTES = {
     GROUP_CHAT: 'GroupChat',
     MESSAGE_INFO: 'MessageInfo',
     SEARCH_TAB: 'SearchTab',
+    /** Pushed search screen — the iOS prominent search BUTTON's destination
+     *  (on iOS search is not a tab; see ProminentSearchButton). */
+    SEARCH: 'Search',
     CALLS_TAB: 'CallsTab',
     CALLS: 'Calls',
     CALL_INFO: 'CallInfo',
