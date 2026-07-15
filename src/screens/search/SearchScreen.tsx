@@ -4,12 +4,10 @@
 // questions surface an on-device AI answer card grounded in the best-matching
 // group. Reachable from the native iOS 26 search tab.
 
-import { LiquidBackground } from '@/components/LiquidBackground';
 import { GlassCard, ListRow } from '@/components/ui';
 import { ROUTES } from '@/constants/routes';
 import { useTheme } from '@/context/ThemeContext';
 import { useAppSearch } from '@/hooks/useAppSearch';
-import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { groupByType, highlightSegments, looksLikeQuestion, SECTION_LABELS, type RankedItem } from '@/services/searchService';
 import { getLastSearchScope, subscribeSearchScope, type AppSearchScope } from '@/services/searchScope';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
@@ -17,7 +15,17 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { Icon, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -117,16 +125,24 @@ const ResultRow = ({ item, query, onPress }: { item: RankedItem; query: string; 
 // A recent search. Swipe left to delete an individual entry — the removal
 // affordance Apple asks for on recents (alongside the "Clear all" in the section
 // header). Rendered as a row (not a chip) so the swipe has something to reveal.
+//
+// The row background must be OPAQUE ENOUGH to occlude the delete action sliding
+// underneath it, but must still read as glass over the liquid background — a flat
+// `theme.colors.surface` renders as a black slab against it. `last` drops the
+// hairline separator so the group's rounded bottom edge stays clean.
 const RecentRow = ({
   value,
+  last,
   onPress,
   onRemove,
 }: {
   value: string;
+  last: boolean;
   onPress: () => void;
   onRemove: () => void;
 }) => {
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
+  const rowBg = isDark ? 'rgba(44,42,58,0.92)' : 'rgba(255,255,255,0.92)';
   return (
     <ReanimatedSwipeable
       friction={2}
@@ -138,7 +154,7 @@ const RecentRow = ({
           accessibilityLabel={`Remove ${value} from recent searches`}
           style={[styles.recentDelete, { backgroundColor: theme.colors.error }]}
         >
-          <Ionicons name="trash-outline" size={18} color={theme.colors.onError ?? '#fff'} />
+          <Ionicons name="trash-outline" size={18} color="#fff" />
         </TouchableOpacity>
       )}
     >
@@ -146,7 +162,14 @@ const RecentRow = ({
         onPress={onPress}
         accessibilityRole="button"
         accessibilityLabel={value}
-        style={[styles.recentRow, { backgroundColor: theme.colors.surface }]}
+        style={[
+          styles.recentRow,
+          {
+            backgroundColor: rowBg,
+            borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth,
+            borderBottomColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)',
+          },
+        ]}
       >
         <Ionicons name="time-outline" size={16} color={theme.colors.onSurfaceVariant} />
         <Text numberOfLines={1} style={{ flex: 1, color: theme.colors.onSurface }}>
@@ -227,23 +250,30 @@ export const SearchScreen = () => {
     persistRecents([]);
   };
 
+  /** Close the search layer, returning to the tab underneath. */
+  const dismiss = useCallback(() => {
+    Keyboard.dismiss();
+    if (navigation.canGoBack()) navigation.goBack();
+  }, [navigation]);
+
+  // Dismiss the layer BEFORE navigating, otherwise the search overlay stays alive
+  // underneath the destination and reappears when you come back.
   const open = (item: RankedItem) => {
     selectionHaptic();
     rememberRecent(debounced);
-    Keyboard.dismiss();
+    dismiss();
     navigation.navigate(item.route as never, (item.params ?? {}) as never);
   };
 
   const askAi = () => {
     lightHaptic();
     rememberRecent(debounced);
-    Keyboard.dismiss();
+    dismiss();
     navigation.navigate(ROUTES.APP.ASK_AI as never, { groupId: aiGroupId, initialQuestion: debounced } as never);
   };
 
   const fieldBg = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)';
   const selectedChipBg = isDark ? 'rgba(88,166,255,0.24)' : 'rgba(0,122,255,0.14)';
-  const bottomPad = getFloatingTabBarContentPadding(insets.bottom, 56);
   const suggestions = useMemo(() => {
     const dynamic = getSuggestions(selectedScope);
     return dynamic.length > 0 ? dynamic : FALLBACK_SUGGESTIONS[selectedScope];
@@ -273,74 +303,29 @@ export const SearchScreen = () => {
   );
 
   return (
-    <LiquidBackground>
-      <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
-        <Text variant="titleLarge" style={[styles.heading, { color: theme.colors.onSurface }]}>
-          Search {SCOPE_LABELS[selectedScope]}
-        </Text>
-
-        {/* Liquid-glass search field. Cancel sits alongside it (iOS convention) so
-            an engaged search can always be exited + the keyboard dismissed — it's
-            reachable here because the prominent search button PUSHES this screen. */}
-        <View style={styles.fieldRow}>
-          <View style={[styles.field, { backgroundColor: fieldBg, flex: 1 }]}>
-            <Ionicons name="search" size={18} color={theme.colors.onSurfaceVariant} />
-            <TextInput
-              ref={inputRef}
-              value={query}
-              onChangeText={setQuery}
-              placeholder={`Search ${SCOPE_LABELS[selectedScope].toLowerCase()}`}
-              placeholderTextColor={theme.colors.onSurfaceVariant}
-              style={[styles.input, { color: theme.colors.onSurface }]}
-              autoCorrect={false}
-              returnKeyType="search"
-              clearButtonMode="while-editing"
-            />
-            {query.length > 0 && (
-              <TouchableOpacity onPress={() => setQuery('')} accessibilityLabel="Clear">
-                <Ionicons name="close-circle" size={18} color={theme.colors.onSurfaceVariant} />
-              </TouchableOpacity>
-            )}
-          </View>
-          {navigation.canGoBack() && (
-            <TouchableOpacity
-              accessibilityRole="button"
-              onPress={() => {
-                Keyboard.dismiss();
-                navigation.goBack();
-              }}
-            >
-              <Text variant="labelLarge" style={{ color: theme.colors.primary }}>
-                Cancel
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <View style={styles.scopeRow}>
-          {scopeOptions.map((scope) => {
-            const selected = selectedScope === scope;
-            return (
-              <TouchableOpacity
-                key={scope}
-                style={[styles.scopeChip, { backgroundColor: selected ? selectedChipBg : fieldBg }]}
-                onPress={() => {
-                  selectionHaptic();
-                  setSelectedScope(scope);
-                }}
-              >
-                <Text variant="labelMedium" style={{ color: selected ? theme.colors.primary : theme.colors.onSurface }}>
-                  {scope === defaultScope ? `${SCOPE_LABELS[scope]}` : SCOPE_LABELS[scope]}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
+    // A LAYER over the tab you were in — not a destination. The stack presents this
+    // as a transparentModal, so the tab's content stays visible behind the scrim
+    // (the Phone app keeps its Calls list visible while you search). Tapping the
+    // scrim dismisses. The field is pinned to the BOTTOM and rides up over the
+    // keyboard, which is both the ergonomic spot and what Phone does.
+    <View style={styles.overlayRoot}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss search"
+        style={[styles.scrim, { backgroundColor: isDark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.18)' }]}
+        onPress={dismiss}
+      />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.overlayBody}
+        pointerEvents="box-none"
+      >
+        {/* Content sits ABOVE the field and grows upward from it. */}
         <ScrollView
+          style={styles.results}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          contentContainerStyle={{ paddingBottom: bottomPad }}
+          contentContainerStyle={styles.resultsContent}
           showsVerticalScrollIndicator={false}
         >
           {debounced.length === 0 ? (
@@ -355,11 +340,20 @@ export const SearchScreen = () => {
                       <Text variant="labelMedium" style={{ color: theme.colors.primary }}>Clear all</Text>
                     </TouchableOpacity>
                   </View>
-                  <GlassCard style={styles.recentsCard}>
-                    {recents.map((r) => (
+                  {/* Plain clipped container (NOT GlassCard) — the rows carry their
+                      own occluding background for the swipe, so a glass card behind
+                      them just double-stacks and muddies the edges. */}
+                  <View
+                    style={[
+                      styles.recentsCard,
+                      { borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)' },
+                    ]}
+                  >
+                    {recents.map((r, i) => (
                       <RecentRow
                         key={r}
                         value={r}
+                        last={i === recents.length - 1}
                         onPress={() => {
                           selectionHaptic();
                           setQuery(r);
@@ -367,7 +361,7 @@ export const SearchScreen = () => {
                         onRemove={() => removeRecent(r)}
                       />
                     ))}
-                  </GlassCard>
+                  </View>
                 </View>
               )}
               <View style={styles.block}>
@@ -450,14 +444,69 @@ export const SearchScreen = () => {
             </View>
           )}
         </ScrollView>
-      </View>
-    </LiquidBackground>
+
+        {/* Bottom bar: scopes + the field, pinned above the keyboard. */}
+        <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 10 }]}>
+          <View style={styles.scopeRow}>
+            {scopeOptions.map((scope) => {
+              const selected = selectedScope === scope;
+              return (
+                <TouchableOpacity
+                  key={scope}
+                  style={[styles.scopeChip, { backgroundColor: selected ? selectedChipBg : fieldBg }]}
+                  onPress={() => {
+                    selectionHaptic();
+                    setSelectedScope(scope);
+                  }}
+                >
+                  <Text variant="labelMedium" style={{ color: selected ? theme.colors.primary : theme.colors.onSurface }}>
+                    {SCOPE_LABELS[scope]}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={styles.fieldRow}>
+            <View style={[styles.field, { backgroundColor: fieldBg, flex: 1 }]}>
+              <Ionicons name="search" size={18} color={theme.colors.onSurfaceVariant} />
+              <TextInput
+                ref={inputRef}
+                value={query}
+                onChangeText={setQuery}
+                placeholder={`Search ${SCOPE_LABELS[selectedScope].toLowerCase()}`}
+                placeholderTextColor={theme.colors.onSurfaceVariant}
+                style={[styles.input, { color: theme.colors.onSurface }]}
+                autoCorrect={false}
+                returnKeyType="search"
+                clearButtonMode="while-editing"
+              />
+              {query.length > 0 && (
+                <TouchableOpacity onPress={() => setQuery('')} accessibilityLabel="Clear">
+                  <Ionicons name="close-circle" size={18} color={theme.colors.onSurfaceVariant} />
+                </TouchableOpacity>
+              )}
+            </View>
+            <TouchableOpacity accessibilityRole="button" onPress={dismiss}>
+              <Text variant="labelLarge" style={{ color: theme.colors.primary }}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingHorizontal: 16 },
-  heading: { fontWeight: '700', marginBottom: 10 },
+  // Overlay shell — transparent so the tab underneath shows through.
+  overlayRoot: { flex: 1 },
+  scrim: { ...StyleSheet.absoluteFillObject },
+  overlayBody: { flex: 1, justifyContent: 'flex-end' },
+  results: { flexGrow: 0, flexShrink: 1 },
+  resultsContent: { paddingHorizontal: 16, paddingTop: 8, justifyContent: 'flex-end' },
+  bottomBar: { paddingHorizontal: 16, paddingTop: 8, gap: 8 },
   field: {
     flexDirection: 'row',
     alignItems: 'center',
