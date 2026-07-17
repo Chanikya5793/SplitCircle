@@ -5,11 +5,11 @@
 // group. Reachable from the native iOS 26 search tab.
 
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { getFloatingTabBarEnvelopeHeight } from '@/components/tabbar/tabBarMetrics';
 import { GlassCard, ListRow } from '@/components/ui';
 import { ROUTES } from '@/constants/routes';
 import { useTheme } from '@/context/ThemeContext';
 import { useAppSearch } from '@/hooks/useAppSearch';
-import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { groupByType, highlightSegments, looksLikeQuestion, SECTION_LABELS, type RankedItem } from '@/services/searchService';
 import { getLastSearchScope, subscribeSearchScope, type AppSearchScope } from '@/services/searchScope';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
@@ -17,7 +17,17 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { Icon, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -171,11 +181,31 @@ export const SearchScreen = () => {
   const [selectedScope, setSelectedScope] = useState<AppSearchScope>(getLastSearchScope());
   const inputRef = useRef<TextInput>(null);
 
+  // The tab bar sits over the bottom of this screen, so the field must clear it when
+  // idle — but once the keyboard is up it covers the tab bar, and that same padding
+  // would leave the field floating in a gap. Track the keyboard and swap.
+  const [keyboardUp, setKeyboardUp] = useState(false);
+
   useEffect(() => {
     void AsyncStorage.getItem(RECENTS_KEY).then((raw) => {
       if (raw) try { setRecents(JSON.parse(raw)); } catch { /* ignore */ }
     });
     return subscribeSearchScope(setDefaultScope);
+  }, []);
+
+  useEffect(() => {
+    const show = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => setKeyboardUp(true),
+    );
+    const hide = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboardUp(false),
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
   }, []);
 
   // Debounce so typing stays smooth even on a large index.
@@ -227,23 +257,45 @@ export const SearchScreen = () => {
     persistRecents([]);
   };
 
+  /**
+   * Close search and put the user back on the tab they came from. Search lives as a
+   * tab (a native tab press can't be intercepted, and navigating a tab pops any modal
+   * — see the notes on the SEARCH_TAB screen), so there's usually nothing to `goBack`
+   * to: we walk the tab navigator's history instead.
+   */
+  const dismiss = useCallback(() => {
+    Keyboard.dismiss();
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    const state = navigation.getState?.();
+    const history = state?.history ?? [];
+    const prevKey = history[history.length - 2]?.key;
+    const backTo =
+      state?.routes?.find((r: any) => r.key === prevKey)?.name ??
+      state?.routes?.find((r: any) => r.name !== ROUTES.APP.SEARCH_TAB)?.name;
+    if (backTo) navigation.navigate(backTo);
+  }, [navigation]);
+
+  // Close the overlay BEFORE navigating, otherwise it stays alive underneath the
+  // destination and reappears when the user comes back.
   const open = (item: RankedItem) => {
     selectionHaptic();
     rememberRecent(debounced);
-    Keyboard.dismiss();
+    dismiss();
     navigation.navigate(item.route as never, (item.params ?? {}) as never);
   };
 
   const askAi = () => {
     lightHaptic();
     rememberRecent(debounced);
-    Keyboard.dismiss();
+    dismiss();
     navigation.navigate(ROUTES.APP.ASK_AI as never, { groupId: aiGroupId, initialQuestion: debounced } as never);
   };
 
   const fieldBg = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)';
   const selectedChipBg = isDark ? 'rgba(88,166,255,0.24)' : 'rgba(0,122,255,0.14)';
-  const bottomPad = getFloatingTabBarContentPadding(insets.bottom, 56);
   const suggestions = useMemo(() => {
     const dynamic = getSuggestions(selectedScope);
     return dynamic.length > 0 ? dynamic : FALLBACK_SUGGESTIONS[selectedScope];
@@ -273,74 +325,29 @@ export const SearchScreen = () => {
   );
 
   return (
+    // Reads as a layer, not a page: no heading, content hugging the bottom, and the
+    // app's own liquid background behind it (search is a tab, so the previous tab's
+    // content can't literally show through — see the SEARCH_TAB notes in AppNavigator).
+    // The field is pinned to the BOTTOM and rides up over the keyboard: the ergonomic
+    // spot, and where the eye already is.
     <LiquidBackground>
-      <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
-        <Text variant="titleLarge" style={[styles.heading, { color: theme.colors.onSurface }]}>
-          Search {SCOPE_LABELS[selectedScope]}
-        </Text>
-
-        {/* Liquid-glass search field. Cancel sits alongside it (iOS convention) so
-            an engaged search can always be exited + the keyboard dismissed — it's
-            reachable here because the prominent search button PUSHES this screen. */}
-        <View style={styles.fieldRow}>
-          <View style={[styles.field, { backgroundColor: fieldBg, flex: 1 }]}>
-            <Ionicons name="search" size={18} color={theme.colors.onSurfaceVariant} />
-            <TextInput
-              ref={inputRef}
-              value={query}
-              onChangeText={setQuery}
-              placeholder={`Search ${SCOPE_LABELS[selectedScope].toLowerCase()}`}
-              placeholderTextColor={theme.colors.onSurfaceVariant}
-              style={[styles.input, { color: theme.colors.onSurface }]}
-              autoCorrect={false}
-              returnKeyType="search"
-              clearButtonMode="while-editing"
-            />
-            {query.length > 0 && (
-              <TouchableOpacity onPress={() => setQuery('')} accessibilityLabel="Clear">
-                <Ionicons name="close-circle" size={18} color={theme.colors.onSurfaceVariant} />
-              </TouchableOpacity>
-            )}
-          </View>
-          {navigation.canGoBack() && (
-            <TouchableOpacity
-              accessibilityRole="button"
-              onPress={() => {
-                Keyboard.dismiss();
-                navigation.goBack();
-              }}
-            >
-              <Text variant="labelLarge" style={{ color: theme.colors.primary }}>
-                Cancel
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <View style={styles.scopeRow}>
-          {scopeOptions.map((scope) => {
-            const selected = selectedScope === scope;
-            return (
-              <TouchableOpacity
-                key={scope}
-                style={[styles.scopeChip, { backgroundColor: selected ? selectedChipBg : fieldBg }]}
-                onPress={() => {
-                  selectionHaptic();
-                  setSelectedScope(scope);
-                }}
-              >
-                <Text variant="labelMedium" style={{ color: selected ? theme.colors.primary : theme.colors.onSurface }}>
-                  {scope === defaultScope ? `${SCOPE_LABELS[scope]}` : SCOPE_LABELS[scope]}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Close search"
+        style={styles.scrim}
+        onPress={dismiss}
+      />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.overlayBody}
+        pointerEvents="box-none"
+      >
+        {/* Results grow UPWARD from the field. */}
         <ScrollView
+          style={styles.results}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          contentContainerStyle={{ paddingBottom: bottomPad }}
+          contentContainerStyle={styles.resultsContent}
           showsVerticalScrollIndicator={false}
         >
           {debounced.length === 0 ? (
@@ -450,14 +457,92 @@ export const SearchScreen = () => {
             </View>
           )}
         </ScrollView>
-      </View>
+
+        {/* Bottom bar: scopes + field + the big X, all riding above the keyboard. */}
+        <View
+          style={[
+            styles.bottomBar,
+            { paddingBottom: keyboardUp ? 10 : getFloatingTabBarEnvelopeHeight(insets.bottom) + 8 },
+          ]}
+        >
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.scopeRow}
+          >
+            {scopeOptions.map((scope) => {
+              const selected = selectedScope === scope;
+              return (
+                <TouchableOpacity
+                  key={scope}
+                  style={[styles.scopeChip, { backgroundColor: selected ? selectedChipBg : fieldBg }]}
+                  onPress={() => {
+                    selectionHaptic();
+                    setSelectedScope(scope);
+                  }}
+                >
+                  <Text variant="labelMedium" style={{ color: selected ? theme.colors.primary : theme.colors.onSurface }}>
+                    {SCOPE_LABELS[scope]}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          <View style={styles.fieldRow}>
+            <View style={[styles.field, { backgroundColor: fieldBg, flex: 1 }]}>
+              <Ionicons name="search" size={18} color={theme.colors.onSurfaceVariant} />
+              <TextInput
+                ref={inputRef}
+                value={query}
+                onChangeText={setQuery}
+                placeholder={`Search ${SCOPE_LABELS[selectedScope].toLowerCase()}`}
+                placeholderTextColor={theme.colors.onSurfaceVariant}
+                style={[styles.input, { color: theme.colors.onSurface }]}
+                autoCorrect={false}
+                returnKeyType="search"
+                clearButtonMode="while-editing"
+              />
+              {query.length > 0 && (
+                <TouchableOpacity onPress={() => setQuery('')} accessibilityLabel="Clear">
+                  <Ionicons name="close-circle" size={18} color={theme.colors.onSurfaceVariant} />
+                </TouchableOpacity>
+              )}
+            </View>
+            {/* The big X — closes the overlay and drops the user back where they were. */}
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Close search"
+              onPress={dismiss}
+              style={[styles.closeButton, { backgroundColor: fieldBg }]}
+            >
+              <Ionicons name="close" size={22} color={theme.colors.onSurface} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
     </LiquidBackground>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingHorizontal: 16 },
-  heading: { fontWeight: '700', marginBottom: 10 },
+  // Overlay shell — transparent so the tab underneath shows through.
+  overlayRoot: { flex: 1 },
+  scrim: { ...StyleSheet.absoluteFillObject },
+  overlayBody: { flex: 1, justifyContent: 'flex-end' },
+  // flexGrow:0 + flexShrink:1 => results hug the field and grow upward, never
+  // pushing it off screen.
+  results: { flexGrow: 0, flexShrink: 1 },
+  resultsContent: { paddingHorizontal: 16, paddingTop: 8 },
+  bottomBar: { paddingHorizontal: 16, paddingTop: 8, gap: 8 },
+  closeButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   field: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -468,7 +553,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   input: { flex: 1, fontSize: 16, paddingVertical: 0 },
-  fieldRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
+  fieldRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   recentsCard: { paddingVertical: 2, paddingHorizontal: 0, overflow: 'hidden' },
   recentRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 12 },
@@ -476,7 +561,7 @@ const styles = StyleSheet.create({
   predictRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 8 },
   predictArrow: { transform: [{ rotate: '-45deg' }] },
   emptySubtitle: { textAlign: 'center', paddingHorizontal: 24, lineHeight: 19 },
-  scopeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  scopeRow: { flexDirection: 'row', gap: 8, paddingRight: 8 },
   scopeChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 15 },
   block: { marginTop: 10 },
   sectionLabel: { letterSpacing: 0.5, marginBottom: 8 },

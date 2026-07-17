@@ -54,10 +54,11 @@ import {
     DarkTheme,
     DefaultTheme,
     NavigationContainer,
+    useFocusEffect,
     useNavigation,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, TouchableOpacity, View, type ImageSourcePropType } from 'react-native';
 import { Icon, Text, TouchableRipple } from 'react-native-paper';
 
@@ -473,14 +474,7 @@ const GroupsStackNavigator = () => {
         // subview loop that sets navitem.searchController). The screen itself already
         // sets headerTitle:'' + headerTransparent:true, so the bar stays invisible and
         // the custom in-content "Expenses" title is untouched.
-        // headerSearchBarOptions itself is configured by the screen (it owns the query
-        // state) in a layout effect — see GroupListScreen.
-        options={{
-          headerShown: true,
-          headerTransparent: true,
-          headerTitle: '',
-          title: ROOT_SCREEN_TITLES.groups,
-        }}
+        options={{ headerShown: false, title: ROOT_SCREEN_TITLES.groups }}
       />
       <GroupsStack.Screen
         name={ROUTES.APP.GROUP_DETAILS}
@@ -931,26 +925,38 @@ const AppTabs = () => {
         }}
       />
       {/*
-        Search is NOT a tab on iOS. `tabBarSystemItem: 'search'` only borrows the
-        system icon — react-native-screens builds tabs with the legacy
-        UITabBarController viewControllers/tabBarItem API and has no `UISearchTab`,
-        so search rendered as a plain 5th tab instead of the Phone app's detached
-        button. Per WWDC26 "Design intuitive search experiences", search here should
-        be a PROMINENT BUTTON that engages search immediately, so on iOS we drop the
-        tab and render <ProminentSearchButton/> beside the bar (it pushes
-        ROUTES.APP.SEARCH). Android keeps the ordinary tab.
+        UNIVERSAL search, behind an unlabeled system search glyph on iOS. Its X returns
+        the user to the tab they came from (SearchScreen.dismiss).
+
+        Two things were tried and REJECTED on the simulator, both worth not repeating:
+        1. Intercepting `tabPress` to open search as a transparentModal over the current
+           tab — native bottom tabs declare tabPress as `canPreventDefault: false`, so
+           the event has no preventDefault and calling it throws "undefined is not a
+           function", killing the app.
+        2. Letting the tab switch happen and bouncing back to the previous tab while
+           presenting the modal — navigating the tab POPS the modal (they're mutually
+           exclusive), so you get either a black void behind the overlay or no overlay
+           at all. Search therefore renders as this tab's own screen.
+
+        The glyph also sits INSIDE the tab pill rather than as a detached pill beside
+        it: that split geometry is UISearchTab, which react-native-screens implements at
+        NO version (verified through 4.27-nightly; upstream #3999 is not_planned), and an
+        unlabeled `tabBarSystemItem: 'search'` does NOT make iOS 26 auto-dress it as a
+        separated pill — verified on the iOS 27 simulator. It needs a native patch.
       */}
-      {Platform.OS !== 'ios' && (
-        <NativeTab.Screen
-          name={ROUTES.APP.SEARCH_TAB}
-          component={SearchScreen}
-          options={{
-            title: 'Search',
-            tabBarLabel: 'Search',
-            tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('search', focused),
-          }}
-        />
-      )}
+      <NativeTab.Screen
+        name={ROUTES.APP.SEARCH_TAB}
+        component={SearchScreen}
+        options={
+          Platform.OS === 'ios'
+            ? { tabBarSystemItem: 'search' as const, tabBarLabel: '' }
+            : {
+                title: 'Search',
+                tabBarLabel: 'Search',
+                tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('search', focused),
+              }
+        }
+      />
     </NativeTab.Navigator>
   );
 };
@@ -1007,12 +1013,22 @@ const AppStackNavigator = () => {
         component={AppTabsWithSearch}
         options={{ headerShown: false, title: ROOT_SCREEN_TITLES.groups }}
       />
-      {/* Destination of the iOS prominent search button. Its own screen (not a tab)
-          so tapping the button lands straight in an engaged search field. */}
+      {/* Universal search, presented as a LAYER over the tab you're on (the tab's
+          content stays visible behind it) rather than a place you navigate to. Opened
+          by intercepting the search tab's press; dismissed with its X, which returns
+          you exactly where you were. */}
       <AppStack.Screen
         name={ROUTES.APP.SEARCH}
         component={SearchScreen}
-        options={{ headerShown: false }}
+        options={{
+          headerShown: false,
+          presentation: 'transparentModal',
+          animation: 'fade',
+          // REQUIRED: native-stack still paints its default (opaque) screen background
+          // on a transparentModal, which renders as a black void instead of the tab
+          // underneath. Clearing contentStyle is what actually makes it see-through.
+          contentStyle: { backgroundColor: 'transparent' },
+        }}
       />
       <AppStack.Screen
         name={ROUTES.APP.GROUP_INFO}

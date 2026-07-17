@@ -53,9 +53,6 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const scrollY = useRef(new Animated.Value(0)).current;
   const [openingGroupId, setOpeningGroupId] = useState<string | null>(null);
 
-  // Text from the native search field (UISearchController).
-  const [searchQuery, setSearchQuery] = useState('');
-
   // Filter & Sort State
   const [filterVisible, setFilterVisible] = useState(false);
   const [sortField, setSortField] = useState<GroupSortField>('updatedAt');
@@ -63,26 +60,10 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const [selectedCurrencies, setSelectedCurrencies] = useState<string[]>([]);
   useSyncRootStackTitle(ROOT_SCREEN_TITLES.groups);
 
-  // The native search bar is a REAL UISearchController that react-native-screens
-  // attaches to this screen's UINavigationItem — which is why the stack keeps
-  // `headerShown: true` while the header itself stays empty + transparent. It must be
-  // configured in a LAYOUT effect: setting it later can miss the native attach
-  // (react-native-screens #1188). `placement: 'integratedButton'` (iOS 26+) renders the
-  // inactive bar as a search BUTTON that expands into the field over this list —
-  // the native version of the "prominent search button". It degrades to an inline
-  // field below iOS 26.
   useLayoutEffect(() => {
     navigation.setOptions({
       headerTitle: '',
       headerTransparent: true,
-      headerSearchBarOptions: {
-        placeholder: 'Search groups or people',
-        placement: 'integratedButton',
-        hideWhenScrolling: false,
-        autoCapitalize: 'none',
-        onChangeText: (e: { nativeEvent: { text: string } }) => setSearchQuery(e.nativeEvent.text),
-        onCancelButtonPress: () => setSearchQuery(''),
-      },
     });
   }, [navigation]);
 
@@ -135,18 +116,6 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const processedGroups = useMemo(() => {
     let result = [...groups];
 
-    // Filter by the NATIVE search field (UISearchController — see the
-    // headerSearchBarOptions effect above). Matches group name or a member's
-    // display name, so "sarah" finds the groups she's in.
-    const q = searchQuery.trim().toLowerCase();
-    if (q) {
-      result = result.filter(
-        g =>
-          g.name.toLowerCase().includes(q) ||
-          g.members?.some(m => (m.displayName ?? '').toLowerCase().includes(q)),
-      );
-    }
-
     // Filter by Currency
     if (selectedCurrencies.length > 0) {
       result = result.filter(g => selectedCurrencies.includes(g.currency));
@@ -178,7 +147,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     });
 
     return result;
-  }, [groups, searchQuery, selectedCurrencies, sortField, sortOrder]);
+  }, [groups, selectedCurrencies, sortField, sortOrder]);
 
   // Per-user archive: archived groups stay fully functional (balances count),
   // they're just collapsed into a section below the active list.
