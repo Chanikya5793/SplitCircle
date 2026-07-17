@@ -20,8 +20,10 @@ export const ROUTES = {
     GROUP_CHAT: 'GroupChat',
     MESSAGE_INFO: 'MessageInfo',
     SEARCH_TAB: 'SearchTab',
-    /** Pushed search screen — the iOS prominent search BUTTON's destination
-     *  (on iOS search is not a tab; see ProminentSearchButton). */
+    /** Unified app-wide search screen. Reachable as a TAB on Android. On iOS search is
+     *  now the native UISearchController on each list screen (see
+     *  headerSearchBarOptions in GroupListScreen), so this route is currently only an
+     *  Android/global fallback — no iOS entry point. */
     SEARCH: 'Search',
     CALLS_TAB: 'CallsTab',
     CALLS: 'Calls',

@@ -40,7 +40,6 @@ import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
 import { OfflineSyncScreen } from '@/screens/settings/OfflineSyncScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { SearchScreen } from '@/screens/search/SearchScreen';
-import { ProminentSearchButton } from '@/components/tabbar/ProminentSearchButton';
 import type { NotificationData } from '@/utils/notifications';
 import { lightHaptic } from '@/utils/haptics';
 // Shared fallback for routes that need a group synced locally — extracted to
@@ -468,7 +467,20 @@ const GroupsStackNavigator = () => {
       <GroupsStack.Screen
         name={ROUTES.APP.GROUPS}
         component={GroupListRoute}
-        options={{ headerShown: false, title: ROOT_SCREEN_TITLES.groups }}
+        // The header is shown ONLY to host the native search bar: react-native-screens
+        // attaches UISearchController to the UINavigationItem, so with headerShown:false
+        // it silently never attaches (RNSScreenStackHeaderConfig early-returns before the
+        // subview loop that sets navitem.searchController). The screen itself already
+        // sets headerTitle:'' + headerTransparent:true, so the bar stays invisible and
+        // the custom in-content "Expenses" title is untouched.
+        // headerSearchBarOptions itself is configured by the screen (it owns the query
+        // state) in a layout effect — see GroupListScreen.
+        options={{
+          headerShown: true,
+          headerTransparent: true,
+          headerTitle: '',
+          title: ROOT_SCREEN_TITLES.groups,
+        }}
       />
       <GroupsStack.Screen
         name={ROUTES.APP.GROUP_DETAILS}
@@ -943,13 +955,16 @@ const AppTabs = () => {
   );
 };
 
-/** Tab bar + (iOS) the detached prominent search button painted above it. */
-const AppTabsWithSearch = () => (
-  <View style={{ flex: 1 }}>
-    <AppTabs />
-    {Platform.OS === 'ios' && <ProminentSearchButton />}
-  </View>
-);
+/**
+ * Tab host. The hand-rolled "prominent search button" that used to be painted here is
+ * GONE: it was a JS <Pressable> that overlapped the Settings tab, because the native
+ * tab bar spans the full width and doesn't make room for it (only a real UISearchTab
+ * would narrow the bar, and react-native-screens implements no UITab/UISearchTab at
+ * ANY version — verified through 4.27-nightly; upstream issue #3999 is not_planned).
+ * Search is now a REAL UISearchController hosted on the screen's native header — see
+ * headerSearchBarOptions on the GROUPS screen.
+ */
+const AppTabsWithSearch = () => <AppTabs />;
 
 const AppStackNavigator = () => {
   const { theme } = useTheme();
