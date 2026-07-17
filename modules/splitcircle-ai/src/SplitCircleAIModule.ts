@@ -39,9 +39,21 @@ export interface OnDeviceReceiptResult {
   insights?: OnDeviceReceiptInsightsRaw;
 }
 
+/** One event from the native (UISearchTab) tab-bar search field. */
+export interface SearchTabEvent {
+  type: 'textChange' | 'activate' | 'deactivate' | 'submit';
+  text: string;
+}
+
 /** Native surface implemented in ios/SplitCircleAIModule.swift (iOS only). */
 export interface SplitCircleAINativeModule {
   redactPII(text: string): string;
+  /** True when this binary carries the UISearchTab bridge (iOS 26+ builds). */
+  hasNativeSearchTab?(): boolean;
+  /** Fill the native tab-bar search field (recents / suggestion taps). */
+  setSearchTabText?(text: string): void;
+  /** expo-modules event surface (used for 'onSearchTabEvent'). */
+  addListener?(eventName: string, listener: (event: SearchTabEvent) => void): { remove(): void };
   donateAskActivity(query?: string | null): Promise<void>;
   getOnDeviceAiAvailability(): OnDeviceAiAvailability;
   /** Token context window of the active on-device model; 0 when unavailable. */

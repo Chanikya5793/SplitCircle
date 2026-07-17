@@ -6,9 +6,20 @@
 //
 // The UI mirrors the iOS 26 Phone/Photos search pattern: a large "Search" title
 // with recents + suggestion pills while idle (Photos), plain full-bleed result
-// sections while typing (Phone), and a bottom-docked field that MORPHS out of
-// the tab bar's round search button — the circle stretches leftward into the
-// full field while the keyboard rises, and collapses back on dismiss.
+// sections while typing (Phone).
+//
+// THE FIELD ITSELF has two modes:
+// - NATIVE (iOS 26 builds carrying the react-native-screens UISearchTab patch):
+//   the tab bar itself morphs into the REAL system search field (UIKit runs the
+//   Liquid Glass animation). This screen renders no field at all — it mirrors
+//   the native field's text via the splitcircle-ai bridge events and only draws
+//   content. Cancelling natively returns to the previous tab (system behavior).
+// - FALLBACK (Android / older builds): a JS bottom-docked field that fakes the
+//   morph — the pill stretches out of the tab bar's search button while the
+//   keyboard rises, and collapses back on dismiss.
+//
+// Reopen semantics (measured off Photos): switching tabs away and back KEEPS a
+// committed search; only cancelling (native Cancel / the fallback X) clears it.
 
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarEnvelopeHeight } from '@/components/tabbar/tabBarMetrics';
@@ -18,6 +29,11 @@ import { useTheme } from '@/context/ThemeContext';
 import { useAppSearch } from '@/hooks/useAppSearch';
 import { groupByType, highlightSegments, looksLikeQuestion, SECTION_LABELS, type RankedItem } from '@/services/searchService';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
+import {
+  isNativeSearchTabAvailable,
+  setNativeSearchTabText,
+  subscribeNativeSearchTab,
+} from '../../../modules/splitcircle-ai';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -186,6 +202,10 @@ export const SearchScreen = () => {
   const { width: windowWidth } = useWindowDimensions();
   const { search, firstSearchableGroupId, getSuggestions } = useAppSearch();
 
+  // Native mode: the system UISearchTab field in the tab bar is the input; this
+  // screen only mirrors it. Fallback mode: this screen owns a JS field.
+  const nativeMode = useMemo(() => isNativeSearchTabAvailable(), []);
+
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [recents, setRecents] = useState<string[]>([]);
@@ -257,21 +277,22 @@ export const SearchScreen = () => {
 
   useFocusEffect(
     useCallback(() => {
-      morph.value = 0;
       contentIn.value = 0;
-      morph.value = withTiming(1, { duration: MORPH_IN_MS, easing: Easing.out(Easing.cubic) });
       contentIn.value = withDelay(90, withTiming(1, { duration: CONTENT_IN_MS }));
+      if (nativeMode) {
+        // UIKit runs the real tab-bar → field morph and focuses the field itself.
+        morph.value = 1;
+        return;
+      }
+      morph.value = 0;
+      morph.value = withTiming(1, { duration: MORPH_IN_MS, easing: Easing.out(Easing.cubic) });
       // Focus almost immediately so the keyboard rises IN PARALLEL with the
       // stretch, exactly like the native morph — not after it.
       const t = setTimeout(() => inputRef.current?.focus(), 40);
-      return () => {
-        clearTimeout(t);
-        // Search always reopens fresh (Phone/Photos behavior): clear the query
-        // on the way out, after the collapse has already hidden the field.
-        setQuery('');
-        setDebounced('');
-      };
-    }, [contentIn, morph]),
+      // NOTE: the query deliberately survives losing focus — switching tabs away
+      // and back keeps a committed search (Photos). Only cancel/X clears it.
+      return () => clearTimeout(t);
+    }, [contentIn, morph, nativeMode]),
   );
 
   const results = useMemo(() => (debounced ? search(debounced, 'all') : []), [debounced, search]);
@@ -291,11 +312,40 @@ export const SearchScreen = () => {
     void AsyncStorage.setItem(RECENTS_KEY, JSON.stringify(next));
   };
 
-  const rememberRecent = (q: string) => {
+  // Functional update: also called from the long-lived native-event subscription,
+  // where a closure over `recents` would be stale.
+  const rememberRecent = useCallback((q: string) => {
     const trimmed = q.trim();
     if (trimmed.length < 2) return;
-    persistRecents([trimmed, ...recents.filter((r) => r.toLowerCase() !== trimmed.toLowerCase())].slice(0, 8));
-  };
+    setRecents((prev) => {
+      const next = [trimmed, ...prev.filter((r) => r.toLowerCase() !== trimmed.toLowerCase())].slice(0, 8);
+      void AsyncStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  // Mirror the native tab-bar search field (UISearchTab) into this screen.
+  useEffect(() => {
+    if (!nativeMode) return;
+    return subscribeNativeSearchTab((event) => {
+      switch (event.type) {
+        case 'textChange':
+          setQuery(event.text);
+          break;
+        case 'submit':
+          rememberRecent(event.text);
+          break;
+        case 'deactivate':
+          // The user cancelled the search session (native Cancel/X): Photos
+          // clears the query here, so the tab reopens fresh next time.
+          setQuery('');
+          setDebounced('');
+          break;
+        default:
+          break;
+      }
+    });
+  }, [nativeMode, rememberRecent]);
 
   const removeRecent = (value: string) => {
     selectionHaptic();
@@ -327,8 +377,15 @@ export const SearchScreen = () => {
     if (backTo) navigation.navigate(backTo);
   }, [navigation]);
 
-  // Animated dismiss: keyboard drops while the field collapses back into the
-  // circle it was born from, then we actually leave the tab.
+  // Animated dismiss (fallback X = the cancel affordance): keyboard drops while
+  // the field collapses back into the circle it was born from, the query clears
+  // (cancel ends the search session, Photos semantics), then we leave the tab.
+  const clearAndNavBack = useCallback(() => {
+    setQuery('');
+    setDebounced('');
+    navBack();
+  }, [navBack]);
+
   const dismiss = useCallback(() => {
     Keyboard.dismiss();
     contentIn.value = withTiming(0, { duration: 150 });
@@ -336,10 +393,20 @@ export const SearchScreen = () => {
       0,
       { duration: MORPH_OUT_MS, easing: Easing.in(Easing.cubic) },
       (finished) => {
-        if (finished) runOnJS(navBack)();
+        if (finished) runOnJS(clearAndNavBack)();
       },
     );
-  }, [contentIn, morph, navBack]);
+  }, [clearAndNavBack, contentIn, morph]);
+
+  // Route query changes from taps (recents / suggestions / predictions) through
+  // the native field when it owns the input, so field and results stay in sync.
+  const applyQuery = useCallback(
+    (text: string) => {
+      setQuery(text);
+      if (nativeMode) setNativeSearchTabText(text);
+    },
+    [nativeMode],
+  );
 
   // Opening a result must be instant — close the overlay synchronously BEFORE
   // navigating (no reverse morph), otherwise it stays alive underneath the
@@ -387,12 +454,14 @@ export const SearchScreen = () => {
 
   return (
     <LiquidBackground>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Close search"
-        style={styles.scrim}
-        onPress={dismiss}
-      />
+      {!nativeMode && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close search"
+          style={styles.scrim}
+          onPress={dismiss}
+        />
+      )}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.body}
@@ -405,7 +474,15 @@ export const SearchScreen = () => {
             style={styles.scroll}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
-            contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 12 }]}
+            contentContainerStyle={[
+              styles.scrollContent,
+              {
+                paddingTop: insets.top + 12,
+                // Native mode has no JS bottom bar below the scroll view — pad the
+                // content itself past the tab bar / integrated search field.
+                paddingBottom: nativeMode ? getFloatingTabBarEnvelopeHeight(insets.bottom) + 16 : 12,
+              },
+            ]}
             showsVerticalScrollIndicator={false}
           >
             {debounced.length === 0 ? (
@@ -441,7 +518,7 @@ export const SearchScreen = () => {
                             value={r}
                             onPress={() => {
                               selectionHaptic();
-                              setQuery(r);
+                              applyQuery(r);
                             }}
                             onRemove={() => removeRecent(r)}
                           />
@@ -458,7 +535,7 @@ export const SearchScreen = () => {
                     <TouchableOpacity
                       key={s}
                       style={[styles.suggestionPill, { backgroundColor: fieldBg }]}
-                      onPress={() => setQuery(s)}
+                      onPress={() => applyQuery(s)}
                       accessibilityRole="button"
                       accessibilityLabel={`Search for ${s}`}
                     >
@@ -526,7 +603,7 @@ export const SearchScreen = () => {
                   key={p}
                   onPress={() => {
                     selectionHaptic();
-                    setQuery(p);
+                    applyQuery(p);
                   }}
                   accessibilityRole="button"
                   accessibilityLabel={p}
@@ -546,7 +623,9 @@ export const SearchScreen = () => {
           </View>
         )}
 
-        {/* Bottom bar: the morphing field + round X, riding above the keyboard. */}
+        {/* Fallback bottom bar: the morphing JS field + round X, riding above the
+            keyboard. In native mode the system field lives in the tab bar itself. */}
+        {!nativeMode && (
         <View
           style={[
             styles.bottomBar,
@@ -591,6 +670,7 @@ export const SearchScreen = () => {
             </TouchableOpacity>
           </Animated.View>
         </View>
+        )}
       </KeyboardAvoidingView>
     </LiquidBackground>
   );

@@ -199,8 +199,60 @@ func routerInstructions(memberNames: String, isoDate: String) -> String {
 #endif
 
 public class SplitCircleAIModule: Module {
+  private var searchTabObservers: [NSObjectProtocol] = []
+
   public func definition() -> ModuleDefinition {
     Name("SplitCircleAI")
+
+    // ── Native search-tab bridge ─────────────────────────────────────────────
+    // The react-native-screens patch (see patches/react-native-screens+*.patch)
+    // hosts a real UISearchTab on iOS 26: the tab bar itself morphs into the
+    // system search field. That field lives entirely in UIKit, so the patch
+    // broadcasts its activity via NSNotificationCenter and this module relays
+    // it to JS — SearchScreen mirrors the text instead of drawing its own field.
+    Events("onSearchTabEvent")
+
+    /// True when this build carries the UISearchTab bridge (both this module and
+    /// the react-native-screens patch ship in the same binary). JS uses this to
+    /// decide between the native tab-bar search field and its own fallback field.
+    Function("hasNativeSearchTab") { () -> Bool in
+      if #available(iOS 26.0, *) { return true }
+      return false
+    }
+
+    /// Fill the native tab-bar search field from JS (recents / suggestion taps).
+    Function("setSearchTabText") { (text: String) in
+      DispatchQueue.main.async {
+        NotificationCenter.default.post(
+          name: Notification.Name("RNSSearchTabSetText"),
+          object: nil,
+          userInfo: ["text": text]
+        )
+      }
+    }
+
+    OnStartObserving {
+      let center = NotificationCenter.default
+      let pairs: [(Notification.Name, String)] = [
+        (Notification.Name("RNSSearchTabTextDidChange"), "textChange"),
+        (Notification.Name("RNSSearchTabDidActivate"), "activate"),
+        (Notification.Name("RNSSearchTabDidDeactivate"), "deactivate"),
+        (Notification.Name("RNSSearchTabDidSubmit"), "submit"),
+      ]
+      self.searchTabObservers = pairs.map { name, type in
+        center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+          self?.sendEvent("onSearchTabEvent", [
+            "type": type,
+            "text": (note.userInfo?["text"] as? String) ?? "",
+          ])
+        }
+      }
+    }
+
+    OnStopObserving {
+      self.searchTabObservers.forEach(NotificationCenter.default.removeObserver(_:))
+      self.searchTabObservers = []
+    }
 
     /// On-device PII redaction (Critical Rule #3, client side).
     /// Uses NSDataDetector — far more accurate than regex for phone numbers and

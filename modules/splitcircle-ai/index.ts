@@ -13,6 +13,7 @@ import NativeModule, {
   type OnDeviceReceiptItem,
   type OnDeviceReceiptResult,
   type OnDeviceRouterDecisionRaw,
+  type SearchTabEvent,
   type WidgetExpense,
   type WidgetGroupBalance,
   type WidgetSnapshot,
@@ -217,8 +218,46 @@ export function reloadWidgets(): void {
   }
 }
 
+// ── Native search-tab bridge (UISearchTab on iOS 26, see the RNS patch) ─────
+
+/**
+ * True when THIS binary hosts the real UISearchTab: the tab bar itself morphs
+ * into the system search field. When false (Android, iOS < 26, or an app build
+ * older than the react-native-screens patch), SearchScreen renders its own
+ * JS field instead.
+ */
+export function isNativeSearchTabAvailable(): boolean {
+  try {
+    return NativeModule?.hasNativeSearchTab?.() === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mirror the native tab-bar search field into JS. Events: `textChange` on every
+ * keystroke, `activate`/`deactivate` for the search session (deactivate == the
+ * user cancelled — Photos semantics: that is the moment a search is cleared),
+ * `submit` on the return key. Returns an unsubscribe function.
+ */
+export function subscribeNativeSearchTab(listener: (event: SearchTabEvent) => void): () => void {
+  if (!NativeModule?.addListener) return () => {};
+  const subscription = NativeModule.addListener('onSearchTabEvent', listener);
+  return () => subscription.remove();
+}
+
+/** Fill the native tab-bar search field (recents / suggestion taps). No-op elsewhere. */
+export function setNativeSearchTabText(text: string): void {
+  try {
+    NativeModule?.setSearchTabText?.(text);
+  } catch {
+    // best-effort
+  }
+}
+
 export { redactPIIFallback };
 export type {
+  SearchTabEvent,
   OnDeviceAiAvailability,
   OnDeviceAskResult,
   OnDeviceParsedExpenseRaw,

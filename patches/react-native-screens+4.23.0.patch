@@ -1,0 +1,486 @@
+diff --git a/node_modules/react-native-screens/android/.gradle/8.9/checksums/checksums.lock b/node_modules/react-native-screens/android/.gradle/8.9/checksums/checksums.lock
+new file mode 100644
+index 0000000..0bbee60
+Binary files /dev/null and b/node_modules/react-native-screens/android/.gradle/8.9/checksums/checksums.lock differ
+diff --git a/node_modules/react-native-screens/android/.gradle/8.9/checksums/md5-checksums.bin b/node_modules/react-native-screens/android/.gradle/8.9/checksums/md5-checksums.bin
+new file mode 100644
+index 0000000..76aa892
+Binary files /dev/null and b/node_modules/react-native-screens/android/.gradle/8.9/checksums/md5-checksums.bin differ
+diff --git a/node_modules/react-native-screens/android/.gradle/8.9/checksums/sha1-checksums.bin b/node_modules/react-native-screens/android/.gradle/8.9/checksums/sha1-checksums.bin
+new file mode 100644
+index 0000000..d1d0b88
+Binary files /dev/null and b/node_modules/react-native-screens/android/.gradle/8.9/checksums/sha1-checksums.bin differ
+diff --git a/node_modules/react-native-screens/android/.gradle/8.9/dependencies-accessors/gc.properties b/node_modules/react-native-screens/android/.gradle/8.9/dependencies-accessors/gc.properties
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/react-native-screens/android/.gradle/8.9/fileChanges/last-build.bin b/node_modules/react-native-screens/android/.gradle/8.9/fileChanges/last-build.bin
+new file mode 100644
+index 0000000..f76dd23
+Binary files /dev/null and b/node_modules/react-native-screens/android/.gradle/8.9/fileChanges/last-build.bin differ
+diff --git a/node_modules/react-native-screens/android/.gradle/8.9/fileHashes/fileHashes.lock b/node_modules/react-native-screens/android/.gradle/8.9/fileHashes/fileHashes.lock
+new file mode 100644
+index 0000000..94e6e2f
+Binary files /dev/null and b/node_modules/react-native-screens/android/.gradle/8.9/fileHashes/fileHashes.lock differ
+diff --git a/node_modules/react-native-screens/android/.gradle/8.9/gc.properties b/node_modules/react-native-screens/android/.gradle/8.9/gc.properties
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/react-native-screens/android/.gradle/buildOutputCleanup/buildOutputCleanup.lock b/node_modules/react-native-screens/android/.gradle/buildOutputCleanup/buildOutputCleanup.lock
+new file mode 100644
+index 0000000..0169889
+Binary files /dev/null and b/node_modules/react-native-screens/android/.gradle/buildOutputCleanup/buildOutputCleanup.lock differ
+diff --git a/node_modules/react-native-screens/android/.gradle/buildOutputCleanup/cache.properties b/node_modules/react-native-screens/android/.gradle/buildOutputCleanup/cache.properties
+new file mode 100644
+index 0000000..36c9954
+--- /dev/null
++++ b/node_modules/react-native-screens/android/.gradle/buildOutputCleanup/cache.properties
+@@ -0,0 +1,2 @@
++#Thu Mar 19 02:33:20 CDT 2026
++gradle.version=8.9
+diff --git a/node_modules/react-native-screens/android/.gradle/vcs-1/gc.properties b/node_modules/react-native-screens/android/.gradle/vcs-1/gc.properties
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/react-native-screens/android/.project b/node_modules/react-native-screens/android/.project
+new file mode 100644
+index 0000000..335a150
+--- /dev/null
++++ b/node_modules/react-native-screens/android/.project
+@@ -0,0 +1,28 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<projectDescription>
++	<name>react-native-screens</name>
++	<comment>Project react-native-screens created by Buildship.</comment>
++	<projects>
++	</projects>
++	<buildSpec>
++		<buildCommand>
++			<name>org.eclipse.buildship.core.gradleprojectbuilder</name>
++			<arguments>
++			</arguments>
++		</buildCommand>
++	</buildSpec>
++	<natures>
++		<nature>org.eclipse.buildship.core.gradleprojectnature</nature>
++	</natures>
++	<filteredResources>
++		<filter>
++			<id>1770485851805</id>
++			<name></name>
++			<type>30</type>
++			<matcher>
++				<id>org.eclipse.core.resources.regexFilterMatcher</id>
++				<arguments>node_modules|\.git|__CREATED_BY_JAVA_LANGUAGE_SERVER__</arguments>
++			</matcher>
++		</filter>
++	</filteredResources>
++</projectDescription>
+diff --git a/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarController.h b/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarController.h
+index a867c81..c898040 100644
+--- a/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarController.h
++++ b/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarController.h
+@@ -118,6 +118,21 @@ NS_ASSUME_NONNULL_BEGIN
+  */
+ - (void)updateOrientation;
+ 
++/**
++ * PATCHED (SplitCircle): whether this controller manages its children through the iOS 18+
++ * UITab API instead of the legacy `viewControllers` API. Enabled on iOS 26+ whenever one of
++ * the tabs declares `systemItem == search`, so that tab can be a real `UISearchTab` — the
++ * system then renders the split search circle and morphs the tab bar into the search field.
++ */
++- (BOOL)rns_usesTabsAPI;
++
++/**
++ * PATCHED (SplitCircle): resolve the RNS tab screen controller backing the given `UITab`.
++ * `tab` is typed `id` so this header stays valid below iOS 18. Returns nil when tabs API
++ * is inactive or the tab is unknown.
++ */
++- (nullable RNSTabsScreenViewController *)rns_screenControllerForTab:(nullable id)tab;
++
+ @end
+ 
+ #pragma mark - Signals
+diff --git a/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarController.mm b/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarController.mm
+index 66976f5..a4a49e4 100644
+--- a/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarController.mm
++++ b/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarController.mm
+@@ -1,12 +1,99 @@
+ #import "RNSTabBarController.h"
+ #import <React/RCTAssert.h>
+ #import <React/RCTLog.h>
++#import "RNSBottomTabsScreenComponentView.h"
+ #import "RNSLog.h"
+ #import "RNSScreenWindowTraits.h"
+ 
++#pragma mark - PATCHED (SplitCircle): native UISearchTab bridge
++
++// Notifications the app-side bridge module observes to mirror the NATIVE tab-bar search
++// field (UISearchTab on iOS 26) into JS. Payload for text/submit: userInfo[@"text"].
++NSNotificationName const RNSSearchTabTextDidChangeNotification = @"RNSSearchTabTextDidChange";
++NSNotificationName const RNSSearchTabDidActivateNotification = @"RNSSearchTabDidActivate";
++NSNotificationName const RNSSearchTabDidDeactivateNotification = @"RNSSearchTabDidDeactivate";
++NSNotificationName const RNSSearchTabDidSubmitNotification = @"RNSSearchTabDidSubmit";
++// Reverse direction: JS asks the native field to adopt a query (recents / suggestion taps).
++NSNotificationName const RNSSearchTabSetTextNotification = @"RNSSearchTabSetText";
++
++/// Forwards UISearchController activity of the tab-bar-integrated search field to
++/// NSNotificationCenter, where the app's own native module relays it to JS. Kept out of
++/// react-native-screens' event system on purpose: no codegen changes, minimal patch.
++@interface RNSSearchTabBridge : NSObject <UISearchResultsUpdating, UISearchControllerDelegate, UISearchBarDelegate>
++@property (nonatomic, weak, nullable) UISearchController *searchController;
++@end
++
++@implementation RNSSearchTabBridge
++
++- (instancetype)init
++{
++  if (self = [super init]) {
++    [NSNotificationCenter.defaultCenter addObserver:self
++                                           selector:@selector(rns_handleSetTextNotification:)
++                                               name:RNSSearchTabSetTextNotification
++                                             object:nil];
++  }
++  return self;
++}
++
++- (void)dealloc
++{
++  [NSNotificationCenter.defaultCenter removeObserver:self];
++}
++
++- (void)rns_handleSetTextNotification:(NSNotification *)notification
++{
++  UISearchController *searchController = self.searchController;
++  if (searchController == nil) {
++    return;
++  }
++  NSString *text = notification.userInfo[@"text"] ?: @"";
++  if (!searchController.isActive) {
++    searchController.active = YES;
++  }
++  searchController.searchBar.text = text;
++  // Setting text programmatically does not call the results updater — echo manually.
++  [self updateSearchResults:searchController];
++}
++
++- (void)updateSearchResults:(UISearchController *)searchController
++{
++  [NSNotificationCenter.defaultCenter postNotificationName:RNSSearchTabTextDidChangeNotification
++                                                    object:nil
++                                                  userInfo:@{@"text" : searchController.searchBar.text ?: @""}];
++}
++
++- (void)willPresentSearchController:(UISearchController *)searchController
++{
++  [NSNotificationCenter.defaultCenter postNotificationName:RNSSearchTabDidActivateNotification object:nil userInfo:@{}];
++}
++
++- (void)willDismissSearchController:(UISearchController *)searchController
++{
++  [NSNotificationCenter.defaultCenter postNotificationName:RNSSearchTabDidDeactivateNotification
++                                                    object:nil
++                                                  userInfo:@{}];
++}
++
++- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar
++{
++  [NSNotificationCenter.defaultCenter postNotificationName:RNSSearchTabDidSubmitNotification
++                                                    object:nil
++                                                  userInfo:@{@"text" : searchBar.text ?: @""}];
++}
++
++@end
++
+ @implementation RNSTabBarController {
+   NSArray<RNSTabsScreenViewController *> *_Nullable _tabScreenControllers;
+ 
++  // PATCHED (SplitCircle): UITab-API mode state (iOS 26+ with a search tab).
++  BOOL _rnsUsesTabsAPI;
++  NSMapTable<id, RNSTabsScreenViewController *> *_Nullable _rnsTabToScreenController;
++  RNSSearchTabBridge *_Nullable _rnsSearchBridge;
++  UINavigationController *_Nullable _rnsSearchNavWrapper;
++  UISearchController *_Nullable _rnsSearchController;
++
+ #if !RCT_NEW_ARCH_ENABLED
+   BOOL _isControllerFlushBlockScheduled;
+ #endif // !RCT_NEW_ARCH_ENABLED
+@@ -120,9 +207,135 @@
+     return;
+   }
+ 
++  // PATCHED (SplitCircle): when one of the tabs is the system search tab, manage children
++  // through the iOS 18 UITab API so it can be a real UISearchTab. Only on iOS 26+, where
++  // the system renders the split circle + tab-bar-morphs-into-search-field behavior that
++  // this patch exists for; everything else keeps the battle-tested legacy path.
++  if (@available(iOS 26.0, *)) {
++    BOOL hasSearchTab = NO;
++    for (RNSTabsScreenViewController *tabViewController in _tabScreenControllers) {
++      if (tabViewController.tabScreenComponentView.systemItem == RNSBottomTabsScreenSystemItemSearch) {
++        hasSearchTab = YES;
++        break;
++      }
++    }
++    if (hasSearchTab) {
++      [self rns_updateTabsUsingTabsAPI];
++      return;
++    }
++  }
++
+   [self setViewControllers:_tabScreenControllers animated:[[self viewControllers] count] != 0];
+ }
+ 
++#pragma mark-- PATCHED (SplitCircle): UITab API management
++
++- (BOOL)rns_usesTabsAPI
++{
++  return _rnsUsesTabsAPI;
++}
++
++- (nullable RNSTabsScreenViewController *)rns_screenControllerForTab:(nullable id)tab
++{
++  if (tab == nil || _rnsTabToScreenController == nil) {
++    return nil;
++  }
++  return [_rnsTabToScreenController objectForKey:tab];
++}
++
++- (void)rns_updateTabsUsingTabsAPI API_AVAILABLE(ios(26.0))
++{
++  _rnsUsesTabsAPI = YES;
++  if (_rnsTabToScreenController == nil) {
++    _rnsTabToScreenController = [NSMapTable strongToWeakObjectsMapTable];
++  }
++  [_rnsTabToScreenController removeAllObjects];
++
++  NSMutableArray<UITab *> *tabs = [NSMutableArray arrayWithCapacity:_tabScreenControllers.count];
++  NSUInteger index = 0;
++  for (RNSTabsScreenViewController *tabViewController in _tabScreenControllers) {
++    UITab *tab;
++    if (tabViewController.tabScreenComponentView.systemItem == RNSBottomTabsScreenSystemItemSearch) {
++      UIViewController *searchHost = [self rns_searchHostControllerWrapping:tabViewController];
++      UISearchTab *searchTab =
++          [[UISearchTab alloc] initWithViewControllerProvider:^UIViewController *_Nonnull(UITab *_Nonnull providedTab) {
++            return searchHost;
++          }];
++      // Selecting the tab activates the integrated field; cancelling returns the user to
++      // the previously selected tab — both are system behaviors (matches Photos).
++      searchTab.automaticallyActivatesSearch = YES;
++      tab = searchTab;
++    } else {
++      NSString *identifier = tabViewController.tabScreenComponentView.tabKey
++          ?: [NSString stringWithFormat:@"rns-tab-%lu", (unsigned long)index];
++      NSString *title = tabViewController.tabBarItem.title ?: tabViewController.tabScreenComponentView.title ?: @"";
++      tab = [[UITab alloc] initWithTitle:title
++                                   image:tabViewController.tabBarItem.image
++                              identifier:identifier
++                  viewControllerProvider:^UIViewController *_Nonnull(UITab *_Nonnull providedTab) {
++                    return tabViewController;
++                  }];
++    }
++    [_rnsTabToScreenController setObject:tabViewController forKey:tab];
++    [tabs addObject:tab];
++    index++;
++  }
++
++  [self setTabs:tabs animated:NO];
++}
++
++/// The UISearchTab's content. UIKit requires the search tab's view controller hierarchy to
++/// carry a UISearchController on a navigationItem for `automaticallyActivatesSearch` /
++/// the integrated tab-bar field to work, hence the (hidden-bar) navigation wrapper.
++- (UIViewController *)rns_searchHostControllerWrapping:(RNSTabsScreenViewController *)tabViewController
++    API_AVAILABLE(ios(26.0))
++{
++  if (_rnsSearchNavWrapper != nil && _rnsSearchNavWrapper.viewControllers.firstObject == tabViewController) {
++    return _rnsSearchNavWrapper;
++  }
++
++  if (_rnsSearchBridge == nil) {
++    _rnsSearchBridge = [RNSSearchTabBridge new];
++  }
++
++  UISearchController *searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
++  searchController.searchResultsUpdater = _rnsSearchBridge;
++  searchController.delegate = _rnsSearchBridge;
++  searchController.searchBar.delegate = _rnsSearchBridge;
++  searchController.obscuresBackgroundDuringPresentation = NO;
++  searchController.hidesNavigationBarDuringPresentation = NO;
++  _rnsSearchBridge.searchController = searchController;
++  _rnsSearchController = searchController;
++
++  tabViewController.navigationItem.searchController = searchController;
++  tabViewController.navigationItem.preferredSearchBarPlacement = UINavigationItemSearchBarPlacementIntegrated;
++
++  UINavigationController *navigationController =
++      [[UINavigationController alloc] initWithRootViewController:tabViewController];
++  navigationController.navigationBarHidden = YES;
++  _rnsSearchNavWrapper = navigationController;
++  return navigationController;
++}
++
++/// UITab ignores the per-controller `tabBarItem` the appearance coordinator populates —
++/// mirror the resolved title/image onto the UITab objects after each appearance pass.
++- (void)rns_syncTabsFromTabBarItems API_AVAILABLE(ios(26.0))
++{
++  for (UITab *tab in self.tabs) {
++    RNSTabsScreenViewController *tabViewController = [_rnsTabToScreenController objectForKey:tab];
++    if (tabViewController == nil || [tab isKindOfClass:UISearchTab.class]) {
++      continue; // the system dresses the search tab itself
++    }
++    if (tabViewController.tabBarItem.image != nil) {
++      tab.image = tabViewController.tabBarItem.image;
++    }
++    NSString *title = tabViewController.tabBarItem.title ?: tabViewController.tabScreenComponentView.title;
++    if (title != nil) {
++      tab.title = title;
++    }
++  }
++}
++
+ - (void)updateSelectedViewControllerIfNeeded
+ {
+   if (_needsUpdateOfSelectedTab) {
+@@ -140,7 +353,9 @@
+ #endif
+ 
+   RNSTabsScreenViewController *_Nullable selectedViewController = nil;
+-  for (RNSTabsScreenViewController *tabViewController in self.viewControllers) {
++  // PATCHED (SplitCircle): iterate the react-provided controllers — in tabs-API mode
++  // `self.viewControllers` contains the UISearchTab's UINavigationController wrapper.
++  for (RNSTabsScreenViewController *tabViewController in _tabScreenControllers) {
+     RNSLog(
+         @"Update Selected View Controller [%ld] isFocused %d",
+         tabViewController.tabScreenComponentView.tag,
+@@ -164,6 +379,26 @@
+     self.tabBar.overrideUserInterfaceStyle = selectedViewController.tabScreenComponentView.userInterfaceStyle;
+   }
+ 
++  // PATCHED (SplitCircle): with the UITab API, selection goes through `selectedTab`. The
++  // legacy `setSelectedViewController:` does not know about the UISearchTab's navigation
++  // wrapper and must not be used in this mode.
++  if (@available(iOS 26.0, *)) {
++    if (_rnsUsesTabsAPI) {
++      for (UITab *tab in self.tabs) {
++        if ([_rnsTabToScreenController objectForKey:tab] == selectedViewController) {
++          // NOTE: the search session is deliberately NOT deactivated when selection moves
++          // away from the UISearchTab — Photos keeps a committed search alive across tab
++          // switches and so do we; UIKit restores the regular tab bar on its own.
++          if (self.selectedTab != tab) {
++            self.selectedTab = tab;
++          }
++          break;
++        }
++      }
++      return;
++    }
++  }
++
+   [self setSelectedViewController:selectedViewController];
+ }
+ 
+@@ -183,11 +418,22 @@
+                                    withHostComponentView:self.tabsHostComponentView
+                                     tabScreenControllers:_tabScreenControllers
+                                              imageLoader:[self.tabsHostComponentView reactImageLoader]];
++
++  // PATCHED (SplitCircle): mirror the freshly resolved tabBarItem titles/images onto the
++  // UITab objects, which are the source of truth in tabs-API mode.
++  if (@available(iOS 26.0, *)) {
++    if (_rnsUsesTabsAPI) {
++      [self rns_syncTabsFromTabBarItems];
++    }
++  }
+ }
+ 
+ - (void)updateTabBarA11yIfNeeded
+ {
+-  for (UIViewController *tabViewController in self.viewControllers) {
++  // PATCHED (SplitCircle): iterate the react-provided controllers rather than
++  // `self.viewControllers` — in tabs-API mode the latter contains the UISearchTab's
++  // UINavigationController wrapper, which is not an RNSTabsScreenViewController.
++  for (UIViewController *tabViewController in _tabScreenControllers) {
+     auto screenView = static_cast<RNSTabsScreenViewController *>(tabViewController).tabScreenComponentView;
+     if (!screenView.tabBarItemNeedsA11yUpdate) {
+       continue;
+diff --git a/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarControllerDelegate.mm b/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarControllerDelegate.mm
+index 71713b3..3748edf 100644
+--- a/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarControllerDelegate.mm
++++ b/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarControllerDelegate.mm
+@@ -5,6 +5,66 @@
+ 
+ @implementation RNSTabBarControllerDelegate
+ 
++// PATCHED (SplitCircle): with the iOS 18+ UITab API active, selection flows through the
++// tab-based delegate methods below; the legacy view-controller-based pair must stand down
++// so a single selection can't be handled (and emitted to JS) twice.
++- (BOOL)tabBarController:(UITabBarController *)tabBarController shouldSelectTab:(UITab *)tab
++    API_AVAILABLE(ios(18.0))
++{
++  RCTAssert(
++      [tabBarController isKindOfClass:RNSTabBarController.class],
++      @"[RNScreens] Unexpected type of controller: %@",
++      tabBarController.class);
++
++  RNSTabBarController *tabBarCtrl = static_cast<RNSTabBarController *>(tabBarController);
++  RNSTabsScreenViewController *tabScreenCtrl = [tabBarCtrl rns_screenControllerForTab:tab];
++  if (tabScreenCtrl == nil) {
++    // Not one of ours (should not happen) — let the system do whatever it wants.
++    return YES;
++  }
++
++  BOOL repeatedSelection = tabBarCtrl.selectedTab == tab;
++  BOOL repeatedSelectionHandledBySpecialEffect =
++      repeatedSelection ? [tabScreenCtrl tabScreenSelectedRepeatedly] : false;
++
++  [tabBarCtrl.tabsHostComponentView
++      emitOnNativeFocusChangeRequestSelectedTabScreen:tabScreenCtrl.tabScreenComponentView
++              repeatedSelectionHandledBySpecialEffect:repeatedSelectionHandledBySpecialEffect];
++
++  if (repeatedSelection) {
++    return NO;
++  }
++
++  // The search tab must select natively so the system runs the tab-bar → search-field
++  // morph and activates the field; JS state follows via the event emitted above.
++  if ([tab isKindOfClass:UISearchTab.class]) {
++    return YES;
++  }
++
++  return ![self shouldPreventNativeTabChangeWithinTabBarController:tabBarCtrl];
++}
++
++- (void)tabBarController:(UITabBarController *)tabBarController
++            didSelectTab:(UITab *)selectedTab
++             previousTab:(UITab *)previousTab API_AVAILABLE(ios(18.0))
++{
++  // PATCHED (SplitCircle): the system can change the selection on its own — cancelling
++  // the search field returns to the previously selected tab. If JS doesn't know about the
++  // newly selected tab yet, ask it to follow. (Search-tab selection is already handled in
++  // shouldSelectTab:, hence the early return.)
++  if ([selectedTab isKindOfClass:UISearchTab.class]) {
++    return;
++  }
++
++  RNSTabBarController *tabBarCtrl = static_cast<RNSTabBarController *>(tabBarController);
++  RNSTabsScreenViewController *tabScreenCtrl = [tabBarCtrl rns_screenControllerForTab:selectedTab];
++  if (tabScreenCtrl != nil && !tabScreenCtrl.tabScreenComponentView.isSelectedScreen) {
++    [tabBarCtrl.tabsHostComponentView
++        emitOnNativeFocusChangeRequestSelectedTabScreen:tabScreenCtrl.tabScreenComponentView
++                repeatedSelectionHandledBySpecialEffect:NO];
++  }
++}
++
+ - (BOOL)tabBarController:(UITabBarController *)tabBarController
+     shouldSelectViewController:(UIViewController *)viewController
+ {
+@@ -13,6 +73,11 @@
+       @"[RNScreens] Unexpected type of controller: %@",
+       tabBarController.class);
+ 
++  // PATCHED (SplitCircle): tabs-API mode is handled by shouldSelectTab: above.
++  if ([static_cast<RNSTabBarController *>(tabBarController) rns_usesTabsAPI]) {
++    return YES;
++  }
++
+   // Can be UINavigationController in case of MoreNavigationController
+   RCTAssert(
+       [viewController isKindOfClass:RNSTabsScreenViewController.class] ||
