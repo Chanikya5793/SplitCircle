@@ -596,7 +596,18 @@ export const SearchScreen = () => {
             left-anchored and self-sized — the typed part in the normal text
             colour, the completion in the muted one. */}
         {predictions.length > 0 && debounced.length > 0 && (
-          <View style={styles.predictWrap} pointerEvents="box-none">
+          <View
+            style={[
+              styles.predictWrap,
+              // Native mode has no JS bottom bar below this panel — clear the
+              // system search field: it docks at the tab bar when the keyboard
+              // is down and rides on top of the keyboard when it's up.
+              nativeMode && {
+                paddingBottom: keyboardUp ? 64 : getFloatingTabBarEnvelopeHeight(insets.bottom) + 8,
+              },
+            ]}
+            pointerEvents="box-none"
+          >
             <View style={[styles.predictPanel, { backgroundColor: panelBg, borderColor: hairline }]}>
               {predictions.map((p, i) => (
                 <TouchableOpacity

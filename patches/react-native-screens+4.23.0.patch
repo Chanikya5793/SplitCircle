@@ -100,7 +100,7 @@ index a867c81..c898040 100644
  
  #pragma mark - Signals
 diff --git a/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarController.mm b/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarController.mm
-index 66976f5..a4a49e4 100644
+index 66976f5..c0ca238 100644
 --- a/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarController.mm
 +++ b/node_modules/react-native-screens/ios/bottom-tabs/host/RNSTabBarController.mm
 @@ -1,12 +1,99 @@
@@ -159,10 +159,10 @@ index 66976f5..a4a49e4 100644
 +  }
 +  searchController.searchBar.text = text;
 +  // Setting text programmatically does not call the results updater — echo manually.
-+  [self updateSearchResults:searchController];
++  [self updateSearchResultsForSearchController:searchController];
 +}
 +
-+- (void)updateSearchResults:(UISearchController *)searchController
++- (void)updateSearchResultsForSearchController:(UISearchController *)searchController
 +{
 +  [NSNotificationCenter.defaultCenter postNotificationName:RNSSearchTabTextDidChangeNotification
 +                                                    object:nil
