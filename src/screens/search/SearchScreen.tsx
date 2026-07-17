@@ -3,6 +3,12 @@
 // (see useAppSearch) and ranked locally, so results are instant. Natural-language
 // questions surface an on-device AI answer card grounded in the best-matching
 // group. Reachable from the native iOS 26 search tab.
+//
+// The UI mirrors the iOS 26 Phone/Photos search pattern: a large "Search" title
+// with recents + suggestion pills while idle (Photos), plain full-bleed result
+// sections while typing (Phone), and a bottom-docked field that MORPHS out of
+// the tab bar's round search button — the circle stretches leftward into the
+// full field while the keyboard rises, and collapses back on dismiss.
 
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarEnvelopeHeight } from '@/components/tabbar/tabBarMetrics';
@@ -11,7 +17,6 @@ import { ROUTES } from '@/constants/routes';
 import { useTheme } from '@/context/ThemeContext';
 import { useAppSearch } from '@/hooks/useAppSearch';
 import { groupByType, highlightSegments, looksLikeQuestion, SECTION_LABELS, type RankedItem } from '@/services/searchService';
-import { getLastSearchScope, subscribeSearchScope, type AppSearchScope } from '@/services/searchScope';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -26,30 +31,34 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
+import Animated, {
+  Easing,
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from 'react-native-reanimated';
 import { Icon, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const RECENTS_KEY = 'search_recents_v1';
-const SCOPE_LABELS: Record<AppSearchScope, string> = {
-  expenses: 'Expenses',
-  chat: 'Chat',
-  calls: 'Calls',
-  settings: 'Settings',
-  all: 'All',
-};
 
-// Fallback "try this" chips, used only until (or when) the user has no real
+// Morph choreography, measured off the Phone app at 60fps: the circle-to-field
+// stretch runs ~18 frames (~300ms) with a strong ease-out, the keyboard rising
+// in parallel; content fades in slightly behind the field. Dismiss reverses it.
+const MORPH_IN_MS = 320;
+const MORPH_OUT_MS = 240;
+const CONTENT_IN_MS = 260;
+
+// Fallback "try this" pills, used only until (or when) the user has no real
 // data to draw dynamic suggestions from. See useAppSearch.getSuggestions.
-const FALLBACK_SUGGESTIONS: Record<AppSearchScope, string[]> = {
-  expenses: ['Dinner', 'Rent', 'Groceries', 'Settle up'],
-  chat: ['photos', 'location', 'invoice', 'yesterday'],
-  calls: ['missed', 'video', 'outgoing', 'yesterday'],
-  settings: ['privacy', 'notifications', 'AI index', 'theme', 'account'],
-  all: ['Dinner', 'notifications', 'missed call', 'AI index'],
-};
+const FALLBACK_SUGGESTIONS = ['Dinner', 'notifications', 'missed call', 'AI index'];
 
 // Renders text with the query's matched substrings emphasised (bold + accent),
 // so results make it obvious *why* they matched. ListRow only accepts a plain
@@ -89,7 +98,8 @@ const HighlightedText = ({
   );
 };
 
-// Local search-result row (mirrors ListRow's look) with highlighted title/subtitle.
+// Plain full-bleed result row (Phone-app style): icon circle, highlighted
+// title/subtitle, hairline divider drawn by the section that owns it.
 const ResultRow = ({ item, query, onPress }: { item: RankedItem; query: string; onPress: () => void }) => {
   const { theme } = useTheme();
   return (
@@ -125,7 +135,7 @@ const ResultRow = ({ item, query, onPress }: { item: RankedItem; query: string; 
 };
 
 // A recent search. Swipe left to delete an individual entry — the removal
-// affordance Apple asks for on recents (alongside the "Clear all" in the section
+// affordance Apple asks for on recents (alongside "Clear" in the section
 // header). Rendered as a row (not a chip) so the swipe has something to reveal.
 const RecentRow = ({
   value,
@@ -136,7 +146,8 @@ const RecentRow = ({
   onPress: () => void;
   onRemove: () => void;
 }) => {
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
+  const rowBg = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)';
   return (
     <ReanimatedSwipeable
       friction={2}
@@ -156,13 +167,13 @@ const RecentRow = ({
         onPress={onPress}
         accessibilityRole="button"
         accessibilityLabel={value}
-        style={[styles.recentRow, { backgroundColor: theme.colors.surface }]}
+        style={[styles.recentRow, { backgroundColor: rowBg }]}
       >
         <Ionicons name="time-outline" size={16} color={theme.colors.onSurfaceVariant} />
         <Text numberOfLines={1} style={{ flex: 1, color: theme.colors.onSurface }}>
           {value}
         </Text>
-        <Ionicons name="chevron-forward" size={15} color={theme.colors.muted} />
+        <Ionicons name="arrow-up-outline" size={14} color={theme.colors.muted} style={styles.recentArrow} />
       </TouchableOpacity>
     </ReanimatedSwipeable>
   );
@@ -172,13 +183,12 @@ export const SearchScreen = () => {
   const navigation = useNavigation<any>();
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
   const { search, firstSearchableGroupId, getSuggestions } = useAppSearch();
 
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [recents, setRecents] = useState<string[]>([]);
-  const [defaultScope, setDefaultScope] = useState<AppSearchScope>(getLastSearchScope());
-  const [selectedScope, setSelectedScope] = useState<AppSearchScope>(getLastSearchScope());
   const inputRef = useRef<TextInput>(null);
 
   // The tab bar sits over the bottom of this screen, so the field must clear it when
@@ -186,11 +196,42 @@ export const SearchScreen = () => {
   // would leave the field floating in a gap. Track the keyboard and swap.
   const [keyboardUp, setKeyboardUp] = useState(false);
 
+  // ── Open/close morph ──────────────────────────────────────────────────────
+  // 0 = a 44pt circle hugging the right edge (where the tab bar's search button
+  // lives), 1 = the full-width field with the round X beside it. The field row
+  // is right-justified so width growth stretches LEFTWARD, like the real morph.
+  const morph = useSharedValue(0);
+  const contentIn = useSharedValue(0);
+
+  const FIELD_HEIGHT = 44;
+  const CLOSE_SIZE = 40;
+  const CLOSE_GAP = 10;
+  // Full field width once the X and paddings are accounted for.
+  const fieldMaxWidth = windowWidth - 16 * 2 - CLOSE_SIZE - CLOSE_GAP;
+
+  const fieldMorphStyle = useAnimatedStyle(() => ({
+    width: interpolate(morph.value, [0, 1], [FIELD_HEIGHT, fieldMaxWidth]),
+  }));
+  // Placeholder/icon/input fade in only once the pill has mostly stretched.
+  const fieldInnerStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(morph.value, [0.45, 1], [0, 1], 'clamp'),
+  }));
+  // The X pops in at the tail of the morph, in the spot the circle started from.
+  const closeStyle = useAnimatedStyle(() => ({
+    width: interpolate(morph.value, [0, 1], [0, CLOSE_SIZE]),
+    marginLeft: interpolate(morph.value, [0, 1], [0, CLOSE_GAP]),
+    opacity: interpolate(morph.value, [0.55, 1], [0, 1], 'clamp'),
+    transform: [{ scale: interpolate(morph.value, [0.55, 1], [0.6, 1], 'clamp') }],
+  }));
+  const contentStyle = useAnimatedStyle(() => ({
+    opacity: contentIn.value,
+    transform: [{ translateY: interpolate(contentIn.value, [0, 1], [10, 0]) }],
+  }));
+
   useEffect(() => {
     void AsyncStorage.getItem(RECENTS_KEY).then((raw) => {
       if (raw) try { setRecents(JSON.parse(raw)); } catch { /* ignore */ }
     });
-    return subscribeSearchScope(setDefaultScope);
   }, []);
 
   useEffect(() => {
@@ -216,15 +257,24 @@ export const SearchScreen = () => {
 
   useFocusEffect(
     useCallback(() => {
-      const next = getLastSearchScope();
-      setDefaultScope(next);
-      setSelectedScope(next);
-      const t = setTimeout(() => inputRef.current?.focus(), 220);
-      return () => clearTimeout(t);
-    }, []),
+      morph.value = 0;
+      contentIn.value = 0;
+      morph.value = withTiming(1, { duration: MORPH_IN_MS, easing: Easing.out(Easing.cubic) });
+      contentIn.value = withDelay(90, withTiming(1, { duration: CONTENT_IN_MS }));
+      // Focus almost immediately so the keyboard rises IN PARALLEL with the
+      // stretch, exactly like the native morph — not after it.
+      const t = setTimeout(() => inputRef.current?.focus(), 40);
+      return () => {
+        clearTimeout(t);
+        // Search always reopens fresh (Phone/Photos behavior): clear the query
+        // on the way out, after the collapse has already hidden the field.
+        setQuery('');
+        setDebounced('');
+      };
+    }, [contentIn, morph]),
   );
 
-  const results = useMemo(() => (debounced ? search(debounced, selectedScope) : []), [debounced, search, selectedScope]);
+  const results = useMemo(() => (debounced ? search(debounced, 'all') : []), [debounced, search]);
   const sections = useMemo(() => groupByType(results), [results]);
   const getGroupIdFromItem = useCallback((item?: RankedItem): string | undefined => {
     const params = item?.params as { groupId?: string; params?: { groupId?: string } } | undefined;
@@ -258,13 +308,12 @@ export const SearchScreen = () => {
   };
 
   /**
-   * Close search and put the user back on the tab they came from. Search lives as a
-   * tab (a native tab press can't be intercepted, and navigating a tab pops any modal
-   * — see the notes on the SEARCH_TAB screen), so there's usually nothing to `goBack`
-   * to: we walk the tab navigator's history instead.
+   * Put the user back on the tab they came from. Search lives as a tab (a native
+   * tab press can't be intercepted, and navigating a tab pops any modal — see the
+   * notes on the SEARCH_TAB screen), so there's usually nothing to `goBack` to:
+   * we walk the tab navigator's history instead.
    */
-  const dismiss = useCallback(() => {
-    Keyboard.dismiss();
+  const navBack = useCallback(() => {
     if (navigation.canGoBack()) {
       navigation.goBack();
       return;
@@ -278,37 +327,55 @@ export const SearchScreen = () => {
     if (backTo) navigation.navigate(backTo);
   }, [navigation]);
 
-  // Close the overlay BEFORE navigating, otherwise it stays alive underneath the
+  // Animated dismiss: keyboard drops while the field collapses back into the
+  // circle it was born from, then we actually leave the tab.
+  const dismiss = useCallback(() => {
+    Keyboard.dismiss();
+    contentIn.value = withTiming(0, { duration: 150 });
+    morph.value = withTiming(
+      0,
+      { duration: MORPH_OUT_MS, easing: Easing.in(Easing.cubic) },
+      (finished) => {
+        if (finished) runOnJS(navBack)();
+      },
+    );
+  }, [contentIn, morph, navBack]);
+
+  // Opening a result must be instant — close the overlay synchronously BEFORE
+  // navigating (no reverse morph), otherwise it stays alive underneath the
   // destination and reappears when the user comes back.
   const open = (item: RankedItem) => {
     selectionHaptic();
     rememberRecent(debounced);
-    dismiss();
+    Keyboard.dismiss();
+    navBack();
     navigation.navigate(item.route as never, (item.params ?? {}) as never);
   };
 
   const askAi = () => {
     lightHaptic();
     rememberRecent(debounced);
-    dismiss();
+    Keyboard.dismiss();
+    navBack();
     navigation.navigate(ROUTES.APP.ASK_AI as never, { groupId: aiGroupId, initialQuestion: debounced } as never);
   };
 
   const fieldBg = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)';
-  const selectedChipBg = isDark ? 'rgba(88,166,255,0.24)' : 'rgba(0,122,255,0.14)';
+  const hairline = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
+  const panelBg = isDark ? 'rgba(44,48,58,0.96)' : 'rgba(248,248,250,0.97)';
   const suggestions = useMemo(() => {
-    const dynamic = getSuggestions(selectedScope);
-    return dynamic.length > 0 ? dynamic : FALLBACK_SUGGESTIONS[selectedScope];
-  }, [getSuggestions, selectedScope]);
+    const dynamic = getSuggestions('all');
+    return dynamic.length > 0 ? dynamic : FALLBACK_SUGGESTIONS;
+  }, [getSuggestions]);
   // Predictive completions: a few candidates that CONTINUE what's been typed, so
   // people rarely have to finish the query. Drawn from real signal (past searches,
   // live suggestions, top result titles) so they always correspond to the input.
-  // Capped at 3 so actual results stay the prominent thing on screen.
+  // Shown Photos-style: a compact panel FLOATING just above the field.
   const predictions = useMemo(() => {
     const q = debounced.toLowerCase();
     if (q.length < 1) return [];
     const pool = Array.from(
-      new Set([...recents, ...getSuggestions(selectedScope), ...results.slice(0, 8).map((r) => r.title)]),
+      new Set([...recents, ...getSuggestions('all'), ...results.slice(0, 8).map((r) => r.title)]),
     );
     return pool
       .filter((c) => {
@@ -316,20 +383,9 @@ export const SearchScreen = () => {
         return lc.startsWith(q) && lc !== q;
       })
       .slice(0, 3);
-  }, [debounced, recents, getSuggestions, selectedScope, results]);
-
-  const scopeOptions = useMemo<AppSearchScope[]>(
-    () => ([defaultScope, 'all', 'expenses', 'chat', 'calls', 'settings'] as AppSearchScope[])
-      .filter((scope, index, arr) => arr.indexOf(scope) === index),
-    [defaultScope],
-  );
+  }, [debounced, recents, getSuggestions, results]);
 
   return (
-    // Reads as a layer, not a page: no heading, content hugging the bottom, and the
-    // app's own liquid background behind it (search is a tab, so the previous tab's
-    // content can't literally show through — see the SEARCH_TAB notes in AppNavigator).
-    // The field is pinned to the BOTTOM and rides up over the keyboard: the ergonomic
-    // spot, and where the eye already is.
     <LiquidBackground>
       <Pressable
         accessibilityRole="button"
@@ -339,178 +395,192 @@ export const SearchScreen = () => {
       />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.overlayBody}
+        style={styles.body}
         pointerEvents="box-none"
       >
-        {/* Results grow UPWARD from the field. */}
-        <ScrollView
-          style={styles.results}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          contentContainerStyle={styles.resultsContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {debounced.length === 0 ? (
-            <View>
-              {recents.length > 0 && (
-                <View style={styles.block}>
-                  <View style={styles.sectionHeader}>
-                    <Text variant="labelMedium" style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant, marginBottom: 0 }]}>
-                      Recent
-                    </Text>
-                    <TouchableOpacity onPress={clearAllRecents} accessibilityRole="button" accessibilityLabel="Clear all recent searches">
-                      <Text variant="labelMedium" style={{ color: theme.colors.primary }}>Clear all</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <GlassCard style={styles.recentsCard}>
-                    {recents.map((r) => (
-                      <RecentRow
-                        key={r}
-                        value={r}
-                        onPress={() => {
-                          selectionHaptic();
-                          setQuery(r);
-                        }}
-                        onRemove={() => removeRecent(r)}
-                      />
-                    ))}
-                  </GlassCard>
-                </View>
-              )}
-              <View style={styles.block}>
-                <Text variant="labelMedium" style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>
-                  Try
+        {/* Content anchored at the TOP (Photos/Phone): large title while idle,
+            plain result sections while typing. */}
+        <Animated.View style={[styles.content, contentStyle]}>
+          <ScrollView
+            style={styles.scroll}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 12 }]}
+            showsVerticalScrollIndicator={false}
+          >
+            {debounced.length === 0 ? (
+              <View>
+                <Text
+                  style={[
+                    styles.largeTitle,
+                    { color: theme.colors.onSurface, fontSize: theme.typography.display.fontSize },
+                  ]}
+                >
+                  Search
                 </Text>
-                <View style={styles.chips}>
+
+                {recents.length > 0 && (
+                  <View style={styles.block}>
+                    <View style={styles.sectionHeader}>
+                      <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                        Recents
+                      </Text>
+                      <TouchableOpacity
+                        onPress={clearAllRecents}
+                        accessibilityRole="button"
+                        accessibilityLabel="Clear all recent searches"
+                        style={[styles.clearPill, { backgroundColor: fieldBg }]}
+                      >
+                        <Text variant="labelMedium" style={{ color: theme.colors.primary }}>Clear</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <View style={[styles.recentsList, { borderRadius: theme.radius.lg }]}>
+                      {recents.map((r, i) => (
+                        <View key={r} style={i < recents.length - 1 ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: hairline } : null}>
+                          <RecentRow
+                            value={r}
+                            onPress={() => {
+                              selectionHaptic();
+                              setQuery(r);
+                            }}
+                            onRemove={() => removeRecent(r)}
+                          />
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                {/* Suggestion pills, stacked vertically like Photos ("One Year
+                    Ago", "Trips in 2025"...). No header — they explain themselves. */}
+                <View style={[styles.block, styles.suggestionStack]}>
                   {suggestions.map((s) => (
-                    <TouchableOpacity key={s} style={[styles.chip, { backgroundColor: fieldBg }]} onPress={() => setQuery(s)}>
-                      <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>{s}</Text>
+                    <TouchableOpacity
+                      key={s}
+                      style={[styles.suggestionPill, { backgroundColor: fieldBg }]}
+                      onPress={() => setQuery(s)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Search for ${s}`}
+                    >
+                      <Text variant="labelLarge" style={{ color: theme.colors.onSurface }}>{s}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
               </View>
-            </View>
-          ) : (
-            <View style={{ gap: 14, paddingTop: 4 }}>
-              {/* Predictive completions — the typed part renders in the normal text
-                  colour and the completion in the muted one, so it's obvious what
-                  you wrote vs what we're offering. */}
-              {predictions.length > 0 && (
-                <GlassCard style={styles.card}>
-                  {predictions.map((p) => (
-                    <TouchableOpacity
-                      key={p}
-                      onPress={() => {
-                        selectionHaptic();
-                        setQuery(p);
-                      }}
-                      accessibilityRole="button"
-                      accessibilityLabel={p}
-                      style={styles.predictRow}
-                    >
-                      <Ionicons name="search" size={15} color={theme.colors.onSurfaceVariant} />
-                      <Text numberOfLines={1} style={{ flex: 1, fontSize: theme.typography.body.fontSize }}>
-                        <Text style={{ color: theme.colors.onSurface }}>{p.slice(0, debounced.length)}</Text>
-                        <Text style={{ color: theme.colors.onSurfaceVariant }}>{p.slice(debounced.length)}</Text>
-                      </Text>
-                      <Ionicons name="arrow-up-outline" size={14} color={theme.colors.muted} style={styles.predictArrow} />
-                    </TouchableOpacity>
-                  ))}
-                </GlassCard>
-              )}
+            ) : (
+              <View style={styles.resultsArea}>
+                {showAiCard && (
+                  <GlassCard style={styles.aiCard}>
+                    <ListRow
+                      title="Ask the on-device assistant"
+                      subtitle={`“${debounced}” · answered privately on your iPhone`}
+                      icon="sparkles"
+                      onPress={askAi}
+                    />
+                  </GlassCard>
+                )}
 
-              {showAiCard && (
-                <GlassCard style={styles.aiCard}>
-                  <ListRow
-                    title="Ask the on-device assistant"
-                    subtitle={`“${debounced}” · answered privately on your iPhone`}
-                    icon="sparkles"
-                    onPress={askAi}
-                  />
-                </GlassCard>
-              )}
+                {/* Never leave a blank view: symbol + title + a subtitle that echoes the
+                    query back, so a typo is obvious and it's clear search actually ran. */}
+                {sections.length === 0 && !showAiCard && (
+                  <View style={styles.empty}>
+                    <Ionicons name="search-outline" size={40} color={theme.colors.onSurfaceVariant} />
+                    <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                      No Results
+                    </Text>
+                    <Text style={[styles.emptySubtitle, { color: theme.colors.onSurfaceVariant }]}>
+                      Nothing matches “{debounced}”. Check the spelling or try a new search.
+                    </Text>
+                  </View>
+                )}
 
-              {/* Never leave a blank view: symbol + title + a subtitle that echoes the
-                  query back, so a typo is obvious and it's clear search actually ran. */}
-              {sections.length === 0 && !showAiCard && (
-                <View style={styles.empty}>
-                  <Ionicons name="search-outline" size={40} color={theme.colors.onSurfaceVariant} />
-                  <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                    No Results
-                  </Text>
-                  <Text style={[styles.emptySubtitle, { color: theme.colors.onSurfaceVariant }]}>
-                    No {SCOPE_LABELS[selectedScope].toLowerCase()} match “{debounced}”. Check the spelling or try a new search.
-                  </Text>
-                </View>
-              )}
+                {/* Plain full-bleed sections (Phone app): header, rows, hairlines. */}
+                {sections.map((section) => (
+                  <View key={section.type} style={styles.section}>
+                    <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+                      {SECTION_LABELS[section.type]}
+                    </Text>
+                    {section.items.map((item, i) => (
+                      <View
+                        key={item.id}
+                        style={i < section.items.length - 1 ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: hairline } : null}
+                      >
+                        <ResultRow item={item} query={debounced} onPress={() => open(item)} />
+                      </View>
+                    ))}
+                  </View>
+                ))}
+              </View>
+            )}
+          </ScrollView>
+        </Animated.View>
 
-              {sections.map((section) => (
-                <GlassCard key={section.type} style={styles.card}>
-                  <Text variant="labelMedium" style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant, paddingHorizontal: 4 }]}>
-                    {SECTION_LABELS[section.type]}
+        {/* Predictive completions float just above the field (Photos style),
+            left-anchored and self-sized — the typed part in the normal text
+            colour, the completion in the muted one. */}
+        {predictions.length > 0 && debounced.length > 0 && (
+          <View style={styles.predictWrap} pointerEvents="box-none">
+            <View style={[styles.predictPanel, { backgroundColor: panelBg, borderColor: hairline }]}>
+              {predictions.map((p, i) => (
+                <TouchableOpacity
+                  key={p}
+                  onPress={() => {
+                    selectionHaptic();
+                    setQuery(p);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={p}
+                  style={[
+                    styles.predictRow,
+                    i < predictions.length - 1 ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: hairline } : null,
+                  ]}
+                >
+                  <Ionicons name="search" size={14} color={theme.colors.onSurfaceVariant} />
+                  <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: theme.typography.body.fontSize }}>
+                    <Text style={{ color: theme.colors.onSurface }}>{p.slice(0, debounced.length)}</Text>
+                    <Text style={{ color: theme.colors.onSurfaceVariant }}>{p.slice(debounced.length)}</Text>
                   </Text>
-                  {section.items.map((item) => (
-                    <ResultRow key={item.id} item={item} query={debounced} onPress={() => open(item)} />
-                  ))}
-                </GlassCard>
+                </TouchableOpacity>
               ))}
             </View>
-          )}
-        </ScrollView>
+          </View>
+        )}
 
-        {/* Bottom bar: scopes + field + the big X, all riding above the keyboard. */}
+        {/* Bottom bar: the morphing field + round X, riding above the keyboard. */}
         <View
           style={[
             styles.bottomBar,
             { paddingBottom: keyboardUp ? 10 : getFloatingTabBarEnvelopeHeight(insets.bottom) + 8 },
           ]}
         >
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.scopeRow}
-          >
-            {scopeOptions.map((scope) => {
-              const selected = selectedScope === scope;
-              return (
-                <TouchableOpacity
-                  key={scope}
-                  style={[styles.scopeChip, { backgroundColor: selected ? selectedChipBg : fieldBg }]}
-                  onPress={() => {
-                    selectionHaptic();
-                    setSelectedScope(scope);
-                  }}
-                >
-                  <Text variant="labelMedium" style={{ color: selected ? theme.colors.primary : theme.colors.onSurface }}>
-                    {SCOPE_LABELS[scope]}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          <View style={styles.fieldRow}>
-            <View style={[styles.field, { backgroundColor: fieldBg, flex: 1 }]}>
+          <Animated.View style={[styles.field, { backgroundColor: fieldBg }, fieldMorphStyle]}>
+            <Animated.View style={[styles.fieldInner, fieldInnerStyle]}>
               <Ionicons name="search" size={18} color={theme.colors.onSurfaceVariant} />
               <TextInput
                 ref={inputRef}
                 value={query}
                 onChangeText={setQuery}
-                placeholder={`Search ${SCOPE_LABELS[selectedScope].toLowerCase()}`}
+                placeholder="Search"
                 placeholderTextColor={theme.colors.onSurfaceVariant}
                 style={[styles.input, { color: theme.colors.onSurface }]}
                 autoCorrect={false}
                 returnKeyType="search"
-                clearButtonMode="while-editing"
+                onSubmitEditing={() => {
+                  // Committing a search (Photos): keyboard drops, results stay.
+                  rememberRecent(debounced);
+                  Keyboard.dismiss();
+                }}
               />
               {query.length > 0 && (
                 <TouchableOpacity onPress={() => setQuery('')} accessibilityLabel="Clear">
                   <Ionicons name="close-circle" size={18} color={theme.colors.onSurfaceVariant} />
                 </TouchableOpacity>
               )}
-            </View>
-            {/* The big X — closes the overlay and drops the user back where they were. */}
+            </Animated.View>
+          </Animated.View>
+          {/* The round X — closes search and drops the user back where they were.
+              Both Phone and Photos keep this beside the docked field. */}
+          <Animated.View style={closeStyle}>
             <TouchableOpacity
               accessibilityRole="button"
               accessibilityLabel="Close search"
@@ -519,7 +589,7 @@ export const SearchScreen = () => {
             >
               <Ionicons name="close" size={22} color={theme.colors.onSurface} />
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         </View>
       </KeyboardAvoidingView>
     </LiquidBackground>
@@ -527,15 +597,33 @@ export const SearchScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  // Overlay shell — transparent so the tab underneath shows through.
-  overlayRoot: { flex: 1 },
   scrim: { ...StyleSheet.absoluteFillObject },
-  overlayBody: { flex: 1, justifyContent: 'flex-end' },
-  // flexGrow:0 + flexShrink:1 => results hug the field and grow upward, never
-  // pushing it off screen.
-  results: { flexGrow: 0, flexShrink: 1 },
-  resultsContent: { paddingHorizontal: 16, paddingTop: 8 },
-  bottomBar: { paddingHorizontal: 16, paddingTop: 8, gap: 8 },
+  body: { flex: 1 },
+  content: { flex: 1 },
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: 16, paddingBottom: 12 },
+  largeTitle: { fontWeight: '700', marginBottom: 4 },
+  // Bottom bar right-justified: the field grows LEFTWARD from the circle.
+  bottomBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  field: {
+    borderRadius: 22,
+    height: 44,
+    overflow: 'hidden',
+    justifyContent: 'center',
+  },
+  fieldInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+  },
+  input: { flex: 1, fontSize: 16, paddingVertical: 0 },
   closeButton: {
     width: 40,
     height: 40,
@@ -543,34 +631,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  field: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    height: 44,
-    marginBottom: 12,
-  },
-  input: { flex: 1, fontSize: 16, paddingVertical: 0 },
-  fieldRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  block: { marginTop: 18 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  recentsCard: { paddingVertical: 2, paddingHorizontal: 0, overflow: 'hidden' },
+  clearPill: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14 },
+  recentsList: { overflow: 'hidden' },
   recentRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 12 },
+  recentArrow: { transform: [{ rotate: '-45deg' }] },
   recentDelete: { width: 64, alignItems: 'center', justifyContent: 'center' },
-  predictRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 8 },
-  predictArrow: { transform: [{ rotate: '-45deg' }] },
-  emptySubtitle: { textAlign: 'center', paddingHorizontal: 24, lineHeight: 19 },
-  scopeRow: { flexDirection: 'row', gap: 8, paddingRight: 8 },
-  scopeChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 15 },
-  block: { marginTop: 10 },
-  sectionLabel: { letterSpacing: 0.5, marginBottom: 8 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16 },
-  card: { paddingVertical: 6, paddingHorizontal: 8, gap: 2 },
-  aiCard: { paddingVertical: 4, paddingHorizontal: 8 },
+  suggestionStack: { alignItems: 'flex-start', gap: 10 },
+  suggestionPill: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 },
+  predictWrap: { paddingHorizontal: 16, paddingBottom: 6, alignItems: 'flex-start' },
+  predictPanel: {
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    minWidth: 200,
+    maxWidth: '78%',
+    overflow: 'hidden',
+  },
+  predictRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 },
+  resultsArea: { gap: 4, paddingTop: 8 },
+  section: { marginBottom: 14 },
+  sectionTitle: { fontWeight: '600', marginBottom: 2 },
+  aiCard: { paddingVertical: 4, paddingHorizontal: 8, marginBottom: 10 },
   empty: { alignItems: 'center', gap: 10, paddingVertical: 48 },
-  resultRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingHorizontal: 4 },
+  emptySubtitle: { textAlign: 'center', paddingHorizontal: 24, lineHeight: 19 },
+  resultRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingHorizontal: 2 },
   resultIcon: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   resultCopy: { flex: 1 },
 });
