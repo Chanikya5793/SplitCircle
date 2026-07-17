@@ -106,8 +106,6 @@
 		<string>remote-notification</string>
 		<string>audio</string>
 		<string>voip</string>
-		<string>processing</string>
-		<string>location</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>SplashScreen</string>
