@@ -9,7 +9,9 @@ Docs: [DESIGN.md](DESIGN.md) (binding UI rules) · [OPS.md](OPS.md) (ship/creden
 chat pipeline + Private Cloud Compute escalation) ·
 [ai_layer/docs/18](ai_layer/docs/18_app_intents_siri_pcc_indexing.md) (Siri / App Intents / Spotlight
 indexing — iOS 27, iOS-only) · [ai_layer/docs/19](ai_layer/docs/19_widgets_and_siri_control.md)
-(widgets + Siri app-control + the one-time widget-target runbook).
+(widgets + Siri app-control + the one-time widget-target runbook) ·
+[ai_layer/docs/20](ai_layer/docs/20_native_search_tab.md) (native UISearchTab search — the
+react-native-screens patch, bridge, behavioral contract; READ BEFORE touching search or tabs).
 
 ## Architecture DNA (do not break)
 
@@ -63,8 +65,18 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   unconditionally or iOS revokes the privilege.
 - **Hermes + optional native modules**: probe `requireOptionalNativeModule()` before
   `require()`ing a package whose native half may be missing — else SIGSEGV, not a catch.
-- **iOS 26 native search tab**: `tabBarSystemItem: 'search'` — setting title/tabBarLabel
-  on iOS demotes it to a regular tab.
+- **iOS 26 native search tab is a PATCH** (`patches/react-native-screens+4.23.0.patch`):
+  on iOS 26 the tab bar uses the UITab/UISearchTab API so the search circle is detached
+  and the tab bar morphs into the system search field natively. RNS upstream has no
+  UISearchTab (issue #3999 not_planned) — an RNS upgrade breaks this; re-port every
+  `PATCHED (SplitCircle)` block. `tabBarSystemItem: 'search'` must stay unlabeled
+  (title/tabBarLabel demotes it). SearchScreen mirrors the native field via
+  splitcircle-ai events; tab-switch KEEPS a committed query, only cancel clears
+  (Photos semantics — deliberate). Full contract: [ai_layer/docs/20](ai_layer/docs/20_native_search_tab.md).
+- **Native changes are invisible to the jsbundle hot-swap** — the sim shows old native
+  code until a real build is installed. `expo run:ios` fails on the Xcode beta (no
+  Simulator.app — it's Device Hub now); use raw `xcodebuild -configuration Debug` +
+  `simctl install` for a one-off sim proof, or `npm run ship:ios`.
 - **Reanimated new-arch**: inserting a sibling ABOVE entering-animated ScrollView content
   doesn't shift that content (overlap) — mount late-loading rows outside the ScrollView.
   `flex: 1` inside height-constrained containers collapses to zero height.
