@@ -14,6 +14,7 @@ export type AssistantIntent =
   | 'delete_expense'
   | 'edit_expense'
   | 'delete_settlement'
+  | 'set_budget'
   | 'navigate'
   | 'question'
   | 'chat';
@@ -53,7 +54,7 @@ export interface SettlementDraft {
   amount: number | null;
 }
 
-import { coerceCategory } from './categoryMatch';
+import { coerceCategory, EXPENSE_CATEGORIES } from './categoryMatch';
 
 const lc = (s: string): string => (s ?? '').toLowerCase();
 
@@ -184,6 +185,46 @@ export function detectExpenseModification(
 }
 
 /** First monetary number in the text (ignores currency symbols), or null. */
+// ── Budget commands (doc 24 P4) ──────────────────────────────────────────────
+
+export interface BudgetCommand {
+  /** Canonical category, null when the message names none. */
+  category: string | null;
+  /** Monthly amount; null for a removal. */
+  amount: number | null;
+  remove: boolean;
+}
+
+const BUDGET_QUESTION_RE = /^(how|what|which|are|is|do|does|did|when|where|who|why)\b|\?\s*$/i;
+const BUDGET_REMOVE_RE = /\b(remove|delete|clear|drop|unset)\b/i;
+const BUDGET_VERB_RE = /\b(set|change|update|make|create|put|cap|adjust|increase|decrease|raise|lower)\b/i;
+
+/**
+ * Parse a budget command ("set the Food budget to 300", "budget 250 for
+ * travel", "remove the food budget"). Returns null when the message isn't a
+ * budget WRITE — question-shaped budget talk ("how's the food budget?") stays
+ * on the question path. Category is matched against the canonical list.
+ */
+export function parseBudgetCommand(message: string): BudgetCommand | null {
+  const q = (message ?? '').trim();
+  if (!/\bbudgets?\b/i.test(q)) return null;
+  if (BUDGET_QUESTION_RE.test(q)) return null;
+
+  const lower = q.toLowerCase();
+  const category =
+    EXPENSE_CATEGORIES.find((c) => new RegExp(`\\b${c.toLowerCase()}\\b`).test(lower)) ?? null;
+
+  if (BUDGET_REMOVE_RE.test(q)) return { category, amount: null, remove: true };
+
+  const amount = parseAmount(q);
+  // A budget WRITE needs an action verb or an amount — bare "food budget"
+  // isn't a command.
+  if (amount == null) {
+    return BUDGET_VERB_RE.test(q) ? { category, amount: null, remove: false } : null;
+  }
+  return { category, amount, remove: false };
+}
+
 export function parseAmount(message: string): number | null {
   const m = message.match(/(?:[$₹€£]\s*)?(\d{1,7}(?:\.\d{1,2})?)/);
   if (!m) return null;
@@ -222,6 +263,11 @@ export function classifyMessage(message: string, members: readonly AssistantMemb
 
   // Help / capabilities → handled deterministically by the question engine.
   if (HELP_RE.test(q)) return 'question';
+
+  // Budget commands (doc 24 P4) — BEFORE edit/add: "set the Food budget to
+  // 300" would otherwise classify as edit_expense ("set…amount") or
+  // add_expense ("for" + amount). Question-shaped budget talk stays a question.
+  if (parseBudgetCommand(q) != null) return 'set_budget';
 
   // Delete settlement / expense (require the noun to stay safe / unambiguous).
   if (DELETE_RE.test(q) && /\bsettlements?\b|\bpayment\b/i.test(q)) return 'delete_settlement';

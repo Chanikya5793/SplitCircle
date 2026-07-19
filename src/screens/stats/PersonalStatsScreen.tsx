@@ -355,6 +355,8 @@ export const PersonalStatsScreen = () => {
             onClose={() => setChatOpen(false)}
             scope="personal"
             facts={personalFacts}
+            currentUserId={user?.userId}
+            personalGroups={visibleGroups}
             factsForRange={(r) => {
               if (!user || r === range) return personalFacts;
               const b = buildPersonalStats(visibleGroups, user.userId, r, Date.now());

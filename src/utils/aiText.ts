@@ -45,6 +45,35 @@ export function stripModelDecorations(raw: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Chat-shaped hygiene for the agentic narrator (doc 24 adaptive verbosity):
+ * strips the same decorations but PRESERVES paragraph breaks and "- " dash
+ * lines, which the narrator is allowed to use. Bullets normalize to "- ";
+ * markdown headers/emphasis/fences/quotes still die. Content-preserving.
+ */
+export function stripChatDecorations(raw: string): string {
+  let s = (raw ?? '').trim();
+  s = s.replace(/^```[a-z]*\s*/i, '').replace(/\s*```$/, '');
+  const quotePairs: [string, string][] = [['"', '"'], ["'", "'"], ['“', '”'], ['‘', '’']];
+  for (const [open, close] of quotePairs) {
+    if (s.startsWith(open) && s.endsWith(close) && s.length > 2) {
+      s = s.slice(1, -1).trim();
+      break;
+    }
+  }
+  // Headers die; bullets normalize to "- "; numbered lists become dash lines.
+  s = s.replace(/^\s*#{1,4}\s+/gm, '');
+  s = s.replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, '- ');
+  s = s.replace(/(\*\*|__)(.*?)\1/g, '$2');
+  s = s.replace(/(^|\s)[*_]([^*_\n]+)[*_](?=[\s.,!?:;)]|$)/g, '$1$2');
+  s = s.replace(/`([^`]*)`/g, '$1');
+  // Collapse horizontal whitespace only; cap blank runs at one empty line.
+  s = s.replace(/[ \t]+/g, ' ');
+  s = s.replace(/ ?\n ?/g, '\n');
+  s = s.replace(/\n{3,}/g, '\n\n');
+  return s.trim();
+}
+
 /** Leading filler before the actual content ("Sure!", "Here's the insight:"). */
 const PREAMBLE_PATTERNS: RegExp[] = [
   /^(?:sure|of course|certainly|absolutely|okay|ok)[,!.:]\s+/i,

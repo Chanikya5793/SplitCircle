@@ -18,12 +18,14 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@': path.resolve(__dirname, 'src'),
       'react-native': path.resolve(__dirname, 'src/services/__tests__/mocks/react-native.ts'),
       '@react-native-async-storage/async-storage': path.resolve(
         __dirname,
         'src/services/__tests__/mocks/async-storage.ts'
       ),
       'expo-crypto': path.resolve(__dirname, 'src/services/__tests__/mocks/expo-crypto.ts'),
+      'expo-sqlite': path.resolve(__dirname, 'src/services/__tests__/mocks/expo-sqlite.ts'),
     },
   },
 });

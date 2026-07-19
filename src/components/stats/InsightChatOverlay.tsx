@@ -15,11 +15,16 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { GuardedScreen } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
-import { deleteThread, listThreads, saveThread } from '@/services/aiThreadStore';
+import { useChat } from '@/context/ChatContext';
+import { useGroups } from '@/context/GroupContext';
+import { deleteThread, listThreads, newMessageId, saveThread } from '@/services/aiThreadStore';
+import { getLastPccQuota, type PccQuotaInfo } from '@/services/insightsAiService';
 import {
+  actionPayloadOf,
   getEnginePref,
   INSIGHTS_SURFACE,
   openInsightsThread,
+  resolveInsightsAction,
   sendInsightsMessage,
   setEnginePref,
   type EnginePref,
@@ -73,6 +78,8 @@ interface InsightChatOverlayProps {
   /** Present for group scope — enables the deterministic exact-answer path. */
   group?: Group;
   currentUserId?: string;
+  /** Personal scope: cross-group rows for the agentic personal tools (doc 24). */
+  personalGroups?: { groupId: string; name: string; currency: string; expenses?: Group['expenses'] }[];
 }
 
 const ENGINE_OPTIONS: { key: EnginePref; icon: string; label: string; hint: string }[] = [
@@ -101,9 +108,20 @@ export const InsightChatOverlay = ({
   initialRange,
   group,
   currentUserId,
+  personalGroups,
 }: InsightChatOverlayProps) => {
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  // Doc 24 P4: confirm-card writes execute through the SAME GroupContext
+  // mutators the assistant uses — the model never mutates anything.
+  const { addExpense, settleUp, updateExpense, deleteExpense, deleteSettlement, updateGroupBudgets } =
+    useGroups();
+  // P5: the group's chat id unlocks the on-device-only chat_search tool.
+  const { threads: chatThreads } = useChat();
+  const groupChatId = useMemo(
+    () => (group ? chatThreads.find((t) => t.groupId === group.groupId)?.chatId : undefined),
+    [chatThreads, group],
+  );
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
   const listRef = useRef<FlatList<AiThreadMessage>>(null);
 
@@ -113,8 +131,15 @@ export const InsightChatOverlay = ({
   const [drifted, setDrifted] = useState(false);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  // P2 live turn feedback: the loop's status line, then streamed narration.
+  const [pending, setPending] = useState<{ status?: string; partial?: string } | null>(null);
   const [keyboardShown, setKeyboardShown] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // P3: structured PCC quota from the latest call — the menu's truth line.
+  const [pccQuota, setPccQuota] = useState<PccQuotaInfo | null>(null);
+  useEffect(() => {
+    if (settingsOpen) setPccQuota(getLastPccQuota());
+  }, [settingsOpen]);
   const [engine, setEngine] = useState<EnginePref>('auto');
   const [contextRange, setContextRange] = useState<StatsRange>(initialRange ?? 'month');
 
@@ -338,6 +363,7 @@ export const InsightChatOverlay = ({
       createdAt: Date.now(),
     };
     setThread((t) => (t ? { ...t, messages: [...t.messages, optimistic] } : t));
+    setPending({ status: 'Thinking…' });
     scrollToEnd();
     try {
       const result = await sendInsightsMessage({
@@ -347,8 +373,12 @@ export const InsightChatOverlay = ({
         cards,
         group,
         currentUserId,
+        personalGroups,
+        chatId: groupChatId,
         drifted,
         engine,
+        onStatus: (line) => setPending((p) => ({ ...p, status: line })),
+        onDelta: (partial) => setPending({ partial }),
       });
       setThread(result.thread);
       setDrifted(false);
@@ -369,6 +399,66 @@ export const InsightChatOverlay = ({
             }
           : t,
       );
+    } finally {
+      setBusy(false);
+      setPending(null);
+      scrollToEnd();
+    }
+  };
+
+  // Confirm/cancel a proposed write (doc 24 P4). Execution happens HERE, via
+  // GroupContext, before the card flips to done — mirroring AiChatScreen.
+  const resolveAction = async (msg: AiThreadMessage, confirm: boolean) => {
+    if (!thread || busy) return;
+    const p = actionPayloadOf(msg.payload);
+    if (!p || p.state !== 'pending') return;
+    lightHaptic();
+    if (!confirm) {
+      setThread(await resolveInsightsAction({ thread, messageId: msg.id, outcome: 'cancelled' }));
+      return;
+    }
+    if (!group) return;
+    setBusy(true);
+    try {
+      const a = p.action;
+      let ok = '✓ Done.';
+      if (a.type === 'add_expense') {
+        await addExpense(group.groupId, a.expense, undefined, undefined, newMessageId());
+        ok = '✓ Expense added.';
+      } else if (a.type === 'settle_up') {
+        await settleUp(group.groupId, a.settlement, newMessageId());
+        ok = '✓ Settlement recorded.';
+      } else if (a.type === 'edit_expense') {
+        await updateExpense(group.groupId, a.expense, undefined, undefined, newMessageId());
+        ok = '✓ Expense updated.';
+      } else if (a.type === 'delete_expense') {
+        await deleteExpense(group.groupId, a.expenseId);
+        ok = '✓ Expense deleted.';
+      } else if (a.type === 'delete_settlement') {
+        await deleteSettlement(group.groupId, a.settlementId);
+        ok = '✓ Settlement deleted.';
+      } else if (a.type === 'set_budget') {
+        const next = { ...(group.budgets ?? {}) };
+        if (a.amount > 0) next[a.category] = a.amount;
+        else delete next[a.category];
+        await updateGroupBudgets(group.groupId, next);
+        ok = a.amount > 0 ? '✓ Budget set.' : '✓ Budget removed.';
+      }
+      mediumHaptic();
+      setThread(
+        await resolveInsightsAction({ thread, messageId: msg.id, outcome: 'done', confirmationText: ok }),
+      );
+    } catch (err) {
+      // Keep the card pending; surface the failure as a thread message.
+      const errMsg: AiThreadMessage = {
+        id: newMessageId(),
+        role: 'assistant',
+        text: `Couldn't complete that: ${err instanceof Error ? err.message : 'unknown error'}.`,
+        createdAt: Date.now(),
+      };
+      const next = { ...thread, messages: [...thread.messages, errMsg] };
+      setThread(next);
+      void saveThread(next);
     } finally {
       setBusy(false);
       scrollToEnd();
@@ -400,8 +490,42 @@ export const InsightChatOverlay = ({
         </View>
       );
     }
+    // Doc 24 ask-backs: a clarify bubble with tappable option chips. Chips are
+    // live only while this is the latest message — answered clarifies keep the
+    // question text but drop the buttons.
+    if (item.role === 'clarify') {
+      const isLatest = thread?.messages[thread.messages.length - 1]?.id === item.id;
+      return (
+        <View style={[styles.msgRow, { justifyContent: 'flex-start' }]}>
+          <GlassView style={[styles.bubble, { borderTopLeftRadius: 4 }]}>
+            <Text style={{ color: theme.colors.onSurface, lineHeight: 20 }}>{item.text}</Text>
+            {isLatest && (item.options?.length ?? 0) > 0 && (
+              <View style={styles.clarifyRow}>
+                {item.options?.map((opt) => (
+                  <TouchableOpacity
+                    key={opt}
+                    onPress={() => void send(opt)}
+                    disabled={busy}
+                    accessibilityRole="button"
+                    accessibilityLabel={opt}
+                  >
+                    <GlassView style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
+                      <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600' }}>
+                        {opt}
+                      </Text>
+                    </GlassView>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </GlassView>
+        </View>
+      );
+    }
     const isUser = item.role === 'user';
     const badge = item.source ? SOURCE_BADGE[item.source] : null;
+    const isLatestMsg = thread?.messages[thread.messages.length - 1]?.id === item.id;
+    const actionPayload = isUser ? null : actionPayloadOf(item.payload);
     return (
       <View style={[styles.msgRow, { justifyContent: isUser ? 'flex-end' : 'flex-start' }]}>
         <GlassView
@@ -415,6 +539,71 @@ export const InsightChatOverlay = ({
           <Text style={{ color: isUser ? '#fff' : theme.colors.onSurface, lineHeight: 20 }}>
             {item.text}
           </Text>
+          {!isUser && !!item.assumption && (
+            <Text
+              variant="labelSmall"
+              style={{ color: theme.colors.onSurfaceVariant, fontSize: 10, marginTop: 4, fontStyle: 'italic' }}
+            >
+              {item.assumption}
+            </Text>
+          )}
+          {/* Confirm card for a proposed write (doc 24 P4). */}
+          {actionPayload && (
+            <View style={[styles.actionCard, { borderColor: `${theme.colors.primary}50` }]}>
+              <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                {actionPayload.action.summary}
+              </Text>
+              {actionPayload.state === 'pending' ? (
+                <View style={styles.actionButtons}>
+                  <TouchableOpacity
+                    onPress={() => void resolveAction(item, false)}
+                    disabled={busy}
+                    style={[styles.actionBtn, { borderColor: theme.colors.outline }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Not now"
+                  >
+                    <Text style={{ color: theme.colors.onSurfaceVariant, fontWeight: '700' }}>Not now</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => void resolveAction(item, true)}
+                    disabled={busy}
+                    style={[
+                      styles.actionBtn,
+                      { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Confirm"
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>Confirm</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
+                  {actionPayload.state === 'done' ? '✓ Done' : 'Dismissed'}
+                </Text>
+              )}
+            </View>
+          )}
+          {/* Assistant quick-reply chips (slot-filling asks, doc 24 P4). */}
+          {!isUser && isLatestMsg && (item.options?.length ?? 0) > 0 && (
+            <View style={styles.clarifyRow}>
+              {item.options?.map((opt) => (
+                <TouchableOpacity
+                  key={opt}
+                  onPress={() => void send(opt)}
+                  disabled={busy}
+                  accessibilityRole="button"
+                  accessibilityLabel={opt}
+                >
+                  <GlassView style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
+                    <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600' }}>
+                      {opt}
+                    </Text>
+                  </GlassView>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
           {item.sources && item.sources.length > 0 && (
             <View style={styles.sources}>
               {item.sources.map((s, i) => (
@@ -579,7 +768,13 @@ export const InsightChatOverlay = ({
                             {o.label}
                           </Text>
                           <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                            {o.hint}
+                            {o.key === 'pcc' && pccQuota?.limitReached
+                              ? `Daily quota reached${
+                                  pccQuota.resetDate
+                                    ? ` · resets ${new Date(pccQuota.resetDate).toLocaleString('en-US', { month: 'short', day: 'numeric' })}`
+                                    : ''
+                                }`
+                              : o.hint}
                           </Text>
                         </View>
                         {engine === o.key && (
@@ -709,7 +904,24 @@ export const InsightChatOverlay = ({
                     busy ? (
                       <View style={[styles.msgRow, { justifyContent: 'flex-start' }]}>
                         <GlassView style={[styles.bubble, { borderTopLeftRadius: 4 }]}>
-                          <ActivityIndicator color={theme.colors.primary} />
+                          {pending?.partial ? (
+                            // Streamed narration filling in live (P2).
+                            <Text style={{ color: theme.colors.onSurface, lineHeight: 20 }}>
+                              {pending.partial}
+                            </Text>
+                          ) : (
+                            <View style={styles.pendingRow}>
+                              <ActivityIndicator size="small" color={theme.colors.primary} />
+                              {!!pending?.status && (
+                                <Text
+                                  variant="labelSmall"
+                                  style={{ color: theme.colors.onSurfaceVariant }}
+                                >
+                                  {pending.status}
+                                </Text>
+                              )}
+                            </View>
+                          )}
                         </GlassView>
                       </View>
                     ) : null
@@ -893,6 +1105,17 @@ const styles = StyleSheet.create({
   sources: { marginTop: 8, gap: 4 },
   sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   starterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
+  clarifyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  pendingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  actionCard: { borderWidth: 1, borderRadius: 12, padding: 10, marginTop: 10, gap: 6 },
+  actionButtons: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  actionBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
   starterChip: {
     borderRadius: 16,
     borderWidth: 1.5,

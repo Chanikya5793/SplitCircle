@@ -12,7 +12,7 @@
  * model-written digest, recent turns stay verbatim.
  */
 
-export type AiThreadRole = 'user' | 'assistant' | 'context';
+export type AiThreadRole = 'user' | 'assistant' | 'context' | 'clarify';
 export type AiAnswerSource = 'ondevice' | 'pcc' | 'deterministic';
 
 export interface AiThreadSource {
@@ -33,6 +33,10 @@ export interface AiThreadMessage {
   source?: AiAnswerSource;
   /** Deterministic citations (tappable expense refs). */
   sources?: AiThreadSource[];
+  /** Tappable answer chips on a 'clarify' message (doc 24 ask-backs). */
+  options?: string[];
+  /** Stated reading on an answer produced under mild ambiguity (doc 24). */
+  assumption?: string;
   /** True once this turn has been folded into thread.summary (display-only). */
   inSummary?: boolean;
   /** Surface-specific extras (e.g. the assistant's action/confirm-card data). */

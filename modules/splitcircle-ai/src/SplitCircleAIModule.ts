@@ -45,6 +45,13 @@ export interface SearchTabEvent {
   text: string;
 }
 
+/** One delta from a native FM stream (doc 24 P2). `done` closes the stream. */
+export interface FmChunkEvent {
+  requestId: string;
+  delta: string;
+  done: boolean;
+}
+
 /** Native surface implemented in ios/SplitCircleAIModule.swift (iOS only). */
 export interface SplitCircleAINativeModule {
   redactPII(text: string): string;
@@ -52,8 +59,8 @@ export interface SplitCircleAINativeModule {
   hasNativeSearchTab?(): boolean;
   /** Fill the native tab-bar search field (recents / suggestion taps). */
   setSearchTabText?(text: string): void;
-  /** expo-modules event surface (used for 'onSearchTabEvent'). */
-  addListener?(eventName: string, listener: (event: SearchTabEvent) => void): { remove(): void };
+  /** expo-modules event surface ('onSearchTabEvent', 'onFmChunk'). */
+  addListener?<T = SearchTabEvent>(eventName: string, listener: (event: T) => void): { remove(): void };
   donateAskActivity(query?: string | null): Promise<void>;
   getOnDeviceAiAvailability(): OnDeviceAiAvailability;
   /** Token context window of the active on-device model; 0 when unavailable. */
@@ -79,30 +86,40 @@ export interface SplitCircleAINativeModule {
     memberNames: string,
     currentUserName: string,
   ): Promise<OnDeviceParsedExpenseRaw>;
-  /** "Understand" pass: free-form question → structured query plan. */
-  planExpenseQuery(question: string, memberNames: string): Promise<OnDeviceQueryPlanRaw>;
-
-  // ── Pipeline v2 spike (doc 17 §A0) ────────────────────────────────────────
-  /** S2 — ask grounded in a persistent per-session transcript (continuity). */
-  askOnDeviceStateful(
-    sessionId: string,
-    question: string,
-    context: string,
+  // P6 (doc 24): planExpenseQuery + the doc-17 spike surface (routeMessage,
+  // askOnDeviceStateful, resetOnDeviceSession) are deleted — superseded by the
+  // agentic pipeline below.
+  // ── Agentic pipeline (doc 24) ─────────────────────────────────────────────
+  /**
+   * Whole-turn router decision (stateless — instructions + prompt fully
+   * assembled in JS by aiLoop.ts). Absent on binaries older than doc-24 P1;
+   * the pipeline capability-gates on it and falls back to the legacy path.
+   */
+  routeTurn?(instructions: string, prompt: string): Promise<OnDeviceAgentDecisionRaw>;
+  /** One data-loop hop: done, or more tool requests. Ships with routeTurn. */
+  agentLoopStep?(instructions: string, prompt: string): Promise<OnDeviceAgentLoopStepRaw>;
+  /**
+   * P2 — streamed free-form generation: emits 'onFmChunk' deltas, resolves
+   * with the full final text when the stream ends. Absent on pre-P2 binaries.
+   */
+  generateTextStreamed?(
+    requestId: string,
+    prompt: string,
     instructions: string,
-  ): Promise<OnDeviceAskResult>;
-  /** S2 — clear a session's transcript ('' clears all). */
-  resetOnDeviceSession(sessionId: string): void;
-  /** S3 — single abstaining router decision over a persistent group session. */
-  routeMessage(
-    sessionId: string,
-    text: string,
-    memberNames: string,
-    isoDate: string,
-  ): Promise<OnDeviceRouterDecisionRaw>;
+  ): Promise<{ answer: string; cancelled: boolean }>;
+  /** P2 — cancel an in-flight stream by requestId (best-effort). */
+  cancelFmStream?(requestId: string): void;
+
   /** S5 — Private Cloud Compute probe (iOS 27). available=false until entitled. */
   pccProbe(question: string): Promise<OnDevicePccProbeResult>;
   /** PCC ask with real instructions + quota (doc 23). Absent on pre-entitlement binaries. */
   pccAsk(question: string, instructions: string): Promise<OnDevicePccAskResult>;
+  /** P3 — PCC ask with a reasoning level + structured quota. Absent pre-P3. */
+  pccAskDeep?(
+    question: string,
+    instructions: string,
+    reasoningLevel: string,
+  ): Promise<OnDevicePccAskResult>;
 
   // ── Widget / App-Group surface (doc 19) ───────────────────────────────────
   /** Write the widget balance snapshot to the App Group container + reload widgets. */
@@ -155,12 +172,35 @@ export interface WidgetSnapshot {
   groups: WidgetGroupBalance[];
 }
 
-export interface OnDeviceRouterDecisionRaw {
+/** Doc 24 — one tool request from the agentic router ('' / 0 = unset). */
+export interface OnDeviceAgentToolRequestRaw {
+  tool: string;
+  month: string;
+  monthB: string;
+  category: string;
+  member: string;
+  merchant: string;
+  query: string;
+  n: number;
+  months: number;
+}
+
+/** Doc 24 — the router's whole-turn decision (coerced JS-side by aiLoop.ts). */
+export interface OnDeviceAgentDecisionRaw {
   intent: string;
   confidence: number;
-  abstain: boolean;
-  chitchatReply: string;
-  queryPlan: OnDeviceQueryPlanRaw;
+  complexity: string;
+  assumption: string;
+  clarifyQuestion: string;
+  clarifyOptions: string[];
+  abstainReply: string;
+  requests: OnDeviceAgentToolRequestRaw[];
+}
+
+/** Doc 24 — one data-loop hop decision. */
+export interface OnDeviceAgentLoopStepRaw {
+  done: boolean;
+  requests: OnDeviceAgentToolRequestRaw[];
 }
 
 export interface OnDevicePccProbeResult {
@@ -176,15 +216,10 @@ export interface OnDevicePccAskResult {
   answer: string;
   /** Best-effort description of PCC quota usage (opaque shape). */
   quota: string;
-}
-
-export interface OnDeviceQueryPlanRaw {
-  intent: string;
-  scope: string;
-  category: string;
-  member: string;
-  metric: string;
-  timeframe: string;
+  /** P3 structured quota (pccAskDeep binaries only). */
+  limitReached?: boolean;
+  /** ISO date the quota resets, '' / absent when unknown. */
+  resetDate?: string;
 }
 
 export interface OnDeviceParsedExpenseRaw {

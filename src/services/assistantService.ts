@@ -18,9 +18,10 @@
 
 import type { Expense, Group } from '@/models';
 import type { ExpenseAiAnswer, ExpenseAiSource } from '@/services/aiService';
+import { runAgenticTurn } from '@/services/aiPipelineService';
+import type { AiThread } from '@/utils/aiThreads';
 import {
   answerExpenseLocally,
-  answerExpenseSmart,
   askExpenseAiOnDevice,
   getOnDeviceAiAvailability,
 } from '@/services/onDeviceAiService';
@@ -32,6 +33,7 @@ import {
   extractExpenseTitle,
   matchExpenseByText,
   matchSettlement,
+  parseBudgetCommand,
   parseExpenseEdit,
   parseParticipants,
   parseSettlement,
@@ -50,7 +52,9 @@ export type ProposedAction =
   | { type: 'delete_expense'; expenseId: string; summary: string; destructive: true }
   | { type: 'edit_expense'; expense: Expense; summary: string }
   | { type: 'delete_settlement'; settlementId: string; summary: string; destructive: true }
-  | { type: 'navigate'; target: NavTarget; summary: string };
+  | { type: 'navigate'; target: NavTarget; summary: string }
+  /** Doc 24 P4 — set/replace a category's monthly budget; amount 0 removes it. */
+  | { type: 'set_budget'; category: string; amount: number; summary: string };
 
 /** A partially-collected expense the bot is still filling in. */
 export interface ExpenseDraft {
@@ -94,6 +98,26 @@ export interface AssistantTurn {
   choices?: string[];
   /** Conversation memory to pass back into the next turn. */
   state: ConversationState;
+  /** True when this reply is an agentic ask-back — store as role 'clarify'. */
+  clarify?: boolean;
+  /** Stated reading under mild ambiguity (doc 24) — rendered as a caption. */
+  assumption?: string;
+  /** Which engine narrated an agentic answer (badge parity with insights). */
+  engineSource?: 'ondevice' | 'pcc';
+}
+
+/** Doc 24 — thread + facts context that unlocks the agentic pipeline for the
+ * question path. Optional: without it the legacy chain runs unchanged. */
+export interface AgenticAssistContext {
+  thread: AiThread;
+  facts: string;
+  /** The group's chat id (doc 24 P5) — unlocks on-device-only chat_search. */
+  chatId?: string;
+  engine?: 'auto' | 'ondevice' | 'pcc';
+  /** P2 — loop progress line for the pending bubble. */
+  onStatus?: (line: string) => void;
+  /** P2 — streamed narration (cleaned accumulated text). */
+  onDelta?: (partial: string) => void;
 }
 
 const money = (n: number, currency: string): string => `${n.toFixed(2)} ${currency}`;
@@ -119,7 +143,8 @@ const memberFirstNames = (group: Group, currentUserId: string): string[] =>
 
 const isAction = (i: AssistantIntent): boolean =>
   i === 'add_expense' || i === 'settle_up' || i === 'delete_expense' ||
-  i === 'edit_expense' || i === 'delete_settlement' || i === 'navigate';
+  i === 'edit_expense' || i === 'delete_settlement' || i === 'navigate' ||
+  i === 'set_budget';
 
 const expenseSummary = (e: NewExpense, group: Group, currentUserId: string): string => {
   const payer = nameOf(group, e.paidBy, currentUserId);
@@ -137,6 +162,7 @@ export async function processAssistantTurn(
   group: Group,
   currentUserId: string,
   state: ConversationState = {},
+  agentic?: AgenticAssistContext,
 ): Promise<AssistantTurn> {
   const text = (message ?? '').trim();
   const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
@@ -180,12 +206,14 @@ export async function processAssistantTurn(
       return handleDeleteSettlement(text, group, currentUserId);
     case 'navigate':
       return handleNavigate(text);
+    case 'set_budget':
+      return handleSetBudget(text, group);
     case 'settle_up':
       return continueSettleUp(text, group, currentUserId, {});
     case 'add_expense':
       return continueAddExpense(text, group, currentUserId, {});
     default:
-      return answerQuestion(text, group, currentUserId);
+      return answerQuestion(text, group, currentUserId, agentic);
   }
 }
 
@@ -381,6 +409,54 @@ function handleDeleteSettlement(text: string, group: Group, currentUserId: strin
   return { reply: 'Delete this settlement? This cannot be undone.', action, state: { lastProposed: action } };
 }
 
+/** Doc 24 P4 — budget confirm card. Category/amount must be fully phrased
+ * (no slot-filling for budgets in v1); removals confirm with the old value. */
+function handleSetBudget(text: string, group: Group): AssistantTurn {
+  const cmd = parseBudgetCommand(text);
+  if (!cmd) {
+    return {
+      reply: 'Which category and monthly amount? e.g. "set the Food budget to 300".',
+      state: {},
+    };
+  }
+  if (!cmd.category) {
+    const present = [...new Set((group.expenses ?? []).map((e) => (e.category ?? 'General').trim() || 'General'))];
+    return {
+      reply: `Which category is that budget for?${present.length ? ` This group spends on: ${present.slice(0, 6).join(', ')}.` : ''} Say e.g. "set the Food budget to 300".`,
+      state: {},
+    };
+  }
+  if (cmd.remove) {
+    const existing = group.budgets?.[cmd.category];
+    if (existing == null) {
+      return { reply: `There's no ${cmd.category} budget to remove.`, state: {} };
+    }
+    const action: ProposedAction = {
+      type: 'set_budget',
+      category: cmd.category,
+      amount: 0,
+      summary: `Remove the ${cmd.category} budget (was ${money(existing, group.currency)}/month)`,
+    };
+    return { reply: 'Remove this budget?', action, state: { lastProposed: action } };
+  }
+  if (cmd.amount == null || cmd.amount <= 0) {
+    return {
+      reply: `What monthly amount for the ${cmd.category} budget? e.g. "set the ${cmd.category} budget to 300".`,
+      state: {},
+    };
+  }
+  const prev = group.budgets?.[cmd.category];
+  const action: ProposedAction = {
+    type: 'set_budget',
+    category: cmd.category,
+    amount: cmd.amount,
+    summary:
+      `${cmd.category}: ${money(cmd.amount, group.currency)}/month` +
+      (prev != null ? ` (was ${money(prev, group.currency)})` : ''),
+  };
+  return { reply: prev != null ? 'Update this budget?' : 'Set this budget?', action, state: { lastProposed: action } };
+}
+
 function handleNavigate(text: string): AssistantTurn {
   const target = detectNavTarget(text);
   if (!target) {
@@ -392,13 +468,42 @@ function handleNavigate(text: string): AssistantTurn {
 
 // ── Questions (deterministic → smart RAG → on-device model → reliable nudge) ──
 
-async function answerQuestion(text: string, group: Group, currentUserId: string): Promise<AssistantTurn> {
+async function answerQuestion(
+  text: string,
+  group: Group,
+  currentUserId: string,
+  agentic?: AgenticAssistContext,
+): Promise<AssistantTurn> {
   const local: ExpenseAiAnswer | null = answerExpenseLocally(text, group, currentUserId);
   if (local) return { reply: local.answer, sources: local.sources, state: {} };
 
-  const smart = await answerExpenseSmart(text, group, currentUserId);
-  if (smart) return { reply: smart.answer, sources: smart.sources, state: {} };
+  // Doc 24 P1: the agentic pipeline replaces the one-shot model chain when the
+  // surface provides thread + facts. Null → the legacy chain below is the net.
+  if (agentic) {
+    const last = agentic.thread.messages[agentic.thread.messages.length - 1];
+    const turn = await runAgenticTurn({
+      thread: agentic.thread,
+      userText: text,
+      facts: agentic.facts,
+      group,
+      currentUserId,
+      chatId: agentic.chatId,
+      engine: agentic.engine,
+      resolvedClarify: last?.role === 'clarify',
+      onStatus: agentic.onStatus,
+      onDelta: agentic.onDelta,
+    });
+    if (turn) {
+      if (turn.role === 'clarify') {
+        return { reply: turn.text, choices: turn.options, clarify: true, state: {} };
+      }
+      return { reply: turn.text, assumption: turn.assumption, engineSource: turn.source, state: {} };
+    }
+  }
 
+  // P6: the doc-17 stateless planExpenseQuery chain is DEAD (the agentic
+  // pipeline above superseded it). The grounded one-shot below remains only as
+  // the old-binary / pipeline-off fallback.
   if (getOnDeviceAiAvailability() === 'available') {
     const ans = await askExpenseAiOnDevice(text, group, currentUserId);
     if (ans?.answer) return { reply: ans.answer, sources: ans.sources, state: {} };

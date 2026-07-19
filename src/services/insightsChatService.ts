@@ -14,9 +14,16 @@
  */
 
 import type { Group } from '@/models';
+import { runAgenticTurn } from '@/services/aiPipelineService';
 import * as threadStore from '@/services/aiThreadStore';
+import {
+  processAssistantTurn,
+  type ConversationState,
+  type ProposedAction,
+} from '@/services/assistantService';
 import { tryPccPrompt } from '@/services/insightsAiService';
 import { answerExpenseLocally } from '@/services/onDeviceAiService';
+import { classifyMessage } from '@/utils/assistantChat';
 import {
   assembleInsightsPrompt,
   deterministicThreadTitle,
@@ -69,6 +76,43 @@ const RETRY_NUDGE =
 
 /** The chat affordance only exists when a narrative model is live. */
 export const insightsChatAvailable = (): boolean => getOnDeviceAiAvailability() === 'available';
+
+// ── Write actions in insights chat (doc 24 P4) ───────────────────────────────
+
+/** Confirm-card payload carried on an assistant message (`message.payload`). */
+export interface ActionPayload {
+  action: ProposedAction;
+  state: 'pending' | 'done' | 'cancelled';
+}
+
+/** Message payload → typed action payload (payload is unknown by design). */
+export function actionPayloadOf(payload: unknown): ActionPayload | null {
+  const p = payload as ActionPayload | undefined;
+  return p && typeof p === 'object' && p.action && typeof p.action.type === 'string' ? p : null;
+}
+
+/** Intents that delegate to the assistant's write machinery. `navigate` stays
+ * out — the insights overlay has no navigation stack of its own. */
+const WRITE_INTENTS = new Set([
+  'add_expense', 'settle_up', 'delete_expense', 'edit_expense', 'delete_settlement', 'set_budget',
+]);
+
+/** Pending confirm cards older than this retire on thread resume (doc 17 A.7:
+ * retire STALE cards, never an in-flight one). */
+const STALE_CARD_MS = 10 * 60 * 1000;
+
+const sweepStaleCards = (thread: AiThread, now: number): AiThread => {
+  let changed = false;
+  const messages = thread.messages.map((m) => {
+    const p = actionPayloadOf(m.payload);
+    if (p && p.state === 'pending' && now - m.createdAt > STALE_CARD_MS) {
+      changed = true;
+      return { ...m, payload: { ...p, state: 'cancelled' as const } };
+    }
+    return m;
+  });
+  return changed ? { ...thread, messages } : thread;
+};
 
 // ── User-selected engine (doc 23 rev: user chooses model) ────────────────────
 
@@ -133,15 +177,21 @@ export async function openInsightsThread(args: {
   if (!args.forceNew) {
     const existing = await threadStore.latestThread(INSIGHTS_SURFACE, args.scope);
     if (existing && shouldResumeThread(existing, now)) {
-      if (existing.factsHash !== factsHash) {
+      // Doc 17 A.7 / doc 24 P4: retire STALE pending confirm cards on resume
+      // (never fresh ones — a mid-flow draft survives an app switch).
+      const swept = sweepStaleCards(existing, now);
+      if (swept.factsHash !== factsHash) {
         const drifted: AiThread = {
-          ...existing,
+          ...swept,
           factsHash,
-          messages: [...existing.messages, contextChip(now)],
+          messages: [...swept.messages, contextChip(now)],
         };
         return { thread: await threadStore.saveThread(drifted), driftDetected: true };
       }
-      return { thread: existing, driftDetected: false };
+      return {
+        thread: swept === existing ? existing : await threadStore.saveThread(swept),
+        driftDetected: false,
+      };
     }
   }
 
@@ -181,10 +231,18 @@ export async function sendInsightsMessage(args: {
   /** Present for group scope — enables the deterministic exact-answer path. */
   group?: Group;
   currentUserId?: string;
+  /** Personal scope: cross-group rows for the agentic personal tools (doc 24). */
+  personalGroups?: { groupId: string; name: string; currency: string; expenses?: Group['expenses'] }[];
+  /** The group's chat id (doc 24 P5) — unlocks on-device-only chat_search. */
+  chatId?: string;
   /** True when this thread was resumed against changed data. */
   drifted?: boolean;
   /** User-selected engine (doc 23 rev). Defaults to 'auto'. */
   engine?: EnginePref;
+  /** P2 — loop progress line for the pending bubble ("Pulling April 2026…"). */
+  onStatus?: (line: string) => void;
+  /** P2 — streamed narration (cleaned accumulated text). Final reply is authoritative. */
+  onDelta?: (partial: string) => void;
 }): Promise<SendResult> {
   const now = Date.now();
   const userMsg: AiThreadMessage = {
@@ -246,10 +304,72 @@ export async function sendInsightsMessage(args: {
     }
   }
 
-  // 2) Narrative model grounded in facts + thread memory. When the question
-  // names a month/category/member/merchant, targeted deterministic aggregates
-  // ride along (doc 23 enrichment) so the model isn't limited to the top-5
-  // summary facts.
+  // 0c) WRITE actions (doc 24 P4): action-shaped messages and in-progress
+  //     action flows delegate to the assistant's proven machinery — same
+  //     slot-filling, same ProposedAction, model never writes. Conversation
+  //     state rides thread.meta so multi-turn drafts survive.
+  let assistantStatePatch: ConversationState | null = null;
+  if (!reply && args.group && args.currentUserId) {
+    const prevState = (args.thread.meta?.assistantState as ConversationState | undefined) ?? {};
+    const midFlow = !!(prevState.pending || prevState.lastProposed);
+    const intent = classifyMessage(
+      args.userText,
+      args.group.members.map((m) => ({ userId: m.userId, displayName: m.displayName })),
+    );
+    if (WRITE_INTENTS.has(intent) || midFlow) {
+      const turn = await processAssistantTurn(args.userText, args.group, args.currentUserId, prevState);
+      assistantStatePatch = turn.state;
+      const payload: ActionPayload | undefined =
+        turn.action && turn.action.type !== 'navigate'
+          ? { action: turn.action, state: 'pending' }
+          : undefined;
+      reply = {
+        id: threadStore.newMessageId(),
+        role: 'assistant',
+        text: turn.reply,
+        options: turn.choices,
+        payload,
+        createdAt: Date.now(),
+      };
+    }
+  }
+
+  // 1b) Agentic pipeline (doc 24 P1): router → data loop → adaptive narration,
+  // with ask-back clarify chips. Null (old binary / flag off / no reply) falls
+  // through to the legacy one-shot narrative below — never worse than before.
+  if (!reply) {
+    const last = args.thread.messages[args.thread.messages.length - 1];
+    const turn = await runAgenticTurn({
+      thread: args.thread,
+      userText: args.userText,
+      facts: args.facts,
+      group: args.group,
+      currentUserId: args.currentUserId ?? '',
+      personalGroups: args.personalGroups,
+      chatId: args.chatId,
+      engine: args.engine,
+      drifted: args.drifted,
+      resolvedClarify: last?.role === 'clarify',
+      onStatus: args.onStatus,
+      onDelta: args.onDelta,
+    });
+    if (turn) {
+      reply = {
+        id: threadStore.newMessageId(),
+        role: turn.role === 'clarify' ? 'clarify' : 'assistant',
+        text: turn.text,
+        source: turn.source,
+        options: turn.options,
+        assumption: turn.assumption,
+        createdAt: Date.now(),
+      };
+    }
+  }
+
+  // 2) LEGACY narrative model grounded in facts + thread memory. When the
+  // question names a month/category/member/merchant, targeted deterministic
+  // aggregates ride along (doc 23 enrichment) so the model isn't limited to
+  // the top-5 summary facts. Runs only when the agentic pipeline declined.
   if (!reply) {
     const extraFacts = args.group
       ? questionContext(args.userText, args.group.expenses ?? [], args.group.members ?? [], now)
@@ -347,11 +467,56 @@ export async function sendInsightsMessage(args: {
     }
   }
 
-  let thread: AiThread = { ...args.thread, messages: [...args.thread.messages, userMsg, reply] };
+  let thread: AiThread = {
+    ...args.thread,
+    ...(assistantStatePatch != null
+      ? { meta: { ...args.thread.meta, assistantState: assistantStatePatch } }
+      : {}),
+    messages: [...args.thread.messages, userMsg, reply],
+  };
   thread = await rollupIfNeeded(thread, args.facts);
   thread = await ensureTitle(thread);
   thread = await threadStore.saveThread(thread);
   return { thread, reply };
+}
+
+/**
+ * Resolve a confirm card (doc 24 P4): flip its payload state, clear the
+ * assistant draft state, optionally append a confirmation line, persist.
+ * The EXECUTION of the action happens in the UI layer (GroupContext mutators)
+ * BEFORE calling this with outcome 'done'.
+ */
+export async function resolveInsightsAction(args: {
+  thread: AiThread;
+  messageId: string;
+  outcome: 'done' | 'cancelled';
+  confirmationText?: string;
+}): Promise<AiThread> {
+  const messages = args.thread.messages.map((m) => {
+    if (m.id !== args.messageId) return m;
+    const p = actionPayloadOf(m.payload);
+    return p ? { ...m, payload: { ...p, state: args.outcome } } : m;
+  });
+  let thread: AiThread = {
+    ...args.thread,
+    messages,
+    meta: { ...args.thread.meta, assistantState: {} },
+  };
+  if (args.confirmationText) {
+    thread = {
+      ...thread,
+      messages: [
+        ...thread.messages,
+        {
+          id: threadStore.newMessageId(),
+          role: 'assistant',
+          text: args.confirmationText,
+          createdAt: Date.now(),
+        },
+      ],
+    };
+  }
+  return threadStore.saveThread(thread);
 }
 
 /** Fold older verbatim turns into the rolling summary when the prompt overflows. */

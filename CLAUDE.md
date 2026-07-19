@@ -17,7 +17,10 @@ decisions for expenses⇄chat integration; the contract for that build) ·
 [ai_layer/docs/22](ai_layer/docs/22_stats_insights.md) (stats/insights engine, AI tiers,
 chat digests, budgets — incl. the PCC simulator-crash gotcha; READ BEFORE touching PCC) ·
 [ai_layer/docs/23](ai_layer/docs/23_insights_chat_threads.md) (insights chat + the
-app-wide AI thread framework — locked decisions, thread store, PCC enrollment checklist).
+app-wide AI thread framework — locked decisions, thread store, PCC enrollment checklist) ·
+[ai_layer/docs/24](ai_layer/docs/24_agentic_ai_pipeline.md) (agentic "one brain" pipeline —
+JS tool loop, clarify chips, streaming, PCC depth engine, local-tier privacy rule; the
+binding contract for BOTH AI surfaces — READ BEFORE touching assistant/insights chat).
 
 ## Architecture DNA (do not break)
 

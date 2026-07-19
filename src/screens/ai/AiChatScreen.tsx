@@ -14,11 +14,13 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { GuardedScreen } from '@/components/ui';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
+import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import type { ExpenseAiSource } from '@/services/aiService';
 import { processAssistantTurn, type ConversationState, type ProposedAction } from '@/services/assistantService';
+import { buildFactsBlock } from '@/services/onDeviceAiService';
 import {
   activateChatThread,
   deleteChatThread,
@@ -33,7 +35,7 @@ import { formatCurrency } from '@/utils/currency';
 import { lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ActivityIndicator, Icon, Text, TextInput } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -54,6 +56,10 @@ interface ChatMsg {
   actionState?: ActionState;
   /** Tappable quick replies offered by the assistant. */
   choices?: string[];
+  /** True when this bubble is an agentic ask-back (doc 24 clarify). */
+  clarify?: boolean;
+  /** Stated reading under mild ambiguity — small caption under the answer. */
+  assumption?: string;
 }
 
 const GREETING = (name: string): ChatMsg => ({
@@ -74,7 +80,13 @@ const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
-  const { addExpense, settleUp, deleteExpense, updateExpense, deleteSettlement } = useGroups();
+  const { addExpense, settleUp, deleteExpense, updateExpense, deleteSettlement, updateGroupBudgets } = useGroups();
+  // P5: the group's chat id unlocks the on-device-only chat_search tool.
+  const { threads: chatThreads } = useChat();
+  const groupChatId = useMemo(
+    () => chatThreads.find((t) => t.groupId === group.groupId)?.chatId,
+    [chatThreads, group.groupId],
+  );
   const navigation = useNavigation<any>();
   const headerHeight = useHeaderHeight();
   const insets = useSafeAreaInsets();
@@ -101,6 +113,8 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   const [messages, setMessages] = useState<ChatMsg[]>([GREETING(group.name)]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  // P2 live turn feedback: the loop's status line, then streamed narration.
+  const [pending, setPending] = useState<{ status?: string; partial?: string } | null>(null);
   const [threads, setThreads] = useState<ChatThreadSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -116,10 +130,14 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
     [group.groupId],
   );
 
+  // Live mirror of `messages` for non-reactive reads (the agentic thread view).
+  const messagesRef = useRef<ChatMsg[]>([]);
+
   const append = useCallback(
     (msg: ChatMsg) => {
       setMessages((prev) => {
         const next = [...prev, msg];
+        messagesRef.current = next;
         persist(next);
         return next;
       });
@@ -139,6 +157,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
         const restored = saved.messages.map((m) =>
           m.action && m.actionState === 'pending' ? { ...m, actionState: 'cancelled' as ActionState } : m,
         );
+        messagesRef.current = restored;
         setMessages(restored);
         stateRef.current = { ...saved.state, pending: undefined, lastProposed: undefined };
         requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
@@ -159,7 +178,31 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
       setInput('');
       setBusy(true);
       try {
-        const turn = await processAssistantTurn(text, group, currentUserId, stateRef.current);
+        // Doc 24: hand the pipeline this chat as a thread view (messages BEFORE
+        // this turn — the new text rides as userText) + a compact facts blob.
+        const prior = messagesRef.current;
+        const agentic = {
+          thread: {
+            threadId: `assistant-live-${group.groupId}`,
+            surface: 'assistant',
+            scope: group.groupId,
+            title: '',
+            createdAt: 0,
+            updatedAt: Date.now(),
+            messages: prior.map((m) => ({
+              id: m.id,
+              role: m.role === 'user' ? ('user' as const) : m.clarify ? ('clarify' as const) : ('assistant' as const),
+              text: m.text,
+              createdAt: 0,
+            })),
+          },
+          facts: buildFactsBlock(group, currentUserId),
+          chatId: groupChatId,
+          onStatus: (line: string) => setPending((p) => ({ ...p, status: line })),
+          onDelta: (partial: string) => setPending({ partial }),
+        };
+        setPending({ status: 'Thinking…' });
+        const turn = await processAssistantTurn(text, group, currentUserId, stateRef.current, agentic);
         stateRef.current = turn.state;
         append({
           id: uid(),
@@ -169,14 +212,17 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           action: turn.action,
           actionState: turn.action ? 'pending' : undefined,
           choices: turn.choices,
+          clarify: turn.clarify,
+          assumption: turn.assumption,
         });
       } catch (err) {
         append({ id: uid(), role: 'assistant', text: err instanceof Error ? err.message : 'Something went wrong. Try again.' });
       } finally {
         setBusy(false);
+        setPending(null);
       }
     },
-    [append, busy, currentUserId, group, input],
+    [append, busy, currentUserId, group, groupChatId, input],
   );
 
   // ── Thread history (doc 23) ───────────────────────────────────────────────
@@ -321,6 +367,12 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
       } else if (a.type === 'delete_settlement') {
         await deleteSettlement(group.groupId, a.settlementId);
         ok = '✓ Settlement deleted.';
+      } else if (a.type === 'set_budget') {
+        const next = { ...(group.budgets ?? {}) };
+        if (a.amount > 0) next[a.category] = a.amount;
+        else delete next[a.category];
+        await updateGroupBudgets(group.groupId, next);
+        ok = a.amount > 0 ? '✓ Budget set.' : '✓ Budget removed.';
       } else {
         await deleteExpense(group.groupId, a.expenseId);
         ok = '✓ Expense deleted.';
@@ -348,6 +400,15 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           ]}
         >
           <Text style={{ color: isUser ? '#fff' : theme.colors.onSurface, lineHeight: 20 }}>{item.text}</Text>
+
+          {!isUser && !!item.assumption ? (
+            <Text
+              variant="labelSmall"
+              style={{ color: theme.colors.onSurfaceVariant, fontSize: 10, marginTop: 4, fontStyle: 'italic' }}
+            >
+              {item.assumption}
+            </Text>
+          ) : null}
 
           {item.sources && item.sources.length > 0 ? (
             <View style={styles.sources}>
@@ -508,7 +569,18 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
             busy ? (
               <View style={[styles.row, { justifyContent: 'flex-start' }]}>
                 <GlassView style={[styles.bubble, { borderTopLeftRadius: 4 }]}>
-                  <ActivityIndicator color={theme.colors.primary} />
+                  {pending?.partial ? (
+                    <Text style={{ color: theme.colors.onSurface, lineHeight: 20 }}>{pending.partial}</Text>
+                  ) : (
+                    <View style={styles.pendingRow}>
+                      <ActivityIndicator size="small" color={theme.colors.primary} />
+                      {!!pending?.status && (
+                        <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                          {pending.status}
+                        </Text>
+                      )}
+                    </View>
+                  )}
                 </GlassView>
               </View>
             ) : null
@@ -574,6 +646,7 @@ const styles = StyleSheet.create({
   sources: { marginTop: 10, gap: 4 },
   sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  pendingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   choiceChip: { borderRadius: 16, borderWidth: 1.5, paddingVertical: 6, paddingHorizontal: 14 },
   actionCard: { marginTop: 10, borderWidth: 1, borderRadius: 12, padding: 10 },
   actionButtons: { flexDirection: 'row', gap: 8, justifyContent: 'flex-end' },

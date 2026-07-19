@@ -6,6 +6,10 @@
  */
 
 import NativeModule, {
+  type FmChunkEvent,
+  type OnDeviceAgentDecisionRaw,
+  type OnDeviceAgentLoopStepRaw,
+  type OnDeviceAgentToolRequestRaw,
   type OnDeviceAiAvailability,
   type OnDeviceAskResult,
   type OnDeviceParsedExpenseRaw,
@@ -13,7 +17,6 @@ import NativeModule, {
   type OnDevicePccProbeResult,
   type OnDeviceReceiptItem,
   type OnDeviceReceiptResult,
-  type OnDeviceRouterDecisionRaw,
   type SearchTabEvent,
   type WidgetExpense,
   type WidgetGroupBalance,
@@ -170,18 +173,6 @@ export async function suggestExpenseCategory(text: string): Promise<string> {
 }
 
 /**
- * "Understand" pass of the RAG pipeline: turn a free-form question into a
- * structured plan. Throws when the on-device model is unavailable.
- */
-export async function planExpenseQuery(question: string, memberNames: string) {
-  const native = NativeModule;
-  if (!native?.planExpenseQuery) {
-    throw new Error('On-device query planning is not available on this platform.');
-  }
-  return serializeFm(() => native.planExpenseQuery(question, memberNames));
-}
-
-/**
  * Parse a natural-language sentence into an expense draft on-device. The caller
  * maps the returned names back to user ids. Throws when the model is unavailable.
  */
@@ -197,45 +188,112 @@ export async function parseExpenseFromText(
   return serializeFm(() => native.parseExpenseFromText(text, memberNames, currentUserName));
 }
 
-// ── Pipeline v2 spike wrappers (doc 17 §A0) ─────────────────────────────────
+// P6 (doc 24): the doc-17 §A0 spike wrappers (askOnDeviceStateful,
+// resetOnDeviceSession, routeMessage) and planExpenseQuery are DELETED — the
+// agentic pipeline below is the one brain; per-turn stateless assembly
+// replaced native transcripts by design (doc 23 rationale, app-wide).
 
-/** S2 — ask grounded in a PERSISTENT per-session transcript for real multi-turn
- * continuity. `sessionId` keys the session (e.g. group id). Throws when unavailable. */
-export async function askOnDeviceStateful(
-  sessionId: string,
-  question: string,
-  context: string,
-  instructions = '',
-): Promise<OnDeviceAskResult> {
-  const native = NativeModule;
-  if (!native?.askOnDeviceStateful) {
-    throw new Error('On-device AI is not available on this platform.');
-  }
-  return serializeFm(() => native.askOnDeviceStateful(sessionId, question, context, instructions));
-}
+// ── Agentic pipeline (doc 24 P1) ────────────────────────────────────────────
 
-/** S2 — clear a session's transcript (pass '' to clear all sessions). No-op off-iOS. */
-export function resetOnDeviceSession(sessionId = ''): void {
-  if (!NativeModule?.resetOnDeviceSession) return;
+/**
+ * True when this binary hosts the agentic router (`routeTurn`). The pipeline
+ * capability-gates on this: hot-swapped JS on an older binary silently keeps
+ * the legacy path instead of breaking.
+ */
+export function isAgenticNativeAvailable(): boolean {
   try {
-    NativeModule.resetOnDeviceSession(sessionId);
+    return typeof NativeModule?.routeTurn === 'function';
   } catch {
-    // best-effort
+    return false;
   }
 }
 
-/** S3 — abstaining router over a persistent per-group session. Throws when unavailable. */
-export async function routeMessage(
-  sessionId: string,
-  text: string,
-  memberNames: string,
-  isoDate: string,
-): Promise<OnDeviceRouterDecisionRaw> {
+/** Whole-turn router decision (doc 24 §3 step 2). Throws when unavailable. */
+export async function routeTurn(
+  instructions: string,
+  prompt: string,
+): Promise<OnDeviceAgentDecisionRaw> {
   const native = NativeModule;
-  if (!native?.routeMessage) {
-    throw new Error('On-device routing is not available on this platform.');
+  if (!native?.routeTurn) {
+    throw new Error('Agentic routing is not available on this binary.');
   }
-  return serializeFm(() => native.routeMessage(sessionId, text, memberNames, isoDate));
+  const route = native.routeTurn.bind(native);
+  return serializeFm(() => route(instructions, prompt));
+}
+
+/** True when this binary streams generation (doc 24 P2). */
+export function isStreamedGenerationAvailable(): boolean {
+  try {
+    return typeof NativeModule?.generateTextStreamed === 'function';
+  } catch {
+    return false;
+  }
+}
+
+export interface FmStreamHandle {
+  /** Resolves with the FULL final text when the stream ends (or was cancelled — partial). */
+  promise: Promise<string>;
+  /** Best-effort cancel: consumption stops at the next snapshot. */
+  cancel: () => void;
+}
+
+let fmStreamSeq = 0;
+
+/**
+ * P2 — streamed narrative generation. `onDelta(delta, full)` fires per chunk;
+ * the promise resolves with the complete text (authoritative — callers gate on
+ * it, not on accumulated deltas). On pre-P2 binaries this degrades to the
+ * non-streamed door with one synthetic full-text delta, so callers never
+ * branch on capability. Rides serializeFm: the queue holds until the stream
+ * finishes — one in-flight model call app-wide (Hermes-heap law).
+ */
+export function generateOnDeviceTextStreamed(
+  prompt: string,
+  instructions: string,
+  onDelta: (delta: string, full: string) => void,
+): FmStreamHandle {
+  const native = NativeModule;
+  if (!native?.generateTextStreamed || !native.addListener) {
+    const promise = generateOnDeviceText(prompt, instructions).then((text) => {
+      if (text) onDelta(text, text);
+      return text;
+    });
+    return { promise, cancel: () => {} };
+  }
+  const requestId = `fm-${Date.now()}-${++fmStreamSeq}`;
+  let full = '';
+  const sub = native.addListener<FmChunkEvent>('onFmChunk', (e) => {
+    if (e.requestId !== requestId || e.done || !e.delta) return;
+    full += e.delta;
+    onDelta(e.delta, full);
+  });
+  const gen = native.generateTextStreamed.bind(native);
+  const promise = serializeFm(() => gen(requestId, prompt, instructions))
+    .then((r) => r?.answer ?? '')
+    .finally(() => sub.remove());
+  return {
+    promise,
+    cancel: () => {
+      try {
+        native.cancelFmStream?.(requestId);
+      } catch {
+        // best-effort
+      }
+    },
+  };
+}
+
+/** One data-loop hop: done, or more tool requests. Throws when unavailable. */
+export async function agentLoopStep(
+  instructions: string,
+  prompt: string,
+): Promise<OnDeviceAgentLoopStepRaw> {
+  const native = NativeModule;
+  if (!native?.agentLoopStep) {
+    throw new Error('Agentic loop is not available on this binary.');
+  }
+  const step = native.agentLoopStep.bind(native);
+  return serializeFm(() => step(instructions, prompt));
 }
 
 /** S5 — Private Cloud Compute probe (iOS 27). `available` is false until the PCC
@@ -248,11 +306,23 @@ export async function pccProbe(question: string): Promise<OnDevicePccProbeResult
   return serializeFm(() => native.pccProbe(question));
 }
 
-/** PCC ask with real instructions + quota surfaced (doc 23). Falls back to the
- * spike `pccProbe` on binaries built before `pccAsk` existed, so hot-swapped JS
- * degrades gracefully. Neutral result off-iOS instead of throwing. */
-export async function pccAsk(question: string, instructions = ''): Promise<OnDevicePccAskResult> {
+/** PCC reasoning depth (doc 24 P3) — maps to ContextOptions.ReasoningLevel. */
+export type PccReasoning = 'light' | 'moderate' | 'deep';
+
+/** PCC ask with real instructions + quota surfaced (doc 23; P3 adds the
+ * reasoning level + structured quota via `pccAskDeep`). Falls back to plain
+ * `pccAsk` (reasoning ignored) and then the spike `pccProbe` on older
+ * binaries, so hot-swapped JS degrades gracefully. Neutral result off-iOS. */
+export async function pccAsk(
+  question: string,
+  instructions = '',
+  reasoning: PccReasoning = 'light',
+): Promise<OnDevicePccAskResult> {
   const native = NativeModule;
+  if (native?.pccAskDeep) {
+    const deep = native.pccAskDeep.bind(native);
+    return serializeFm(() => deep(question, instructions, reasoning));
+  }
   if (native?.pccAsk) {
     return serializeFm(() => native.pccAsk(question, instructions));
   }
@@ -329,6 +399,10 @@ export function setNativeSearchTabText(text: string): void {
 export { redactPIIFallback };
 export type {
   SearchTabEvent,
+  FmChunkEvent,
+  OnDeviceAgentDecisionRaw,
+  OnDeviceAgentLoopStepRaw,
+  OnDeviceAgentToolRequestRaw,
   OnDeviceAiAvailability,
   OnDeviceAskResult,
   OnDeviceParsedExpenseRaw,
@@ -336,7 +410,6 @@ export type {
   OnDevicePccProbeResult,
   OnDeviceReceiptItem,
   OnDeviceReceiptResult,
-  OnDeviceRouterDecisionRaw,
   WidgetExpense,
   WidgetGroupBalance,
   WidgetSnapshot,

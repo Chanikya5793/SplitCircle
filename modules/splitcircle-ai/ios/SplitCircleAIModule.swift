@@ -99,104 +99,108 @@ struct OnDeviceParsedExpense {
   var date: String
 }
 
-/// A structured plan parsed from a free-form question about expenses.
+// P6 (doc 24): OnDeviceQueryPlan, the doc-17 spike (OnDeviceRouterDecision,
+// FMSessionStore, routerInstructions), and their functions are DELETED —
+// superseded by the agentic pipeline structs below. Stateless per-call
+// sessions replaced native transcripts by design (doc 23, app-wide).
+
+// MARK: - Agentic pipeline (doc 24) -------------------------------------------
+// The "one brain" turn structs. ALL prompt text is assembled in JS (aiLoop.ts)
+// and tools execute deterministically in JS (aiTools.ts) — these structs only
+// give the model a strict shape to decide into. Calls are STATELESS (fresh
+// session per call, serialized app-wide by the JS serializeFm queue).
+
+/// One data request the model wants the JS tool registry to execute.
 @available(iOS 26.0, *)
 @Generable
-struct OnDeviceQueryPlan {
-  @Guide(description: "One of: spend, balance, settle_up, biggest, count, average, who_most, leaderboard, breakdown, paid_for, recent, summary, compare, trend, unknown. Use unknown if it isn't about this group's expenses/balances.")
-  var intent: String
-  @Guide(description: "Who it's about: 'me', 'group', or a member's EXACT name from the provided list. Empty for the whole group.")
-  var scope: String
-  @Guide(description: "Category if mentioned: General, Food, Transport, Utilities, Entertainment, Shopping, Travel, Health. Empty if none.")
+struct OnDeviceAgentToolRequest {
+  @Guide(description: "Tool name copied EXACTLY from the catalog in the instructions.")
+  var tool: String
+  @Guide(description: "Period like 'april 2026', '2026-04', 'last month', '2025'. Empty when the tool doesn't need one.")
+  var month: String
+  @Guide(description: "Second period, ONLY for compare_ranges. Empty otherwise.")
+  var monthB: String
+  @Guide(description: "Category name for category tools. Empty otherwise.")
   var category: String
-  @Guide(description: "A member's EXACT name for a balance question like 'how much do I owe X'. Empty otherwise.")
+  @Guide(description: "Member name copied EXACTLY from the member list. Empty otherwise.")
   var member: String
-  @Guide(description: "'paid' or 'share' for who_most/leaderboard. Empty otherwise.")
-  var metric: String
-  @Guide(description: "One of: this_month, last_month, this_week, last_week, this_year, today. Empty for all-time.")
-  var timeframe: String
+  @Guide(description: "Merchant/store name for merchant_stats. Empty otherwise.")
+  var merchant: String
+  @Guide(description: "Search text, ONLY for search_expenses. Empty otherwise.")
+  var query: String
+  @Guide(description: "Row count for top_expenses. 0 means the default.")
+  var n: Int
+  @Guide(description: "Months of history for category_trail. 0 means the default.")
+  var months: Int
 }
 
-// MARK: - Pipeline v2 spike (doc 17, branch spike/fm-ios27) -------------------
-// Additive + guarded. Proves three things compile on the iOS 27 SDK before the
-// Phase A rewrite: (S2) a persistent multi-turn session, (S3) a single abstaining
-// router @Generable, (S5) the iOS-27 Private Cloud Compute model. Existing
-// functions are left untouched.
-
-/// S3 — one structured router decision the JS layer routes on. `abstain` lets the
-/// model decline non-money / greeting messages instead of fabricating a plan
-/// (the root cause of "Hello" → settle-up dump). `queryPlan` reuses the existing
-/// @Generable plan, proving nested guided generation compiles.
+/// The router's whole-turn decision (doc 24 §3 step 2).
 @available(iOS 26.0, *)
 @Generable
-struct OnDeviceRouterDecision {
-  @Guide(description: "Intent, EXACTLY one of: question, add_expense, settle_up, delete_expense, edit_expense, delete_settlement, navigate, chitchat.")
+struct OnDeviceAgentDecision {
+  @Guide(description: "EXACTLY one of: answer, clarify, abstain.")
   var intent: String
-  @Guide(description: "Your confidence from 0.0 to 1.0 that the intent is correct.")
+  @Guide(description: "Confidence 0.0-1.0 that you understood the request.")
   var confidence: Double
-  @Guide(description: "True if this message is a greeting, small talk, an app/meta command, or NOT about this group's money. When true, leave the query plan empty.")
-  var abstain: Bool
-  @Guide(description: "A short, friendly reply to show ONLY when abstain is true (e.g. answer a greeting). Empty otherwise.")
-  var chitchatReply: String
-  @Guide(description: "For a 'question' intent: the structured query plan. For any other intent, leave its fields empty.")
-  var queryPlan: OnDeviceQueryPlan
+  @Guide(description: "EXACTLY one of: simple, moderate, deep.")
+  var complexity: String
+  @Guide(description: "When mildly ambiguous and you proceed anyway: the reading you chose (e.g. 'April means April 2026'). Empty when unambiguous.")
+  var assumption: String
+  @Guide(description: "The ONE short question to ask when intent is clarify. Empty otherwise.")
+  var clarifyQuestion: String
+  @Guide(description: "2-4 short tappable answer options when intent is clarify. Empty otherwise.")
+  var clarifyOptions: [String]
+  @Guide(description: "One friendly line to show when intent is abstain. Empty otherwise.")
+  var abstainReply: String
+  @Guide(description: "Data requests needed before answering, up to 3. Empty when the FACTS already suffice or intent is not answer.")
+  var requests: [OnDeviceAgentToolRequest]
 }
 
-/// S2 — persistent `LanguageModelSession` cache keyed by a caller string (per
-/// group / per role) so the model keeps a real multi-turn Transcript across
-/// turns. Today every call spins a fresh session and loses continuity; this is
-/// the highest-value fix. Stored behind a `nonisolated(unsafe)` global because
-/// the type is iOS-26-gated. NOTE: a session handles one request at a time —
-/// the JS layer serializes turns; revisit locking before shipping.
-nonisolated(unsafe) private var _fmSessionStore: AnyObject?
-
+/// One data-loop hop: keep gathering or stop (doc 24 §3 step 4).
 @available(iOS 26.0, *)
-final class FMSessionStore {
-  static func shared() -> FMSessionStore {
-    if let s = _fmSessionStore as? FMSessionStore { return s }
-    let s = FMSessionStore()
-    _fmSessionStore = s
-    return s
-  }
-
-  private var sessions: [String: LanguageModelSession] = [:]
-
-  func session(id: String, instructions: String) -> LanguageModelSession {
-    if let existing = sessions[id] { return existing }
-    let created = LanguageModelSession(instructions: instructions)
-    created.prewarm()
-    sessions[id] = created
-    return created
-  }
-
-  func reset(id: String) { sessions.removeValue(forKey: id) }
-  func resetAll() { sessions.removeAll() }
+@Generable
+struct OnDeviceAgentLoopStep {
+  @Guide(description: "True when the gathered TOOL RESULTS are enough to answer well.")
+  var done: Bool
+  @Guide(description: "The missing data requests when done is false, up to 3. Empty when done.")
+  var requests: [OnDeviceAgentToolRequest]
 }
 
-/// S3 — the richer system prompt (session `instructions`). Carries persona, the
-/// fixed category list, the abstain rule, the "never compute numbers" rule, and
-/// today's date (the model has no clock) so relative timeframes resolve.
 @available(iOS 26.0, *)
-func routerInstructions(memberNames: String, isoDate: String) -> String {
-  """
-  You are SplitCircle's assistant for a shared-expense group. Today is \(isoDate). \
-  Group members: \(memberNames).
-
-  Classify each user message into ONE intent. For a 'question', also fill the \
-  query plan. Rules:
-  - NEVER compute, total, or invent numbers — return only a plan; the app computes \
-    exact amounts deterministically.
-  - If the message is a greeting, small talk, an app/meta command (e.g. "clear the \
-    chat"), or not about this group's money, set abstain=true, intent='chitchat', \
-    and put a short friendly reply in chitchatReply. Do NOT fabricate a plan.
-  - Copy member names EXACTLY from the list above; never invent people.
-  - Pick categories only from: General, Food, Transport, Utilities, Entertainment, \
-    Shopping, Travel, Health.
-  - Use the conversation so far to resolve follow-ups like "what about April?" or \
-    "the month before that".
-  """
+private func agentRequestDict(_ r: OnDeviceAgentToolRequest) -> [String: Any] {
+  [
+    "tool": r.tool, "month": r.month, "monthB": r.monthB, "category": r.category,
+    "member": r.member, "merchant": r.merchant, "query": r.query, "n": r.n, "months": r.months,
+  ]
 }
 #endif
+
+// MARK: - P2 stream cancellation registry ------------------------------------
+// Cancel flags for in-flight FM streams, keyed by the JS-supplied requestId.
+// Best-effort: consumption stops at the next snapshot. Lock-guarded because
+// cancelFmStream is called from the JS thread while the stream loop runs on a
+// concurrent executor.
+
+nonisolated(unsafe) private var _fmCancelledStreams = Set<String>()
+private let _fmCancelLock = NSLock()
+
+private func fmCancelStream(_ id: String) {
+  _fmCancelLock.lock()
+  _fmCancelledStreams.insert(id)
+  _fmCancelLock.unlock()
+}
+
+private func fmStreamCancelled(_ id: String) -> Bool {
+  _fmCancelLock.lock()
+  defer { _fmCancelLock.unlock() }
+  return _fmCancelledStreams.contains(id)
+}
+
+private func fmClearCancel(_ id: String) {
+  _fmCancelLock.lock()
+  _fmCancelledStreams.remove(id)
+  _fmCancelLock.unlock()
+}
 
 public class SplitCircleAIModule: Module {
   private var searchTabObservers: [NSObjectProtocol] = []
@@ -210,7 +214,7 @@ public class SplitCircleAIModule: Module {
     // system search field. That field lives entirely in UIKit, so the patch
     // broadcasts its activity via NSNotificationCenter and this module relays
     // it to JS — SearchScreen mirrors the text instead of drawing its own field.
-    Events("onSearchTabEvent")
+    Events("onSearchTabEvent", "onFmChunk")
 
     /// True when this build carries the UISearchTab bridge (both this module and
     /// the react-native-screens patch ship in the same binary). JS uses this to
@@ -436,6 +440,45 @@ public class SplitCircleAIModule: Module {
       throw OnDeviceAiUnavailableException()
     }
 
+    /// P2 (doc 24) — STREAMED free-form generation. Cumulative snapshots from
+    /// `streamResponse` are diffed to deltas and emitted as 'onFmChunk' events
+    /// ({requestId, delta, done}); the promise resolves with the FULL final
+    /// text only when the stream ends, so the JS serializeFm queue naturally
+    /// holds until completion — one in-flight model call app-wide stays law.
+    AsyncFunction("generateTextStreamed") { (requestId: String, prompt: String, instructions: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else {
+          throw OnDeviceAiUnavailableException()
+        }
+        fmClearCancel(requestId)
+        let instr = instructions.isEmpty
+          ? "Follow the instructions in the prompt exactly. Reply with plain sentences only — no lists, no markdown, no preamble."
+          : instructions
+        let session = LanguageModelSession(instructions: instr)
+        var full = ""
+        for try await snapshot in session.streamResponse(to: prompt) {
+          if fmStreamCancelled(requestId) { break }
+          let text = snapshot.content
+          guard text.count > full.count else { continue }
+          let delta = String(text.dropFirst(full.count))
+          full = text
+          self.sendEvent("onFmChunk", ["requestId": requestId, "delta": delta, "done": false])
+        }
+        let cancelled = fmStreamCancelled(requestId)
+        fmClearCancel(requestId)
+        self.sendEvent("onFmChunk", ["requestId": requestId, "delta": "", "done": true])
+        return ["answer": full, "cancelled": cancelled]
+      }
+      #endif
+      throw OnDeviceAiUnavailableException()
+    }
+
+    /// P2 — cancel an in-flight stream (best-effort; the partial still returns).
+    Function("cancelFmStream") { (requestId: String) -> Void in
+      fmCancelStream(requestId)
+    }
+
     /// Parse OCR receipt text into structured data fully on-device via
     /// Foundation Models. `fewShot` is an optional plain-text block of learned
     /// merchant corrections used to bias item naming. Throws when unavailable.
@@ -554,101 +597,55 @@ public class SplitCircleAIModule: Module {
       throw OnDeviceAiUnavailableException()
     }
 
-    /// "Understand" pass of the RAG pipeline: turn a free-form question into a
-    /// structured plan the JS layer maps to an exact deterministic answer.
-    AsyncFunction("planExpenseQuery") { (question: String, memberNames: String) async throws -> [String: Any] in
+    // ── Agentic pipeline (doc 24): stateless guided-generation hops ─────────
+
+    /// Whole-turn router decision. Instructions + prompt arrive fully assembled
+    /// from JS (aiLoop.ts) so prompt iteration never needs a native rebuild; a
+    /// fresh session per call keeps the turn stateless and replayable. Greedy
+    /// sampling — routing must be stable run-to-run.
+    AsyncFunction("routeTurn") { (instructions: String, prompt: String) async throws -> [String: Any] in
       #if canImport(FoundationModels)
       if #available(iOS 26.0, *) {
         guard case .available = SystemLanguageModel.default.availability else {
           throw OnDeviceAiUnavailableException()
         }
-        let session = LanguageModelSession {
-          """
-          You convert a question about a shared-expense group into a structured
-          plan. Use EXACT member names from this list when a person is meant:
-          \(memberNames). If the question isn't about this group's expenses,
-          balances, or settlements, set intent to "unknown".
-          """
-        }
-        let r = try await session.respond(to: "Question: \(question)", generating: OnDeviceQueryPlan.self).content
-        return [
-          "intent": r.intent,
-          "scope": r.scope,
-          "category": r.category,
-          "member": r.member,
-          "metric": r.metric,
-          "timeframe": r.timeframe,
-        ]
-      }
-      #endif
-      throw OnDeviceAiUnavailableException()
-    }
-
-    // ── Pipeline v2 spike probes (doc 17 §A0) ───────────────────────────────
-
-    /// S2 — ask grounded in a PERSISTENT, per-session transcript so follow-ups
-    /// keep continuity. `sessionId` is the caller's group/thread key.
-    AsyncFunction("askOnDeviceStateful") { (sessionId: String, question: String, context: String, instructions: String) async throws -> [String: Any] in
-      #if canImport(FoundationModels)
-      if #available(iOS 26.0, *) {
-        guard case .available = SystemLanguageModel.default.availability else {
-          throw OnDeviceAiUnavailableException()
-        }
-        let instr = instructions.isEmpty
-          ? "You are SplitCircle's expense assistant. Answer ONLY from the numbered expense lines; never invent numbers."
-          : instructions
-        let session = FMSessionStore.shared().session(id: sessionId, instructions: instr)
-        let prompt = context.isEmpty ? question : """
-        Expenses:
-        \(context)
-
-        Question: \(question)
-        """
-        let response = try await session.respond(to: prompt, generating: OnDeviceExpenseAnswer.self)
-        return [
-          "answer": response.content.answer,
-          "sourceIndexes": response.content.sourceIndexes,
-        ]
-      }
-      #endif
-      throw OnDeviceAiUnavailableException()
-    }
-
-    /// S2 — clear a session's transcript (e.g. "clear the chat" / new thread).
-    Function("resetOnDeviceSession") { (sessionId: String) -> Void in
-      #if canImport(FoundationModels)
-      if #available(iOS 26.0, *) {
-        if sessionId.isEmpty { FMSessionStore.shared().resetAll() }
-        else { FMSessionStore.shared().reset(id: sessionId) }
-      }
-      #endif
-    }
-
-    /// S3 — single abstaining router over a persistent per-group session.
-    AsyncFunction("routeMessage") { (sessionId: String, text: String, memberNames: String, isoDate: String) async throws -> [String: Any] in
-      #if canImport(FoundationModels)
-      if #available(iOS 26.0, *) {
-        guard case .available = SystemLanguageModel.default.availability else {
-          throw OnDeviceAiUnavailableException()
-        }
-        let session = FMSessionStore.shared().session(
-          id: "router:\(sessionId)",
-          instructions: routerInstructions(memberNames: memberNames, isoDate: isoDate)
-        )
-        let r = try await session.respond(to: "Message: \(text)", generating: OnDeviceRouterDecision.self).content
+        let session = LanguageModelSession(instructions: instructions)
+        let r = try await session.respond(
+          to: prompt,
+          generating: OnDeviceAgentDecision.self,
+          options: GenerationOptions(sampling: .greedy)
+        ).content
         return [
           "intent": r.intent,
           "confidence": r.confidence,
-          "abstain": r.abstain,
-          "chitchatReply": r.chitchatReply,
-          "queryPlan": [
-            "intent": r.queryPlan.intent,
-            "scope": r.queryPlan.scope,
-            "category": r.queryPlan.category,
-            "member": r.queryPlan.member,
-            "metric": r.queryPlan.metric,
-            "timeframe": r.queryPlan.timeframe,
-          ],
+          "complexity": r.complexity,
+          "assumption": r.assumption,
+          "clarifyQuestion": r.clarifyQuestion,
+          "clarifyOptions": r.clarifyOptions,
+          "abstainReply": r.abstainReply,
+          "requests": r.requests.map(agentRequestDict),
+        ]
+      }
+      #endif
+      throw OnDeviceAiUnavailableException()
+    }
+
+    /// One data-loop hop: enough gathered, or request more (doc 24 §3 step 4).
+    AsyncFunction("agentLoopStep") { (instructions: String, prompt: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else {
+          throw OnDeviceAiUnavailableException()
+        }
+        let session = LanguageModelSession(instructions: instructions)
+        let r = try await session.respond(
+          to: prompt,
+          generating: OnDeviceAgentLoopStep.self,
+          options: GenerationOptions(sampling: .greedy)
+        ).content
+        return [
+          "done": r.done,
+          "requests": r.requests.map(agentRequestDict),
         ]
       }
       #endif
@@ -694,6 +691,54 @@ public class SplitCircleAIModule: Module {
       }
       #endif
       return ["available": false, "reason": "unsupportedOS", "answer": "", "contextSize": 0]
+    }
+
+    /// P3 (doc 24) — PCC ask with a caller-picked REASONING LEVEL and
+    /// STRUCTURED quota. The depth engine's door: 'moderate' for router-judged
+    /// deep turns, 'deep' for explicit analyze asks, 'light' otherwise.
+    /// Supersedes `pccAsk` for new JS (which falls back on older binaries).
+    AsyncFunction("pccAskDeep") { (question: String, instructions: String, reasoningLevel: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels) && compiler(>=6.4)
+      if #available(iOS 27.0, *) {
+        let model = PrivateCloudComputeLanguageModel()
+        var reason = "available"
+        switch model.availability {
+        case .available:
+          reason = "available"
+        case .unavailable(let r):
+          switch r {
+          case .deviceNotEligible: reason = "deviceNotEligible"
+          case .systemNotReady: reason = "systemNotReady"
+          @unknown default: reason = "unknown"
+          }
+        @unknown default:
+          reason = "unknown"
+        }
+        guard model.isAvailable else {
+          return ["available": false, "reason": reason, "answer": "", "quota": "", "limitReached": false, "resetDate": ""]
+        }
+        let level: ContextOptions.ReasoningLevel =
+          reasoningLevel == "deep" ? .deep : reasoningLevel == "moderate" ? .moderate : .light
+        let instr = instructions.isEmpty ? "You are SplitCircle's expense assistant." : instructions
+        let session = LanguageModelSession(model: model, instructions: instr)
+        let response = try await session.respond(
+          to: question,
+          contextOptions: ContextOptions(reasoningLevel: level)
+        )
+        // Structured quota (P3): the pill menu renders these, not a debug string.
+        let quota = model.quotaUsage
+        let resetIso = quota.resetDate.map { ISO8601DateFormatter().string(from: $0) } ?? ""
+        return [
+          "available": true,
+          "reason": reason,
+          "answer": response.content,
+          "quota": String(describing: quota.status),
+          "limitReached": quota.isLimitReached,
+          "resetDate": resetIso,
+        ]
+      }
+      #endif
+      return ["available": false, "reason": "unsupportedOS", "answer": "", "quota": "", "limitReached": false, "resetDate": ""]
     }
 
     /// PCC ask with REAL caller-supplied instructions + quota surfaced (doc 23

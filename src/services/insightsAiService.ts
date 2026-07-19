@@ -22,6 +22,7 @@ import {
   getOnDeviceAiAvailability,
   pccAsk,
   pccProbe,
+  type PccReasoning,
 } from '../../modules/splitcircle-ai';
 
 const PCC_PREF_KEY = 'pcc_deep_analysis_v1';
@@ -251,18 +252,40 @@ async function tryPcc(facts: string): Promise<InsightNarrative | null> {
  * the model's real instructions slot when given; '' keeps the doc-23 stateless
  * shape where the assembled prompt carries them.
  */
-export async function tryPccPrompt(prompt: string, instructions = ''): Promise<string | null> {
+export async function tryPccPrompt(
+  prompt: string,
+  instructions = '',
+  reasoning: PccReasoning = 'light',
+): Promise<string | null> {
   try {
     if (!(await getPccEnabled())) return null;
     if (!pccEligible()) return null;
     // pccAsk is already serialized by the module-level FM queue.
-    const result = await pccAsk(prompt, instructions);
+    const result = await pccAsk(prompt, instructions, reasoning);
+    if (result && typeof result.limitReached === 'boolean') {
+      lastPccQuota = { limitReached: result.limitReached, resetDate: result.resetDate || undefined };
+    }
     if (!result?.available) return null;
     const text = (result.answer ?? '').trim();
     return text || null;
   } catch {
     return null;
   }
+}
+
+// ── PCC quota (doc 24 P3 — the engine menu's truth line) ─────────────────────
+
+export interface PccQuotaInfo {
+  limitReached: boolean;
+  /** ISO date the quota resets, when Apple reports one. */
+  resetDate?: string;
+}
+
+let lastPccQuota: PccQuotaInfo | null = null;
+
+/** Structured quota from the most recent PCC call this session (null = none yet). */
+export function getLastPccQuota(): PccQuotaInfo | null {
+  return lastPccQuota;
 }
 
 /** Test/diagnostics hook. */
