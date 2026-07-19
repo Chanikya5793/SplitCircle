@@ -215,6 +215,36 @@ const NAVIGATE_RE = /\b(open|go to|take me to|jump to|navigate to)\b/i;
 const SHOW_RE = /\b(show|list|view|see|display|what (are|is|were)|tell me)\b/i;
 const HELP_RE = /\b(help|what (all )?can (you|u|i) (do|ask|help)|what (do|are) you (do|capable|able)|what can you answer|how (do|does) (this|you|it) work|commands?|capabilities|who are you|what are you)\b/i;
 
+/** Chat-control / social messages handled BEFORE any model or query routing. */
+export type MetaCommand = 'clear_chat' | 'help' | 'greeting' | 'thanks' | 'goodbye';
+
+/**
+ * Detect chat-control and social messages ("clear the chat", "hello",
+ * "thanks") so they never leak into the expense pipeline — the doc-17 #2
+ * failure was "Clear the chat" answered with a spend total. Pure + offline.
+ */
+export function detectMetaCommand(message: string): MetaCommand | null {
+  const q = (message ?? '').trim();
+  if (!q) return null;
+  if (
+    /\b(clear|reset|wipe|erase|delete)\b[^.?!]*\b(chat|conversation|history|thread|messages)\b/i.test(q) ||
+    /\b(start over|start fresh|new (chat|conversation|thread))\b/i.test(q)
+  ) {
+    return 'clear_chat';
+  }
+  if (HELP_RE.test(q)) return 'help';
+  if (/^(hi+|hello+|hey+|heya|yo|hola|howdy|namaste|good\s+(morning|afternoon|evening)|sup|what'?s\s+up)[\s!.,?]*$/i.test(q)) {
+    return 'greeting';
+  }
+  if (/^(thanks+|thank\s+you|thankyou|thx|ty|tysm|cheers|great|awesome|cool|nice|perfect|got\s+it)[\s!.,]*$/i.test(q)) {
+    return 'thanks';
+  }
+  if (/^(bye+|goodbye|see\s+(ya|you)|later|good\s*night|gn)[\s!.,]*$/i.test(q)) {
+    return 'goodbye';
+  }
+  return null;
+}
+
 export function classifyMessage(message: string, members: readonly AssistantMember[]): AssistantIntent {
   const q = message ?? '';
   const hasMember = findMember(q, members) != null;

@@ -17,6 +17,8 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { getOnDeviceAiAvailability, ON_DEVICE_UNAVAILABLE_COPY } from '@/services/onDeviceAiService';
 import { getIndexStoreEntries, getIndexStoreFootprint } from '@/services/aiIndexStore';
+import { isPccEnabled, setPccEnabled } from '@/services/aiSettings';
+import { getPccAvailability } from '../../../modules/splitcircle-ai';
 import { buildIndexStatus, type IndexStatus } from '@/utils/aiIndexStatus';
 import {
   clearAnalyticsCache,
@@ -25,10 +27,10 @@ import {
   INDEX_VERSION,
   isIndexFresh,
 } from '@/utils/expenseAnalytics';
-import { mediumHaptic, successHaptic } from '@/utils/haptics';
+import { lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
 import { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { Button, Icon, Text } from 'react-native-paper';
+import { Button, Icon, Switch, Text } from 'react-native-paper';
 
 /** Human-readable byte size for the storage footprint line. */
 const formatBytes = (bytes: number): string =>
@@ -42,6 +44,19 @@ export const AiIndexScreen = () => {
   const availability = getOnDeviceAiAvailability();
   const [status, setStatus] = useState<IndexStatus | null>(null);
   const [footprint, setFootprint] = useState(0);
+  const pccAvailability = getPccAvailability();
+  const pccSupported = pccAvailability !== 'unsupportedOS';
+  const [pccOn, setPccOn] = useState(true);
+
+  useEffect(() => {
+    void isPccEnabled().then(setPccOn);
+  }, []);
+
+  const togglePcc = (next: boolean) => {
+    lightHaptic();
+    setPccOn(next);
+    void setPccEnabled(next);
+  };
 
   // Index every group on-device (persisting to SQLite), then summarize from the
   // persistent store so freshness reflects what actually survives a restart.
@@ -101,6 +116,28 @@ export const AiIndexScreen = () => {
               : `${ON_DEVICE_UNAVAILABLE_COPY[availability]} Exact answers (spending, balances, settle-up) still work on this device without it.`}
           </Text>
         </GlassView>
+
+        {pccSupported ? (
+          <GlassView style={styles.card}>
+            <View style={[styles.row, { justifyContent: 'space-between' }]}>
+              <View style={[styles.row, { flex: 1 }]}>
+                <Icon source="cloud-lock-outline" size={22} color={theme.colors.primary} />
+                <Text variant="titleSmall" style={{ fontWeight: '700', color: theme.colors.onSurface }}>Private Cloud Compute</Text>
+              </View>
+              <Switch value={pccOn} onValueChange={togglePcc} />
+            </View>
+            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 6, lineHeight: 19 }}>
+              For complex questions the on-device model can't hold, SplitCircle can use
+              Apple's Private Cloud Compute — a bigger model on Apple silicon servers with
+              the same privacy guarantees, cryptographically verified and never stored.
+              Amounts are still computed exactly on-device; the cloud only helps phrase the
+              answer. Answers that use it are clearly labelled.{' '}
+              {pccAvailability === 'available'
+                ? pccOn ? 'Currently ON.' : 'Currently OFF — answers stay strictly on-device.'
+                : 'Not available right now (needs iOS 26+ with Apple Intelligence and a connection).'}
+            </Text>
+          </GlassView>
+        ) : null}
 
         <GlassView style={styles.card}>
           <View style={[styles.row, { justifyContent: 'space-between' }]}>

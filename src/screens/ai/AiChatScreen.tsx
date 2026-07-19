@@ -14,13 +14,16 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { GuardedScreen } from '@/components/ui';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
+import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
+import type { AssistantDataSources } from '@/services/aiDataAccess';
 import type { ExpenseAiSource } from '@/services/aiService';
 import { processAssistantTurn, type ConversationState, type ProposedAction } from '@/services/assistantService';
 import {
   activateChatThread,
+  clearChatSession,
   deleteChatThread,
   listChatThreads,
   loadChatSession,
@@ -28,6 +31,9 @@ import {
   saveChatSession,
   type ChatThreadSummary,
 } from '@/services/chatSession';
+import { getChatMessages } from '@/services/localMessageStorage';
+import { getRecurringBillsForGroup } from '@/services/recurringBillService';
+import { resetOnDeviceSession } from '../../../modules/splitcircle-ai';
 import type { NavTarget } from '@/utils/assistantChat';
 import { formatCurrency } from '@/utils/currency';
 import { lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
@@ -54,6 +60,10 @@ interface ChatMsg {
   actionState?: ActionState;
   /** Tappable quick replies offered by the assistant. */
   choices?: string[];
+  /** Where an open-ended answer came from — shows a "Private Cloud Compute" badge. */
+  via?: 'onDevice' | 'pcc';
+  /** True while the bubble is receiving streamed partials. */
+  streaming?: boolean;
 }
 
 const GREETING = (name: string): ChatMsg => ({
@@ -71,10 +81,14 @@ const QUICK_PROMPTS = [
 
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+/** Confirm cards / drafts older than this are retired on session restore. */
+const STALE_CARD_MS = 10 * 60 * 1000;
+
 export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
-  const { addExpense, settleUp, deleteExpense, updateExpense, deleteSettlement } = useGroups();
+  const { groups, addExpense, settleUp, deleteExpense, updateExpense, deleteSettlement } = useGroups();
+  const { threads: chatThreads } = useChat();
   const navigation = useNavigation<any>();
   const headerHeight = useHeaderHeight();
   const insets = useSafeAreaInsets();
@@ -128,6 +142,21 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
     [persist],
   );
 
+  /** Patch a single message in place (used for streaming partials). */
+  const patchMessage = useCallback((id: string, patch: Partial<ChatMsg>) => {
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
+  }, []);
+
+  // Extra data the assistant can reach when a prompt needs it (cross-group
+  // aggregates, this group's chat, recurring bills). All local / on-device.
+  const groupChatId = chatThreads.find((t) => t.groupId === group.groupId)?.chatId;
+  const dataSources: AssistantDataSources = {
+    getAllGroups: () => groups,
+    getRecurringBills: () => getRecurringBillsForGroup(group.groupId),
+    getChatMessages: groupChatId ? () => getChatMessages(groupChatId) : undefined,
+  };
+
   // Restore the persisted conversation for this group on first mount.
   useEffect(() => {
     let active = true;
@@ -135,12 +164,21 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
       if (!active || hydrated.current) return;
       hydrated.current = true;
       if (saved && saved.messages.length > 0) {
-        // Drop any stale pending confirm cards from the previous session.
-        const restored = saved.messages.map((m) =>
-          m.action && m.actionState === 'pending' ? { ...m, actionState: 'cancelled' as ActionState } : m,
-        );
+        const stale = Date.now() - (saved.updatedAt || 0) > STALE_CARD_MS;
+        // Only RETIRE confirm cards that are actually stale (older than the
+        // window). A quick nav-away-and-back keeps the pending card AND the
+        // in-progress slot-filling draft (doc 17 fix #6). Streaming bubbles
+        // never resume — collapse any that were mid-stream at save time.
+        const restored = saved.messages.map((m) => {
+          if (m.streaming) return { ...m, streaming: false };
+          if (stale && m.action && m.actionState === 'pending') {
+            return { ...m, actionState: 'cancelled' as ActionState };
+          }
+          return m;
+        });
         setMessages(restored);
-        stateRef.current = { ...saved.state, pending: undefined, lastProposed: undefined };
+        // Preserve the slot-filling draft; drop only a stale last-proposed card.
+        stateRef.current = stale ? { ...saved.state, pending: undefined, lastProposed: undefined } : saved.state;
         requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
       }
     });
@@ -158,25 +196,70 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
       append({ id: uid(), role: 'user', text });
       setInput('');
       setBusy(true);
+
+      // A single assistant bubble that streamed partials fill in as they arrive.
+      const replyId = uid();
+      let streamStarted = false;
+      const onPartial = (partial: string) => {
+        if (!partial) return;
+        if (!streamStarted) {
+          streamStarted = true;
+          append({ id: replyId, role: 'assistant', text: partial, streaming: true });
+        } else {
+          patchMessage(replyId, { text: partial });
+        }
+      };
+
       try {
-        const turn = await processAssistantTurn(text, group, currentUserId, stateRef.current);
+        const turn = await processAssistantTurn(text, group, currentUserId, stateRef.current, {
+          sources: dataSources,
+          onPartial,
+        });
         stateRef.current = turn.state;
-        append({
-          id: uid(),
+
+        // Meta "clear the chat" — wipe the thread, persisted session, and the
+        // model's transcript so the next turn truly starts fresh.
+        if (turn.resetChat) {
+          resetOnDeviceSession(`ask:${group.groupId}`);
+          resetOnDeviceSession(`route:${group.groupId}`);
+          void clearChatSession(group.groupId);
+          stateRef.current = {};
+          const cleared: ChatMsg[] = [GREETING(group.name), { id: uid(), role: 'assistant', text: turn.reply }];
+          setMessages(cleared);
+          persist(cleared);
+          return;
+        }
+
+        const final: ChatMsg = {
+          id: replyId,
           role: 'assistant',
           text: turn.reply,
           sources: turn.sources,
           action: turn.action,
           actionState: turn.action ? 'pending' : undefined,
           choices: turn.choices,
-        });
+          via: turn.via,
+          streaming: false,
+        };
+        if (streamStarted) {
+          patchMessage(replyId, final);
+          setMessages((prev) => {
+            persist(prev);
+            return prev;
+          });
+        } else {
+          append(final);
+        }
       } catch (err) {
-        append({ id: uid(), role: 'assistant', text: err instanceof Error ? err.message : 'Something went wrong. Try again.' });
+        const msg = err instanceof Error ? err.message : 'Something went wrong. Try again.';
+        if (streamStarted) patchMessage(replyId, { text: msg, streaming: false });
+        else append({ id: replyId, role: 'assistant', text: msg });
       } finally {
         setBusy(false);
       }
     },
-    [append, busy, currentUserId, group, input],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [append, patchMessage, persist, busy, currentUserId, group, input, groups, chatThreads],
   );
 
   // ── Thread history (doc 23) ───────────────────────────────────────────────
@@ -347,7 +430,19 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
               : { borderTopLeftRadius: 4 },
           ]}
         >
-          <Text style={{ color: isUser ? '#fff' : theme.colors.onSurface, lineHeight: 20 }}>{item.text}</Text>
+          <Text style={{ color: isUser ? '#fff' : theme.colors.onSurface, lineHeight: 20 }}>
+            {item.text}
+            {item.streaming ? <Text style={{ color: theme.colors.primary }}> ▍</Text> : null}
+          </Text>
+
+          {item.via === 'pcc' ? (
+            <View style={styles.badge}>
+              <Icon source="cloud-lock-outline" size={13} color={theme.colors.onSurfaceVariant} />
+              <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                Answered in Private Cloud Compute
+              </Text>
+            </View>
+          ) : null}
 
           {item.sources && item.sources.length > 0 ? (
             <View style={styles.sources}>
@@ -573,6 +668,7 @@ const styles = StyleSheet.create({
   bubble: { maxWidth: '88%', borderRadius: 18, paddingVertical: 10, paddingHorizontal: 14 },
   sources: { marginTop: 10, gap: 4 },
   sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  badge: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8, opacity: 0.85 },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   choiceChip: { borderRadius: 16, borderWidth: 1.5, paddingVertical: 6, paddingHorizontal: 14 },
   actionCard: { marginTop: 10, borderWidth: 1, borderRadius: 12, padding: 10 },

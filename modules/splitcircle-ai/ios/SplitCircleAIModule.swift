@@ -113,8 +113,22 @@ struct OnDeviceQueryPlan {
   var member: String
   @Guide(description: "'paid' or 'share' for who_most/leaderboard. Empty otherwise.")
   var metric: String
-  @Guide(description: "One of: this_month, last_month, this_week, last_week, this_year, today. Empty for all-time.")
+  @Guide(description: "Timeframe token: this_month, last_month, this_week, last_week, this_year, today, a month name optionally with year (april, april_2025), a quarter (q2, q2_2025), a year (year_2025), or previous_period for 'the month/period before that'. Empty for all-time.")
   var timeframe: String
+}
+
+/// One agentic answering step: the model either answers from the provided data
+/// or names the data packs it still needs (read-only; the JS layer fetches and
+/// re-prompts). Numbers still come only from the verified facts it was given.
+@available(iOS 26.0, *)
+@Generable
+struct OnDeviceAgentStep {
+  @Guide(description: "The final answer when the provided data is sufficient. Empty ONLY when more data is needed.")
+  var answer: String
+  @Guide(description: "1-based numbers of the expense lines actually used. Empty if none.")
+  var sourceIndexes: [Int]
+  @Guide(description: "Data kinds still needed to answer, chosen ONLY from the 'Available data kinds' list in the prompt. Empty when the answer is complete.")
+  var needsData: [String]
 }
 
 // MARK: - Pipeline v2 spike (doc 17, branch spike/fm-ios27) -------------------
@@ -152,16 +166,23 @@ nonisolated(unsafe) private var _fmSessionStore: AnyObject?
 
 @available(iOS 26.0, *)
 final class FMSessionStore {
+  private static let storeLock = NSLock()
+
   static func shared() -> FMSessionStore {
+    storeLock.lock()
+    defer { storeLock.unlock() }
     if let s = _fmSessionStore as? FMSessionStore { return s }
     let s = FMSessionStore()
     _fmSessionStore = s
     return s
   }
 
+  private let lock = NSLock()
   private var sessions: [String: LanguageModelSession] = [:]
 
   func session(id: String, instructions: String) -> LanguageModelSession {
+    lock.lock()
+    defer { lock.unlock() }
     if let existing = sessions[id] { return existing }
     let created = LanguageModelSession(instructions: instructions)
     created.prewarm()
@@ -169,8 +190,17 @@ final class FMSessionStore {
     return created
   }
 
-  func reset(id: String) { sessions.removeValue(forKey: id) }
-  func resetAll() { sessions.removeAll() }
+  func reset(id: String) {
+    lock.lock()
+    defer { lock.unlock() }
+    sessions.removeValue(forKey: id)
+  }
+
+  func resetAll() {
+    lock.lock()
+    defer { lock.unlock() }
+    sessions.removeAll()
+  }
 }
 
 /// S3 — the richer system prompt (session `instructions`). Carries persona, the
@@ -188,12 +218,25 @@ func routerInstructions(memberNames: String, isoDate: String) -> String {
     exact amounts deterministically.
   - If the message is a greeting, small talk, an app/meta command (e.g. "clear the \
     chat"), or not about this group's money, set abstain=true, intent='chitchat', \
-    and put a short friendly reply in chitchatReply. Do NOT fabricate a plan.
+    and put a short friendly reply in chitchatReply. Do NOT fabricate a plan. \
+    When you are unsure what the user means, also abstain — never guess a plan.
   - Copy member names EXACTLY from the list above; never invent people.
   - Pick categories only from: General, Food, Transport, Utilities, Entertainment, \
     Shopping, Travel, Health.
+  - Timeframe tokens: this_month, last_month, this_week, last_week, this_year, \
+    today, a month name like april or april_2025, a quarter like q2, a year like \
+    year_2025, or previous_period for "the month/period before that". Empty means \
+    all-time — do NOT default to this_month when no time is mentioned.
   - Use the conversation so far to resolve follow-ups like "what about April?" or \
     "the month before that".
+
+  Examples:
+  - "Hello" → abstain=true, intent=chitchat, chitchatReply="Hey! Ask me about \
+    this group's spending, or tell me to add an expense."
+  - "Aprils total?" → intent=question, plan{intent=spend, scope=group, timeframe=april}
+  - "what about the month before that?" → intent=question, \
+    plan{intent=spend, scope=group, timeframe=previous_period}
+  - "add 20 for lunch with Sam" → intent=add_expense, confidence high, no plan
   """
 }
 #endif
@@ -210,7 +253,9 @@ public class SplitCircleAIModule: Module {
     // system search field. That field lives entirely in UIKit, so the patch
     // broadcasts its activity via NSNotificationCenter and this module relays
     // it to JS — SearchScreen mirrors the text instead of drawing its own field.
-    Events("onSearchTabEvent")
+    // `onAiStreamChunk` carries snapshot-streamed answer partials
+    // ({ requestId, text, done }) from askOnDeviceStreamed.
+    Events("onSearchTabEvent", "onAiStreamChunk")
 
     /// True when this build carries the UISearchTab bridge (both this module and
     /// the react-native-screens patch ship in the same binary). JS uses this to
@@ -649,6 +694,138 @@ public class SplitCircleAIModule: Module {
             "metric": r.queryPlan.metric,
             "timeframe": r.queryPlan.timeframe,
           ],
+        ]
+      }
+      #endif
+      throw OnDeviceAiUnavailableException()
+    }
+
+    // ── Pipeline v2 (doc 17 Phases A–C): streaming, agentic reads, PCC ──────
+
+    /// Ask over a persistent session, STREAMING the answer as it generates.
+    /// Emits `onAiStreamChunk` events ({requestId, text, done}) with the
+    /// answer-so-far, then resolves with the final structured result. The JS
+    /// layer serializes calls per session.
+    AsyncFunction("askOnDeviceStreamed") { (sessionId: String, requestId: String, question: String, context: String, instructions: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else {
+          throw OnDeviceAiUnavailableException()
+        }
+        let instr = instructions.isEmpty
+          ? "You are SplitCircle's expense assistant. Answer ONLY from the numbered expense lines and verified totals; never invent numbers."
+          : instructions
+        let session = FMSessionStore.shared().session(id: sessionId, instructions: instr)
+        let prompt = context.isEmpty ? question : """
+        \(context)
+
+        Question: \(question)
+        """
+        var lastAnswer = ""
+        var lastIndexes: [Int] = []
+        let stream = session.streamResponse(to: prompt, generating: OnDeviceExpenseAnswer.self)
+        for try await partial in stream {
+          if let answer = partial.answer, !answer.isEmpty, answer != lastAnswer {
+            lastAnswer = answer
+            self.sendEvent("onAiStreamChunk", ["requestId": requestId, "text": answer, "done": false])
+          }
+          if let idxs = partial.sourceIndexes { lastIndexes = idxs }
+        }
+        self.sendEvent("onAiStreamChunk", ["requestId": requestId, "text": lastAnswer, "done": true])
+        return ["answer": lastAnswer, "sourceIndexes": lastIndexes]
+      }
+      #endif
+      throw OnDeviceAiUnavailableException()
+    }
+
+    /// One agentic answering step over a persistent session: the model answers
+    /// from the provided packs OR names the data kinds it still needs (from
+    /// `availableData`). The JS layer fetches requested packs and calls again —
+    /// the read-only tool loop lives in JS where the data actually is.
+    AsyncFunction("askOnDeviceAgentic") { (sessionId: String, question: String, context: String, availableData: String, isoDate: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else {
+          throw OnDeviceAiUnavailableException()
+        }
+        let session = FMSessionStore.shared().session(
+          id: sessionId,
+          instructions: """
+          You are SplitCircle's expense assistant. Today is \(isoDate). Answer \
+          ONLY from the data sections provided; the 'Verified totals' numbers \
+          are exact — phrase them, never recompute or invent numbers. If the \
+          provided sections cannot answer the question but one of the available \
+          data kinds could, put those kind names in needsData and leave the \
+          answer empty. If nothing could answer it, say so plainly in the answer.
+          """
+        )
+        let prompt = """
+        Available data kinds you may request: \(availableData)
+
+        \(context)
+
+        Question: \(question)
+        """
+        let r = try await session.respond(to: prompt, generating: OnDeviceAgentStep.self).content
+        return ["answer": r.answer, "sourceIndexes": r.sourceIndexes, "needsData": r.needsData]
+      }
+      #endif
+      throw OnDeviceAiUnavailableException()
+    }
+
+    /// Private Cloud Compute availability: "available" | "deviceNotEligible" |
+    /// "systemNotReady" | "unsupportedOS". Runtime-gated on iOS 27 + the PCC
+    /// entitlement (portal capability) + network.
+    Function("getPccAvailability") { () -> String in
+      #if canImport(FoundationModels)
+      if #available(iOS 27.0, *) {
+        let model = PrivateCloudComputeLanguageModel()
+        switch model.availability {
+        case .available: return "available"
+        case .unavailable(let r):
+          switch r {
+          case .deviceNotEligible: return "deviceNotEligible"
+          case .systemNotReady: return "systemNotReady"
+          @unknown default: return "systemNotReady"
+          }
+        @unknown default: return "systemNotReady"
+        }
+      }
+      #endif
+      return "unsupportedOS"
+    }
+
+    /// Ask Private Cloud Compute, grounded in the same packed context as the
+    /// on-device path. 32K window + deeper reasoning for complex questions the
+    /// on-device model can't hold. Fresh session per call (context is repacked
+    /// each time); numbers STILL come from the verified facts, PCC only
+    /// understands + phrases. `reasoningLevel`: "light" | "moderate" | "deep".
+    AsyncFunction("askPcc") { (question: String, context: String, instructions: String, reasoningLevel: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels)
+      if #available(iOS 27.0, *) {
+        let model = PrivateCloudComputeLanguageModel()
+        guard model.isAvailable else { throw OnDeviceAiUnavailableException() }
+        let instr = instructions.isEmpty
+          ? "You are SplitCircle's expense assistant. Answer ONLY from the data sections provided; verified totals are exact — never recompute or invent numbers."
+          : instructions
+        let level: ReasoningLevel = reasoningLevel == "deep" ? .deep : reasoningLevel == "moderate" ? .moderate : .light
+        let session = LanguageModelSession(model: model, instructions: instr)
+        let prompt = context.isEmpty ? question : """
+        \(context)
+
+        Question: \(question)
+        """
+        let response = try await session.respond(
+          to: prompt,
+          generating: OnDeviceExpenseAnswer.self,
+          contextOptions: ContextOptions(reasoningLevel: level)
+        )
+        return [
+          "answer": response.content.answer,
+          "sourceIndexes": response.content.sourceIndexes,
+          // Best-effort transparency into the user's PCC quota (shape is
+          // OS-defined; JS treats it as an opaque display string).
+          "quota": String(describing: model.quotaUsage),
         ]
       }
       #endif

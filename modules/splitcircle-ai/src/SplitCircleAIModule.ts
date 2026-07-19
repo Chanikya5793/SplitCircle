@@ -111,6 +111,39 @@ export interface SplitCircleAINativeModule {
   reloadWidgets(): void;
   /** The App Group identifier the widget snapshot lives under. */
   getAppGroupId(): string;
+
+  // ── Pipeline v2 (doc 17 Phases A–C) ───────────────────────────────────────
+  /** Streamed ask over a persistent session; emits `onAiStreamChunk` events. */
+  askOnDeviceStreamed(
+    sessionId: string,
+    requestId: string,
+    question: string,
+    context: string,
+    instructions: string,
+  ): Promise<OnDeviceAskResult>;
+  /** One agentic step: answer from packs or request more data kinds. */
+  askOnDeviceAgentic(
+    sessionId: string,
+    question: string,
+    context: string,
+    availableData: string,
+    isoDate: string,
+  ): Promise<OnDeviceAgentStepRaw>;
+  /** PCC availability (iOS 27 + entitlement + network). */
+  getPccAvailability(): PccAvailability;
+  /** Ask Private Cloud Compute grounded in packed context. */
+  askPcc(
+    question: string,
+    context: string,
+    instructions: string,
+    reasoningLevel: PccReasoningLevel,
+  ): Promise<PccAskResult>;
+
+  /** Subscribe to native events (Expo Modules API). */
+  addListener?(
+    eventName: 'onAiStreamChunk',
+    listener: (event: AiStreamChunkEvent) => void,
+  ): { remove(): void };
 }
 
 /** A recent expense projected into the snapshot for Siri/Shortcuts entities. */
@@ -153,6 +186,31 @@ export interface WidgetSnapshot {
   userId: string;
   updatedAt: number;
   groups: WidgetGroupBalance[];
+}
+
+/** Snapshot-streamed partial: `text` is the full answer so far. */
+export interface AiStreamChunkEvent {
+  requestId: string;
+  text: string;
+  done: boolean;
+}
+
+export interface OnDeviceAgentStepRaw {
+  answer: string;
+  sourceIndexes: number[];
+  /** Data kinds the model still needs (validated JS-side). */
+  needsData: string[];
+}
+
+export type PccAvailability = 'available' | 'deviceNotEligible' | 'systemNotReady' | 'unsupportedOS';
+
+export type PccReasoningLevel = 'light' | 'moderate' | 'deep';
+
+export interface PccAskResult {
+  answer: string;
+  sourceIndexes: number[];
+  /** Opaque OS-defined quota description, for transparency UI. */
+  quota?: string;
 }
 
 export interface OnDeviceRouterDecisionRaw {

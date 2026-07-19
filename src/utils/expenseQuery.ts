@@ -82,7 +82,8 @@ export const ASSISTANT_CAPABILITIES = [
 const MAX_SOURCES = 8;
 
 // Canonical category → words that imply it (improves recall for "food", "gas"…).
-const CATEGORY_SYNONYMS: Record<string, string[]> = {
+// Exported for the follow-up resolver ("what about food?" → category swap).
+export const CATEGORY_SYNONYMS: Record<string, string[]> = {
   Food: ['food', 'dinner', 'lunch', 'breakfast', 'restaurant', 'restaurants', 'eat', 'eating', 'groceries', 'grocery', 'meal', 'meals', 'snack', 'snacks', 'dining', 'coffee'],
   Transport: ['transport', 'transportation', 'gas', 'fuel', 'uber', 'lyft', 'taxi', 'cab', 'commute', 'train', 'bus', 'parking'],
   Utilities: ['utilities', 'utility', 'electric', 'electricity', 'water', 'internet', 'wifi'],

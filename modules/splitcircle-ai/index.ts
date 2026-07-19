@@ -6,6 +6,8 @@
  */
 
 import NativeModule, {
+  type AiStreamChunkEvent,
+  type OnDeviceAgentStepRaw,
   type OnDeviceAiAvailability,
   type OnDeviceAskResult,
   type OnDeviceParsedExpenseRaw,
@@ -14,6 +16,9 @@ import NativeModule, {
   type OnDeviceReceiptItem,
   type OnDeviceReceiptResult,
   type OnDeviceRouterDecisionRaw,
+  type PccAskResult,
+  type PccAvailability,
+  type PccReasoningLevel,
   type SearchTabEvent,
   type WidgetExpense,
   type WidgetGroupBalance,
@@ -326,9 +331,82 @@ export function setNativeSearchTabText(text: string): void {
   }
 }
 
+// ── Pipeline v2 (doc 17 Phases A–C) ─────────────────────────────────────────
+
+/**
+ * Streamed ask over a persistent session. Partials arrive via
+ * `subscribeAiStream` ({requestId, text, done} — `text` is the whole answer so
+ * far); the promise resolves with the final structured result. Throws when the
+ * on-device model is unavailable.
+ */
+export async function askOnDeviceStreamed(
+  sessionId: string,
+  requestId: string,
+  question: string,
+  context: string,
+  instructions = '',
+): Promise<OnDeviceAskResult> {
+  if (!NativeModule?.askOnDeviceStreamed) {
+    throw new Error('On-device AI is not available on this platform.');
+  }
+  return NativeModule.askOnDeviceStreamed(sessionId, requestId, question, context, instructions);
+}
+
+/** Subscribe to streamed answer partials. Returns an unsubscribe fn (no-op off-iOS). */
+export function subscribeAiStream(listener: (event: AiStreamChunkEvent) => void): () => void {
+  const sub = NativeModule?.addListener?.('onAiStreamChunk', listener);
+  return () => sub?.remove();
+}
+
+/**
+ * One agentic answering step: the model answers from the provided packs or
+ * names the data kinds it still needs (the caller fetches and re-prompts).
+ * Throws when the on-device model is unavailable.
+ */
+export async function askOnDeviceAgentic(
+  sessionId: string,
+  question: string,
+  context: string,
+  availableData: string,
+  isoDate: string,
+): Promise<OnDeviceAgentStepRaw> {
+  if (!NativeModule?.askOnDeviceAgentic) {
+    throw new Error('On-device AI is not available on this platform.');
+  }
+  return NativeModule.askOnDeviceAgentic(sessionId, question, context, availableData, isoDate);
+}
+
+/** Private Cloud Compute availability (iOS 27 + entitlement + network). */
+export function getPccAvailability(): PccAvailability {
+  if (!NativeModule?.getPccAvailability) return 'unsupportedOS';
+  try {
+    return NativeModule.getPccAvailability();
+  } catch {
+    return 'unsupportedOS';
+  }
+}
+
+/**
+ * Ask Private Cloud Compute, grounded in the same packed context as the
+ * on-device path (32K window, deeper reasoning). Throws when unavailable —
+ * callers gate on `getPccAvailability()` and the user's PCC setting first.
+ */
+export async function askPcc(
+  question: string,
+  context: string,
+  instructions = '',
+  reasoningLevel: PccReasoningLevel = 'light',
+): Promise<PccAskResult> {
+  if (!NativeModule?.askPcc) {
+    throw new Error('Private Cloud Compute is not available on this platform.');
+  }
+  return NativeModule.askPcc(question, context, instructions, reasoningLevel);
+}
+
 export { redactPIIFallback };
 export type {
-  SearchTabEvent,
+  AiStreamChunkEvent,
+  OnDeviceAgentStepRaw,
   OnDeviceAiAvailability,
   OnDeviceAskResult,
   OnDeviceParsedExpenseRaw,
@@ -337,6 +415,10 @@ export type {
   OnDeviceReceiptItem,
   OnDeviceReceiptResult,
   OnDeviceRouterDecisionRaw,
+  PccAskResult,
+  PccAvailability,
+  PccReasoningLevel,
+  SearchTabEvent,
   WidgetExpense,
   WidgetGroupBalance,
   WidgetSnapshot,

@@ -26,6 +26,13 @@ export type PlanIntent =
   | 'trend'
   | 'unknown';
 
+/**
+ * Timeframe token from the model. Beyond the fixed relative words, explicit
+ * tokens are accepted: a month name ("april", "april_2025"), a quarter
+ * ("q2", "q2_2025"), a year ("year_2025"), and "previous_period" (the period
+ * before the last question's — resolved by the follow-up layer). Anything
+ * unrecognized is treated as all-time.
+ */
 export type PlanTimeframe =
   | 'this_month'
   | 'last_month'
@@ -33,6 +40,8 @@ export type PlanTimeframe =
   | 'last_week'
   | 'this_year'
   | 'today'
+  | 'previous_period'
+  | (string & {})
   | null;
 
 export interface QueryPlan {
@@ -47,7 +56,7 @@ export interface QueryPlan {
   timeframe?: PlanTimeframe;
 }
 
-const TF: Record<Exclude<PlanTimeframe, null>, string> = {
+const TF: Record<string, string> = {
   this_month: 'this month',
   last_month: 'last month',
   this_week: 'this week',
@@ -56,7 +65,38 @@ const TF: Record<Exclude<PlanTimeframe, null>, string> = {
   today: 'today',
 };
 
-const tfPhrase = (t: PlanTimeframe): string => (t && TF[t] ? ` ${TF[t]}` : '');
+const MONTH_TOKEN_RE =
+  /^(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)(?:[_\s-](\d{4}))?$/;
+const QUARTER_TOKEN_RE = /^q([1-4])(?:[_\s-](\d{4}))?$/;
+const YEAR_TOKEN_RE = /^(?:year[_\s-])?(20\d\d)$/;
+
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * Render a timeframe token as a natural-language phrase (leading space
+ * included) that `parseTimeframe` understands, e.g. 'april_2025' → ' in April
+ * 2025'. '' for unknown tokens (⇒ all-time). `previous_period` is resolved by
+ * the follow-up layer before rendering and yields '' here.
+ */
+export function timeframeTokenToPhrase(token: PlanTimeframe): string {
+  if (!token) return '';
+  const t = token.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!t) return '';
+  if (TF[t]) return ` ${TF[t]}`;
+  const m = MONTH_TOKEN_RE.exec(t);
+  if (m) return ` in ${cap(m[1])}${m[2] ? ` ${m[2]}` : ''}`;
+  const q = QUARTER_TOKEN_RE.exec(t);
+  if (q) return ` in Q${q[1]}${q[2] ? ` ${q[2]}` : ''}`;
+  const y = YEAR_TOKEN_RE.exec(t);
+  if (y) return ` in ${y[1]}`;
+  return '';
+}
+
+/** True when the token names a timeframe `timeframeTokenToPhrase` can render. */
+export const isKnownTimeframeToken = (token: string): boolean =>
+  timeframeTokenToPhrase(token) !== '' || token === 'previous_period';
+
+const tfPhrase = (t: PlanTimeframe): string => timeframeTokenToPhrase(t);
 
 /** Subject word: "I" for me, the member name, else "we" (group). */
 const subject = (scope?: string): string => {

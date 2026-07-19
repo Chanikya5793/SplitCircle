@@ -346,8 +346,65 @@ export interface Timeframe {
 
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 
+const MONTH_LABELS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+] as const;
+
+// Matches a month name or 3-letter abbreviation, an optional possessive
+// ("Aprils total?" / "April's total"), and an optional 4-digit year.
+const MONTH_RE =
+  /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)('?s)?\b(?:,?\s*(\d{4}))?/;
+
+const MONTH_INDEX: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+/** Calendar-month window with an "in April [2025]" label (year shown when ≠ current). */
+function monthWindow(year: number, month: number, currentYear: number): Timeframe {
+  return {
+    startMs: new Date(year, month, 1).getTime(),
+    endMs: new Date(year, month + 1, 1).getTime() - 1,
+    label: `in ${MONTH_LABELS[month]}${year === currentYear ? '' : ` ${year}`}`,
+  };
+}
+
+function quarterWindow(year: number, quarter: number, currentYear: number): Timeframe {
+  const m = (quarter - 1) * 3;
+  return {
+    startMs: new Date(year, m, 1).getTime(),
+    endMs: new Date(year, m + 3, 1).getTime() - 1,
+    label: `in Q${quarter}${year === currentYear ? '' : ` ${year}`}`,
+  };
+}
+
 /**
- * Parse a relative timeframe from a question ("last month", "this week", …).
+ * Explicit month name → the most recent occurrence not in the future
+ * ("April" asked in July 2026 ⇒ April 2026; "December" ⇒ December 2025),
+ * unless a year is given. Bare "may" needs a possessive, year, or a leading
+ * in/for/during/of so the modal verb ("may I ask") never reads as a month.
+ */
+function parseExplicitMonth(q: string, now: Date): Timeframe | null {
+  const m = MONTH_RE.exec(q);
+  if (!m) return null;
+  const idx = MONTH_INDEX[m[1].slice(0, 3)];
+  if (idx == null) return null;
+  const possessive = Boolean(m[2]);
+  const year = m[3] ? Number(m[3]) : null;
+  if (m[1] === 'may' && !possessive && year == null) {
+    const before = q.slice(0, m.index).trimEnd();
+    if (!/\b(in|for|during|of|about)$/.test(before)) return null;
+  }
+  const currentYear = now.getFullYear();
+  const resolvedYear = year ?? (idx > now.getMonth() ? currentYear - 1 : currentYear);
+  return monthWindow(resolvedYear, idx, currentYear);
+}
+
+/**
+ * Parse a timeframe from a question — relative words ("last month", "this
+ * week"), explicit month names ("April", "Aprils total?", "April 2025"),
+ * quarters ("Q2", "last quarter"), and explicit years ("in 2025").
  * Returns null when none is mentioned (⇒ all-time). `now` is injectable for tests.
  */
 export function parseTimeframe(question: string, now: number = Date.now()): Timeframe | null {
@@ -381,7 +438,77 @@ export function parseTimeframe(question: string, now: number = Date.now()): Time
   if (/\btoday\b/.test(q)) {
     return { startMs: startOfDay(d), endMs: now, label: 'today' };
   }
+
+  // Quarters — "Q2", "Q2 2025", "this quarter", "last quarter".
+  const currentQuarter = Math.floor(m / 3) + 1;
+  if (/\blast quarter\b/.test(q)) {
+    return currentQuarter === 1 ? quarterWindow(y - 1, 4, y) : quarterWindow(y, currentQuarter - 1, y);
+  }
+  if (/\bthis quarter\b/.test(q)) {
+    return quarterWindow(y, currentQuarter, y);
+  }
+  const quarter = /\bq([1-4])\b(?:\s*(\d{4}))?/.exec(q);
+  if (quarter) {
+    const qNum = Number(quarter[1]);
+    const qYear = quarter[2] ? Number(quarter[2]) : qNum > currentQuarter ? y - 1 : y;
+    return quarterWindow(qYear, qNum, y);
+  }
+
+  // Explicit month names ("April", "Aprils total?", "April 2025").
+  const explicitMonth = parseExplicitMonth(q, d);
+  if (explicitMonth) return explicitMonth;
+
+  // Explicit year — preposition-gated ("in 2025") so amounts never read as years.
+  const year = /\b(?:in|for|during|of)\s+(20\d\d)\b/.exec(q);
+  if (year) {
+    const yy = Number(year[1]);
+    return {
+      startMs: new Date(yy, 0, 1).getTime(),
+      endMs: new Date(yy + 1, 0, 1).getTime() - 1,
+      label: yy === y ? 'this year' : `in ${yy}`,
+    };
+  }
+
   return null;
+}
+
+/**
+ * The comparable period immediately before `tf` — powers follow-ups like
+ * "what about the month before that?". Granularity is inferred from the span:
+ * calendar months step to the previous calendar month, years to the previous
+ * year, anything else slides back by its own span.
+ */
+export function previousTimeframe(tf: Timeframe, now: number = Date.now()): Timeframe {
+  const currentYear = new Date(now).getFullYear();
+  const start = new Date(tf.startMs);
+  const spanDays = (tf.endMs - tf.startMs) / 86400000;
+
+  if (spanDays >= 27 && spanDays <= 32 && start.getDate() === 1) {
+    return monthWindow(
+      start.getMonth() === 0 ? start.getFullYear() - 1 : start.getFullYear(),
+      start.getMonth() === 0 ? 11 : start.getMonth() - 1,
+      currentYear,
+    );
+  }
+  if (spanDays >= 88 && spanDays <= 93 && start.getDate() === 1) {
+    const q = Math.floor(start.getMonth() / 3) + 1;
+    return q === 1
+      ? quarterWindow(start.getFullYear() - 1, 4, currentYear)
+      : quarterWindow(start.getFullYear(), q - 1, currentYear);
+  }
+  const looksLikeYear =
+    (spanDays >= 364 && spanDays <= 367) ||
+    (start.getMonth() === 0 && start.getDate() === 1 && /\byear\b|^in 20\d\d$/.test(tf.label));
+  if (looksLikeYear) {
+    const yy = start.getFullYear() - 1;
+    return {
+      startMs: new Date(yy, 0, 1).getTime(),
+      endMs: new Date(yy + 1, 0, 1).getTime() - 1,
+      label: `in ${yy}`,
+    };
+  }
+  const span = tf.endMs - tf.startMs + 1;
+  return { startMs: tf.startMs - span, endMs: tf.startMs - 1, label: 'the period before that' };
 }
 
 export const inTimeframe = (e: Expense, tf: Timeframe | null): boolean =>

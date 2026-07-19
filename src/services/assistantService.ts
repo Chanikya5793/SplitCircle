@@ -18,16 +18,25 @@
 
 import type { Expense, Group } from '@/models';
 import type { ExpenseAiAnswer, ExpenseAiSource } from '@/services/aiService';
+import { resetOnDeviceSession, routeMessage } from '../../modules/splitcircle-ai';
+import type { AssistantDataSources } from '@/services/aiDataAccess';
 import {
   answerExpenseLocally,
-  answerExpenseSmart,
-  askExpenseAiOnDevice,
+  answerOpenEndedGrounded,
+  coercePlan,
   getOnDeviceAiAvailability,
+  type AnswerVia,
 } from '@/services/onDeviceAiService';
+import {
+  inferPlanFromQuestion,
+  resolveFollowUp,
+  resolvePreviousPeriodToken,
+} from '@/utils/assistantFollowUp';
 import { categorizeText } from '@/utils/categoryMatch';
 import {
   classifyMessage,
   detectExpenseModification,
+  detectMetaCommand,
   detectNavTarget,
   extractExpenseTitle,
   matchExpenseByText,
@@ -40,6 +49,8 @@ import {
   type NavTarget,
 } from '@/utils/assistantChat';
 import { pairwiseNet } from '@/utils/expenseAnalytics';
+import { planToQuestion, type QueryPlan } from '@/utils/expensePlan';
+import { ASSISTANT_CAPABILITIES, answerExpenseQuery, type QueryContext } from '@/utils/expenseQuery';
 import { equalSplit } from '@/utils/smartSplitRecommender';
 
 export type NewExpense = Omit<Expense, 'expenseId' | 'createdAt' | 'updatedAt'>;
@@ -75,6 +86,12 @@ export interface ConversationState {
     | { intent: 'settle_up'; draft: SettleDraft };
   /** The last action shown as a confirm card, so the user can tweak it. */
   lastProposed?: ProposedAction;
+  /**
+   * The last answered question as a structured plan, so follow-up fragments
+   * ("what about April?", "the month before that") anchor to it instead of
+   * being routed as new (and usually misread) questions.
+   */
+  lastQuery?: QueryPlan;
 }
 
 const NAV_LABELS: Record<NavTarget, string> = {
@@ -94,6 +111,17 @@ export interface AssistantTurn {
   choices?: string[];
   /** Conversation memory to pass back into the next turn. */
   state: ConversationState;
+  /** Where an open-ended answer was generated (drives the transparency badge). */
+  via?: AnswerVia;
+  /** Signals the UI to reset the chat (native session + persisted thread). */
+  resetChat?: boolean;
+}
+
+/** Options the screen threads in: extra data sources + streaming callback. */
+export interface AssistantTurnOptions {
+  sources?: AssistantDataSources;
+  onPartial?: (text: string) => void;
+  now?: number;
 }
 
 const money = (n: number, currency: string): string => `${n.toFixed(2)} ${currency}`;
@@ -137,6 +165,7 @@ export async function processAssistantTurn(
   group: Group,
   currentUserId: string,
   state: ConversationState = {},
+  options: AssistantTurnOptions = {},
 ): Promise<AssistantTurn> {
   const text = (message ?? '').trim();
   const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
@@ -145,6 +174,14 @@ export async function processAssistantTurn(
   // Global cancel/abort — clears any in-progress flow.
   if (/^(cancel|never ?mind|nvm|stop|forget it|no thanks?)\b/i.test(text)) {
     return { reply: 'Okay, cancelled. What else can I help with?', state: {} };
+  }
+
+  // 0) Chat-control / social messages handled BEFORE any model or query
+  //    routing, so "clear the chat" / "hello" never leak into the spend engine
+  //    (doc 17 failures #1, #2). Only when no action flow is mid-progress.
+  if (!state.pending) {
+    const meta = handleMetaCommand(text, group);
+    if (meta) return meta;
   }
 
   const fresh = classifyMessage(text, members);
@@ -185,7 +222,36 @@ export async function processAssistantTurn(
     case 'add_expense':
       return continueAddExpense(text, group, currentUserId, {});
     default:
-      return answerQuestion(text, group, currentUserId);
+      return answerQuestion(text, group, currentUserId, state, options);
+  }
+}
+
+// ── Meta / chat-control commands ─────────────────────────────────────────────
+
+function handleMetaCommand(text: string, group: Group): AssistantTurn | null {
+  const meta = detectMetaCommand(text);
+  if (!meta) return null;
+  switch (meta) {
+    case 'clear_chat':
+      return {
+        reply: 'Cleared our conversation. What would you like to do next?',
+        state: {},
+        resetChat: true,
+      };
+    case 'help':
+      return { reply: ASSISTANT_CAPABILITIES, state: {} };
+    case 'greeting':
+      return {
+        reply: `Hi! Ask me about ${group.name}'s spending and balances, or tell me to add an expense or settle up.`,
+        choices: ['How much did I spend?', 'Show our settle-up', 'Add an expense'],
+        state: {},
+      };
+    case 'thanks':
+      return { reply: "You're welcome! Anything else?", state: {} };
+    case 'goodbye':
+      return { reply: 'See you! I’ll be here whenever you need me.', state: {} };
+    default:
+      return null;
   }
 }
 
@@ -390,23 +456,149 @@ function handleNavigate(text: string): AssistantTurn {
   return { reply: `Open ${NAV_LABELS[target]}?`, action, state: { lastProposed: action } };
 }
 
-// ── Questions (deterministic → smart RAG → on-device model → reliable nudge) ──
+// ── Questions ────────────────────────────────────────────────────────────────
+// Router-first pipeline: cheap deterministic answers → conversational-memory
+// follow-ups → the abstaining on-device router (front-door understanding) →
+// grounded open-ended answering (progressive/agentic data + streaming + PCC).
+// Numbers ALWAYS come from the deterministic engine; the model only classifies,
+// fills slots, and phrases.
 
-async function answerQuestion(text: string, group: Group, currentUserId: string): Promise<AssistantTurn> {
-  const local: ExpenseAiAnswer | null = answerExpenseLocally(text, group, currentUserId);
-  if (local) return { reply: local.answer, sources: local.sources, state: {} };
+const NUDGE =
+  "I’m not sure I caught that. I can answer questions about this group’s spending and balances, add expenses, and record settle-ups.\n\nTry “how much did I spend on food?”, “settle up with Alex”, or “add $20 lunch”.";
 
-  const smart = await answerExpenseSmart(text, group, currentUserId);
-  if (smart) return { reply: smart.answer, sources: smart.sources, state: {} };
+/** Remember an answered question (as a plan) so the next turn can follow up. */
+function withMemory(turn: AssistantTurn, plan: QueryPlan): AssistantTurn {
+  return { ...turn, state: { ...turn.state, lastQuery: plan } };
+}
 
-  if (getOnDeviceAiAvailability() === 'available') {
-    const ans = await askExpenseAiOnDevice(text, group, currentUserId);
-    if (ans?.answer) return { reply: ans.answer, sources: ans.sources, state: {} };
+const queryCtx = (group: Group, currentUserId: string, now?: number): QueryContext => ({
+  expenses: group.expenses ?? [],
+  settlements: group.settlements ?? [],
+  members: group.members.map((m) => ({ userId: m.userId, displayName: m.displayName })),
+  currentUserId,
+  currency: group.currency,
+  now,
+});
+
+/** Run a canonical question through the deterministic engine; null if not handled. */
+function tryDeterministic(
+  canonical: string,
+  plan: QueryPlan,
+  group: Group,
+  currentUserId: string,
+  now?: number,
+): AssistantTurn | null {
+  const r = answerExpenseQuery(canonical, queryCtx(group, currentUserId, now));
+  if (!r.handled) return null;
+  return withMemory({ reply: r.answer, sources: r.sources, state: {} }, plan);
+}
+
+async function answerQuestion(
+  text: string,
+  group: Group,
+  currentUserId: string,
+  state: ConversationState,
+  options: AssistantTurnOptions,
+): Promise<AssistantTurn> {
+  const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
+  const now = options.now;
+
+  // 1) Follow-up to the previous question ("what about April?", "the month
+  //    before that", "and for food?") — resolve against remembered lastQuery.
+  if (state.lastQuery) {
+    const merged = resolveFollowUp(text, state.lastQuery, members, now ?? Date.now());
+    if (merged) {
+      const canonical = renderPlan(merged, now);
+      if (canonical) {
+        const turn = tryDeterministic(canonical, merged, group, currentUserId, now);
+        if (turn) return turn;
+      }
+    }
   }
 
-  return {
-    reply:
-      "I’m not sure I caught that. I can answer questions about this group’s spending and balances, add expenses, and record settle-ups.\n\nTry “how much did I spend on food?”, “settle up with Alex”, or “add $20 lunch”.",
-    state: {},
-  };
+  // 2) Cheap deterministic pass on the raw text (exact numbers, every device).
+  const local: ExpenseAiAnswer | null = answerExpenseLocally(text, group, currentUserId);
+  if (local) {
+    return withMemory(
+      { reply: local.answer, sources: local.sources, state: {} },
+      inferPlanFromQuestion(text, members, now ?? Date.now()),
+    );
+  }
+
+  // 3) Abstaining router (front-door understanding). Classifies + plans over a
+  //    persistent transcript; abstains on non-money/greeting instead of
+  //    fabricating. Numbers still come from the deterministic engine below.
+  if (getOnDeviceAiAvailability() === 'available') {
+    const routed = await routeViaModel(text, group, currentUserId, now);
+    if (routed) return routed;
+  }
+
+  // 4) Grounded open-ended answering (progressive/agentic data + streaming, PCC
+  //    escalation). Understands + phrases; never computes numbers.
+  const grounded = await answerOpenEndedGrounded(text, group, currentUserId, {
+    sources: options.sources,
+    onPartial: options.onPartial,
+    now,
+  });
+  if (grounded?.answer) {
+    return withMemory(
+      { reply: grounded.answer, sources: grounded.sources, via: grounded.via, state: {} },
+      inferPlanFromQuestion(text, members, now ?? Date.now()),
+    );
+  }
+
+  return { reply: NUDGE, state: {} };
+}
+
+/** Render a plan to a canonical question, resolving previous_period first. */
+function renderPlan(plan: QueryPlan, now?: number): string {
+  let p = plan;
+  if (p.timeframe === 'previous_period') {
+    const token = resolvePreviousPeriodToken(plan.timeframe, now ?? Date.now());
+    p = { ...p, timeframe: token ?? null };
+  }
+  return planToQuestion(p);
+}
+
+/**
+ * The abstaining router: classify the message over a persistent per-group
+ * session. On abstain (greeting/small talk/non-money) reply with the model's
+ * friendly line; on a question, execute its plan deterministically; on low
+ * confidence, fall through to grounded answering rather than guess.
+ */
+async function routeViaModel(
+  text: string,
+  group: Group,
+  currentUserId: string,
+  now?: number,
+): Promise<AssistantTurn | null> {
+  const memberNames = group.members.map((m) => m.displayName).filter(Boolean).join(', ');
+  const isoDate = new Date(now ?? Date.now()).toISOString().slice(0, 10);
+  let decision;
+  try {
+    decision = await routeMessage(`route:${group.groupId}`, text, memberNames, isoDate);
+  } catch {
+    return null;
+  }
+
+  if (decision.abstain) {
+    const reply = decision.chitchatReply?.trim();
+    return { reply: reply || NUDGE, state: {} };
+  }
+
+  if (decision.intent === 'question') {
+    const plan = coercePlan(decision.queryPlan);
+    const canonical = renderPlan(plan, now);
+    if (canonical) {
+      const turn = tryDeterministic(canonical, plan, group, currentUserId, now);
+      if (turn) return turn;
+    }
+    // Understood as a question but not deterministically answerable → let the
+    // grounded engine handle it (caller path continues).
+    return null;
+  }
+
+  // The router thinks this is an action but the deterministic action classifier
+  // disagreed; trust the safe deterministic path (caller falls through).
+  return null;
 }

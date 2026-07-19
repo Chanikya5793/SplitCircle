@@ -295,3 +295,59 @@ clean; device-verified on an iPhone 15 Pro+ and on the **iOS 27.0 simulator**.
 - **Open question for the owner:** pursue PCC enrollment now (lead time) or defer until after Phase A
   ships and is verified? Recommendation: **ship Phase A first**; start the PCC application in parallel
   since enrollment has lead time.
+
+---
+
+## 7. Implementation status (Phases A–C wired end-to-end)
+
+The pipeline was inverted from "deterministic-first, model-as-fallback" to **router-first
+understanding with a deterministic engine that owns every number**, and the data layer grew from a
+fixed expense slice to on-demand, budgeted multi-source packs. All TypeScript is `tsc`-clean and
+covered by unit tests (`npm run test:unit`, 219 passing). The native Swift additions are guarded the
+same way as the merged spike (`#if canImport(FoundationModels)` + `#available`) and build locally on
+Xcode-beta 27; **on-device runtime of the new native functions is still pending device verification**,
+exactly like the S2/S3 spike log entries.
+
+### What shipped
+
+- **Router-first pipeline** ([assistantService.ts](../../src/services/assistantService.ts)):
+  meta-commands → follow-up memory → cheap deterministic answer → abstaining `routeMessage`
+  (front-door) → grounded open-ended answering. Numbers only ever come from `answerExpenseQuery`.
+- **Abstain + meta vocabulary** (A.2/A.3/A.6): greetings, "clear the chat", thanks/bye, help are
+  caught in JS *before* any model call (`detectMetaCommand`), and the router's `abstain` flag routes
+  non-money messages to a friendly reply instead of a fabricated plan. The router instructions now
+  carry few-shot examples + the "abstain when unsure / don't default to this_month" rules.
+- **Timeframe coverage** (A.4): explicit months ("April", "Aprils total?", "April 2025"), quarters
+  ("Q2"), years ("in 2025"), and `previousTimeframe` for "the month before that"
+  ([expenseAnalytics.ts](../../src/utils/expenseAnalytics.ts), [expensePlan.ts](../../src/utils/expensePlan.ts)).
+- **Conversational memory on the Q&A path** (A.5): `ConversationState.lastQuery` + a follow-up
+  resolver ([assistantFollowUp.ts](../../src/utils/assistantFollowUp.ts)) so "what about April?",
+  "the month before that", "and for food?", "what about Sam?" merge into the previous question.
+- **Persistence fix** (A.7): the screen no longer wipes `pending`/`lastProposed` on restore; it
+  retires only confirm cards/drafts older than 10 min ([AiChatScreen.tsx](../../src/screens/ai/AiChatScreen.tsx)).
+- **Progressive data access + agentic fetching**: the model can be grounded in settlements, recurring
+  bills, itemized receipt lines, cross-group aggregates, chat snippets, and a personal spending
+  profile — chosen by question heuristics and by what the model requests mid-answer (read-only loop),
+  packed under the device's real token budget in priority order
+  ([aiContextPacks.ts](../../src/utils/aiContextPacks.ts), [aiDataAccess.ts](../../src/services/aiDataAccess.ts)).
+  Chat snippets are PII-redacted before entering any prompt.
+- **Streaming** (B): `askOnDeviceStreamed` emits `onAiStreamChunk` snapshots; the chat renders the
+  answer as it generates.
+- **PCC escalation** (C): `getPccAvailability` + `askPcc` (32K window, `reasoningLevel`), escalated
+  only when the data outgrows the on-device window or on-device AI is unavailable. User-controlled via
+  a Settings → AI toggle (default ON, [aiSettings.ts](../../src/services/aiSettings.ts)); every PCC
+  answer carries an "Answered in Private Cloud Compute" badge. Session store is now `NSLock`-guarded.
+- **Native surface** ([SplitCircleAIModule.swift](../../modules/splitcircle-ai/ios/SplitCircleAIModule.swift)):
+  `askOnDeviceStreamed`, `askOnDeviceAgentic`, `getPccAvailability`, `askPcc`, plus `OnDeviceAgentStep`
+  @Generable and the richer router instructions.
+
+### Follow-ups / carry-overs
+
+- **Device verification** of the new native functions (streaming partials shape, PCC `respond`
+  `generating:` + `contextOptions:` overload, agentic step) on an iPhone 17 Pro — the TS side degrades
+  gracefully (throws → nudge) if a signature differs.
+- **Entitlement string** (C.1): [SplitCircle.entitlements](../../ios/SplitCircle/SplitCircle.entitlements)
+  carries a clearly-marked placeholder key — replace with the exact portal capability string once PCC
+  enrollment is confirmed. `model.isAvailable` gates runtime regardless, so the placeholder is safe.
+- **EAS image**: unchanged (`xcode-26.4`); the iOS-27 symbols compile locally on Xcode-beta 27 like the
+  merged spike. Bump the pin when an Xcode 27 EAS image is available (B.1).
