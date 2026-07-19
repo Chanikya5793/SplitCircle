@@ -1,3 +1,4 @@
+import { ExpenseCardBubble } from '@/components/Chat/ExpenseCardBubble';
 import { LinkPreview } from '@/components/Chat/LinkPreview';
 import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
 import { ReactionsRow } from '@/components/Chat/ReactionsRow';
@@ -516,10 +517,40 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
   // ── Early returns for tombstone / system messages ──────────────────────────
   // These come AFTER all hooks so React always sees the same hook count.
 
+  // Money-in-chat card (ai_layer/docs/21): typed expense/settlement messages
+  // render as a muted tappable card. Reactions ride the normal message
+  // reaction system; dim behaves like every other row.
+  if (message.type === 'expense' && message.expenseRef) {
+    return (
+      <ExpenseCardBubble
+        message={message}
+        dimmed={dimmed}
+        onLongPress={onLongPress}
+        onDoubleTap={onDoubleTap}
+        onReactionsPress={onReactionsPress}
+      />
+    );
+  }
+
+  // Degraded expense message (pointer lost — e.g. a minimal lastMessage copy):
+  // render as a quiet system chip with the content string rather than letting
+  // it fall through to a personal text bubble.
+  if (message.type === 'expense') {
+    return (
+      <View style={styles.systemContainer}>
+        <View style={[styles.systemBubble, { backgroundColor: isDark ? 'rgba(28, 31, 38, 0.8)' : 'rgba(255, 255, 255, 0.85)' }]}>
+          <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>{message.content}</Text>
+        </View>
+      </View>
+    );
+  }
+
   if (message.type === 'system') {
     return (
       <View style={styles.systemContainer}>
-        <View style={[styles.systemBubble, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }]}>
+        {/* Call events land here too ("📞 Outgoing call · 00:39") — the chip
+            needs a real surface to stay legible over loud wallpapers. */}
+        <View style={[styles.systemBubble, { backgroundColor: isDark ? 'rgba(28, 31, 38, 0.8)' : 'rgba(255, 255, 255, 0.85)' }]}>
           <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>{message.content}</Text>
         </View>
       </View>
@@ -529,7 +560,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
   if (user && message.deletedFor?.includes(user.userId)) {
     return (
       <View style={styles.systemContainer}>
-        <View style={[styles.systemBubble, styles.tombstoneBubble, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)' }]}>
+        <View style={[styles.systemBubble, styles.tombstoneBubble, { backgroundColor: isDark ? 'rgba(28, 31, 38, 0.65)' : 'rgba(255, 255, 255, 0.7)' }]}>
           <Ionicons name="trash-outline" size={11} color={theme.colors.onSurfaceVariant} />
           <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>You deleted this message</Text>
         </View>
@@ -541,7 +572,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
     const youDeleted = user?.userId === message.senderId;
     return (
       <View style={styles.systemContainer}>
-        <View style={[styles.systemBubble, styles.tombstoneBubble, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)' }]}>
+        <View style={[styles.systemBubble, styles.tombstoneBubble, { backgroundColor: isDark ? 'rgba(28, 31, 38, 0.65)' : 'rgba(255, 255, 255, 0.7)' }]}>
           <Ionicons name="ban-outline" size={11} color={theme.colors.onSurfaceVariant} />
           <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>
             {youDeleted ? 'You deleted this message' : 'This message was deleted'}
@@ -1269,7 +1300,10 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
                 style={({ pressed }) => [
                   styles.container,
                   styles.other,
-                  { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.7)' },
+                  // Near-opaque so text never loses to a vivid wallpaper — a
+                  // 10%-white (dark) / 70%-white (light) bubble washes out
+                  // completely over saturated blobs.
+                  { backgroundColor: isDark ? 'rgba(28, 31, 38, 0.88)' : 'rgba(255, 255, 255, 0.92)' },
                   message.reactions && Object.keys(message.reactions).length > 0 && styles.bubbleWithReactions,
                   pressed && !selectionMode && (onLongPress) && { opacity: 0.85 },
                 ]}

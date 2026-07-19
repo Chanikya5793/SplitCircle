@@ -74,6 +74,8 @@ service cloud.firestore {
           'currency',
           'expenses',
           'settlements',
+          'moneyInChat',
+          'budgets',
           'updatedAt',
         ])
         && request.resource.data.groupId == resource.data.groupId

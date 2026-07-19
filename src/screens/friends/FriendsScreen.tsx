@@ -434,7 +434,19 @@ export const FriendsScreen = () => {
         </StickyHeaderPill>
       </Animated.View>
 
-      <Shield target="friends">
+      <Shield
+        target="friends"
+        duressFallback={
+          <View style={[styles.container, { paddingTop: insets.top + 24, flex: 1, justifyContent: 'center' }]}>
+            <GlassView style={styles.emptyCard}>
+              <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>No friends yet</Text>
+              <Text style={[styles.emptyBody, { color: theme.colors.onSurfaceVariant }]}>
+                You'll see people here once you share a group, split an expense, or add someone manually.
+              </Text>
+            </GlassView>
+          </View>
+        }
+      >
       <Animated.ScrollView
         contentContainerStyle={[
           styles.container,

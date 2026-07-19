@@ -27,6 +27,8 @@ import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { WallpaperPickerSheet } from '@/components/ui';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
+import { resolveMoneyInChat } from '@/models/group';
 import { useAuth } from '@/context/AuthContext';
 import { useCallContext } from '@/context/CallContext';
 import { useChat } from '@/context/ChatContext';
@@ -267,6 +269,49 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     });
     return map;
   }, [rows]);
+  // Money-in-chat header balance pill (ai_layer/docs/21): the linked expense
+  // group's balance for the current user, rendered through the guard/lens
+  // funnel so shielded or converted amounts behave like everywhere else.
+  const linkedGroup = thread.groupId ? groups.find((g) => g.groupId === thread.groupId) : undefined;
+  const { postGroupDigest } = useGroups();
+  const fmtChatMoney = useMoneyDisplay(thread.groupId);
+  const myGroupBalance =
+    linkedGroup?.members.find((m) => m.userId === user?.userId)?.balance ?? 0;
+
+  // Insights digest trigger (ai_layer/docs/22): when this group chat opens and
+  // the previous period's "wrapped" card is absent, post it. The deterministic
+  // message id makes concurrent posts from several members converge to one.
+  const digestCheckedRef = useRef(false);
+  useEffect(() => {
+    if (digestCheckedRef.current || !linkedGroup) return;
+    const cadence = resolveMoneyInChat(linkedGroup.moneyInChat).insights.digestCadence;
+    if (cadence === 'off') return;
+    const now = new Date();
+    let periodKey: string;
+    let window: { startMs: number; endMs: number; label: string };
+    if (cadence === 'monthly') {
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const endMs = new Date(now.getFullYear(), now.getMonth(), 1).getTime() - 1;
+      periodKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
+      window = { startMs: start.getTime(), endMs, label: start.toLocaleString(undefined, { month: 'long' }) };
+    } else {
+      const dow = (now.getDay() + 6) % 7; // 0 = Monday
+      const thisMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
+      const prevMonday = new Date(thisMonday.getTime() - 7 * 86400000);
+      periodKey = `${prevMonday.getFullYear()}-${String(prevMonday.getMonth() + 1).padStart(2, '0')}-${String(prevMonday.getDate()).padStart(2, '0')}`;
+      window = { startMs: prevMonday.getTime(), endMs: thisMonday.getTime() - 1, label: 'Last week' };
+    }
+    const digestId = `digest-${linkedGroup.groupId}-${periodKey}`;
+    if (messages.some((m) => (m.messageId || m.id) === digestId)) {
+      digestCheckedRef.current = true;
+      return;
+    }
+    // Wait for the local store's first delivery before concluding it's absent.
+    if (messages.length === 0) return;
+    digestCheckedRef.current = true;
+    void postGroupDigest(linkedGroup.groupId, periodKey, window);
+  }, [linkedGroup, messages, postGroupDigest]);
+
   // Text input state for composer
   const [text, setText] = useState('');
   const listRef = useRef<FlatList<ChatMessage>>(null);
@@ -1286,9 +1331,12 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   // Masked title for the header pill only — navigation params keep the real
   // title so back buttons and Group Info still read correctly.
   const { maskChatTitle } = usePrivacyMask();
-  const displayTitle = maskChatTitle(title, thread.chatId);
-  const { isShielded: guardIsShielded } = usePrivacyGuard();
+  const displayTitle = maskChatTitle(title, thread.chatId, thread.type === 'group' ? 'group' : 'person');
+  const { isShielded: guardIsShielded, isLockedDown: guardIsLockedDown } = usePrivacyGuard();
   const chatShielded = guardIsShielded('chats', thread.chatId);
+  // Lock overlay only outside duress; in the decoy world the room just reads
+  // as an empty conversation (data stays gated by chatShielded).
+  const chatLocked = guardIsLockedDown('chats', thread.chatId);
 
   const handleHeaderPress = () => {
     lightHaptic();
@@ -1603,6 +1651,40 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               </TouchableOpacity>
             </View>
           </View>
+          {linkedGroup && Math.abs(myGroupBalance) >= 0.005 && !chatShielded && (
+            <TouchableOpacity
+              onPress={() => {
+                lightHaptic();
+                // @ts-ignore — navigation typing
+                navigation.navigate(ROUTES.APP.SETTLEMENTS, { groupId: linkedGroup.groupId });
+              }}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={
+                myGroupBalance < 0 ? 'You owe money in this group — settle up' : 'You are owed money in this group'
+              }
+              style={styles.balancePillTouchable}
+            >
+              <GlassView style={styles.balancePillGlass} intensity={40} contentStyle={styles.balancePillContent}>
+                <Icon
+                  source={myGroupBalance < 0 ? 'arrow-top-right' : 'arrow-bottom-left'}
+                  size={13}
+                  color={myGroupBalance < 0 ? theme.colors.moneyNegative : theme.colors.moneyPositive}
+                />
+                <Text
+                  variant="labelSmall"
+                  style={{
+                    color: myGroupBalance < 0 ? theme.colors.moneyNegative : theme.colors.moneyPositive,
+                    fontWeight: '700',
+                  }}
+                >
+                  {myGroupBalance < 0
+                    ? `You owe ${fmtChatMoney(Math.abs(myGroupBalance), linkedGroup.currency)} · settle`
+                    : `You're owed ${fmtChatMoney(myGroupBalance, linkedGroup.currency)}`}
+                </Text>
+              </GlassView>
+            </TouchableOpacity>
+          )}
         </View>
         )}
 
@@ -1615,6 +1697,13 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               : row.message.messageId || row.message.id || `${row.message.createdAt}_${row.message.senderId}`
           }
           renderItem={renderItem as any}
+          // Rows read dim/highlight/selection/search state from renderItem's
+          // closure, and VirtualizedList only guarantees cell re-renders when
+          // data or extraData changes — without this, rows dimmed while the
+          // message action sheet was open stay stuck at 0.35 opacity on
+          // physical devices. renderItem's useCallback deps cover exactly that
+          // closure state, so its identity is the change signal.
+          extraData={renderItem}
           style={styles.list}
           contentContainerStyle={[
             styles.listContent,
@@ -1657,7 +1746,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
           }}
         />
 
-        {chatShielded && (
+        {chatLocked && (
           <View style={[styles.chatLockOverlay, { backgroundColor: theme.colors.appBackground }]} pointerEvents="auto">
             <Icon source="lock-outline" size={40} color={theme.colors.onSurfaceVariant} />
             <Text style={{ color: theme.colors.onSurface, fontWeight: '600', marginTop: 12, fontSize: 16 }}>
@@ -2347,6 +2436,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
+  },
+  balancePillTouchable: {
+    alignSelf: 'center',
+    marginTop: 6,
+  },
+  balancePillGlass: {
+    borderRadius: 999,
+  },
+  balancePillContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
   },
   chatLockOverlay: {
     ...StyleSheet.absoluteFillObject,

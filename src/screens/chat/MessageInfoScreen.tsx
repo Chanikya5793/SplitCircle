@@ -285,7 +285,7 @@ export const MessageInfoScreen = () => {
 
   return (
     <LiquidBackground>
-      <GuardedScreen target="chats" label="Hidden">
+      <GuardedScreen target="chats" label="Hidden" duressBehavior="blank" duressLabel="Message unavailable.">
       <SafeAreaView style={styles.container} edges={['bottom']}>
         <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }], paddingTop: insets.top }]}>
           <GlassView style={styles.stickyHeaderGlass}>

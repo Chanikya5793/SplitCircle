@@ -4,6 +4,12 @@
   <dict>
     <key>aps-environment</key>
     <string>production</string>
+    <!-- Private Cloud Compute (doc 23): capability granted + added to the
+         App ID / provisioning profile on the portal 2026-07-18. If signing
+         rejects this key, the regenerated profile's Entitlements dict names
+         the exact expected string — fix HERE, don't remove the capability. -->
+    <key>com.apple.developer.private-cloud-compute</key>
+    <true/>
     <!-- NOTE: the App Group capability
            com.apple.security.application-groups → group.com.splitcircle.app
          is added here as part of the one-time widget setup (ai_layer/docs/19 runbook),

@@ -2,6 +2,7 @@
 // found four different green/red palettes invented across screens for the
 // same concept — this kills that class of drift.
 
+import { useDisplayCurrency } from '@/context/DisplayCurrencyContext';
 import { useTheme } from '@/context/ThemeContext';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { formatCurrency } from '@/utils/currency';
@@ -12,6 +13,11 @@ import { Text } from 'react-native-paper';
 export interface MoneyTextProps {
   amount: number;
   currency?: string;
+  /**
+   * Expense-group id. When set, the group's display-currency lens applies:
+   * the amount renders converted (with a "≈" marker) while the lens is on.
+   */
+  groupId?: string;
   /**
    * Semantic direction. 'auto' colors by the sign of `amount`
    * (positive → owed to you, negative → you owe, zero → settled).
@@ -27,6 +33,7 @@ export interface MoneyTextProps {
 export const MoneyText = ({
   amount,
   currency = 'USD',
+  groupId,
   tone = 'auto',
   showSign = false,
   size = 'body',
@@ -34,6 +41,11 @@ export const MoneyText = ({
   numberOfLines,
 }: MoneyTextProps) => {
   const { theme } = useTheme();
+  const { getConversion } = useDisplayCurrency();
+
+  const conversion = groupId ? getConversion(groupId, currency) : null;
+  const displayAmount = conversion ? amount * conversion.rate : amount;
+  const displayCurrency = conversion ? conversion.target : currency;
 
   const resolvedTone =
     tone === 'auto' ? (amount > 0 ? 'positive' : amount < 0 ? 'negative' : 'neutral') : tone;
@@ -57,8 +69,9 @@ export const MoneyText = ({
     ? action === 'vanish'
       ? '···'
       : '••••'
-    : formatCurrency(Math.abs(amount), currency);
+    : formatCurrency(Math.abs(displayAmount), displayCurrency);
   const sign = !scrambleAmounts && showSign && amount !== 0 ? (amount > 0 ? '+' : '−') : '';
+  const approx = !scrambleAmounts && conversion ? '≈' : '';
 
   return (
     <Text
@@ -74,6 +87,7 @@ export const MoneyText = ({
         style,
       ]}
     >
+      {approx}
       {sign}
       {magnitude}
     </Text>

@@ -572,7 +572,7 @@ export const CallSessionScreen = ({
   // Privacy guard: if calls are hidden and the user trips the guard mid-call,
   // mask the peer's name and drop their photo so the call screen gives nothing
   // away (the call keeps working — this is presentation only).
-  const { isShielded: guardIsShielded, settings: guardSettings } = usePrivacyGuard();
+  const { isShielded: guardIsShielded, settings: guardSettings, duress: guardDuress } = usePrivacyGuard();
   const callsHidden = guardIsShielded('calls');
 
   const peer = useMemo<CallPeer>(() => {
@@ -597,7 +597,10 @@ export const CallSessionScreen = ({
     if (!callsHidden) return raw;
     return {
       ...raw,
-      name: guardSettings.action === 'vanish' ? 'Call' : maskTextValue(raw.name, guardSettings.textStyle),
+      name:
+        !guardDuress && guardSettings.action === 'vanish'
+          ? 'Call'
+          : maskTextValue(raw.name, guardDuress ? 'garble' : guardSettings.textStyle, 'person'),
       photoURL: undefined,
     };
   }, [chatId, groupId, groups, threads, type, user?.userId, callsHidden, guardSettings.action, guardSettings.textStyle]);

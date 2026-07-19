@@ -1,5 +1,9 @@
 import { db } from '@/firebase';
-import type { ChatMessage, ChatParticipant, Expense, Group, GroupMember, ParticipantShare, Settlement } from '@/models';
+import type { ChatMessage, ChatParticipant, Expense, ExpenseRef, Group, GroupMember, MoneyInChatSettings, ParticipantShare, Settlement } from '@/models';
+import { resolveMoneyInChat } from '@/models/group';
+import { formatCurrency } from '@/utils/currency';
+import { monthKey } from '@/utils/expenseAnalytics';
+import { aggregateRange, budgetStatus, detectAnomalies, memberBreakdown } from '@/utils/statsInsights';
 import { queueMessage } from '@/services/messageQueueService';
 import { deleteFile, uploadFile } from '@/services/storageService';
 import { loadCachedGroups, persistGroups } from '@/services/groupCache';
@@ -44,6 +48,16 @@ interface GroupContextValue {
   deleteSettlement: (groupId: string, settlementId: string) => Promise<void>;
   updateGroup: (groupId: string, updates: { name?: string; description?: string; photoURL?: string }) => Promise<void>;
   convertGroupCurrency: (groupId: string, newCurrency: string, rate: number) => Promise<void>;
+  /** Admin-gated Money-in-Chat policy update (ai_layer/docs/21). */
+  updateMoneyInChat: (groupId: string, settings: MoneyInChatSettings) => Promise<void>;
+  /** Admin-gated per-category monthly budgets (ai_layer/docs/22). */
+  updateGroupBudgets: (groupId: string, budgets: Record<string, number>) => Promise<void>;
+  /** Idempotent "wrapped" digest card post for a completed period. */
+  postGroupDigest: (
+    groupId: string,
+    periodKey: string,
+    window: { startMs: number; endMs: number; label: string },
+  ) => Promise<void>;
   updateMemberRole: (groupId: string, userId: string, role: 'admin' | 'member') => Promise<void>;
   removeMember: (groupId: string, userId: string) => Promise<void>;
   leaveGroup: (groupId: string) => Promise<void>;
@@ -515,6 +529,10 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     });
 
     void flushOutbox();
+
+    postExpenseCard(localGroup, groupId, newExpense);
+    maybePostBudgetAlert(localGroup, groupId, newExpense);
+    maybePostAnomalyAlert(localGroup, groupId, newExpense);
   };
 
   const updateExpense = async (groupId: string, updatedExpense: Expense, newFileUri?: string | null, newFileName?: string, requestId?: string) => {
@@ -678,6 +696,8 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     });
 
     void flushOutbox();
+
+    postSettlementCard(localGroup, groupId, newSettlement);
   };
 
   const updateSettlement = async (groupId: string, updatedSettlement: Settlement, requestId?: string) => {
@@ -739,16 +759,30 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
   const writeGroupSystemMessage = async (
     groupId: string,
     content: string,
-    options: { participantsOverride?: ChatParticipant[]; participantIdsOverride?: string[] } = {},
+    options: {
+      participantsOverride?: ChatParticipant[];
+      participantIdsOverride?: string[];
+      /** Money-in-chat: turn the system line into a typed card (type/expenseRef). */
+      messageOverrides?: Partial<Pick<ChatMessage, 'type' | 'expenseRef'>>;
+      /**
+       * Deterministic message id (digest/alert idempotency): concurrent posts
+       * from several members converge on ONE message in RTDB + local stores.
+       */
+      fixedMessageId?: string;
+    } = {},
   ) => {
     if (!user) return;
     try {
+      // Query by MY participation, not by groupId: the chats read rule requires
+      // `auth.uid in participantIds`, and a groupId-only query can't prove that
+      // (Firestore "rules are not filters") — it dies with permission-denied.
+      // array-contains(uid) is provably safe and needs no composite index; the
+      // group match happens client-side over the user's own chats.
       const chatsRef = collection(db, 'chats');
-      const chatQ = query(chatsRef, where('groupId', '==', groupId));
+      const chatQ = query(chatsRef, where('participantIds', 'array-contains', user.userId));
       const chatSnap = await getDocs(chatQ);
-      if (chatSnap.empty) return;
-
-      const chatDoc = chatSnap.docs[0];
+      const chatDoc = chatSnap.docs.find((d) => (d.data() as { groupId?: string }).groupId === groupId);
+      if (!chatDoc) return;
       const chatId = chatDoc.id;
       const chatData = chatDoc.data() as Record<string, unknown>;
 
@@ -757,7 +791,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       const baseParticipantIds =
         options.participantIdsOverride ?? ((chatData.participantIds as string[] | undefined) ?? []);
 
-      const msgId = uuid();
+      const msgId = options.fixedMessageId ?? uuid();
       const now = Date.now();
       const systemMessage: ChatMessage = {
         id: msgId,
@@ -773,6 +807,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         isFromMe: false,
         deliveredTo: [],
         readBy: [],
+        ...options.messageOverrides,
       };
 
       const updatePayload: Record<string, unknown> = {
@@ -801,6 +836,225 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       // the source of truth is the group doc; the chat is best-effort.
       console.warn('writeGroupSystemMessage failed', error);
     }
+  };
+
+  // ── Money-in-chat auto-post (ai_layer/docs/21) ─────────────────────────────
+  // Best-effort card into the linked group chat. Honors the admin autoPost
+  // policy ('cards' → typed card, 'compact' → plain system line, 'off' → skip)
+  // and NEVER blocks or fails the money write itself — the group doc is the
+  // source of truth, the chat is a mirror.
+
+  const memberName = (group: Group | undefined, userId: string): string =>
+    [...(group?.members ?? []), ...(group?.archivedMembers ?? [])].find((m) => m.userId === userId)
+      ?.displayName ?? 'Someone';
+
+  const postExpenseCard = (group: Group | undefined, groupId: string, expense: Expense) => {
+    const policy = resolveMoneyInChat(group?.moneyInChat).autoPost;
+    if (policy === 'off') return;
+    const payerName = memberName(group, expense.paidBy);
+    const content = `💸 ${expense.title} · ${formatCurrency(expense.amount, group?.currency)} paid by ${payerName}`;
+    const ref: ExpenseRef = {
+      kind: 'expense',
+      groupId,
+      refId: expense.expenseId,
+      snapshot: {
+        title: expense.title,
+        amount: expense.amount,
+        currency: group?.currency ?? 'USD',
+        payerName,
+        payerId: expense.paidBy,
+        participantCount: expense.participants.length,
+        ...(expense.category ? { category: expense.category } : {}),
+      },
+    };
+    void writeGroupSystemMessage(
+      groupId,
+      content,
+      policy === 'cards' ? { messageOverrides: { type: 'expense', expenseRef: ref } } : {},
+    );
+  };
+
+  const postSettlementCard = (group: Group | undefined, groupId: string, settlement: Settlement) => {
+    const policy = resolveMoneyInChat(group?.moneyInChat).autoPost;
+    if (policy === 'off') return;
+    const fromName = memberName(group, settlement.fromUserId);
+    const toName = memberName(group, settlement.toUserId);
+    const content = `✅ ${fromName} paid ${toName} ${formatCurrency(settlement.amount, group?.currency)}`;
+    const ref: ExpenseRef = {
+      kind: 'settlement',
+      groupId,
+      refId: settlement.settlementId,
+      snapshot: {
+        title: 'Settlement',
+        amount: settlement.amount,
+        currency: group?.currency ?? 'USD',
+        payerName: fromName,
+        payerId: settlement.fromUserId,
+        participantCount: 2,
+        toName,
+        toUserId: settlement.toUserId,
+      },
+    };
+    void writeGroupSystemMessage(
+      groupId,
+      content,
+      policy === 'cards' ? { messageOverrides: { type: 'expense', expenseRef: ref } } : {},
+    );
+  };
+
+  // ── Insights → chat (ai_layer/docs/22): digests, budget alerts, anomalies ──
+
+  /**
+   * Post the previous period's "wrapped" digest card (idempotent via a
+   * deterministic message id — any member can trigger it, one card results).
+   * Called by ChatRoomScreen when it sees the digest is due and absent.
+   */
+  const postGroupDigest = async (groupId: string, periodKey: string, window: { startMs: number; endMs: number; label: string }) => {
+    const group = groups.find((g) => g.groupId === groupId);
+    if (!group) return;
+    const settings = resolveMoneyInChat(group.moneyInChat);
+    if (settings.insights.digestCadence === 'off') return;
+
+    const agg = aggregateRange(group.expenses ?? [], window, user?.userId ?? '');
+    if (agg.count === 0) return; // Nothing to wrap.
+    const topCategory = agg.byCategory[0]?.category;
+    const { rows } = memberBreakdown(group.expenses ?? [], group.members ?? [], window);
+    const topPayer = rows[0];
+
+    const title = `${window.label} wrapped`;
+    const content = `📊 ${title} · ${formatCurrency(agg.total, group.currency)} across ${agg.count} expense${agg.count === 1 ? '' : 's'}${topCategory ? ` · Top: ${topCategory}` : ''}`;
+    const ref: ExpenseRef = {
+      kind: 'digest',
+      groupId,
+      refId: periodKey,
+      snapshot: {
+        title,
+        amount: agg.total,
+        currency: group.currency ?? 'USD',
+        payerName: topPayer?.name ?? '',
+        payerId: topPayer?.userId ?? '',
+        participantCount: agg.count,
+        ...(topCategory ? { category: topCategory } : {}),
+      },
+    };
+    await writeGroupSystemMessage(groupId, content, {
+      messageOverrides: { type: 'expense', expenseRef: ref },
+      fixedMessageId: `digest-${groupId}-${periodKey}`,
+    });
+  };
+
+  /** Budget-crossing alert card (80% / 100%), idempotent per month+category+threshold. */
+  const maybePostBudgetAlert = (group: Group | undefined, groupId: string, expense: Expense) => {
+    if (!group?.budgets) return;
+    const settings = resolveMoneyInChat(group.moneyInChat);
+    if (!settings.insights.budgetAlerts) return;
+    const now = Date.now();
+    const before = budgetStatus(group.budgets, group.expenses ?? [], now);
+    const after = budgetStatus(group.budgets, [...(group.expenses ?? []), expense], now);
+    const cat = (expense.category ?? 'General').trim() || 'General';
+    const prev = before.find((b) => b.category.toLowerCase() === cat.toLowerCase());
+    const next = after.find((b) => b.category.toLowerCase() === cat.toLowerCase());
+    if (!next) return;
+    const threshold = next.pct >= 100 ? 100 : next.pct >= 80 ? 80 : null;
+    if (threshold == null || (prev && prev.pct >= threshold)) return;
+    const mk = monthKey(now);
+    const title = threshold >= 100 ? `${next.category} budget exceeded` : `${next.category} at ${next.pct}% of budget`;
+    const ref: ExpenseRef = {
+      kind: 'insight',
+      groupId,
+      refId: `budget-${mk}-${next.category}`,
+      snapshot: {
+        title,
+        amount: next.spent,
+        currency: group.currency ?? 'USD',
+        payerName: '',
+        payerId: '',
+        participantCount: 0,
+        category: next.category,
+      },
+    };
+    void writeGroupSystemMessage(groupId, `🎯 ${title} · ${formatCurrency(next.spent, group.currency)} of ${formatCurrency(next.budget, group.currency)}`, {
+      messageOverrides: { type: 'expense', expenseRef: ref },
+      fixedMessageId: `budget-${groupId}-${mk}-${next.category.toLowerCase()}-${threshold}`,
+    });
+  };
+
+  /** Unusual-spend alert card (opt-in via admin panel; default off). */
+  const maybePostAnomalyAlert = (group: Group | undefined, groupId: string, expense: Expense) => {
+    if (!group) return;
+    const settings = resolveMoneyInChat(group.moneyInChat);
+    if (!settings.insights.anomalyPosts) return;
+    const hits = detectAnomalies([...(group.expenses ?? []), expense], Date.now());
+    const mine = hits.find((a) => a.expenseId === expense.expenseId);
+    if (!mine) return;
+    const ref: ExpenseRef = {
+      kind: 'insight',
+      groupId,
+      refId: expense.expenseId,
+      snapshot: {
+        title: `${mine.title}: ${mine.ratio}× the usual`,
+        amount: mine.amount,
+        currency: group.currency ?? 'USD',
+        payerName: '',
+        payerId: '',
+        participantCount: 0,
+        category: mine.category,
+      },
+    };
+    void writeGroupSystemMessage(
+      groupId,
+      `📈 ${mine.title} is ${mine.ratio}× the usual for ${mine.category}`,
+      {
+        messageOverrides: { type: 'expense', expenseRef: ref },
+        fixedMessageId: `anomaly-${groupId}-${expense.expenseId}`,
+      },
+    );
+  };
+
+  /** Admin-set per-category monthly budgets (group currency). */
+  const updateGroupBudgets = async (groupId: string, budgets: Record<string, number>) => {
+    if (!user) throw new Error('You must be signed in to change budgets.');
+    const group = groups.find((g) => g.groupId === groupId);
+    if (!group) throw new Error('Group not found.');
+    const me = group.members.find((m) => m.userId === user.userId);
+    if (!me || (me.role !== 'owner' && me.role !== 'admin')) {
+      throw new Error('Only group admins can set budgets.');
+    }
+    const clean: Record<string, number> = {};
+    for (const [k, v] of Object.entries(budgets)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0 && k.trim()) clean[k.trim()] = Math.round(n * 100) / 100;
+    }
+    const groupRef = doc(db, 'groups', groupId);
+    await updateDoc(groupRef, { budgets: clean, updatedAt: serverTimestamp() });
+    setGroups((prev) => {
+      const next = prev.map((g) => (g.groupId === groupId ? { ...g, budgets: clean, updatedAt: Date.now() } : g));
+      if (user) void persistGroups(user.userId, next);
+      return next;
+    });
+  };
+
+  const updateMoneyInChat = async (groupId: string, settings: MoneyInChatSettings) => {
+    if (!user) throw new Error('You must be signed in to change group settings.');
+    const group = groups.find((g) => g.groupId === groupId);
+    if (!group) throw new Error('Group not found.');
+    const me = group.members.find((m) => m.userId === user.userId);
+    if (!me || (me.role !== 'owner' && me.role !== 'admin')) {
+      throw new Error('Only group admins can change Money in Chat settings.');
+    }
+
+    const groupRef = doc(db, 'groups', groupId);
+    await updateDoc(groupRef, { moneyInChat: settings, updatedAt: serverTimestamp() });
+
+    setGroups((prev) => {
+      const next = prev.map((g) =>
+        g.groupId === groupId ? { ...g, moneyInChat: settings, updatedAt: Date.now() } : g,
+      );
+      if (user) void persistGroups(user.userId, next);
+      return next;
+    });
+
+    void writeGroupSystemMessage(groupId, `${me.displayName} updated Money in Chat settings`);
   };
 
   const updateGroup = async (
@@ -1163,6 +1417,9 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       deleteSettlement,
       updateGroup,
       convertGroupCurrency,
+      updateMoneyInChat,
+      updateGroupBudgets,
+      postGroupDigest,
       updateMemberRole,
       removeMember,
       leaveGroup,

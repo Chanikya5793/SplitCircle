@@ -8,7 +8,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { getExpenseDetailsTitle } from '@/navigation/screenTitles';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { radius, spacing } from '@/theme';
-import { formatCurrency } from '@/utils/currency';
+import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { getExpenseSplitDetails } from '@/utils/expenseSplit';
 import { buildReceiptInsightRows } from '@/utils/receiptInsights';
 import { useNavigation } from '@react-navigation/native';
@@ -46,6 +46,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   const scrollY = useRef(new Animated.Value(0)).current;
   const group = groups.find((g) => g.groupId === groupId);
   const expense = group?.expenses.find((e) => e.expenseId === expenseId);
+  const fmtMoney = useMoneyDisplay(groupId);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -96,8 +97,8 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   // early return — React crashes with "Rendered more hooks than during the
   // previous render". Keep every hook above the fallback branch.
   const splitDetails = useMemo(
-    () => (group && expense ? getExpenseSplitDetails(expense, memberMap, group.currency) : null),
-    [expense, group?.currency, memberMap],
+    () => (group && expense ? getExpenseSplitDetails(expense, memberMap, group.currency, fmtMoney) : null),
+    [expense, group?.currency, memberMap, fmtMoney],
   );
 
   if (!group || !expense) {
@@ -191,7 +192,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             <View>
               <Text variant="headlineMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{expense.title}</Text>
               <Text variant="titleMedium" style={[styles.amount, { color: theme.colors.onSurface }]}>
-                {formatCurrency(expense.amount, group.currency)}
+                {fmtMoney(expense.amount, group.currency)}
               </Text>
             </View>
             <Chip icon={getCategoryIcon(expense.category)} style={{ backgroundColor: theme.colors.secondaryContainer }} textStyle={{ color: theme.colors.onSecondaryContainer }}>{expense.category}</Chip>
@@ -255,7 +256,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
                       )}
                     </View>
                     <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                      {formatCurrency(item.price, group.currency)}
+                      {fmtMoney(item.price, group.currency)}
                     </Text>
                   </View>
                 ))}
@@ -264,7 +265,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
                   <View style={styles.receiptItemRow}>
                     <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>Tax</Text>
                     <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                      {formatCurrency(expense.splitMetadata.taxAmount, group.currency)}
+                      {fmtMoney(expense.splitMetadata.taxAmount, group.currency)}
                     </Text>
                   </View>
                 )}
@@ -273,7 +274,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
                   <View style={styles.receiptItemRow}>
                     <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>Tip</Text>
                     <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                      {formatCurrency(expense.splitMetadata.tipAmount, group.currency)}
+                      {fmtMoney(expense.splitMetadata.tipAmount, group.currency)}
                     </Text>
                   </View>
                 )}
@@ -285,7 +286,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
           {(() => {
             const insightRows = buildReceiptInsightRows(
               expense.receipt?.insights,
-              (n) => formatCurrency(n, group.currency),
+              (n) => fmtMoney(n, group.currency),
             );
             if (insightRows.length === 0) return null;
             return (
@@ -333,7 +334,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             <View style={styles.row}>
               <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>{payerName}</Text>
               <Text variant="bodyLarge" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                {formatCurrency(expense.amount, group.currency)}
+                {fmtMoney(expense.amount, group.currency)}
               </Text>
             </View>
           </View>
@@ -379,7 +380,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             {expense.participants.map((p) => (
               <View key={p.userId} style={styles.row}>
                 <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>{memberMap[p.userId] || 'Unknown'}</Text>
-                <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>{formatCurrency(p.share, group.currency)}</Text>
+                <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>{fmtMoney(p.share, group.currency)}</Text>
               </View>
             ))}
           </View>

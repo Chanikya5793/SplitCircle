@@ -33,6 +33,7 @@ import { GroupInfoScreen } from '@/screens/groups/GroupInfoScreen';
 import { GroupListScreen } from '@/screens/groups/GroupListScreen';
 import { ArchivedGroupsScreen } from '@/screens/groups/ArchivedGroupsScreen';
 import { GroupStatsScreen } from '@/screens/groups/GroupStatsScreen';
+import { PersonalStatsScreen } from '@/screens/stats/PersonalStatsScreen';
 import { AiChatScreen } from '@/screens/ai/AiChatScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { NotificationSettingsScreen } from '@/screens/settings/NotificationSettingsScreen';
@@ -561,7 +562,7 @@ const GroupStatsRoute = ({ route, navigation }: any) => {
   if (!group) {
     return <GroupLoadingFallback navigation={navigation} />;
   }
-  return <GroupStatsScreen group={group} />;
+  return <GroupStatsScreen group={group} openInsightsChat={route.params?.openInsightsChat === true} />;
 };
 
 const AskAiRoute = ({ route, navigation }: any) => {
@@ -1093,7 +1094,20 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.GROUP_STATS}
         component={GroupStatsRoute}
-        options={{ title: SCREEN_TITLES.groupStats }}
+        options={{
+          title: SCREEN_TITLES.groupStats,
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.PERSONAL_STATS}
+        component={PersonalStatsScreen}
+        options={{
+          title: 'Your spending',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
       />
       <AppStack.Screen
         name={ROUTES.APP.ASK_AI}

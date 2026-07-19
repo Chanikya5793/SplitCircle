@@ -55,7 +55,7 @@ export const SwipeableExpenseCard = ({
   const { theme } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
   const { pressScaleStyle, onPressIn, onPressOut } = usePressScale();
-  const payerName = maskGroupText(memberMap[expense.paidBy] || 'Unknown', groupId);
+  const payerName = maskGroupText(memberMap[expense.paidBy] || 'Unknown', groupId, 'person');
   const isSettlement = expense.category === 'Settlement';
   const splitLabel = getExpenseSplitLabel(expense);
 
@@ -125,11 +125,11 @@ export const SwipeableExpenseCard = ({
                     />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{maskGroupText(expense.title, groupId)}</Text>
+                    <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{maskGroupText(expense.title, groupId, 'title')}</Text>
                     <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
                       {isSettlement
-                        ? `${maskGroupText(expense.category, groupId)} · Paid by ${payerName}`
-                        : `${maskGroupText(expense.category, groupId)} · ${maskGroupText(splitLabel, groupId)} · Paid by ${payerName}`}
+                        ? `${maskGroupText(expense.category, groupId, 'category')} · Paid by ${payerName}`
+                        : `${maskGroupText(expense.category, groupId, 'category')} · ${maskGroupText(splitLabel, groupId, 'note')} · Paid by ${payerName}`}
                     </Text>
                     <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                       {maskGroupText(new Date(expense.createdAt).toLocaleDateString(), groupId)}

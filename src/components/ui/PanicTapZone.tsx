@@ -13,13 +13,14 @@ const TAP_WINDOW_MS = 600;
 const TAPS_TO_TRIP = 3;
 
 export const PanicTapZone = () => {
-  const { settings, active, trip } = usePrivacyGuard();
+  const { settings, active, duress, trip } = usePrivacyGuard();
   const insets = useSafeAreaInsets();
   const tapsRef = useRef<number[]>([]);
 
   const armed = settings.enabled && Boolean(settings.codeHash);
-  // Nothing to do once shields are already up (the reveal path owns that).
-  if (!armed || active || settings.panicCorner === 'off') return null;
+  // Nothing to do once shields are already up (the reveal path owns that) —
+  // except in duress, where the panic tap silently re-raises FULL shields.
+  if (!armed || (active && !duress) || settings.panicCorner === 'off') return null;
 
   const onTap = () => {
     const now = Date.now();

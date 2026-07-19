@@ -1,7 +1,7 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GroupAvatar, GroupPhotoUploader, GuardedScreen} from '@/components/ui';
-import { CurrencyConvertSheet, WallpaperPickerSheet } from '@/components/ui';
+import { CurrencyConvertSheet, MoneyInChatSheet, WallpaperPickerSheet } from '@/components/ui';
 import { getWallpaperSync } from '@/services/wallpaperService';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -89,6 +89,7 @@ export const GroupInfoScreen = () => {
     // hooks than during the previous render". Keep every hook up here.
     const [wallpaperSheetOpen, setWallpaperSheetOpen] = useState(false);
     const [currencySheetOpen, setCurrencySheetOpen] = useState(false);
+    const [moneyInChatOpen, setMoneyInChatOpen] = useState(false);
 
     const group = useMemo(() => groups.find((g) => g.groupId === groupId), [groups, groupId]);
 
@@ -613,6 +614,18 @@ export const GroupInfoScreen = () => {
                             onPress={isAdmin ? () => { lightHaptic(); setCurrencySheetOpen(true); } : undefined}
                             right={isAdmin ? (props) => <List.Icon {...props} icon="chevron-right" /> : undefined}
                         />
+                        {isAdmin && (
+                            <>
+                                <Divider />
+                                <List.Item
+                                    title="Money in chat"
+                                    description="Cards, nudges & sharing in the group chat"
+                                    left={(props) => <List.Icon {...props} icon="message-badge-outline" />}
+                                    onPress={() => { lightHaptic(); setMoneyInChatOpen(true); }}
+                                    right={(props) => <List.Icon {...props} icon="chevron-right" />}
+                                />
+                            </>
+                        )}
                         <Divider />
                         <List.Item
                             title="Invite code"
@@ -772,6 +785,11 @@ export const GroupInfoScreen = () => {
                 visible={currencySheetOpen}
                 group={group}
                 onClose={() => setCurrencySheetOpen(false)}
+            />
+            <MoneyInChatSheet
+                visible={moneyInChatOpen}
+                group={group}
+                onClose={() => setMoneyInChatOpen(false)}
             />
         </GuardedScreen>
         </LiquidBackground>

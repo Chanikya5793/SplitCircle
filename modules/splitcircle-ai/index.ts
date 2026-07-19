@@ -9,6 +9,7 @@ import NativeModule, {
   type OnDeviceAiAvailability,
   type OnDeviceAskResult,
   type OnDeviceParsedExpenseRaw,
+  type OnDevicePccAskResult,
   type OnDevicePccProbeResult,
   type OnDeviceReceiptItem,
   type OnDeviceReceiptResult,
@@ -51,6 +52,22 @@ export async function donateAskActivity(query?: string): Promise<void> {
 }
 
 /**
+ * ALL Foundation Models calls are serialized app-wide through this queue.
+ * Two concurrent LanguageModelSession / PCC model constructions race the expo
+ * module event plumbing and corrupt the Hermes heap — SIGSEGV inside the VM,
+ * seen on-sim during doc 22 (PCC) and on the physical iPhone 17 Pro
+ * 2026-07-18 (two askOnDevice calls racing when Group Stats opens). One
+ * in-flight model call at a time, enforced at this single choke point; sync
+ * availability/context getters stay unqueued.
+ */
+let fmQueue: Promise<unknown> = Promise.resolve();
+function serializeFm<T>(run: () => Promise<T>): Promise<T> {
+  const next = fmQueue.then(run, run);
+  fmQueue = next.catch(() => undefined);
+  return next;
+}
+
+/**
  * Availability of the on-device Apple Foundation Models LLM (Apple
  * Intelligence). "unsupportedOS" covers non-iOS platforms, iOS < 26, and
  * builds without the native module.
@@ -86,10 +103,40 @@ export function getOnDeviceContextSize(): number {
  * `getOnDeviceAiAvailability()` first and fall back / explain.
  */
 export async function askOnDevice(question: string, context: string): Promise<OnDeviceAskResult> {
-  if (!NativeModule?.askOnDevice) {
+  const native = NativeModule;
+  if (!native?.askOnDevice) {
     throw new Error('On-device AI is not available on this platform.');
   }
-  return NativeModule.askOnDevice(question, context);
+  return serializeFm(() => native.askOnDevice(question, context));
+}
+
+/**
+ * Free-form on-device generation with caller-supplied instructions — the door
+ * for NARRATIVE work (stats insight card, insights chat, titles, summaries).
+ * Unlike `askOnDevice` there is no Q&A persona, no empty "Expenses:" scaffold,
+ * and no citation struct fighting the caller's instructions. `deterministic`
+ * uses greedy sampling so identical prompts produce identical text. On
+ * binaries older than `generateText` (hot-swapped JS) this degrades to the
+ * `askOnDevice` shape rather than breaking. Throws when unavailable.
+ */
+export async function generateOnDeviceText(
+  prompt: string,
+  instructions = '',
+  opts: { deterministic?: boolean } = {},
+): Promise<string> {
+  const native = NativeModule;
+  if (native?.generateText) {
+    const generate = native.generateText.bind(native);
+    const result = await serializeFm(() => generate(prompt, instructions, opts.deterministic === true));
+    return result?.answer ?? '';
+  }
+  if (native?.askOnDevice) {
+    const result = await serializeFm(() =>
+      native.askOnDevice(instructions ? `${instructions}\n\n${prompt}` : prompt, ''),
+    );
+    return result?.answer ?? '';
+  }
+  throw new Error('On-device AI is not available on this platform.');
 }
 
 /**
@@ -102,10 +149,11 @@ export async function parseReceiptStructured(
   rawText: string,
   fewShot = '',
 ): Promise<OnDeviceReceiptResult> {
-  if (!NativeModule?.parseReceiptStructured) {
+  const native = NativeModule;
+  if (!native?.parseReceiptStructured) {
     throw new Error('On-device receipt parsing is not available on this platform.');
   }
-  return NativeModule.parseReceiptStructured(rawText, fewShot);
+  return serializeFm(() => native.parseReceiptStructured(rawText, fewShot));
 }
 
 /**
@@ -114,10 +162,11 @@ export async function parseReceiptStructured(
  * Throws when the on-device model is unavailable.
  */
 export async function suggestExpenseCategory(text: string): Promise<string> {
-  if (!NativeModule?.suggestExpenseCategory) {
+  const native = NativeModule;
+  if (!native?.suggestExpenseCategory) {
     throw new Error('On-device categorization is not available on this platform.');
   }
-  return NativeModule.suggestExpenseCategory(text);
+  return serializeFm(() => native.suggestExpenseCategory(text));
 }
 
 /**
@@ -125,10 +174,11 @@ export async function suggestExpenseCategory(text: string): Promise<string> {
  * structured plan. Throws when the on-device model is unavailable.
  */
 export async function planExpenseQuery(question: string, memberNames: string) {
-  if (!NativeModule?.planExpenseQuery) {
+  const native = NativeModule;
+  if (!native?.planExpenseQuery) {
     throw new Error('On-device query planning is not available on this platform.');
   }
-  return NativeModule.planExpenseQuery(question, memberNames);
+  return serializeFm(() => native.planExpenseQuery(question, memberNames));
 }
 
 /**
@@ -140,10 +190,11 @@ export async function parseExpenseFromText(
   memberNames: string,
   currentUserName: string,
 ): Promise<OnDeviceParsedExpenseRaw> {
-  if (!NativeModule?.parseExpenseFromText) {
+  const native = NativeModule;
+  if (!native?.parseExpenseFromText) {
     throw new Error('On-device expense parsing is not available on this platform.');
   }
-  return NativeModule.parseExpenseFromText(text, memberNames, currentUserName);
+  return serializeFm(() => native.parseExpenseFromText(text, memberNames, currentUserName));
 }
 
 // ── Pipeline v2 spike wrappers (doc 17 §A0) ─────────────────────────────────
@@ -156,10 +207,11 @@ export async function askOnDeviceStateful(
   context: string,
   instructions = '',
 ): Promise<OnDeviceAskResult> {
-  if (!NativeModule?.askOnDeviceStateful) {
+  const native = NativeModule;
+  if (!native?.askOnDeviceStateful) {
     throw new Error('On-device AI is not available on this platform.');
   }
-  return NativeModule.askOnDeviceStateful(sessionId, question, context, instructions);
+  return serializeFm(() => native.askOnDeviceStateful(sessionId, question, context, instructions));
 }
 
 /** S2 — clear a session's transcript (pass '' to clear all sessions). No-op off-iOS. */
@@ -179,19 +231,38 @@ export async function routeMessage(
   memberNames: string,
   isoDate: string,
 ): Promise<OnDeviceRouterDecisionRaw> {
-  if (!NativeModule?.routeMessage) {
+  const native = NativeModule;
+  if (!native?.routeMessage) {
     throw new Error('On-device routing is not available on this platform.');
   }
-  return NativeModule.routeMessage(sessionId, text, memberNames, isoDate);
+  return serializeFm(() => native.routeMessage(sessionId, text, memberNames, isoDate));
 }
 
 /** S5 — Private Cloud Compute probe (iOS 27). `available` is false until the PCC
  * entitlement is granted; returns a neutral result off-iOS instead of throwing. */
 export async function pccProbe(question: string): Promise<OnDevicePccProbeResult> {
-  if (!NativeModule?.pccProbe) {
+  const native = NativeModule;
+  if (!native?.pccProbe) {
     return { available: false, reason: 'unsupportedOS', answer: '', contextSize: 0 };
   }
-  return NativeModule.pccProbe(question);
+  return serializeFm(() => native.pccProbe(question));
+}
+
+/** PCC ask with real instructions + quota surfaced (doc 23). Falls back to the
+ * spike `pccProbe` on binaries built before `pccAsk` existed, so hot-swapped JS
+ * degrades gracefully. Neutral result off-iOS instead of throwing. */
+export async function pccAsk(question: string, instructions = ''): Promise<OnDevicePccAskResult> {
+  const native = NativeModule;
+  if (native?.pccAsk) {
+    return serializeFm(() => native.pccAsk(question, instructions));
+  }
+  if (native?.pccProbe) {
+    const probe = await serializeFm(() =>
+      native.pccProbe(instructions ? `${instructions}\n\n${question}` : question),
+    );
+    return { available: probe.available, reason: probe.reason, answer: probe.answer, quota: '' };
+  }
+  return { available: false, reason: 'unsupportedOS', answer: '', quota: '' };
 }
 
 /**
@@ -261,6 +332,7 @@ export type {
   OnDeviceAiAvailability,
   OnDeviceAskResult,
   OnDeviceParsedExpenseRaw,
+  OnDevicePccAskResult,
   OnDevicePccProbeResult,
   OnDeviceReceiptItem,
   OnDeviceReceiptResult,

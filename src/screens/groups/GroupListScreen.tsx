@@ -41,9 +41,10 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const { user } = useAuth();
   const { isOnline } = useOfflineSync();
   const { theme, isDark } = useTheme();
-  const { isShielded: guardIsShielded } = usePrivacyGuard();
-  // Creating/joining expense groups is blocked while expenses are hidden.
-  const groupsShielded = guardIsShielded('expenses');
+  const { isShielded: guardIsShielded, isVanished: guardIsVanished, duress: guardDuress } = usePrivacyGuard();
+  // Creating/joining expense groups is blocked while expenses are hidden —
+  // but not in duress, where a disabled button would betray the fake unlock.
+  const groupsShielded = guardIsShielded('expenses') && !guardDuress;
   const [dialog, setDialog] = useState<'create' | 'join' | null>(null);
   const [name, setName] = useState('');
   const [currencyInput, setCurrencyInput] = useState('USD');
@@ -114,7 +115,9 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
 
   // Filter and Sort Logic
   const processedGroups = useMemo(() => {
-    let result = [...groups];
+    // Scoped-sensitive groups VANISH while shielded — removed outright, no
+    // masked placeholder row advertising that something is hidden.
+    let result = groups.filter((g) => !guardIsVanished('expenses', g.groupId));
 
     // Filter by Currency
     if (selectedCurrencies.length > 0) {
@@ -147,7 +150,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     });
 
     return result;
-  }, [groups, selectedCurrencies, sortField, sortOrder]);
+  }, [groups, selectedCurrencies, sortField, sortOrder, guardIsVanished]);
 
   // Per-user archive: archived groups stay fully functional (balances count),
   // they're just collapsed into a section below the active list.

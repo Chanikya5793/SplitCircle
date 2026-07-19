@@ -433,7 +433,7 @@ export const FilePreviewScreen = () => {
       <View style={styles.root}>
         {renderHeader()}
         <View style={{ flex: 1 }}>
-          <GuardedScreen target="chats" entityId={params.chatId} label="Hidden">
+          <GuardedScreen target="chats" entityId={params.chatId} label="Hidden" duressBehavior="blank" duressLabel="File unavailable.">
             {renderContent()}
           </GuardedScreen>
         </View>

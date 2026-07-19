@@ -42,8 +42,11 @@ export const StarredMessagesScreen = () => {
   const params = (route.params as StarredScreenParams) ?? {};
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useTheme();
-  const { isShielded: guardIsShielded } = usePrivacyGuard();
+  const { isShielded: guardIsShielded, isLockedDown: guardIsLockedDown } = usePrivacyGuard();
   const starredShielded = guardIsShielded('chats');
+  // Lock copy only outside duress — in the decoy world this reads as a
+  // normal empty starred list instead of advertising hidden content.
+  const starredLocked = guardIsLockedDown('chats');
   const { threads } = useChat();
   const { user } = useAuth();
 
@@ -123,12 +126,12 @@ export const StarredMessagesScreen = () => {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={theme.colors.primary} />}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Ionicons name={starredShielded ? 'lock-closed-outline' : 'star-outline'} size={56} color={theme.colors.onSurfaceVariant} />
+            <Ionicons name={starredLocked ? 'lock-closed-outline' : 'star-outline'} size={56} color={theme.colors.onSurfaceVariant} />
             <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>
-              {starredShielded ? 'Hidden' : 'No starred messages'}
+              {starredLocked ? 'Hidden' : 'No starred messages'}
             </Text>
             <Text style={[styles.emptySub, { color: theme.colors.onSurfaceVariant }]}>
-              {starredShielded ? 'Shake again or enter your code to reveal.' : 'Long-press a message and tap Star to keep it here.'}
+              {starredLocked ? 'Shake again or enter your code to reveal.' : 'Long-press a message and tap Star to keep it here.'}
             </Text>
           </View>
         }

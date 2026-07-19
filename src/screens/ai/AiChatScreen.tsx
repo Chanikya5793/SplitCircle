@@ -19,7 +19,15 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import type { ExpenseAiSource } from '@/services/aiService';
 import { processAssistantTurn, type ConversationState, type ProposedAction } from '@/services/assistantService';
-import { loadChatSession, saveChatSession } from '@/services/chatSession';
+import {
+  activateChatThread,
+  deleteChatThread,
+  listChatThreads,
+  loadChatSession,
+  newChatThread,
+  saveChatSession,
+  type ChatThreadSummary,
+} from '@/services/chatSession';
 import type { NavTarget } from '@/utils/assistantChat';
 import { formatCurrency } from '@/utils/currency';
 import { lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
@@ -93,6 +101,8 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   const [messages, setMessages] = useState<ChatMsg[]>([GREETING(group.name)]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [threads, setThreads] = useState<ChatThreadSummary[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   // Conversation memory (slot-filling draft / last proposed action), carried
   // across turns and persisted per group so the thread survives navigation.
@@ -168,6 +178,92 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
     },
     [append, busy, currentUserId, group, input],
   );
+
+  // ── Thread history (doc 23) ───────────────────────────────────────────────
+
+  const resetToGreeting = useCallback(() => {
+    stateRef.current = {};
+    setMessages([GREETING(group.name)]);
+  }, [group.name]);
+
+  const toggleHistory = useCallback(async () => {
+    lightHaptic();
+    if (!historyOpen) setThreads(await listChatThreads(group.groupId));
+    setHistoryOpen((v) => !v);
+  }, [group.groupId, historyOpen]);
+
+  const startNewThread = useCallback(async () => {
+    lightHaptic();
+    await newChatThread(group.groupId);
+    resetToGreeting();
+    setHistoryOpen(false);
+  }, [group.groupId, resetToGreeting]);
+
+  const switchThread = useCallback(
+    async (threadId: string) => {
+      lightHaptic();
+      const loaded = await activateChatThread<ChatMsg>(group.groupId, threadId);
+      if (loaded && loaded.messages.length > 0) {
+        // Same restore rule as mount: stale confirm cards retire.
+        setMessages(
+          loaded.messages.map((m) =>
+            m.action && m.actionState === 'pending' ? { ...m, actionState: 'cancelled' as ActionState } : m,
+          ),
+        );
+        stateRef.current = { ...loaded.state, pending: undefined, lastProposed: undefined };
+      } else {
+        resetToGreeting();
+      }
+      setHistoryOpen(false);
+      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
+    },
+    [group.groupId, resetToGreeting],
+  );
+
+  const removeThread = useCallback(
+    async (threadId: string) => {
+      lightHaptic();
+      const wasActive = threads[0]?.threadId === threadId;
+      await deleteChatThread(group.groupId, threadId);
+      setThreads(await listChatThreads(group.groupId));
+      if (wasActive) {
+        const next = await loadChatSession<ChatMsg>(group.groupId);
+        if (next && next.messages.length > 0) {
+          setMessages(next.messages);
+          stateRef.current = { ...next.state, pending: undefined, lastProposed: undefined };
+        } else {
+          resetToGreeting();
+        }
+      }
+    },
+    [group.groupId, resetToGreeting, threads],
+  );
+
+  // Header controls: history + new thread.
+  useEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <View style={styles.headerRight}>
+          <TouchableOpacity
+            onPress={() => void toggleHistory()}
+            style={styles.headerIcon}
+            accessibilityRole="button"
+            accessibilityLabel="Conversation history"
+          >
+            <Icon source="history" size={22} color={theme.colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => void startNewThread()}
+            style={styles.headerIcon}
+            accessibilityRole="button"
+            accessibilityLabel="New conversation"
+          >
+            <Icon source="plus" size={24} color={theme.colors.primary} />
+          </TouchableOpacity>
+        </View>
+      ),
+    });
+  }, [navigation, theme.colors.primary, toggleHistory, startNewThread]);
 
   // Auto-send a prefilled question (e.g. from the donated Siri activity).
   const didAutoSend = useRef(false);
@@ -338,12 +434,69 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
 
   return (
     <LiquidBackground>
-      <GuardedScreen target="expenses" label="Assistant hidden">
+      <GuardedScreen target="expenses" label="Assistant hidden" duressBehavior="blank" duressLabel="No conversations yet.">
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={headerHeight}
       >
+        {historyOpen && (
+          <View
+            style={[
+              styles.historyPanel,
+              {
+                top: headerHeight + 4,
+                backgroundColor: isDark ? 'rgba(28,31,38,0.97)' : 'rgba(255,255,255,0.97)',
+                borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)',
+              },
+            ]}
+          >
+            {threads.length === 0 ? (
+              <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, padding: 14 }}>
+                No conversations yet.
+              </Text>
+            ) : (
+              threads.map((t, i) => (
+                <View
+                  key={t.threadId}
+                  style={[
+                    styles.historyRow,
+                    { borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)' },
+                  ]}
+                >
+                  <TouchableOpacity
+                    style={styles.historyMain}
+                    onPress={() => void switchThread(t.threadId)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open ${t.title}`}
+                  >
+                    <Text
+                      variant="labelMedium"
+                      numberOfLines={1}
+                      style={{
+                        color: i === 0 ? theme.colors.primary : theme.colors.onSurface,
+                        fontWeight: '600',
+                      }}
+                    >
+                      {t.title}
+                    </Text>
+                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                      {new Date(t.updatedAt).toLocaleDateString()} · {t.messageCount} messages
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => void removeThread(t.threadId)}
+                    style={styles.historyDelete}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Delete ${t.title}`}
+                  >
+                    <Icon source="trash-can-outline" size={18} color={theme.colors.onSurfaceVariant} />
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+          </View>
+        )}
         <FlatList
           ref={listRef}
           data={messages}
@@ -397,6 +550,24 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  headerRight: { flexDirection: 'row' },
+  headerIcon: { padding: 6 },
+  historyPanel: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    zIndex: 20,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  historyMain: { flex: 1, minWidth: 0, paddingVertical: 11, paddingHorizontal: 14, gap: 1 },
+  historyDelete: { padding: 12 },
   list: { padding: 12, gap: 10, paddingBottom: 8 },
   row: { flexDirection: 'row', width: '100%' },
   bubble: { maxWidth: '88%', borderRadius: 18, paddingVertical: 10, paddingHorizontal: 14 },

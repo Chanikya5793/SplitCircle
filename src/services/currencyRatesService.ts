@@ -61,6 +61,35 @@ const fetchTable = async (base: string): Promise<CachedTable> => {
   return table;
 };
 
+export interface RateTableResult {
+  rates: Record<string, number>;
+  fetchedAt: number;
+  stale: boolean;
+}
+
+/**
+ * Full rate table for a base currency (one fetch shows every target's rate).
+ * Fresh-cache → network → stale-cache, in that order.
+ */
+export const getRateTable = async (from: string): Promise<RateTableResult> => {
+  const base = from.toUpperCase();
+
+  const cached = await loadCache(base);
+  if (cached && Date.now() - cached.fetchedAt < FRESH_MS) {
+    return { rates: cached.rates, fetchedAt: cached.fetchedAt, stale: false };
+  }
+
+  try {
+    const table = await fetchTable(base);
+    return { rates: table.rates, fetchedAt: table.fetchedAt, stale: false };
+  } catch (error) {
+    if (cached) {
+      return { rates: cached.rates, fetchedAt: cached.fetchedAt, stale: true };
+    }
+    throw error instanceof Error ? error : new Error('Could not fetch exchange rates.');
+  }
+};
+
 /**
  * Rate to multiply a `from` amount by to get the `to` amount.
  * Fresh-cache → network → stale-cache, in that order.
@@ -70,22 +99,10 @@ export const getExchangeRate = async (from: string, to: string): Promise<RateRes
   const target = to.toUpperCase();
   if (base === target) return { rate: 1, fetchedAt: Date.now(), stale: false };
 
-  const cached = await loadCache(base);
-  if (cached?.rates[target] && Date.now() - cached.fetchedAt < FRESH_MS) {
-    return { rate: cached.rates[target], fetchedAt: cached.fetchedAt, stale: false };
-  }
-
-  try {
-    const table = await fetchTable(base);
-    const rate = table.rates[target];
-    if (!rate) throw new Error(`No rate available for ${base} → ${target}.`);
-    return { rate, fetchedAt: table.fetchedAt, stale: false };
-  } catch (error) {
-    if (cached?.rates[target]) {
-      return { rate: cached.rates[target], fetchedAt: cached.fetchedAt, stale: true };
-    }
-    throw error instanceof Error ? error : new Error('Could not fetch exchange rates.');
-  }
+  const table = await getRateTable(base);
+  const rate = table.rates[target];
+  if (!rate) throw new Error(`No rate available for ${base} → ${target}.`);
+  return { rate, fetchedAt: table.fetchedAt, stale: table.stale };
 };
 
 /** Round to the currency's minor unit (JPY/KRW have none). */

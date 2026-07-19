@@ -73,7 +73,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     return otherParticipant?.displayName || 'Direct Chat';
   }, [groups, user?.userId]);
 
-  const { isShielded, action, settings: guardSettings } = usePrivacyGuard();
+  const { isShielded, isVanished, action, settings: guardSettings } = usePrivacyGuard();
   // Full-list vanish only when the user chose "vanish" AND every chat is in
   // scope; otherwise render the list and let each row disguise itself per-scope.
   const vanishAllChats =
@@ -115,7 +115,9 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
 
   // Sort Logic
   const processedThreads = useMemo(() => {
-    let result = [...threads];
+    // Scoped-sensitive chats VANISH while shielded — no masked placeholder
+    // row advertising that something is hidden (and none at all in duress).
+    let result = threads.filter((t) => !isVanished('chats', t.chatId));
 
     result.sort((a, b) => {
       let comparison = 0;
@@ -139,7 +141,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
     });
 
     return result;
-  }, [threads, sortField, sortOrder, getChatTitle, localUnreadCounts]);
+  }, [threads, sortField, sortOrder, getChatTitle, localUnreadCounts, isVanished]);
 
   // Per-user organization: locked chats hide entirely behind a biometric
   // folder (locked wins), archived collapse into a folder, pinned float atop

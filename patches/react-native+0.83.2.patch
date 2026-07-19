@@ -2,6 +2,32 @@ diff --git a/node_modules/react-native/.DS_Store b/node_modules/react-native/.DS
 new file mode 100644
 index 0000000..8fef697
 Binary files /dev/null and b/node_modules/react-native/.DS_Store differ
+diff --git a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTEnhancedScrollView.mm b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTEnhancedScrollView.mm
+index 5720429..0e30379 100644
+--- a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTEnhancedScrollView.mm
++++ b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTEnhancedScrollView.mm
+@@ -36,6 +36,21 @@
+     // and keeps it as an opt-in behavior.
+     self.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+ 
++    // PATCHED (SplitCircle): iOS 26 applies a progressive "scroll edge effect"
++    // (glass fade) at scroll view edges by default when built with the iOS 26
++    // SDK. Over the app's colorful liquid backdrops it reads as fog washing
++    // out content (chat bubbles looked "dim" near the top/bottom of the
++    // screen, tracking the keyboard). RN exposes no prop for it — disable on
++    // every edge, app-wide.
++#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
++    if (@available(iOS 26.0, *)) {
++      self.topEdgeEffect.hidden = YES;
++      self.bottomEdgeEffect.hidden = YES;
++      self.leftEdgeEffect.hidden = YES;
++      self.rightEdgeEffect.hidden = YES;
++    }
++#endif
++
+     // We intentionally force `UIScrollView`s `semanticContentAttribute` to `LTR` here
+     // because this attribute affects a position of vertical scrollbar; we don't want this
+     // scrollbar flip because we also flip it with whole `UIScrollView` flip.
 diff --git a/node_modules/react-native/third-party-podspecs/RCT-Folly.podspec b/node_modules/react-native/third-party-podspecs/RCT-Folly.podspec
 index 8852179..040c4f0 100644
 --- a/node_modules/react-native/third-party-podspecs/RCT-Folly.podspec

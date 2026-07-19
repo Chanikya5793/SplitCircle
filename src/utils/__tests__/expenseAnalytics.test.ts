@@ -118,13 +118,16 @@ describe('parseTimeframe', () => {
   const now = Date.UTC(2026, 5, 14); // 2026-06-14
 
   it('parses last month / this month windows', () => {
+    // parseTimeframe builds calendar windows in LOCAL time, so assert with
+    // local getters — getUTCMonth() shifts across month boundaries depending
+    // on the machine's timezone.
     const last = parseTimeframe('summarize last month', now)!;
     expect(last.label).toBe('last month');
-    expect(new Date(last.startMs).getUTCMonth()).toBe(4); // May
-    expect(new Date(last.endMs).getUTCMonth()).toBe(4);
+    expect(new Date(last.startMs).getMonth()).toBe(4); // May
+    expect(new Date(last.endMs).getMonth()).toBe(4);
 
     const thisM = parseTimeframe('what about this month', now)!;
-    expect(new Date(thisM.startMs).getUTCMonth()).toBe(5); // June
+    expect(new Date(thisM.startMs).getMonth()).toBe(5); // June
   });
 
   it('returns null when no timeframe is mentioned', () => {
@@ -136,8 +139,9 @@ describe('comparison windows', () => {
   const now = Date.UTC(2026, 5, 14); // 2026-06-14
 
   it('calendarWindow for this/last month', () => {
-    expect(new Date(calendarWindow(now, 'month', 0).startMs).getUTCMonth()).toBe(5); // June
-    expect(new Date(calendarWindow(now, 'month', -1).startMs).getUTCMonth()).toBe(4); // May
+    // calendarWindow is local-time based too — see note in parseTimeframe tests.
+    expect(new Date(calendarWindow(now, 'month', 0).startMs).getMonth()).toBe(5); // June
+    expect(new Date(calendarWindow(now, 'month', -1).startMs).getMonth()).toBe(4); // May
   });
 
   it('comparisonWindows month: current vs previous are adjacent, non-overlapping', () => {

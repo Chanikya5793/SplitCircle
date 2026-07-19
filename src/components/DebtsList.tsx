@@ -92,12 +92,12 @@ const SwipeableDebtRow = ({
                 <View style={styles.member}>
                     <Avatar.Text
                         size={28}
-                        label={maskGroupText(fromMember.displayName, groupId).slice(0, 2).toUpperCase()}
+                        label={maskGroupText(fromMember.displayName, groupId, 'person').slice(0, 2).toUpperCase()}
                         style={{ backgroundColor: theme.colors.errorContainer }}
                         color={theme.colors.onErrorContainer}
                     />
                     <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                        {maskGroupText(fromMember.displayName, groupId)}
+                        {maskGroupText(fromMember.displayName, groupId, 'person')}
                     </Text>
                 </View>
 
@@ -111,12 +111,12 @@ const SwipeableDebtRow = ({
                 <View style={styles.member}>
                     <Avatar.Text
                         size={28}
-                        label={maskGroupText(toMember.displayName, groupId).slice(0, 2).toUpperCase()}
+                        label={maskGroupText(toMember.displayName, groupId, 'person').slice(0, 2).toUpperCase()}
                         style={{ backgroundColor: theme.colors.primaryContainer }}
                         color={theme.colors.onPrimaryContainer}
                     />
                     <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                        {maskGroupText(toMember.displayName, groupId)}
+                        {maskGroupText(toMember.displayName, groupId, 'person')}
                     </Text>
                 </View>
 
@@ -319,7 +319,7 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                             </View>
 
                             <Text style={{ color: theme.colors.onSurfaceVariant, marginBottom: 16 }}>
-                                Why {maskGroupText(memberMap[selectedDebt.from]?.displayName ?? '', group.groupId)} owes {maskGroupText(memberMap[selectedDebt.to]?.displayName ?? '', group.groupId)} {fmtMoney(selectedDebt.amount, group.currency)}
+                                Why {maskGroupText(memberMap[selectedDebt.from]?.displayName ?? '', group.groupId, 'person')} owes {maskGroupText(memberMap[selectedDebt.to]?.displayName ?? '', group.groupId, 'person')} {fmtMoney(selectedDebt.amount, group.currency)}
                             </Text>
 
                             <ScrollView style={{ maxHeight: 400 }}>

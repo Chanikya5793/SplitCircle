@@ -23,6 +23,7 @@ export default defineConfig({
         __dirname,
         'src/services/__tests__/mocks/async-storage.ts'
       ),
+      'expo-crypto': path.resolve(__dirname, 'src/services/__tests__/mocks/expo-crypto.ts'),
     },
   },
 });

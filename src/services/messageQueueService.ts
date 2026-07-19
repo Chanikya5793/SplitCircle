@@ -57,6 +57,7 @@ interface QueueMessagePayload {
   replyTo?: ChatMessage['replyTo'];
   location?: ChatMessage['location'];
   forwardedFrom?: ChatMessage['forwardedFrom'];
+  expenseRef?: ChatMessage['expenseRef'];
 }
 
 const isReceiptData = (value: unknown): value is ReceiptData => {
@@ -134,6 +135,7 @@ const parseQueuePayload = (value: unknown): QueueMessagePayload | null => {
     replyTo: payload.replyTo as ChatMessage['replyTo'] | undefined,
     location: payload.location as ChatMessage['location'] | undefined,
     forwardedFrom: payload.forwardedFrom as ChatMessage['forwardedFrom'] | undefined,
+    expenseRef: payload.expenseRef as ChatMessage['expenseRef'] | undefined,
   };
 };
 
@@ -228,6 +230,28 @@ export const queueMessage = async (
       console.log('↪️ Queuing message with forwardedFrom');
     }
 
+    // Money-in-chat card pointer (ai_layer/docs/21). Serialized field-by-field
+    // so no `undefined` ever reaches RTDB (it rejects undefined values).
+    if (message.expenseRef) {
+      const r = message.expenseRef;
+      messageData.expenseRef = {
+        kind: r.kind,
+        groupId: r.groupId,
+        refId: r.refId,
+        snapshot: {
+          title: r.snapshot.title,
+          amount: r.snapshot.amount,
+          currency: r.snapshot.currency,
+          payerName: r.snapshot.payerName,
+          payerId: r.snapshot.payerId,
+          participantCount: r.snapshot.participantCount,
+          ...(r.snapshot.category ? { category: r.snapshot.category } : {}),
+          ...(r.snapshot.toName ? { toName: r.snapshot.toName } : {}),
+          ...(r.snapshot.toUserId ? { toUserId: r.snapshot.toUserId } : {}),
+        },
+      };
+    }
+
     await set(messageQueueRef, messageData);
     console.log('✅ Message queued for:', recipientId);
   } catch (error) {
@@ -309,7 +333,8 @@ export const listenForMessages = (
     try {
       let localMediaPath: string | undefined;
       let mediaDownloaded = false;
-      const hasMedia = payload.type !== 'text' && payload.type !== 'system' && payload.type !== 'location';
+      const hasMedia =
+        payload.type !== 'text' && payload.type !== 'system' && payload.type !== 'location' && payload.type !== 'expense';
 
       if (hasMedia && payload.mediaUrl) {
         try {
@@ -341,6 +366,7 @@ export const listenForMessages = (
         replyTo: payload.replyTo,
         location: payload.location,
         forwardedFrom: payload.forwardedFrom,
+        expenseRef: payload.expenseRef,
         status: 'delivered',
         isFromMe: false,
         deliveredTo: [],

@@ -169,7 +169,10 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
   const { theme } = useTheme();
   const { preferences, updatePreference } = useNotificationContext();
   const { isShielded } = usePrivacyGuard();
-  const { maskChatTitle, maskPreview } = usePrivacyMask();
+  const { maskChatTitle: maskChatTitleRaw, maskPreview } = usePrivacyMask();
+  // Group chats disguise as circle names, DMs as person names.
+  const maskChatTitle = (t: string, chatId?: string) =>
+    maskChatTitleRaw(t, chatId, thread.type === 'group' ? 'group' : 'person');
 
   const chatsAnyShielded = isShielded('chats');
   const pinnedChats = user?.pinnedChats;

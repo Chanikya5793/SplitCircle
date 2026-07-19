@@ -19,7 +19,10 @@ export { StickyHeaderPill, type StickyHeaderPillProps } from './StickyHeaderPill
 export { WallpaperPickerSheet, type WallpaperPickerSheetProps } from './WallpaperPickerSheet';
 export { GlassBackButton, type GlassBackButtonProps } from './GlassBackButton';
 export { CurrencyConvertSheet } from './CurrencyConvertSheet';
-export { GuardedScreen, LockedOverlay, Shield, promptGuardUnlock } from "./Shield";
+export { DisplayCurrencySheet, type DisplayCurrencySheetProps } from './DisplayCurrencySheet';
+export { MoneyInChatSheet, type MoneyInChatSheetProps } from './MoneyInChatSheet';
+export { GuardedScreen, GuardTransitionVeil, LockedOverlay, Shield } from "./Shield";
+export { GuardCodePad, type GuardCodePadProps, type CodePadOutcome } from "./GuardCodePad";
 export { PrivacyGuardSheet } from "./PrivacyGuardSheet";
 export { AppLockGate } from "./AppLockGate";
 export { PanicTapZone } from "./PanicTapZone";

@@ -3,8 +3,10 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { GuardedScreen } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { useAppLock } from '@/context/AppLockContext';
+import { useDisplayCurrency } from '@/context/DisplayCurrencyContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { formatCurrency } from '@/utils/currency';
 import { authenticate, isBiometricAvailable } from '@/services/biometrics';
 import type { Group, GroupMember } from '@/models';
 import { useState } from 'react';
@@ -30,7 +32,13 @@ export const SettlementsScreen = ({
 }: SettlementsScreenProps) => {
   const { settleUp, updateSettlement } = useGroups();
   const { settings: appLock } = useAppLock();
+  const { getConversion } = useDisplayCurrency();
   const { theme, isDark } = useTheme();
+
+  // Display-currency lens: settlements are ALWAYS recorded in the group
+  // currency; when the lens is on we show the converted equivalent as a
+  // reference line under the amount so the user can sanity-check it.
+  const displayConversion = getConversion(group.groupId, group.currency);
 
   // Find existing settlement if editing
   const existingSettlement = settlementId
@@ -145,6 +153,16 @@ export const SettlementsScreen = ({
             left={<TextInput.Affix text={group.currency} />}
             contentStyle={{ paddingHorizontal: 16 }}
           />
+          {displayConversion && Number(amount) > 0 && (
+            <Text
+              variant="labelSmall"
+              style={{ color: theme.colors.onSurfaceVariant, marginTop: -10, marginBottom: 16 }}
+            >
+              ≈ {formatCurrency(Number(amount) * displayConversion.rate, displayConversion.target)}{' '}
+              at 1 {group.currency} = {displayConversion.rate.toFixed(4)} {displayConversion.target}
+              {' · '}recorded in {group.currency}
+            </Text>
+          )}
           <TextInput
             label="Note"
             value={note}

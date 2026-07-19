@@ -76,7 +76,7 @@ export const AiIndexScreen = () => {
 
   return (
     <LiquidBackground>
-      <GuardedScreen target="expenses" label="On-device index hidden">
+      <GuardedScreen target="expenses" label="On-device index hidden" duressBehavior="blank" duressLabel="Index is empty.">
       <ScrollView contentContainerStyle={styles.container}>
         <GlassView style={styles.card}>
           <View style={styles.row}>

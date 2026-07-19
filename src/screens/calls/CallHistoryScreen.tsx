@@ -42,7 +42,6 @@ import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import Animated, {
     FadeIn,
     FadeOut,
-    Layout,
     SlideInDown,
     runOnJS,
     useAnimatedStyle,
@@ -152,16 +151,11 @@ const CallHistoryRow = memo(function CallHistoryRow({
       friction={2}
       onSwipeableWillOpen={lightHaptic}
     >
-      <Animated.View
-        entering={FadeIn.duration(200)}
-        exiting={FadeOut.duration(150)}
-        layout={Layout.springify()}
-        style={pressScaleStyle}
-      >
-        {/* forceBlur: native liquid glass vanishes when wrapped in the row's
-            Reanimated FadeIn/FadeOut/Layout animations — the blur material
-            composites reliably under them. */}
-        <GlassView style={styles.callItem} forceBlur>
+      {/* Transform-only animation (press scale) so the row keeps REAL native
+          liquid glass — Fade/Layout animations here would kill the material
+          (DESIGN.md liquid glass DNA) and forced the old blur fallback. */}
+      <Animated.View style={pressScaleStyle}>
+        <GlassView style={styles.callItem}>
           <TouchableRipple
             onPress={() => onPressInfo(entry)}
             onLongPress={() => onLongPressRow(entry)}
@@ -275,11 +269,13 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  const { isShielded } = usePrivacyGuard();
+  const { isShielded, isLockedDown, isVanished } = usePrivacyGuard();
   const callsShielded = isShielded('calls');
   // The New Call sheet lists conversations by name — block it whenever calls
-  // OR chats are hidden so it can't reveal who you talk to.
-  const newCallBlocked = callsShielded || isShielded('chats');
+  // OR chats are locked down so it can't reveal who you talk to. In duress the
+  // block would betray the fake unlock, so the sheet stays usable and the
+  // vanish filter below silently drops sensitive conversations instead.
+  const newCallBlocked = isLockedDown('calls') || isLockedDown('chats');
   const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
 
   const [callHistory, setCallHistory] = useState<CallHistoryEntry[]>([]);
@@ -386,15 +382,18 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
     extrapolate: 'clamp',
   });
 
-  // Filter calls
+  // Filter calls. Calls whose conversation has VANISHED (scoped-sensitive
+  // chat while shielded) disappear here too — a call row naming someone whose
+  // chat doesn't exist would advertise the hiding.
   const filteredCalls = useMemo(() => {
+    const visible = callHistory.filter((c) => !isVanished('chats', c.chatId));
     if (filter === 'missed') {
-      return callHistory.filter(
+      return visible.filter(
         (c) => c.status === 'missed' || c.status === 'declined'
       );
     }
-    return callHistory;
-  }, [callHistory, filter]);
+    return visible;
+  }, [callHistory, filter, isVanished]);
 
   // Group calls into sections by date (Apple phone style)
   const sections: CallHistorySection[] = useMemo(() => {
@@ -442,10 +441,11 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
 
   // Threads filtered by search query for new call sheet
   const filteredThreads = useMemo(() => {
-    if (!searchQuery.trim()) return threads;
+    const visible = threads.filter((t) => !isVanished('chats', t.chatId));
+    if (!searchQuery.trim()) return visible;
     const q = searchQuery.toLowerCase();
-    return threads.filter((t) => getThreadDisplayName(t).toLowerCase().includes(q));
-  }, [threads, searchQuery, user, groups]);
+    return visible.filter((t) => getThreadDisplayName(t).toLowerCase().includes(q));
+  }, [threads, searchQuery, user, groups, isVanished]);
 
   const handleCallBack = useCallback(
     (entry: CallHistoryEntry) => {
@@ -645,26 +645,17 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
             <View style={styles.headerContainer}>
               {/* Title row: Edit button + "Calls" + new call icon */}
               <View style={styles.titleRow}>
-                <TouchableOpacity
-                  onPress={toggleEdit}
-                  style={[
-                    styles.editButton,
-                    {
-                      backgroundColor: isDark
-                        ? 'rgba(255,255,255,0.12)'
-                        : 'rgba(0,0,0,0.06)',
-                    },
-                  ]}
-                  activeOpacity={0.7}
-                >
-                  <Text
-                    style={[
-                      styles.editButtonText,
-                      { color: theme.colors.primary },
-                    ]}
-                  >
-                    {isEditing ? 'Done' : 'Edit'}
-                  </Text>
+                <TouchableOpacity onPress={toggleEdit} style={styles.editButton} activeOpacity={0.7}>
+                  <GlassView style={styles.headerPillGlass} contentStyle={styles.editButtonInner}>
+                    <Text
+                      style={[
+                        styles.editButtonText,
+                        { color: theme.colors.primary },
+                      ]}
+                    >
+                      {isEditing ? 'Done' : 'Edit'}
+                    </Text>
+                  </GlassView>
                 </TouchableOpacity>
 
                 <Text
@@ -680,35 +671,24 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                     setSearchQuery('');
                     setShowNewCallSheet(true);
                   }}
-                  style={[
-                    styles.newCallButton,
-                    {
-                      backgroundColor: isDark
-                        ? 'rgba(255,255,255,0.12)'
-                        : 'rgba(0,0,0,0.06)',
-                    },
-                  ]}
+                  style={styles.newCallButton}
                   activeOpacity={0.7}
                 >
-                  <MaterialCommunityIcons
-                    name="phone-plus-outline"
-                    size={22}
-                    color={theme.colors.primary}
-                  />
+                  <GlassView style={styles.headerPillGlass} contentStyle={styles.newCallButtonInner}>
+                    <MaterialCommunityIcons
+                      name="phone-plus-outline"
+                      size={22}
+                      color={theme.colors.primary}
+                    />
+                  </GlassView>
                 </TouchableOpacity>
               </View>
 
               {/* Filter chips: All | Missed (Apple style segmented) */}
               <View style={styles.filterRow}>
-                <View
-                  style={[
-                    styles.segmentedControl,
-                    {
-                      backgroundColor: isDark
-                        ? 'rgba(255,255,255,0.08)'
-                        : 'rgba(0,0,0,0.06)',
-                    },
-                  ]}
+                <GlassView
+                  style={styles.segmentedGlass}
+                  contentStyle={styles.segmentedControl}
                 >
                   <TouchableOpacity
                     onPress={() => {
@@ -770,7 +750,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                       Missed
                     </Text>
                   </TouchableOpacity>
-                </View>
+                </GlassView>
               </View>
 
               {/* Clear all button in edit mode */}
@@ -1038,43 +1018,42 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   editButton: {
+    zIndex: 10,
+  },
+  // Shared glass pill for the small header chrome (Edit / new-call). The glass
+  // material provides its own depth — no manual shadow or tint.
+  headerPillGlass: {
+    borderRadius: 21,
+  },
+  editButtonInner: {
     paddingVertical: 8,
     paddingHorizontal: 18,
-    borderRadius: 50,
-    zIndex: 10,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
+  },
+  newCallButtonInner: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   editButtonText: {
     fontSize: 15,
     fontWeight: '600',
   },
   newCallButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
     zIndex: 10,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
   },
   // -- Segmented Control --
   filterRow: {
     alignItems: 'center',
     marginBottom: 16,
   },
+  segmentedGlass: {
+    borderRadius: 10,
+    width: 200,
+  },
   segmentedControl: {
     flexDirection: 'row',
-    borderRadius: 10,
     padding: 3,
-    width: 200,
   },
   segment: {
     flex: 1,

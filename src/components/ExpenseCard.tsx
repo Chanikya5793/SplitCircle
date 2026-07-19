@@ -25,7 +25,7 @@ export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0, 
   const { theme, isDark } = useTheme();
   const { pendingSyncIds } = useGroups();
   const isPendingSync = pendingSyncIds.has(expense.expenseId);
-  const payerName = maskGroupText(memberMap[expense.paidBy] || 'Unknown', groupId);
+  const payerName = maskGroupText(memberMap[expense.paidBy] || 'Unknown', groupId, 'person');
   const isSettlement = expense.category === 'Settlement';
   const splitLabel = getExpenseSplitLabel(expense);
 
@@ -36,11 +36,11 @@ export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0, 
           <View style={styles.content}>
             <View style={styles.header}>
               <View style={styles.titleRow}>
-                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{maskGroupText(expense.title, groupId)}</Text>
+                <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>{maskGroupText(expense.title, groupId, 'title')}</Text>
                 <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
                   {isSettlement
-                    ? `${maskGroupText(expense.category, groupId)} · Paid by ${payerName}`
-                    : `${maskGroupText(expense.category, groupId)} · ${maskGroupText(splitLabel, groupId)} · Paid by ${payerName}`}
+                    ? `${maskGroupText(expense.category, groupId, 'category')} · Paid by ${payerName}`
+                    : `${maskGroupText(expense.category, groupId, 'category')} · ${maskGroupText(splitLabel, groupId, 'note')} · Paid by ${payerName}`}
                 </Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                   {maskGroupText(new Date(expense.createdAt).toLocaleDateString(), groupId)}

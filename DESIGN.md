@@ -21,6 +21,75 @@ Current design contract. Rules only — history lives in git.
 **Ambient surfaces** (lists, home, settings): liquid animated background + glass cards
 (GlassCard; native liquid glass on iOS 26+, graceful fallbacks).
 
+**EVERY NEW screen/overlay ships GLASS-FIRST** (LiquidBackground canvas + glass cards,
+bubbles, chrome). The solid dense-editor treatment below is a narrow EXCEPTION for
+form-heavy editors (Add Expense split editor class) — chats, browsing, stats, and
+conversational surfaces are ambient, never solid. When in doubt: glass.
+
+**Full-screen overlays are gesture-dismissable.** Anything that covers the screen
+(chat overlays, full-screen results) closes on a swipe-down: grabber bar + 1:1 finger
+tracking on the drag zone, rubber-band upward, committed fling/distance dismisses —
+in addition to an explicit close control. Never a modal the user can only ✕ out of.
+ALSO a **left-edge swipe-back** (iOS back-gesture semantics: activate from the left
+~28px, track the finger, commit on distance/fling) — overlays behave like pushed
+screens, not traps. Grab targets are generous (grabber zone ≥ 20px tall).
+
+**Floating header chrome is GLASS, title included.** Buttons over content are glass
+circles; the title/subtitle block is a glass pill (StickyHeaderPill DNA) — text never
+floats bare over scrolling content.
+
+**The composer hugs the keyboard.** When the keyboard is up, the safe-area bottom
+margin is swapped for a small gap (~6px) — never a dead inset floating the input
+above the keys.
+
+**AI disclosure is mandatory.** Any surface that renders model output labels the
+engine per message (On-device / Private Cloud Compute / Exact-deterministic badge)
+and shows the live engine where a conversation is ongoing. Context injections
+(fresh facts into an old thread) are disclosed inline, never silent.
+
+## Liquid glass DNA (binding)
+
+**One primitive.** ALL glass goes through `GlassCard` (`src/components/ui/GlassCard.tsx`);
+`GlassView` is a deprecated shim over it. Never hand-roll BlurView + rgba tints for a
+surface that should be glass — that's how the Calls tab drifted. Three-tier material,
+resolved once at startup:
+
+| Tier | Path | Notes |
+|---|---|---|
+| iOS 26+ | expo-glass-effect native `GlassView`, `glassEffectStyle="regular"` | REAL liquid glass; carries its own rim highlight — no manual border |
+| older iOS | `BlurView` + theme-crossfaded tint/border (`themeProgress` worklet) | tint/border from `NEUTRALS.*.glassTint/glassBorder` |
+| Android | near-opaque tinted card + `elevation: 4` | BlurView can't render there |
+
+expo-glass-effect is required DEFENSIVELY (try/catch require) because registering its
+native view manager throws at splash on binaries missing the module — keep that guard.
+
+**Native-material kill list.** The iOS 26 material silently drops out (renders as
+nothing) when composited under:
+- a Reanimated **opacity/layout** animation (`FadeIn/FadeOut/Layout`) anywhere above it
+  → either pass `forceBlur` (blur-tier fallback) or, better, animate **transforms only**
+  (`pressScaleStyle`, translateY slides are safe — SwipeableGroupCard is the exemplar);
+- any ancestor with **fractional opacity** (kills UIVisualEffectView — StickyHeaderPill
+  slides in via transform, never opacity).
+Prefer restructuring the animation over `forceBlur`; forceBlur rows visibly don't match
+native-glass cards on the same screen.
+
+**Ambient composition per tab root:** `LiquidBackground` (animated theme blobs) at the
+screen root → GlassCard content cards → `StickyHeaderPill` for the scroll-collapsed
+title → floating circular actions are GlassView-filled (GroupListScreen
+`glassActionInner`). Small chrome (Edit pills, segmented filters, icon buttons) is glass
+too — not hardcoded `rgba(255,255,255,0.12)` boxes.
+
+**Sheet DNA.** Every bottom sheet: `Modal transparent animationType="fade"
+statusBarTranslucent` — the fade carries the full-screen scrim (`rgba(0,0,0,0.4–0.45)`)
+in/out. The sheet itself is bottom-anchored (overlay `flex-end`, or
+`position:absolute; bottom:0`) and slides with a **native-driver translateY** (timing
+260–320ms `Easing.out(cubic)` against measured height, or `SlideInDown.springify()` for
+gesture sheets), top radius 24–28, grabber bar, `paddingBottom: insets.bottom`. NEVER
+`animationType="slide"` — it slides the scrim along with the sheet and stutters.
+Sheets that stage a choice get a docked footer: summary/subline left, Cancel + one
+always-working primary CTA right; commit work happens on Save, never per-row-tap
+(per-tap context writes re-render the whole app behind the modal — that reads as lag).
+
 **Dense editors** (split options, any form-heavy sheet): SOLID.
 - Canvas dark `rgba(13,15,20,0.94)` / light `rgba(250,250,252,0.96)`; cards dark
   `rgba(28,31,38,0.96)` / light `rgba(255,255,255,0.97)` with hairline borders

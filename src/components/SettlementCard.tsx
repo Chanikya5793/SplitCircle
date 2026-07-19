@@ -36,8 +36,8 @@ export const SettlementCard = ({
     const { pendingSyncIds } = useGroups();
     const isPendingSync = pendingSyncIds.has(settlement.settlementId);
     const swipeableRef = useRef<Swipeable>(null);
-    const fromName = maskGroupText(memberMap[settlement.fromUserId] || 'Unknown', groupId);
-    const toName = maskGroupText(memberMap[settlement.toUserId] || 'Unknown', groupId);
+    const fromName = maskGroupText(memberMap[settlement.fromUserId] || 'Unknown', groupId, 'person');
+    const toName = maskGroupText(memberMap[settlement.toUserId] || 'Unknown', groupId, 'person');
 
     const handlePress = () => {
         lightHaptic();
@@ -104,14 +104,14 @@ export const SettlementCard = ({
                                     </View>
                                     <View style={{ flex: 1 }}>
                                         <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                                            {maskGroupText('Settlement', groupId)}
+                                            {maskGroupText('Settlement', groupId, 'note')}
                                         </Text>
                                         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
                                             {fromName} → {toName}
                                         </Text>
                                         {settlement.note && (
                                             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
-                                                {maskGroupText(settlement.note, groupId)}
+                                                {maskGroupText(settlement.note, groupId, 'note')}
                                             </Text>
                                         )}
                                         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>

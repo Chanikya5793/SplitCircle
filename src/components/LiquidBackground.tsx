@@ -219,33 +219,40 @@ export const LiquidBackground = ({
 
   return (
     <Animated.View style={[styles.container, containerStyle, style]}>
-      <Blob
-        lightColor={lightBlobColors[0]}
-        darkColor={darkBlobColors[0]}
-        themeProgress={themeProgress}
-        size={300}
-        initialX={-50}
-        initialY={-50}
-        animate={animate}
-      />
-      <Blob
-        lightColor={lightBlobColors[1]}
-        darkColor={darkBlobColors[1]}
-        themeProgress={themeProgress}
-        size={350}
-        initialX={width - 200}
-        initialY={height - 200}
-        animate={animate}
-      />
-      <Blob
-        lightColor={lightBlobColors[2]}
-        darkColor={darkBlobColors[2]}
-        themeProgress={themeProgress}
-        size={240}
-        initialX={width - 180}
-        initialY={-40}
-        animate={animate}
-      />
+      {/* Blobs live in their own untransformed absolute-fill layer so the
+          content sibling paints above them by document order. Relying on
+          zIndex alone breaks on the new architecture: the blobs' Reanimated
+          transforms made them composite OVER foreground content, washing out
+          anything without a glass/blur surface (dim chat bubbles on device). */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <Blob
+          lightColor={lightBlobColors[0]}
+          darkColor={darkBlobColors[0]}
+          themeProgress={themeProgress}
+          size={300}
+          initialX={-50}
+          initialY={-50}
+          animate={animate}
+        />
+        <Blob
+          lightColor={lightBlobColors[1]}
+          darkColor={darkBlobColors[1]}
+          themeProgress={themeProgress}
+          size={350}
+          initialX={width - 200}
+          initialY={height - 200}
+          animate={animate}
+        />
+        <Blob
+          lightColor={lightBlobColors[2]}
+          darkColor={darkBlobColors[2]}
+          themeProgress={themeProgress}
+          size={240}
+          initialX={width - 180}
+          initialY={-40}
+          animate={animate}
+        />
+      </View>
 
       <View style={styles.content}>
         {children}

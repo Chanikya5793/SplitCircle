@@ -5,8 +5,8 @@
 
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
-import { GlassCard, ListRow, PrivacyGuardSheet, SectionLabel, StickyHeaderPill, WallpaperPickerSheet } from '@/components/ui';
-import { attemptUnlock, getGuardSync, hashCode, lockoutRemainingMs, updateGuard } from '@/services/privacyGuardService';
+import { GlassCard, GuardCodePad, ListRow, PrivacyGuardSheet, SectionLabel, StickyHeaderPill, WallpaperPickerSheet } from '@/components/ui';
+import { attemptUnlock, getGuardSync, hashCode, updateGuard } from '@/services/privacyGuardService';
 import { useAppLock } from '@/context/AppLockContext';
 import { AUTO_LOCK_OPTIONS, updateAppLock } from '@/services/appLockService';
 import { authenticate, biometricLabel, isBiometricAvailable } from '@/services/biometrics';
@@ -51,9 +51,11 @@ export const SettingsScreen = () => {
   const { isDark, theme, mode, setMode, accent, setAccent } = useTheme();
   const appWallpaper = useWallpaperSlot('app');
   const chatDefaultWallpaper = useWallpaperSlot('chat-default');
-  const { active: guardActive, settings: guardSettings } = usePrivacyGuard();
+  const { active: guardActive, duress: guardDuress, settings: guardSettings } = usePrivacyGuard();
   const { maskPersonName } = usePrivacyMask();
-  const hideOwnProfile = guardActive && guardSettings.hideProfile;
+  // Not in duress: a blanked-out profile card would betray the fake unlock —
+  // the coercer usually knows whose phone this is anyway.
+  const hideOwnProfile = guardActive && !guardDuress && guardSettings.hideProfile;
   const insets = useSafeAreaInsets();
   const route = useRoute<any>();
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -75,42 +77,9 @@ export const SettingsScreen = () => {
   const versionTapsRef = useRef<number[]>([]);
 
   // Hidden entry: 7 quick taps on the version footer. First time sets the
-  // secret code; afterwards the code is required to open the sheet.
-  const promptForCode = () => {
-    void lockoutRemainingMs().then((remaining) => {
-      if (remaining > 0) {
-        appAlert('Too many attempts', `Try again in ${Math.ceil(remaining / 1000)}s.`);
-        return;
-      }
-      appPrompt(
-        'Enter code',
-        undefined,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Open',
-            onPress: (code?: string) => {
-              void attemptUnlock(code ?? '').then(({ ok, duress, lockedForMs }) => {
-                if (ok) {
-                  void updateGuard({ active: false });
-                  setGuardSheetOpen(true);
-                } else if (duress) {
-                  // Coerced open: look like a dead end, reveal nothing.
-                  lightHaptic();
-                } else {
-                  lightHaptic();
-                  if (lockedForMs > 0) {
-                    appAlert('Too many attempts', `Locked for ${Math.ceil(lockedForMs / 1000)}s.`);
-                  }
-                }
-              });
-            },
-          },
-        ],
-        'secure-text',
-      );
-    });
-  };
+  // secret code via the keypad; afterwards the code (or Face ID) is required
+  // to open the sheet. 'set' | 'unlock' | null drives the GuardCodePad below.
+  const [guardPad, setGuardPad] = useState<null | 'set' | 'unlock'>(null);
 
   const handleVersionTap = () => {
     const now = Date.now();
@@ -126,41 +95,39 @@ export const SettingsScreen = () => {
         if (await isBiometricAvailable()) {
           const ok = await authenticate('Open privacy settings');
           if (ok) {
-            void updateGuard({ active: false });
+            void updateGuard({ active: false, duressActive: false });
             setGuardSheetOpen(true);
             return;
           }
         }
-        promptForCode();
+        setGuardPad('unlock');
       })();
       return;
     }
-    if (!guard.codeHash) {
-      appPrompt(
-        'Set a secret code',
-        'This unlocks the hidden privacy settings and releases the guard after a shake.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Save',
-            onPress: (code?: string) => {
-              const trimmed = code?.trim() ?? '';
-              if (trimmed.length < 4) {
-                appAlert('Too short', 'Use at least 4 characters.');
-                return;
-              }
-              void hashCode(trimmed).then((digest) => {
-                void updateGuard({ codeHash: digest });
-                setGuardSheetOpen(true);
-              });
-            },
-          },
-        ],
-        'secure-text',
-      );
-      return;
+    setGuardPad(guard.codeHash ? 'unlock' : 'set');
+  };
+
+  const handleGuardPadSubmit = async (code: string) => {
+    if (guardPad === 'set') {
+      const digest = await hashCode(code);
+      await updateGuard({ codeHash: digest });
+      setGuardSheetOpen(true);
+      return { status: 'ok' } as const;
     }
-    promptForCode();
+    const { ok, duress, lockedForMs } = await attemptUnlock(code);
+    if (ok) {
+      void updateGuard({ active: false, duressActive: false });
+      setGuardSheetOpen(true);
+      return { status: 'ok' } as const;
+    }
+    if (duress) {
+      // Coerced open: dismiss like a success but never show the sheet; with
+      // shields up this also drops into the decoy world.
+      if (getGuardSync().active) void updateGuard({ duressActive: true });
+      return { status: 'ok' } as const;
+    }
+    if (lockedForMs > 0) return { status: 'locked', lockedForMs } as const;
+    return { status: 'wrong' } as const;
   };
   const [strictReviewMode, setStrictReviewModeState] = useState(false);
   const [useAIForReceipts, setUseAIForReceiptsState] = useState(true);
@@ -623,6 +590,18 @@ export const SettingsScreen = () => {
 
         <SectionLabel style={styles.sectionLabel}>General</SectionLabel>
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+          <ListRow
+            title="Your spending"
+            subtitle="Cross-group stats, budgets & deep analysis"
+            icon="chart-arc"
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate(ROUTES.APP.PERSONAL_STATS, {
+                backTitle: ROOT_SCREEN_TITLES.settings,
+              });
+            }}
+          />
+          {divider}
           {wrapAnchor(SETTING_IDS.notifications, (
           <ListRow
             title="Notifications"
@@ -671,6 +650,18 @@ export const SettingsScreen = () => {
       </Animated.ScrollView>
 
       <PrivacyGuardSheet visible={guardSheetOpen} onClose={() => setGuardSheetOpen(false)} />
+      <GuardCodePad
+        visible={guardPad !== null}
+        mode={guardPad === 'set' ? 'set' : 'unlock'}
+        title={guardPad === 'set' ? 'Set a secret code' : 'Enter code'}
+        subtitle={
+          guardPad === 'set'
+            ? 'Opens these hidden settings and releases the guard after a shake.'
+            : undefined
+        }
+        onClose={() => setGuardPad(null)}
+        onSubmit={handleGuardPadSubmit}
+      />
       <WallpaperPickerSheet
         visible={wallpaperSlot !== null}
         slot={wallpaperSlot}

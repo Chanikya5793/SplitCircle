@@ -285,6 +285,7 @@ export function getExpenseSplitDetails(
   expense: Pick<Expense, 'amount' | 'participants' | 'splitMetadata' | 'splitType'>,
   memberMap: Record<string, string>,
   currency: string,
+  fmt: (value: number, currency?: string) => string = formatCurrency,
 ): ExpenseSplitDetails {
   const metadata = inferExpenseSplitMetadata(expense);
   const rows: ExpenseSplitDetailRow[] = [];
@@ -317,7 +318,7 @@ export function getExpenseSplitDetails(
       included.forEach((participant) => {
         rows.push({
           label: memberMap[participant.userId] || 'Unknown',
-          value: `${participant.adjustment && participant.adjustment > 0 ? '+' : ''}${formatCurrency(participant.adjustment ?? 0, currency)}`,
+          value: `${participant.adjustment && participant.adjustment > 0 ? '+' : ''}${fmt(participant.adjustment ?? 0, currency)}`,
         });
       });
       break;
@@ -328,18 +329,18 @@ export function getExpenseSplitDetails(
       });
       rows.push({
         label: 'Tax',
-        value: formatCurrency(metadata.taxAmount ?? 0, currency),
+        value: fmt(metadata.taxAmount ?? 0, currency),
       });
       rows.push({
         label: 'Tip',
-        value: formatCurrency(metadata.tipAmount ?? 0, currency),
+        value: fmt(metadata.tipAmount ?? 0, currency),
       });
       break;
     case 'income':
       included.forEach((participant) => {
         rows.push({
           label: memberMap[participant.userId] || 'Unknown',
-          value: formatCurrency(participant.incomeWeight ?? 0, currency),
+          value: fmt(participant.incomeWeight ?? 0, currency),
         });
       });
       break;
@@ -415,8 +416,8 @@ export function getExpenseSplitDetails(
         rows.push({
           label: category.label,
           value: excludedNames
-            ? `${formatCurrency(category.amount, currency)} · excludes ${excludedNames}`
-            : formatCurrency(category.amount, currency),
+            ? `${fmt(category.amount, currency)} · excludes ${excludedNames}`
+            : fmt(category.amount, currency),
         });
       });
       break;

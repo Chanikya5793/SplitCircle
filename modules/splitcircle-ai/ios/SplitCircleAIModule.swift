@@ -410,6 +410,32 @@ public class SplitCircleAIModule: Module {
       throw OnDeviceAiUnavailableException()
     }
 
+    /// Free-form text generation with CALLER-supplied instructions — the door
+    /// for the narrative tier (stats insight card, insights chat turns, thread
+    /// titles, rollup summaries; doc 22/23). Unlike `askOnDevice` this installs
+    /// no Q&A persona, wraps no "Expenses:" block, and forces no citation
+    /// struct — routing the narrator through those made the model deflect with
+    /// "I don't have enough expense data" and answer in Q&A phrasing.
+    /// `deterministic` uses greedy sampling so identical facts narrate
+    /// identically run-to-run. Throws when the model is unavailable.
+    AsyncFunction("generateText") { (prompt: String, instructions: String, deterministic: Bool) async throws -> [String: Any] in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else {
+          throw OnDeviceAiUnavailableException()
+        }
+        let instr = instructions.isEmpty
+          ? "Follow the instructions in the prompt exactly. Reply with plain sentences only — no lists, no markdown, no preamble."
+          : instructions
+        let session = LanguageModelSession(instructions: instr)
+        let options = deterministic ? GenerationOptions(sampling: .greedy) : GenerationOptions()
+        let response = try await session.respond(to: prompt, options: options)
+        return ["answer": response.content]
+      }
+      #endif
+      throw OnDeviceAiUnavailableException()
+    }
+
     /// Parse OCR receipt text into structured data fully on-device via
     /// Foundation Models. `fewShot` is an optional plain-text block of learned
     /// merchant corrections used to bias item naming. Throws when unavailable.
@@ -668,6 +694,46 @@ public class SplitCircleAIModule: Module {
       }
       #endif
       return ["available": false, "reason": "unsupportedOS", "answer": "", "contextSize": 0]
+    }
+
+    /// PCC ask with REAL caller-supplied instructions + quota surfaced (doc 23
+    /// — supersedes the spike `pccProbe` for actual answers; probe stays for
+    /// diagnostics). Deliberately stateless like the JS chat layer: one
+    /// model+session per call, serialized app-wide by the JS `serializeFm`
+    /// queue, prompt assembly (facts/summary/turns) happens in JS.
+    AsyncFunction("pccAsk") { (question: String, instructions: String) async throws -> [String: Any] in
+      #if canImport(FoundationModels) && compiler(>=6.4)
+      if #available(iOS 27.0, *) {
+        let model = PrivateCloudComputeLanguageModel()
+        var reason = "available"
+        switch model.availability {
+        case .available:
+          reason = "available"
+        case .unavailable(let r):
+          switch r {
+          case .deviceNotEligible: reason = "deviceNotEligible"
+          case .systemNotReady: reason = "systemNotReady"
+          @unknown default: reason = "unknown"
+          }
+        @unknown default:
+          reason = "unknown"
+        }
+        guard model.isAvailable else {
+          return ["available": false, "reason": reason, "answer": "", "quota": ""]
+        }
+        let instr = instructions.isEmpty ? "You are SplitCircle's expense assistant." : instructions
+        let session = LanguageModelSession(model: model, instructions: instr)
+        let response = try await session.respond(
+          to: question,
+          contextOptions: ContextOptions(reasoningLevel: .light)
+        )
+        // Quota shape is opaque/new — surface a best-effort description for
+        // the Settings diagnostics row rather than binding to its fields.
+        let quota = String(describing: model.quotaUsage)
+        return ["available": true, "reason": reason, "answer": response.content, "quota": quota]
+      }
+      #endif
+      return ["available": false, "reason": "unsupportedOS", "answer": "", "quota": ""]
     }
   }
 }

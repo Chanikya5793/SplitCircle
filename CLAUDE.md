@@ -11,7 +11,13 @@ chat pipeline + Private Cloud Compute escalation) ·
 indexing — iOS 27, iOS-only) · [ai_layer/docs/19](ai_layer/docs/19_widgets_and_siri_control.md)
 (widgets + Siri app-control + the one-time widget-target runbook) ·
 [ai_layer/docs/20](ai_layer/docs/20_native_search_tab.md) (native UISearchTab search — the
-react-native-screens patch, bridge, behavioral contract; READ BEFORE touching search or tabs).
+react-native-screens patch, bridge, behavioral contract; READ BEFORE touching search or tabs) ·
+[ai_layer/docs/21](ai_layer/docs/21_money_in_chat.md) (Money-in-Chat blueprint — locked product
+decisions for expenses⇄chat integration; the contract for that build) ·
+[ai_layer/docs/22](ai_layer/docs/22_stats_insights.md) (stats/insights engine, AI tiers,
+chat digests, budgets — incl. the PCC simulator-crash gotcha; READ BEFORE touching PCC) ·
+[ai_layer/docs/23](ai_layer/docs/23_insights_chat_threads.md) (insights chat + the
+app-wide AI thread framework — locked decisions, thread store, PCC enrollment checklist).
 
 ## Architecture DNA (do not break)
 
@@ -80,15 +86,30 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
 - **Reanimated new-arch**: inserting a sibling ABOVE entering-animated ScrollView content
   doesn't shift that content (overlap) — mount late-loading rows outside the ScrollView.
   `flex: 1` inside height-constrained containers collapses to zero height.
+- **iOS 26 scroll-edge effect is disabled by an RN patch** (`patches/react-native+0.83.2.patch`,
+  `RCTEnhancedScrollView.mm` `PATCHED (SplitCircle)` block). Built with the iOS 26 SDK, every
+  UIScrollView gets a default progressive glass fade at its edges (`UIScrollEdgeEffect`) — over
+  our colorful liquid backdrops it looks like fog "dimming" content near the top/bottom (worst
+  in chat, tracks the keyboard). RN has no prop for it; an RN upgrade must re-port the patch.
 - **react-native-svg** pinned 15.12.1 (chart-kit compat).
 - **App Intents run headless** (Siri invokes them without launching JS) — their Swift `perform()`
   cannot call into React Native at all. They read the on-disk SQLite index
   (`modules/splitcircle-ai/ios/SplitCircleIndexReader.swift`) directly instead. That pod links
   system `libsqlite3` while expo-sqlite vendors its own statically-compiled copy — unverified
   linker risk, see [ai_layer/docs/18](ai_layer/docs/18_app_intents_siri_pcc_indexing.md) §3.1.
-- **Private Cloud Compute** requires an entitlement Apple grants manually (App Store Small Business
-  Program + <2M downloads + approved request) — `pccProbe()` compiles but `isAvailable` stays false
-  until that's granted. Not a code bug if PCC-backed calls report unavailable.
+- **Private Cloud Compute entitlement GRANTED 2026-07-18** (capability on the App ID + provisioning
+  profile; `com.apple.developer.private-cloud-compute` in `SplitCircle.entitlements`). Builds from
+  before that date report `isAvailable=false` — that's the binary, not a bug. On sim it stays
+  unavailable by design (hard-excluded, see the FM serialization gotcha below).
+- **Foundation Models calls MUST stay serialized** — two concurrent model constructions (on-device
+  OR PCC) race the expo module plumbing and corrupt the Hermes heap: SIGSEGV inside the VM, seen
+  on the physical iPhone 17 Pro 2026-07-18 (two `askOnDevice` racing on Group Stats open). The
+  global `serializeFm` queue in `modules/splitcircle-ai/index.ts` is the enforcement point — route
+  any NEW FM-touching native fn through it, never call `NativeModule.*` directly.
+- **Narrative/free-text FM work goes through `generateOnDeviceText`, never `askOnDevice`** —
+  askOnDevice natively installs a numbered-lines Q&A persona + citation struct that made the
+  stats narrator deflect ("I don't have enough expense data") and drift. Model output is never
+  rendered verbatim: `src/utils/aiText.ts` strips/validates it (doc 22 "Narrative-tier reliability").
 - **Widgets need a one-time Xcode step** — the Widget Extension target + App Group
   (`group.com.splitcircle.app`) are NOT in `pbxproj`/entitlements yet; all source is on disk
   (`ios/SplitCircleWidgets/`). Follow the runbook in

@@ -59,6 +59,16 @@ export interface SplitCircleAINativeModule {
   /** Token context window of the active on-device model; 0 when unavailable. */
   getOnDeviceContextSize(): number;
   askOnDevice(question: string, context: string): Promise<OnDeviceAskResult>;
+  /**
+   * Free-form generation with caller-supplied instructions — the narrative
+   * tier's door (no Q&A persona, no citation struct). `deterministic` uses
+   * greedy sampling. Absent on binaries older than this function.
+   */
+  generateText?(
+    prompt: string,
+    instructions: string,
+    deterministic: boolean,
+  ): Promise<{ answer: string }>;
   /** Parse OCR receipt text into structured data on-device. */
   parseReceiptStructured(rawText: string, fewShot: string): Promise<OnDeviceReceiptResult>;
   /** Suggest one expense category for the given text (validated by the caller). */
@@ -91,6 +101,8 @@ export interface SplitCircleAINativeModule {
   ): Promise<OnDeviceRouterDecisionRaw>;
   /** S5 — Private Cloud Compute probe (iOS 27). available=false until entitled. */
   pccProbe(question: string): Promise<OnDevicePccProbeResult>;
+  /** PCC ask with real instructions + quota (doc 23). Absent on pre-entitlement binaries. */
+  pccAsk(question: string, instructions: string): Promise<OnDevicePccAskResult>;
 
   // ── Widget / App-Group surface (doc 19) ───────────────────────────────────
   /** Write the widget balance snapshot to the App Group container + reload widgets. */
@@ -156,6 +168,14 @@ export interface OnDevicePccProbeResult {
   reason: string;
   answer: string;
   contextSize: number;
+}
+
+export interface OnDevicePccAskResult {
+  available: boolean;
+  reason: string;
+  answer: string;
+  /** Best-effort description of PCC quota usage (opaque shape). */
+  quota: string;
 }
 
 export interface OnDeviceQueryPlanRaw {

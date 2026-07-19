@@ -3,6 +3,7 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { MissedCallQuickReply } from '@/components/MissedCallQuickReply';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { AuthProvider } from '@/context/AuthContext';
+import { DisplayCurrencyProvider } from '@/context/DisplayCurrencyContext';
 import { CallProvider } from '@/context/CallContext';
 import { ChatProvider } from '@/context/ChatContext';
 import { GroupProvider } from '@/context/GroupContext';
@@ -10,7 +11,7 @@ import { LoadingProvider } from '@/context/LoadingContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { PrivacyGuardProvider } from '@/context/PrivacyGuardContext';
 import { AppLockProvider } from '@/context/AppLockContext';
-import { AppLockGate, LockedOverlay, PanicTapZone } from '@/components/ui';
+import { AppLockGate, GuardTransitionVeil, LockedOverlay, PanicTapZone } from '@/components/ui';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { AppNavigator } from '@/navigation/AppNavigator';
 import { StatusBar } from 'expo-status-bar';
@@ -32,6 +33,7 @@ function AppContent() {
                 <CallProvider>
                   <MissedCallQuickReply />
                   <AppLockProvider>
+                    <DisplayCurrencyProvider>
                     <PrivacyGuardProvider>
                       <StatusBar style={isDark ? "light" : "dark"} />
                       <LiquidBackground>
@@ -39,9 +41,11 @@ function AppContent() {
                         <AppNavigator />
                       </LiquidBackground>
                       <PanicTapZone />
+                      <GuardTransitionVeil />
                       <LockedOverlay />
                       <AppAlertHost />
                     </PrivacyGuardProvider>
+                    </DisplayCurrencyProvider>
                     <AppLockGate />
                   </AppLockProvider>
                 </CallProvider>

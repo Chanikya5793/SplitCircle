@@ -61,11 +61,33 @@ export interface PrivacyGuardSettings {
   blockScreenRecording: boolean;
   /** A silent alternative to shaking: triple-tap a hidden screen corner. */
   panicCorner: PanicCorner;
+  /** Trip when the phone rests face-down for a moment (flip-to-shush style). */
+  flipToHide: boolean;
+  /**
+   * Auto re-hide: ms after a reveal before the shields raise themselves
+   * again (1Password-style auto-lock). 0 = stay revealed until tripped.
+   */
+  revealTimeoutMs: number;
+  /**
+   * Salt mixed into every disguise/decoy seed. "Shuffle disguise" rotates it
+   * so all fake names and amounts re-randomize — for when someone has
+   * already seen the current decoys.
+   */
+  disguiseSalt: string;
   action: GuardAction;
   targets: GuardTargets;
   sensitivity: GuardSensitivity;
   /** Whether the guard is currently tripped (persists across relaunches). */
   active: boolean;
+  /**
+   * Duress decoy world: set when the DURESS code was entered at an unlock
+   * prompt. The app looks unlocked (no lock panels, no visible masking style)
+   * but scoped-sensitive entities are silently absent and every still-visible
+   * sensitive surface renders convincing fakes (dictionary names, scaled
+   * ledger). Persists across relaunches — the coercer may keep the phone.
+   * Cleared only by a REAL-code unlock.
+   */
+  duressActive: boolean;
   textStyle: GuardTextStyle;
   amountStyle: GuardAmountStyle;
   /** Scramble names too (group names, chat titles, people). */
@@ -95,10 +117,14 @@ export const DEFAULT_GUARD_SETTINGS: PrivacyGuardSettings = {
   hideOnScreenshot: false,
   blockScreenRecording: false,
   panicCorner: 'off',
+  flipToHide: false,
+  revealTimeoutMs: 0,
+  disguiseSalt: '',
   action: 'scramble',
   targets: { expenses: true, charts: true, calls: false, friends: false, chats: false, everything: false },
   sensitivity: 'normal',
   active: false,
+  duressActive: false,
   textStyle: 'garble',
   amountStyle: 'dots',
   hideNames: false,
@@ -121,7 +147,7 @@ export const inScope = (scope: GuardScope, id: string | undefined): boolean => {
 
 // ---------------------------------------------------------------------------
 // Disguise primitives — deterministic per input so the UI is stable frame to
-// frame and across screens (a garbled name always garbles the same way).
+// frame and across screens (a disguised name always disguises the same way).
 
 const mulberry = (seedInput: string) => {
   let seed = 2166136261 >>> 0;
@@ -137,9 +163,13 @@ const mulberry = (seedInput: string) => {
 const CONSONANTS = 'bcdfghklmnprstvz';
 const VOWELS = 'aeiou';
 
-/** Fake-but-plausible text: keeps length, casing and word breaks. */
+/**
+ * Legacy per-character garble — kept for content with no dictionary shape
+ * (invite codes, dates, arbitrary strings). Keeps length, casing, word breaks;
+ * digits stay digits.
+ */
 export const garbleText = (input: string): string => {
-  const rand = mulberry(`garble:${input}`);
+  const rand = mulberry(`garble:${cache?.disguiseSalt ?? ''}:${input}`);
   let out = '';
   let useVowel = rand() > 0.5;
   for (const ch of input) {
@@ -160,20 +190,146 @@ export const garbleText = (input: string): string => {
   return out;
 };
 
+// Curated pools — the "Disguise" style swaps sensitive text for entries picked
+// deterministically from these, so a glance shows a perfectly ordinary app
+// instead of visibly-scrambled data. Pools are intentionally bland.
+
+const FAKE_FIRST_NAMES = [
+  'Aarav', 'Alex', 'Ana', 'Arjun', 'Ben', 'Chris', 'Dana', 'Dev', 'Diego',
+  'Elena', 'Emma', 'Farah', 'Felix', 'Hana', 'Ishan', 'Ivy', 'Jamie', 'Jon',
+  'Kavya', 'Kim', 'Lea', 'Leo', 'Lucas', 'Maya', 'Mia', 'Mila', 'Nate',
+  'Neha', 'Nina', 'Noah', 'Omar', 'Priya', 'Rahul', 'Ravi', 'Rhea', 'Rohan',
+  'Ryan', 'Sam', 'Sana', 'Sara', 'Sean', 'Tara', 'Tom', 'Uma', 'Vik', 'Zara',
+];
+
+const FAKE_GROUP_NAMES = [
+  'Weekend plans', 'Lunch crew', 'Trip fund', 'Roommates', 'Office snacks',
+  'Movie night', 'Game night', 'Gym buddies', 'Road trip', 'Brunch club',
+  'Study group', 'Book club', 'Coffee run', 'Grocery pool', 'Carpool',
+  'Flat 4B', 'House stuff', 'Birthday plan', 'Potluck', 'Badminton',
+  'Hiking gang', 'Dinner club', 'Old friends', 'Cricket squad', 'Picnic plan',
+  'Team outing', 'Neighbours', 'Family plan', 'Getaway fund', 'Fantasy league',
+];
+
+const FAKE_EXPENSE_TITLES = [
+  'Groceries', 'Dinner', 'Lunch', 'Coffee', 'Taxi', 'Fuel', 'Snacks',
+  'Breakfast', 'Parking', 'Tickets', 'Pizza night', 'Supplies', 'Utilities',
+  'Internet', 'Rent share', 'Cleaning', 'Takeout', 'Ice cream', 'Pharmacy',
+  'Bus fare', 'Milk & eggs', 'Fruit', 'Water bottles', 'Paper towels',
+  'Detergent', 'Chai', 'Sandwiches', 'Dessert', 'Veggies', 'Cab home',
+];
+
+const FAKE_CATEGORIES = [
+  'Food & drink', 'Groceries', 'Transport', 'Home', 'Entertainment',
+  'Utilities', 'Travel', 'Shopping', 'Health', 'Other',
+];
+
+const FAKE_PREVIEWS = [
+  'Sounds good!', 'See you at 6', 'On my way', 'Sure 👍', 'Thanks!',
+  'Ok done', 'Haha nice', 'Yes please', 'Let me check', 'Cool cool',
+  'Almost there', 'Good morning!', 'Same time tomorrow?', 'Perfect',
+  'Got it', 'No worries', 'Sent it', 'Call me when free', 'Okk',
+  'Where are you?', 'Just left', 'Nice one', 'Will do', 'Great idea',
+  'Maybe Saturday?', 'Congrats!!', 'Happy birthday!', 'Safe travels',
+  'Good night', 'Talk later',
+];
+
+const FAKE_NOTES = [
+  'Split evenly', 'Paid in cash', 'Will settle later', 'From last week',
+  'Counted everyone', 'Added tip', 'Receipt with me', 'Rounded off',
+  'For the whole month', 'As discussed',
+];
+
+/** What KIND of text is being disguised — picks the dictionary. */
+export type DisguiseKind =
+  | 'person'   // people names → plausible fake names
+  | 'group'    // group / group-chat titles → generic circle names
+  | 'title'    // expense titles → mundane purchases
+  | 'category' // expense categories
+  | 'preview'  // chat last-message previews → stock mundane lines
+  | 'note'     // free-form notes → short bland phrases
+  | 'raw';     // no dictionary shape (codes, dates) → legacy garble
+
+/** Current shuffle salt — rotating it re-randomizes every disguise/decoy. */
+const salt = (): string => (cache?.disguiseSalt ?? '');
+
+const pickFrom = (pool: string[], seed: string, avoid?: string): string => {
+  const rand = mulberry(`disguise:${salt()}:${seed}`);
+  let idx = Math.floor(rand() * pool.length);
+  if (avoid && pool[idx].toLowerCase() === avoid.toLowerCase()) {
+    idx = (idx + 1) % pool.length;
+  }
+  return pool[idx];
+};
+
+/**
+ * Fake-but-convincing replacement text, deterministic per input. Unlike the
+ * legacy garble (which reads as obviously scrambled), the output is drawn from
+ * curated real-word pools so nothing on screen looks redacted.
+ */
+export const disguiseText = (input: string, kind: DisguiseKind): string => {
+  const trimmed = input.trim();
+  if (!trimmed) return input;
+  switch (kind) {
+    case 'person': {
+      const first = pickFrom(FAKE_FIRST_NAMES, `p:${trimmed}`, trimmed.split(/\s+/)[0]);
+      // Multi-word real names get a surname initial so rosters look varied.
+      if (trimmed.includes(' ')) {
+        const rand = mulberry(`pi:${salt()}:${trimmed}`);
+        const initial = String.fromCharCode(65 + Math.floor(rand() * 26));
+        return `${first} ${initial}`;
+      }
+      return first;
+    }
+    case 'group':
+      return pickFrom(FAKE_GROUP_NAMES, `g:${trimmed}`, trimmed);
+    case 'title':
+      return pickFrom(FAKE_EXPENSE_TITLES, `t:${trimmed}`, trimmed);
+    case 'category':
+      return pickFrom(FAKE_CATEGORIES, `c:${trimmed}`, trimmed);
+    case 'preview':
+      return pickFrom(FAKE_PREVIEWS, `v:${trimmed}`, trimmed);
+    case 'note':
+      return pickFrom(FAKE_NOTES, `n:${trimmed}`, trimmed);
+    case 'raw':
+    default:
+      return garbleText(input);
+  }
+};
+
 /** Redacted text in the configured style. */
-export const maskTextValue = (input: string, style: GuardTextStyle): string => {
-  if (style === 'garble') return garbleText(input);
+export const maskTextValue = (
+  input: string,
+  style: GuardTextStyle,
+  kind: DisguiseKind = 'raw',
+): string => {
+  if (style === 'garble') return disguiseText(input, kind);
   const glyph = style === 'blocks' ? '█' : '•';
   const len = Math.max(4, Math.min(input.length, 14));
   return glyph.repeat(len);
 };
 
-/** Decoy amount: plausible, stable for a given real value. */
-export const decoyAmount = (value: number): number => {
-  const rand = mulberry(`decoy:${value.toFixed(4)}`);
-  const magnitude = Math.abs(value) < 1 ? 10 : Math.abs(value) < 100 ? 100 : 1000;
-  const fake = Math.round((rand() * magnitude + magnitude * 0.05) * 100) / 100;
-  return value < 0 ? -fake : fake;
+/**
+ * Stable multiplier for the decoy ledger. ONE factor per seed (pass the
+ * groupId) so every amount in a group scales linearly — sums, splits, and
+ * balances all still reconcile, which is what makes the fake ledger survive
+ * scrutiny. The factor skips the ~1.0 band so decoys visibly differ from
+ * the truth.
+ */
+export const decoyScaleFor = (seedKey: string): number => {
+  const r = mulberry(`decoy-scale:${salt()}:${seedKey}`)();
+  const factor = 0.45 + r * 1.25; // 0.45 – 1.70
+  return factor > 0.88 && factor < 1.12 ? factor + 0.3 : factor;
+};
+
+/**
+ * Decoy amount: the real value times the seed's stable scale factor, rounded
+ * to cents. Deterministic and LINEAR — a group's expenses still add up to its
+ * totals and balances (within rounding), unlike independent random decoys.
+ */
+export const decoyAmount = (value: number, seedKey: string = 'global'): number => {
+  if (!Number.isFinite(value) || value === 0) return 0;
+  return Math.round(value * decoyScaleFor(seedKey) * 100) / 100;
 };
 
 /** Acceleration magnitude (in g) that counts as a shake, per sensitivity. */
@@ -237,8 +393,17 @@ const LOCKOUT_KEY = 'guard_lockout_v1';
 interface LockoutState {
   fails: number;
   until: number; // ms epoch; 0 = not locked out
+  /** When the most recent failed attempt happened (0 = none since unlock). */
+  lastFailAt: number;
+  /**
+   * Snapshot taken at the moment of the last successful unlock (macOS
+   * "there have been N failed attempts since last login" style) — the live
+   * counter resets on unlock, so this is what the settings sheet shows.
+   */
+  prevFails: number;
+  prevLastFailAt: number;
 }
-let lockout: LockoutState = { fails: 0, until: 0 };
+let lockout: LockoutState = { fails: 0, until: 0, lastFailAt: 0, prevFails: 0, prevLastFailAt: 0 };
 let lockoutHydrated = false;
 
 const loadLockout = async (): Promise<LockoutState> => {
@@ -308,19 +473,39 @@ export const attemptUnlock = async (code: string): Promise<UnlockResult> => {
 
   const ok = await verifyCode(code);
   if (ok) {
-    lockout = { fails: 0, until: 0 };
+    lockout = {
+      fails: 0,
+      until: 0,
+      lastFailAt: 0,
+      prevFails: lockout.fails,
+      prevLastFailAt: lockout.lastFailAt,
+    };
     await saveLockout();
     return { ok: true, duress: false, lockedForMs: 0 };
   }
 
-  // Duress code: look like nothing happened. Don't reveal, don't penalize.
+  // Duress code: look like nothing happened. Don't reveal, don't penalize —
+  // and never RECORD it anywhere a later real unlock could surface.
   if (await isDuressCode(code)) {
     return { ok: false, duress: true, lockedForMs: 0 };
   }
 
   lockout.fails += 1;
+  lockout.lastFailAt = Date.now();
   const cd = cooldownFor(lockout.fails);
   lockout.until = cd > 0 ? Date.now() + cd : 0;
   await saveLockout();
   return { ok: false, duress: false, lockedForMs: cd };
+};
+
+/**
+ * Failed code attempts around the last successful REAL unlock — a quiet
+ * tamper indicator ("did someone try my phone?"). Prefers the live counter
+ * (biometric unlocks don't reset it), falling back to the snapshot captured
+ * when the code last unlocked. Duress entries are never counted or recorded.
+ */
+export const getFailedAttempts = async (): Promise<{ count: number; lastAt: number }> => {
+  await loadLockout();
+  if (lockout.fails > 0) return { count: lockout.fails, lastAt: lockout.lastFailAt };
+  return { count: lockout.prevFails ?? 0, lastAt: lockout.prevLastFailAt ?? 0 };
 };

@@ -19,7 +19,7 @@
             ".validate": "!newData.exists() || newData.isNumber()"
           },
           "type": {
-            ".validate": "!newData.exists() || (newData.isString() && (newData.val() == 'text' || newData.val() == 'image' || newData.val() == 'video' || newData.val() == 'audio' || newData.val() == 'system' || newData.val() == 'call' || newData.val() == 'file' || newData.val() == 'location'))"
+            ".validate": "!newData.exists() || (newData.isString() && (newData.val() == 'text' || newData.val() == 'image' || newData.val() == 'video' || newData.val() == 'audio' || newData.val() == 'system' || newData.val() == 'call' || newData.val() == 'file' || newData.val() == 'location' || newData.val() == 'expense'))"
           },
           "isGroupChat": {
             ".validate": "!newData.exists() || newData.isBoolean()"
@@ -44,6 +44,9 @@
           },
           "requestId": {
             ".validate": "!newData.exists() || newData.isString() || newData.val() == null"
+          },
+          "expenseRef": {
+            ".validate": "!newData.exists() || newData.val() == null || (newData.hasChildren(['kind', 'groupId', 'refId', 'snapshot']) && newData.child('kind').isString() && newData.child('groupId').isString() && newData.child('refId').isString())"
           }
         }
       }

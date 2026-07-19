@@ -10,6 +10,11 @@ import { GlassView } from './GlassView';
 interface SpendingChartProps {
     expenses: Expense[];
     currency: string;
+    /**
+     * Display-currency multiplier (default 1). Keeps chart magnitudes in the
+     * same unit as the converted totals rendered next to the chart.
+     */
+    rate?: number;
     showPieChart?: boolean;
 }
 
@@ -64,17 +69,24 @@ const aggregateByCategory = (
         }));
 };
 
-export const SpendingChart = ({ expenses, currency, showPieChart = true }: SpendingChartProps) => {
+export const SpendingChart = ({ expenses, currency, rate = 1, showPieChart = true }: SpendingChartProps) => {
     const { theme, isDark } = useTheme();
     const { isShielded: chartsIsShielded, action: chartAction } = usePrivacyGuard();
     const chartsShielded = chartsIsShielded('charts');
     const { width: screenWidth } = useWindowDimensions();
 
-    const lineData = useMemo(() => aggregateByWeek(expenses), [expenses]);
-    const pieData = useMemo(
-        () => aggregateByCategory(expenses, theme.colors.chart, theme.colors.muted),
-        [expenses, theme],
-    );
+    const lineData = useMemo(() => {
+        const weekly = aggregateByWeek(expenses);
+        return rate === 1
+            ? weekly
+            : { labels: weekly.labels, data: weekly.data.map((v) => v * rate) };
+    }, [expenses, rate]);
+    const pieData = useMemo(() => {
+        const byCategory = aggregateByCategory(expenses, theme.colors.chart, theme.colors.muted);
+        return rate === 1
+            ? byCategory
+            : byCategory.map((entry) => ({ ...entry, amount: entry.amount * rate }));
+    }, [expenses, theme, rate]);
 
     const chartConfig = {
         backgroundColor: 'transparent',

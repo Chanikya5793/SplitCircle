@@ -1,9 +1,14 @@
 import { GlassView } from '@/components/GlassView';
+import { DisplayCurrencySheet } from '@/components/ui/DisplayCurrencySheet';
+import { useDisplayCurrency } from '@/context/DisplayCurrencyContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group, GroupMember } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
-import { StyleSheet, View } from 'react-native';
+import { formatRelativeTime } from '@/utils/format';
+import { lightHaptic } from '@/utils/haptics';
+import { useState } from 'react';
+import { Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -15,7 +20,68 @@ interface BalanceSummaryProps {
 export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
   const fmtMoney = useMoneyDisplay(group.groupId);
   const { maskGroupText } = usePrivacyMask();
+  const { getPref, getConversion, toggleDisplay } = useDisplayCurrency();
   const { theme } = useTheme();
+  const [showCurrencySheet, setShowCurrencySheet] = useState(false);
+
+  const base = (group.currency ?? 'USD').toUpperCase();
+  const pref = getPref(group.groupId);
+  const hasUsablePref = pref !== null && pref.base === base && pref.target !== base;
+  const conversion = getConversion(group.groupId, base);
+
+  // Tap the balances → flip between group currency and the chosen currency.
+  // First tap with nothing configured opens the picker instead.
+  const handleFlip = () => {
+    lightHaptic();
+    if (hasUsablePref) {
+      toggleDisplay(group.groupId);
+    } else {
+      setShowCurrencySheet(true);
+    }
+  };
+
+  const openSheet = () => {
+    lightHaptic();
+    setShowCurrencySheet(true);
+  };
+
+  const currencyPill = (
+    <TouchableOpacity
+      onPress={openSheet}
+      accessibilityRole="button"
+      accessibilityLabel="Choose a display currency"
+      style={[styles.pill, { borderColor: theme.colors.primary }]}
+    >
+      <MaterialCommunityIcons name="swap-horizontal" size={14} color={theme.colors.primary} />
+      <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600' }}>
+        {conversion ? `≈ ${conversion.target}` : base}
+      </Text>
+    </TouchableOpacity>
+  );
+
+  const rateFootnote = conversion ? (
+    <TouchableOpacity onPress={openSheet} accessibilityRole="button" accessibilityLabel="Change the display currency or rate">
+      <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+        {`Shown in ${conversion.target} · 1 ${base} = ${conversion.rate.toFixed(4)} ${conversion.target} · ${
+          conversion.source === 'custom'
+            ? 'your custom rate'
+            : conversion.stale && conversion.fetchedAt
+              ? `ECB rate cached ${formatRelativeTime(conversion.fetchedAt)} (offline)`
+              : conversion.fetchedAt
+                ? `ECB rate, updated ${formatRelativeTime(conversion.fetchedAt)}`
+                : 'ECB rate'
+        }`}
+      </Text>
+    </TouchableOpacity>
+  ) : null;
+
+  const sheet = (
+    <DisplayCurrencySheet
+      visible={showCurrencySheet}
+      group={group}
+      onClose={() => setShowCurrencySheet(false)}
+    />
+  );
 
   const activeMembers = group.members ?? [];
   const archivedMembers = (group.archivedMembers ?? []).filter(
@@ -57,7 +123,7 @@ export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
       <View key={member.userId} style={styles.row}>
         <View style={styles.nameWrap}>
           <Text style={[styles.name, { color: labelColor }]} numberOfLines={1}>
-            {maskGroupText(member.displayName, group.groupId)}
+            {maskGroupText(member.displayName, group.groupId, 'person')}
           </Text>
           {archived ? (
             <Text variant="labelSmall" style={[styles.formerTag, { color: theme.colors.onSurfaceVariant }]}>
@@ -74,11 +140,26 @@ export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
 
   return (
     <GlassView style={styles.container}>
-      <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
-        Balances
-      </Text>
-      {activeMembers.map((m) => renderRow(m, false))}
-      {archivedMembers.map((m) => renderRow(m, true))}
+      <Pressable
+        onPress={handleFlip}
+        accessibilityRole="button"
+        accessibilityLabel={
+          conversion
+            ? `Balances shown in ${conversion.target}. Tap to show ${base}.`
+            : `Balances shown in ${base}. Tap to view in another currency.`
+        }
+      >
+        <View style={styles.headerRow}>
+          <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
+            Balances
+          </Text>
+          {currencyPill}
+        </View>
+        {activeMembers.map((m) => renderRow(m, false))}
+        {archivedMembers.map((m) => renderRow(m, true))}
+        {rateFootnote}
+      </Pressable>
+      {sheet}
     </GlassView>
   );
 };
@@ -92,11 +173,27 @@ const styles = StyleSheet.create({
   title: {
     fontWeight: '600',
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 12,
+    marginBottom: 6,
   },
   nameWrap: {
     flex: 1,

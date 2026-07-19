@@ -1,6 +1,32 @@
 import type { PresenceStatus } from './user';
 
-export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'location' | 'system' | 'call';
+export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'location' | 'system' | 'call' | 'expense';
+
+/**
+ * Money-in-chat card payload (ai_layer/docs/21). The card is a POINTER into the
+ * group's canonical money data plus a render snapshot: the snapshot lets the
+ * card draw offline/before Firestore sync, but tap-through and any live render
+ * always prefer the real expense/settlement. Never treat snapshot amounts as
+ * authoritative.
+ */
+export interface ExpenseRef {
+  kind: 'expense' | 'settlement' | 'request' | 'digest' | 'insight';
+  groupId: string;
+  /** expenseId for kind 'expense'; settlementId for 'settlement'; requestId for 'request'. */
+  refId: string;
+  snapshot: {
+    title: string;
+    amount: number;
+    currency: string;
+    payerName: string;
+    payerId: string;
+    participantCount: number;
+    category?: string;
+    /** Settlement/request only: receiving side. */
+    toName?: string;
+    toUserId?: string;
+  };
+}
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 
 export interface ChatParticipant {
@@ -115,6 +141,8 @@ export interface ChatMessage {
   deletedForEveryone?: boolean;
   /** UserIds @-mentioned in this message — used to highlight bubbles when the current user is mentioned. */
   mentions?: string[];
+  /** Money-in-chat card data — present when type === 'expense'. */
+  expenseRef?: ExpenseRef;
 }
 
 export interface PinnedMessageRef {
