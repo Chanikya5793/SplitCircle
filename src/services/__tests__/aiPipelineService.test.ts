@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { __clearAsyncStorageStore } from './mocks/async-storage';
 import type { Group } from '@/models';
 import type { AiThread } from '@/utils/aiThreads';
 
@@ -37,7 +38,12 @@ vi.mock('@/services/insightsAiService', () => ({
   tryPccPrompt: vi.fn(async () => null),
 }));
 
-import { runAgenticTurn } from '../aiPipelineService';
+import { clearAgenticAnswerCache, runAgenticTurn } from '../aiPipelineService';
+import {
+  __clearMemoryCache,
+  addItem as addMemoryItem,
+  getEntityFixes,
+} from '../aiMemoryService';
 import { tryPccPrompt } from '@/services/insightsAiService';
 
 const pcc = vi.mocked(tryPccPrompt);
@@ -89,6 +95,12 @@ beforeEach(async () => {
   // must not bleed into the next test.
   vi.resetAllMocks();
   fm.availability = 'available';
+  // The doc-25 answer cache is module-global — identical baseArgs would
+  // cross-hit between specs without this. Memory's doc cache likewise holds
+  // items after the storage underneath is wiped.
+  clearAgenticAnswerCache();
+  __clearMemoryCache();
+  __clearAsyncStorageStore(); // memory docs etc. must not leak between specs
   await AsyncStorage.removeItem('ai_pipeline_v1');
 });
 
@@ -265,6 +277,58 @@ describe('P3 PCC depth routing', () => {
   });
 });
 
+describe('Q1 trace + answer cache (doc 25)', () => {
+  it('replies carry a full turn trace', async () => {
+    fm.routeTurn.mockResolvedValueOnce(decision({ requests: [{ tool: 'balances' }] }));
+    fm.agentLoopStep.mockResolvedValueOnce({ done: true, requests: [] });
+    fm.generateOnDeviceText.mockResolvedValueOnce('You are owed 50 USD.');
+    const r = await runAgenticTurn(baseArgs());
+    expect(r?.trace).toMatchObject({
+      surface: 'insights',
+      scope: 'g1',
+      userText: 'how are we doing?',
+      intent: 'answer',
+      replyRole: 'assistant',
+      replyText: 'You are owed 50 USD.',
+      usedLocal: false,
+    });
+    expect(r?.trace?.requests).toEqual([{ tool: 'balances', args: '' }]);
+    expect(r?.trace?.results.some((t) => t.tool === 'balances')).toBe(true);
+  });
+
+  it('an exact-repeat question over unchanged facts answers from cache', async () => {
+    fm.routeTurn.mockResolvedValueOnce(decision({}));
+    fm.generateOnDeviceText.mockResolvedValueOnce('The total is 100 USD.');
+    const first = await runAgenticTurn(baseArgs());
+    const second = await runAgenticTurn(baseArgs());
+    expect(second?.text).toBe(first?.text);
+    expect(fm.routeTurn).toHaveBeenCalledTimes(1); // second turn never hit the model
+  });
+
+  it('changed facts or replay mode bypass the cache', async () => {
+    fm.routeTurn.mockResolvedValue(decision({}));
+    fm.generateOnDeviceText.mockResolvedValue('The total is 100 USD.');
+    await runAgenticTurn(baseArgs());
+    await runAgenticTurn({ ...baseArgs(), facts: '{"total":100,"count":1}' });
+    await runAgenticTurn({ ...baseArgs(), replay: true });
+    expect(fm.routeTurn).toHaveBeenCalledTimes(3);
+  });
+
+  it('clarify replies are never cached', async () => {
+    fm.routeTurn
+      .mockResolvedValueOnce(
+        decision({ intent: 'clarify', clarifyQuestion: 'Which Sam?', clarifyOptions: ['Sam Lee', 'Samir'] }),
+      )
+      .mockResolvedValueOnce(
+        decision({ intent: 'clarify', clarifyQuestion: 'Which Sam?', clarifyOptions: ['Sam Lee', 'Samir'] }),
+      );
+    await runAgenticTurn(baseArgs());
+    const second = await runAgenticTurn(baseArgs());
+    expect(second?.role).toBe('clarify');
+    expect(fm.routeTurn).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('P5 local-tier pinning', () => {
   it('a chat_search turn never narrates on PCC, even when deep', async () => {
     fm.routeTurn.mockResolvedValueOnce(
@@ -295,6 +359,38 @@ describe('P5 local-tier pinning', () => {
     await runAgenticTurn({ ...baseArgs(), chatId: 'c1' });
     expect(fm.routeTurn.mock.calls[0][0]).toContain('chat_search');
     expect(fm.routeTurn.mock.calls[0][0]).toContain('call_stats');
+  });
+});
+
+describe('Q2 memory (doc 25)', () => {
+  it('memory rides router AND narrator instructions', async () => {
+    await addMemoryItem('global', 'preference', 'keep answers short');
+    fm.routeTurn.mockResolvedValueOnce(decision({}));
+    fm.generateOnDeviceText.mockResolvedValueOnce('The total is 100 USD.');
+    await runAgenticTurn(baseArgs());
+    expect(fm.routeTurn.mock.calls[0][0]).toContain('keep answers short');
+    expect(fm.generateOnDeviceText.mock.calls[0][1]).toContain('keep answers short');
+  });
+
+  it('two consistent clarify answers teach an entity fix', async () => {
+    const clarifyThread = () =>
+      thread([
+        { id: 'u0', role: 'user', text: 'what does sam owe?', createdAt: NOW },
+        { id: 'c1', role: 'clarify', text: 'Which one?', options: ['Sam Lee', 'Samir'], createdAt: NOW },
+      ]);
+    for (let i = 0; i < 2; i++) {
+      fm.routeTurn.mockResolvedValueOnce(decision({}));
+      fm.generateOnDeviceText.mockResolvedValueOnce('The total is 100 USD.');
+      await runAgenticTurn({ ...baseArgs(), thread: clarifyThread(), userText: 'Sam Lee' });
+    }
+    expect(await getEntityFixes(['group:g1'])).toEqual({ sam: 'Sam Lee' });
+  });
+
+  it('empty memory adds nothing to the instructions', async () => {
+    fm.routeTurn.mockResolvedValueOnce(decision({}));
+    fm.generateOnDeviceText.mockResolvedValueOnce('The total is 100 USD.');
+    await runAgenticTurn(baseArgs());
+    expect(fm.routeTurn.mock.calls[0][0]).not.toContain('MEMORY');
   });
 });
 

@@ -124,6 +124,13 @@ export interface Expense {
   participants: ParticipantShare[];
   splitMetadata?: ExpenseSplitMetadata;
   settled: boolean;
+  /**
+   * Per-participant settle state (doc 26): userIds whose share is squared
+   * away. The payer is implicitly settled. When every non-payer participant
+   * is here, `settled` flips true. Drives the avatar ticks on recurring-bill
+   * chat cards and the toggles in ExpenseDetails.
+   */
+  settledParticipantIds?: string[];
   notes?: string;
   receipt?: ReceiptMetadata;
   recurring?: RecurringExpenseMetadata;

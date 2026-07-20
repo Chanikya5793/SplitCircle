@@ -3,6 +3,7 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { EmptyState, GuardedScreen } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { ROUTES } from '@/constants';
+import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { getExpenseDetailsTitle } from '@/navigation/screenTitles';
@@ -42,6 +43,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
   const navigation = useNavigation<any>();
   const { groupId, expenseId } = route.params;
   const { groups, deleteExpense, updateExpense } = useGroups();
+  const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const scrollY = useRef(new Animated.Value(0)).current;
   const group = groups.find((g) => g.groupId === groupId);
@@ -377,12 +379,58 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
               Split with
             </Text>
-            {expense.participants.map((p) => (
-              <View key={p.userId} style={styles.row}>
-                <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>{memberMap[p.userId] || 'Unknown'}</Text>
-                <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>{fmtMoney(p.share, group.currency)}</Text>
-              </View>
-            ))}
+            {expense.participants.map((p) => {
+              // Per-participant settle ticks (doc 26): payer is implicitly
+              // settled; payer/admins can tick anyone, members can tick
+              // themselves. All non-payer ticked → expense.settled.
+              const isPayer = p.userId === expense.paidBy;
+              const ticked = isPayer || (expense.settledParticipantIds ?? []).includes(p.userId);
+              const myRole = group.members.find((m) => m.userId === user?.userId)?.role;
+              const canToggle =
+                !isPayer &&
+                !!user &&
+                (user.userId === expense.paidBy ||
+                  user.userId === p.userId ||
+                  myRole === 'admin' ||
+                  myRole === 'owner');
+              const toggle = async () => {
+                const next = new Set(expense.settledParticipantIds ?? []);
+                if (next.has(p.userId)) next.delete(p.userId);
+                else next.add(p.userId);
+                const allSettled = expense.participants
+                  .filter((part) => part.userId !== expense.paidBy)
+                  .every((part) => next.has(part.userId));
+                try {
+                  await updateExpense(groupId, {
+                    ...expense,
+                    settledParticipantIds: [...next],
+                    settled: allSettled,
+                  });
+                } catch (error) {
+                  console.warn('toggle participant settled failed', error);
+                }
+              };
+              return (
+                <View key={p.userId} style={styles.row}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                    <IconButton
+                      icon={ticked ? 'check-circle' : 'circle-outline'}
+                      size={20}
+                      iconColor={ticked ? (theme.colors.success ?? theme.colors.primary) : theme.colors.onSurfaceVariant}
+                      disabled={!canToggle}
+                      onPress={canToggle ? () => { void toggle(); } : undefined}
+                      style={{ margin: 0 }}
+                      accessibilityLabel={`${memberMap[p.userId] || 'Unknown'} ${ticked ? 'settled' : 'not settled'}`}
+                    />
+                    <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>
+                      {memberMap[p.userId] || 'Unknown'}
+                      {isPayer ? ' (paid)' : ''}
+                    </Text>
+                  </View>
+                  <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>{fmtMoney(p.share, group.currency)}</Text>
+                </View>
+              );
+            })}
           </View>
 
           <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />

@@ -46,6 +46,26 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   firebase deploy --only functions,firestore:rules --project "$FIREBASE_PROJECT" --non-interactive --force
 fi
 
+# 0b. Preflight (doc 25 Q1): the vitest suites are a HARD gate — a red suite
+#     never ships. On-device AI evals live on the phone (Settings → On-Device
+#     AI → AI evals), unreadable from here: prompt when interactive, warn when
+#     headless. SKIP_AI_EVAL_CHECK=1 skips the prompt only, never the tests.
+step "Preflight: unit + services test suites…"
+npm run test:unit
+npm run test:services
+if [[ "${SKIP_AI_EVAL_CHECK:-}" != "1" ]]; then
+  if [[ -t 0 ]]; then
+    printf '\033[1;33m▶ On-device AI evals passed on the iPhone? (Settings → On-Device AI → AI evals) [y/N] \033[0m'
+    read -r EVAL_OK
+    if [[ "$EVAL_OK" != "y" && "$EVAL_OK" != "Y" ]]; then
+      echo "Aborting — run the on-device evals first (or SKIP_AI_EVAL_CHECK=1)." >&2
+      exit 1
+    fi
+  else
+    printf '\033[1;33m▶ Reminder: run the on-device AI evals (Settings → On-Device AI → AI evals) before releasing this build.\033[0m\n'
+  fi
+fi
+
 # 1. Local iOS build → a saved, timestamped .ipa artifact.
 step "Building iOS locally (profile: $PROFILE)…"
 eas build --platform ios --local --profile "$PROFILE" --non-interactive --output "$IPA"

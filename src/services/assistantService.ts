@@ -19,6 +19,9 @@
 import type { Expense, Group } from '@/models';
 import type { ExpenseAiAnswer, ExpenseAiSource } from '@/services/aiService';
 import { runAgenticTurn } from '@/services/aiPipelineService';
+import { addItem as addMemoryItem } from '@/services/aiMemoryService';
+import type { TurnTrace } from '@/utils/aiFeedback';
+import { parseRememberCommand } from '@/utils/aiMemory';
 import type { AiThread } from '@/utils/aiThreads';
 import {
   answerExpenseLocally,
@@ -33,6 +36,7 @@ import {
   extractExpenseTitle,
   matchExpenseByText,
   matchSettlement,
+  parseAmount,
   parseBudgetCommand,
   parseExpenseEdit,
   parseParticipants,
@@ -104,6 +108,8 @@ export interface AssistantTurn {
   assumption?: string;
   /** Which engine narrated an agentic answer (badge parity with insights). */
   engineSource?: 'ondevice' | 'pcc';
+  /** Doc 25 — the agentic turn snapshot (screen registers it for 👎 capture). */
+  trace?: TurnTrace;
 }
 
 /** Doc 24 — thread + facts context that unlocks the agentic pipeline for the
@@ -208,6 +214,8 @@ export async function processAssistantTurn(
       return handleNavigate(text);
     case 'set_budget':
       return handleSetBudget(text, group);
+    case 'memory_add':
+      return handleRemember(text);
     case 'settle_up':
       return continueSettleUp(text, group, currentUserId, {});
     case 'add_expense':
@@ -409,6 +417,27 @@ function handleDeleteSettlement(text: string, group: Group, currentUserId: strin
   return { reply: 'Delete this settlement? This cannot be undone.', action, state: { lastProposed: action } };
 }
 
+/** Doc 25 Q2 — explicit memory write. Applies IMMEDIATELY (no confirm card —
+ * locked decision; undo lives in the Settings ledger). Stored GLOBAL: stated
+ * facts and preferences transcend a single group. */
+async function handleRemember(text: string): Promise<AssistantTurn> {
+  const cmd = parseRememberCommand(text, parseAmount(text) != null);
+  if (!cmd) {
+    return { reply: 'What should I remember? e.g. "remember that Maya is my sister".', state: {} };
+  }
+  try {
+    await addMemoryItem('global', cmd.kind, cmd.text);
+    return {
+      reply:
+        `Remembered — "${cmd.text}". ` +
+        'I manage what I know in Settings → On-Device AI → AI memory.',
+      state: {},
+    };
+  } catch {
+    return { reply: "I couldn't save that just now — try again in a moment.", state: {} };
+  }
+}
+
 /** Doc 24 P4 — budget confirm card. Category/amount must be fully phrased
  * (no slot-filling for budgets in v1); removals confirm with the old value. */
 function handleSetBudget(text: string, group: Group): AssistantTurn {
@@ -495,9 +524,15 @@ async function answerQuestion(
     });
     if (turn) {
       if (turn.role === 'clarify') {
-        return { reply: turn.text, choices: turn.options, clarify: true, state: {} };
+        return { reply: turn.text, choices: turn.options, clarify: true, state: {}, trace: turn.trace };
       }
-      return { reply: turn.text, assumption: turn.assumption, engineSource: turn.source, state: {} };
+      return {
+        reply: turn.text,
+        assumption: turn.assumption,
+        engineSource: turn.source,
+        state: {},
+        trace: turn.trace,
+      };
     }
   }
 

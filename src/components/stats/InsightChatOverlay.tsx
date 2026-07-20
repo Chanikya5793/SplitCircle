@@ -17,6 +17,9 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
+import { thumbsDown, thumbsUp } from '@/services/aiFeedbackService';
+import { prewarmOnDeviceModel } from '../../../modules/splitcircle-ai';
+import { FEEDBACK_REASON_LABELS, type FeedbackReason } from '@/utils/aiFeedback';
 import { deleteThread, listThreads, newMessageId, saveThread } from '@/services/aiThreadStore';
 import { getLastPccQuota, type PccQuotaInfo } from '@/services/insightsAiService';
 import {
@@ -133,6 +136,8 @@ export const InsightChatOverlay = ({
   const [busy, setBusy] = useState(false);
   // P2 live turn feedback: the loop's status line, then streamed narration.
   const [pending, setPending] = useState<{ status?: string; partial?: string } | null>(null);
+  // Doc 25 flywheel: per-message thumb state ('ask' = reason chips showing).
+  const [feedback, setFeedback] = useState<Record<string, 'up' | 'ask' | 'down'>>({});
   const [keyboardShown, setKeyboardShown] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // P3: structured PCC quota from the latest call — the menu's truth line.
@@ -146,6 +151,11 @@ export const InsightChatOverlay = ({
   useEffect(() => {
     void getEnginePref().then(setEngine);
   }, []);
+
+  // Doc 25: warm the model when the overlay opens — first turn skips cold-load.
+  useEffect(() => {
+    if (visible) prewarmOnDeviceModel();
+  }, [visible]);
 
   // The facts actually grounding this chat: the user-picked context range.
   const activeFacts = factsForRange ? factsForRange(contextRange) : facts;
@@ -258,7 +268,16 @@ export const InsightChatOverlay = ({
     ],
   }));
 
+  // Auto-follow guard: follow streaming growth ONLY while the user is already
+  // pinned near the bottom. The old unconditional onContentSizeChange →
+  // scrollToEnd re-fired on every streamed token, compounding offsets past the
+  // content (the "infinite scroll into the void") and yanking any attempt to
+  // scroll back. Scrolling up now disengages following; an explicit send
+  // re-engages it.
+  const nearBottom = useRef(true);
+
   const scrollToEnd = useCallback(() => {
+    nearBottom.current = true;
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
   }, []);
 
@@ -465,6 +484,31 @@ export const InsightChatOverlay = ({
     }
   };
 
+  // Doc 25: 👍 records sentiment; 👎 opens reason chips, then snapshots the
+  // whole turn into a local eval fixture (reduced when the trace ring is gone).
+  const onThumb = (msg: AiThreadMessage, up: boolean) => {
+    lightHaptic();
+    if (up) {
+      setFeedback((s) => ({ ...s, [msg.id]: 'up' }));
+      void thumbsUp(msg.id);
+    } else {
+      setFeedback((s) => ({ ...s, [msg.id]: 'ask' }));
+    }
+  };
+
+  const onFeedbackReason = (msg: AiThreadMessage, reason?: FeedbackReason) => {
+    lightHaptic();
+    setFeedback((s) => ({ ...s, [msg.id]: 'down' }));
+    const idx = thread?.messages.findIndex((m) => m.id === msg.id) ?? -1;
+    const prevUser = idx > 0 ? [...(thread?.messages.slice(0, idx) ?? [])].reverse().find((m) => m.role === 'user') : undefined;
+    void thumbsDown(msg.id, reason, {
+      surface: INSIGHTS_SURFACE,
+      scope,
+      userText: prevUser?.text ?? '',
+      replyText: msg.text,
+    });
+  };
+
   const hairline = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)';
 
   const showStarters = (thread?.messages.filter((m) => m.role === 'user').length ?? 0) === 0;
@@ -633,6 +677,53 @@ export const InsightChatOverlay = ({
               </Text>
             </View>
           )}
+          {/* Doc 25 flywheel: thumbs → reason chips → local eval fixture. */}
+          {!isUser &&
+            (feedback[item.id] === 'ask' ? (
+              <View style={styles.clarifyRow}>
+                {(Object.keys(FEEDBACK_REASON_LABELS) as FeedbackReason[]).map((r) => (
+                  <TouchableOpacity
+                    key={r}
+                    onPress={() => onFeedbackReason(item, r)}
+                    accessibilityRole="button"
+                    accessibilityLabel={FEEDBACK_REASON_LABELS[r]}
+                  >
+                    <GlassView style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
+                      <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600' }}>
+                        {FEEDBACK_REASON_LABELS[r]}
+                      </Text>
+                    </GlassView>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : feedback[item.id] === 'down' ? (
+              <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, fontSize: 10, marginTop: 4 }}>
+                Noted — added to AI evals
+              </Text>
+            ) : (
+              <View style={styles.thumbRow}>
+                <TouchableOpacity
+                  onPress={() => onThumb(item, true)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Good answer"
+                >
+                  <Icon
+                    source={feedback[item.id] === 'up' ? 'thumb-up' : 'thumb-up-outline'}
+                    size={13}
+                    color={feedback[item.id] === 'up' ? theme.colors.primary : theme.colors.onSurfaceVariant}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => onThumb(item, false)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Bad answer"
+                >
+                  <Icon source="thumb-down-outline" size={13} color={theme.colors.onSurfaceVariant} />
+                </TouchableOpacity>
+              </View>
+            ))}
         </GlassView>
       </View>
     );
@@ -899,7 +990,15 @@ export const InsightChatOverlay = ({
                     { paddingTop: insets.top + 88, paddingBottom: 92 + insets.bottom },
                   ]}
                   keyboardShouldPersistTaps="handled"
-                  onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+                  onScroll={(e) => {
+                    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+                    nearBottom.current =
+                      contentSize.height - contentOffset.y - layoutMeasurement.height < 80;
+                  }}
+                  scrollEventThrottle={64}
+                  onContentSizeChange={() => {
+                    if (nearBottom.current) listRef.current?.scrollToEnd({ animated: false });
+                  }}
                   ListFooterComponent={
                     busy ? (
                       <View style={[styles.msgRow, { justifyContent: 'flex-start' }]}>
@@ -1107,6 +1206,7 @@ const styles = StyleSheet.create({
   starterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
   clarifyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   pendingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  thumbRow: { flexDirection: 'row', gap: 14, marginTop: 6 },
   actionCard: { borderWidth: 1, borderRadius: 12, padding: 10, marginTop: 10, gap: 6 },
   actionButtons: { flexDirection: 'row', gap: 8, marginTop: 4 },
   actionBtn: {

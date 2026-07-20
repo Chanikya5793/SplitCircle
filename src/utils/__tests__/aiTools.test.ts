@@ -337,6 +337,13 @@ describe('local-tier tools (doc 24 P5)', () => {
     expect(toolCatalog(localCtx(), { includeLocal: false })).not.toContain('chat_search');
   });
 
+  it('entity fixes rewrite member args before resolution (doc 25 Q2)', async () => {
+    const ctx: ToolCtx = { ...groupCtx(), entityFixes: { sam: 'Sam Lee' } };
+    const p = json(await run({ tool: 'member_stats', member: 'Sam' }, ctx));
+    expect(p.ambiguous).toBeUndefined(); // no clarify — the fix resolved it
+    expect(p.name).toBe('Sam Lee');
+  });
+
   it('toolTier reports tiers', async () => {
     expect(toolTier('chat_search')).toBe('local');
     expect(toolTier('call_stats')).toBe('local');

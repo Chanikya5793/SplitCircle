@@ -12,10 +12,17 @@ const RECURRING_BILLS_COLLECTION = "recurringBills";
 const GROUPS_COLLECTION = "groups";
 const EXPENSES_COLLECTION = "expenses";
 const MAX_OCCURRENCES_PER_RUN = 64;
+const MAX_PENDING_OCCURRENCES = 6;
+const REMINDER_LEAD_MS = 3 * 24 * 60 * 60 * 1000; // T-3 days, monthly+ bills only
 
 type ParticipantShare = {
     userId: string;
     share: number;
+};
+
+type BillRotation = {
+    order: string[];
+    index: number;
 };
 
 type RecurringBillRecord = {
@@ -35,6 +42,13 @@ type RecurringBillRecord = {
     dayOfMonth?: number;
     dayOfWeek?: number;
     frequency?: LegacyBillFrequency;
+    // ── v2 (ai_layer/docs/26) ──
+    amountMode: "fixed" | "variable";
+    requiresAccept: boolean;
+    rotation?: BillRotation;
+    skippedOccurrences: number[];
+    pendingOccurrences: number[];
+    reminderSentFor?: number;
 };
 
 type ProcessResult = {
@@ -98,6 +112,24 @@ const normalizeRecurringBill = (billId: string, raw: Record<string, unknown>): R
     const lastGeneratedAt = toNumber(raw.lastGeneratedAt) ?? undefined;
     const isActive = raw.isActive !== false;
 
+    let rotation: BillRotation | undefined;
+    if (raw.rotation && typeof raw.rotation === "object") {
+        const rawRotation = raw.rotation as { order?: unknown; index?: unknown };
+        const order = Array.isArray(rawRotation.order)
+            ? rawRotation.order.filter((id): id is string => typeof id === "string" && id.length > 0)
+            : [];
+        if (order.length >= 2) {
+            const index = typeof rawRotation.index === "number" && Number.isFinite(rawRotation.index)
+                ? Math.max(0, Math.trunc(rawRotation.index)) % order.length
+                : 0;
+            rotation = { order, index };
+        }
+    }
+
+    const toOccurrenceList = (value: unknown): number[] => Array.isArray(value)
+        ? value.filter((ts): ts is number => typeof ts === "number" && Number.isFinite(ts)).sort((a, b) => a - b)
+        : [];
+
     return {
         billId,
         groupId,
@@ -115,22 +147,41 @@ const normalizeRecurringBill = (billId: string, raw: Record<string, unknown>): R
         dayOfMonth: typeof raw.dayOfMonth === "number" ? raw.dayOfMonth : undefined,
         dayOfWeek: typeof raw.dayOfWeek === "number" ? raw.dayOfWeek : undefined,
         frequency: raw.frequency as LegacyBillFrequency | undefined,
+        amountMode: raw.amountMode === "variable" ? "variable" : "fixed",
+        requiresAccept: raw.requiresAccept === true,
+        rotation,
+        skippedOccurrences: toOccurrenceList(raw.skippedOccurrences),
+        pendingOccurrences: toOccurrenceList(raw.pendingOccurrences),
+        reminderSentFor: toNumber(raw.reminderSentFor) ?? undefined,
     };
 };
 
-const buildRecurringExpense = (bill: RecurringBillRecord, occurrenceAt: number) => {
+// Title carries NO "(Recurring)" decoration — recurrence is metadata
+// (`expense.recurring`); renderers draw their own badge (ai_layer/docs/26).
+// MUST stay byte-compatible with the client fallback in
+// src/services/recurringBillService.ts (arrayUnion dedupes on deep equality).
+const buildRecurringExpense = (bill: RecurringBillRecord, occurrenceAt: number, paidBy: string) => {
     const expenseId = `rec_${bill.billId}_${occurrenceAt}`;
     return {
         expenseId,
         groupId: bill.groupId,
-        title: `${bill.title} (Recurring)`,
+        title: bill.title,
         category: bill.category,
         amount: bill.amount,
-        paidBy: bill.paidBy,
+        paidBy,
         splitType: "custom",
         participants: bill.participants,
+        splitMetadata: {
+            version: 1,
+            method: "exact",
+            participantConfig: bill.participants.map((participant) => ({
+                userId: participant.userId,
+                included: true,
+                exactAmount: participant.share,
+                computedAmount: participant.share,
+            })),
+        },
         settled: false,
-        notes: `Auto-generated from recurring bill (${new Date(occurrenceAt).toISOString().slice(0, 10)})`,
         recurring: {
             billId: bill.billId,
             occurrenceAt,
@@ -140,6 +191,38 @@ const buildRecurringExpense = (bill: RecurringBillRecord, occurrenceAt: number) 
     };
 };
 
+/** Payer for the given rotation slot; falls back to the fixed payer. */
+const rotationPayerAt = (bill: RecurringBillRecord, index: number): string =>
+    bill.rotation ? bill.rotation.order[index % bill.rotation.order.length] : bill.paidBy;
+
+/** T-3 reminders only make sense for monthly-and-slower cadences (doc 26). */
+const reminderLeadMs = (rule: RecurrenceRule): number =>
+    rule.frequency === "monthly" || rule.frequency === "yearly" ? REMINDER_LEAD_MS : 0;
+
+/**
+ * Rotation-aware payer push. Fire-and-forget: reminder delivery must never
+ * fail bill generation. Lazily imported to keep cold-start cost off the
+ * callable path.
+ */
+const sendBillReminder = async (
+    bill: RecurringBillRecord,
+    payerId: string,
+    body: string,
+): Promise<void> => {
+    try {
+        const { sendPushToUsers } = await import("./notifications");
+        await sendPushToUsers(
+            [payerId],
+            bill.title,
+            body,
+            { groupId: bill.groupId, billId: bill.billId, kind: "recurringBill" },
+            "expenses",
+        );
+    } catch (error) {
+        logger.warn("Recurring bill reminder push failed", { billId: bill.billId, error });
+    }
+};
+
 const processBill = async (
     billRef: DocumentReference,
     bill: RecurringBillRecord,
@@ -147,20 +230,36 @@ const processBill = async (
 ): Promise<number> => {
     if (!bill.isActive) return 0;
 
+    // Variable AND accept-gated (1:1 request) bills park instead of generating.
+    const parksOccurrences = bill.amountMode === "variable" || bill.requiresAccept;
+    const skipped = new Set(bill.skippedOccurrences);
     let currentDueAt = bill.nextDueAt;
-    let generatedCount = 0;
+    let processedCount = 0;
     let shouldDeactivate = false;
     let lastGeneratedAt = bill.lastGeneratedAt;
+    let rotationIndex = bill.rotation?.index ?? 0;
+    const pending = [...bill.pendingOccurrences];
+    const newlyPending: number[] = [];
     const expensesToAdd: ReturnType<typeof buildRecurringExpense>[] = [];
 
     while (
         currentDueAt <= now &&
-        generatedCount < MAX_OCCURRENCES_PER_RUN &&
+        processedCount < MAX_OCCURRENCES_PER_RUN &&
         (!bill.endAt || currentDueAt <= bill.endAt)
     ) {
-        expensesToAdd.push(buildRecurringExpense(bill, currentDueAt));
-        lastGeneratedAt = currentDueAt;
-        generatedCount += 1;
+        if (skipped.has(currentDueAt)) {
+            // Explicitly skipped: no expense, no rotation turn consumed.
+        } else if (parksOccurrences) {
+            if (!pending.includes(currentDueAt)) {
+                pending.push(currentDueAt);
+                newlyPending.push(currentDueAt);
+            }
+        } else {
+            expensesToAdd.push(buildRecurringExpense(bill, currentDueAt, rotationPayerAt(bill, rotationIndex)));
+            lastGeneratedAt = currentDueAt;
+            if (bill.rotation) rotationIndex = (rotationIndex + 1) % bill.rotation.order.length;
+        }
+        processedCount += 1;
 
         const next = findNextOccurrenceAt(bill.recurrenceRule, bill.startAt, currentDueAt);
         if (!next || next <= currentDueAt) {
@@ -170,35 +269,71 @@ const processBill = async (
         currentDueAt = next;
     }
 
-    if (generatedCount === 0) {
+    // T-3 upcoming reminder for the (possibly advanced) next occurrence —
+    // idempotent via reminderSentFor, rotation-aware, monthly+ only.
+    const leadMs = reminderLeadMs(bill.recurrenceRule);
+    const upcomingDueAt = processedCount > 0 ? currentDueAt : bill.nextDueAt;
+    const shouldRemind =
+        !shouldDeactivate &&
+        leadMs > 0 &&
+        upcomingDueAt > now &&
+        upcomingDueAt - now <= leadMs &&
+        bill.reminderSentFor !== upcomingDueAt &&
+        (!bill.endAt || upcomingDueAt <= bill.endAt);
+
+    if (processedCount === 0 && !shouldRemind) {
         return 0;
     }
 
     const db = getFirestore();
     const batch = db.batch();
-    const groupRef = db.collection(GROUPS_COLLECTION).doc(bill.groupId);
 
-    batch.update(groupRef, {
-        expenses: FieldValue.arrayUnion(...expensesToAdd),
-        updatedAt: Date.now(),
-    });
-
-    expensesToAdd.forEach((expense) => {
-        const topLevelExpenseRef = db.collection(EXPENSES_COLLECTION).doc(expense.expenseId);
-        batch.set(topLevelExpenseRef, expense, { merge: true });
-    });
+    if (expensesToAdd.length > 0) {
+        const groupRef = db.collection(GROUPS_COLLECTION).doc(bill.groupId);
+        batch.update(groupRef, {
+            expenses: FieldValue.arrayUnion(...expensesToAdd),
+            updatedAt: Date.now(),
+        });
+        expensesToAdd.forEach((expense) => {
+            const topLevelExpenseRef = db.collection(EXPENSES_COLLECTION).doc(expense.expenseId);
+            batch.set(topLevelExpenseRef, expense, { merge: true });
+        });
+    }
 
     batch.update(billRef, {
         recurrenceRule: bill.recurrenceRule,
         startAt: bill.startAt,
-        nextDueAt: currentDueAt,
+        nextDueAt: processedCount > 0 ? currentDueAt : bill.nextDueAt,
         isActive: shouldDeactivate ? false : bill.isActive,
         lastGeneratedAt: lastGeneratedAt ?? null,
+        pendingOccurrences: pending.sort((a, b) => a - b).slice(-MAX_PENDING_OCCURRENCES),
+        ...(bill.rotation ? { rotation: { order: bill.rotation.order, index: rotationIndex } } : {}),
+        ...(shouldRemind ? { reminderSentFor: upcomingDueAt } : {}),
         updatedAt: Date.now(),
     });
 
     await batch.commit();
-    return generatedCount;
+
+    if (shouldRemind) {
+        const payerId = rotationPayerAt(bill, rotationIndex);
+        const dueDate = new Date(upcomingDueAt).toISOString().slice(0, 10);
+        await sendBillReminder(bill, payerId, `Due ${dueDate} — your turn to pay.`);
+    }
+    if (newlyPending.length > 0) {
+        if (bill.requiresAccept) {
+            // 1:1 request: consent comes from the counterparty (non-payer).
+            const payerId = rotationPayerAt(bill, rotationIndex);
+            const counterparty = bill.participants.find((p) => p.userId !== payerId);
+            if (counterparty) {
+                await sendBillReminder(bill, counterparty.userId, "Recurring request due — accept it in the chat to add it.");
+            }
+        } else {
+            const payerId = rotationPayerAt(bill, rotationIndex);
+            await sendBillReminder(bill, payerId, "Bill is due — enter this month's amount to split it.");
+        }
+    }
+
+    return expensesToAdd.length;
 };
 
 const queryBills = async (groupId?: string) => {

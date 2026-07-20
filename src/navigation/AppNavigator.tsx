@@ -37,6 +37,8 @@ import { PersonalStatsScreen } from '@/screens/stats/PersonalStatsScreen';
 import { AiChatScreen } from '@/screens/ai/AiChatScreen';
 import { LoadingScreen } from '@/screens/onboarding/LoadingScreen';
 import { NotificationSettingsScreen } from '@/screens/settings/NotificationSettingsScreen';
+import { AiEvalsScreen } from '@/screens/settings/AiEvalsScreen';
+import { AiMemoryScreen } from '@/screens/settings/AiMemoryScreen';
 import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
 import { OfflineSyncScreen } from '@/screens/settings/OfflineSyncScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
@@ -1148,6 +1150,16 @@ const AppStackNavigator = () => {
         name={ROUTES.APP.AI_INDEX}
         component={AiIndexScreen}
         options={{ title: SCREEN_TITLES.aiIndex }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.AI_EVALS}
+        component={AiEvalsScreen}
+        options={{ title: SCREEN_TITLES.aiEvals }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.AI_MEMORY}
+        component={AiMemoryScreen}
+        options={{ title: SCREEN_TITLES.aiMemory }}
       />
       <AppStack.Screen
         name={ROUTES.APP.OFFLINE_SYNC}

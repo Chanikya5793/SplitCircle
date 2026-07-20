@@ -25,12 +25,19 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarEnvelopeHeight } from '@/components/tabbar/tabBarMetrics';
 import { GlassCard, ListRow } from '@/components/ui';
 import { ROUTES } from '@/constants/routes';
+import { useAuth } from '@/context/AuthContext';
+import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useAppSearch } from '@/hooks/useAppSearch';
+import { runAgenticTurn } from '@/services/aiPipelineService';
+import { buildFactsBlock } from '@/services/onDeviceAiService';
 import { groupByType, highlightSegments, looksLikeQuestion, SECTION_LABELS, type RankedItem } from '@/services/searchService';
+import type { AiThread } from '@/utils/aiThreads';
+import { buildPersonalStats } from '@/utils/statsInsights';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import {
   isNativeSearchTabAvailable,
+  prewarmOnDeviceModel,
   setNativeSearchTabText,
   subscribeNativeSearchTab,
 } from '../../../modules/splitcircle-ai';
@@ -60,7 +67,7 @@ import Animated, {
   withDelay,
   withTiming,
 } from 'react-native-reanimated';
-import { Icon, Text } from 'react-native-paper';
+import { ActivityIndicator, Icon, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const RECENTS_KEY = 'search_recents_v1';
@@ -201,6 +208,8 @@ export const SearchScreen = () => {
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const { search, firstSearchableGroupId, getSuggestions } = useAppSearch();
+  const { groups } = useGroups();
+  const { user } = useAuth();
 
   // Native mode: the system UISearchTab field in the tab bar is the input; this
   // screen only mirrors it. Fallback mode: this screen owns a JS field.
@@ -305,7 +314,80 @@ export const SearchScreen = () => {
     const best = results.find((r) => r.type === 'expense' || r.type === 'settlement' || r.type === 'group' || r.type === 'action');
     return getGroupIdFromItem(best) ?? firstSearchableGroupId;
   }, [firstSearchableGroupId, getGroupIdFromItem, results]);
-  const showAiCard = debounced.length > 0 && looksLikeQuestion(debounced) && Boolean(aiGroupId);
+  const visibleGroups = useMemo(() => (groups ?? []).filter((g) => !g.hidden), [groups]);
+  const showAiCard =
+    debounced.length > 0 && looksLikeQuestion(debounced) && (Boolean(aiGroupId) || visibleGroups.length > 0);
+
+  // ── Doc 25 Q3: the inline answer card ───────────────────────────────────────
+  // Fires on SUBMIT only (return key) — never as-you-type. Group scope when the
+  // query names a group; personal cross-group otherwise. A newer submit
+  // supersedes a stale run via the sequence counter; clarify/null degrades to
+  // the deep-link row. Cancel clears it with the query (Photos semantics).
+  interface SearchAnswer {
+    query: string;
+    status?: string;
+    partial?: string;
+    text?: string;
+    source?: 'ondevice' | 'pcc';
+    done: boolean;
+    failed?: boolean;
+  }
+  const [answer, setAnswer] = useState<SearchAnswer | null>(null);
+  const answerSeq = useRef(0);
+
+  const runSearchAnswer = useCallback(
+    (raw: string) => {
+      const text = raw.trim();
+      if (!text || !looksLikeQuestion(text) || !user) return;
+      const seq = ++answerSeq.current;
+      const named = visibleGroups.find((g) => text.toLowerCase().includes(g.name.toLowerCase()));
+      const scope = named ? named.groupId : 'personal';
+      setAnswer({ query: text, status: 'Thinking…', done: false });
+      const patch = (fn: (a: SearchAnswer) => SearchAnswer) =>
+        setAnswer((prev) => (answerSeq.current === seq && prev ? fn(prev) : prev));
+      const thread: AiThread = {
+        threadId: `search-${seq}`,
+        surface: 'search',
+        scope,
+        title: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: [],
+      };
+      const facts = named
+        ? buildFactsBlock(named, user.userId)
+        : (() => {
+            const b = buildPersonalStats(visibleGroups, user.userId, 'all', Date.now());
+            return JSON.stringify({
+              scope: 'personal',
+              groups: b.groups.map((g) => ({ n: g.name, cur: g.currency, share: g.yourShare, count: g.count })),
+              categories: b.categoriesByCurrency,
+            });
+          })();
+      runAgenticTurn({
+        thread,
+        userText: text,
+        facts,
+        group: named,
+        currentUserId: user.userId,
+        personalGroups: named ? undefined : visibleGroups,
+        onStatus: (line) => patch((a) => ({ ...a, status: line })),
+        onDelta: (partial) => patch((a) => ({ ...a, partial })),
+      })
+        .then((reply) => {
+          if (answerSeq.current !== seq) return;
+          if (reply && reply.role === 'assistant') {
+            setAnswer({ query: text, text: reply.text, source: reply.source, done: true });
+          } else {
+            setAnswer({ query: text, done: true, failed: true });
+          }
+        })
+        .catch(() => {
+          if (answerSeq.current === seq) setAnswer({ query: text, done: true, failed: true });
+        });
+    },
+    [user, visibleGroups],
+  );
 
   const persistRecents = (next: string[]) => {
     setRecents(next);
@@ -332,20 +414,27 @@ export const SearchScreen = () => {
         case 'textChange':
           setQuery(event.text);
           break;
+        case 'activate':
+          // Warm the model while the user types — first submit answers faster.
+          prewarmOnDeviceModel();
+          break;
         case 'submit':
           rememberRecent(event.text);
+          runSearchAnswer(event.text);
           break;
         case 'deactivate':
           // The user cancelled the search session (native Cancel/X): Photos
-          // clears the query here, so the tab reopens fresh next time.
+          // clears the query here, so the tab reopens fresh next time. The
+          // answer card dies with the query.
           setQuery('');
           setDebounced('');
+          setAnswer(null);
           break;
         default:
           break;
       }
     });
-  }, [nativeMode, rememberRecent]);
+  }, [nativeMode, rememberRecent, runSearchAnswer]);
 
   const removeRecent = (value: string) => {
     selectionHaptic();
@@ -548,12 +637,51 @@ export const SearchScreen = () => {
               <View style={styles.resultsArea}>
                 {showAiCard && (
                   <GlassCard style={styles.aiCard}>
-                    <ListRow
-                      title="Ask the on-device assistant"
-                      subtitle={`“${debounced}” · answered privately on your iPhone`}
-                      icon="sparkles"
-                      onPress={askAi}
-                    />
+                    {answer && answer.query === debounced.trim() ? (
+                      // Doc 25 Q3: the streamed inline answer (a RESULT ROW —
+                      // the doc-20 native-tab contract is untouched).
+                      <TouchableOpacity
+                        onPress={askAi}
+                        accessibilityRole="button"
+                        accessibilityLabel="Continue in the assistant"
+                      >
+                        <View style={styles.answerBody}>
+                          {!answer.done && (
+                            <View style={styles.answerPending}>
+                              <ActivityIndicator size="small" color={theme.colors.primary} />
+                              <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                                {answer.status ?? 'Thinking…'}
+                              </Text>
+                            </View>
+                          )}
+                          {!answer.failed && (answer.text || answer.partial) && (
+                            <Text style={{ color: theme.colors.onSurface, lineHeight: 20 }}>
+                              {answer.text ?? answer.partial}
+                            </Text>
+                          )}
+                          {answer.done && answer.failed && (
+                            <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                              Tap to ask the assistant about “{answer.query}”.
+                            </Text>
+                          )}
+                          {answer.done && !answer.failed && (
+                            <Text
+                              variant="labelSmall"
+                              style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}
+                            >
+                              {answer.source === 'pcc' ? 'Private Cloud' : 'On-device'} · tap to continue in chat
+                            </Text>
+                          )}
+                        </View>
+                      </TouchableOpacity>
+                    ) : (
+                      <ListRow
+                        title="Ask the on-device assistant"
+                        subtitle={`“${debounced}” · press return to answer here`}
+                        icon="sparkles"
+                        onPress={askAi}
+                      />
+                    )}
                   </GlassCard>
                 )}
 
@@ -658,6 +786,7 @@ export const SearchScreen = () => {
                 onSubmitEditing={() => {
                   // Committing a search (Photos): keyboard drops, results stay.
                   rememberRecent(debounced);
+                  runSearchAnswer(debounced);
                   Keyboard.dismiss();
                 }}
               />
@@ -744,6 +873,8 @@ const styles = StyleSheet.create({
   section: { marginBottom: 14 },
   sectionTitle: { fontWeight: '600', marginBottom: 2 },
   aiCard: { paddingVertical: 4, paddingHorizontal: 8, marginBottom: 10 },
+  answerBody: { paddingVertical: 10, paddingHorizontal: 8, gap: 6 },
+  answerPending: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   empty: { alignItems: 'center', gap: 10, paddingVertical: 48 },
   emptySubtitle: { textAlign: 'center', paddingHorizontal: 24, lineHeight: 19 },
   resultRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingHorizontal: 2 },

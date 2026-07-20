@@ -221,6 +221,18 @@ export async function routeTurn(
   return serializeFm(() => route(instructions, prompt));
 }
 
+/**
+ * Doc 25 — warm the model when an AI surface opens so the first turn doesn't
+ * pay the cold-load. Best-effort: never throws, no-op off-iOS/pre-Q1 binaries.
+ * Rides serializeFm so it can never race a real turn.
+ */
+export function prewarmOnDeviceModel(): void {
+  const native = NativeModule;
+  if (!native?.prewarmOnDevice) return;
+  const warm = native.prewarmOnDevice.bind(native);
+  void serializeFm(() => warm()).catch(() => undefined);
+}
+
 /** True when this binary streams generation (doc 24 P2). */
 export function isStreamedGenerationAvailable(): boolean {
   try {

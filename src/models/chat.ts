@@ -10,10 +10,17 @@ export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'locat
  * authoritative.
  */
 export interface ExpenseRef {
-  kind: 'expense' | 'settlement' | 'request' | 'digest' | 'insight';
+  kind: 'expense' | 'settlement' | 'request' | 'digest' | 'insight' | 'recurringBill' | 'recurringRequest';
   groupId: string;
-  /** expenseId for kind 'expense'; settlementId for 'settlement'; requestId for 'request'. */
+  /** expenseId for kind 'expense'; settlementId for 'settlement'; requestId for 'request'; billId for 'recurringBill'. */
   refId: string;
+  /**
+   * 'recurringBill' only: the occurrence this card tracks. The generated
+   * expense's id is derivable (`rec_<refId>_<occurrenceAt>`), which is how the
+   * card resolves its live state (upcoming → due → generated → settled)
+   * WITHOUT ever editing the message (ai_layer/docs/26).
+   */
+  occurrenceAt?: number;
   snapshot: {
     title: string;
     amount: number;
@@ -25,6 +32,10 @@ export interface ExpenseRef {
     /** Settlement/request only: receiving side. */
     toName?: string;
     toUserId?: string;
+    /** 'recurringBill' only: human recurrence label ("Monthly on the 1st"). */
+    recurrenceSummary?: string;
+    /** 'recurringBill' only: variable-amount bill — amount arrives at confirm. */
+    variable?: boolean;
   };
 }
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';

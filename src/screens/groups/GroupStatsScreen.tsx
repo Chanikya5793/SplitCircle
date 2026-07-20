@@ -25,6 +25,9 @@ import { resolveMoneyInChat } from '@/models/group';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { narrateInsights, type InsightNarrative } from '@/services/insightsAiService';
 import { getRecurringBillsForGroup } from '@/services/recurringBillService';
+import { upsertFactByPrefix } from '@/services/aiMemoryService';
+import { detectRecurringCandidates } from '@/utils/recurringDetection';
+import { formatCurrency } from '@/utils/currency';
 import { getGroupAnalytics } from '@/utils/expenseAnalytics';
 import {
   aggregateRange,
@@ -65,6 +68,7 @@ const CARD_ICONS: Record<InsightCard['kind'], string> = {
   savings: 'tag-heart-outline',
   budget: 'wallet-outline',
   velocity: 'clock-outline',
+  recurring: 'repeat',
 };
 
 export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenProps) => {
@@ -90,10 +94,25 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
   const isAdmin = myRole === 'owner' || myRole === 'admin';
   const fairnessVisible = !settings.insights.fairnessAdminsOnly || isAdmin;
 
+  const [billTitles, setBillTitles] = useState<string[]>([]);
+
   useEffect(() => {
     if (!group) return;
     getRecurringBillsForGroup(group.groupId)
-      .then((bills) => setRecurringMonthly(monthlyCommitment(bills)))
+      .then((bills) => {
+        const monthly = monthlyCommitment(bills);
+        setRecurringMonthly(monthly);
+        setBillTitles(bills.map((b) => b.title));
+        // Doc 26: commitments fact into the memory ledger (idempotent) so the
+        // assistant reasons with the group's fixed obligations.
+        if (bills.length > 0) {
+          void upsertFactByPrefix(
+            `group:${group.groupId}`,
+            'Recurring commitments:',
+            `Recurring commitments: about ${formatCurrency(monthly, group.currency)}/month across ${bills.length} recurring bill${bills.length === 1 ? '' : 's'} (${bills.map((b) => b.title).slice(0, 5).join(', ')}).`,
+          );
+        }
+      })
       .catch(() => setRecurringMonthly(0));
   }, [group?.groupId]);
 
@@ -112,6 +131,11 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
     const velocity = settleVelocity(group.settlements ?? [], analytics.balances, now);
     const budgets = budgetStatus(group.budgets, expenses, now);
     const heatmap = dailyHeatmap(expenses, now);
+    // Doc 26 detection surface (b): the strongest not-yet-set-up pattern.
+    const recurringCandidate = detectRecurringCandidates(expenses, {
+      now,
+      excludeKeys: billTitles,
+    })[0] ?? null;
     const cards = buildHeuristicCards({
       trends,
       anomalies,
@@ -121,6 +145,7 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
       budgets,
       velocity,
       staleDays: settings.nudges.staleDays,
+      recurringSuggestion: recurringCandidate,
     });
     const facts = buildStatsFacts({
       groupName: group.name,
@@ -142,7 +167,7 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
     });
     return { aggregate, trends, members, merchants, forecast, anomalies, budgets, heatmap, cards, facts };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [group, user?.userId, range, recurringMonthly, fairnessVisible, settings.nudges.staleDays]);
+  }, [group, user?.userId, range, recurringMonthly, billTitles, fairnessVisible, settings.nudges.staleDays]);
 
   // Deep link from a digest/insight chat card: open the chat once the
   // narrative (the thread's seed) has arrived. One-shot per mount.

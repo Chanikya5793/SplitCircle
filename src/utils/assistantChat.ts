@@ -15,6 +15,7 @@ export type AssistantIntent =
   | 'edit_expense'
   | 'delete_settlement'
   | 'set_budget'
+  | 'memory_add'
   | 'navigate'
   | 'question'
   | 'chat';
@@ -54,6 +55,7 @@ export interface SettlementDraft {
   amount: number | null;
 }
 
+import { parseRememberCommand } from './aiMemory';
 import { coerceCategory, EXPENSE_CATEGORIES } from './categoryMatch';
 
 const lc = (s: string): string => (s ?? '').toLowerCase();
@@ -268,6 +270,10 @@ export function classifyMessage(message: string, members: readonly AssistantMemb
   // 300" would otherwise classify as edit_expense ("set…amount") or
   // add_expense ("for" + amount). Question-shaped budget talk stays a question.
   if (parseBudgetCommand(q) != null) return 'set_budget';
+
+  // "remember that …" (doc 25 Q2) — amounts stay with the money flows
+  // ("remember I paid Sam 20" is a settlement, not a memory).
+  if (parseRememberCommand(q, hasAmount) != null) return 'memory_add';
 
   // Delete settlement / expense (require the noun to stay safe / unambiguous).
   if (DELETE_RE.test(q) && /\bsettlements?\b|\bpayment\b/i.test(q)) return 'delete_settlement';

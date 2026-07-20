@@ -477,7 +477,7 @@ export function budgetStatus(
 
 export interface InsightCard {
   id: string;
-  kind: 'trend' | 'anomaly' | 'forecast' | 'fairness' | 'savings' | 'budget' | 'velocity';
+  kind: 'trend' | 'anomaly' | 'forecast' | 'fairness' | 'savings' | 'budget' | 'velocity' | 'recurring';
   severity: 'info' | 'warn' | 'good';
   title: string;
   body: string;
@@ -494,6 +494,8 @@ export interface HeuristicInputs {
   budgets: BudgetStatusRow[];
   velocity: SettleVelocityInfo;
   staleDays: number;
+  /** Detected recurring-looking pattern not yet set up as a bill (doc 26). */
+  recurringSuggestion?: { title: string; medianAmount: number; cadence: 'weekly' | 'monthly'; occurrenceCount: number } | null;
 }
 
 export function buildHeuristicCards(inputs: HeuristicInputs): InsightCard[] {
@@ -573,6 +575,18 @@ export function buildHeuristicCards(inputs: HeuristicInputs): InsightCard[] {
       title: 'Receipt savings captured',
       body: 'Discounts and coupons caught on scanned receipts in this range.',
       amount: inputs.totalSavings,
+    });
+  }
+
+  const rec = inputs.recurringSuggestion;
+  if (rec) {
+    cards.push({
+      id: `recurring-${rec.title}`,
+      kind: 'recurring',
+      severity: 'info',
+      title: `${rec.title} looks recurring`,
+      body: `Added ${rec.occurrenceCount} times on a ${rec.cadence} rhythm — set it up as a recurring bill and it handles itself.`,
+      amount: rec.medianAmount,
     });
   }
 

@@ -238,6 +238,7 @@ export const queueMessage = async (
         kind: r.kind,
         groupId: r.groupId,
         refId: r.refId,
+        ...(r.occurrenceAt !== undefined ? { occurrenceAt: r.occurrenceAt } : {}),
         snapshot: {
           title: r.snapshot.title,
           amount: r.snapshot.amount,
@@ -248,6 +249,8 @@ export const queueMessage = async (
           ...(r.snapshot.category ? { category: r.snapshot.category } : {}),
           ...(r.snapshot.toName ? { toName: r.snapshot.toName } : {}),
           ...(r.snapshot.toUserId ? { toUserId: r.snapshot.toUserId } : {}),
+          ...(r.snapshot.recurrenceSummary ? { recurrenceSummary: r.snapshot.recurrenceSummary } : {}),
+          ...(r.snapshot.variable ? { variable: true } : {}),
         },
       };
     }

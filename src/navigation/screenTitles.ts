@@ -27,6 +27,8 @@ export const SCREEN_TITLES = {
   liveCall: 'Live call',
   notifications: 'Notifications',
   aiIndex: 'On-Device AI',
+  aiEvals: 'AI Evals',
+  aiMemory: 'AI Memory',
 } as const;
 
 export const getGroupNameById = (

@@ -24,7 +24,9 @@ import {
   getExpenseSplitLabel,
   inferExpenseSplitMetadata,
 } from '@/utils/expenseSplit';
+import { ROUTES } from '@/constants';
 import { lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
+import { detectRecurringCandidates, matchCandidate } from '@/utils/recurringDetection';
 import { buildSplitHistory, recommendSplit } from '@/utils/smartSplitRecommender';
 import { detectExpenseAnomalies } from '@/utils/expenseAnomaly';
 import { isOnDeviceExpenseNlAvailable, parseExpenseFromTextOnDevice } from '@/services/onDeviceExpenseNlService';
@@ -102,6 +104,18 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
   const [nlText, setNlText] = useState('');
   const [nlBusy, setNlBusy] = useState(false);
   const nlAvailable = useMemo(() => isOnDeviceExpenseNlAvailable(), []);
+
+  // Doc 26 detection surface (a): "Repeats monthly?" chip at the moment of
+  // creation. Deterministic clustering over this group's history — no FM call.
+  // New expenses only; bill-generated occurrences never re-suggest.
+  const recurringCandidates = useMemo(
+    () => (expenseId ? [] : detectRecurringCandidates(group.expenses ?? [])),
+    [expenseId, group.expenses],
+  );
+  const recurringMatch = useMemo(
+    () => (title.trim().length >= 3 ? matchCandidate(title, recurringCandidates) : undefined),
+    [title, recurringCandidates],
+  );
 
   const [showPayerDialog, setShowPayerDialog] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
@@ -789,6 +803,26 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
               onChangeText={setTitle}
               style={styles.field}
             />
+
+            {recurringMatch && (
+              <TouchableOpacity
+                onPress={() => {
+                  lightHaptic();
+                  (navigation as any).navigate(ROUTES.APP.RECURRING_BILLS, {
+                    groupId: group.groupId,
+                    backTitle: group.name,
+                  });
+                }}
+                style={[styles.recurringNote, { backgroundColor: isDark ? 'rgba(100,180,255,0.12)' : 'rgba(33,150,243,0.08)', flexDirection: 'row', alignItems: 'center', gap: 8 }]}
+                accessibilityRole="button"
+                accessibilityLabel={`Set up ${recurringMatch.title} as a recurring bill`}
+              >
+                <Icon source="repeat" size={16} color={theme.colors.primary} />
+                <Text style={{ color: theme.colors.onSurfaceVariant, fontSize: 13, flex: 1 }}>
+                  “{recurringMatch.title}” shows up {recurringMatch.cadence} — set it up as a recurring bill?
+                </Text>
+              </TouchableOpacity>
+            )}
 
             <View style={styles.row}>
               <FloatingLabelInput

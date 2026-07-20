@@ -5,11 +5,13 @@ import { GuardedScreen } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { Group } from '@/models';
-import { BillFrequency, MonthlyPattern, RecurrenceRule, RecurringBill } from '@/models/recurringBill';
+import { BillAmountMode, BillFrequency, MonthlyPattern, RecurrenceRule, RecurringBill } from '@/models/recurringBill';
 import {
     createRecurringBill,
     deleteRecurringBill,
     getRecurringBillsForGroup,
+    resolveRotationPayer,
+    skipOccurrence,
     syncRecurringBillsForGroupWithFallback,
     toggleRecurringBillStatus,
     updateRecurringBill,
@@ -225,6 +227,11 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
     const [paidBy, setPaidBy] = useState<string>('');
     const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>([]);
 
+    // ── v2 (ai_layer/docs/26): fixed/variable + payer rotation ──
+    const [amountMode, setAmountMode] = useState<BillAmountMode>('fixed');
+    const [rotationEnabled, setRotationEnabled] = useState(false);
+    const [rotationOrder, setRotationOrder] = useState<string[]>([]);
+
     const [frequency, setFrequency] = useState<BillFrequency>('monthly');
     const [intervalInput, setIntervalInput] = useState('1');
     const [selectedPreset, setSelectedPreset] = useState<FrequencyPreset>('monthly');
@@ -272,6 +279,9 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
         setTitle('');
         setAmount('');
         setCategory('Utilities');
+        setAmountMode('fixed');
+        setRotationEnabled(false);
+        setRotationOrder([]);
         setFrequency('monthly');
         setIntervalInput('1');
         setSelectedPreset('monthly');
@@ -390,8 +400,16 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
             const participants = buildParticipantShares(billAmount);
             const nextDueAt = findNextOccurrenceAt(recurrenceRule, startAt, now - 1) ?? startAt;
 
+            const hasRotation = rotationEnabled && rotationOrder.length >= 2;
+
             if (editingBillId) {
                 const existingBill = bills.find((bill) => bill.billId === editingBillId);
+                // Keep the rotation turn when the order is unchanged; a reorder
+                // restarts the cycle from the first person.
+                const sameOrder =
+                    hasRotation &&
+                    existingBill?.rotation &&
+                    existingBill.rotation.order.join(',') === rotationOrder.join(',');
                 await updateRecurringBill(editingBillId, {
                     title: title.trim(),
                     amount: billAmount,
@@ -401,6 +419,13 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     recurrenceRule,
                     startAt,
                     nextDueAt,
+                    amountMode,
+                    // Hidden-ledger bills (1:1 requests, doc 26) are ALWAYS
+                    // accept-gated: consent per occurrence, no silent accrual.
+                    requiresAccept: group.hidden === true,
+                    rotation: hasRotation
+                        ? { order: rotationOrder, index: sameOrder ? existingBill!.rotation!.index : 0 }
+                        : (null as unknown as undefined), // Firestore: null clears the field
                     frequency: frequency as any,
                     dayOfWeek: selectedWeekdays[0],
                     dayOfMonth: parseDayList(dayOfMonthInput, new Date().getDate())[0],
@@ -417,6 +442,9 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                     recurrenceRule,
                     startAt,
                     isActive: true,
+                    amountMode,
+                    requiresAccept: group.hidden === true,
+                    ...(hasRotation ? { rotation: { order: rotationOrder, index: 0 } } : {}),
                     nextDueAt: now, // generate immediately for newly created bills // should be updated to correct "nextDueAt" in sync step if required
                     frequency: frequency as any,
                     dayOfWeek: selectedWeekdays[0],
@@ -446,6 +474,9 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
         setCategory(bill.category);
         setPaidBy(bill.paidBy);
         setSelectedParticipantIds(bill.participants.map((participant) => participant.userId));
+        setAmountMode(bill.amountMode ?? 'fixed');
+        setRotationEnabled(Boolean(bill.rotation));
+        setRotationOrder(bill.rotation?.order ?? []);
         setFrequency(normalizedRule.frequency);
         setIntervalInput(String(normalizedRule.interval ?? 1));
         setSelectedPreset(inferPreset(normalizedRule.frequency, normalizedRule.interval ?? 1, normalizedRule.weekdays, normalizedRule.daysOfMonth));
@@ -479,6 +510,30 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
             appAlert('Error', 'Failed to update bill status');
             await loadBills();
         }
+    };
+
+    // Skip-this-occurrence (doc 26): no expense, rotation turn NOT consumed.
+    const handleSkipNext = (bill: RecurringBill) => {
+        appAlert(
+            'Skip Next Occurrence',
+            `Skip "${bill.title}" due ${new Date(bill.nextDueAt).toLocaleDateString()}? No expense will be created and the payer turn won't advance.`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Skip',
+                    onPress: async () => {
+                        try {
+                            await skipOccurrence(bill, bill.nextDueAt);
+                            lightHaptic();
+                            await loadBills();
+                        } catch (error) {
+                            console.error('Error skipping occurrence:', error);
+                            appAlert('Error', 'Failed to skip the next occurrence');
+                        }
+                    },
+                },
+            ],
+        );
     };
 
     const handleDelete = (bill: RecurringBill) => {
@@ -540,19 +595,34 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                             {bill.title}
                                         </Text>
                                         <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                                            {formatCurrency(bill.amount, group.currency)} • {getRecurrenceSummary(bill.recurrenceRule)}
+                                            {bill.amountMode === 'variable'
+                                                ? `Variable (≈${formatCurrency(bill.amount, group.currency)})`
+                                                : formatCurrency(bill.amount, group.currency)} • {getRecurrenceSummary(bill.recurrenceRule)}
                                         </Text>
                                         <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
-                                            Paid by {memberMap[bill.paidBy] ?? 'Unknown'} • {bill.participants.length} participant{bill.participants.length === 1 ? '' : 's'}
+                                            {bill.rotation
+                                                ? `Rotates · next turn: ${memberMap[resolveRotationPayer(bill)] ?? 'Unknown'}`
+                                                : `Paid by ${memberMap[bill.paidBy] ?? 'Unknown'}`} • {bill.participants.length} participant{bill.participants.length === 1 ? '' : 's'}
                                         </Text>
                                         <Text style={{ color: theme.colors.onSurfaceVariant }}>
                                             Next run: {new Date(bill.nextDueAt).toLocaleString()}
                                         </Text>
+                                        {(bill.pendingOccurrences?.length ?? 0) > 0 && (
+                                            <Text style={{ color: theme.colors.primary, marginTop: 2 }}>
+                                                {bill.pendingOccurrences!.length} occurrence{bill.pendingOccurrences!.length === 1 ? '' : 's'} waiting for an amount — confirm from the group chat
+                                            </Text>
+                                        )}
                                     </View>
                                     <Switch
                                         value={bill.isActive}
                                         onValueChange={() => handleToggle(bill)}
                                         color={theme.colors.primary}
+                                    />
+                                    <IconButton
+                                        icon="skip-next-outline"
+                                        iconColor={theme.colors.onSurfaceVariant}
+                                        onPress={() => handleSkipNext(bill)}
+                                        accessibilityLabel="Skip next occurrence"
                                     />
                                     <IconButton
                                         icon="pencil-outline"
@@ -591,7 +661,32 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                             </Text>
 
                             <FloatingLabelInput label="Title" value={title} onChangeText={setTitle} />
-                            <FloatingLabelInput label="Amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
+                            <FloatingLabelInput
+                                label={amountMode === 'variable' ? 'Typical amount' : 'Amount'}
+                                value={amount}
+                                onChangeText={setAmount}
+                                keyboardType="decimal-pad"
+                            />
+
+                            <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Amount Type</Text>
+                            <View style={styles.wrapRow}>
+                                {(['fixed', 'variable'] as const).map((mode) => (
+                                    <TouchableOpacity
+                                        key={mode}
+                                        onPress={() => setAmountMode(mode)}
+                                        style={[styles.chip, amountMode === mode && { backgroundColor: theme.colors.primary }]}
+                                    >
+                                        <Text style={{ color: amountMode === mode ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                                            {mode === 'fixed' ? 'Fixed' : 'Variable'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                            {amountMode === 'variable' && (
+                                <Text style={[styles.helperText, { color: theme.colors.onSurfaceVariant }]}>
+                                    Variable bills wait for the real amount each time: a card appears in the group chat and the payer (or an admin) enters it. Shares split in the same proportions as the typical amount.
+                                </Text>
+                            )}
 
                             <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Category</Text>
                             <View style={styles.wrapRow}>
@@ -798,6 +893,59 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                     </TouchableOpacity>
                                 ))}
                             </View>
+
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
+                                <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant, marginTop: 0, marginBottom: 0 }]}>
+                                    Rotate Payer
+                                </Text>
+                                <Switch
+                                    value={rotationEnabled}
+                                    onValueChange={(value) => {
+                                        lightHaptic();
+                                        setRotationEnabled(value);
+                                        if (value && rotationOrder.length === 0) {
+                                            setRotationOrder(paidBy ? [paidBy] : []);
+                                        }
+                                    }}
+                                    color={theme.colors.primary}
+                                />
+                            </View>
+                            {rotationEnabled && (
+                                <>
+                                    <Text style={[styles.helperText, { color: theme.colors.onSurfaceVariant }]}>
+                                        Tap members in turn order — each generated occurrence moves to the next person. Skipped occurrences don't consume a turn.
+                                    </Text>
+                                    <View style={styles.wrapRow}>
+                                        {group.members.map((member) => {
+                                            const position = rotationOrder.indexOf(member.userId);
+                                            const selected = position >= 0;
+                                            return (
+                                                <TouchableOpacity
+                                                    key={member.userId}
+                                                    onPress={() => {
+                                                        lightHaptic();
+                                                        setRotationOrder((prev) => (
+                                                            prev.includes(member.userId)
+                                                                ? prev.filter((id) => id !== member.userId)
+                                                                : [...prev, member.userId]
+                                                        ));
+                                                    }}
+                                                    style={[styles.chip, selected && { backgroundColor: theme.colors.primary }]}
+                                                >
+                                                    <Text style={{ color: selected ? theme.colors.onPrimary : theme.colors.onSurface }}>
+                                                        {selected ? `${position + 1}. ` : ''}{member.displayName}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </View>
+                                    {rotationOrder.length < 2 && (
+                                        <Text style={[styles.helperText, { color: theme.colors.error }]}>
+                                            Pick at least two members for a rotation.
+                                        </Text>
+                                    )}
+                                </>
+                            )}
 
                             <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Participants</Text>
                             <View style={styles.wrapRow}>

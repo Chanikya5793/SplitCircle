@@ -12,6 +12,8 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GuardedScreen } from '@/components/ui';
+import { ROUTES } from '@/constants';
+import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -36,6 +38,7 @@ const formatBytes = (bytes: number): string =>
 
 export const AiIndexScreen = () => {
   const { theme } = useTheme();
+  const navigation = useNavigation();
   const { user } = useAuth();
   const { groups } = useGroups();
   const userId = user?.userId ?? '';
@@ -131,6 +134,22 @@ export const AiIndexScreen = () => {
 
           <Button mode="outlined" icon="refresh" onPress={rebuild} style={{ marginTop: 16, borderColor: theme.colors.outline }}>
             Rebuild index
+          </Button>
+          <Button
+            mode="outlined"
+            icon="clipboard-check-outline"
+            onPress={() => navigation.navigate(ROUTES.APP.AI_EVALS as never)}
+            style={{ marginTop: 8, borderColor: theme.colors.outline }}
+          >
+            AI evals
+          </Button>
+          <Button
+            mode="outlined"
+            icon="brain"
+            onPress={() => navigation.navigate(ROUTES.APP.AI_MEMORY as never)}
+            style={{ marginTop: 8, borderColor: theme.colors.outline }}
+          >
+            AI memory
           </Button>
         </GlassView>
       </ScrollView>

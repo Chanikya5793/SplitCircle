@@ -5,6 +5,14 @@ import { formatCurrency } from '@/utils/currency';
 import { monthKey } from '@/utils/expenseAnalytics';
 import { aggregateRange, budgetStatus, detectAnomalies, memberBreakdown } from '@/utils/statsInsights';
 import { queueMessage } from '@/services/messageQueueService';
+import {
+    getRecurringBillsForGroup,
+    resolveRotationPayer,
+    syncRecurringBillsForGroupWithFallback,
+} from '@/services/recurringBillService';
+import { findHiddenLedgerGroup } from '@/services/hiddenLedgerService';
+import { getRecurrenceSummary } from '@/utils/recurrence';
+import { detectRecurringCandidates } from '@/utils/recurringDetection';
 import { deleteFile, uploadFile } from '@/services/storageService';
 import { loadCachedGroups, persistGroups } from '@/services/groupCache';
 import { enqueueOp, loadOutbox, removeOp } from '@/services/outbox';
@@ -57,6 +65,21 @@ interface GroupContextValue {
     groupId: string,
     periodKey: string,
     window: { startMs: number; endMs: number; label: string },
+  ) => Promise<void>;
+  /**
+   * Idempotent recurring-bill card posts (ai_layer/docs/26): syncs generation,
+   * then posts one stateful card per relevant occurrence (recently generated,
+   * pending variable, upcoming within the T-3 window). `existingMessageIds`
+   * lets the caller (chat screen) skip already-present cards — the digest
+   * pattern's absence check.
+   */
+  postRecurringBillCards: (groupId: string, existingMessageIds: Set<string>) => Promise<void>;
+  /** 1:1 recurring request accept-cards into a direct chat (doc 26 §1:1). */
+  postRecurringRequestCards: (
+    friendUserId: string,
+    chatId: string,
+    participantIds: string[],
+    existingMessageIds: Set<string>,
   ) => Promise<void>;
   updateMemberRole: (groupId: string, userId: string, role: 'admin' | 'member') => Promise<void>;
   removeMember: (groupId: string, userId: string) => Promise<void>;
@@ -838,6 +861,57 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     }
   };
 
+  /**
+   * Direct-chat variant of writeGroupSystemMessage (doc 26 §1:1): posts a
+   * typed card into a KNOWN chat (no group→chat lookup — direct threads have
+   * no groupId). Same idempotency contract: a fixedMessageId converges
+   * concurrent posts on one message.
+   */
+  const writeDirectCardMessage = async (
+    chatId: string,
+    participantIds: string[],
+    content: string,
+    options: {
+      messageOverrides?: Partial<Pick<ChatMessage, 'type' | 'expenseRef'>>;
+      fixedMessageId?: string;
+    } = {},
+  ) => {
+    if (!user) return;
+    try {
+      const msgId = options.fixedMessageId ?? uuid();
+      const now = Date.now();
+      const systemMessage: ChatMessage = {
+        id: msgId,
+        messageId: msgId,
+        requestId: msgId,
+        chatId,
+        senderId: user.userId,
+        type: 'system',
+        content,
+        status: 'sent',
+        createdAt: now,
+        timestamp: now,
+        isFromMe: false,
+        deliveredTo: [],
+        readBy: [],
+        ...options.messageOverrides,
+      };
+      await updateDoc(doc(db, 'chats', chatId), {
+        lastMessage: { ...systemMessage, createdAt: serverTimestamp() },
+        updatedAt: serverTimestamp(),
+      });
+      for (const recipientId of participantIds) {
+        try {
+          await queueMessage(recipientId, systemMessage, false);
+        } catch (error) {
+          console.error(`Failed to queue direct card for ${recipientId}:`, error);
+        }
+      }
+    } catch (error) {
+      console.warn('writeDirectCardMessage failed', error);
+    }
+  };
+
   // ── Money-in-chat auto-post (ai_layer/docs/21) ─────────────────────────────
   // Best-effort card into the linked group chat. Honors the admin autoPost
   // policy ('cards' → typed card, 'compact' → plain system line, 'off' → skip)
@@ -941,6 +1015,164 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       messageOverrides: { type: 'expense', expenseRef: ref },
       fixedMessageId: `digest-${groupId}-${periodKey}`,
     });
+  };
+
+  // ── Recurring-bill cards (ai_layer/docs/26) ────────────────────────────────
+  // Digest pattern: any member who opens the chat triggers generation sync,
+  // then posts the missing occurrence cards with deterministic message ids —
+  // concurrent posts from several members converge on ONE card. The card is
+  // STATEFUL by pointer: it renders upcoming → due → generated → settled from
+  // live group data, so it is posted once per occurrence and never edited.
+
+  const RECENT_GENERATED_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+  const PENDING_CARD_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+  const UPCOMING_LEAD_MS = 3 * 24 * 60 * 60 * 1000; // T-3, monthly+ bills only
+
+  const postRecurringBillCards = async (groupId: string, existingMessageIds: Set<string>) => {
+    const group = groups.find((g) => g.groupId === groupId);
+    if (!group) return;
+    const policy = resolveMoneyInChat(group.moneyInChat).autoPost;
+    if (policy === 'off') return;
+
+    try {
+      // Generation first (idempotent server/client dual path) so a just-due
+      // fixed bill's card renders "generated", not a stale "due".
+      await syncRecurringBillsForGroupWithFallback(groupId);
+      const bills = await getRecurringBillsForGroup(groupId);
+      const now = Date.now();
+
+      for (const bill of bills) {
+        const isVariable = bill.amountMode === 'variable';
+        const leadMs =
+          bill.recurrenceRule.frequency === 'monthly' || bill.recurrenceRule.frequency === 'yearly'
+            ? UPCOMING_LEAD_MS
+            : 0;
+
+        const occurrences = new Set<number>();
+        if (bill.lastGeneratedAt && now - bill.lastGeneratedAt <= RECENT_GENERATED_WINDOW_MS) {
+          occurrences.add(bill.lastGeneratedAt);
+        }
+        for (const pendingAt of bill.pendingOccurrences ?? []) {
+          if (now - pendingAt <= PENDING_CARD_WINDOW_MS) occurrences.add(pendingAt);
+        }
+        if (bill.isActive && leadMs > 0 && bill.nextDueAt > now && bill.nextDueAt - now <= leadMs) {
+          occurrences.add(bill.nextDueAt);
+        }
+
+        for (const occurrenceAt of occurrences) {
+          const messageId = `recbill-${bill.billId}-${occurrenceAt}`;
+          if (existingMessageIds.has(messageId)) continue;
+
+          const payerId = resolveRotationPayer(bill);
+          const payerName = memberName(group, payerId);
+          const summary = getRecurrenceSummary(bill.recurrenceRule);
+          const content = `🔁 ${bill.title} · ${summary}${
+            isVariable ? '' : ` · ${formatCurrency(bill.amount, group.currency)}`
+          }`;
+          const ref: ExpenseRef = {
+            kind: 'recurringBill',
+            groupId,
+            refId: bill.billId,
+            occurrenceAt,
+            snapshot: {
+              title: bill.title,
+              amount: isVariable ? 0 : bill.amount,
+              currency: group.currency ?? 'USD',
+              payerName,
+              payerId,
+              participantCount: bill.participants.length,
+              ...(bill.category ? { category: bill.category } : {}),
+              recurrenceSummary: summary,
+              ...(isVariable ? { variable: true } : {}),
+            },
+          };
+          await writeGroupSystemMessage(
+            groupId,
+            content,
+            policy === 'cards'
+              ? { messageOverrides: { type: 'expense', expenseRef: ref }, fixedMessageId: messageId }
+              : { fixedMessageId: messageId },
+          );
+        }
+      }
+      // Detection surface (c) — doc 26: the bot suggests the strongest
+      // recurring-looking pattern not yet set up. The deterministic message id
+      // doubles as the once-per-cluster-EVER rate limit (messages are
+      // permanent locally, so a seen suggestion never re-posts).
+      const candidate = detectRecurringCandidates(group.expenses ?? [], {
+        excludeKeys: bills.map((b) => b.title),
+      })[0];
+      if (candidate) {
+        const suggestionId = `recsuggest-${groupId}-${candidate.key.replace(/\s+/g, '_')}`;
+        if (!existingMessageIds.has(suggestionId)) {
+          await writeGroupSystemMessage(
+            groupId,
+            `🔁 "${candidate.title}" has been added ${candidate.occurrenceCount} times on a ${candidate.cadence} rhythm — set it up as a recurring bill and it handles itself. Recurring Bills → New.`,
+            { fixedMessageId: suggestionId },
+          );
+        }
+      }
+    } catch (error) {
+      // Cards are a mirror — never let them break chat open or generation.
+      console.warn('postRecurringBillCards failed', error);
+    }
+  };
+
+  /**
+   * 1:1 recurring request cards (doc 26): from a DIRECT chat, sync the hidden
+   * ledger's bills and post an accept card per parked occurrence. Same digest
+   * pattern — deterministic `recreq-<billId>-<occurrenceAt>` ids, caller
+   * passes the already-present message ids.
+   */
+  const postRecurringRequestCards = async (
+    friendUserId: string,
+    chatId: string,
+    participantIds: string[],
+    existingMessageIds: Set<string>,
+  ) => {
+    if (!user) return;
+    const ledger = findHiddenLedgerGroup(groups, user.userId, friendUserId);
+    if (!ledger) return;
+    try {
+      await syncRecurringBillsForGroupWithFallback(ledger.groupId);
+      const bills = await getRecurringBillsForGroup(ledger.groupId);
+      const now = Date.now();
+      for (const bill of bills) {
+        if (bill.requiresAccept !== true) continue;
+        for (const occurrenceAt of bill.pendingOccurrences ?? []) {
+          if (now - occurrenceAt > PENDING_CARD_WINDOW_MS) continue;
+          const messageId = `recreq-${bill.billId}-${occurrenceAt}`;
+          if (existingMessageIds.has(messageId)) continue;
+          const payerId = resolveRotationPayer(bill);
+          const payerName = memberName(ledger, payerId);
+          const summary = getRecurrenceSummary(bill.recurrenceRule);
+          const ref: ExpenseRef = {
+            kind: 'recurringRequest',
+            groupId: ledger.groupId,
+            refId: bill.billId,
+            occurrenceAt,
+            snapshot: {
+              title: bill.title,
+              amount: bill.amount,
+              currency: ledger.currency ?? 'USD',
+              payerName,
+              payerId,
+              participantCount: bill.participants.length,
+              ...(bill.category ? { category: bill.category } : {}),
+              recurrenceSummary: summary,
+            },
+          };
+          await writeDirectCardMessage(
+            chatId,
+            participantIds,
+            `🔁 ${bill.title} · ${summary} · ${formatCurrency(bill.amount, ledger.currency)} — awaiting accept`,
+            { messageOverrides: { type: 'expense', expenseRef: ref }, fixedMessageId: messageId },
+          );
+        }
+      }
+    } catch (error) {
+      console.warn('postRecurringRequestCards failed', error);
+    }
   };
 
   /** Budget-crossing alert card (80% / 100%), idempotent per month+category+threshold. */
@@ -1420,6 +1652,8 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       updateMoneyInChat,
       updateGroupBudgets,
       postGroupDigest,
+      postRecurringBillCards,
+      postRecurringRequestCards,
       updateMemberRole,
       removeMember,
       leaveGroup,

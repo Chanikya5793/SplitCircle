@@ -14,6 +14,7 @@
  */
 
 import type { Group } from '@/models';
+import { noteTurn } from '@/services/aiFeedbackService';
 import { runAgenticTurn } from '@/services/aiPipelineService';
 import * as threadStore from '@/services/aiThreadStore';
 import {
@@ -95,6 +96,7 @@ export function actionPayloadOf(payload: unknown): ActionPayload | null {
  * out — the insights overlay has no navigation stack of its own. */
 const WRITE_INTENTS = new Set([
   'add_expense', 'settle_up', 'delete_expense', 'edit_expense', 'delete_settlement', 'set_budget',
+  'memory_add',
 ]);
 
 /** Pending confirm cards older than this retire on thread resume (doc 17 A.7:
@@ -363,6 +365,8 @@ export async function sendInsightsMessage(args: {
         assumption: turn.assumption,
         createdAt: Date.now(),
       };
+      // Doc 25: register the turn snapshot so a later 👎 can capture it.
+      noteTurn(reply.id, turn.trace);
     }
   }
 

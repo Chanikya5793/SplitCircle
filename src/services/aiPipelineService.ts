@@ -16,7 +16,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Group } from '@/models';
 import { tryPccPrompt } from '@/services/insightsAiService';
-import { repeatsRecent, type AiThread } from '@/utils/aiThreads';
+import { hashFacts, repeatsRecent, type AiThread } from '@/utils/aiThreads';
+import {
+  ANSWER_CACHE_CAP,
+  THREAD_TAIL_CAP,
+  TRACE_FACTS_CAP,
+  TRACE_JSON_CAP,
+  answerCacheKey,
+  capText,
+  type TurnTrace,
+} from '@/utils/aiFeedback';
 import {
   MAX_HOPS,
   LOOP_WALL_MS,
@@ -43,6 +52,13 @@ import {
 } from '@/utils/aiTools';
 import { getCallHistory } from '@/services/localCallStorage';
 import { getChatMessages } from '@/services/localMessageStorage';
+import {
+  getEntityFixes,
+  getInjection as getMemoryInjection,
+  recordClarifyPick,
+  recordTurnPattern,
+} from '@/services/aiMemoryService';
+import { extractClarifyAlias } from '@/utils/aiMemory';
 import type { Timeframe } from '@/utils/expenseAnalytics';
 import { numbersGrounded, stripChatDecorations } from '@/utils/aiText';
 import {
@@ -111,6 +127,8 @@ export interface AgenticTurnArgs {
    * grounding/repeat gates); a rejected streamed draft is replaced silently.
    */
   onDelta?: (partial: string) => void;
+  /** Doc 25 — eval replay: bypass the answer cache and never write to it. */
+  replay?: boolean;
 }
 
 export interface AgenticReply {
@@ -121,6 +139,18 @@ export interface AgenticReply {
   options?: string[];
   /** Stated reading under mild ambiguity — rendered as a caption (doc 24). */
   assumption?: string;
+  /** Doc 25 — the full turn snapshot; a 👎 turns it into an eval fixture. */
+  trace?: TurnTrace;
+}
+
+// Per-turn answer cache (doc 25 latency polish): identical question over
+// identical facts returns instantly. Session-only; local-tier turns are never
+// cached (chat/call data can change without moving the facts hash).
+const answerCache = new Map<string, { reply: AgenticReply; trace: TurnTrace }>();
+
+/** Test hook — the cache is module-global and would bleed between specs. */
+export function clearAgenticAnswerCache(): void {
+  answerCache.clear();
 }
 
 /** PCC's 32K window minus a generous reserve (doc 17 §3). */
@@ -240,8 +270,52 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     if (!(await agenticPipelineActive())) return null;
     const started = Date.now();
     const now = started;
+
+    // A message that directly follows a clarify IS its answer — infer here so
+    // every caller gets loop-proof ask-backs without extra plumbing.
+    const lastMsg = args.thread.messages[args.thread.messages.length - 1];
+    const resolvedClarify = args.resolvedClarify === true || lastMsg?.role === 'clarify';
+    const memScope = args.group ? `group:${args.group.groupId}` : 'personal';
+
+    // Doc 25 Q2 — silent entity-fix learning: a message answering a clarify
+    // whose options shared an ambiguous alias records the pick; two consistent
+    // picks promote a fix and the alias never asks again. This runs BEFORE the
+    // answer cache — an answered clarify must teach even when the reply is a
+    // cache hit — and is awaited so the write can't race the next turn.
+    if (
+      !args.replay &&
+      resolvedClarify &&
+      lastMsg?.role === 'clarify' &&
+      (lastMsg.options?.length ?? 0) >= 2
+    ) {
+      const priorUser = [...args.thread.messages].reverse().find((m) => m.role === 'user');
+      const alias = extractClarifyAlias(priorUser?.text ?? '', lastMsg.options ?? []);
+      const choice = lastMsg.options?.find(
+        (o) => o.trim().toLowerCase() === args.userText.trim().toLowerCase(),
+      );
+      if (alias && choice) await recordClarifyPick(memScope, alias, choice);
+    }
+
+    // Doc 25: exact-repeat questions over unchanged facts answer instantly.
+    const factsHash = hashFacts(args.facts);
+    const cacheKey = answerCacheKey(args.thread.surface, args.thread.scope, factsHash, args.userText);
+    if (!args.replay) {
+      const hit = answerCache.get(cacheKey);
+      if (hit) return { ...hit.reply, trace: hit.trace };
+    }
+
     const ctx = buildToolCtx(args, now);
     const g = ctx.group;
+    // Doc 25 Q2 — memory rides every turn: the MEMORY block into instructions
+    // (user chose it may reach PCC too) and entity fixes into the tool layer.
+    const memScopes = ['global', memScope];
+    const [memoryBlock, entityFixes] = await Promise.all([
+      getMemoryInjection(memScopes),
+      getEntityFixes(memScopes),
+    ]);
+    if (Object.keys(entityFixes).length > 0) ctx.entityFixes = entityFixes;
+    const withMemory = (instructions: string): string =>
+      memoryBlock ? `${instructions}\n\n${memoryBlock}` : instructions;
     const scopeLabel =
       args.scopeLabel ?? (g ? `the group "${g.name}"` : 'your personal spending across all groups');
     const categories = g
@@ -254,10 +328,6 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     const filter = { includeLocal };
     const catalog = toolCatalog(ctx, filter);
     const date = dateLine(now);
-    // A message that directly follows a clarify IS its answer — infer here so
-    // every caller gets loop-proof ask-backs without extra plumbing.
-    const lastMsg = args.thread.messages[args.thread.messages.length - 1];
-    const resolvedClarify = args.resolvedClarify === true || lastMsg?.role === 'clarify';
 
     // ── Step 2: router ──────────────────────────────────────────────────────
     const routerPrompt = assembleRouterPrompt({
@@ -273,47 +343,102 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     });
     const decision: AgentDecision = coerceDecision(
       await routeTurn(
-        routerInstructions({
-          scopeLabel,
-          memberNames: g ? g.members.map((m) => m.displayName).filter(Boolean) : [],
-          categories,
-          dateLine: date,
-          toolCatalog: catalog,
-        }),
+        withMemory(
+          routerInstructions({
+            scopeLabel,
+            memberNames: g ? g.members.map((m) => m.displayName).filter(Boolean) : [],
+            categories,
+            dateLine: date,
+            toolCatalog: catalog,
+          }),
+        ),
         routerPrompt.prompt,
       ),
     );
 
+    // Doc 25 Q2 — observed-pattern counters (toggle-respected in the service).
+    if (!args.replay && decision.requests.length > 0) {
+      void recordTurnPattern(memScopes[1], {
+        category: decision.requests[0].category,
+        period: decision.requests[0].month,
+      });
+    }
+
+    // Doc 25 trace scaffolding — hoisted so every return path can snapshot.
+    const results: ToolResult[] = [];
+    const executedRequests: { tool: string; args: string }[] = [];
+    let loopSteps = 0;
+    // True once a local-tier tool ran — the turn is pinned on-device (doc 24 P5).
+    let usedLocal = false;
+    const makeTrace = (reply: {
+      role: 'assistant' | 'clarify';
+      text: string;
+      source?: 'ondevice' | 'pcc';
+    }): TurnTrace => ({
+      at: now,
+      surface: args.thread.surface,
+      scope: args.thread.scope,
+      userText: args.userText,
+      facts: capText(args.facts, TRACE_FACTS_CAP),
+      factsHash,
+      engine: args.engine ?? 'auto',
+      intent: decision.intent,
+      complexity: decision.complexity,
+      assumption: decision.assumption || undefined,
+      hops: loopSteps,
+      requests: executedRequests,
+      results: results.map((r) => ({
+        tool: r.tool,
+        label: r.label,
+        json: capText(r.json, TRACE_JSON_CAP),
+        error: r.error,
+      })),
+      usedLocal,
+      source: reply.source,
+      replyRole: reply.role,
+      replyText: reply.text,
+      durationMs: Date.now() - started,
+      threadTail: args.thread.messages
+        .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'clarify')
+        .slice(-THREAD_TAIL_CAP)
+        .map((m) => ({ role: m.role, text: capText(m.text, 300) })),
+    });
+
     if (decision.intent === 'abstain') {
-      const text = stripChatDecorations(decision.abstainReply);
-      return {
+      const reply: AgenticReply = {
         role: 'assistant',
         text:
-          text ||
+          stripChatDecorations(decision.abstainReply) ||
           `Hey! Ask me anything about ${g ? `${g.name}'s` : 'your'} spending — a month, a person, a category, or say "summary" for exact totals.`,
         source: 'ondevice',
       };
+      return { ...reply, trace: makeTrace({ role: 'assistant', text: reply.text, source: 'ondevice' }) };
     }
 
     if (decision.intent === 'clarify' && !resolvedClarify) {
-      return {
+      const reply: AgenticReply = {
         role: 'clarify',
         text: decision.clarifyQuestion,
         options: decision.clarifyOptions,
         source: 'ondevice',
       };
+      return { ...reply, trace: makeTrace({ role: 'clarify', text: reply.text, source: 'ondevice' }) };
     }
 
     // ── Step 4: data loop (router's requests are hop 1) ─────────────────────
     const seenKeys = new Set<string>();
-    const results: ToolResult[] = [];
     let requests: ToolRequest[] = decision.requests;
-    let loopSteps = 0;
-    // True once a local-tier tool ran — the turn is pinned on-device (doc 24 P5).
-    let usedLocal = false;
     while (requests.length > 0) {
       if (args.onStatus) args.onStatus(statusLineFor(requests[0], ctx));
       if (includeLocal && requests.some((r) => toolTier(r.tool) === 'local')) usedLocal = true;
+      executedRequests.push(
+        ...requests.map((r) => ({
+          tool: r.tool,
+          args: [r.month, r.monthB, r.category, r.member, r.merchant, r.query]
+            .filter(Boolean)
+            .join(' '),
+        })),
+      );
       results.push(...(await executeToolRequests(requests, ctx, seenKeys, filter)));
       requests = [];
       // Ask "enough?" only while hops + time remain (router + narrator excluded
@@ -347,12 +472,13 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
         try {
           const parsed = JSON.parse(r.json) as { ambiguous?: string[] };
           if (parsed.ambiguous && parsed.ambiguous.length >= 2) {
-            return {
+            const reply: AgenticReply = {
               role: 'clarify',
               text: `Which one do you mean?`,
               options: parsed.ambiguous.slice(0, 4),
               source: 'ondevice',
             };
+            return { ...reply, trace: makeTrace({ role: 'clarify', text: reply.text, source: 'ondevice' }) };
           }
         } catch {
           // Non-JSON results can't carry ambiguity.
@@ -403,7 +529,7 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     let source: 'ondevice' | 'pcc' = 'ondevice';
 
     const narrateOnDevice = async (nudge = ''): Promise<string> => {
-      const instr = narratorInstructions(narratorArgs) + nudge;
+      const instr = withMemory(narratorInstructions(narratorArgs)) + nudge;
       // Stream only the FIRST draft — a retry after a failed gate would
       // re-stream text the UI already replaced.
       if (args.onDelta && !nudge) {
@@ -417,7 +543,8 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     };
     const narratePcc = async (): Promise<string> => {
       const big = assemble(PCC_BUDGET);
-      const out = await tryPccPrompt(big.prompt, narratorInstructions(narratorArgs), reasoning);
+      // Memory may ride PCC prompts — explicit doc-25 user decision.
+      const out = await tryPccPrompt(big.prompt, withMemory(narratorInstructions(narratorArgs)), reasoning);
       return stripChatDecorations(out ?? '');
     };
 
@@ -457,12 +584,22 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     }
     if (!text) return null;
 
-    return {
+    const reply: AgenticReply = {
       role: 'assistant',
       text,
       source,
       assumption: decision.assumption || undefined,
     };
+    const trace = makeTrace({ role: 'assistant', text, source });
+    // Cache exact-repeat answers (never local-tier turns, never during replay).
+    if (!args.replay && !usedLocal) {
+      answerCache.set(cacheKey, { reply, trace });
+      if (answerCache.size > ANSWER_CACHE_CAP) {
+        const oldest = answerCache.keys().next().value;
+        if (oldest != null) answerCache.delete(oldest);
+      }
+    }
+    return { ...reply, trace };
   } catch {
     return null; // Legacy path is the safety net — the pipeline never throws.
   }

@@ -20,7 +20,12 @@ chat digests, budgets — incl. the PCC simulator-crash gotcha; READ BEFORE touc
 app-wide AI thread framework — locked decisions, thread store, PCC enrollment checklist) ·
 [ai_layer/docs/24](ai_layer/docs/24_agentic_ai_pipeline.md) (agentic "one brain" pipeline —
 JS tool loop, clarify chips, streaming, PCC depth engine, local-tier privacy rule; the
-binding contract for BOTH AI surfaces — READ BEFORE touching assistant/insights chat).
+binding contract for BOTH AI surfaces — READ BEFORE touching assistant/insights chat) ·
+[ai_layer/docs/25](ai_layer/docs/25_ai_flywheel_memory_search.md) (quality flywheel —
+👎-to-fixture evals, AI memory + ledger, search-tab answer card; locked build order Q1→Q3) ·
+[ai_layer/docs/26](ai_layer/docs/26_recurring_bills_v2.md) (Recurring Bills v2 — stateful chat
+bill cards, fixed/variable, payer rotation, pattern detection, 1:1 accept-per-occurrence;
+locked contract, sequenced AFTER doc 25 Q1→Q3).
 
 ## Architecture DNA (do not break)
 
@@ -94,12 +99,27 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   UIScrollView gets a default progressive glass fade at its edges (`UIScrollEdgeEffect`) — over
   our colorful liquid backdrops it looks like fog "dimming" content near the top/bottom (worst
   in chat, tracks the keyboard). RN has no prop for it; an RN upgrade must re-port the patch.
+- **Never unconditional `onContentSizeChange` → `scrollToEnd`** on a chat list with
+  STREAMING content: every token re-fires it, offsets compound past the content
+  ("infinite scroll into the void") and scroll-back gets yanked forever. Gate the
+  follow on a near-bottom ref (see the AI chat surfaces); explicit sends re-engage it.
 - **react-native-svg** pinned 15.12.1 (chart-kit compat).
 - **App Intents run headless** (Siri invokes them without launching JS) — their Swift `perform()`
   cannot call into React Native at all. They read the on-disk SQLite index
   (`modules/splitcircle-ai/ios/SplitCircleIndexReader.swift`) directly instead. That pod links
   system `libsqlite3` while expo-sqlite vendors its own statically-compiled copy — unverified
   linker risk, see [ai_layer/docs/18](ai_layer/docs/18_app_intents_siri_pcc_indexing.md) §3.1.
+- **App Shortcuts (Siri) has real gaps — catalogued 2026-07-20, not yet fixed.**
+  `SplitCircleShortcuts: AppShortcutsProvider`
+  ([SplitCircleIntents.swift:471](modules/splitcircle-ai/ios/SplitCircleIntents.swift:471)) is
+  already at Apple's 10-shortcut cap — don't add an 11th `AppShortcut` without retiring one.
+  `AppShortcuts.updateAppShortcutParameters()` is never called anywhere in the repo, so Siri's
+  group picker can drift stale after a group is created/renamed/left. Cross-module App Intent
+  discovery (every `AppEntity`/`AppIntent`/`AppShortcutsProvider` is `public` because the pod is
+  a separate Swift module from the app target) is unverified without a real device build — if a
+  shortcut silently doesn't register, the fallback is moving the files into `ios/SplitCircle/`.
+  Neither doc 18 §6 nor doc 19 §5's device-verification checklist has ever been run — treat this
+  whole surface as spike-quality until it has.
 - **Private Cloud Compute entitlement GRANTED 2026-07-18** (capability on the App ID + provisioning
   profile; `com.apple.developer.private-cloud-compute` in `SplitCircle.entitlements`). Builds from
   before that date report `isAvailable=false` — that's the binary, not a bug. On sim it stays

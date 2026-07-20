@@ -38,6 +38,8 @@ export const ROUTES = {
     NOTIFICATION_SETTINGS: 'NotificationSettings',
     OFFLINE_SYNC: 'OfflineSync',
     AI_INDEX: 'AiIndex',
+    AI_EVALS: 'AiEvals',
+    AI_MEMORY: 'AiMemory',
     PROFILE: 'Profile',
     CHAT_MEDIA_GALLERY: 'ChatMediaGallery',
     FILE_PREVIEW: 'FilePreview',

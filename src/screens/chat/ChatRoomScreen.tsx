@@ -51,6 +51,7 @@ import {
   updateMessageContent,
 } from '@/services/localMessageStorage';
 import { authenticate } from '@/services/biometrics';
+import { ensureHiddenLedgerGroup } from '@/services/hiddenLedgerService';
 import { isLockSessionUnlocked, markLockSessionUnlocked } from '@/services/chatLockService';
 import { getOrDownloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import {
@@ -273,7 +274,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   // group's balance for the current user, rendered through the guard/lens
   // funnel so shielded or converted amounts behave like everywhere else.
   const linkedGroup = thread.groupId ? groups.find((g) => g.groupId === thread.groupId) : undefined;
-  const { postGroupDigest } = useGroups();
+  const { postGroupDigest, postRecurringBillCards, postRecurringRequestCards } = useGroups();
   const fmtChatMoney = useMoneyDisplay(thread.groupId);
   const myGroupBalance =
     linkedGroup?.members.find((m) => m.userId === user?.userId)?.balance ?? 0;
@@ -311,6 +312,31 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     digestCheckedRef.current = true;
     void postGroupDigest(linkedGroup.groupId, periodKey, window);
   }, [linkedGroup, messages, postGroupDigest]);
+
+  // Recurring-bill card trigger (ai_layer/docs/26): same digest pattern —
+  // opening the chat syncs generation and posts any missing occurrence cards
+  // (deterministic ids make concurrent members converge on one card each).
+  const billCardsCheckedRef = useRef(false);
+  useEffect(() => {
+    if (billCardsCheckedRef.current || !linkedGroup) return;
+    // Wait for the local store's first delivery before concluding cards are absent.
+    if (messages.length === 0) return;
+    billCardsCheckedRef.current = true;
+    const existingIds = new Set(messages.map((m) => m.messageId || m.id));
+    void postRecurringBillCards(linkedGroup.groupId, existingIds);
+  }, [linkedGroup, messages, postRecurringBillCards]);
+
+  // 1:1 recurring request cards (doc 26): direct threads sync the hidden
+  // ledger's parked occurrences and post accept cards — same digest pattern.
+  const requestCardsCheckedRef = useRef(false);
+  useEffect(() => {
+    if (requestCardsCheckedRef.current || thread.type !== 'direct') return;
+    const peer = thread.participants.find((p) => p.userId !== user?.userId);
+    if (!peer?.userId || messages.length === 0) return;
+    requestCardsCheckedRef.current = true;
+    const existingIds = new Set(messages.map((m) => m.messageId || m.id));
+    void postRecurringRequestCards(peer.userId, thread.chatId, thread.participantIds, existingIds);
+  }, [thread, user?.userId, messages, postRecurringRequestCards]);
 
   // Text input state for composer
   const [text, setText] = useState('');
@@ -2024,6 +2050,42 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
             icon: 'image-outline',
             onPress: () => setWallpaperSheetOpen(true),
           },
+          // 1:1 recurring requests (doc 26) — backed by the hidden 2-person
+          // ledger (doc 21). Group chats manage bills from Group Details.
+          ...(thread.type === 'direct' && directParticipant && user
+            ? [
+                {
+                  key: 'recurring',
+                  label: 'Recurring requests',
+                  icon: 'repeat-outline' as const,
+                  onPress: () => {
+                    void (async () => {
+                      try {
+                        const currency =
+                          groups.find((g) => !g.hidden)?.currency ?? 'USD';
+                        const ledgerId = await ensureHiddenLedgerGroup(
+                          { userId: user.userId, displayName: user.displayName, photoURL: user.photoURL ?? undefined },
+                          {
+                            userId: directParticipant.userId,
+                            displayName: directParticipant.displayName,
+                            photoURL: directParticipant.photoURL ?? undefined,
+                          },
+                          currency,
+                          groups,
+                        );
+                        // @ts-ignore
+                        navigation.navigate(ROUTES.APP.RECURRING_BILLS, {
+                          groupId: ledgerId,
+                          backTitle: directParticipant.displayName,
+                        });
+                      } catch (error) {
+                        console.warn('ensureHiddenLedgerGroup failed', error);
+                      }
+                    })();
+                  },
+                },
+              ]
+            : []),
         ] satisfies HeaderMenuItem[]}
       />
 

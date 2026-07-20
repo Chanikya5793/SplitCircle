@@ -21,6 +21,9 @@ import type { Group } from '@/models';
 import type { ExpenseAiSource } from '@/services/aiService';
 import { processAssistantTurn, type ConversationState, type ProposedAction } from '@/services/assistantService';
 import { buildFactsBlock } from '@/services/onDeviceAiService';
+import { noteTurn, thumbsDown, thumbsUp } from '@/services/aiFeedbackService';
+import { prewarmOnDeviceModel } from '../../../modules/splitcircle-ai';
+import { FEEDBACK_REASON_LABELS, type FeedbackReason } from '@/utils/aiFeedback';
 import {
   activateChatThread,
   deleteChatThread,
@@ -115,6 +118,8 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   const [busy, setBusy] = useState(false);
   // P2 live turn feedback: the loop's status line, then streamed narration.
   const [pending, setPending] = useState<{ status?: string; partial?: string } | null>(null);
+  // Doc 25 flywheel: per-message thumb state ('ask' = reason chips showing).
+  const [feedback, setFeedback] = useState<Record<string, 'up' | 'ask' | 'down'>>({});
   const [threads, setThreads] = useState<ChatThreadSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -133,6 +138,10 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   // Live mirror of `messages` for non-reactive reads (the agentic thread view).
   const messagesRef = useRef<ChatMsg[]>([]);
 
+  // Auto-follow guard (same rule as the insights overlay): streaming growth
+  // follows only while pinned near the bottom; appends re-engage following.
+  const nearBottom = useRef(true);
+
   const append = useCallback(
     (msg: ChatMsg) => {
       setMessages((prev) => {
@@ -141,10 +150,16 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
         persist(next);
         return next;
       });
+      nearBottom.current = true;
       requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
     },
     [persist],
   );
+
+  // Doc 25: warm the model on entry so the first turn skips the cold-load.
+  useEffect(() => {
+    prewarmOnDeviceModel();
+  }, []);
 
   // Restore the persisted conversation for this group on first mount.
   useEffect(() => {
@@ -204,8 +219,9 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
         setPending({ status: 'Thinking…' });
         const turn = await processAssistantTurn(text, group, currentUserId, stateRef.current, agentic);
         stateRef.current = turn.state;
+        const replyId = uid();
         append({
-          id: uid(),
+          id: replyId,
           role: 'assistant',
           text: turn.reply,
           sources: turn.sources,
@@ -215,6 +231,8 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           clarify: turn.clarify,
           assumption: turn.assumption,
         });
+        // Doc 25: register the turn snapshot so a later 👎 can capture it.
+        noteTurn(replyId, turn.trace);
       } catch (err) {
         append({ id: uid(), role: 'assistant', text: err instanceof Error ? err.message : 'Something went wrong. Try again.' });
       } finally {
@@ -387,6 +405,31 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
     }
   };
 
+  // Doc 25: 👍 records sentiment; 👎 opens reason chips → local eval fixture.
+  const onThumb = (msg: ChatMsg, up: boolean) => {
+    lightHaptic();
+    if (up) {
+      setFeedback((s) => ({ ...s, [msg.id]: 'up' }));
+      void thumbsUp(msg.id);
+    } else {
+      setFeedback((s) => ({ ...s, [msg.id]: 'ask' }));
+    }
+  };
+
+  const onFeedbackReason = (msg: ChatMsg, reason?: FeedbackReason) => {
+    lightHaptic();
+    setFeedback((s) => ({ ...s, [msg.id]: 'down' }));
+    const list = messagesRef.current;
+    const idx = list.findIndex((m) => m.id === msg.id);
+    const prevUser = idx > 0 ? [...list.slice(0, idx)].reverse().find((m) => m.role === 'user') : undefined;
+    void thumbsDown(msg.id, reason, {
+      surface: 'assistant',
+      scope: group.groupId,
+      userText: prevUser?.text ?? '',
+      replyText: msg.text,
+    });
+  };
+
   const renderItem = ({ item }: { item: ChatMsg }) => {
     const isUser = item.role === 'user';
     return (
@@ -451,6 +494,44 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                 </TouchableOpacity>
               ))}
             </View>
+          ) : null}
+
+          {/* Doc 25 flywheel: thumbs → reason chips → local eval fixture. */}
+          {!isUser && item.id !== 'greeting' ? (
+            feedback[item.id] === 'ask' ? (
+              <View style={styles.choices}>
+                {(Object.keys(FEEDBACK_REASON_LABELS) as FeedbackReason[]).map((r) => (
+                  <TouchableOpacity
+                    key={r}
+                    onPress={() => onFeedbackReason(item, r)}
+                    style={[styles.choiceChip, { borderColor: theme.colors.primary }]}
+                    accessibilityRole="button"
+                    accessibilityLabel={FEEDBACK_REASON_LABELS[r]}
+                  >
+                    <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                      {FEEDBACK_REASON_LABELS[r]}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : feedback[item.id] === 'down' ? (
+              <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, fontSize: 10, marginTop: 4 }}>
+                Noted — added to AI evals
+              </Text>
+            ) : (
+              <View style={styles.thumbRow}>
+                <TouchableOpacity onPress={() => onThumb(item, true)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Good answer">
+                  <Icon
+                    source={feedback[item.id] === 'up' ? 'thumb-up' : 'thumb-up-outline'}
+                    size={13}
+                    color={feedback[item.id] === 'up' ? theme.colors.primary : theme.colors.onSurfaceVariant}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => onThumb(item, false)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Bad answer">
+                  <Icon source="thumb-down-outline" size={13} color={theme.colors.onSurfaceVariant} />
+                </TouchableOpacity>
+              </View>
+            )
           ) : null}
 
           {item.action && item.actionState === 'pending' ? (
@@ -565,6 +646,14 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           renderItem={renderItem}
           contentContainerStyle={[styles.list, { paddingTop: headerHeight + 8 }]}
           keyboardShouldPersistTaps="handled"
+          onScroll={(e) => {
+            const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+            nearBottom.current = contentSize.height - contentOffset.y - layoutMeasurement.height < 80;
+          }}
+          scrollEventThrottle={64}
+          onContentSizeChange={() => {
+            if (nearBottom.current) listRef.current?.scrollToEnd({ animated: false });
+          }}
           ListFooterComponent={
             busy ? (
               <View style={[styles.row, { justifyContent: 'flex-start' }]}>
@@ -647,6 +736,7 @@ const styles = StyleSheet.create({
   sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   pendingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  thumbRow: { flexDirection: 'row', gap: 14, marginTop: 6 },
   choiceChip: { borderRadius: 16, borderWidth: 1.5, paddingVertical: 6, paddingHorizontal: 14 },
   actionCard: { marginTop: 10, borderWidth: 1, borderRadius: 12, padding: 10 },
   actionButtons: { flexDirection: 'row', gap: 8, justifyContent: 'flex-end' },

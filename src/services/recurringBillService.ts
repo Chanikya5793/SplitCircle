@@ -7,7 +7,7 @@
 import { app, db } from '@/firebase';
 import type { Expense } from '@/models';
 import type { ParticipantShare } from '@/models/expense';
-import type { LegacyBillFrequency, RecurrenceRule, RecurringBill } from '@/models/recurringBill';
+import type { BillAmountMode, BillRotation, LegacyBillFrequency, RecurrenceRule, RecurringBill } from '@/models/recurringBill';
 import {
     findNextOccurrenceAt,
     getNextDueAt,
@@ -30,6 +30,8 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 
 const COLLECTION_NAME = 'recurringBills';
 const MAX_GENERATION_CATCH_UP = 48;
+/** Variable bills: due occurrences kept awaiting an amount. Oldest drop off. */
+const MAX_PENDING_OCCURRENCES = 6;
 const functions = getFunctions(app);
 
 type TriggerRecurringBillsResponse = {
@@ -55,6 +57,59 @@ type RecurringBillUpsertInput = Partial<Omit<RecurringBill, 'billId' | 'createdA
     frequency?: LegacyBillFrequency;
     dayOfMonth?: number;
     dayOfWeek?: number;
+};
+
+const normalizeRotation = (value: unknown): BillRotation | undefined => {
+    if (!value || typeof value !== 'object') return undefined;
+    const raw = value as { order?: unknown; index?: unknown };
+    const order = Array.isArray(raw.order) ? raw.order.filter((id): id is string => typeof id === 'string' && id.length > 0) : [];
+    if (order.length < 2) return undefined; // A rotation of one is just paidBy.
+    const index = typeof raw.index === 'number' && Number.isFinite(raw.index) ? Math.max(0, Math.trunc(raw.index)) : 0;
+    return { order, index: index % order.length };
+};
+
+const normalizeOccurrenceList = (value: unknown): number[] => {
+    if (!Array.isArray(value)) return [];
+    return value
+        .filter((ts): ts is number => typeof ts === 'number' && Number.isFinite(ts))
+        .sort((a, b) => a - b);
+};
+
+/** Payer for the bill's NEXT generated occurrence (rotation-aware). */
+export const resolveRotationPayer = (bill: Pick<RecurringBill, 'paidBy' | 'rotation'>): string => {
+    const rotation = bill.rotation;
+    if (!rotation || rotation.order.length === 0) return bill.paidBy;
+    return rotation.order[rotation.index % rotation.order.length];
+};
+
+/**
+ * Scale the bill's stored participant shares to a different total (variable
+ * bills confirm a real amount each occurrence). Proportional, rounded to 2dp,
+ * remainder credited to the first participant so the sum is exact.
+ */
+export const scaleShares = (
+    participants: ParticipantShare[],
+    fromTotal: number,
+    toTotal: number,
+): ParticipantShare[] => {
+    if (participants.length === 0) return [];
+    if (!Number.isFinite(toTotal) || toTotal <= 0 || fromTotal === toTotal) return participants;
+    const scaled = fromTotal > 0
+        ? participants.map((p) => ({
+            ...p,
+            share: Math.round((p.share / fromTotal) * toTotal * 100) / 100,
+        }))
+        // Degenerate stored total (e.g. variable bill saved with 0): equal split.
+        : participants.map((p) => ({
+            ...p,
+            share: Math.round((toTotal / participants.length) * 100) / 100,
+        }));
+    const sum = scaled.reduce((acc, p) => acc + p.share, 0);
+    const drift = Math.round((toTotal - sum) * 100) / 100;
+    if (drift !== 0) {
+        scaled[0] = { ...scaled[0], share: Math.round((scaled[0].share + drift) * 100) / 100 };
+    }
+    return scaled;
 };
 
 const getValidTimestamp = (value: unknown): number | null => {
@@ -144,6 +199,12 @@ const normalizeRecurringBill = (billId: string, rawData: Record<string, unknown>
         isActive: data.isActive ?? true,
         lastGeneratedAt: getValidTimestamp(data.lastGeneratedAt) ?? undefined,
         nextDueAt,
+        amountMode: (rawData.amountMode === 'variable' ? 'variable' : 'fixed') as BillAmountMode,
+        requiresAccept: rawData.requiresAccept === true,
+        rotation: normalizeRotation(rawData.rotation),
+        skippedOccurrences: normalizeOccurrenceList(rawData.skippedOccurrences),
+        pendingOccurrences: normalizeOccurrenceList(rawData.pendingOccurrences),
+        reminderSentFor: getValidTimestamp(rawData.reminderSentFor) ?? undefined,
         createdAt,
         updatedAt,
     };
@@ -257,26 +318,41 @@ export const isBillDue = (bill: RecurringBill, now: Date = new Date()): boolean 
     return now.getTime() >= bill.nextDueAt;
 };
 
+/** Deterministic id shared by every generation path (dedupe key — sacred). */
+export const recurringExpenseId = (billId: string, occurrenceAt: number): string =>
+    `rec_${billId}_${occurrenceAt}`;
+
 /**
  * Generate expense data from a recurring bill.
  * Uses a deterministic expenseId and occurrence-based timestamps so that
  * both the Cloud Function backend and the client fallback produce identical
  * objects — making arrayUnion deduplication and set-with-merge idempotent.
+ * The title carries NO decoration — recurrence is metadata (`expense.
+ * recurring`) and renderers draw their own badge (ai_layer/docs/26).
  */
-export const generateExpenseFromBill = (bill: RecurringBill, occurrenceAt: number): Expense => {
+export const generateExpenseFromBill = (
+    bill: RecurringBill,
+    occurrenceAt: number,
+    overrides?: { amount?: number; paidBy?: string },
+): Expense => {
+    const amount = overrides?.amount ?? bill.amount;
+    const paidBy = overrides?.paidBy ?? resolveRotationPayer(bill);
+    const participants = overrides?.amount !== undefined
+        ? scaleShares(bill.participants, bill.amount, overrides.amount)
+        : bill.participants;
     return {
-        expenseId: `rec_${bill.billId}_${occurrenceAt}`,
+        expenseId: recurringExpenseId(bill.billId, occurrenceAt),
         groupId: bill.groupId,
-        title: `${bill.title} (Recurring)`,
+        title: bill.title,
         category: bill.category,
-        amount: bill.amount,
-        paidBy: bill.paidBy,
+        amount,
+        paidBy,
         splitType: 'custom',
-        participants: bill.participants,
+        participants,
         splitMetadata: {
             version: 1,
             method: 'exact',
-            participantConfig: bill.participants.map((participant) => ({
+            participantConfig: participants.map((participant) => ({
                 userId: participant.userId,
                 included: true,
                 exactAmount: participant.share,
@@ -284,7 +360,6 @@ export const generateExpenseFromBill = (bill: RecurringBill, occurrenceAt: numbe
             })),
         },
         settled: false,
-        notes: `Auto-generated from recurring bill (${new Date(occurrenceAt).toISOString().slice(0, 10)})`,
         recurring: {
             billId: bill.billId,
             occurrenceAt,
@@ -292,6 +367,63 @@ export const generateExpenseFromBill = (bill: RecurringBill, occurrenceAt: numbe
         createdAt: occurrenceAt,
         updatedAt: occurrenceAt,
     };
+};
+
+/**
+ * Confirm a variable bill's due occurrence with the real amount (doc 26).
+ * Writes the SAME deterministic expense object both server/client generation
+ * paths would (`rec_<billId>_<occurrenceAt>`), clears the pending marker, and
+ * advances the rotation turn. Client UX gates callers to payer/admin; data
+ * safety comes from the deterministic id (double-confirm converges on one
+ * expense via set-with-merge + arrayUnion).
+ */
+export const confirmVariableOccurrence = async (
+    bill: RecurringBill,
+    occurrenceAt: number,
+    amount: number,
+): Promise<Expense> => {
+    if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error('A positive amount is required to confirm this bill.');
+    }
+    const paidBy = resolveRotationPayer(bill);
+    const expense = generateExpenseFromBill(bill, occurrenceAt, { amount, paidBy });
+
+    const batch = writeBatch(db);
+    const groupRef = doc(db, 'groups', bill.groupId);
+    batch.update(groupRef, {
+        expenses: arrayUnion(expense),
+        updatedAt: Date.now(),
+    });
+    batch.set(doc(db, 'expenses', expense.expenseId), expense, { merge: true });
+    batch.update(doc(db, COLLECTION_NAME, bill.billId), {
+        pendingOccurrences: (bill.pendingOccurrences ?? []).filter((ts) => ts !== occurrenceAt),
+        lastGeneratedAt: occurrenceAt,
+        ...(bill.rotation
+            ? { rotation: { order: bill.rotation.order, index: (bill.rotation.index + 1) % bill.rotation.order.length } }
+            : {}),
+        updatedAt: Date.now(),
+    });
+    await batch.commit();
+    return expense;
+};
+
+/**
+ * Skip the bill's next occurrence ("we were all traveling in June"): records
+ * it in skippedOccurrences and advances nextDueAt. The rotation turn is NOT
+ * consumed. Works for pending variable occurrences too (pass their timestamp).
+ */
+export const skipOccurrence = async (bill: RecurringBill, occurrenceAt: number): Promise<void> => {
+    const updates: Record<string, unknown> = {
+        skippedOccurrences: [...new Set([...(bill.skippedOccurrences ?? []), occurrenceAt])].sort((a, b) => a - b),
+        pendingOccurrences: (bill.pendingOccurrences ?? []).filter((ts) => ts !== occurrenceAt),
+        updatedAt: Date.now(),
+    };
+    if (occurrenceAt === bill.nextDueAt) {
+        const next = getNextDueAt(bill.recurrenceRule, bill.startAt, occurrenceAt);
+        if (next) updates.nextDueAt = next;
+        else updates.isActive = false;
+    }
+    await updateDoc(doc(db, COLLECTION_NAME, bill.billId), updates);
 };
 
 /**
@@ -349,20 +481,36 @@ export const processDueBills = async (
     for (const bill of bills) {
         if (!bill.isActive) continue;
 
+        // Variable AND accept-gated bills both park instead of generating —
+        // the amount (variable) or the consent (1:1 request) arrives later.
+        const parksOccurrences = bill.amountMode === 'variable' || bill.requiresAccept === true;
+        const skipped = new Set(bill.skippedOccurrences ?? []);
         let currentDueAt = bill.nextDueAt;
-        let generatedForBill = 0;
+        let processedForBill = 0;
         let shouldDeactivate = false;
         let lastGeneratedAt = bill.lastGeneratedAt;
+        let rotationIndex = bill.rotation?.index ?? 0;
+        const pending = [...(bill.pendingOccurrences ?? [])];
         const expensesToAdd: Expense[] = [];
 
         while (
             currentDueAt <= now &&
-            generatedForBill < MAX_GENERATION_CATCH_UP &&
+            processedForBill < MAX_GENERATION_CATCH_UP &&
             (!bill.endAt || currentDueAt <= bill.endAt)
         ) {
-            expensesToAdd.push(generateExpenseFromBill(bill, currentDueAt));
-            lastGeneratedAt = currentDueAt;
-            generatedForBill++;
+            if (skipped.has(currentDueAt)) {
+                // Explicitly skipped: no expense, no rotation turn consumed.
+            } else if (parksOccurrences) {
+                if (!pending.includes(currentDueAt)) pending.push(currentDueAt);
+            } else {
+                const paidBy = bill.rotation
+                    ? bill.rotation.order[rotationIndex % bill.rotation.order.length]
+                    : bill.paidBy;
+                expensesToAdd.push(generateExpenseFromBill(bill, currentDueAt, { paidBy }));
+                lastGeneratedAt = currentDueAt;
+                if (bill.rotation) rotationIndex = (rotationIndex + 1) % bill.rotation.order.length;
+            }
+            processedForBill++;
 
             const nextDueAt = getNextDueAt(bill.recurrenceRule, bill.startAt, currentDueAt);
             if (!nextDueAt || nextDueAt <= currentDueAt) {
@@ -372,32 +520,35 @@ export const processDueBills = async (
             currentDueAt = nextDueAt;
         }
 
-        if (generatedForBill > 0) {
+        if (processedForBill > 0) {
             const batch = writeBatch(db);
-            const groupRef = doc(db, 'groups', groupId);
+            const billRef = doc(db, COLLECTION_NAME, bill.billId);
 
-            batch.update(groupRef, {
-                expenses: arrayUnion(...expensesToAdd),
-                updatedAt: Date.now(),
-            });
-
-            for (const expense of expensesToAdd) {
-                const topLevelRef = doc(db, 'expenses', expense.expenseId);
-                batch.set(topLevelRef, expense, { merge: true });
+            if (expensesToAdd.length > 0) {
+                const groupRef = doc(db, 'groups', groupId);
+                batch.update(groupRef, {
+                    expenses: arrayUnion(...expensesToAdd),
+                    updatedAt: Date.now(),
+                });
+                for (const expense of expensesToAdd) {
+                    const topLevelRef = doc(db, 'expenses', expense.expenseId);
+                    batch.set(topLevelRef, expense, { merge: true });
+                }
             }
 
-            const billRef = doc(db, COLLECTION_NAME, bill.billId);
             batch.update(billRef, {
                 recurrenceRule: bill.recurrenceRule,
                 startAt: bill.startAt,
                 nextDueAt: currentDueAt,
                 isActive: shouldDeactivate ? false : bill.isActive,
                 lastGeneratedAt: lastGeneratedAt ?? null,
+                pendingOccurrences: pending.sort((a, b) => a - b).slice(-MAX_PENDING_OCCURRENCES),
+                ...(bill.rotation ? { rotation: { order: bill.rotation.order, index: rotationIndex } } : {}),
                 updatedAt: Date.now(),
             });
 
             await batch.commit();
-            generatedCount += generatedForBill;
+            generatedCount += expensesToAdd.length;
         }
     }
 

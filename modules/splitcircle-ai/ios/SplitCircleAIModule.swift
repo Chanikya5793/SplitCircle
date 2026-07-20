@@ -451,6 +451,21 @@ public class SplitCircleAIModule: Module {
       throw OnDeviceAiUnavailableException()
     }
 
+    /// Doc 25 — load the on-device model into memory ahead of the first turn
+    /// (cuts first-token latency; the weights stay warm after the session is
+    /// discarded). Serialized by the JS FM queue like every other model touch.
+    AsyncFunction("prewarmOnDevice") { () async -> Bool in
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, *) {
+        guard case .available = SystemLanguageModel.default.availability else { return false }
+        let session = LanguageModelSession(instructions: "You are SplitCircle's money assistant.")
+        session.prewarm()
+        return true
+      }
+      #endif
+      return false
+    }
+
     /// P2 (doc 24) — STREAMED free-form generation. Cumulative snapshots from
     /// `streamResponse` are diffed to deltas and emitted as 'onFmChunk' events
     /// ({requestId, delta, done}); the promise resolves with the FULL final

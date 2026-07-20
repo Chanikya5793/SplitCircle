@@ -117,7 +117,8 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const processedGroups = useMemo(() => {
     // Scoped-sensitive groups VANISH while shielded — removed outright, no
     // masked placeholder row advertising that something is hidden.
-    let result = groups.filter((g) => !guardIsVanished('expenses', g.groupId));
+    // Hidden 2-person ledgers (doc 21) never surface in the groups list.
+    let result = groups.filter((g) => !g.hidden && !guardIsVanished('expenses', g.groupId));
 
     // Filter by Currency
     if (selectedCurrencies.length > 0) {

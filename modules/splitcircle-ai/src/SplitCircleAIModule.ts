@@ -109,6 +109,8 @@ export interface SplitCircleAINativeModule {
   ): Promise<{ answer: string; cancelled: boolean }>;
   /** P2 — cancel an in-flight stream by requestId (best-effort). */
   cancelFmStream?(requestId: string): void;
+  /** Doc 25 — warm the on-device model ahead of the first turn. Absent pre-Q1. */
+  prewarmOnDevice?(): Promise<boolean>;
 
   /** S5 — Private Cloud Compute probe (iOS 27). available=false until entitled. */
   pccProbe(question: string): Promise<OnDevicePccProbeResult>;

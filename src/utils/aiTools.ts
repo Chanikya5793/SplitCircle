@@ -116,6 +116,9 @@ export interface ToolCtx {
    */
   chatSearch?: (query: string, tf: Timeframe | null) => Promise<ChatSearchResult>;
   callStats?: (member: string | undefined, tf: Timeframe | null) => Promise<CallStatsResult>;
+  /** Doc 25 Q2 — learned alias → display-name fixes ("sam" → "Sam Lee"),
+   * applied to member args BEFORE resolution so fixed names never re-clarify. */
+  entityFixes?: Record<string, string>;
 }
 
 // ── Period resolution ("april", "2026-04", "last month", "2025") ─────────────
@@ -887,9 +890,15 @@ export async function executeToolRequests(
 ): Promise<ToolResult[]> {
   const available = new Set(availableTools(ctx, filter));
   const out: ToolResult[] = [];
-  for (const req of requests) {
+  for (let req of requests) {
     if (out.length >= MAX_REQUESTS_PER_HOP) break;
     if (seenKeys.size + out.length >= MAX_TOTAL_REQUESTS) break;
+    // Learned entity fixes rewrite member args before anything else (doc 25 Q2)
+    // — a fixed alias resolves deterministically and never re-clarifies.
+    if (req.member && ctx.entityFixes) {
+      const fix = ctx.entityFixes[norm(req.member)];
+      if (fix) req = { ...req, member: fix };
+    }
     const key = requestKey(req);
     if (seenKeys.has(key)) continue;
     seenKeys.add(key);
