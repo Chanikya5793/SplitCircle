@@ -261,6 +261,11 @@ public struct AddExpenseIntent: AppIntent {
   @Parameter(title: "Split method", default: .equal)
   public var splitMethod: SplitCircleSplitMethodAppEnum
 
+  // Category defaults to .general so the fast voice flow ("add a $20 expense") never
+  // forces a prompt — parity with the old hardcoded "General", now overridable.
+  @Parameter(title: "Category", default: .general)
+  public var category: SplitCircleCategoryAppEnum
+
   // Who's in the split. Empty ⇒ everyone in the group. Scoped to `group` by the person
   // query (SplitCirclePersonEntity) and re-filtered here defensively.
   @Parameter(title: "Split with")
@@ -274,6 +279,7 @@ public struct AddExpenseIntent: AppIntent {
   public static var parameterSummary: some ParameterSummary {
     Summary("Add \(\.$amount) for \(\.$title) to \(\.$group)") {
       \.$splitMethod
+      \.$category
       \.$participants
       \.$values
     }
@@ -287,6 +293,14 @@ public struct AddExpenseIntent: AppIntent {
     }
     guard amount > 0 else {
       return .result(dialog: "That amount doesn't look right — try a positive number.")
+    }
+    // Itemized needs per-item receipt data (price/assignedTo per line) that there's no
+    // way to voice/Shortcuts-enter headlessly. Without it the JS drain runs
+    // computeItemized([], 0, 0, …), which returns all-zero shares — but toParticipantShares
+    // filters by `included`, not by nonzero amount, so a real full-amount expense that
+    // charges nobody would be written. Reject it here before anything is queued.
+    guard splitMethod != .itemized else {
+      return .result(dialog: "Itemized splits need a receipt — open ManaSplit for \(group.name) to split this by item.")
     }
     let everyone = SplitCircleIndexReader.members(forGroup: group.id, userId: userId).map { $0.id }
     var chosen: [String]
@@ -321,7 +335,7 @@ public struct AddExpenseIntent: AppIntent {
       "groupId": group.id,
       "title": cleanTitle,
       "amount": amount,
-      "category": "General",
+      "category": category.rawValue,
       "paidByUserId": userId,
       "participantUserIds": chosen,
       "splitMethod": splitMethod.rawValue,
@@ -411,6 +425,12 @@ public struct SettleUpIntent: AppIntent {
     }
     guard person.groupId == group.id else {
       return .result(dialog: "\(person.name) isn't in \(group.name) — pick someone from that group.")
+    }
+    // The person picker (SplitCirclePersonQuery.all) includes the signed-in user, so a
+    // self-selection is an easy accident. A settlement with fromUserId == toUserId nets to
+    // zero but lands a nonsensical "you paid yourself" record — reject it before queueing.
+    guard person.userId != userId else {
+      return .result(dialog: "You can't settle up with yourself — pick someone else in \(group.name).")
     }
     let other = person.userId
     let fromUserId = direction == .iPaid ? userId : other
@@ -518,7 +538,11 @@ public struct SplitCircleShortcuts: AppShortcutsProvider {
     )
     AppShortcut(
       intent: AddExpenseIntent(),
-      phrases: ["Add an expense in \(.applicationName)", "New \(.applicationName) expense in \(\.$group)"],
+      phrases: [
+        "Add an expense in \(.applicationName)",
+        "Record a new expense in \(.applicationName)",
+        "New \(.applicationName) expense in \(\.$group)",
+      ],
       shortTitle: "Add Expense",
       systemImageName: "plus.circle"
     )

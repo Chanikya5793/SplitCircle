@@ -359,6 +359,20 @@ export function reloadWidgets(): void {
   }
 }
 
+/**
+ * Ask App Intents to refresh the dynamic parameter options behind our Siri
+ * shortcuts (the group picker) so Siri never offers stale/renamed/deleted groups.
+ * No-op off iOS or on builds predating the native function. Never throws.
+ */
+export function updateSiriShortcutParameters(): void {
+  if (!NativeModule?.updateSiriShortcutParameters) return;
+  try {
+    NativeModule.updateSiriShortcutParameters();
+  } catch {
+    // best-effort — a stale picker is a minor UX blemish, never a data-flow break.
+  }
+}
+
 // ── Native search-tab bridge (UISearchTab on iOS 26, see the RNS patch) ─────
 
 /**

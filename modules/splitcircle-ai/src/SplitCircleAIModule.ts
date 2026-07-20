@@ -126,6 +126,12 @@ export interface SplitCircleAINativeModule {
   writeWidgetSnapshot(json: string): void;
   /** Force a WidgetKit timeline refresh. */
   reloadWidgets(): void;
+  /**
+   * Re-scan the dynamic parameter options behind our Siri shortcuts (the group
+   * picker). Call after the group set changes so Siri never offers stale groups.
+   * Absent on older builds — guard before calling.
+   */
+  updateSiriShortcutParameters?(): void;
   /** The App Group identifier the widget snapshot lives under. */
   getAppGroupId(): string;
 }

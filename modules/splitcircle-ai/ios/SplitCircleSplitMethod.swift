@@ -34,7 +34,12 @@ public enum SplitCircleSplitMethodAppEnum: String, AppEnum {
     .income: "By income",
     .consumption: "By consumption",
     .timeBased: "By time",
-    .gamified: "Roulette / Karma game",
+    // Only plain uniform roulette is reachable headlessly: AddExpenseIntent.perform()
+    // picks a random loser and never sets gamifiedMode, so the weightedRoulette and
+    // scrooge/"Karma" modes (which need a per-participant rouletteWeight slider or
+    // historicalPaid context there's no voice input for) can't be delivered via Siri.
+    // Label it "Roulette" — NOT "Roulette / Karma game" — so it doesn't overpromise.
+    .gamified: "Roulette",
     .itemType: "By item type",
   ]
 }

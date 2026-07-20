@@ -326,6 +326,17 @@ public class SplitCircleAIModule: Module {
       SplitCircleSharedStore.reloadWidgets()
     }
 
+    /// Tell App Intents to re-scan the dynamic parameter options behind our Siri
+    /// shortcuts (the group picker's suggestedEntities + Siri's group-name vocabulary).
+    /// Called from groupCache after the group set meaningfully changes so Siri never
+    /// offers stale/renamed/deleted groups. No-op on older builds where the provider's
+    /// static refresh hook isn't available.
+    Function("updateSiriShortcutParameters") { () -> Void in
+      if #available(iOS 17.0, *) {
+        SplitCircleShortcuts.updateAppShortcutParameters()
+      }
+    }
+
     /// The App Group identifier the widget snapshot lives under — exposed so JS can
     /// surface it on the AI/index transparency screen if desired.
     Function("getAppGroupId") { () -> String in

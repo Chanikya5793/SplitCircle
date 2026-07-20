@@ -194,6 +194,18 @@ Do these in order. Steps A–B are the developer portal; C–E are Xcode; F is t
 > If step 12 fails on a provisioning/entitlement mismatch, the App Group isn't fully synced —
 > revisit A/B/F. Do NOT ship the app entitlement (D8) without A/B done, or signing fails.
 
+> **⚠️ Cross-workstream tripwire — re-verify Siri after this runbook lands.** Once the App
+> Group entitlement is live, `SplitCircleIndexReader.richGroups(forUser:)` silently switches
+> its **primary** data source from the SQLite mirror (`ai_index.db`) to the App Group snapshot
+> (`widget.json`) — the very path every Siri intent reads through (group picker, participant
+> picker, `AddExpenseIntent` member resolution, all balance/category queries). That App Group
+> branch has **never executed in production** (the entitlement didn't exist), so the Siri
+> Add-Expense/Settle-Up device-verification checklist (doc 18 §6 / §5 here) must be **re-run**
+> after this runbook completes — this is the first time that data path is exercised, and a
+> parsing divergence from the SQLite branch would change Siri's answers with no code change to
+> blame. Treat "Siri re-verified against the App Group snapshot" as a **done criterion of this
+> runbook**, not an optional follow-up.
+
 ---
 
 ## 5. Verification checklist (fill in on the first real build — don't trust this doc until then)
@@ -209,6 +221,26 @@ Do these in order. Steps A–B are the developer portal; C–E are Xcode; F is t
 - [ ] All 6 shortcuts appear in the Shortcuts app after a cold install + first launch.
 - [ ] Signed-out: intents/widgets show empty/"sign in" states, never crash.
 - [ ] `ship:ios --build-only` green with the App Group capability provisioned.
+
+**Added in the Siri remediation pass (2026-07-20) — verify alongside the above:**
+- [ ] **New phrase** — Siri responds to *"Record a new expense in ManaSplit"* (Gap 2), identically
+      to the existing *"Add an expense…"* phrase.
+- [ ] **Category parameter** (Gap 4) — the Add-Expense action shows a Category picker matching
+      `ALL_EXPENSE_CATEGORIES`; a chosen category round-trips byte-identical into the created
+      expense; omitting it defaults to "General" without prompting.
+- [ ] **Group-picker freshness** (Gap 1) — `updateSiriShortcutParameters()` now fires from
+      `groupCache.persistGroups`/`clearCachedGroups`. Create/rename a group in-app → Siri offers
+      it without a reinstall; sign out → the groups drop from Siri's options.
+- [ ] **Itemized guard** (Gap 6) — picking "Itemized" via Siri now hears a rejection dialog and
+      queues **nothing** (was: a phantom full-amount expense charging nobody $0).
+- [ ] **Gamified label honesty** (Gap 8) — the split-method picker shows "Roulette" (not
+      "Roulette / Karma game"); every gamified run is a single random loser paying the full amount.
+- [ ] **Self-settlement guard** (Gap 9) — selecting yourself in Settle Up hears a rejection dialog
+      and queues nothing; settling with a different member is unaffected.
+
+> **Unit gate (no device):** `siriShortcutParams.test.ts`, `categoryEnumSync.test.ts`,
+> `splitMethodEnumSync.test.ts` all pass — the JS wiring + the two hand-maintained Swift↔JS enum
+> mirrors are guarded in CI.
 
 ---
 

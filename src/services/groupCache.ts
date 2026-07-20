@@ -12,6 +12,7 @@ import type { Group } from '@/models';
 import { getItem, removeItem, setItem } from '@/utils/storage';
 import { pruneGroupMeta, upsertGroupMeta } from '@/services/aiIndexStore';
 import { publishWidgetSnapshot } from '@/services/widgetService';
+import { updateSiriShortcutParameters } from '../../modules/splitcircle-ai';
 
 const cacheKey = (userId: string) => `groups_cache_v1_${userId}`;
 
@@ -47,6 +48,13 @@ export async function persistGroups(userId: string, groups: Group[]): Promise<vo
   }
   // Refresh the home/lock-screen/Control-Center widgets from the same data.
   publishWidgetSnapshot(userId, groups);
+  // Same coalesced cadence: tell Siri to re-scan the group picker so it never
+  // offers a stale/renamed/deleted group. Best-effort — must never break the flow.
+  try {
+    updateSiriShortcutParameters();
+  } catch {
+    // Non-blocking: a stale Siri picker is cosmetic, never a data-flow break.
+  }
 }
 
 /** Clear the cache (e.g. on sign-out). */
@@ -56,5 +64,11 @@ export async function clearCachedGroups(userId: string): Promise<void> {
     await removeItem(cacheKey(userId));
   } catch {
     // ignore
+  }
+  // Drop the signed-out user's groups from Siri's cached options.
+  try {
+    updateSiriShortcutParameters();
+  } catch {
+    // Non-blocking: best-effort, same contract as the persist path.
   }
 }
