@@ -43,6 +43,7 @@ vi.mock('@/components/ui', () => ({
   GroupPhotoUploader: () => <div data-testid="group-photo" />,
   GuardedScreen: ({ children }: any) => <div>{children}</div>,
   CurrencyConvertSheet: () => null,
+  MoneyInChatSheet: () => null,
   WallpaperPickerSheet: () => null,
 }));
 

@@ -101,6 +101,18 @@ vi.mock('react-native-paper', () => {
   };
 });
 
+// Mock AuthContext so the real one (which imports @/firebase and validates
+// EXPO_PUBLIC_FIREBASE_* env vars at module load) never loads in the test env.
+vi.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ user: { userId: 'u1' } }),
+}));
+
+// Mock the money formatter so its privacy-guard / expo-modules-core import
+// chain (SecureStore et al.) never loads in the jsdom test env.
+vi.mock('@/hooks/useMoneyDisplay', () => ({
+  useMoneyDisplay: () => (value: number, currency?: string) => `${currency ?? '$'}${value}`,
+}));
+
 const groupsState: { groups: any[] } = { groups: [] };
 
 vi.mock('@/context/GroupContext', () => ({
