@@ -249,6 +249,17 @@ public struct AddExpenseIntent: AppIntent {
   public static var title: LocalizedStringResource = "Add ManaSplit Expense"
   public static var description = IntentDescription("Add an expense to a ManaSplit group with any split method — no app needed.")
 
+  // Root-cause fix (plan §10, Step 2): make headlessness EXPLICIT rather than relying
+  // on the implicit background default. Apple documents that performing an intent does
+  // not foreground the app by default (WWDC25), so this is a no-regression change — but
+  // it removes any dependency on that default, the only thing an old/differently-linked
+  // binary could plausibly disagree about (the incident's fallback hypothesis).
+  // `IntentModes`/`supportedModes` are iOS 26+-only APIs, so this member carries its own
+  // `@available(iOS 26.0, *)` — NOT a blanket change to the struct's iOS 17 availability
+  // (that would break the build below iOS 26).
+  @available(iOS 26.0, *)
+  public static var supportedModes: IntentModes = .background
+
   @Parameter(title: "Group")
   public var group: SplitCircleGroupEntity
 
@@ -290,6 +301,18 @@ public struct AddExpenseIntent: AppIntent {
   public func perform() async throws -> some IntentResult & ProvidesDialog {
     guard let userId = SplitCircleCurrentUser.read() else {
       return .result(dialog: "Sign in to ManaSplit first, then try again.")
+    }
+    // Root-cause fix (plan §10, Step 1): the required `group` param is resolved by
+    // SplitCircleGroupQuery, which returns [] on a resolution miss (e.g. a cold
+    // background launch racing the JS-side current-user write, or before the index is
+    // populated). An unresolved/garbage Group must not silently flow into
+    // enqueuePendingExpense — verify it maps to a real group (same groups(forUser:)
+    // source the entity query uses) and fail with a spoken error first. This can't
+    // suppress Siri's own undocumented "just open the app" fallback (no public API for
+    // that), but it removes the silent bad-data path and gives the intent a chance to
+    // speak before Siri decides to foreground.
+    guard SplitCircleIndexReader.group(id: group.id, userId: userId) != nil else {
+      return .result(dialog: "I couldn't find that group — try again and pick one from the list.")
     }
     guard amount > 0 else {
       return .result(dialog: "That amount doesn't look right — try a positive number.")
@@ -396,6 +419,11 @@ public struct SettleUpIntent: AppIntent {
   public static var title: LocalizedStringResource = "Settle Up in ManaSplit"
   public static var description = IntentDescription("Record a settlement in a ManaSplit group — no app needed.")
 
+  // Root-cause fix (plan §10, Step 2): explicit headless mode, same rationale and same
+  // iOS 26+ availability gating as AddExpenseIntent above.
+  @available(iOS 26.0, *)
+  public static var supportedModes: IntentModes = .background
+
   @Parameter(title: "Group")
   public var group: SplitCircleGroupEntity
 
@@ -419,6 +447,13 @@ public struct SettleUpIntent: AppIntent {
   public func perform() async throws -> some IntentResult & ProvidesDialog {
     guard let userId = SplitCircleCurrentUser.read() else {
       return .result(dialog: "Sign in to ManaSplit first, then try again.")
+    }
+    // Root-cause fix (plan §10, Step 1): same required-entity resolution guard as
+    // AddExpenseIntent — reject an unresolved/garbage `group` with a spoken error
+    // before it can reach enqueuePendingSettlement, rather than letting it fall through
+    // to Siri's silent app-opening fallback.
+    guard SplitCircleIndexReader.group(id: group.id, userId: userId) != nil else {
+      return .result(dialog: "I couldn't find that group — try again and pick one from the list.")
     }
     guard amount > 0 else {
       return .result(dialog: "That amount doesn't look right — try a positive number.")
