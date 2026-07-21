@@ -667,16 +667,29 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       // on this device (other members' devices clear via the snapshot diff).
       void dismissNotificationsForEntity({ expenseId });
 
-      // Delete from legacy top-level expenses collection docs
-      const q = query(collection(db, 'expenses'), where('expenseId', '==', expenseId));
-      const snapshot = await getDocs(q);
-      await Promise.all(snapshot.docs.map(async (docSnap) => {
-        if (docSnap.id === expenseId) {
-          return;
-        }
+      // Best-effort cleanup of legacy top-level expense docs whose doc ID
+      // predates the expenseId-as-doc-ID convention. This is its own try/catch
+      // because the query is unscoped by groupId (it can't be — the whole
+      // point is finding docs under a DIFFERENT id), so firestore.rules'
+      // per-document `isGroupMemberById(resource.data.groupId)` check can't be
+      // statically satisfied for a collection-wide `list`, and Firestore
+      // correctly denies it every time. That's expected, not a real failure —
+      // it must never surface as "Failed to delete expense" after the actual
+      // deletion above (the group update + primary doc delete) already
+      // succeeded.
+      try {
+        const q = query(collection(db, 'expenses'), where('expenseId', '==', expenseId));
+        const snapshot = await getDocs(q);
+        await Promise.all(snapshot.docs.map(async (docSnap) => {
+          if (docSnap.id === expenseId) {
+            return;
+          }
 
-        await deleteDoc(doc(db, 'expenses', docSnap.id));
-      }));
+          await deleteDoc(doc(db, 'expenses', docSnap.id));
+        }));
+      } catch (legacyCleanupError) {
+        console.warn('Legacy expense doc cleanup skipped (non-fatal):', legacyCleanupError);
+      }
     } catch (error) {
       console.error('Error deleting expense:', error);
       throw error;

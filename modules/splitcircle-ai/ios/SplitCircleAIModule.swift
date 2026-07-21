@@ -8,6 +8,29 @@ import FoundationModels
 /// Keep the donated activity alive — `becomeCurrent()` does not retain it.
 private var currentAskActivity: NSUserActivity?
 
+/// One-time cleanup for the duplicate-Spotlight-entries bug: every
+/// donateAskActivity call before this fix created a fresh NSUserActivity with
+/// no persistentIdentifier, so old installs can already have a handful of
+/// stale, indistinguishable "Ask SplitCircle about my spending" rows sitting
+/// in the on-device search index. The fixed donation logic (below) stops
+/// this from growing further, but doesn't retroactively merge what's already
+/// indexed — wipe it once, gated by a flag so this never runs twice on the
+/// same device, then let the corrected logic re-donate a single clean entry
+/// the next time the user actually asks something.
+private var didCleanUpDuplicateAskActivities = false
+private let askActivityDedupeMigrationKey = "SplitCircleAskActivityDedupeMigrationDone_v1"
+
+private func cleanUpDuplicateAskActivitiesOnce() {
+  guard !didCleanUpDuplicateAskActivities else { return }
+  didCleanUpDuplicateAskActivities = true
+  guard !UserDefaults.standard.bool(forKey: askActivityDedupeMigrationKey) else { return }
+  UserDefaults.standard.set(true, forKey: askActivityDedupeMigrationKey)
+  NSUserActivity.deleteAllSavedUserActivities {
+    // Best-effort — nothing to react to; the next donation below re-adds a
+    // single, correctly-deduplicated entry.
+  }
+}
+
 #if canImport(FoundationModels)
 /// Structured answer the on-device model fills in (FoundationModels @Generable).
 /// Keeping the shape minimal preserves the 4096-token combined budget.
@@ -299,7 +322,20 @@ public class SplitCircleAIModule: Module {
     /// the standard continueUserActivity flow → React Navigation linking).
     AsyncFunction("donateAskActivity") { (query: String?) in
       DispatchQueue.main.async {
+        // Bug fix: every call used to build a fresh NSUserActivity with no
+        // persistentIdentifier, so Spotlight had no stable key to correlate
+        // repeat donations against — each ask indexed as a brand-new entry,
+        // accumulating duplicate "Ask SplitCircle about my spending" rows
+        // over time instead of updating one canonical activity. A constant
+        // persistentIdentifier tells Spotlight "this is the same activity,
+        // just updated" so it replaces rather than appends. Also resign the
+        // previous instance first so there's never more than one "current"
+        // ask-activity live at once.
+        cleanUpDuplicateAskActivitiesOnce()
+        currentAskActivity?.resignCurrent()
+
         let activity = NSUserActivity(activityType: "com.splitcircle.ask-ai")
+        activity.persistentIdentifier = "com.splitcircle.ask-ai.current"
         activity.title = "Ask SplitCircle about my spending"
         activity.isEligibleForSearch = true
         activity.isEligibleForPrediction = true
