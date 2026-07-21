@@ -20,10 +20,23 @@ import { formatCurrency } from '@/utils/currency';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { findNextOccurrenceAt, getRecurrenceSummary, normalizeRecurrenceRule } from '@/utils/recurrence';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import {
+    Animated,
+    Easing,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    TouchableOpacity,
+    useWindowDimensions,
+    View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { appAlert } from '@/utils/appAlert';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import { Button, IconButton, Modal, Portal, Switch, Text } from 'react-native-paper';
+import { Button, Icon, IconButton, Switch, Text } from 'react-native-paper';
 import { ALL_EXPENSE_CATEGORIES } from '@/utils/categoryMatch';
 
 // Same canonical set as everywhere else (utils/categoryMatch.ts), ordered
@@ -211,14 +224,36 @@ const SwipeableBillCard = ({
 };
 
 export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
-    const { theme } = useTheme();
+    const { theme, isDark } = useTheme();
     const { user } = useAuth();
+    const insets = useSafeAreaInsets();
+    const { height: screenHeight } = useWindowDimensions();
     const [bills, setBills] = useState<RecurringBill[]>([]);
     const [loading, setLoading] = useState(true);
     const [modalVisible, setModalVisible] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [editingBillId, setEditingBillId] = useState<string | null>(null);
     const [editingStartAt, setEditingStartAt] = useState<number | null>(null);
+
+    // Sheet entrance: slide UP from below while the Modal fades the scrim in
+    // (app-wide "Sheet DNA" — see DisplayCurrencySheet). Native driver only.
+    const slide = useRef(new Animated.Value(0)).current;
+    const [sheetHeight, setSheetHeight] = useState(screenHeight * 0.9);
+    useEffect(() => {
+        if (modalVisible) {
+            slide.setValue(0);
+            Animated.timing(slide, {
+                toValue: 1,
+                duration: 300,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }).start();
+        }
+    }, [modalVisible, slide]);
+    const sheetTranslateY = slide.interpolate({
+        inputRange: [0, 1],
+        outputRange: [sheetHeight + 80, 0],
+    });
 
     // Form state
     const [title, setTitle] = useState('');
@@ -561,104 +596,179 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
         setModalVisible(true);
     };
 
+    const closeModal = () => {
+        setModalVisible(false);
+        resetForm();
+    };
+
+    // Glass action pill for the card's dedicated action row — icon over label,
+    // spaced so operations breathe instead of crowding the card edge.
+    const CardAction = ({
+        icon,
+        label,
+        color,
+        onPress,
+        accessibilityLabel,
+    }: {
+        icon: string;
+        label: string;
+        color: string;
+        onPress: () => void;
+        accessibilityLabel?: string;
+    }) => (
+        <TouchableOpacity
+            onPress={onPress}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={accessibilityLabel ?? label}
+            style={[
+                styles.cardAction,
+                { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' },
+            ]}
+        >
+            <Icon source={icon} size={20} color={color} />
+            <Text style={[styles.cardActionLabel, { color }]}>{label}</Text>
+        </TouchableOpacity>
+    );
+
     return (
         <LiquidBackground>
-      <GuardedScreen target="expenses" entityId={group.groupId} label="Bills hidden">
-            <ScrollView contentContainerStyle={styles.container}>
-                <GlassView style={styles.headerCard}>
-                    <Text variant="headlineSmall" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                        Recurring Bills
-                    </Text>
-                    <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                        Automate and schedule shared expenses with advanced rules.
-                    </Text>
-                </GlassView>
-
-                {bills.length === 0 && !loading ? (
-                    <GlassView style={styles.emptyCard}>
-                        <Text style={{ textAlign: 'center', color: theme.colors.onSurfaceVariant }}>
-                            No recurring bills yet.
+            <GuardedScreen target="expenses" entityId={group.groupId} label="Bills hidden">
+                <ScrollView
+                    contentContainerStyle={[styles.container, { paddingTop: insets.top + 60 }]}
+                    showsVerticalScrollIndicator={false}
+                >
+                    <GlassView style={styles.headerCard}>
+                        <Text variant="headlineSmall" style={{ fontWeight: '700', color: theme.colors.onSurface }}>
+                            Recurring Bills
+                        </Text>
+                        <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
+                            Automate and schedule shared expenses with advanced rules.
                         </Text>
                     </GlassView>
-                ) : (
-                    bills.map((bill) => (
-                        <SwipeableBillCard
-                            key={bill.billId}
-                            editColor={theme.colors.primary}
-                            onEdit={() => handleEdit(bill)}
-                            onDelete={() => handleDelete(bill)}
-                        >
-                            <GlassView style={styles.billCard}>
-                                <View style={styles.billRow}>
-                                    <View style={{ flex: 1 }}>
-                                        <Text variant="titleMedium" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
-                                            {bill.title}
-                                        </Text>
+
+                    {bills.length === 0 && !loading ? (
+                        <GlassView style={styles.emptyCard}>
+                            <Icon source="calendar-clock" size={40} color={theme.colors.onSurfaceVariant} />
+                            <Text style={{ textAlign: 'center', color: theme.colors.onSurface, fontWeight: '600', marginTop: 10 }}>
+                                No recurring bills yet
+                            </Text>
+                            <Text style={{ textAlign: 'center', color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
+                                Add one to automate a shared expense on a schedule.
+                            </Text>
+                        </GlassView>
+                    ) : (
+                        bills.map((bill) => (
+                            <SwipeableBillCard
+                                key={bill.billId}
+                                editColor={theme.colors.primary}
+                                onEdit={() => handleEdit(bill)}
+                                onDelete={() => handleDelete(bill)}
+                            >
+                                <GlassView style={styles.billCard}>
+                                    {/* Header: title + amount on the left, active toggle on the right */}
+                                    <View style={styles.billHeader}>
+                                        <View style={{ flex: 1, paddingRight: 12 }}>
+                                            <Text variant="titleMedium" style={{ fontWeight: '700', color: theme.colors.onSurface }}>
+                                                {bill.title}
+                                            </Text>
+                                            <Text style={{ color: theme.colors.onSurface, marginTop: 2, fontWeight: '600' }}>
+                                                {bill.amountMode === 'variable'
+                                                    ? `Variable (≈${formatCurrency(bill.amount, group.currency)})`
+                                                    : formatCurrency(bill.amount, group.currency)}
+                                                <Text style={{ color: theme.colors.onSurfaceVariant, fontWeight: '400' }}>
+                                                    {'  •  '}{getRecurrenceSummary(bill.recurrenceRule)}
+                                                </Text>
+                                            </Text>
+                                        </View>
+                                        <Switch
+                                            value={bill.isActive}
+                                            onValueChange={() => handleToggle(bill)}
+                                            color={theme.colors.primary}
+                                        />
+                                    </View>
+
+                                    {/* Meta lines */}
+                                    <View style={styles.billMeta}>
                                         <Text style={{ color: theme.colors.onSurfaceVariant }}>
-                                            {bill.amountMode === 'variable'
-                                                ? `Variable (≈${formatCurrency(bill.amount, group.currency)})`
-                                                : formatCurrency(bill.amount, group.currency)} • {getRecurrenceSummary(bill.recurrenceRule)}
-                                        </Text>
-                                        <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
                                             {bill.rotation
                                                 ? `Rotates · next turn: ${memberMap[resolveRotationPayer(bill)] ?? 'Unknown'}`
                                                 : `Paid by ${memberMap[bill.paidBy] ?? 'Unknown'}`} • {bill.participants.length} participant{bill.participants.length === 1 ? '' : 's'}
                                         </Text>
-                                        <Text style={{ color: theme.colors.onSurfaceVariant }}>
+                                        <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
                                             Next run: {new Date(bill.nextDueAt).toLocaleString()}
                                         </Text>
                                         {(bill.pendingOccurrences?.length ?? 0) > 0 && (
-                                            <Text style={{ color: theme.colors.primary, marginTop: 2 }}>
+                                            <Text style={{ color: theme.colors.primary, marginTop: 4 }}>
                                                 {bill.pendingOccurrences!.length} occurrence{bill.pendingOccurrences!.length === 1 ? '' : 's'} waiting for an amount — confirm from the group chat
                                             </Text>
                                         )}
                                     </View>
-                                    <Switch
-                                        value={bill.isActive}
-                                        onValueChange={() => handleToggle(bill)}
-                                        color={theme.colors.primary}
-                                    />
-                                    <IconButton
-                                        icon="skip-next-outline"
-                                        iconColor={theme.colors.onSurfaceVariant}
-                                        onPress={() => handleSkipNext(bill)}
-                                        accessibilityLabel="Skip next occurrence"
-                                    />
-                                    <IconButton
-                                        icon="pencil-outline"
-                                        iconColor={theme.colors.primary}
-                                        onPress={() => handleEdit(bill)}
-                                    />
-                                    <IconButton
-                                        icon="delete-outline"
-                                        iconColor={theme.colors.error}
-                                        onPress={() => handleDelete(bill)}
-                                    />
-                                </View>
-                            </GlassView>
-                        </SwipeableBillCard>
-                    ))
-                )}
 
-                <Button mode="contained" onPress={openCreateModal} style={{ marginTop: 20 }} icon="plus">
-                    Add Recurring Bill
-                </Button>
-            </ScrollView>
+                                    {/* Dedicated, spaced action row — brought out of the cramped edge */}
+                                    <View style={[styles.cardActionRow, { borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' }]}>
+                                        <CardAction
+                                            icon="skip-next-outline"
+                                            label="Skip"
+                                            color={theme.colors.onSurfaceVariant}
+                                            onPress={() => handleSkipNext(bill)}
+                                            accessibilityLabel="Skip next occurrence"
+                                        />
+                                        <CardAction
+                                            icon="pencil-outline"
+                                            label="Edit"
+                                            color={theme.colors.primary}
+                                            onPress={() => handleEdit(bill)}
+                                            accessibilityLabel="Edit recurring bill"
+                                        />
+                                        <CardAction
+                                            icon="delete-outline"
+                                            label="Delete"
+                                            color={theme.colors.error}
+                                            onPress={() => handleDelete(bill)}
+                                            accessibilityLabel="Delete recurring bill"
+                                        />
+                                    </View>
+                                </GlassView>
+                            </SwipeableBillCard>
+                        ))
+                    )}
 
-            <Portal>
-                <Modal
-                    visible={modalVisible}
-                    onDismiss={() => {
-                        setModalVisible(false);
-                        resetForm();
-                    }}
-                    contentContainerStyle={styles.modal}
+                    <Button mode="contained" onPress={openCreateModal} style={styles.addButton} icon="plus">
+                        Add Recurring Bill
+                    </Button>
+                </ScrollView>
+            </GuardedScreen>
+
+            {/* Create / edit form — app "Sheet DNA": fade scrim + slide-up glass sheet */}
+            <Modal
+                visible={modalVisible}
+                transparent
+                statusBarTranslucent
+                animationType="fade"
+                onRequestClose={closeModal}
+            >
+                <KeyboardAvoidingView
+                    style={styles.sheetOverlay}
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    pointerEvents="box-none"
                 >
-                    <GlassView style={styles.modalCard}>
-                        <ScrollView contentContainerStyle={styles.modalContent} showsVerticalScrollIndicator={false}>
-                            <Text variant="headlineSmall" style={{ marginBottom: 16, color: theme.colors.onSurface }}>
+                    <Pressable style={styles.sheetBackdrop} onPress={closeModal} accessibilityLabel="Dismiss form" />
+                    <Animated.View
+                        onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}
+                        style={{ transform: [{ translateY: sheetTranslateY }] }}
+                    >
+                        <GlassView style={styles.sheet} intensity={80}>
+                            <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)' }]} />
+                            <Text variant="titleLarge" style={{ fontWeight: '700', color: theme.colors.onSurface, textAlign: 'center', marginBottom: 12 }}>
                                 {editingBillId ? 'Edit Recurring Bill' : 'New Recurring Bill'}
                             </Text>
+                            <ScrollView
+                                style={{ maxHeight: screenHeight * 0.62 }}
+                                contentContainerStyle={styles.sheetContent}
+                                showsVerticalScrollIndicator={false}
+                                keyboardShouldPersistTaps="handled"
+                            >
 
                             <FloatingLabelInput label="Title" value={title} onChangeText={setTitle} />
                             <FloatingLabelInput
@@ -969,52 +1079,54 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                 })}
                             </View>
 
-                            <Button
-                                mode="contained"
-                                onPress={handleCreate}
-                                loading={isSubmitting}
-                                style={{ marginTop: 14 }}
-                            >
-                                {editingBillId ? 'Save Changes' : 'Create Bill'}
-                            </Button>
+                            </ScrollView>
 
-                            <Button
-                                mode="text"
-                                onPress={() => {
-                                    setModalVisible(false);
-                                    resetForm();
-                                }}
-                                style={{ marginTop: 8 }}
-                            >
-                                Cancel
-                            </Button>
-                        </ScrollView>
-                    </GlassView>
-                </Modal>
-            </Portal>
-        </GuardedScreen>
-    </LiquidBackground>
+                            {/* Docked footer — actions live here, not buried at the bottom of the scroll */}
+                            <View style={[styles.sheetFooter, { borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)', paddingBottom: insets.bottom + 10 }]}>
+                                <Button
+                                    mode="text"
+                                    onPress={closeModal}
+                                    style={styles.footerCancel}
+                                    textColor={theme.colors.onSurface}
+                                >
+                                    Cancel
+                                </Button>
+                                <Button
+                                    mode="contained"
+                                    onPress={handleCreate}
+                                    loading={isSubmitting}
+                                    style={styles.footerSubmit}
+                                    contentStyle={{ height: 46 }}
+                                >
+                                    {editingBillId ? 'Save Changes' : 'Create Bill'}
+                                </Button>
+                            </View>
+                        </GlassView>
+                    </Animated.View>
+                </KeyboardAvoidingView>
+            </Modal>
+        </LiquidBackground>
     );
 };
 
 const styles = StyleSheet.create({
     container: {
         padding: 16,
-        paddingBottom: 100,
+        paddingBottom: 120,
     },
     headerCard: {
         padding: 20,
         borderRadius: 24,
-        marginBottom: 20,
+        marginBottom: 16,
     },
     billCard: {
         padding: 16,
-        borderRadius: 20,
+        borderRadius: 22,
     },
     swipeableContainer: {
-        borderRadius: 20,
+        borderRadius: 22,
         overflow: 'hidden',
-        marginBottom: 10,
+        marginBottom: 12,
     },
     rowActions: {
         flexDirection: 'row',
@@ -1031,29 +1143,87 @@ const styles = StyleSheet.create({
         marginTop: -4,
     },
     emptyCard: {
-        padding: 30,
-        borderRadius: 20,
+        padding: 32,
+        borderRadius: 22,
         alignItems: 'center',
+        marginBottom: 12,
     },
-    billRow: {
+    billHeader: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+    },
+    billMeta: {
+        marginTop: 8,
+    },
+    cardActionRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 14,
+        paddingTop: 12,
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    cardAction: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: 10,
+        borderRadius: 14,
+    },
+    cardActionLabel: {
+        fontSize: 13,
+        fontWeight: '600',
+    },
+    addButton: {
+        marginTop: 8,
+        borderRadius: 16,
+    },
+    // ── Sheet DNA ──
+    sheetOverlay: {
+        flex: 1,
+        justifyContent: 'flex-end',
+    },
+    sheetBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    sheet: {
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        borderBottomLeftRadius: 0,
+        borderBottomRightRadius: 0,
+        paddingTop: 10,
+    },
+    grabber: {
+        alignSelf: 'center',
+        width: 40,
+        height: 5,
+        borderRadius: 3,
+        marginBottom: 12,
+    },
+    sheetContent: {
+        paddingHorizontal: 20,
+        paddingBottom: 16,
+    },
+    sheetFooter: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
+        paddingHorizontal: 20,
+        paddingTop: 12,
+        borderTopWidth: StyleSheet.hairlineWidth,
     },
-    modal: {
-        margin: 14,
-        maxHeight: '90%',
+    footerCancel: {
+        borderRadius: 16,
     },
-    modalCard: {
-        borderRadius: 24,
-        overflow: 'hidden',
-    },
-    modalContent: {
-        padding: 20,
-        paddingBottom: 24,
+    footerSubmit: {
+        flex: 1,
+        borderRadius: 16,
     },
     sectionLabel: {
-        marginTop: 12,
+        marginTop: 16,
         marginBottom: 8,
         fontWeight: '600',
     },
@@ -1071,6 +1241,10 @@ const styles = StyleSheet.create({
         paddingHorizontal: 14,
         paddingVertical: 8,
         borderRadius: 18,
-        backgroundColor: 'rgba(0,0,0,0.08)',
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: 'rgba(128,128,128,0.35)',
+        // Theme-neutral system fill — reads on both light and dark glass, unlike
+        // the old rgba(0,0,0,0.08) that vanished in dark mode.
+        backgroundColor: 'rgba(120,120,128,0.16)',
     },
 });

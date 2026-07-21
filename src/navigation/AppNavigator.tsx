@@ -1123,7 +1123,11 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.RECURRING_BILLS}
         component={RecurringBillsRoute}
-        options={{ title: SCREEN_TITLES.recurringBills }}
+        options={{
+          title: SCREEN_TITLES.recurringBills,
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
       />
       <AppStack.Screen
         name={ROUTES.APP.CALL_INFO}
