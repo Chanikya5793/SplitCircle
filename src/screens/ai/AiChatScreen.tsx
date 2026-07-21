@@ -142,6 +142,21 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   // follows only while pinned near the bottom; appends re-engage following.
   const nearBottom = useRef(true);
 
+  // The keyboard already occupies the home-indicator safe area, so the input
+  // bar's resting bottom margin (which clears that area when closed) must
+  // drop to a plain gap while the keyboard is up — otherwise it stacks with
+  // KeyboardAvoidingView's own padding and leaves a dead gap above the keyboard.
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const subs = [
+      Keyboard.addListener(showEvent, () => setKeyboardVisible(true)),
+      Keyboard.addListener(hideEvent, () => setKeyboardVisible(false)),
+    ];
+    return () => subs.forEach((s) => s.remove());
+  }, []);
+
   const append = useCallback(
     (msg: ChatMsg) => {
       setMessages((prev) => {
@@ -442,7 +457,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
               : { borderTopLeftRadius: 4 },
           ]}
         >
-          <Text style={{ color: isUser ? '#fff' : theme.colors.onSurface, lineHeight: 20 }}>{item.text}</Text>
+          <Text style={{ color: isUser ? theme.colors.onPrimary : theme.colors.onSurface, lineHeight: 20 }}>{item.text}</Text>
 
           {!isUser && !!item.assumption ? (
             <Text
@@ -542,7 +557,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                     <Text style={{ color: theme.colors.onSurfaceVariant, fontWeight: '700' }}>Not now</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => openTarget(item, (item.action as { target: NavTarget }).target)} style={[styles.actionBtn, { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }]}>
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>Open {item.action.summary}</Text>
+                    <Text style={{ color: theme.colors.onPrimary, fontWeight: '700' }}>Open {item.action.summary}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -560,7 +575,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                     style={[styles.actionBtn, { backgroundColor: 'destructive' in item.action && item.action.destructive ? theme.colors.error : theme.colors.primary, borderColor: 'transparent' }]}
                     disabled={busy}
                   >
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>{'destructive' in item.action && item.action.destructive ? 'Delete' : 'Confirm'}</Text>
+                    <Text style={{ color: 'destructive' in item.action && item.action.destructive ? theme.colors.onError : theme.colors.onPrimary, fontWeight: '700' }}>{'destructive' in item.action && item.action.destructive ? 'Delete' : 'Confirm'}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -580,19 +595,10 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={headerHeight}
+        keyboardVerticalOffset={0}
       >
         {historyOpen && (
-          <View
-            style={[
-              styles.historyPanel,
-              {
-                top: headerHeight + 4,
-                backgroundColor: isDark ? 'rgba(28,31,38,0.97)' : 'rgba(255,255,255,0.97)',
-                borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)',
-              },
-            ]}
-          >
+          <GlassView style={[styles.historyPanel, { top: headerHeight + 4 }]}>
             {threads.length === 0 ? (
               <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, padding: 14 }}>
                 No conversations yet.
@@ -637,7 +643,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                 </View>
               ))
             )}
-          </View>
+          </GlassView>
         )}
         <FlatList
           ref={listRef}
@@ -686,7 +692,10 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           </View>
         ) : null}
 
-        <View style={[styles.inputBar, { marginBottom: Math.max(insets.bottom, 8), backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}>
+        <GlassView
+          style={[styles.inputBarShell, { marginBottom: keyboardVisible ? 8 : Math.max(insets.bottom, 8) }]}
+          contentStyle={styles.inputBarRow}
+        >
           <TextInput
             mode="flat"
             value={input}
@@ -695,6 +704,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
             multiline
             underlineColor="transparent"
             activeUnderlineColor="transparent"
+            selectionColor={theme.colors.primary}
             style={styles.textInput}
             onSubmitEditing={() => send()}
             blurOnSubmit
@@ -702,7 +712,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           <TouchableOpacity onPress={() => send()} disabled={busy || !input.trim()} style={styles.sendBtn} accessibilityLabel="Send">
             <Icon source="arrow-up-circle" size={34} color={input.trim() && !busy ? theme.colors.primary : theme.colors.onSurfaceVariant} />
           </TouchableOpacity>
-        </View>
+        </GlassView>
       </KeyboardAvoidingView>
     </GuardedScreen>
     </LiquidBackground>
@@ -719,7 +729,6 @@ const styles = StyleSheet.create({
     right: 12,
     zIndex: 20,
     borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
   historyRow: {
@@ -743,7 +752,8 @@ const styles = StyleSheet.create({
   actionBtn: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1 },
   quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
   quickChip: { borderRadius: 16, paddingVertical: 6, paddingHorizontal: 12 },
-  inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginHorizontal: 12, marginTop: 4, borderRadius: 24, paddingLeft: 16, paddingRight: 6, paddingVertical: 4 },
+  inputBarShell: { marginHorizontal: 12, marginTop: 4, borderRadius: 24 },
+  inputBarRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingLeft: 16, paddingRight: 6, paddingVertical: 4 },
   textInput: { flex: 1, backgroundColor: 'transparent', maxHeight: 120, fontSize: 15 },
   sendBtn: { paddingBottom: 6 },
 });
