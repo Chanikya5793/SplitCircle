@@ -56,6 +56,7 @@ vi.mock('@/components/ui', () => ({
     </div>
   ),
   GuardedScreen: ({ children }: any) => <div>{children}</div>,
+  GlassCard: ({ children }: any) => <div>{children}</div>,
 }));
 
 vi.mock('@/context/ThemeContext', () => ({
