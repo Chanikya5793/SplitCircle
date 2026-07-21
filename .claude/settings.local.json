@@ -10,7 +10,8 @@
       "Bash(node scripts/validate_palette.js \"#58A6FF,#2DD4BF,#FBBF24,#A78BFA,#FB7185,#34D399,#F472B6,#94A3B8\" --mode dark)",
       "Bash(sed -n 550-575p /Users/chanakya/SplitCircle/src/navigation/AppNavigator.tsx; grep -rn \"cog\\\\|gear\\\\|settings\" /Users/chanakya/SplitCircle/src/screens/groups/GroupStatsScreen.tsx /Users/chanakya/SplitCircle/src/components/ui/GuardedScreen.tsx 2>/dev/null | head; ls /Users/chanakya/SplitCircle/src/components/ui/ | head -30)",
       "Bash(npx vitest *)",
-      "Bash(xcrun simctl *)"
+      "Bash(xcrun simctl *)",
+      "Bash(ls -la ~/.claude/projects/ 2>/dev/null | head -30)"
     ]
   }
 }

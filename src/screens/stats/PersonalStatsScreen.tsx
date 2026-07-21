@@ -143,7 +143,11 @@ export const PersonalStatsScreen = () => {
   return (
     <LiquidBackground>
       <GuardedScreen target="expenses" label="Stats hidden" duressBehavior="blank" duressLabel="Not enough activity to chart yet.">
-        <ScrollView contentContainerStyle={[styles.container, { paddingTop: headerHeight + 8 }]}>
+        <ScrollView
+          contentContainerStyle={[styles.container, { paddingTop: headerHeight + 8 }]}
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets
+        >
           <View style={styles.rangeRow}>
             {(Object.keys(RANGE_LABELS) as StatsRange[]).map((r) => (
               <TouchableOpacity
