@@ -314,7 +314,11 @@ public struct AddExpenseIntent: AppIntent {
     guard SplitCircleIndexReader.group(id: group.id, userId: userId) != nil else {
       return .result(dialog: "I couldn't find that group — try again and pick one from the list.")
     }
-    guard amount > 0 else {
+    // Pre-ship review finding: a non-finite amount (e.g. Infinity from a Shortcuts
+    // divide-by-zero magic variable) passes `amount > 0` but can't be JSON-encoded —
+    // enqueuePendingExpense's JSONSerialization silently no-ops, yet perform() would
+    // still speak a success dialog with nothing actually queued. Reject it explicitly.
+    guard amount > 0, amount.isFinite else {
       return .result(dialog: "That amount doesn't look right — try a positive number.")
     }
     // Itemized needs per-item receipt data (price/assignedTo per line) that there's no
@@ -455,7 +459,10 @@ public struct SettleUpIntent: AppIntent {
     guard SplitCircleIndexReader.group(id: group.id, userId: userId) != nil else {
       return .result(dialog: "I couldn't find that group — try again and pick one from the list.")
     }
-    guard amount > 0 else {
+    // Pre-ship review finding: same non-finite-amount guard as AddExpenseIntent — see
+    // that struct's comment for why (JSONSerialization silently drops Infinity/NaN,
+    // but perform() would still speak a false success dialog).
+    guard amount > 0, amount.isFinite else {
       return .result(dialog: "That amount doesn't look right — try a positive number.")
     }
     guard person.groupId == group.id else {
