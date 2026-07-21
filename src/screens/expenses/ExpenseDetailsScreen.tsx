@@ -1,6 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { EmptyState, GuardedScreen } from '@/components/ui';
+import { EmptyState, GlassCard, GuardedScreen } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -15,9 +15,9 @@ import { buildReceiptInsightRows } from '@/utils/receiptInsights';
 import { useNavigation } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, Image, Modal, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
-import { Button, Chip, Dialog, Divider, Icon, IconButton, Portal, Text, TextInput } from 'react-native-paper';
+import { Button, Chip, Divider, Icon, IconButton, Text, TextInput } from 'react-native-paper';
 
 // Category to Icon mapping
 const getCategoryIcon = (category: string): string => {
@@ -494,20 +494,35 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
           </View>
         </GlassView>
 
-        <Portal>
-          <Dialog visible={showDeleteDialog} onDismiss={() => setShowDeleteDialog(false)} style={{ backgroundColor: theme.colors.surface }}>
-            <Dialog.Title style={{ color: theme.colors.onSurface }}>Delete Expense</Dialog.Title>
-            <Dialog.Content>
-              <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>Are you sure you want to delete this expense? This cannot be undone.</Text>
-            </Dialog.Content>
-            <Dialog.Actions>
-              <Button onPress={() => setShowDeleteDialog(false)}>Cancel</Button>
-              <Button textColor={theme.colors.error} onPress={handleDelete}>
-                Delete
-              </Button>
-            </Dialog.Actions>
-          </Dialog>
-        </Portal>
+        <Modal
+          visible={showDeleteDialog}
+          transparent
+          statusBarTranslucent
+          animationType="fade"
+          onRequestClose={() => setShowDeleteDialog(false)}
+        >
+          <Pressable
+            style={styles.deleteDialogBackdrop}
+            onPress={() => setShowDeleteDialog(false)}
+            accessibilityLabel="Dismiss delete confirmation"
+          />
+          <View style={styles.deleteDialogWrap} pointerEvents="box-none">
+            <GlassCard style={styles.deleteDialogCard}>
+              <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
+                Delete Expense
+              </Text>
+              <Text variant="bodyMedium" style={[styles.deleteDialogBody, { color: theme.colors.onSurfaceVariant }]}>
+                Are you sure you want to delete this expense? This cannot be undone.
+              </Text>
+              <View style={styles.deleteDialogActions}>
+                <Button onPress={() => setShowDeleteDialog(false)}>Cancel</Button>
+                <Button textColor={theme.colors.error} onPress={handleDelete}>
+                  Delete
+                </Button>
+              </View>
+            </GlassCard>
+          </View>
+        </Modal>
 
         <Modal visible={showImageModal} transparent={true} onRequestClose={() => setShowImageModal(false)}>
           <View style={styles.modalContainer}>
@@ -530,6 +545,30 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     paddingBottom: 180,
     flexGrow: 1,
+  },
+  deleteDialogBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  deleteDialogWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  deleteDialogCard: {
+    width: '100%',
+    maxWidth: 400,
+    padding: spacing.lg,
+  },
+  deleteDialogBody: {
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  deleteDialogActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: spacing.xs,
   },
   card: {
     padding: spacing.lg,
