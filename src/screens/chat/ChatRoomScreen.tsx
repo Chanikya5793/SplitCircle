@@ -16,12 +16,13 @@ import {
 import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
 import type { MediaPreviewSendItem } from '@/components/Chat/MediaPreview';
 import type { MessageAction } from '@/components/Chat/MessageActionSheet';
+import { EmojiPickerSheet } from '@/components/Chat/EmojiPickerSheet';
 import { ReactionDetailsSheet } from '@/components/Chat/ReactionDetailsSheet';
 import type { SelectionAction } from '@/components/Chat/SelectionToolbar';
 import { AlbumBubble } from '@/components/AlbumBubble';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GroupAvatar, UserAvatar } from '@/components/ui';
+import { GlassToast, GroupAvatar, UserAvatar } from '@/components/ui';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { WallpaperPickerSheet } from '@/components/ui';
@@ -41,7 +42,7 @@ import { useMentionAutocomplete } from '@/hooks/useMentionAutocomplete';
 import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import { useSelectionMode } from '@/hooks/useSelectionMode';
 import { useTypingPresence } from '@/hooks/useTypingPresence';
-import type { ChatMessage, ChatParticipant, ChatThread, MessageType, PinnedMessageRef } from '@/models';
+import type { ChatMessage, ChatParticipant, ChatThread, MessageType, PinnedMessageRef, ReactionMap } from '@/models';
 import { appAlert } from '@/utils/appAlert';
 import {
   markMessageDeletedForUser,
@@ -65,7 +66,7 @@ import { useNavigation } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, FlatList, InteractionManager, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Avatar, Icon, IconButton, Snackbar, Text, TextInput } from 'react-native-paper';
+import { Avatar, Icon, IconButton, Text, TextInput } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Edit window — WhatsApp allows edits up to 15 minutes after sending.
@@ -437,6 +438,10 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
   // Reaction details sheet state
   const [reactionTarget, setReactionTarget] = useState<ChatMessage | null>(null);
+  // "+" in the quick-reaction row opens the full emoji grid — a separate target
+  // because by the time the user picks an emoji, actionTarget (MessageActionSheet's
+  // own target) has already been cleared by that sheet's own close animation.
+  const [emojiPickerTarget, setEmojiPickerTarget] = useState<ChatMessage | null>(null);
   // Undo-delete-for-me snackbar — holds the most recent set of messageIds the
   // user just hid, so they can recover within DELETE_UNDO_WINDOW_MS.
   const [undoDelete, setUndoDelete] = useState<{ messageIds: string[] } | null>(null);
@@ -605,17 +610,31 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
         const editedAt = item.editedAt ?? 0;
         const contentLen = item.content?.length ?? 0;
         const statusCode = item.status === 'read' ? 4 : item.status === 'delivered' ? 3 : item.status === 'sent' ? 2 : item.status === 'failed' ? 5 : 1;
-        let reactionsCount = 0;
+        // A plain count (e.g. reactionsCount) is blind to WHICH emoji or WHO
+        // reacted — swapping 👍→❤️, or one user's remove exactly offsetting
+        // another's add elsewhere in the map, leaves the count unchanged and
+        // the mutation invisible to this gate, so a real reaction update can
+        // silently fail to reach setMessages. Fold the actual emoji/userId
+        // characters in instead — still numeric-only, no string allocation.
+        let reactionsFingerprint = 0;
         if (item.reactions) {
-          for (const ids of Object.values(item.reactions)) {
-            reactionsCount += ids.length;
+          for (const emoji in item.reactions) {
+            for (let c = 0; c < emoji.length; c++) {
+              reactionsFingerprint = (reactionsFingerprint * 31 + emoji.charCodeAt(c)) | 0;
+            }
+            const ids = item.reactions[emoji];
+            for (const id of ids) {
+              for (let c = 0; c < id.length; c++) {
+                reactionsFingerprint = (reactionsFingerprint * 31 + id.charCodeAt(c)) | 0;
+              }
+            }
           }
         }
         // djb2-inspired rolling hash
         statusFingerprint = ((statusFingerprint << 5) - statusFingerprint +
           i * 31 + deliveredCount * 7 + readCount * 13 + starredCount * 17 +
           deletedForCount * 23 + deletedAll * 37 + (editedAt & 0xFFFF) +
-          contentLen * 3 + statusCode * 41 + reactionsCount * 53) | 0;
+          contentLen * 3 + statusCode * 41 + reactionsFingerprint * 53) | 0;
       }
       const statusChanged = statusFingerprint !== prevStatusFingerprint;
 
@@ -877,15 +896,51 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     });
   }, [navigation, thread.chatId, mediaPipelineLoading]);
 
+  // Reactions have no server-confirmed id to key an optimistic update off of
+  // (unlike star/delete, which flip a field on the message itself), so they
+  // previously relied entirely on the notify → debounced-reload → fingerprint
+  // round trip to reach the screen — any hiccup there and a tap silently
+  // "didn't work." Applying the locally-computed next reactions map directly
+  // gives reactions the same immediate, reliable update star/delete already
+  // have; the eventual reload just confirms what's already on screen.
+  const applyLocalReactions = useCallback((targetId: string, reactions: ReactionMap) => {
+    const reactionsLocalVersion = Date.now();
+    setMessages((prev) =>
+      prev.map((m) => ((m.messageId || m.id) === targetId ? { ...m, reactions, reactionsLocalVersion } : m)),
+    );
+  }, []);
+
   const handleReact = useCallback(async (emoji: string) => {
     if (!user || !actionTarget) return;
+    if (emoji === '+') {
+      // Hand off to the full emoji grid — actionTarget itself is about to be
+      // cleared by MessageActionSheet's own close animation, so capture the
+      // target separately for whenever the user actually picks an emoji.
+      // Deferred past MessageActionSheet's own 120ms close animation: two
+      // native Modals both visible while one is still transitioning out is
+      // unreliable (the second can silently fail to present) — same reason
+      // the 'select' action below defers entering selection mode.
+      const target = actionTarget;
+      setTimeout(() => setEmojiPickerTarget(target), 150);
+      return;
+    }
     const targetId = actionTarget.messageId || actionTarget.id;
-    const finalEmoji = emoji === '+' ? '❤️' : emoji;
-    const next = await toggleMessageReaction(thread.chatId, targetId, user.userId, finalEmoji);
+    const next = await toggleMessageReaction(thread.chatId, targetId, user.userId, emoji);
     if (next !== undefined) {
+      applyLocalReactions(targetId, next);
       void publishMessageState(thread.chatId, targetId, { reactions: next });
     }
-  }, [actionTarget, thread.chatId, user]);
+  }, [actionTarget, thread.chatId, user, applyLocalReactions]);
+
+  const handlePickEmoji = useCallback(async (emoji: string) => {
+    if (!user || !emojiPickerTarget) return;
+    const targetId = emojiPickerTarget.messageId || emojiPickerTarget.id;
+    const next = await toggleMessageReaction(thread.chatId, targetId, user.userId, emoji);
+    if (next !== undefined) {
+      applyLocalReactions(targetId, next);
+      void publishMessageState(thread.chatId, targetId, { reactions: next });
+    }
+  }, [emojiPickerTarget, thread.chatId, user, applyLocalReactions]);
 
   const handleReactionsPress = useCallback((message: ChatMessage) => {
     // Open the reaction details sheet (not the action sheet).
@@ -1049,9 +1104,10 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     const targetId = message.messageId || message.id;
     const next = await toggleMessageReaction(thread.chatId, targetId, user.userId, '❤️');
     if (next !== undefined) {
+      applyLocalReactions(targetId, next);
       void publishMessageState(thread.chatId, targetId, { reactions: next });
     }
-  }, [thread.chatId, user]);
+  }, [thread.chatId, user, applyLocalReactions]);
 
   // ──────────────────────────── Selection mode ────────────────────────────
   const handleBulkAction = useCallback(async (action: SelectionAction) => {
@@ -2061,8 +2117,19 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
                   onPress: () => {
                     void (async () => {
                       try {
-                        const currency =
-                          groups.find((g) => !g.hidden)?.currency ?? 'USD';
+                        // Was picking an arbitrary non-hidden group's currency
+                        // (whichever happened to be first in the current array
+                        // order) — deterministic-but-meaningless, and could
+                        // land on a currency that has nothing to do with this
+                        // relationship. Prefer a group this user and the other
+                        // participant actually already share (most recently
+                        // active one), which is at least a relevant signal;
+                        // fall back to 'USD', the same default a brand-new
+                        // group's own currency picker starts on.
+                        const sharedGroups = groups
+                          .filter((g) => !g.hidden && g.members.some((m) => m.userId === directParticipant.userId))
+                          .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+                        const currency = sharedGroups[0]?.currency ?? 'USD';
                         const ledgerId = await ensureHiddenLedgerGroup(
                           { userId: user.userId, displayName: user.displayName, photoURL: user.photoURL ?? undefined },
                           {
@@ -2218,15 +2285,34 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
           const targetId = reactionTarget.messageId || reactionTarget.id;
           const next = await toggleMessageReaction(thread.chatId, targetId, user.userId, emoji);
           if (next !== undefined) {
+            applyLocalReactions(targetId, next);
             void publishMessageState(thread.chatId, targetId, { reactions: next });
           }
         }}
         onClose={() => setReactionTarget(null)}
       />
 
-      {/* Undo delete-for-me snackbar — auto-dismisses after the undo window. */}
-      <Snackbar
+      <EmojiPickerSheet
+        visible={!!emojiPickerTarget}
+        selectedEmojis={
+          user && emojiPickerTarget?.reactions
+            ? Object.entries(emojiPickerTarget.reactions)
+                .filter(([, ids]) => ids.includes(user.userId))
+                .map(([emoji]) => emoji)
+            : undefined
+        }
+        onPick={handlePickEmoji}
+        onClose={() => setEmojiPickerTarget(null)}
+      />
+
+      {/* Undo delete-for-me toast — auto-dismisses after the undo window. */}
+      <GlassToast
         visible={!!undoDelete}
+        message={
+          undoDelete && undoDelete.messageIds.length > 1
+            ? `${undoDelete.messageIds.length} messages deleted for you`
+            : 'Message deleted for you'
+        }
         onDismiss={() => setUndoDelete(null)}
         duration={DELETE_UNDO_WINDOW_MS}
         action={{
@@ -2235,12 +2321,8 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
             void handleUndoDelete();
           },
         }}
-        wrapperStyle={{ bottom: insets.bottom + 90 }}
-      >
-        {undoDelete && undoDelete.messageIds.length > 1
-          ? `${undoDelete.messageIds.length} messages deleted for you`
-          : 'Message deleted for you'}
-      </Snackbar>
+        bottomOffset={insets.bottom + 90}
+      />
 
       {/* Non-blocking media pipeline status — floats above the composer so the
           user can keep scrolling/typing/navigating while compression and

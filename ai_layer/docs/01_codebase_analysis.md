@@ -18,7 +18,7 @@
 | **Backend** | **Firebase Cloud Functions v2** (Node 22, Gen-2) | `functions/src/` |
 | **Primary DB** | **Cloud Firestore** | `firestore.rules`, `src/firebase/` |
 | **Realtime DB** | **Firebase Realtime Database** (call signaling only) | `database.rules.json`, `onValueCreated` |
-| **Auth** | **Firebase Auth** (Google OAuth + email) | `OAUTH_CONFIG.md`, `AuthContext.tsx` |
+| **Auth** | **Firebase Auth** (Google OAuth + email) | `OPS.md` (Google OAuth section), `AuthContext.tsx` |
 | **Storage** | Firebase Storage (`storageService.ts`) + on-device SQLite/AsyncStorage cache | `expo-sqlite`, `localMessageStorage.ts` |
 | **Realtime calls** | **LiveKit** (WebRTC) + CallKit/VoIP push | `livekit-client`, `functions/src/voipPush.ts` |
 | **Push** | Expo Push (data) + APNs VoIP (`@parse/node-apn`) | `functions/src/notifications.ts` |

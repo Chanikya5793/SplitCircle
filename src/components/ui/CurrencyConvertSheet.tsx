@@ -4,6 +4,7 @@
 // the confirmation dialog (rate + age + expense count), and busy states.
 
 import { useGroups } from '@/context/GroupContext';
+import { GlassCard } from './GlassCard';
 import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
 import type { Group } from '@/models';
@@ -30,7 +31,6 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
   const insets = useSafeAreaInsets();
   const [busyCurrency, setBusyCurrency] = useState<string | null>(null);
 
-  const surface = isDark ? '#1c1c20' : '#ffffff';
   const options = COMMON_CURRENCIES.filter((c) => c !== group.currency?.toUpperCase());
 
   const handlePick = async (target: string) => {
@@ -78,7 +78,7 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
   return (
     <Modal visible={visible} transparent statusBarTranslucent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close currency picker" />
-      <View style={[styles.sheet, { backgroundColor: surface, paddingBottom: insets.bottom + 12 }]}>
+      <GlassCard style={styles.sheetGlass} contentStyle={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
         <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }]} />
         <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
           Convert currency
@@ -97,7 +97,7 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
               accessibilityLabel={`Convert to ${code}`}
               style={[
                 styles.row,
-                { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' },
+                { borderBottomColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)' },
               ]}
             >
               <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
@@ -109,7 +109,7 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
             </TouchableOpacity>
           ))}
         </ScrollView>
-      </View>
+      </GlassCard>
     </Modal>
   );
 };
@@ -119,11 +119,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',  // modal scrim — intentionally scheme-independent
   },
-  sheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingTop: 8,
+  sheetGlass: {
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     maxHeight: '65%',
+  },
+  sheet: {
+    paddingTop: 8,
   },
   grabber: {
     alignSelf: 'center',

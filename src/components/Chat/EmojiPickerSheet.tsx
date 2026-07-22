@@ -1,3 +1,4 @@
+import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { lightHaptic } from '@/utils/haptics';
 import { BlurView } from 'expo-blur';
@@ -181,7 +182,6 @@ export const EmojiPickerSheet = memo(({
     onClose();
   };
 
-  const surface = (theme.colors as any).elevation?.level3 ?? theme.colors.surface;
   const tabActive = theme.colors.surfaceVariant ?? (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)');
   const selectedBg = `${theme.colors.primary}26`; // ~15% primary
 
@@ -200,7 +200,7 @@ export const EmojiPickerSheet = memo(({
         />
       </Pressable>
       <Animated.View style={styles.sheetAnchor} entering={SlideInDown.duration(260)}>
-        <View style={[styles.sheet, { backgroundColor: surface }]}>
+        <GlassCard style={styles.sheetGlass} contentStyle={styles.sheetContent}>
           <View style={styles.sheetHandle} />
           <Text
             variant="titleSmall"
@@ -265,7 +265,7 @@ export const EmojiPickerSheet = memo(({
               })}
             </View>
           </ScrollView>
-        </View>
+        </GlassCard>
       </Animated.View>
     </Modal>
   );
@@ -284,17 +284,22 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
   },
-  sheet: {
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    paddingBottom: 40,
-    paddingTop: 12,
+  sheetGlass: {
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     height: 460,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.18,
     shadowRadius: 12,
     elevation: 20,
+  },
+  sheetContent: {
+    flex: 1,
+    paddingBottom: 40,
+    paddingTop: 12,
   },
   sheetHandle: {
     width: 36,

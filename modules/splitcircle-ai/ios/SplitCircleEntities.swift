@@ -15,7 +15,7 @@ import Foundation
 /// conformances that live outside the main app module. Every AppEntity/AppIntent/
 /// AppShortcutsProvider type in this file and SplitCircleIntents.swift is public
 /// for that reason; that reliability claim itself is unverified without a real
-/// device build (see AI_ARCHITECTURE.md).
+/// device build (see CLAUDE.md's Architecture DNA section).
 @available(iOS 17.0, *)
 public struct SplitCircleGroupEntity: AppEntity {
   public let id: String

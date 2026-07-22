@@ -8,7 +8,7 @@ import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { getExpenseSplitLabel } from '@/utils/expenseSplit';
 import { StyleSheet, View } from 'react-native';
 import { IconButton, Text, TouchableRipple } from 'react-native-paper';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { SlideInDown } from 'react-native-reanimated';
 
 interface ExpenseCardProps {
   expense: Expense;
@@ -30,7 +30,7 @@ export const ExpenseCard = ({ expense, currency, memberMap, onPress, index = 0, 
   const splitLabel = getExpenseSplitLabel(expense);
 
   return (
-    <Animated.View entering={FadeInDown.delay(index * 50).springify()}>
+    <Animated.View entering={SlideInDown.delay(index * 50).springify()}>
       <GlassView style={styles.container}>
         <TouchableRipple onPress={onPress} style={{ flex: 1 }}>
           <View style={styles.content}>

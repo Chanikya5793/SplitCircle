@@ -298,7 +298,14 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
 
     // Doc 25: exact-repeat questions over unchanged facts answer instantly.
     const factsHash = hashFacts(args.facts);
-    const cacheKey = answerCacheKey(args.thread.surface, args.thread.scope, factsHash, args.userText);
+    const cacheKey = answerCacheKey(
+      args.thread.surface,
+      args.thread.scope,
+      factsHash,
+      args.userText,
+      args.engine ?? 'auto',
+      resolvedClarify,
+    );
     if (!args.replay) {
       const hit = answerCache.get(cacheKey);
       if (hit) return { ...hit.reply, trace: hit.trace };

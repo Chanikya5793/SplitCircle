@@ -53,6 +53,11 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
   // null target = off (show the group currency).
   const [staged, setStaged] = useState<string | null>(null);
   const [rateText, setRateText] = useState('');
+  // Whether the RATE TEXT was actually typed by the user, as opposed to
+  // seeded programmatically (a fresh currency tap, or reopening the sheet).
+  // This — not a numeric comparison against the live rate — is what "custom"
+  // means; see isCustom below.
+  const [userEditedRate, setUserEditedRate] = useState(false);
   const [table, setTable] = useState<RateTableResult | null>(null);
   const [tableError, setTableError] = useState<string | null>(null);
 
@@ -69,6 +74,7 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
       const usable = pref && pref.base === base && pref.target !== base ? pref : null;
       setStaged(usable && usable.enabled ? usable.target : null);
       setRateText(usable?.customRate !== undefined ? String(usable.customRate) : '');
+      setUserEditedRate(usable?.customRate !== undefined);
       setTableError(null);
       slide.setValue(0);
       Animated.timing(slide, {
@@ -89,14 +95,23 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
   const liveRate = staged ? table?.rates[staged] : undefined;
   const parsedRate = Number(rateText.replace(',', '.'));
   const rateValid = Number.isFinite(parsedRate) && parsedRate > 0;
-  // An edited rate that differs from the live one gets pinned as custom.
-  const isCustom = rateValid && (liveRate === undefined || Math.abs(parsedRate - liveRate) > 1e-9);
+  // Only a rate the user actually typed counts as "custom". Comparing the
+  // live rate against the displayed toFixed(4) value would treat the display
+  // rounding itself as an edit — the rounding error routinely exceeds any
+  // sane tolerance, so merely tapping a currency would falsely pin it.
+  const isCustom = rateValid && userEditedRate;
 
   const stageTarget = (code: string) => {
     lightHaptic();
     setStaged(code);
     const live = table?.rates[code];
     setRateText(live ? live.toFixed(4) : '');
+    setUserEditedRate(false);
+  };
+
+  const handleRateTextChange = (text: string) => {
+    setRateText(text);
+    setUserEditedRate(true);
   };
 
   const stageOff = () => {
@@ -126,7 +141,7 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
           : `≈ ${staged} · fetching rate…`;
 
   const translateY = slide.interpolate({ inputRange: [0, 1], outputRange: [sheetH + 60, 0] });
-  const hairline = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)';
+  const hairline = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)';
   const inputBorder = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)';
 
   return (
@@ -212,7 +227,7 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
                   </Text>
                   <RNTextInput
                     value={rateText}
-                    onChangeText={setRateText}
+                    onChangeText={handleRateTextChange}
                     keyboardType="decimal-pad"
                     accessibilityLabel="Exchange rate"
                     placeholder="rate"

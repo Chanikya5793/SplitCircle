@@ -22,6 +22,7 @@ import {
     getDoc,
     getDocs,
     query,
+    runTransaction,
     updateDoc,
     where,
     writeBatch,
@@ -376,6 +377,15 @@ export const generateExpenseFromBill = (
  * advances the rotation turn. Client UX gates callers to payer/admin; data
  * safety comes from the deterministic id (double-confirm converges on one
  * expense via set-with-merge + arrayUnion).
+ *
+ * Runs inside a transaction that RE-READS the bill instead of trusting the
+ * caller's (possibly stale) `bill` argument: two chat cards confirming two
+ * different pending occurrences on the same bill at nearly the same time
+ * would otherwise both compute the same rotation turn/payer and the second
+ * write to land would silently clobber the first's pendingOccurrences/rotation
+ * update. Firestore retries a transaction whose read is invalidated by a
+ * concurrent commit, so the second confirm here correctly sees the first
+ * one's result and advances from there instead of repeating it.
  */
 export const confirmVariableOccurrence = async (
     bill: RecurringBill,
@@ -385,25 +395,32 @@ export const confirmVariableOccurrence = async (
     if (!Number.isFinite(amount) || amount <= 0) {
         throw new Error('A positive amount is required to confirm this bill.');
     }
-    const paidBy = resolveRotationPayer(bill);
-    const expense = generateExpenseFromBill(bill, occurrenceAt, { amount, paidBy });
 
-    const batch = writeBatch(db);
-    const groupRef = doc(db, 'groups', bill.groupId);
-    batch.update(groupRef, {
-        expenses: arrayUnion(expense),
-        updatedAt: Date.now(),
+    const billRef = doc(db, COLLECTION_NAME, bill.billId);
+    let expense!: Expense;
+    await runTransaction(db, async (txn) => {
+        const freshSnap = await txn.get(billRef);
+        if (!freshSnap.exists()) throw new Error('Recurring bill not found.');
+        const freshBill = normalizeRecurringBill(bill.billId, freshSnap.data());
+
+        const paidBy = resolveRotationPayer(freshBill);
+        expense = generateExpenseFromBill(freshBill, occurrenceAt, { amount, paidBy });
+
+        const groupRef = doc(db, 'groups', freshBill.groupId);
+        txn.update(groupRef, {
+            expenses: arrayUnion(expense),
+            updatedAt: Date.now(),
+        });
+        txn.set(doc(db, 'expenses', expense.expenseId), expense, { merge: true });
+        txn.update(billRef, {
+            pendingOccurrences: (freshBill.pendingOccurrences ?? []).filter((ts) => ts !== occurrenceAt),
+            lastGeneratedAt: occurrenceAt,
+            ...(freshBill.rotation
+                ? { rotation: { order: freshBill.rotation.order, index: (freshBill.rotation.index + 1) % freshBill.rotation.order.length } }
+                : {}),
+            updatedAt: Date.now(),
+        });
     });
-    batch.set(doc(db, 'expenses', expense.expenseId), expense, { merge: true });
-    batch.update(doc(db, COLLECTION_NAME, bill.billId), {
-        pendingOccurrences: (bill.pendingOccurrences ?? []).filter((ts) => ts !== occurrenceAt),
-        lastGeneratedAt: occurrenceAt,
-        ...(bill.rotation
-            ? { rotation: { order: bill.rotation.order, index: (bill.rotation.index + 1) % bill.rotation.order.length } }
-            : {}),
-        updatedAt: Date.now(),
-    });
-    await batch.commit();
     return expense;
 };
 
@@ -411,19 +428,30 @@ export const confirmVariableOccurrence = async (
  * Skip the bill's next occurrence ("we were all traveling in June"): records
  * it in skippedOccurrences and advances nextDueAt. The rotation turn is NOT
  * consumed. Works for pending variable occurrences too (pass their timestamp).
+ *
+ * Re-reads the bill inside a transaction for the same reason as
+ * confirmVariableOccurrence above — skipping one occurrence while a chat card
+ * confirms a different one on the same bill must not clobber either write.
  */
 export const skipOccurrence = async (bill: RecurringBill, occurrenceAt: number): Promise<void> => {
-    const updates: Record<string, unknown> = {
-        skippedOccurrences: [...new Set([...(bill.skippedOccurrences ?? []), occurrenceAt])].sort((a, b) => a - b),
-        pendingOccurrences: (bill.pendingOccurrences ?? []).filter((ts) => ts !== occurrenceAt),
-        updatedAt: Date.now(),
-    };
-    if (occurrenceAt === bill.nextDueAt) {
-        const next = getNextDueAt(bill.recurrenceRule, bill.startAt, occurrenceAt);
-        if (next) updates.nextDueAt = next;
-        else updates.isActive = false;
-    }
-    await updateDoc(doc(db, COLLECTION_NAME, bill.billId), updates);
+    const billRef = doc(db, COLLECTION_NAME, bill.billId);
+    await runTransaction(db, async (txn) => {
+        const freshSnap = await txn.get(billRef);
+        if (!freshSnap.exists()) throw new Error('Recurring bill not found.');
+        const freshBill = normalizeRecurringBill(bill.billId, freshSnap.data());
+
+        const updates: Record<string, unknown> = {
+            skippedOccurrences: [...new Set([...(freshBill.skippedOccurrences ?? []), occurrenceAt])].sort((a, b) => a - b),
+            pendingOccurrences: (freshBill.pendingOccurrences ?? []).filter((ts) => ts !== occurrenceAt),
+            updatedAt: Date.now(),
+        };
+        if (occurrenceAt === freshBill.nextDueAt) {
+            const next = getNextDueAt(freshBill.recurrenceRule, freshBill.startAt, occurrenceAt);
+            if (next) updates.nextDueAt = next;
+            else updates.isActive = false;
+        }
+        txn.update(billRef, updates);
+    });
 };
 
 /**
@@ -536,13 +564,29 @@ export const processDueBills = async (
                 }
             }
 
+            // Cap pendingOccurrences at MAX_PENDING_OCCURRENCES (oldest first
+            // out), but the ones truncated off must land in skippedOccurrences
+            // — otherwise they vanish with no expense, no skip record, and (since
+            // nextDueAt has already moved past them) no way to ever confirm or
+            // regenerate them.
+            const sortedPending = pending.sort((a, b) => a - b);
+            const keptPending = sortedPending.slice(-MAX_PENDING_OCCURRENCES);
+            const droppedPending = sortedPending.slice(0, -MAX_PENDING_OCCURRENCES);
+
             batch.update(billRef, {
                 recurrenceRule: bill.recurrenceRule,
                 startAt: bill.startAt,
                 nextDueAt: currentDueAt,
                 isActive: shouldDeactivate ? false : bill.isActive,
                 lastGeneratedAt: lastGeneratedAt ?? null,
-                pendingOccurrences: pending.sort((a, b) => a - b).slice(-MAX_PENDING_OCCURRENCES),
+                pendingOccurrences: keptPending,
+                ...(droppedPending.length > 0
+                    ? {
+                        skippedOccurrences: [...new Set([...(bill.skippedOccurrences ?? []), ...droppedPending])].sort(
+                            (a, b) => a - b,
+                        ),
+                    }
+                    : {}),
                 ...(bill.rotation ? { rotation: { order: bill.rotation.order, index: rotationIndex } } : {}),
                 updatedAt: Date.now(),
             });

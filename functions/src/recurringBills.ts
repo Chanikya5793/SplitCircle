@@ -300,13 +300,25 @@ const processBill = async (
         });
     }
 
+    // Cap pendingOccurrences at MAX_PENDING_OCCURRENCES (oldest first out),
+    // but the ones truncated off must land in skippedOccurrences — otherwise
+    // they vanish with no expense, no skip record, and (since nextDueAt has
+    // already moved past them) no way to ever confirm or regenerate them.
+    // Mirrors the client fallback's identical fix in recurringBillService.ts.
+    const sortedPending = pending.sort((a, b) => a - b);
+    const keptPending = sortedPending.slice(-MAX_PENDING_OCCURRENCES);
+    const droppedPending = sortedPending.slice(0, -MAX_PENDING_OCCURRENCES);
+
     batch.update(billRef, {
         recurrenceRule: bill.recurrenceRule,
         startAt: bill.startAt,
         nextDueAt: processedCount > 0 ? currentDueAt : bill.nextDueAt,
         isActive: shouldDeactivate ? false : bill.isActive,
         lastGeneratedAt: lastGeneratedAt ?? null,
-        pendingOccurrences: pending.sort((a, b) => a - b).slice(-MAX_PENDING_OCCURRENCES),
+        pendingOccurrences: keptPending,
+        ...(droppedPending.length > 0
+            ? { skippedOccurrences: [...new Set([...bill.skippedOccurrences, ...droppedPending])].sort((a, b) => a - b) }
+            : {}),
         ...(bill.rotation ? { rotation: { order: bill.rotation.order, index: rotationIndex } } : {}),
         ...(shouldRemind ? { reminderSentFor: upcomingDueAt } : {}),
         updatedAt: Date.now(),

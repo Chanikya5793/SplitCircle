@@ -3,7 +3,7 @@ import { DebtsList } from '@/components/DebtsList';
 import { ActivityTypeFilter, DateRange, FilterSortSheet, SortField, SortOrder } from '@/components/FilterSortSheet';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GroupAvatar } from '@/components/ui';
+import { GroupAvatar, GlassCard } from '@/components/ui';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { SettlementCard } from '@/components/SettlementCard';
 import { ExpenseCardSkeleton } from '@/components/SkeletonLoader';
@@ -816,13 +816,15 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 style={styles.compactButtonSmall}
                 borderless
               >
-                <View style={{ flex: 1 }}>
-                  <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-                  <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
-                    <IconButton icon="chart-pie" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
-                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
-                  </View>
-                </View>
+                {/* forceBlur: this button sits inside expandedContainer's continuous
+                    scroll-linked opacity cross-fade — an ancestor with fractional
+                    opacity kills the native iOS 26 glass material (DESIGN.md's kill
+                    list). Not a one-shot mount animation, so it can't be restructured
+                    to transform-only like an entering/exiting preset. */}
+                <GlassCard style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
+                  <IconButton icon="chart-pie" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
+                </GlassCard>
               </TouchableRipple>
 
               <TouchableRipple
@@ -830,13 +832,10 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 style={styles.compactButtonSmall}
                 borderless
               >
-                <View style={{ flex: 1 }}>
-                  <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-                  <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
-                    <IconButton icon="chat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
-                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
-                  </View>
-                </View>
+                <GlassCard style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
+                  <IconButton icon="chat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
+                </GlassCard>
               </TouchableRipple>
 
               <TouchableRipple
@@ -844,13 +843,10 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 style={styles.compactButtonSmall}
                 borderless
               >
-                <View style={{ flex: 1 }}>
-                  <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-                  <View style={[styles.compactButtonSmallInner, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)' }]}>
-                    <IconButton icon="repeat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
-                    <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
-                  </View>
-                </View>
+                <GlassCard style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
+                  <IconButton icon="repeat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                  <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
+                </GlassCard>
               </TouchableRipple>
             </View>
           </Animated.View>
@@ -867,7 +863,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               ]}
               pointerEvents={isCompact ? 'auto' : 'none'}
             >
-              <View style={[styles.androidDock, { backgroundColor: isDark ? 'rgba(18,22,30,0.96)' : 'rgba(252,252,255,0.98)', borderColor: isDark ? 'rgba(148,163,184,0.24)' : 'rgba(15,23,42,0.14)' }]}>
+              <GlassCard style={styles.androidDock} contentStyle={styles.androidDockContent} radius={50}>
                 <TouchableRipple onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.success }]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="handshake" size={18} color="#fff" />
@@ -898,7 +894,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                     <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Add</Text>
                   </View>
                 </TouchableRipple>
-              </View>
+              </GlassCard>
             </Animated.View>
           )}
       </View>
@@ -1003,6 +999,9 @@ const styles = StyleSheet.create({
     borderRadius: 50,
     overflow: 'hidden',
   },
+  compactButtonSmallGlass: {
+    flex: 1,
+  },
   compactButtonSmallInner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1020,18 +1019,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   androidDock: {
-    borderRadius: 50,
-    borderWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    gap: 10,
     elevation: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.18,
     shadowRadius: 12,
+  },
+  androidDockContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    gap: 10,
   },
   androidDockButton: {
     flex: 1,

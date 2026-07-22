@@ -78,6 +78,9 @@
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>com.splitcircle.ask-ai</string>
+		<string>INStartCallIntent</string>
+		<string>INStartAudioCallIntent</string>
+		<string>INStartVideoCallIntent</string>
 	</array>
 	<key>RCTNewArchEnabled</key>
 	<true/>

@@ -107,16 +107,20 @@ export const SpendingChart = ({ expenses, currency, rate = 1, showPieChart = tru
         },
     };
 
-    if (expenses.length === 0 || lineData.data.length === 0) {
-        // Privacy guard: charts target hides the whole visualization.
-        if (chartsShielded) {
-            return chartAction === 'vanish' ? null : (
-                <GlassView style={styles.container}>
-                    <Text style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>Hidden</Text>
-                </GlassView>
-            );
-        }
+    // Privacy guard: charts target hides the whole visualization. This must
+    // run before the empty-data check below, not inside it — the real charts
+    // (populated with actual spending data) are rendered further down with no
+    // guard of their own, so checking only inside the empty-data branch left
+    // the shield doing nothing for anyone with real data to hide.
+    if (chartsShielded) {
+        return chartAction === 'vanish' ? null : (
+            <GlassView style={styles.container}>
+                <Text style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>Hidden</Text>
+            </GlassView>
+        );
+    }
 
+    if (expenses.length === 0 || lineData.data.length === 0) {
         return (
             <GlassView style={styles.container}>
                 <Text style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>

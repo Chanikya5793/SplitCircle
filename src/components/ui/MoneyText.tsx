@@ -5,6 +5,7 @@
 import { useDisplayCurrency } from '@/context/DisplayCurrencyContext';
 import { useTheme } from '@/context/ThemeContext';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
+import { decoyAmount } from '@/services/privacyGuardService';
 import { formatCurrency } from '@/utils/currency';
 import React from 'react';
 import { StyleProp, TextStyle } from 'react-native';
@@ -60,16 +61,28 @@ export const MoneyText = ({
           : theme.colors.onSurface;
 
   // Privacy guard: every amount in the app funnels through here, so one
-  // check scrambles them all when the "expenses" shield is tripped.
-  const { isShielded, action } = usePrivacyGuard();
-  const scrambleAmounts = isShielded('expenses');
+  // check scrambles them all when the "expenses" shield is tripped. Mirrors
+  // useMoneyDisplay's branch order exactly — the same guard-aware formatter
+  // every other money-rendering component (BalanceSummary, DebtsList,
+  // ExpenseCard, SettlementCard, ...) already uses. Duress MUST show a
+  // believable scaled decoy, never the dots/blocks placeholder: an obvious
+  // "hidden" marker immediately tips off a coercer that something's hidden,
+  // defeating the whole point of the fake-unlock decoy world.
+  const { isShielded, action, duress, settings } = usePrivacyGuard();
+  const scrambleAmounts = isShielded('expenses', groupId);
 
   const type = theme.typography[size];
-  const magnitude = scrambleAmounts
-    ? action === 'vanish'
-      ? '···'
-      : '••••'
-    : formatCurrency(Math.abs(displayAmount), displayCurrency);
+  const magnitude = !scrambleAmounts
+    ? formatCurrency(Math.abs(displayAmount), displayCurrency)
+    : duress
+      ? formatCurrency(decoyAmount(Math.abs(displayAmount), groupId ?? 'global'), displayCurrency)
+      : action === 'vanish'
+        ? '···'
+        : settings.amountStyle === 'zeros'
+          ? formatCurrency(0, displayCurrency)
+          : settings.amountStyle === 'decoy'
+            ? formatCurrency(decoyAmount(Math.abs(displayAmount), groupId ?? 'global'), displayCurrency)
+            : '••••';
   const sign = !scrambleAmounts && showSign && amount !== 0 ? (amount > 0 ? '+' : '−') : '';
   const approx = !scrambleAmounts && conversion ? '≈' : '';
 

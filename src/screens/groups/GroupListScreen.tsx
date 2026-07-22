@@ -1,6 +1,6 @@
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
-import { StickyHeaderPill } from '@/components/ui';
+import { GlassCard, StickyHeaderPill } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
@@ -25,9 +25,9 @@ import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Keyboard, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, Keyboard, Modal, Platform, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
-import { Button, Modal, Portal, Text, IconButton, Chip, TouchableRipple } from 'react-native-paper';
+import { Button, Text, IconButton, Chip, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface GroupListScreenProps {
@@ -409,28 +409,38 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         </TouchableOpacity>
       </View>}
 
-      <Portal>
-        <GroupFilterSortSheet
-          visible={filterVisible}
-          onClose={() => setFilterVisible(false)}
-          sortField={sortField}
-          sortOrder={sortOrder}
-          selectedCurrencies={selectedCurrencies}
-          availableCurrencies={availableCurrencies}
-          onSortFieldChange={setSortField}
-          onSortOrderChange={setSortOrder}
-          onCurrencyToggle={toggleCurrency}
-        />
+      <GroupFilterSortSheet
+        visible={filterVisible}
+        onClose={() => setFilterVisible(false)}
+        sortField={sortField}
+        sortOrder={sortOrder}
+        selectedCurrencies={selectedCurrencies}
+        availableCurrencies={availableCurrencies}
+        onSortFieldChange={setSortField}
+        onSortOrderChange={setSortOrder}
+        onCurrencyToggle={toggleCurrency}
+      />
 
-        <Modal
-          visible={dialog === 'create'}
-          onDismiss={() => setDialog(null)}
-          contentContainerStyle={[
-            styles.modalContainer,
-            keyboardVisible && { marginBottom: 300 }
-          ]}
+      {/* react-native-paper's own Modal wraps its content in a Surface with an
+          animated `opacity` style — exactly the "ancestor with fractional
+          opacity" that kills the native iOS 26 glass material (DESIGN.md's
+          native-material kill list). Every other sheet in this app already
+          uses RN core Modal for this reason; these two dialogs were the one
+          place still on paper's Modal, and it read as a fully bare/unstyled
+          overlay on a real device. */}
+      <Modal
+        visible={dialog === 'create'}
+        transparent
+        statusBarTranslucent
+        animationType="fade"
+        onRequestClose={() => setDialog(null)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setDialog(null)} accessibilityLabel="Close create group" />
+        <View
+          style={[styles.modalContainer, keyboardVisible && { marginBottom: 300 }]}
+          pointerEvents="box-none"
         >
-          <GlassView style={styles.glassCard}>
+          <GlassCard style={styles.glassCard}>
             <Text variant="headlineSmall" style={[styles.modalTitle, { color: theme.colors.onSurface }]}>Create group</Text>
             <ScrollView contentContainerStyle={{ paddingHorizontal: 4 }} keyboardShouldPersistTaps="handled">
               <FloatingLabelInput
@@ -452,12 +462,15 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
                   style={showCurrencyList ? { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } : undefined}
                 />
                 {showCurrencyList && (
-                  <View style={[styles.currencyList, { backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.85)', borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
+                  <GlassCard
+                    style={[styles.currencyList, { borderTopLeftRadius: 0, borderTopRightRadius: 0 }]}
+                    radius={20}
+                  >
                     <ScrollView nestedScrollEnabled={true} keyboardShouldPersistTaps="handled">
                       {filteredCurrencies.slice(0, 50).map((item) => (
                         <TouchableOpacity
                           key={item.code}
-                          style={[styles.currencyItem, { borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }]}
+                          style={[styles.currencyItem, { borderBottomColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)' }]}
                           onPress={() => {
                             setCurrencyInput(item.code);
                             setShowCurrencyList(false);
@@ -468,7 +481,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
                         </TouchableOpacity>
                       ))}
                     </ScrollView>
-                  </View>
+                  </GlassCard>
                 )}
               </View>
             </ScrollView>
@@ -484,18 +497,23 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
                 Create
               </PrimaryButton>
             </View>
-          </GlassView>
-        </Modal>
+          </GlassCard>
+        </View>
+      </Modal>
 
-        <Modal
-          visible={dialog === 'join'}
-          onDismiss={() => setDialog(null)}
-          contentContainerStyle={[
-            styles.modalContainer,
-            keyboardVisible && { marginBottom: 150 }
-          ]}
+      <Modal
+        visible={dialog === 'join'}
+        transparent
+        statusBarTranslucent
+        animationType="fade"
+        onRequestClose={() => setDialog(null)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setDialog(null)} accessibilityLabel="Close join group" />
+        <View
+          style={[styles.modalContainer, keyboardVisible && { marginBottom: 150 }]}
+          pointerEvents="box-none"
         >
-          <GlassView style={styles.glassCard}>
+          <GlassCard style={styles.glassCard}>
             <Text variant="headlineSmall" style={[styles.modalTitle, { color: theme.colors.onSurface }]}>Join group</Text>
             <FloatingLabelInput
               label="Invite code"
@@ -515,9 +533,9 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
                 {isOnline ? 'Join' : 'Offline'}
               </PrimaryButton>
             </View>
-          </GlassView>
-        </Modal>
-      </Portal>
+          </GlassCard>
+        </View>
+      </Modal>
 
     </LiquidBackground>
   );
@@ -569,12 +587,7 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   currencyList: {
-    borderWidth: 1,
-    borderTopWidth: 0,
     maxHeight: 150,
-    elevation: 4,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
   },
   currencyItem: {
     flexDirection: 'row',
@@ -582,7 +595,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     alignItems: 'center',
   },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
   modalContainer: {
+    flex: 1,
     padding: 20,
     alignItems: 'center',
     justifyContent: 'center',
@@ -591,7 +609,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 400,
     padding: 24,
-    borderRadius: 30,
+    borderRadius: 28,
   },
   modalTitle: {
     marginBottom: 0, // Spacing between title and first field

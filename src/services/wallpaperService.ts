@@ -50,6 +50,24 @@ type WallpaperMap = Partial<Record<string, StoredEntry>>;
 let cache: WallpaperMap | null = null;
 const listeners = new Set<() => void>();
 
+// Every mutation below does an unlocked load-modify-persist (spread the
+// current map, change one slot, persist the whole map back). Two concurrent
+// writes to DIFFERENT slots (e.g. app wallpaper + chat-default set in quick
+// succession, or an onChanged callback firing mid-write) can both read the
+// same starting snapshot and then persist their own — whichever commits
+// last silently overwrites the other slot's update. Chaining every mutation
+// through this queue serializes them so each one always starts from the
+// result of the previous, not a stale snapshot.
+let writeQueue: Promise<unknown> = Promise.resolve();
+const withWriteLock = <T>(fn: () => Promise<T>): Promise<T> => {
+  const run = writeQueue.then(fn, fn);
+  writeQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+};
+
 const notify = () => listeners.forEach((l) => l());
 
 /** Subscribe to any wallpaper change. Returns unsubscribe. */
@@ -179,12 +197,14 @@ const storeAsWallpaper = async (
   if (mode === 'move') source.move(dest);
   else source.copy(dest);
 
-  const map = { ...(await loadMap()) };
-  const previous = map[slot];
-  map[slot] = { kind: 'photo', file: fileName, setAt: Date.now() };
-  await persistMap(map);
-  deletePreviousFile(previous);
-  return toEntry(map[slot]!);
+  return withWriteLock(async () => {
+    const map = { ...(await loadMap()) };
+    const previous = map[slot];
+    map[slot] = { kind: 'photo', file: fileName, setAt: Date.now() };
+    await persistMap(map);
+    deletePreviousFile(previous);
+    return toEntry(map[slot]!);
+  });
 };
 
 /** Delete the backing image file of a replaced/cleared PHOTO entry. */
@@ -206,12 +226,14 @@ export const setWallpaperBlob = async (
   dark: BlobTrio,
   adaptive?: boolean,
 ): Promise<WallpaperEntry> => {
-  const map = { ...(await loadMap()) };
-  const previous = map[slot];
-  map[slot] = { kind: 'blob', light, dark, adaptive, setAt: Date.now() };
-  await persistMap(map);
-  deletePreviousFile(previous); // frees the old photo file if we replaced one
-  return toEntry(map[slot]!);
+  return withWriteLock(async () => {
+    const map = { ...(await loadMap()) };
+    const previous = map[slot];
+    map[slot] = { kind: 'blob', light, dark, adaptive, setAt: Date.now() };
+    await persistMap(map);
+    deletePreviousFile(previous); // frees the old photo file if we replaced one
+    return toEntry(map[slot]!);
+  });
 };
 
 /**
@@ -253,17 +275,22 @@ export const copyWallpaper = async (
     return storeAsWallpaper(targetSlot, resolveUri(source.file), 'copy');
   }
 
-  const previous = map[targetSlot];
-  const next = { ...map, [targetSlot]: {
-    kind: 'blob' as const,
-    light: [...source.light] as BlobTrio,
-    dark: [...source.dark] as BlobTrio,
-    adaptive: source.adaptive,
-    setAt: Date.now(),
-  } };
-  await persistMap(next);
-  deletePreviousFile(previous);
-  return toEntry(next[targetSlot]!);
+  return withWriteLock(async () => {
+    // Re-read inside the lock rather than reusing the outer `map` — that
+    // snapshot was taken before the lock was granted and may be stale by now.
+    const fresh = { ...(await loadMap()) };
+    const previous = fresh[targetSlot];
+    fresh[targetSlot] = {
+      kind: 'blob' as const,
+      light: [...source.light] as BlobTrio,
+      dark: [...source.dark] as BlobTrio,
+      adaptive: source.adaptive,
+      setAt: Date.now(),
+    };
+    await persistMap(fresh);
+    deletePreviousFile(previous);
+    return toEntry(fresh[targetSlot]!);
+  });
 };
 
 /** Chat slots the user has individually customized (excludes the default). */
@@ -288,10 +315,12 @@ export const resolveChainSync = (slots: WallpaperSlot[]): WallpaperEntry | null 
 
 /** Clear a slot (per-chat clear falls back to default; default clear to blobs). */
 export const clearWallpaper = async (slot: WallpaperSlot): Promise<void> => {
-  const map = { ...(await loadMap()) };
-  const previous = map[slot];
-  if (!previous) return;
-  delete map[slot];
-  await persistMap(map);
-  deletePreviousFile(previous);
+  return withWriteLock(async () => {
+    const map = { ...(await loadMap()) };
+    const previous = map[slot];
+    if (!previous) return;
+    delete map[slot];
+    await persistMap(map);
+    deletePreviousFile(previous);
+  });
 };

@@ -1,7 +1,7 @@
 import { CallControls } from '@/components/CallControls';
 import { nativeCallService } from '@/services/nativeCallService';
 import { startRingback, stopRingback } from '@/services/ringback';
-import { GroupAvatar, UserAvatar } from '@/components/ui';
+import { GlassCard, GroupAvatar, UserAvatar } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
@@ -10,6 +10,8 @@ import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { maskTextValue } from '@/services/privacyGuardService';
 import { useCallManager } from '@/hooks/useCallManager';
 import type { CallStatus, CallType } from '@/models';
+import { ROUTES } from '@/constants/routes';
+import { navigationRef } from '@/navigation/navigationRef';
 import {
   AudioSession,
   LiveKitRoom,
@@ -337,10 +339,12 @@ const VideoRoomContent = ({ theme, isCameraOff, peer, cameraFacing }: VideoRoomC
       )}
 
       {hasRemoteVideo && (
-        <View style={styles.videoTopPill} pointerEvents="none">
-          <Text style={styles.videoTopPillText} numberOfLines={1}>
-            {peer.name}
-          </Text>
+        <View style={styles.videoTopPillWrap} pointerEvents="none">
+          <GlassCard radius={16} contentStyle={styles.videoTopPillContent}>
+            <Text style={styles.videoTopPillText} numberOfLines={1}>
+              {peer.name}
+            </Text>
+          </GlassCard>
         </View>
       )}
 
@@ -715,6 +719,20 @@ export const CallSessionScreen = ({
     void endCall();
   }, [endCall, requestRoomShutdown]);
 
+  // "No answer" → Message: there's nothing left to wait for once the caller
+  // decides to text instead, so end the call the same way Cancel does, then
+  // open the thread to compose. Was previously wired straight to onHangUp,
+  // which just closed the call screen with no way to actually message anyone.
+  const handleMessage = useCallback(() => {
+    debugLog('CallSessionScreen message from no-answer');
+    isLocalHangupRef.current = true;
+    requestRoomShutdown();
+    void endCall();
+    if (navigationRef.isReady()) {
+      navigationRef.navigate(ROUTES.APP.GROUP_CHAT, { chatId, initialTitle: peer.name });
+    }
+  }, [endCall, requestRoomShutdown, chatId, peer.name]);
+
   // Flip between the front and back phone camera. Prefers LiveKit's
   // restartTrack({ facingMode }) — the documented, reliable switch that also
   // updates the track's internal facing state — and falls back to the raw
@@ -887,15 +905,17 @@ export const CallSessionScreen = ({
       <CallBackdrop peer={peer} />
       <View style={styles.container}>
         {/* Status chip — call type + live status, iOS-thin, top center. */}
-        <View style={[styles.statusChip, { top: insets.top + 10 }]} pointerEvents="none">
-          <Ionicons
-            name={callType === 'video' ? 'videocam' : 'call'}
-            size={13}
-            color="rgba(255,255,255,0.75)"
-          />
-          <Text style={styles.statusChipText} numberOfLines={1}>
-            {statusText}
-          </Text>
+        <View style={[styles.statusChipWrap, { top: insets.top + 10 }]} pointerEvents="none">
+          <GlassCard radius={14} contentStyle={styles.statusChipContent}>
+            <Ionicons
+              name={callType === 'video' ? 'videocam' : 'call'}
+              size={13}
+              color="rgba(255,255,255,0.75)"
+            />
+            <Text style={styles.statusChipText} numberOfLines={1}>
+              {statusText}
+            </Text>
+          </GlassCard>
         </View>
         {onMinimize ? (
           <TouchableOpacity
@@ -903,9 +923,11 @@ export const CallSessionScreen = ({
             activeOpacity={0.7}
             accessibilityRole="button"
             accessibilityLabel="Minimize call"
-            style={[styles.minimizeBtn, { top: insets.top + 4 }]}
+            style={[styles.minimizeBtnWrap, { top: insets.top + 4 }]}
           >
-            <Ionicons name="chevron-down" size={22} color="#fff" />
+            <GlassCard radius={18} style={styles.minimizeBtnGlass} contentStyle={styles.minimizeBtnContent}>
+              <Ionicons name="chevron-down" size={22} color="#fff" />
+            </GlassCard>
           </TouchableOpacity>
         ) : null}
 
@@ -963,7 +985,7 @@ export const CallSessionScreen = ({
           {noAnswer ? (
             <NoAnswerOptions
               onCancel={onHangUp}
-              onMessage={onHangUp}
+              onMessage={handleMessage}
               onCallAgain={() => void startCall(callType)}
             />
           ) : (
@@ -1033,18 +1055,18 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  statusChip: {
+  statusChipWrap: {
     position: 'absolute',
     alignSelf: 'center',
+    zIndex: 20,
+    maxWidth: '70%',
+  },
+  statusChipContent: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 5,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    zIndex: 20,
-    maxWidth: '70%',
   },
   statusChipText: {
     color: 'rgba(255,255,255,0.85)',
@@ -1052,16 +1074,19 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
-  minimizeBtn: {
+  minimizeBtnWrap: {
     position: 'absolute',
     left: 16,
+    zIndex: 20,
+  },
+  minimizeBtnGlass: {
     width: 36,
     height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.14)',
+  },
+  minimizeBtnContent: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 20,
   },
   roomContainer: {
     ...StyleSheet.absoluteFillObject,
@@ -1095,15 +1120,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontVariant: ['tabular-nums'],
   },
-  videoTopPill: {
+  videoTopPillWrap: {
     position: 'absolute',
     top: 110,
     alignSelf: 'center',
+    maxWidth: '70%',
+  },
+  videoTopPillContent: {
     paddingHorizontal: 14,
     paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: 'rgba(10,12,18,0.55)',
-    maxWidth: '70%',
   },
   videoTopPillText: {
     color: '#fff',

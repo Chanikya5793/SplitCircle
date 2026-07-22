@@ -50,7 +50,6 @@ import { lightHaptic } from '@/utils/haptics';
 import { GroupLoadingFallback } from '@/navigation/GroupLoadingFallback';
 import { getCallInfoTitle, getChatThreadTitle, getExpenseDetailsTitle, getRouteBackLabel, ROOT_SCREEN_TITLES, SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
-import { setLastSearchScopeForRoute } from '@/services/searchScope';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { NativeBottomTabIcon } from '@react-navigation/bottom-tabs/unstable';
 import {
@@ -885,11 +884,6 @@ const AppTabs = () => {
         tabBarControllerMode: Platform.OS === 'ios' ? 'auto' : undefined,
         tabBarMinimizeBehavior: IOS_NATIVE_ACCESSORY_SUPPORTED ? 'onScrollDown' : undefined,
       }}
-      screenListeners={({ route }: { route: { name: string } }) => ({
-        focus: () => {
-          setLastSearchScopeForRoute(route.name);
-        },
-      })}
     >
       <NativeTab.Screen
         name={ROUTES.APP.GROUPS_TAB}

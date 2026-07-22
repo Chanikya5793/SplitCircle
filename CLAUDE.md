@@ -25,7 +25,15 @@ binding contract for BOTH AI surfaces — READ BEFORE touching assistant/insight
 👎-to-fixture evals, AI memory + ledger, search-tab answer card; locked build order Q1→Q3) ·
 [ai_layer/docs/26](ai_layer/docs/26_recurring_bills_v2.md) (Recurring Bills v2 — stateful chat
 bill cards, fixed/variable, payer rotation, pattern detection, 1:1 accept-per-occurrence;
-locked contract, sequenced AFTER doc 25 Q1→Q3).
+locked contract, sequenced AFTER doc 25 Q1→Q3) ·
+[ai_layer/docs/27](ai_layer/docs/27_sign_in_with_apple.md) (Sign in with Apple — research +
+implementation plan, not yet built; App Store Guideline 4.8 compliance since Google is
+already offered; READ the nonce/first-run-name-capture/manual-entitlement gotchas before
+building) ·
+[ai_layer/docs/28](ai_layer/docs/28_account_deletion.md) (in-app account deletion —
+research + implementation plan, not yet built; App Store Guideline 5.1.1(v) compliance,
+zero existing account-deletion path; Cloud-Function-only since Firestore rules hard-deny
+client deletes on `users/{uid}`).
 
 ## Architecture DNA (do not break)
 
@@ -94,6 +102,24 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
 - **Reanimated new-arch**: inserting a sibling ABOVE entering-animated ScrollView content
   doesn't shift that content (overlap) — mount late-loading rows outside the ScrollView.
   `flex: 1` inside height-constrained containers collapses to zero height.
+- **Liquid-glass violations don't show up in code review — they need a grep, not an
+  eyeball.** A hand-rolled solid/hex surface reads as "normal dark UI" until it sits
+  next to a real glass one; a full 45-bug branch review missed every instance until a
+  screenshot caught it (`AddExpenseScreen`'s payer/category pickers were raw
+  react-native-paper `Dialog`/`Menu`, `HeaderMenu.tsx` was hardcoded `#1c1c20`). Before
+  touching any modal/menu/dropdown, read DESIGN.md's "Self-audit" checklist under
+  "Liquid glass DNA" and grep for its signatures — don't rely on the diff looking fine.
+- **A glass dropdown/overlay stacked over a screen with SIMILAR content underneath
+  (another list of names/rows) needs its own dimming backdrop, or it reads as
+  double-vision.** Converting `BillSplitScreen`'s payer/participant dropdown from
+  near-opaque solid to `GlassCard` let the scrolling participant list underneath bleed
+  through legibly enough to overlap the dropdown's own rows — invisible in a code diff,
+  only caught by actually opening the sheet on a simulator. A plain dark scrim wasn't
+  opaque enough either (GlassCard's own translucency still let text shapes through);
+  fixed with a full `BlurView` + tint backdrop between the trigger screen and the
+  dropdown (same shape as the winner-overlay/`MessageActionSheet` backdrop pattern).
+  Any new glass overlay presented ON TOP of a similarly-styled scrolling list needs
+  this backdrop — a solid canvas beneath a menu/sheet doesn't.
 - **iOS 26 scroll-edge effect is disabled by an RN patch** (`patches/react-native+0.83.2.patch`,
   `RCTEnhancedScrollView.mm` `PATCHED (SplitCircle)` block). Built with the iOS 26 SDK, every
   UIScrollView gets a default progressive glass fade at its edges (`UIScrollEdgeEffect`) — over

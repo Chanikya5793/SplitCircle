@@ -213,6 +213,32 @@ describe('graph tools — exact numbers', () => {
     expect(p.savings).toBe(7);
   });
 
+  // Regression test for a confirmed bug (ui-revamp branch review):
+  // merchantAggregate groups strictly by exact lowercased title, so
+  // "Walmart" and "Walmart groceries" are separate rows with independent
+  // totals — but merchant_stats' "recent" list re-filters with a
+  // bidirectional substring match against the matched title, which pulls
+  // rows from the OTHER exact-title group back in. total/visits stay
+  // correct for the matched group; "recent" silently disagrees with them.
+  // Expected to FAIL until the "recent" filter matches on the same
+  // exact-title key merchantAggregate used, not a substring.
+  it('BUG: merchant_stats "recent" can include expenses from a different exact-title group', async () => {
+    const collision = makeExpense({
+      title: 'Walmart', amount: 10, category: 'Food', paidBy: 'u1',
+      createdAt: at(2026, 6, 15),
+      participants: [share('u1', 10)],
+    });
+    const ctx: ToolCtx = { ...groupCtx(), group: { ...groupCtx().group!, expenses: [...expenses, collision] } };
+    const p = json(await run({ tool: 'merchant_stats', merchant: 'walmart' }, ctx));
+
+    expect(p.merchant).toBe('Walmart groceries');
+    expect(p.total).toBe(120);
+    expect(p.visits).toBe(1);
+
+    const recent = p.recent as { title: string }[];
+    expect(recent.map((r) => r.title)).toEqual(['Walmart groceries']);
+  });
+
   it('top_expenses ranks by amount', async () => {
     const p = json(await run({ tool: 'top_expenses', n: 2 }));
     const rows = p.rows as { title: string; amount: number }[];

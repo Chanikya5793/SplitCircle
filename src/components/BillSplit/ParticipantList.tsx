@@ -1,3 +1,4 @@
+import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { spacing } from '@/theme';
 import { formatCurrency, getCurrencySymbol } from '@/utils/currency';
@@ -211,7 +212,7 @@ return (
         </Text>
     </TouchableOpacity>
     </View>
-    <View style={[styles.groupCard, { backgroundColor: theme.dark ? 'rgba(28,31,38,0.96)' : 'rgba(255,255,255,0.97)' }]}>
+    <GlassCard style={styles.groupCard}>
     {participants.map((p, index) => (
     <ParticipantRow
         key={p.id}
@@ -226,7 +227,7 @@ return (
         onAdjustmentChange={onAdjustmentChange}
     />
     ))}
-    </View>
+    </GlassCard>
 </View>
 );
 });
@@ -238,7 +239,6 @@ paddingHorizontal: spacing.md,
 groupCard: {
 borderRadius: 16,
 paddingHorizontal: spacing.sm,
-overflow: 'hidden',
 },
 listHeader: {
 flexDirection: 'row',

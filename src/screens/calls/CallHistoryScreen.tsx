@@ -1,5 +1,5 @@
 import { GlassView } from '@/components/GlassView';
-import { StickyHeaderPill } from '@/components/ui';
+import { GlassCard, StickyHeaderPill } from '@/components/ui';
 import { ChatListSkeleton } from '@/components/SkeletonLoader';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
@@ -49,7 +49,6 @@ import Animated, {
     withSpring,
     withTiming,
 } from 'react-native-reanimated';
-import { BlurView } from 'expo-blur';
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
 
@@ -838,24 +837,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                 entering={SlideInDown.springify().damping(30).stiffness(350).mass(1)}
                 style={[styles.sheetContainer, sheetAnimatedStyle]}
               >
-                {Platform.OS === 'ios' && (
-                  <BlurView
-                    intensity={80}
-                    tint={isDark ? 'dark' : 'light'}
-                    style={StyleSheet.absoluteFill}
-                    pointerEvents="none"
-                  />
-                )}
-                <View
-                  style={[
-                    styles.sheetInner,
-                    {
-                      backgroundColor: isDark
-                        ? Platform.OS === 'ios' ? 'rgba(30,30,40,0.35)' : 'rgba(30,30,40,0.92)'
-                        : Platform.OS === 'ios' ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.95)',
-                    },
-                  ]}
-                >
+                <GlassCard style={styles.sheetGlassInner} contentStyle={styles.sheetInner} intensity={80}>
                   {/* Handle bar */}
                   <View style={styles.sheetHandle}>
                     <View
@@ -985,7 +967,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                       );
                     }}
                   />
-                </View>
+                </GlassCard>
               </Animated.View>
             </GestureDetector>
           </KeyboardAvoidingView>
@@ -1208,12 +1190,12 @@ const styles = StyleSheet.create({
   },
   sheetContainer: {
     maxHeight: '75%',
+  },
+  sheetGlassInner: {
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-    borderBottomWidth: 0,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
   },
   sheetInner: {
     paddingBottom: 40,

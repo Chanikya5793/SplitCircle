@@ -1,5 +1,5 @@
 import { db } from '@/firebase';
-import type { ChatMessage, ChatParticipant, Expense, ExpenseRef, Group, GroupMember, MoneyInChatSettings, ParticipantShare, Settlement } from '@/models';
+import type { ChatMessage, ChatParticipant, Expense, ExpenseRef, ExpenseSplitMetadata, ExpenseSplitParticipantConfig, Group, GroupMember, MoneyInChatSettings, ParticipantShare, Settlement } from '@/models';
 import { resolveMoneyInChat } from '@/models/group';
 import { formatCurrency } from '@/utils/currency';
 import { monthKey } from '@/utils/expenseAnalytics';
@@ -622,19 +622,32 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         updatedAt: serverTimestamp(),
       }, { merge: true });
 
-      // Update legacy top-level expenses collection docs (best effort).
-      const q = query(collection(db, 'expenses'), where('expenseId', '==', finalExpense.expenseId));
-      const snapshot = await getDocs(q);
-      await Promise.all(snapshot.docs.map(async (docSnap) => {
-        if (docSnap.id === finalExpense.expenseId) {
-          return;
-        }
+      // Best-effort cleanup of legacy top-level expense docs whose doc ID
+      // predates the expenseId-as-doc-ID convention. Its own try/catch for the
+      // same reason as deleteExpense's identical block below: the query is
+      // unscoped by groupId (it can't be — the whole point is finding docs
+      // under a DIFFERENT id), so firestore.rules' per-document
+      // `isGroupMemberById(resource.data.groupId)` check can't be statically
+      // satisfied for a collection-wide `list`, and Firestore correctly denies
+      // it every time. That's expected, not a real failure — it must never
+      // surface as "Failed to save expense" after the actual update above
+      // (the group doc update + primary expense doc write) already succeeded.
+      try {
+        const q = query(collection(db, 'expenses'), where('expenseId', '==', finalExpense.expenseId));
+        const snapshot = await getDocs(q);
+        await Promise.all(snapshot.docs.map(async (docSnap) => {
+          if (docSnap.id === finalExpense.expenseId) {
+            return;
+          }
 
-        await updateDoc(doc(db, 'expenses', docSnap.id), {
-          ...finalExpense,
-          updatedAt: serverTimestamp(),
-        });
-      }));
+          await updateDoc(doc(db, 'expenses', docSnap.id), {
+            ...finalExpense,
+            updatedAt: serverTimestamp(),
+          });
+        }));
+      } catch (legacyCleanupError) {
+        console.warn('Legacy expense doc cleanup skipped (non-fatal):', legacyCleanupError);
+      }
     } catch (error) {
       console.error('Error updating expense:', error);
       throw error;
@@ -1365,7 +1378,60 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     if (target === group.currency?.toUpperCase()) return;
 
     const zeroDecimal = ['JPY', 'KRW', 'VND', 'CLP'].includes(target);
-    const round = (v: number) => (zeroDecimal ? Math.round(v * rate) : Math.round(v * rate * 100) / 100);
+    // Minor-unit scale for this target currency (100 = cents, 1 = whole units
+    // for zero-decimal currencies like JPY) — all rounding below happens in
+    // integer minor units to avoid floating-point drift.
+    const scale = zeroDecimal ? 1 : 100;
+    const toRawUnits = (v: number) => (v || 0) * rate * scale;
+    const round = (v: number) => Math.round(toRawUnits(v)) / scale;
+    const convertMoney = (v: number | undefined): number | undefined =>
+      v === undefined ? undefined : round(v);
+
+    /**
+     * Rounds a set of raw (unrounded) minor-unit values so they sum EXACTLY
+     * to round(total) — remainder minor-units go to the largest fractional
+     * parts first, the same convention splitMath.ts uses for split rounding.
+     * Without this, rounding every share independently drifts the sum away
+     * from the converted total by a cent or more per expense.
+     */
+    const reconcileShares = (total: number, raw: number[]): number[] => {
+      const totalUnits = Math.round(toRawUnits(total));
+      const floored = raw.map((v) => Math.floor(toRawUnits(v)));
+      let remainder = totalUnits - floored.reduce((a, b) => a + b, 0);
+      const byFraction = raw
+        .map((v, i) => ({ i, frac: toRawUnits(v) - Math.floor(toRawUnits(v)) }))
+        .sort((a, b) => b.frac - a.frac);
+      for (const { i } of byFraction) {
+        if (remainder === 0) break;
+        floored[i] += remainder > 0 ? 1 : -1;
+        remainder += remainder > 0 ? -1 : 1;
+      }
+      return floored.map((u) => u / scale);
+    };
+
+    const convertParticipantConfig = (
+      cfg: ExpenseSplitParticipantConfig,
+    ): ExpenseSplitParticipantConfig => ({
+      ...cfg,
+      exactAmount: convertMoney(cfg.exactAmount),
+      adjustment: convertMoney(cfg.adjustment),
+      historicalPaid: convertMoney(cfg.historicalPaid),
+      computedAmount: convertMoney(cfg.computedAmount),
+    });
+
+    const convertSplitMetadata = (
+      meta: ExpenseSplitMetadata | undefined,
+    ): ExpenseSplitMetadata | undefined => {
+      if (!meta) return meta;
+      return {
+        ...meta,
+        taxAmount: convertMoney(meta.taxAmount),
+        tipAmount: convertMoney(meta.tipAmount),
+        receiptItems: meta.receiptItems?.map((item) => ({ ...item, price: round(item.price) })),
+        itemCategories: meta.itemCategories?.map((cat) => ({ ...cat, amount: round(cat.amount) })),
+        participantConfig: meta.participantConfig?.map(convertParticipantConfig),
+      };
+    };
 
     await runTransaction(db, async (txn) => {
       const ref = doc(db, 'groups', groupId);
@@ -1373,23 +1439,39 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       if (!snap.exists()) throw new Error('Group not found.');
       const data = snap.data() as Group;
 
-      const expenses = (data.expenses ?? []).map((expense) => ({
-        ...expense,
-        amount: round(expense.amount),
-        participants: (expense.participants ?? []).map((participantShare) => ({
-          ...participantShare,
-          share: round(participantShare.share),
-        })),
-      }));
+      const expenses = (data.expenses ?? []).map((expense) => {
+        const shares = reconcileShares(
+          expense.amount,
+          (expense.participants ?? []).map((p) => p.share),
+        );
+        return {
+          ...expense,
+          amount: round(expense.amount),
+          participants: (expense.participants ?? []).map((participantShare, i) => ({
+            ...participantShare,
+            share: shares[i],
+          })),
+          splitMetadata: convertSplitMetadata(expense.splitMetadata),
+        };
+      });
       const settlements = (data.settlements ?? []).map((settlement) => ({
         ...settlement,
         amount: round(settlement.amount),
       }));
+      // Per-category budget thresholds are stored in the group currency too —
+      // left unconverted, a budget silently becomes looser or tighter by the
+      // conversion factor with no warning the next time it's checked.
+      const budgets = data.budgets
+        ? Object.fromEntries(
+            Object.entries(data.budgets).map(([category, amount]) => [category, round(amount)]),
+          )
+        : data.budgets;
 
       txn.update(ref, {
         currency: target,
         expenses,
         settlements,
+        ...(budgets ? { budgets } : {}),
         updatedAt: serverTimestamp(),
       });
     });

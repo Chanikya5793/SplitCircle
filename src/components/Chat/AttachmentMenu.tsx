@@ -1,3 +1,4 @@
+import { GlassCard } from '@/components/ui';
 import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
@@ -216,9 +217,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       }
     });
 
-  const menuSurface = (theme.colors as any).elevation?.level3 ?? theme.colors.surface;
   const menuStyle = useAnimatedStyle(() => ({
-    backgroundColor: menuSurface,
     transform: [{ translateY: slideAnim.value }],
   }));
 
@@ -536,49 +535,46 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
         {/* Menu */}
         <GestureDetector gesture={gesture}>
-          <Animated.View
-            style={[
-              styles.menuContainer,
-              menuStyle,
-            ]}
-          >
-            {/* Handle */}
-            <View style={styles.handleContainer}>
-              <View style={[styles.handle, { backgroundColor: theme.colors.outlineVariant ?? (isDark ? '#555' : '#ccc') }]} />
-            </View>
-
-            {/* Processing indicator — shown after native picker returns */}
-            {isProcessing ? (
-              <View style={styles.processingContainer}>
-                <ActivityIndicator size="large" color={theme.colors.primary} />
-                <Text style={[styles.processingText, { color: theme.colors.onSurface }]}>
-                  {status?.message ?? 'Preparing…'}
-                </Text>
-                <Text style={[styles.processingHint, { color: theme.colors.onSurfaceVariant }]}>
-                  Please keep this screen open while we prepare your attachment.
-                </Text>
+          <Animated.View style={menuStyle}>
+            <GlassCard style={styles.menuGlass} contentStyle={styles.menuContent}>
+              {/* Handle */}
+              <View style={styles.handleContainer}>
+                <View style={[styles.handle, { backgroundColor: theme.colors.outlineVariant ?? (isDark ? '#555' : '#ccc') }]} />
               </View>
-            ) : (
-              <>
-                {/* Options Grid */}
-                <View style={styles.optionsGrid}>
-                  {attachmentOptions.map((option) => renderOption(option))}
-                </View>
 
-                {/* Cancel Button */}
-                <TouchableOpacity
-                  style={[
-                    styles.cancelButton,
-                    { backgroundColor: theme.colors.surfaceVariant ?? (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)') },
-                    selectingAttachment && { opacity: 0.5 },
-                  ]}
-                  onPress={selectingAttachment ? undefined : onClose}
-                  activeOpacity={selectingAttachment ? 1 : 0.7}
-                >
-                  <Text style={[styles.cancelText, { color: theme.colors.error }]}>Cancel</Text>
-                </TouchableOpacity>
-              </>
-            )}
+              {/* Processing indicator — shown after native picker returns */}
+              {isProcessing ? (
+                <View style={styles.processingContainer}>
+                  <ActivityIndicator size="large" color={theme.colors.primary} />
+                  <Text style={[styles.processingText, { color: theme.colors.onSurface }]}>
+                    {status?.message ?? 'Preparing…'}
+                  </Text>
+                  <Text style={[styles.processingHint, { color: theme.colors.onSurfaceVariant }]}>
+                    Please keep this screen open while we prepare your attachment.
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  {/* Options Grid */}
+                  <View style={styles.optionsGrid}>
+                    {attachmentOptions.map((option) => renderOption(option))}
+                  </View>
+
+                  {/* Cancel Button */}
+                  <TouchableOpacity
+                    style={[
+                      styles.cancelButton,
+                      { backgroundColor: theme.colors.surfaceVariant ?? (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)') },
+                      selectingAttachment && { opacity: 0.5 },
+                    ]}
+                    onPress={selectingAttachment ? undefined : onClose}
+                    activeOpacity={selectingAttachment ? 1 : 0.7}
+                  >
+                    <Text style={[styles.cancelText, { color: theme.colors.error }]}>Cancel</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </GlassCard>
           </Animated.View>
         </GestureDetector>
       </View>
@@ -595,9 +591,13 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
-  menuContainer: {
+  menuGlass: {
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+  },
+  menuContent: {
     paddingBottom: Platform.OS === 'ios' ? 34 : 20,
     paddingTop: 12,
   },

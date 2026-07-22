@@ -1,8 +1,9 @@
+import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatParticipant } from '@/models';
 import { lightHaptic } from '@/utils/haptics';
 import { useMemo } from 'react';
-import { FlatList, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { FlatList, StyleSheet, TouchableOpacity } from 'react-native';
 import { Avatar, Text } from 'react-native-paper';
 
 interface MentionAutocompleteProps {
@@ -34,19 +35,10 @@ export const MentionAutocomplete = ({
 
   if (!visible || filtered.length === 0) return null;
 
-  const surface = isDark ? '#1c1c20' : '#ffffff';
-  const divider = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  const divider = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)';
 
   return (
-    <View
-      style={[
-        styles.root,
-        {
-          backgroundColor: surface,
-          borderColor: divider,
-        },
-      ]}
-    >
+    <GlassCard style={styles.root}>
       <FlatList
         data={filtered}
         keyboardShouldPersistTaps="always"
@@ -83,7 +75,7 @@ export const MentionAutocomplete = ({
           </TouchableOpacity>
         )}
       />
-    </View>
+    </GlassCard>
   );
 };
 
@@ -92,14 +84,11 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     marginBottom: 6,
     borderRadius: 16,
-    overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth,
     maxHeight: 220,
     shadowColor: '#000',
     shadowOpacity: 0.15,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 12,
-    elevation: Platform.OS === 'android' ? 4 : 0,
   },
   row: {
     flexDirection: 'row',

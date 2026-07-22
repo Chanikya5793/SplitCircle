@@ -16,9 +16,15 @@ import { getCallHistory, type CallHistoryEntry } from '@/services/localCallStora
 import { subscribeToFriends, type Friend } from '@/services/friendsService';
 import { getChatMessagesPaginated } from '@/services/localMessageStorage';
 import { searchIndex, type SearchItem } from '@/services/searchService';
-import type { AppSearchScope } from '@/services/searchScope';
 import { formatCurrency } from '@/utils/currency';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+// Search is universal (doc 20: scope chips were deliberately removed), so
+// this is only load-bearing as a type for the ranking helpers below — every
+// call site here hardcodes 'all'. There used to be a separate live
+// last-active-scope tracker (services/searchScope.ts); it was write-only
+// (nothing ever read it) and was removed rather than kept running unused.
+export type AppSearchScope = 'expenses' | 'chat' | 'calls' | 'settings' | 'all';
 
 // How many recent messages per thread are folded into global search. Capped so
 // the index stays small and the async build never blocks typing.
@@ -301,8 +307,12 @@ export const useAppSearch = () => {
       const collected: SearchItem[] = [];
       for (const t of threads) {
         if (cancelled) return;
-        // Never index a chat the privacy guard is actively shielding.
-        if (guard.active && guard.isShielded('chats', t.chatId)) continue;
+        // Never index a chat the privacy guard is actively shielding, and
+        // never index message BODIES at all once "hide previews" is on — the
+        // base chat-item tier above already withholds the preview text for
+        // that setting; this tier was the one place full message content
+        // still leaked in as searchable result titles regardless of it.
+        if (guard.active && (guard.isShielded('chats', t.chatId) || guard.settings.hidePreviews)) continue;
         // Never index message bodies of a locked chat — the biometric gate
         // would be meaningless if its content surfaced in search results.
         if (user?.lockedChats?.[t.chatId]) continue;
@@ -350,7 +360,7 @@ export const useAppSearch = () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threads, user?.userId, user?.lockedChats, guard.active]);
+  }, [threads, user?.userId, user?.lockedChats, guard.active, guard.settings]);
 
   // Full index is a cheap concat of the two tiers — no expensive reflatten.
   const index = useMemo<SearchItem[]>(() => [...baseIndex, ...messageIndex], [baseIndex, messageIndex]);

@@ -99,9 +99,14 @@ export function coerceDecision(raw: RawAgentDecision): AgentDecision {
     raw.complexity === 'deep' ? 'deep' : raw.complexity === 'moderate' ? 'moderate' : 'simple';
   const options = [...new Set((raw.clarifyOptions ?? []).map(cleanStr).filter(Boolean))].slice(0, 4);
   const clarifyQuestion = cleanStr(raw.clarifyQuestion);
+  // A clarify needs a question AND 2-4 tappable options — the same
+  // 'clarify-shape' invariant the eval harness checks (aiFeedback.ts
+  // evaluateReplay). A clarify with zero or one option has no chip flow the
+  // user can actually answer through, so degrade to answering just like a
+  // missing question does.
+  const validClarify = Boolean(clarifyQuestion) && options.length >= 2;
   return {
-    // A clarify without a question can't render — degrade to answering.
-    intent: intent === 'clarify' && !clarifyQuestion ? 'answer' : intent,
+    intent: intent === 'clarify' && !validClarify ? 'answer' : intent,
     confidence: Math.min(1, Math.max(0, Number(raw.confidence) || 0)),
     complexity,
     assumption: cleanStr(raw.assumption),

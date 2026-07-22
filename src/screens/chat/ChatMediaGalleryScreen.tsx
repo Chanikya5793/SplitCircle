@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GlassToast } from '@/components/ui';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -45,7 +46,7 @@ import Reanimated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { Snackbar, Text } from 'react-native-paper';
+import { Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ─── constants ───────────────────────────────────────────────────────────────
@@ -2174,10 +2175,15 @@ export const ChatMediaGalleryScreen = () => {
         }}
       />
 
-      {/* Undo snackbar — surfaces after delete-for-me bulk action so the user
+      {/* Undo toast — surfaces after delete-for-me bulk action so the user
           can recover within the undo window if they hit the wrong action. */}
-      <Snackbar
+      <GlassToast
         visible={!!undoSnapshot}
+        message={
+          undoSnapshot && undoSnapshot.messageIds.length > 1
+            ? `${undoSnapshot.messageIds.length} items deleted for you`
+            : 'Item deleted for you'
+        }
         onDismiss={() => setUndoSnapshot(null)}
         duration={DELETE_UNDO_WINDOW_MS}
         action={{
@@ -2186,12 +2192,8 @@ export const ChatMediaGalleryScreen = () => {
             void handleUndoBulkDelete();
           },
         }}
-        wrapperStyle={{ bottom: insets.bottom + 90 }}
-      >
-        {undoSnapshot && undoSnapshot.messageIds.length > 1
-          ? `${undoSnapshot.messageIds.length} items deleted for you`
-          : 'Item deleted for you'}
-      </Snackbar>
+        bottomOffset={insets.bottom + 90}
+      />
     </LiquidBackground>
   );
 };

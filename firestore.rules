@@ -111,6 +111,7 @@ service cloud.firestore {
           'updatedAt',
           'groupId',
           'unreadCount',
+          'pinnedMessages',
         ])
         && request.resource.data.chatId == resource.data.chatId
         && request.resource.data.type == resource.data.type

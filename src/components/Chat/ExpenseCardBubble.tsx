@@ -91,6 +91,18 @@ export const ExpenseCardBubble = ({
   const isSettlement = ref.kind === 'settlement';
   const isDigest = ref.kind === 'digest';
   const isInsight = ref.kind === 'insight';
+  const liveSettlement = isSettlement ? group?.settlements.find((s) => s.settlementId === ref.refId) : undefined;
+  // Doc 21's tombstone invariant: once the group's live data has actually
+  // loaded, a plain expense/settlement ref whose target isn't in it anymore
+  // was deleted — render a tombstone instead of the stale snapshot forever.
+  // Recurring bill/request refs are excluded: for those, "no live expense
+  // yet" is the normal upcoming/due state (recurringState above), not a
+  // deletion signal. `!!group` gates this so offline/pre-sync (group not
+  // loaded at all) still falls back to the snapshot as designed, rather than
+  // being mistaken for a deletion.
+  const isDeleted =
+    (!isRecurring && ref.kind === 'expense' && !!group && !liveExpense) ||
+    (isSettlement && !!group && !liveSettlement);
   const recurringStateLine = !isRecurring
     ? undefined
     : recurringState === 'settled'
@@ -231,6 +243,40 @@ export const ExpenseCardBubble = ({
     ? `${theme.colors.success ?? theme.colors.primary}22`
     : `${theme.colors.primary}22`;
   const iconColor = isSettlement ? (theme.colors.success ?? theme.colors.primary) : theme.colors.primary;
+
+  if (isDeleted) {
+    return (
+      <View style={[styles.wrapper, dimmed && { opacity: 0.35 }]}>
+        <View
+          style={[styles.card, { backgroundColor: surface, borderColor: hairline, opacity: 0.6 }]}
+          accessibilityLabel={isSettlement ? 'Settlement removed' : 'Expense removed'}
+        >
+          <View style={[styles.iconCircle, { backgroundColor: `${theme.colors.onSurfaceVariant}22` }]}>
+            <Ionicons name="trash-outline" size={18} color={theme.colors.onSurfaceVariant} />
+          </View>
+          <View style={styles.body}>
+            <Text
+              variant="bodyMedium"
+              style={{ color: theme.colors.onSurfaceVariant, fontStyle: 'italic' }}
+            >
+              {isSettlement ? 'Settlement removed' : 'Expense removed'}
+            </Text>
+            <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, opacity: 0.7 }}>
+              {formatRelativeTime(message.createdAt)}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.reactionsWrap}>
+          <ReactionsRow
+            reactions={message.reactions}
+            currentUserId={user?.userId}
+            align="left"
+            onPress={onReactionsPress ? () => onReactionsPress(message) : undefined}
+          />
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.wrapper, dimmed && { opacity: 0.35 }]}>

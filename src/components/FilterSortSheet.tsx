@@ -1,7 +1,7 @@
 import React from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { IconButton, Text } from 'react-native-paper';
-import { BlurView } from 'expo-blur';
+import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutDown, useSharedValue, useAnimatedStyle, withSpring, withTiming, runOnJS } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -157,12 +157,7 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                         entering={SlideInDown.springify().damping(30).stiffness(350).mass(1)}
                         style={[styles.sheetContainer, animatedStyle]}
                     >
-                        <BlurView
-                            intensity={80}
-                            tint={isDark ? 'dark' : 'light'}
-                            style={StyleSheet.absoluteFill}
-                        />
-                        <View style={[styles.sheet, { backgroundColor: isDark ? 'rgba(30,30,40,0.35)' : 'rgba(255,255,255,0.4)' }]}>
+                        <GlassCard style={styles.sheetGlass} contentStyle={styles.sheet} intensity={80}>
                             {/* Handle bar */}
                             <View style={styles.handleContainer}>
                                 <View style={[styles.handle, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)' }]} />
@@ -272,7 +267,7 @@ export const FilterSortSheet: React.FC<FilterSortSheetProps> = ({
                                     </View>
                                 </View>
                             </ScrollView>
-                        </View>
+                        </GlassCard>
                     </Animated.View>
                 </GestureDetector>
             </View>
@@ -291,15 +286,12 @@ const styles = StyleSheet.create({
     },
     sheetContainer: {
         maxHeight: '70%',
+    },
+    sheetGlass: {
         borderTopLeftRadius: 28,
         borderTopRightRadius: 28,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.15)',
-        borderBottomWidth: 0,
-    },
-    blurView: {
-        flex: 1,
+        borderBottomLeftRadius: 0,
+        borderBottomRightRadius: 0,
     },
     sheet: {
         paddingBottom: 40,

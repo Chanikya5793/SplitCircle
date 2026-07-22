@@ -4,6 +4,7 @@
 // same `MediaPreviewSendItem` shape — failed items are just send-items that
 // didn't make it through `sendMessage`.
 
+import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { useVideoThumbnail } from '@/utils/videoThumbnail';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -99,13 +100,8 @@ export const FailedItemsSheet = ({
       onRequestClose={onClose}
     >
       <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable
-          style={[
-            styles.sheet,
-            { backgroundColor: isDark ? '#1c1c1e' : '#fff' },
-          ]}
-          onPress={() => undefined}
-        >
+        <Pressable onPress={() => undefined}>
+        <GlassCard style={styles.sheetGlass} contentStyle={styles.sheetContent}>
           <View style={styles.handle} />
           <View style={styles.headerRow}>
             <View style={{ flex: 1 }}>
@@ -186,6 +182,7 @@ export const FailedItemsSheet = ({
               </Text>
             </TouchableOpacity>
           )}
+        </GlassCard>
         </Pressable>
       </Pressable>
     </Modal>
@@ -198,11 +195,15 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
-  sheet: {
+  sheetGlass: {
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
-    paddingBottom: 24,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     maxHeight: '85%',
+  },
+  sheetContent: {
+    paddingBottom: 24,
   },
   handle: {
     alignSelf: 'center',

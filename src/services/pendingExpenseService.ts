@@ -184,62 +184,91 @@ export function usePendingExpenseFlush(): void {
     running.current = true;
     try {
       // ── Expenses ──
-      const keepExpenses: QueuedExpense[] = [];
+      // Track which requestIds actually got handled (added, or genuinely
+      // nothing-to-add) rather than building the "keep" array from this
+      // pass's stale initial read. A headless Siri/Shortcuts intent can
+      // append a brand-new record to the SAME UserDefaults key natively
+      // while an `await addExpense(...)` below is still in flight; writing
+      // back a "keep" list computed purely from the record we started with
+      // would silently drop that new arrival. Re-reading fresh right before
+      // the write and filtering out only the ids we actually processed
+      // means it survives instead.
+      const processedExpenseIds = new Set<string>();
       for (const rec of pendingExpenses) {
         const group = groupsRef.current.find((g) => g.groupId === rec.groupId);
-        if (!group) {
-          keepExpenses.push(rec); // group not loaded yet — retry next pass
-          continue;
-        }
+        if (!group) continue; // group not loaded yet — retry next pass
         try {
+          if (!group.members.some((m) => m.userId === rec.paidByUserId)) {
+            // The Siri/Shortcuts-supplied payer left the group between the
+            // intent firing and the app foregrounding. Silently reattributing
+            // to an arbitrary member (previously group.members[0]) would
+            // misassign real money with no way to detect it after the fact —
+            // drop the record instead and log it so it's at least
+            // discoverable, rather than posting a confidently wrong expense.
+            console.warn(
+              `pendingExpenseService: dropping queued expense ${rec.requestId} — payer ${rec.paidByUserId} is no longer a member of group ${rec.groupId}`,
+            );
+            processedExpenseIds.add(rec.requestId);
+            continue;
+          }
           const built = materializeExpense(rec, group);
-          if (!built) continue; // nothing to add — drop it
-          const paidBy = group.members.some((m) => m.userId === rec.paidByUserId)
-            ? rec.paidByUserId
-            : group.members[0]?.userId ?? rec.paidByUserId;
-          await addExpense(
-            rec.groupId,
-            {
-              groupId: rec.groupId,
-              title: rec.title || 'Expense',
-              category: rec.category || 'General',
-              amount: rec.amount,
-              paidBy,
-              splitType: built.splitType,
-              participants: built.shares,
-              splitMetadata: built.splitMetadata,
-              settled: false,
-              notes: '',
-            },
-            undefined,
-            undefined,
-            rec.requestId,
-          );
+          if (built) {
+            await addExpense(
+              rec.groupId,
+              {
+                groupId: rec.groupId,
+                title: rec.title || 'Expense',
+                category: rec.category || 'General',
+                amount: rec.amount,
+                paidBy: rec.paidByUserId,
+                splitType: built.splitType,
+                participants: built.shares,
+                splitMetadata: built.splitMetadata,
+                settled: false,
+                notes: '',
+              },
+              undefined,
+              undefined,
+              rec.requestId,
+            );
+          }
+          // Either materialized + added, or genuinely nothing to add — both done.
+          processedExpenseIds.add(rec.requestId);
         } catch {
-          keepExpenses.push(rec); // transient failure — retry later
+          // transient failure — leave queued, retry later
         }
       }
-      writeQueue(EXPENSES_KEY, keepExpenses);
+      if (processedExpenseIds.size > 0) {
+        const freshExpenses = readQueue<QueuedExpense>(EXPENSES_KEY);
+        writeQueue(
+          EXPENSES_KEY,
+          freshExpenses.filter((rec) => !processedExpenseIds.has(rec.requestId)),
+        );
+      }
 
-      // ── Settlements ──
-      const keepSettlements: QueuedSettlement[] = [];
+      // ── Settlements ── (same fresh-read-before-write fix as above)
+      const processedSettlementIds = new Set<string>();
       for (const rec of pendingSettlements) {
         const group = groupsRef.current.find((g) => g.groupId === rec.groupId);
-        if (!group) {
-          keepSettlements.push(rec);
-          continue;
-        }
+        if (!group) continue;
         try {
           await settleUp(
             rec.groupId,
             { fromUserId: rec.fromUserId, toUserId: rec.toUserId, amount: rec.amount },
             rec.requestId,
           );
+          processedSettlementIds.add(rec.requestId);
         } catch {
-          keepSettlements.push(rec);
+          // transient failure — leave queued, retry later
         }
       }
-      writeQueue(SETTLEMENTS_KEY, keepSettlements);
+      if (processedSettlementIds.size > 0) {
+        const freshSettlements = readQueue<QueuedSettlement>(SETTLEMENTS_KEY);
+        writeQueue(
+          SETTLEMENTS_KEY,
+          freshSettlements.filter((rec) => !processedSettlementIds.has(rec.requestId)),
+        );
+      }
     } finally {
       running.current = false;
     }

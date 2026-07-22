@@ -1,4 +1,5 @@
 import { colors, darkColors, spacing } from '@/constants';
+import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
 import { heavyHaptic, lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
@@ -6,7 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LayoutChangeEvent, Pressable, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Button, Icon, IconButton, Text } from 'react-native-paper';
-import Animated, { FadeIn, FadeInDown, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, runOnJS, SlideInDown, SlideInUp, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import type { RouletteWheelRef } from './RouletteWheel';
 import RouletteWheel from './RouletteWheel';
 import { computeKarma, listDatesBetween } from './splitMath';
@@ -22,26 +23,10 @@ function inputBorder(isDark: boolean): string {
   return isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)';
 }
 
-// §9 DNA: dense editors are SOLID. Every card in every mode shares this one
-// near-opaque surface with a hairline border — blobs whisper through the
-// canvas behind, never through content.
+// Every card in every mode shares this one glass surface — blobs show
+// through the canvas behind, and through cards too, like the rest of the app.
 const SolidCard = ({ style, children }: { style?: any; children: React.ReactNode }) => {
-  const { isDark } = useTheme();
-  return (
-    <View
-      style={[
-        {
-          backgroundColor: isDark ? 'rgba(28,31,38,0.96)' : 'rgba(255,255,255,0.97)',
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)',
-          overflow: 'hidden',
-        },
-        style,
-      ]}
-    >
-      {children}
-    </View>
-  );
+  return <GlassCard style={style}>{children}</GlassCard>;
 };
 
 function getInitials(name: string): string {
@@ -516,7 +501,7 @@ const ItemizedReceiptMode = React.memo(({
       )}
 
       {items.map((item, idx) => (
-        <Animated.View key={item.id} entering={FadeInDown.delay(idx * 40).springify()}>
+        <Animated.View key={item.id} entering={SlideInDown.delay(idx * 40).springify()}>
           <SolidCard style={styles.itemCard}>
             <View style={styles.itemRow}>
               <TextInput
@@ -1233,7 +1218,7 @@ const TimeBasedMode = React.memo(({
 
       </SolidCard>
 
-      <Animated.View entering={FadeInDown.springify()}>
+      <Animated.View entering={SlideInDown.springify()}>
         <SolidCard style={styles.timeSummaryCard}>
           <View style={styles.timeSummaryHeader}>
             <View style={styles.timeSummaryHeaderText}>
@@ -1297,7 +1282,7 @@ const TimeBasedMode = React.memo(({
       </Animated.View>
 
       {allZero && (
-        <Animated.View entering={FadeIn.duration(300)}>
+        <Animated.View entering={SlideInUp.duration(300)}>
           <SolidCard style={styles.timeEmptyCard}>
             <View style={styles.timeEmptyContent}>
               <Icon source="calendar-clock" size={32} color={palette.muted} />
@@ -1386,7 +1371,7 @@ const TimeBasedMode = React.memo(({
         const visibleLongWeekendToggleLabel = areVisibleLongWeekendsSelected ? 'Remove long wkends' : 'Add long wkends';
 
         return (
-          <Animated.View key={participant.id} entering={FadeInDown.delay(index * 50).springify()}>
+          <Animated.View key={participant.id} entering={SlideInDown.delay(index * 50).springify()}>
             <SolidCard style={[
               styles.timeParticipantCard,
               {
@@ -2584,7 +2569,7 @@ const ItemTypeMode = React.memo(({ categories, onCategoriesChange, participants,
       </View>
 
       {categories.map((cat, ci) => (
-        <Animated.View key={cat.id} entering={FadeInDown.delay(ci * 40).springify()}>
+        <Animated.View key={cat.id} entering={SlideInDown.delay(ci * 40).springify()}>
           <SolidCard style={styles.itemCard}>
             <View style={styles.catHeader}>
               <Text variant="titleSmall" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>

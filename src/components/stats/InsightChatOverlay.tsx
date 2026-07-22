@@ -509,7 +509,7 @@ export const InsightChatOverlay = ({
     });
   };
 
-  const hairline = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)';
+  const hairline = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)';
 
   const showStarters = (thread?.messages.filter((m) => m.role === 'user').length ?? 0) === 0;
 

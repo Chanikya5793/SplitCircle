@@ -11,20 +11,29 @@ import React from 'react';
 import { Platform, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import Animated, { interpolateColor, useAnimatedStyle } from 'react-native-reanimated';
 
-// Resolve the native liquid-glass module defensively: requiring
-// expo-glass-effect registers a native view manager, which THROWS during
-// bundle init on any binary that doesn't include the ExpoGlassEffect native
-// module (older dev clients). This file is in the app's startup import chain,
-// so an eager import would crash at the splash screen. Fall back to blur.
+// Resolve the native liquid-glass module defensively. A bare require() of
+// expo-glass-effect on a binary that doesn't include the ExpoGlassEffect
+// native module (older dev clients, or the JS-only jsbundle hot-swap used to
+// verify non-native changes) doesn't reliably throw a catchable JS error —
+// per this project's own optional-native-module gotcha, it can SIGSEGV
+// Hermes instead. This file sits in the app's startup import chain, so probe
+// with requireOptionalNativeModule() FIRST (same pattern as
+// PrivacyGuardContext/ringback/screenCaptureGuard/biometrics) and only
+// require() the JS wrapper once the native half is confirmed present. Fall
+// back to blur otherwise.
 let NativeGlassView: React.ComponentType<any> | null = null;
 let LIQUID_GLASS = false;
 if (Platform.OS === 'ios') {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const glass = require('expo-glass-effect');
-    if (glass.isLiquidGlassAvailable()) {
-      NativeGlassView = glass.GlassView;
-      LIQUID_GLASS = true;
+    const { requireOptionalNativeModule } = require('expo-modules-core');
+    if (requireOptionalNativeModule('ExpoGlassEffect')) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const glass = require('expo-glass-effect');
+      if (glass.isLiquidGlassAvailable()) {
+        NativeGlassView = glass.GlassView;
+        LIQUID_GLASS = true;
+      }
     }
   } catch {
     LIQUID_GLASS = false;

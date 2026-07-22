@@ -55,7 +55,7 @@
   `timeBased`/`shares` config. **No competitor can do this** — it's unique to SplitCircle's model.
 
 ### RAG-08 — Policy / Help RAG *(new — support deflection)*  🟡
-- **Source:** in-repo docs (`README`, `ARCHITECTURE.md`, `CALLING_SETUP.md`).
+- **Source:** in-repo docs (`README`, `CLAUDE.md`, `OPS.md`).
 - **Queries:** "how do I start a group call?" Embeds product docs, not user PII.
 
 ---

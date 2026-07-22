@@ -157,6 +157,23 @@ describe('attemptUnlock + duress', () => {
     expect(locked.ok).toBe(false);
     expect(locked.lockedForMs).toBeGreaterThan(0);
   });
+
+  // Regression test for a confirmed bug (ui-revamp branch review): the
+  // previous test leaves the module in a locked-out state (module-level
+  // lockout state deliberately survives across tests here, see the NOTE
+  // above). A forced duress-code entry made WHILE that cooldown is active
+  // must still fake success silently — that's the entire point of the
+  // duress code. Currently attemptUnlock returns the lockout cooldown
+  // before ever checking isDuressCode, so this test is expected to FAIL
+  // until that ordering is fixed.
+  it('BUG: recognizes the duress code even while a lockout cooldown is active', async () => {
+    const stillLocked = await attemptUnlock('0000');
+    expect(stillLocked.lockedForMs).toBeGreaterThan(0);
+
+    const duress = await attemptUnlock('9999');
+    expect(duress.duress).toBe(true);
+    expect(duress.lockedForMs).toBe(0);
+  });
 });
 
 describe('disguise shuffle salt', () => {

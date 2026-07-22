@@ -468,6 +468,18 @@ export const isDuressCode = async (code: string): Promise<boolean> => {
  */
 export const attemptUnlock = async (code: string): Promise<UnlockResult> => {
   await loadLockout();
+
+  // Duress code: look like nothing happened. Don't reveal, don't penalize —
+  // and never RECORD it anywhere a later real unlock could surface. This is
+  // checked BEFORE the lockout cooldown below on purpose: a coercer who has
+  // already burned a few guesses (tripping the escalating lockout) must
+  // still get a silent fake success from the duress code, not a "too many
+  // attempts" message — that would both fail to trigger the decoy world and
+  // reveal that a lockout mechanism exists at all.
+  if (await isDuressCode(code)) {
+    return { ok: false, duress: true, lockedForMs: 0 };
+  }
+
   const remaining = Math.max(0, lockout.until - Date.now());
   if (remaining > 0) return { ok: false, duress: false, lockedForMs: remaining };
 
@@ -482,12 +494,6 @@ export const attemptUnlock = async (code: string): Promise<UnlockResult> => {
     };
     await saveLockout();
     return { ok: true, duress: false, lockedForMs: 0 };
-  }
-
-  // Duress code: look like nothing happened. Don't reveal, don't penalize —
-  // and never RECORD it anywhere a later real unlock could surface.
-  if (await isDuressCode(code)) {
-    return { ok: false, duress: true, lockedForMs: 0 };
   }
 
   lockout.fails += 1;

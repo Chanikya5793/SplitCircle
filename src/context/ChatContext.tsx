@@ -477,6 +477,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           deletedForEveryone: state.deletedForEveryone,
           editedContent: state.editedContent,
           editedAt: state.editedAt,
+          updatedAt: state.updatedAt,
         });
       },
       (error) => {

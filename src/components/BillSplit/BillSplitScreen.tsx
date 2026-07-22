@@ -1,5 +1,7 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
+import { BlurView } from 'expo-blur';
 import type { ExpenseSplitMetadata } from '@/models';
 import { recordSplit } from '@/services/splitHistoryService';
 import { spacing } from '@/theme';
@@ -10,7 +12,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Icon, PaperProvider, Text } from 'react-native-paper';
-import Animated, { Easing, FadeIn, FadeInDown, FadeOut, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, FadeIn, FadeOut, runOnJS, SlideInDown, SlideOutUp, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 // Canonical method order — matches MethodRail. Swiping steps through this list,
 // so the rail and the swipe gesture always agree.
@@ -37,7 +39,9 @@ import {
     computeStandardTimeBased,
     computeTimeBased,
     computeWeightedRoulette,
+    fromCents,
     listDatesBetween,
+    toCents,
     validateSplit
 } from './splitMath';
 import type {
@@ -373,6 +377,25 @@ export const BillSplitScreen = ({
   // ── Weighted Roulette Complete ────────────────────────────────────────────
   const handleWeightedComplete = useCallback((assignments: { userId: string; percentage: number }[]) => {
     setWeightedAssignments(assignments);
+    // Round each assignment's dollar amount using the same largest-fractional
+    // -part remainder distribution splitMath.ts's computePercentage/
+    // computeShares use, instead of rounding each independently — otherwise
+    // the committed amounts can land a cent short of/over totalAmount even
+    // though the drawn percentages summed to exactly 100%.
+    const totalCents = toCents(totalAmount);
+    const rawCents = assignments.map((a) => (a.percentage / 100) * totalCents);
+    const flooredCents = rawCents.map((c) => Math.floor(c));
+    let remainder = totalCents - flooredCents.reduce((a, b) => a + b, 0);
+    const byFraction = rawCents
+      .map((c, i) => ({ i, frac: c - Math.floor(c) }))
+      .sort((a, b) => b.frac - a.frac);
+    for (const { i } of byFraction) {
+      if (remainder <= 0) break;
+      flooredCents[i] += 1;
+      remainder -= 1;
+    }
+    const amountByUserId = new Map(assignments.map((a, i) => [a.userId, fromCents(flooredCents[i])]));
+
     setParticipants((prev) =>
       prev.map((p) => {
         const a = assignments.find((x) => x.userId === p.id);
@@ -380,7 +403,7 @@ export const BillSplitScreen = ({
         return {
           ...p,
           percentage: pct,
-          computedAmount: Math.round((totalAmount * pct / 100) * 100) / 100,
+          computedAmount: amountByUserId.get(p.id) ?? 0,
         };
       }),
     );
@@ -770,57 +793,69 @@ export const BillSplitScreen = ({
   return (
     <PaperProvider theme={theme}>
       <LiquidBackground>
-        <View style={[styles.container, { backgroundColor: theme.dark ? 'rgba(13,15,20,0.94)' : 'rgba(250,250,252,0.96)' }]}>
+        <View style={styles.container}>
           {/* Header — title + payer share one block so no separate payer row
               burns vertical space below. Tapping the subtitle opens the payer
               picker as an overlay. */}
-          <View style={[styles.header, { borderBottomColor: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)' }]}>
-            <TouchableOpacity onPress={onCancel} activeOpacity={0.7} style={styles.headerSide}>
-              <Text variant="labelLarge" style={{ color: theme.colors.primary }}>Cancel</Text>
-            </TouchableOpacity>
-            <Pressable
-              style={({ pressed }) => [styles.headerCenter, pressed && { opacity: 0.6 }]}
-              onPress={() => { selectionHaptic(); setShowParticipantMenu(false); setShowPayerMenu((v) => !v); }}
-              accessibilityRole="button"
-              accessibilityLabel={`Paid by ${payerName}. Tap to change payer`}
-            >
-              <Text variant="titleMedium" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>
-                Split options
-              </Text>
-              <View style={styles.headerPayerRow}>
-                <Text variant="labelSmall" style={{ color: theme.colors.muted }}>
-                  Paid by{' '}
-                  <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '700' }}>{payerName}</Text>
+          <View style={styles.headerWrap}>
+            <GlassCard style={styles.headerGlass} contentStyle={styles.header}>
+              <TouchableOpacity onPress={onCancel} activeOpacity={0.7} style={styles.headerSide}>
+                <Text variant="labelLarge" style={{ color: theme.colors.primary }}>Cancel</Text>
+              </TouchableOpacity>
+              <Pressable
+                style={({ pressed }) => [styles.headerCenter, pressed && { opacity: 0.6 }]}
+                onPress={() => { selectionHaptic(); setShowParticipantMenu(false); setShowPayerMenu((v) => !v); }}
+                accessibilityRole="button"
+                accessibilityLabel={`Paid by ${payerName}. Tap to change payer`}
+              >
+                <Text variant="titleMedium" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>
+                  Split options
                 </Text>
-                <Icon source={showPayerMenu ? 'chevron-up' : 'chevron-down'} size={13} color={theme.colors.primary} />
-              </View>
-            </Pressable>
-            {/* Global roster selector — one tap to include/exclude anyone, in
-                any mode. Balances the header opposite Cancel. */}
-            <Pressable
-              style={({ pressed }) => [styles.headerRight, pressed && { opacity: 0.6 }]}
-              onPress={() => { selectionHaptic(); setShowPayerMenu(false); setShowParticipantMenu((v) => !v); }}
-              accessibilityRole="button"
-              accessibilityLabel={`${included.length} of ${participants.length} people in the split. Tap to change`}
-            >
-              <Icon source="account-multiple" size={16} color={theme.colors.primary} />
-              <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '800' }}>
-                {included.length}/{participants.length}
-              </Text>
-              <Icon source={showParticipantMenu ? 'chevron-up' : 'chevron-down'} size={13} color={theme.colors.primary} />
-            </Pressable>
+                <View style={styles.headerPayerRow}>
+                  <Text variant="labelSmall" style={{ color: theme.colors.muted }}>
+                    Paid by{' '}
+                    <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '700' }}>{payerName}</Text>
+                  </Text>
+                  <Icon source={showPayerMenu ? 'chevron-up' : 'chevron-down'} size={13} color={theme.colors.primary} />
+                </View>
+              </Pressable>
+              {/* Global roster selector — one tap to include/exclude anyone, in
+                  any mode. Balances the header opposite Cancel. */}
+              <Pressable
+                style={({ pressed }) => [styles.headerRight, pressed && { opacity: 0.6 }]}
+                onPress={() => { selectionHaptic(); setShowPayerMenu(false); setShowParticipantMenu((v) => !v); }}
+                accessibilityRole="button"
+                accessibilityLabel={`${included.length} of ${participants.length} people in the split. Tap to change`}
+              >
+                <Icon source="account-multiple" size={16} color={theme.colors.primary} />
+                <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '800' }}>
+                  {included.length}/{participants.length}
+                </Text>
+                <Icon source={showParticipantMenu ? 'chevron-up' : 'chevron-down'} size={13} color={theme.colors.primary} />
+              </Pressable>
+            </GlassCard>
           </View>
 
-          {/* Payer picker — overlay under the header, solid surface */}
+          {/* Dropdown backdrop — glass dropdowns are translucent, so without a
+              dimming scrim behind them the scrolling participant rows underneath
+              visually merge with the dropdown's own rows. Tapping it also closes
+              whichever menu is open. */}
+          {(showPayerMenu || showParticipantMenu) && (
+            <Animated.View entering={FadeIn.duration(120)} exiting={FadeOut.duration(100)} style={[StyleSheet.absoluteFill, { zIndex: 40 }]} pointerEvents="box-none">
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={() => { setShowPayerMenu(false); setShowParticipantMenu(false); }}
+              >
+                <BlurView intensity={60} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+                <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.12)' }]} />
+              </Pressable>
+            </Animated.View>
+          )}
+
+          {/* Payer picker — overlay under the header, glass surface */}
           {showPayerMenu && (
-            <Animated.View entering={FadeInDown.duration(150)} exiting={FadeOut.duration(120)} style={styles.payerOverlay}>
-              <View style={[
-                styles.payerDropdownInner,
-                {
-                  backgroundColor: theme.dark ? 'rgba(28,31,38,0.99)' : 'rgba(255,255,255,0.99)',
-                  borderColor: theme.dark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)',
-                },
-              ]}>
+            <Animated.View entering={SlideInDown.duration(150)} exiting={SlideOutUp.duration(120)} style={styles.payerOverlay}>
+              <GlassCard style={styles.payerDropdownGlass}>
                 {participants.map((p) => (
                   <Pressable
                     key={p.id}
@@ -837,26 +872,20 @@ export const BillSplitScreen = ({
                     </View>
                   </Pressable>
                 ))}
-              </View>
+              </GlassCard>
             </Animated.View>
           )}
 
           {/* Participant roster — global multi-select overlay under the header.
               Stays open while you toggle several; the header chevron closes it. */}
           {showParticipantMenu && (
-            <Animated.View entering={FadeInDown.duration(150)} exiting={FadeOut.duration(120)} style={styles.payerOverlay}>
-              <View style={[
-                styles.payerDropdownInner,
-                {
-                  backgroundColor: theme.dark ? 'rgba(28,31,38,0.99)' : 'rgba(255,255,255,0.99)',
-                  borderColor: theme.dark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)',
-                },
-              ]}>
+            <Animated.View entering={SlideInDown.duration(150)} exiting={SlideOutUp.duration(120)} style={styles.payerOverlay}>
+              <GlassCard style={styles.payerDropdownGlass}>
                 <Pressable
                   onPress={handleSelectAll}
                   style={({ pressed }) => [
                     styles.payerDropdownItem,
-                    { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)' },
+                    { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.dark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)' },
                     pressed && { opacity: 0.6 },
                   ]}
                 >
@@ -879,7 +908,7 @@ export const BillSplitScreen = ({
                     </View>
                   </Pressable>
                 ))}
-              </View>
+              </GlassCard>
             </Animated.View>
           )}
 
@@ -976,8 +1005,10 @@ export const BillSplitScreen = ({
             <Animated.View
               entering={FadeIn.duration(220)}
               exiting={FadeOut.duration(150)}
-              style={[styles.winnerOverlay, { backgroundColor: theme.dark ? 'rgba(13,15,20,0.98)' : 'rgba(250,250,252,0.99)' }]}
+              style={styles.winnerOverlay}
             >
+              <BlurView intensity={80} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} pointerEvents="none" />
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} pointerEvents="none" />
               <ConfettiBurst key={loserId} />
               <TouchableOpacity
                 style={styles.winnerClose}
@@ -1029,8 +1060,10 @@ export const BillSplitScreen = ({
             <Animated.View
               entering={FadeIn.duration(220)}
               exiting={FadeOut.duration(150)}
-              style={[styles.winnerOverlay, { backgroundColor: theme.dark ? 'rgba(13,15,20,0.98)' : 'rgba(250,250,252,0.99)' }]}
+              style={styles.winnerOverlay}
             >
+              <BlurView intensity={80} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} pointerEvents="none" />
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} pointerEvents="none" />
               <ConfettiBurst key={weightedOutcomeRows.map((row) => `${row.id}:${row.percentage}`).join('|')} />
               <TouchableOpacity
                 style={styles.winnerClose}
@@ -1046,21 +1079,20 @@ export const BillSplitScreen = ({
                 <Text variant="bodyMedium" style={{ color: theme.colors.muted }}>Everyone can see their final share.</Text>
               </View>
 
-              <ScrollView style={[
-                styles.weightedOutcomeList,
-                { backgroundColor: theme.dark ? 'rgba(28,31,38,0.98)' : 'rgba(255,255,255,0.98)', borderColor: theme.dark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)' },
-              ]} showsVerticalScrollIndicator={false}>
-                {weightedOutcomeRows.map((row, index) => (
-                  <View key={row.id} style={[
-                    styles.weightedOutcomeRow,
-                    index < weightedOutcomeRows.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)' },
-                  ]}>
-                    <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '700', flex: 1 }} numberOfLines={1}>{row.name}</Text>
-                    <Text variant="titleMedium" style={{ color: theme.colors.primary, fontWeight: '800' }}>{row.percentage}%</Text>
-                    <Text variant="bodyMedium" style={{ color: theme.colors.muted, width: 78, textAlign: 'right' }}>{formatCurrency(row.amount, currency)}</Text>
-                  </View>
-                ))}
-              </ScrollView>
+              <GlassCard style={styles.weightedOutcomeGlass} contentStyle={styles.weightedOutcomeContent} forceBlur>
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  {weightedOutcomeRows.map((row, index) => (
+                    <View key={row.id} style={[
+                      styles.weightedOutcomeRow,
+                      index < weightedOutcomeRows.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.dark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)' },
+                    ]}>
+                      <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '700', flex: 1 }} numberOfLines={1}>{row.name}</Text>
+                      <Text variant="titleMedium" style={{ color: theme.colors.primary, fontWeight: '800' }}>{row.percentage}%</Text>
+                      <Text variant="bodyMedium" style={{ color: theme.colors.muted, width: 78, textAlign: 'right' }}>{formatCurrency(row.amount, currency)}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              </GlassCard>
 
               <View style={styles.winnerActions}>
                 <TouchableOpacity
@@ -1090,8 +1122,10 @@ export const BillSplitScreen = ({
             <Animated.View
               entering={FadeIn.duration(220)}
               exiting={FadeOut.duration(150)}
-              style={[styles.winnerOverlay, { backgroundColor: theme.dark ? 'rgba(13,15,20,0.98)' : 'rgba(250,250,252,0.99)' }]}
+              style={styles.winnerOverlay}
             >
+              <BlurView intensity={80} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} pointerEvents="none" />
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} pointerEvents="none" />
               <ConfettiBurst key={karmaOutcomeRows.map((row) => `${row.id}:${row.amount}`).join('|')} />
               <TouchableOpacity
                 style={styles.winnerClose}
@@ -1107,20 +1141,19 @@ export const BillSplitScreen = ({
                 <Text variant="bodyMedium" style={{ color: theme.colors.muted }}>Past contributions are reflected in every share.</Text>
               </View>
 
-              <ScrollView style={[
-                styles.weightedOutcomeList,
-                { backgroundColor: theme.dark ? 'rgba(28,31,38,0.98)' : 'rgba(255,255,255,0.98)', borderColor: theme.dark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)' },
-              ]} showsVerticalScrollIndicator={false}>
-                {karmaOutcomeRows.map((row, index) => (
-                  <View key={row.id} style={[
-                    styles.weightedOutcomeRow,
-                    index < karmaOutcomeRows.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)' },
-                  ]}>
-                    <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '700', flex: 1 }} numberOfLines={1}>{row.name}</Text>
-                    <Text variant="titleMedium" style={{ color: theme.colors.primary, fontWeight: '800' }}>{formatCurrency(row.amount, currency)}</Text>
-                  </View>
-                ))}
-              </ScrollView>
+              <GlassCard style={styles.weightedOutcomeGlass} contentStyle={styles.weightedOutcomeContent} forceBlur>
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  {karmaOutcomeRows.map((row, index) => (
+                    <View key={row.id} style={[
+                      styles.weightedOutcomeRow,
+                      index < karmaOutcomeRows.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.dark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)' },
+                    ]}>
+                      <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '700', flex: 1 }} numberOfLines={1}>{row.name}</Text>
+                      <Text variant="titleMedium" style={{ color: theme.colors.primary, fontWeight: '800' }}>{formatCurrency(row.amount, currency)}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              </GlassCard>
 
               <View style={styles.winnerActions}>
                 <TouchableOpacity
@@ -1176,16 +1209,21 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  headerWrap: {
+    paddingHorizontal: spacing.md,
+    // Presented as a pageSheet — the card already sits below the status bar,
+    // so the old 56px of top padding was pure dead space.
+    paddingTop: 10,
+  },
+  headerGlass: {
+    borderRadius: 20,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
-    // Presented as a pageSheet — the card already sits below the status bar,
-    // so the old 56px of top padding was pure dead space.
-    paddingTop: 10,
-    paddingBottom: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 10,
   },
   headerSide: {
     minWidth: 56,
@@ -1211,7 +1249,7 @@ const styles = StyleSheet.create({
   },
   payerOverlay: {
     position: 'absolute',
-    top: 64,
+    top: 76,
     left: spacing.md,
     right: spacing.md,
     zIndex: 50,
@@ -1229,10 +1267,8 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingBottom: spacing.lg,
   },
-  payerDropdownInner: {
+  payerDropdownGlass: {
     borderRadius: 14,
-    overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth,
   },
   payerDropdownItem: {
     flexDirection: 'row',
@@ -1285,15 +1321,16 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textAlign: 'center',
   },
-  weightedOutcomeList: {
+  weightedOutcomeGlass: {
     alignSelf: 'stretch',
     marginHorizontal: spacing.md,
     // Fill the space between the header and the docked actions instead of a
     // fixed 52% slice — most splits now show every row with no scroll at all.
     flex: 1,
     borderRadius: 20,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: 'hidden',
+  },
+  weightedOutcomeContent: {
+    flex: 1,
   },
   weightedOutcomeRow: {
     minHeight: 58,

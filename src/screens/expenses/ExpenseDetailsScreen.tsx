@@ -379,10 +379,18 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
               Split with
             </Text>
+            <Text variant="bodySmall" style={[styles.splitModeNote, { color: theme.colors.onSurfaceVariant }]}>
+              A personal reminder only — it doesn't record a payment or change the group balance. Use Settle Up for that.
+            </Text>
             {expense.participants.map((p) => {
-              // Per-participant settle ticks (doc 26): payer is implicitly
+              // Per-participant settle ticks (doc 26): purely a presentational
+              // "did they pay me back informally" marker — payer is implicitly
               // settled; payer/admins can tick anyone, members can tick
-              // themselves. All non-payer ticked → expense.settled.
+              // themselves. All non-payer ticked → expense.settled. This is
+              // NEVER read by balance/debt computation (adaptGroup) by design
+              // — a real payment must go through Settle Up, which is the
+              // actual source of truth. See ai_layer/docs/26 §"Per-participant
+              // settle state".
               const isPayer = p.userId === expense.paidBy;
               const ticked = isPayer || (expense.settledParticipantIds ?? []).includes(p.userId);
               const myRole = group.members.find((m) => m.userId === user?.userId)?.role;

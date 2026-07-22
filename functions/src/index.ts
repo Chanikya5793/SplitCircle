@@ -478,6 +478,14 @@ export const onChatUpdated = onDocumentUpdated(
             senderId,
             senderName,
         };
+        // Locked recipients' visible title/body are already genericized above
+        // — the DATA payload must match, or anything that reads it raw (a
+        // future notification-service extension, widget, background handler)
+        // can still recover who sent it before the recipient unlocks the
+        // chat. Only chatId (needed for the tap-to-open-the-still-gated-chat
+        // deep link) and the bare type survive; senderId/senderName/groupId
+        // are all either unused client-side or directly identifying.
+        const lockedDataPayload = { type: "message", chatId };
 
         try {
             if (normalRecipientIds.length > 0) {
@@ -508,7 +516,7 @@ export const onChatUpdated = onDocumentUpdated(
                     lockedRecipientIds,
                     "ManaSplit",
                     "New message",
-                    dataPayload,
+                    lockedDataPayload,
                     "messages",
                     chatId,
                     "messages",

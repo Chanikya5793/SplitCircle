@@ -4,7 +4,7 @@ import type { Participant, SplitMethod } from '@/components/BillSplit/types';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GuardedScreen } from '@/components/ui';
+import { GlassCard, GlassPickerSheet, GuardedScreen, SectionLabel } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { ReceiptScannerSheet, type ReceiptScannerResult } from '@/components/ReceiptScannerSheet';
 import { useAuth } from '@/context/AuthContext';
@@ -36,7 +36,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Image, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
-import { Button, Chip, Dialog, Icon, Menu, PaperProvider, Portal, Text, TextInput, TouchableRipple } from 'react-native-paper';
+import { Button, Chip, Icon, PaperProvider, Text, TextInput } from 'react-native-paper';
 
 interface AddExpenseScreenProps {
   group: Group;
@@ -104,6 +104,7 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
   const [nlText, setNlText] = useState('');
   const [nlBusy, setNlBusy] = useState(false);
   const nlAvailable = useMemo(() => isOnDeviceExpenseNlAvailable(), []);
+  const [nlExpanded, setNlExpanded] = useState(false);
 
   // Doc 26 detection surface (a): "Repeats monthly?" chip at the moment of
   // creation. Deterministic clustering over this group's history — no FM call.
@@ -750,48 +751,64 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
           <GlassView style={styles.card}>
             <Text variant="headlineMedium" style={[styles.title, { color: theme.colors.onSurface }]}>{expenseId ? 'Edit expense' : 'Add expense'}</Text>
 
-            {/* Natural-language entry (on-device, eligible devices only) */}
+            {/* Natural-language entry (on-device, eligible devices only) — collapsed
+                by default so it doesn't cost vertical space for the people who type
+                fields directly; tapping the pill reveals the input in place. */}
             {nlAvailable && !expenseId ? (
-              <View
-                style={[
-                  styles.nlCard,
-                  {
-                    borderColor: theme.colors.primary,
-                    backgroundColor: isDark ? 'rgba(88,166,255,0.08)' : 'rgba(31,111,235,0.05)',
-                  },
-                ]}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              nlExpanded ? (
+                <View style={styles.nlCard}>
+                  <View style={styles.nlCardHeader}>
+                    <Icon source="creation" size={16} color={theme.colors.primary} />
+                    <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '700', flex: 1 }}>
+                      Type it in plain English
+                    </Text>
+                    <TouchableOpacity onPress={() => setNlExpanded(false)} hitSlop={8}>
+                      <Icon source="close" size={16} color={theme.colors.onSurfaceVariant} />
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput
+                    mode="outlined"
+                    value={nlText}
+                    onChangeText={setNlText}
+                    placeholder="e.g. $40 dinner with Alex & Sam, split equally"
+                    multiline
+                    autoFocus
+                    onSubmitEditing={handleNlParse}
+                    outlineColor={`${theme.colors.primary}${isDark ? '85' : '70'}`}
+                    activeOutlineColor={theme.colors.primary}
+                    outlineStyle={{ borderWidth: 1.5, borderRadius: 12 }}
+                    style={{ backgroundColor: 'transparent' }}
+                    right={
+                      <TextInput.Icon
+                        icon={nlBusy ? 'loading' : 'arrow-right-circle'}
+                        disabled={nlBusy || !nlText.trim()}
+                        onPress={handleNlParse}
+                      />
+                    }
+                  />
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => { lightHaptic(); setNlExpanded(true); }}
+                  activeOpacity={0.7}
+                  style={styles.nlPill}
+                  accessibilityRole="button"
+                  accessibilityLabel="Type the expense in plain English"
+                >
                   <Icon source="creation" size={16} color={theme.colors.primary} />
                   <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                    Type it in plain English
+                    Type it in plain English instead
                   </Text>
-                </View>
-                <TextInput
-                  mode="outlined"
-                  value={nlText}
-                  onChangeText={setNlText}
-                  placeholder="e.g. $40 dinner with Alex & Sam, split equally"
-                  multiline
-                  onSubmitEditing={handleNlParse}
-                  outlineColor={`${theme.colors.primary}${isDark ? '85' : '70'}`}
-                  activeOutlineColor={theme.colors.primary}
-                  outlineStyle={{ borderWidth: 1.5, borderRadius: 12 }}
-                  style={{ backgroundColor: 'transparent' }}
-                  right={
-                    <TextInput.Icon
-                      icon={nlBusy ? 'loading' : 'arrow-right-circle'}
-                      disabled={nlBusy || !nlText.trim()}
-                      onPress={handleNlParse}
-                    />
-                  }
-                />
-              </View>
+                </TouchableOpacity>
+              )
             ) : null}
 
+            <SectionLabel style={[styles.sectionLabel, styles.sectionLabelFirst]}>Basics</SectionLabel>
+
             {isRecurringExpense && (
-              <View style={[styles.recurringNote, { backgroundColor: isDark ? 'rgba(100,180,255,0.12)' : 'rgba(33,150,243,0.08)' }]}>
-                <Text style={{ color: theme.colors.onSurfaceVariant, fontSize: 13 }}>
+              <View style={styles.infoBanner}>
+                <Icon source="information-outline" size={15} color={theme.colors.primary} />
+                <Text style={{ color: theme.colors.onSurfaceVariant, fontSize: 13, flex: 1 }}>
                   Editing this occurrence only. Future recurrences will use the original bill settings.
                 </Text>
               </View>
@@ -813,11 +830,11 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
                     backTitle: group.name,
                   });
                 }}
-                style={[styles.recurringNote, { backgroundColor: isDark ? 'rgba(100,180,255,0.12)' : 'rgba(33,150,243,0.08)', flexDirection: 'row', alignItems: 'center', gap: 8 }]}
+                style={styles.infoBanner}
                 accessibilityRole="button"
                 accessibilityLabel={`Set up ${recurringMatch.title} as a recurring bill`}
               >
-                <Icon source="repeat" size={16} color={theme.colors.primary} />
+                <Icon source="repeat" size={15} color={theme.colors.primary} />
                 <Text style={{ color: theme.colors.onSurfaceVariant, fontSize: 13, flex: 1 }}>
                   “{recurringMatch.title}” shows up {recurringMatch.cadence} — set it up as a recurring bill?
                 </Text>
@@ -837,83 +854,75 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
             </View>
 
             <View style={styles.row}>
-              <Menu
-                visible={showCategoryMenu}
-                onDismiss={() => setShowCategoryMenu(false)}
-                anchor={
-                  <Button mode="outlined" onPress={() => setShowCategoryMenu(true)} icon={getCategoryIcon(category)} style={{ borderColor: `${theme.colors.primary}55` }}>
-                    {category}
-                  </Button>
-                }
-              >
-                {CATEGORIES.map((cat) => (
-                  <Menu.Item key={cat} onPress={() => { setCategory(cat); setShowCategoryMenu(false); }} title={cat} leadingIcon={getCategoryIcon(cat)} />
-                ))}
-              </Menu>
+              <Button mode="outlined" onPress={() => setShowCategoryMenu(true)} icon={getCategoryIcon(category)} style={{ borderColor: `${theme.colors.primary}55` }}>
+                {category}
+              </Button>
 
               <Button mode="outlined" onPress={() => setShowPayerDialog(true)} icon="account-cash" style={{ borderColor: `${theme.colors.primary}55` }}>
                 Paid by {memberDisplayNames[paidBy] ?? 'Unknown'}
               </Button>
             </View>
 
-            {/* Smart Receipt Scanner Button */}
-            {!expenseId && (
-              <TouchableOpacity
-                onPress={() => {
-                  mediumHaptic();
-                  setShowReceiptScanner(true);
-                }}
-                activeOpacity={0.7}
-                style={[styles.scanReceiptBtn, { borderColor: theme.colors.primary }]}
-              >
-                <View style={styles.scanReceiptBtnContent}>
-                  <View style={[styles.scanReceiptIconCircle, { backgroundColor: `${theme.colors.primary}15` }]}>
-                    <Icon source="camera-document" size={24} color={theme.colors.primary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                      Scan Receipt
-                    </Text>
-                    <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                      Auto-extract items, tax, tip & total
-                    </Text>
-                  </View>
-                  <Icon source="chevron-right" size={20} color={theme.colors.primary} />
-                </View>
-              </TouchableOpacity>
-            )}
+            <SectionLabel style={styles.sectionLabel}>Receipt</SectionLabel>
 
-            <View style={styles.field}>
-              <Menu
-                visible={showReceiptMenu}
-                onDismiss={() => setShowReceiptMenu(false)}
-                anchor={
-                  <Button mode="outlined" icon="paperclip" onPress={() => setShowReceiptMenu(true)} style={{ borderColor: `${theme.colors.primary}55` }}>
-                    {receiptUri ? 'Change Receipt' : 'Add Receipt'}
-                  </Button>
-                }
-              >
-                <Menu.Item onPress={handleTakePhoto} title="Take Photo" leadingIcon="camera" />
-                <Menu.Item onPress={handlePickImage} title="Choose from Gallery" leadingIcon="image" />
-                <Menu.Item onPress={handlePickDocument} title="Upload Document" leadingIcon="file-document" />
-              </Menu>
-
-              {receiptUri && (
-                <View style={styles.imagePreviewContainer}>
-                  {receiptType === 'image' ? (
-                    <Image source={{ uri: receiptUri }} style={[styles.imagePreview, { backgroundColor: isDark ? '#333' : '#f0f0f0' }]} resizeMode="contain" />
-                  ) : (
-                    <View style={[styles.documentPreview, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#f0f0f0' }]}>
-                      <Text variant="bodyLarge" style={{ marginBottom: 8, color: theme.colors.onSurface }}>📄 {receiptName || 'Document attached'}</Text>
+            {/* One compact row: Scan (OCR auto-extract) is the primary action,
+                Attach (camera/gallery/document, no OCR) is the secondary icon
+                button beside it — was two separate full-width boxes. */}
+            <View style={styles.row}>
+              {!expenseId && (
+                <TouchableOpacity
+                  onPress={() => {
+                    mediumHaptic();
+                    setShowReceiptScanner(true);
+                  }}
+                  activeOpacity={0.7}
+                  style={[styles.scanReceiptBtn, { borderColor: theme.colors.primary }]}
+                >
+                  <View style={styles.scanReceiptBtnContent}>
+                    <Icon source="camera-document" size={20} color={theme.colors.primary} />
+                    <View style={{ flex: 1 }}>
+                      <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                        Scan Receipt
+                      </Text>
+                      <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                        Auto-extract items, tax & total
+                      </Text>
                     </View>
-                  )}
-                  <Button onPress={() => { setReceiptUri(null); setReceiptType(null); setReceiptName(null); }} textColor={theme.colors.error}>
-                    Remove
-                  </Button>
-                </View>
+                  </View>
+                </TouchableOpacity>
               )}
+              <TouchableOpacity
+                onPress={() => setShowReceiptMenu(true)}
+                activeOpacity={0.7}
+                style={[styles.attachReceiptBtn, { borderColor: `${theme.colors.primary}55` }, expenseId ? { flex: 1, width: undefined } : null]}
+                accessibilityRole="button"
+                accessibilityLabel={receiptUri ? 'Change receipt' : 'Attach receipt'}
+              >
+                <Icon source="paperclip" size={20} color={theme.colors.primary} />
+                {expenseId ? (
+                  <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                    {receiptUri ? 'Change Receipt' : 'Add Receipt'}
+                  </Text>
+                ) : null}
+              </TouchableOpacity>
             </View>
 
+            {receiptUri && (
+              <View style={styles.imagePreviewContainer}>
+                {receiptType === 'image' ? (
+                  <Image source={{ uri: receiptUri }} style={[styles.imagePreview, { backgroundColor: isDark ? '#333' : '#f0f0f0' }]} resizeMode="contain" />
+                ) : (
+                  <View style={[styles.documentPreview, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#f0f0f0' }]}>
+                    <Text variant="bodyLarge" style={{ marginBottom: 8, color: theme.colors.onSurface }}>📄 {receiptName || 'Document attached'}</Text>
+                  </View>
+                )}
+                <Button onPress={() => { setReceiptUri(null); setReceiptType(null); setReceiptName(null); }} textColor={theme.colors.error}>
+                  Remove
+                </Button>
+              </View>
+            )}
+
+            <SectionLabel style={styles.sectionLabel}>Split</SectionLabel>
 
             {/* Split Options Button */}
             <TouchableOpacity
@@ -950,31 +959,21 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
               </View>
             </TouchableOpacity>
 
-            {/* Smart split suggestion (on-device) */}
+            {/* Smart split suggestion (on-device) — a slim inline row attached
+                right under Split Options, not a second independent card. */}
             {splitSuggestion ? (
               <TouchableOpacity
                 onPress={applySplitSuggestion}
-                activeOpacity={0.8}
-                style={[
-                  styles.suggestionChip,
-                  {
-                    borderColor: theme.colors.primary,
-                    backgroundColor: isDark ? 'rgba(88,166,255,0.10)' : 'rgba(31,111,235,0.06)',
-                  },
-                ]}
+                activeOpacity={0.7}
+                style={styles.suggestionRow}
               >
-                <Icon source="lightbulb-on-outline" size={18} color={theme.colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                    Suggested split
-                  </Text>
-                  <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                    {splitSuggestion.method === 'equal' ? 'Split equally' : 'Match how this group usually splits'}
-                    {' · '}
-                    {Math.round(splitSuggestion.confidence * 100)}% match
-                  </Text>
-                </View>
-                <Text variant="labelLarge" style={{ color: theme.colors.primary, fontWeight: '700' }}>
+                <Icon source="lightbulb-on-outline" size={16} color={theme.colors.primary} />
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }} numberOfLines={1}>
+                  {splitSuggestion.method === 'equal' ? 'Split equally' : 'Match how this group usually splits'}
+                  {' · '}
+                  {Math.round(splitSuggestion.confidence * 100)}% match
+                </Text>
+                <Text variant="labelMedium" style={{ color: theme.colors.primary, fontWeight: '700' }}>
                   Apply
                 </Text>
               </TouchableOpacity>
@@ -1012,13 +1011,8 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
 
             {/* On-device anomaly warnings (duplicate / unusually large) */}
             {expenseAnomalies.length > 0 ? (
-              <View
-                style={[
-                  styles.anomalyBanner,
-                  { backgroundColor: isDark ? 'rgba(255,150,0,0.12)' : 'rgba(255,140,0,0.08)' },
-                ]}
-              >
-                <Icon source="alert-outline" size={20} color="#FF9500" />
+              <View style={styles.warningBanner}>
+                <Icon source="alert-outline" size={18} color="#FF9500" />
                 <View style={{ flex: 1, gap: 2 }}>
                   {expenseAnomalies.map((a) => (
                     <Text key={a.type} variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, lineHeight: 18 }}>
@@ -1033,7 +1027,7 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
 
         {/* Docked action bar — Cancel / Save are always in reach, no scroll to
             the bottom of the form required. */}
-        <View style={[styles.dockedActions, { backgroundColor: isDark ? 'rgba(18,20,26,0.98)' : 'rgba(255,255,255,0.98)', borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)' }]}>
+        <GlassCard style={styles.dockedGlass} contentStyle={styles.dockedActions}>
           <Button mode="outlined" onPress={onClose} style={[styles.dockedCancel, { borderColor: `${theme.colors.primary}55` }]}>
             Cancel
           </Button>
@@ -1047,7 +1041,7 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
           >
             {expenseId ? 'Save changes' : 'Save expense'}
           </PrimaryButton>
-        </View>
+        </GlassCard>
         </View>
       </GuardedScreen>
     </LiquidBackground>
@@ -1089,32 +1083,47 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
         )}
       </Modal>
 
-      <Portal>
-        <Dialog visible={showPayerDialog} onDismiss={() => setShowPayerDialog(false)} style={{ backgroundColor: theme.colors.surface }}>
-          <Dialog.Title style={{ color: theme.colors.onSurface }}>Who paid?</Dialog.Title>
-          <Dialog.Content>
-            <ScrollView style={{ maxHeight: 300 }}>
-              {group.members.map((member) => (
-                <TouchableRipple
-                  key={member.userId}
-                  onPress={() => {
-                    setPaidBy(member.userId);
-                    setShowPayerDialog(false);
-                  }}
-                >
-                  <View style={styles.payerRow}>
-                    <Text variant="bodyLarge" style={{ color: theme.colors.onSurface }}>{member.displayName}</Text>
-                    {paidBy === member.userId && <Text style={{ color: theme.colors.primary }}>Selected</Text>}
-                  </View>
-                </TouchableRipple>
-              ))}
-            </ScrollView>
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setShowPayerDialog(false)}>Cancel</Button>
-          </Dialog.Actions>
-        </Dialog>
-      </Portal>
+      <GlassPickerSheet
+        visible={showPayerDialog}
+        onClose={() => setShowPayerDialog(false)}
+        title="Who paid?"
+        options={group.members.map((member) => ({
+          key: member.userId,
+          label: member.displayName,
+          selected: paidBy === member.userId,
+          onPress: () => {
+            setPaidBy(member.userId);
+            setShowPayerDialog(false);
+          },
+        }))}
+      />
+
+      <GlassPickerSheet
+        visible={showCategoryMenu}
+        onClose={() => setShowCategoryMenu(false)}
+        title="Category"
+        options={CATEGORIES.map((cat) => ({
+          key: cat,
+          label: cat,
+          icon: getCategoryIcon(cat),
+          selected: cat === category,
+          onPress: () => {
+            setCategory(cat);
+            setShowCategoryMenu(false);
+          },
+        }))}
+      />
+
+      <GlassPickerSheet
+        visible={showReceiptMenu}
+        onClose={() => setShowReceiptMenu(false)}
+        title={receiptUri ? 'Change Receipt' : 'Add Receipt'}
+        options={[
+          { key: 'photo', label: 'Take Photo', icon: 'camera', onPress: handleTakePhoto },
+          { key: 'gallery', label: 'Choose from Gallery', icon: 'image', onPress: handlePickImage },
+          { key: 'document', label: 'Upload Document', icon: 'file-document', onPress: handlePickDocument },
+        ]}
+      />
     </PaperProvider>
   );
 };
@@ -1130,6 +1139,12 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 24,
   },
+  dockedGlass: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+  },
   dockedActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1137,7 +1152,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 28,
-    borderTopWidth: StyleSheet.hairlineWidth,
   },
   dockedCancel: {
     minWidth: 104,
@@ -1154,11 +1168,21 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 12,
   },
-  recurringNote: {
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+  infoBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
     marginBottom: 8,
+  },
+  sectionLabel: {
+    marginHorizontal: 0,
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  sectionLabelFirst: {
+    marginTop: 0,
   },
   field: {
     marginBottom: 8,
@@ -1184,24 +1208,26 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   scanReceiptBtn: {
+    flex: 1,
     borderWidth: 1.5,
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    marginBottom: 8,
-    borderStyle: 'solid',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
   scanReceiptBtnContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
-  scanReceiptIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
+  attachReceiptBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    width: 48,
+    height: 48,
+    borderWidth: 1.5,
+    borderRadius: 14,
   },
   splitOptionsBtn: {
     borderWidth: 1,
@@ -1231,17 +1257,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
-  suggestionChip: {
+  suggestionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    borderWidth: 1,
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
     marginBottom: 8,
   },
-  anomalyBanner: {
+  warningBanner: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
@@ -1250,21 +1274,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 8,
   },
+  nlPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    marginBottom: 4,
+  },
   nlCard: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 12,
+    marginBottom: 8,
+  },
+  nlCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
   },
   splitPreview: {
     marginBottom: 8,
-  },
-  payerRow: {
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
   },
   imagePreviewContainer: {
     marginTop: 8,

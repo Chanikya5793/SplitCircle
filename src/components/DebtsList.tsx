@@ -7,9 +7,9 @@ import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { minimizeDebts, type Debt } from '@/utils/debtMinimizer';
 import { lightHaptic } from '@/utils/haptics';
 import { useMemo, useRef, useState } from 'react';
-import { Animated as RNAnimated, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated as RNAnimated, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import { Avatar, IconButton, Modal, Portal, Text } from 'react-native-paper';
+import { Avatar, IconButton, Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 
 interface SwipeableDebtRowProps {
@@ -288,12 +288,20 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                 )}
             </GlassView>
 
-            <Portal>
-                <Modal
-                    visible={!!selectedDebt}
-                    onDismiss={() => setSelectedDebt(null)}
-                    contentContainerStyle={styles.modalContainer}
-                >
+            {/* react-native-paper's own Modal wraps its content in a Surface with an
+                animated `opacity` style — an ancestor with fractional opacity kills
+                the native iOS 26 glass material (DESIGN.md's native-material kill
+                list). RN core Modal's fade is a native UIKit transition, not a
+                JS-tree opacity ancestor, so it doesn't have this problem. */}
+            <Modal
+                visible={!!selectedDebt}
+                transparent
+                statusBarTranslucent
+                animationType="fade"
+                onRequestClose={() => setSelectedDebt(null)}
+            >
+                <Pressable style={styles.modalBackdrop} onPress={() => setSelectedDebt(null)} accessibilityLabel="Close breakdown" />
+                <View style={styles.modalContainer} pointerEvents="box-none">
                     {selectedDebt && (
                         <GlassView
                             style={[
@@ -351,8 +359,8 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                             </ScrollView>
                         </GlassView>
                     )}
-                </Modal>
-            </Portal>
+                </View>
+            </Modal>
         </>
     );
 };
@@ -400,7 +408,12 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         marginVertical: 2,
     },
+    modalBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+    },
     modalContainer: {
+        flex: 1,
         padding: 20,
         alignItems: 'center',
         justifyContent: 'center',

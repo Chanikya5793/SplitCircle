@@ -1,3 +1,4 @@
+import { GlassCard } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
@@ -86,7 +87,6 @@ export const ForwardPickerSheet = ({
     onClose();
   };
 
-  const surface = isDark ? '#1a1a1f' : '#ffffff';
   const muted = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
 
   return (
@@ -101,7 +101,7 @@ export const ForwardPickerSheet = ({
         <Pressable style={StyleSheet.absoluteFill} onPress={handleClose}>
           <View style={styles.backdrop} />
         </Pressable>
-        <View style={[styles.sheet, { backgroundColor: surface }]}>
+        <GlassCard style={styles.sheetGlass} contentStyle={styles.sheetContent}>
           <View style={styles.handleWrap}>
             <View style={[styles.handle, { backgroundColor: isDark ? '#555' : '#ccc' }]} />
           </View>
@@ -205,7 +205,7 @@ export const ForwardPickerSheet = ({
                 : `Forward to ${selectedIds.length} chat${selectedIds.length === 1 ? '' : 's'}`}
             </Text>
           </TouchableOpacity>
-        </View>
+        </GlassCard>
       </View>
     </Modal>
   );
@@ -214,12 +214,16 @@ export const ForwardPickerSheet = ({
 const styles = StyleSheet.create({
   root: { flex: 1, justifyContent: 'flex-end' },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)' },
-  sheet: {
+  sheetGlass: {
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    maxHeight: '82%',
+  },
+  sheetContent: {
     paddingTop: 8,
     paddingBottom: Platform.OS === 'ios' ? 34 : 16,
-    maxHeight: '82%',
   },
   handleWrap: { alignItems: 'center', paddingVertical: 6 },
   handle: { width: 38, height: 4, borderRadius: 2 },

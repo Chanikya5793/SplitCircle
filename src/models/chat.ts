@@ -141,6 +141,10 @@ export interface ChatMessage {
   replyTo?: ReplyTo;
   // WhatsApp-parity fields — local-first, sync deferred to Phase 2.
   reactions?: ReactionMap;
+  /** Local write-time stamp bumped on every reaction toggle — lets
+   *  applyRemoteMessageState refuse to let a stale server replay clobber a
+   *  newer local change (reactions has no server-confirmed id to order by). */
+  reactionsLocalVersion?: number;
   starredBy?: string[];
   /** UserIds who hid this message client-side via "Delete for me". */
   deletedFor?: string[];

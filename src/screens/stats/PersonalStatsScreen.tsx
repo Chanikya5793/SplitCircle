@@ -6,6 +6,7 @@
 
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { AiNarrativeSkeleton } from '@/components/stats/AiNarrativeSkeleton';
 import { InsightChatOverlay } from '@/components/stats/InsightChatOverlay';
 import { HBar } from '@/components/stats/StatsVisuals';
 import { GuardedScreen } from '@/components/ui';
@@ -48,6 +49,7 @@ export const PersonalStatsScreen = () => {
 
   const [range, setRange] = useState<StatsRange>('month');
   const [narrative, setNarrative] = useState<InsightNarrative | null>(null);
+  const [narrativeLoading, setNarrativeLoading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [pccOn, setPccOn] = useState(true);
   const [pccStatus, setPccStatus] = useState<{ available: boolean; reason: string } | null>(null);
@@ -95,12 +97,19 @@ export const PersonalStatsScreen = () => {
   useEffect(() => {
     let cancelled = false;
     setNarrative(null);
-    if (!personalFacts) return;
+    if (!personalFacts) {
+      setNarrativeLoading(false);
+      return;
+    }
+    setNarrativeLoading(true);
     narrateInsights(personalFacts, { deep: true })
       .then((n) => {
         if (!cancelled) setNarrative(n);
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setNarrativeLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -179,7 +188,7 @@ export const PersonalStatsScreen = () => {
             ))}
           </View>
 
-          {narrative && (
+          {narrative ? (
             <TouchableOpacity
               activeOpacity={0.88}
               onPress={() => {
@@ -206,6 +215,8 @@ export const PersonalStatsScreen = () => {
               </Text>
             </GlassView>
             </TouchableOpacity>
+          ) : (
+            narrativeLoading && <AiNarrativeSkeleton />
           )}
 
           <GlassView style={styles.card}>

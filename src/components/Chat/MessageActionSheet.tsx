@@ -1,3 +1,4 @@
+import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
@@ -168,8 +169,11 @@ export const MessageActionSheet = ({
   }, [visible, fade, scale]);
 
   const backdropStyle = useAnimatedStyle(() => ({ opacity: fade.value }));
+  // Transform-only — an ancestor's fractional opacity kills the native iOS 26
+  // glass material on the GlassCards below (DESIGN.md's native-material kill
+  // list). The backdrop above already fades independently on the same `fade`
+  // value, so dropping opacity here doesn't change how the reveal reads.
   const contentStyle = useAnimatedStyle(() => ({
-    opacity: fade.value,
     transform: [{ scale: scale.value }],
   }));
 
@@ -210,8 +214,7 @@ export const MessageActionSheet = ({
     handleClose();
   };
 
-  const cardBg = isDark ? 'rgba(45,45,48,0.88)' : 'rgba(255,255,255,0.82)';
-  const divider = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)';
+  const divider = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)';
 
   const items: Array<{
     key: MessageAction;
@@ -286,35 +289,37 @@ export const MessageActionSheet = ({
         >
           <View style={styles.scrollContent} pointerEvents="box-none">
             {/* Reaction strip */}
-            <View style={[styles.reactionRow, { backgroundColor: cardBg }]}>
-              {QUICK_REACTIONS.map((emoji) => {
-                const active = currentUserReactions?.includes(emoji) ?? false;
-                return (
-                  <TouchableOpacity
-                    key={emoji}
-                    onPress={() => handleReact(emoji)}
-                    style={[
-                      styles.reactionButton,
-                      active && {
-                        backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)',
-                        borderWidth: 1.5,
-                        borderColor: theme.colors.primary,
-                      },
-                    ]}
-                    activeOpacity={0.7}
-                    hitSlop={4}
-                  >
-                    <Text style={styles.reactionEmoji}>{emoji}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-              <TouchableOpacity
-                onPress={() => handleReact('+')}
-                style={[styles.reactionButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="add" size={20} color={isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)'} />
-              </TouchableOpacity>
+            <View style={styles.reactionRowWrap}>
+              <GlassCard style={styles.reactionRowGlass} contentStyle={styles.reactionRowContent}>
+                {QUICK_REACTIONS.map((emoji) => {
+                  const active = currentUserReactions?.includes(emoji) ?? false;
+                  return (
+                    <TouchableOpacity
+                      key={emoji}
+                      onPress={() => handleReact(emoji)}
+                      style={[
+                        styles.reactionButton,
+                        active && {
+                          backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)',
+                          borderWidth: 1.5,
+                          borderColor: theme.colors.primary,
+                        },
+                      ]}
+                      activeOpacity={0.7}
+                      hitSlop={4}
+                    >
+                      <Text style={styles.reactionEmoji}>{emoji}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                <TouchableOpacity
+                  onPress={() => handleReact('+')}
+                  style={[styles.reactionButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="add" size={20} color={isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)'} />
+                </TouchableOpacity>
+              </GlassCard>
             </View>
 
             {/* Floating message bubble */}
@@ -329,7 +334,7 @@ export const MessageActionSheet = ({
 
             {/* Action list — supports slide-to-select */}
             <View
-              style={[styles.actionCard, { backgroundColor: cardBg }]}
+              style={styles.actionCardWrap}
               onLayout={(e) => {
                 actionCardHeightRef.current = e.nativeEvent.layout.height;
               }}
@@ -353,41 +358,38 @@ export const MessageActionSheet = ({
                 setHoveredAction(null);
               }}
             >
-              <BlurView
-                intensity={isDark ? 30 : 50}
-                tint={isDark ? 'dark' : 'light'}
-                style={StyleSheet.absoluteFill}
-              />
-              {visibleItems.map((item, idx) => (
-                <TouchableOpacity
-                  key={item.key}
-                  style={[
-                    styles.actionRow,
-                    hoveredAction === idx && {
-                      backgroundColor: item.destructive
-                        ? (isDark ? 'rgba(255,80,80,0.2)' : 'rgba(255,0,0,0.08)')
-                        : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.08)'),
-                    },
-                    idx < visibleItems.length - 1 && { borderBottomColor: divider, borderBottomWidth: StyleSheet.hairlineWidth },
-                  ]}
-                  onPress={() => handleAction(item.key)}
-                  activeOpacity={0.55}
-                >
-                  <Text
+              <GlassCard style={styles.actionCardGlass}>
+                {visibleItems.map((item, idx) => (
+                  <TouchableOpacity
+                    key={item.key}
                     style={[
-                      styles.actionLabel,
-                      { color: item.destructive ? theme.colors.error : theme.colors.onSurface },
+                      styles.actionRow,
+                      hoveredAction === idx && {
+                        backgroundColor: item.destructive
+                          ? (isDark ? 'rgba(255,80,80,0.2)' : 'rgba(255,0,0,0.08)')
+                          : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.08)'),
+                      },
+                      idx < visibleItems.length - 1 && { borderBottomColor: divider, borderBottomWidth: StyleSheet.hairlineWidth },
                     ]}
+                    onPress={() => handleAction(item.key)}
+                    activeOpacity={0.55}
                   >
-                    {item.label}
-                  </Text>
-                  <Ionicons
-                    name={item.icon}
-                    size={20}
-                    color={item.destructive ? theme.colors.error : (isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.35)')}
-                  />
-                </TouchableOpacity>
-              ))}
+                    <Text
+                      style={[
+                        styles.actionLabel,
+                        { color: item.destructive ? theme.colors.error : theme.colors.onSurface },
+                      ]}
+                    >
+                      {item.label}
+                    </Text>
+                    <Ionicons
+                      name={item.icon}
+                      size={20}
+                      color={item.destructive ? theme.colors.error : (isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.35)')}
+                    />
+                  </TouchableOpacity>
+                ))}
+              </GlassCard>
             </View>
           </View>
         </Animated.View>
@@ -410,18 +412,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 12,
   },
-  reactionRow: {
-    flexDirection: 'row',
+  reactionRowWrap: {
     alignSelf: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 6,
-    borderRadius: 28,
-    gap: 2,
     shadowColor: '#000',
     shadowOpacity: 0.15,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
     elevation: 6,
+  },
+  reactionRowGlass: {
+    borderRadius: 28,
+  },
+  reactionRowContent: {
+    flexDirection: 'row',
+    paddingHorizontal: 6,
+    paddingVertical: 6,
+    gap: 2,
   },
   reactionButton: {
     width: 38,
@@ -437,14 +443,15 @@ const styles = StyleSheet.create({
   bubbleContainer: {
     paddingHorizontal: 4,
   },
-  actionCard: {
-    borderRadius: 14,
-    overflow: 'hidden',
+  actionCardWrap: {
     shadowColor: '#000',
     shadowOpacity: 0.15,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
+  },
+  actionCardGlass: {
+    borderRadius: 14,
   },
   actionRow: {
     flexDirection: 'row',

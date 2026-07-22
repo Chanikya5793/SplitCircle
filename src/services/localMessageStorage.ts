@@ -372,7 +372,7 @@ export const toggleMessageReaction = async (
         reactions[emoji] = Array.from(usersForEmoji);
       }
 
-      messages[idx] = { ...message, reactions };
+      messages[idx] = { ...message, reactions, reactionsLocalVersion: Date.now() };
       result = reactions;
       await AsyncStorage.setItem(key, JSON.stringify(messages));
       notifyMessageListeners(chatId);
@@ -413,7 +413,7 @@ export const removeAllReactionsForUser = async (
         return;
       }
 
-      messages[idx] = { ...message, reactions };
+      messages[idx] = { ...message, reactions, reactionsLocalVersion: Date.now() };
       result = reactions;
       await AsyncStorage.setItem(key, JSON.stringify(messages));
       notifyMessageListeners(chatId);
@@ -518,6 +518,8 @@ export const applyRemoteMessageState = async (
     deletedForEveryone?: boolean;
     editedContent?: string;
     editedAt?: number;
+    /** Firestore Timestamp (or null while a local write is still unacked). */
+    updatedAt?: unknown;
   }
 ): Promise<boolean> => {
   let changed = false;
@@ -535,7 +537,22 @@ export const applyRemoteMessageState = async (
         // Replace whole map — sender is the source of truth for their own emoji.
         const beforeHash = JSON.stringify(existing.reactions ?? {});
         const afterHash = JSON.stringify(state.reactions);
-        if (beforeHash !== afterHash) {
+        // Ordering guard — without this, a stale server-side messageState doc
+        // (e.g. a publish that failed/queued after connectivity hiccups) gets
+        // replayed on every re-subscribe (chat reopen, app foreground) and
+        // silently clobbers a newer local toggle back to the old reaction set.
+        // Only reject when we can prove the remote write is actually older —
+        // an unresolved local cache echo (updatedAt still null) is the
+        // writer's own latest value, so it always wins.
+        const remoteMs =
+          state.updatedAt && typeof (state.updatedAt as { toMillis?: () => number }).toMillis === 'function'
+            ? (state.updatedAt as { toMillis: () => number }).toMillis()
+            : undefined;
+        const staleRemote =
+          remoteMs !== undefined &&
+          existing.reactionsLocalVersion !== undefined &&
+          remoteMs < existing.reactionsLocalVersion;
+        if (beforeHash !== afterHash && !staleRemote) {
           next.reactions = state.reactions;
           changed = true;
         }

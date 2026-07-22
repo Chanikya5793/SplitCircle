@@ -86,6 +86,14 @@ const pendingStartCallEvents: NativeCallEventMap['startCall'][] = [];
 
 const nativeToAppCallIds = new Map<string, string>();
 const appToNativeCallIds = new Map<string, string>();
+// Parallel to appToNativeCallIds, keyed the same — when each mapping was
+// created. dismissNativeCall's audio-reset guard uses this to tell a
+// genuinely live call apart from an orphaned entry left behind by a
+// teardown path that never called clearCall (crash, force-kill): the map
+// itself can't distinguish "live" from "stuck" on size alone.
+const appToNativeCallMappedAt = new Map<string, number>();
+// Generous upper bound on how long a real call could plausibly still be live.
+const MAX_PLAUSIBLE_CALL_DURATION_MS = 4 * 60 * 60 * 1000;
 const handledBufferedEvents = new Set<string>();
 
 // True while CallKit has an active AVAudioSession for a call. useCallManager's
@@ -349,6 +357,7 @@ const ensureMappedNativeCallId = (appCallId: string): string => {
   // exact same CallKit UUID, keeping answer/end events correlated.
   const nativeCallId = nativeUuidForCall(appCallId);
   appToNativeCallIds.set(appCallId, nativeCallId);
+  appToNativeCallMappedAt.set(appCallId, Date.now());
   nativeToAppCallIds.set(nativeCallId, appCallId);
   return nativeCallId;
 };
@@ -715,7 +724,16 @@ async function dismissNativeCall(nativeCallId: string): Promise<void> {
   // for a watchdog-activated session that reset would stop the audio unit and
   // silence the in-progress call. With a call live, its own teardown
   // (endCall → resetAudioSession) owns the flag cleanup.
-  if (appToNativeCallIds.size === 0) {
+  // appToNativeCallIds is cleared by clearCall() on every teardown path this
+  // slice knows about, but an entry left behind by one this doesn't cover
+  // (crash, force-kill) would otherwise block this reset forever — size
+  // alone can't tell "live call" from "stuck entry". A mapping older than
+  // any plausible real call is treated as stale, not live.
+  const now = Date.now();
+  const hasLiveCall = [...appToNativeCallMappedAt.values()].some(
+    (mappedAt) => now - mappedAt < MAX_PLAUSIBLE_CALL_DURATION_MS,
+  );
+  if (!hasLiveCall) {
     resetAudioSession();
   } else {
     appendCallDebug('dismissNativeCall.resetSkipped', { reason: 'app call live' });
@@ -729,6 +747,7 @@ function clearCall(appCallId: string): void {
   }
 
   appToNativeCallIds.delete(appCallId);
+  appToNativeCallMappedAt.delete(appCallId);
   nativeToAppCallIds.delete(nativeCallId);
 }
 

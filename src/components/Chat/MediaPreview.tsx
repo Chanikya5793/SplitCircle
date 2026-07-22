@@ -1,3 +1,4 @@
+import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
 import {
@@ -789,13 +790,14 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
             style={styles.qualitySheetBackdrop}
             onPress={() => setQualityMenuOpen(false)}
           >
-            <TouchableOpacity activeOpacity={1} style={styles.qualitySheetCard}>
-              <Text style={styles.qualitySheetTitle}>
+            <TouchableOpacity activeOpacity={1} style={styles.qualitySheetTouchWrap}>
+              <GlassCard style={styles.qualitySheetGlass} contentStyle={styles.qualitySheetContent}>
+              <Text style={[styles.qualitySheetTitle, { color: theme.colors.onSurface }]}>
                 {internalItems.length > 1
                   ? `Send item ${safeIndex + 1} of ${internalItems.length} as`
                   : 'Send media as'}
               </Text>
-              <Text style={styles.qualitySheetSubtitle}>
+              <Text style={[styles.qualitySheetSubtitle, { color: theme.colors.onSurfaceVariant }]}>
                 {media.width && media.height
                   ? `Source: ${media.width} × ${media.height}${media.fileSize ? ` • ${formatFileSize(media.fileSize)}` : ''}`
                   : 'Choose a quality for this item'}
@@ -830,10 +832,10 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                     }}
                   >
                     <View style={styles.qualitySheetRowText}>
-                      <Text style={styles.qualitySheetRowLabel}>
+                      <Text style={[styles.qualitySheetRowLabel, { color: theme.colors.onSurface }]}>
                         {opt === 'HD' ? 'HD quality' : 'Standard quality'}
                       </Text>
-                      <Text style={styles.qualitySheetRowDescription}>
+                      <Text style={[styles.qualitySheetRowDescription, { color: theme.colors.onSurfaceVariant }]}>
                         {resolutionLabel}
                         {sizeHint ? ` • ${sizeHint}` : opt === 'HD' ? ' • larger file' : ' • smaller, faster upload'}
                       </Text>
@@ -879,6 +881,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                   </Text>
                 </TouchableOpacity>
               )}
+              </GlassCard>
             </TouchableOpacity>
           </TouchableOpacity>
         )}
@@ -1214,22 +1217,24 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
-  qualitySheetCard: {
-    backgroundColor: '#1a1a1a',
+  qualitySheetTouchWrap: {},
+  qualitySheetGlass: {
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+  },
+  qualitySheetContent: {
     paddingHorizontal: 16,
     paddingTop: 18,
     paddingBottom: 28,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
   },
   qualitySheetTitle: {
-    color: '#fff',
     fontSize: 17,
     fontWeight: '700',
     marginBottom: 4,
   },
   qualitySheetSubtitle: {
-    color: 'rgba(255,255,255,0.6)',
     fontSize: 13,
     marginBottom: 14,
   },
@@ -1246,12 +1251,10 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   qualitySheetRowLabel: {
-    color: '#fff',
     fontSize: 15,
     fontWeight: '600',
   },
   qualitySheetRowDescription: {
-    color: 'rgba(255,255,255,0.6)',
     fontSize: 12,
     marginTop: 2,
   },

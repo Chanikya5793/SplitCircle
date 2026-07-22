@@ -516,8 +516,13 @@ const TOOLS: Record<
       const tf = p?.tf ?? null;
       const { matched, others } = resolveMerchant(req.merchant ?? '', g.expenses, tf);
       if (!matched) return err('merchant_stats', 'merchant stats', `nothing matching "${req.merchant ?? ''}" in expense titles`);
+      // Exact-title match — the SAME key merchantAggregate grouped matched.total
+      // /matched.count by. A substring match here (e.g. "Walmart" vs "Walmart
+      // Groceries") would pull rows from a different, unaggregated title group
+      // into "recent" while total/visits stay computed from just the matched
+      // group, so the two would silently disagree.
       const rows = spendIn(g.expenses, tf)
-        .filter((e) => norm(e.title).includes(norm(matched.name)) || norm(matched.name).includes(norm(e.title)))
+        .filter((e) => norm(e.title) === norm(matched.name))
         .sort((a, b) => b.createdAt - a.createdAt);
       return ok('merchant_stats', `${matched.name} stats`, {
         merchant: matched.name,

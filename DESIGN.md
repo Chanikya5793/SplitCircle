@@ -16,15 +16,20 @@ Current design contract. Rules only — history lives in git.
   ListRow, EmptyState, OfflineState, SyncBadge, MoneyText, SectionLabel). Reuse these;
   no new UI libraries; keep react-native-paper.
 
-## Two surface classes
+## One surface class
 
-**Ambient surfaces** (lists, home, settings): liquid animated background + glass cards
-(GlassCard; native liquid glass on iOS 26+, graceful fallbacks).
-
-**EVERY NEW screen/overlay ships GLASS-FIRST** (LiquidBackground canvas + glass cards,
-bubbles, chrome). The solid dense-editor treatment below is a narrow EXCEPTION for
-form-heavy editors (Add Expense split editor class) — chats, browsing, stats, and
-conversational surfaces are ambient, never solid. When in doubt: glass.
+**EVERY screen/overlay ships GLASS-FIRST** (LiquidBackground canvas + glass cards,
+bubbles, chrome) — lists, home, settings, chats, browsing, stats, conversational
+surfaces, and `BillSplitScreen` (`src/components/BillSplit/`, the split-method editor
+a "Split options" tap opens). There is no solid exception anymore: `BillSplitScreen`
+used to ship a deliberate near-opaque "dense editor" treatment (rationale: legibility
+at high row density, blobs never competing with dense data) — reverted 2026-07-22 after
+user feedback that the split editor read as visibly un-glass next to the rest of the
+app; it's ambient like everything else now. Its OTHER dense-editor behavioral rules
+(docked footer, zero reserved clearance, page-swipe between modes — see "Dense editors"
+below) still apply; only the material changed. Any popup/menu/dialog a screen presents
+directly (payer picker, category picker, receipt picker, etc.) MUST be glass. When in
+doubt: glass.
 
 **Full-screen overlays are gesture-dismissable.** Anything that covers the screen
 (chat overlays, full-screen results) closes on a swipe-down: grabber bar + 1:1 finger
@@ -63,6 +68,42 @@ resolved once at startup:
 expo-glass-effect is required DEFENSIVELY (try/catch require) because registering its
 native view manager throws at splash on binaries missing the module — keep that guard.
 
+**Self-audit — how a violation hides from review (2026-07-21 incident: a full branch
+review scored 45 confirmed bugs and missed EVERY instance of this; only a screenshot
+caught it).** A violation reads as "normal-looking dark UI" in code review and even in
+a screenshot glanced at quickly — it only reads as wrong next to a real glass surface,
+or to someone who knows the rule. Don't eyeball it; grep for the signatures on EVERY
+screen, with no exceptions (the BillSplitScreen family was the one exception and it
+was reverted 2026-07-22 for exactly this reason — it read as un-glass next to the rest
+of the app):
+- `backgroundColor:` set to a hardcoded hex (`#1c1c1e`, `#1c1c20`, ...) or an
+  `rgba(...)` literal with alpha ⪆ 0.5, on anything that floats/overlays/pops up
+  (menu, dialog, dropdown, dropdown-under-header, winner/result reveal) — GlassCard
+  replaces this for a bounded card; a full-bleed `BlurView` backdrop for a full-screen
+  reveal (see "Dense editors" below).
+- A direct `import { BlurView } from 'expo-blur'` OUTSIDE `GlassCard.tsx` itself, UNLESS
+  it's a deliberate full-bleed backdrop (a context-menu or celebratory-reveal scrim
+  behind bounded glass content, e.g. `MessageActionSheet`, `BillSplitScreen`'s winner
+  overlays) — every bounded card should get blur BY WAY OF GlassCard, never call
+  BlurView directly for a surface with its own border/radius (that's the exact shape of
+  the Calls-tab drift this rule already names, and it recurred in `ScreenScaffold.tsx`'s
+  sticky header after the rule was written).
+- `react-native-paper`'s `Dialog`, `Menu`, or `Snackbar` used to present a picker,
+  action list, or popup. These render Material-style opaque library chrome — they are
+  never glass and don't take a `GlassCard`-shaped fix, they need rebuilding as a
+  custom sheet/menu the way `BillSplitScreen`'s payer/participant dropdowns are (or,
+  simpler, wrapping their content in `GlassCard` and driving visibility yourself
+  instead of `Portal`/`visible`). `AddExpenseScreen`'s payer/category/receipt pickers
+  were exactly this.
+- Before touching any modal/menu/dropdown/sheet: does it call `GlassCard` (or
+  `StickyHeaderPill`) somewhere in its own render tree? If not, that's the bug — there
+  is no screen left where a solid/hand-rolled surface is the documented answer.
+- One narrow, deliberate exception: the roulette/weighted-roulette wheel's center
+  **hub** (`RouletteWheel.tsx`/`WeightedRouletteWheel.tsx`, `hubBg`/`hubBorder`) stays
+  a small solid circle — it reads as the wheel's physical spin button, not a floating
+  panel, and liquid glass over a colorful spinning wheel muddies both. If this ever
+  gets revisited, it's a deliberate call, not a miss.
+
 **Native-material kill list.** The iOS 26 material silently drops out (renders as
 nothing) when composited under:
 - a Reanimated **opacity/layout** animation (`FadeIn/FadeOut/Layout`) anywhere above it
@@ -90,11 +131,13 @@ Sheets that stage a choice get a docked footer: summary/subline left, Cancel + o
 always-working primary CTA right; commit work happens on Save, never per-row-tap
 (per-tap context writes re-render the whole app behind the modal — that reads as lag).
 
-**Dense editors** (split options, any form-heavy sheet): SOLID.
-- Canvas dark `rgba(13,15,20,0.94)` / light `rgba(250,250,252,0.96)`; cards dark
-  `rgba(28,31,38,0.96)` / light `rgba(255,255,255,0.97)` with hairline borders
-  (`rgba(255,255,255,0.08)` / `rgba(15,23,42,0.08)`). Blobs whisper through the canvas
-  only, never through cards.
+**Dense editors** (the BillSplitScreen split-method editor family — NOT the ambient
+Add Expense screen that opens it; see the note above): glass like everywhere else, but
+still governed by these density/behavior rules unique to a high-row-count editor:
+- Cards are `GlassCard` (`SolidCard` in `AdvancedModeContent.tsx` is the shared wrapper —
+  one edit there covers every mode). Full-screen celebratory reveals (winner overlays)
+  use a full-bleed `BlurView` backdrop, not a bounded card — same pattern as
+  `MessageActionSheet`'s context-menu backdrop.
 - Every vertical pixel works: footers dock in normal flow (header / flex ScrollView /
   footer), zero reserved clearance; pageSheets get ~14px top padding, not 56.
 - **Primary actions dock, never scroll away.** A form's commit/cancel (e.g. Add Expense

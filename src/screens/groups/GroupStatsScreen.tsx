@@ -6,6 +6,7 @@
 
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { AiNarrativeSkeleton } from '@/components/stats/AiNarrativeSkeleton';
 import { InsightChatOverlay } from '@/components/stats/InsightChatOverlay';
 import {
   CategoryShareBar,
@@ -81,6 +82,7 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
 
   const [range, setRange] = useState<StatsRange>('month');
   const [narrative, setNarrative] = useState<InsightNarrative | null>(null);
+  const [narrativeLoading, setNarrativeLoading] = useState(false);
   const [aiExpanded, setAiExpanded] = useState(false);
   const [aiLineCount, setAiLineCount] = useState(0);
   const [chatOpen, setChatOpen] = useState(false);
@@ -185,12 +187,19 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
     setNarrative(null);
     setAiExpanded(false);
     setAiLineCount(0);
-    if (!bundle) return;
+    if (!bundle) {
+      setNarrativeLoading(false);
+      return;
+    }
+    setNarrativeLoading(true);
     narrateInsights(bundle.facts)
       .then((n) => {
         if (!cancelled) setNarrative(n);
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setNarrativeLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -367,7 +376,7 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
           </GlassView>
 
           {/* AI narrative (labeled by engine) */}
-          {narrative && (
+          {narrative ? (
             <TouchableOpacity
               activeOpacity={0.88}
               onPress={() => {
@@ -418,6 +427,8 @@ export const GroupStatsScreen = ({ group, openInsightsChat }: GroupStatsScreenPr
               )}
             </GlassView>
             </TouchableOpacity>
+          ) : (
+            narrativeLoading && <AiNarrativeSkeleton />
           )}
 
           {/* Insight cards (deterministic — always available) */}

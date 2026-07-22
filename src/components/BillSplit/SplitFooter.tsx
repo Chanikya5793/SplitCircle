@@ -1,3 +1,4 @@
+import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { spacing } from '@/theme';
 import { formatCurrency, getCurrencySymbol } from '@/utils/currency';
@@ -46,12 +47,22 @@ export const SplitFooter = React.memo(({
   const allocatedTotal = included.reduce((s, p) => s + p.computedAmount, 0);
 
   const isGame = currentMethod === 'gamified';
-  const isWheel = isGame && (gamifiedMode === 'roulette' || gamifiedMode === 'weightedRoulette');
+  // Only plain roulette's spin is safe to trigger from the footer — it's the
+  // same computeRoulette() call the animated wheel's own hub uses. Weighted
+  // roulette's real game is AdvancedModeContent's WeightedRouletteWheel, with
+  // its own hub-driven percentage draws (handleWeightedSpin/onWeightedComplete);
+  // routing the footer's CTA there too used to fire a different, unrelated
+  // single-loser algorithm (computeWeightedRoulette) that could silently
+  // overwrite a split still visibly in progress on the wheel. Weighted
+  // roulette is treated like karma below: play on its own control, footer
+  // just commits once it's done.
+  const isWheel = isGame && gamifiedMode === 'roulette';
   const isKarma = isGame && gamifiedMode === 'scrooge';
   const gameResolved = isGame && (gamifiedMode === 'roulette' ? Boolean(loserId) : validation.isValid);
   // The footer's CTA is a *working* button, never a dead disabled one:
-  //  • an un-landed wheel game → it spins (same trigger as the hub);
-  //  • karma is applied on its own slider, so the footer just commits;
+  //  • an un-landed ROULETTE wheel → it spins (same trigger as the hub);
+  //  • weighted roulette / karma are played on their own control, so the
+  //    footer just commits once they're resolved;
   //  • otherwise it's Done, enabled only once the split is valid.
   const canSpin = isWheel && !gameResolved && !isSpinning;
   const canDone = !isSpinning && (isGame ? gameResolved : validation.isValid);
@@ -102,13 +113,7 @@ export const SplitFooter = React.memo(({
   const ctaIcon = isSpinning ? 'timer-sand' : canSpin ? 'rotate-right' : 'check';
 
   return (
-    <View style={[
-      styles.footer,
-      {
-        backgroundColor: theme.dark ? 'rgba(18,20,26,0.98)' : 'rgba(255,255,255,0.98)',
-        borderTopColor: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)',
-      },
-    ]}>
+    <GlassCard style={styles.footerGlass} contentStyle={styles.footer}>
       <View style={styles.summary}>
         <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '800' }} numberOfLines={1}>
           {headline}
@@ -135,11 +140,17 @@ export const SplitFooter = React.memo(({
           {ctaLabel}
         </Text>
       </Pressable>
-    </View>
+    </GlassCard>
   );
 });
 
 const styles = StyleSheet.create({
+  footerGlass: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+  },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -147,7 +158,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingTop: 10,
     paddingBottom: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
   },
   summary: {
     flex: 1,

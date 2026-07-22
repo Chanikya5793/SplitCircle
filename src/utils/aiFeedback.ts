@@ -164,12 +164,23 @@ const normQuestion = (s: string): string =>
     .replace(/\s+/g, ' ')
     .trim();
 
-/** Identical question over identical facts in the same scope ⇒ same answer. */
+/**
+ * Identical question over identical facts in the same scope ⇒ same answer —
+ * but only when it's actually the same QUESTION. `engine` is included so
+ * switching the engine preference (e.g. auto → pcc, wanting a deeper answer)
+ * busts the cache instead of silently replaying the old engine's reply, and
+ * `resolvedClarify` is included so a message that's resolving a prior
+ * clarify (e.g. a bare "April" picking a clarify option) can never collide
+ * with an unrelated earlier turn whose question text happened to normalize
+ * to the same string.
+ */
 export function answerCacheKey(
   surface: string,
   scope: string,
   factsHash: string,
   userText: string,
+  engine: string = 'auto',
+  resolvedClarify: boolean = false,
 ): string {
-  return `${surface}|${scope}|${factsHash}|${normQuestion(userText)}`;
+  return `${surface}|${scope}|${factsHash}|${normQuestion(userText)}|${engine}|${resolvedClarify ? 'clarify' : 'fresh'}`;
 }

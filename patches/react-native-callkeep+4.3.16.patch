@@ -1,7 +1,3 @@
-diff --git a/node_modules/react-native-callkeep/.DS_Store b/node_modules/react-native-callkeep/.DS_Store
-new file mode 100644
-index 0000000..1da164e
-Binary files /dev/null and b/node_modules/react-native-callkeep/.DS_Store differ
 diff --git a/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.m b/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.m
 index 786045f..f0ccd27 100644
 --- a/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.m

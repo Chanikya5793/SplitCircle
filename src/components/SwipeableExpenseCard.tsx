@@ -100,7 +100,7 @@ export const SwipeableExpenseCard = ({
   };
 
   return (
-    <View style={{ marginBottom: 1 }}>
+    <View style={{ marginBottom: 4 }}>
       <Swipeable
         ref={swipeableRef}
         renderRightActions={onDelete ? renderRightActions : undefined}

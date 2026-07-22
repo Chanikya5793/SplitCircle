@@ -1,3 +1,4 @@
+import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { ReactionMap } from '@/models';
 import { lightHaptic } from '@/utils/haptics';
@@ -49,9 +50,12 @@ export const ReactionDetailsSheet = ({
   }, [visible, fade, translateY]);
 
   const backdropStyle = useAnimatedStyle(() => ({ opacity: fade.value }));
+  // Transform-only — an ancestor's fractional opacity kills the native iOS 26
+  // glass material on the sheet's GlassCard (DESIGN.md's native-material kill
+  // list). The backdrop above already fades independently on the same `fade`
+  // value, so dropping opacity here doesn't change how the reveal reads.
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
-    opacity: fade.value,
   }));
 
   const entries = reactions
@@ -75,8 +79,6 @@ export const ReactionDetailsSheet = ({
     handleClose();
     onRemoveReaction?.(emoji);
   };
-
-  const cardBg = isDark ? 'rgba(45,45,48,0.88)' : 'rgba(255,255,255,0.82)';
 
   return (
     <Modal
@@ -102,12 +104,11 @@ export const ReactionDetailsSheet = ({
 
         {/* Sheet — anchored to bottom, passes through touches above */}
         <View style={styles.sheetContainer} pointerEvents="box-none">
-          <Animated.View style={[styles.sheet, { backgroundColor: cardBg, paddingBottom: insets.bottom + 16 }, sheetStyle]}>
-            <BlurView
-              intensity={isDark ? 30 : 50}
-              tint={isDark ? 'dark' : 'light'}
-              style={[StyleSheet.absoluteFill, { borderTopLeftRadius: 22, borderTopRightRadius: 22, overflow: 'hidden' }]}
-            />
+          <Animated.View style={[styles.sheetWrap, sheetStyle]}>
+            <GlassCard
+              style={styles.sheetGlass}
+              contentStyle={[styles.sheetContent, { paddingBottom: insets.bottom + 16 }]}
+            >
             <View style={styles.handle} />
             <Text
               variant="titleSmall"
@@ -171,6 +172,7 @@ export const ReactionDetailsSheet = ({
                 </Text>
               )}
             </ScrollView>
+            </GlassCard>
           </Animated.View>
         </View>
       </View>
@@ -186,17 +188,22 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
   },
-  sheet: {
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    paddingTop: 12,
-    maxHeight: 420,
-    overflow: 'hidden',
+  sheetWrap: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.2,
     shadowRadius: 16,
     elevation: 20,
+  },
+  sheetGlass: {
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    maxHeight: 420,
+  },
+  sheetContent: {
+    paddingTop: 12,
   },
   handle: {
     width: 36,

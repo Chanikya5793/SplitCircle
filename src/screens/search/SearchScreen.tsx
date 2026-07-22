@@ -636,7 +636,11 @@ export const SearchScreen = () => {
             ) : (
               <View style={styles.resultsArea}>
                 {showAiCard && (
-                  <GlassCard style={styles.aiCard}>
+                  // forceBlur: this card sits inside the screen's own opacity fade-in
+                  // (contentStyle, on focus) — an ancestor with fractional opacity kills
+                  // the native iOS 26 glass material (DESIGN.md's kill list). Restructuring
+                  // the whole screen's entrance animation isn't worth it for one card.
+                  <GlassCard style={styles.aiCard} forceBlur>
                     {answer && answer.query === debounced.trim() ? (
                       // Doc 25 Q3: the streamed inline answer (a RESULT ROW —
                       // the doc-20 native-tab contract is untouched).
@@ -785,8 +789,15 @@ export const SearchScreen = () => {
                 returnKeyType="search"
                 onSubmitEditing={() => {
                   // Committing a search (Photos): keyboard drops, results stay.
-                  rememberRecent(debounced);
-                  runSearchAnswer(debounced);
+                  // Use the LIVE typed text, not the 130ms-debounced value —
+                  // submitting inside that window (typing then immediately
+                  // hitting return) would otherwise save/answer a stale,
+                  // truncated query. Mirrors native mode's 'submit', which
+                  // already uses the live event.text for the same reason.
+                  const live = query.trim();
+                  setDebounced(live);
+                  rememberRecent(live);
+                  runSearchAnswer(live);
                   Keyboard.dismiss();
                 }}
               />

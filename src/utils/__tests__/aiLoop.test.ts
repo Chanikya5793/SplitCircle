@@ -51,6 +51,21 @@ describe('coerceDecision', () => {
     expect(d.clarifyOptions).toEqual(['A', 'B', 'C', 'D']);
   });
 
+  // Regression test for a confirmed bug (ui-revamp branch review): the
+  // eval harness (aiFeedback.ts evaluateReplay, check 'clarify-shape')
+  // requires 2-4 options for a valid clarify, but coerceDecision only
+  // demotes to 'answer' when clarifyQuestion is empty — it never checks
+  // clarifyOptions.length. A clarify with 0 or 1 options reaches the UI
+  // with no way for the user to answer via the chip flow. Expected to FAIL
+  // until coerceDecision also demotes on an out-of-range options count.
+  it('BUG: demotes a clarify with fewer than 2 options to answer (clarify-shape invariant)', () => {
+    const zero = coerceDecision({ intent: 'clarify', clarifyQuestion: 'Which one?', clarifyOptions: [] });
+    expect(zero.intent).toBe('answer');
+
+    const one = coerceDecision({ intent: 'clarify', clarifyQuestion: 'Which one?', clarifyOptions: ['A'] });
+    expect(one.intent).toBe('answer');
+  });
+
   it('cleans requests: drops toolless rows, caps at 3, normalizes 0/empty to unset', () => {
     const d = coerceDecision({
       intent: 'answer',

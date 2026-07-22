@@ -9,6 +9,7 @@
  */
 
 import { getFirestore } from "firebase-admin/firestore";
+import * as logger from "firebase-functions/logger";
 
 export interface GroupEntityCheck {
     expenseId?: string;
@@ -75,7 +76,17 @@ export const verifyGroupEntityExists = async (
             return { ok: false, reason: "group_deleted" };
         }
         return evaluateGroupEntityData(snap.data() as Record<string, unknown>, check);
-    } catch {
+    } catch (error) {
+        // Still fails OPEN on purpose (see the doc comment above) — but a
+        // persistent problem (permissions regression, IAM change) would
+        // otherwise degrade this guard to "always ok" forever with zero
+        // visibility. Logging loudly here is what makes that discoverable
+        // instead of silent.
+        logger.error("verifyGroupEntityExists read failed — guard failing open", {
+            groupId,
+            check,
+            error: error instanceof Error ? error.message : String(error),
+        });
         return { ok: true };
     }
 };

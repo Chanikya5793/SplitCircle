@@ -52,7 +52,7 @@ import { GuardCodePad, type CodePadOutcome } from './GuardCodePad';
 // Translucent chrome ON the glass — tints only, the material shows through.
 
 const cardTint = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.50)');
-const hairline = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)');
+const hairline = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)');
 const trackBg = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)');
 const segSelectedBg = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.92)');
 

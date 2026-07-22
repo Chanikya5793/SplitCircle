@@ -5,11 +5,9 @@
 // compose useHeaderScroll() + <StickyGlassHeader>/<LargeTitle> directly.
 
 import { useTheme } from '@/context/ThemeContext';
-import { BlurView } from 'expo-blur';
 import React, { useRef } from 'react';
 import {
   Animated,
-  Platform,
   RefreshControlProps,
   StyleProp,
   StyleSheet,
@@ -18,6 +16,7 @@ import {
 } from 'react-native';
 import { Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StickyHeaderPill } from './StickyHeaderPill';
 
 export interface HeaderScroll {
   scrollY: Animated.Value;
@@ -37,62 +36,66 @@ export const useHeaderScroll = (): HeaderScroll => {
 interface StickyGlassHeaderProps {
   title: string;
   scrollY: Animated.Value;
-  /** Scroll range over which the header fades in. */
+  /** Scroll range over which the header slides into view. */
   fadeRange?: [number, number];
   right?: React.ReactNode;
 }
 
-/** Full-width translucent strip pinned to the top that fades in on scroll. */
+/**
+ * Centered glass pill, pinned to the top, that slides into view on scroll.
+ *
+ * DESIGN.md: "ALL glass goes through GlassCard... Never hand-roll BlurView +
+ * rgba tints for a surface that should be glass" and "the title/subtitle
+ * block is a glass pill (StickyHeaderPill DNA)" — this now routes through
+ * StickyHeaderPill instead of a hand-rolled BlurView/tinted-View strip.
+ *
+ * Reveal is a TRANSFORM (translateY), never opacity: the native-material
+ * kill list in DESIGN.md is explicit that any ancestor with fractional
+ * opacity stops the iOS 26 glass material from rendering at all, and
+ * StickyHeaderPill's own contract says the same — this is exactly the
+ * hand-rolled-BlurView-with-opacity pattern that drifted the Calls tab.
+ */
 export const StickyGlassHeader = ({
   title,
   scrollY,
   fadeRange = [0, 40],
   right,
 }: StickyGlassHeaderProps) => {
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
   const insets = useSafeAreaInsets();
 
-  const opacity = scrollY.interpolate({
+  // Slides down from fully clipped above the header's own box (well past its
+  // ~44px content height) to its resting position — never fades in.
+  const translateY = scrollY.interpolate({
     inputRange: fadeRange,
-    outputRange: [0, 1],
+    outputRange: [-60, 0],
     extrapolate: 'clamp',
   });
 
   return (
-    <Animated.View
-      pointerEvents="box-none"
-      style={[styles.stickyHeader, { paddingTop: insets.top, opacity }]}
-    >
-      {Platform.OS === 'ios' ? (
-        <BlurView
-          intensity={40}
-          tint={isDark ? 'dark' : 'light'}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
-      ) : (
-        <View
-          style={[StyleSheet.absoluteFill, { backgroundColor: theme.colors.glassFallback }]}
-          pointerEvents="none"
-        />
-      )}
-      <View style={[styles.stickyInner, { paddingHorizontal: theme.spacing.md }]}>
-        <Text
-          numberOfLines={1}
-          style={[
-            styles.stickyTitle,
-            {
-              color: theme.colors.onSurface,
-              fontSize: theme.typography.subtitle.fontSize,
-              fontWeight: theme.typography.subtitle.fontWeight,
-            },
-          ]}
-        >
-          {title}
-        </Text>
+    <View pointerEvents="box-none" style={[styles.stickyHeader, { paddingTop: insets.top }]}>
+      <Animated.View
+        pointerEvents="box-none"
+        style={[styles.stickyInner, { paddingHorizontal: theme.spacing.md, transform: [{ translateY }] }]}
+      >
+        <StickyHeaderPill>
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.stickyTitle,
+              {
+                color: theme.colors.onSurface,
+                fontSize: theme.typography.subtitle.fontSize,
+                fontWeight: theme.typography.subtitle.fontWeight,
+              },
+            ]}
+          >
+            {title}
+          </Text>
+        </StickyHeaderPill>
         {right ? <View style={styles.stickyRight}>{right}</View> : null}
-      </View>
-    </Animated.View>
+      </Animated.View>
+    </View>
   );
 };
 
