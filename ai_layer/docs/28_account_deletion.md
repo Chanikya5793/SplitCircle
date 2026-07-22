@@ -5,6 +5,14 @@ account from inside the app. Not yet built. Written as a companion to
 [doc 27](27_sign_in_with_apple.md) — flagged there as a pre-existing gap, now
 researched and planned in full per follow-up request.
 
+> **Updated by [doc 29](29_group_departure_balance_integrity.md):** this doc
+> originally modeled account deletion's group-cleanup on `leaveGroup`'s
+> then-current behavior, which did not check the caller's balance before
+> departure. Doc 29 changes `leaveGroup` to block on a nonzero balance — account
+> deletion must follow the same rule (see "Design decisions" and the Cloud
+> Function sketch below, both updated) or it becomes a backdoor around that
+> check. Read doc 29 first if you're implementing either feature.
+
 ## Why this, why now
 
 App Store Review Guideline 5.1.1(v): any app that lets a user create an account
@@ -35,11 +43,13 @@ reviewer checks for it.
     blocks if the caller is the group's `owner` ("Owners must promote another
     member to owner before leaving"); otherwise archives the member (`archived:
     true`, `balance: 0`, `archivedReason: 'left'`) and posts a system message.
-    Crucially, **it does not check the caller's outstanding balance** — leaving
-    with a nonzero balance already zeroes it in the archive today. This is an
-    existing product decision (balance history stays visible to the group, but
-    the leaving member's live balance doesn't block departure) — account deletion
-    should follow the exact same rule, not invent a stricter one.
+    As of doc 29, it also blocks on a nonzero live balance ("settle up before
+    leaving") — account deletion's cascade must enforce the same rule per group,
+    not the weaker pre-doc-29 behavior. (Doc 29 also found and fixes a separate,
+    more serious bug: editing an expense after someone's departure was silently
+    dropping their share from the split. That fix is orthogonal to this doc's
+    Cloud Function — it lives entirely in `AddExpenseScreen.tsx` — but it's why
+    the balance shown/checked here can be trusted as accurate.)
   - `deleteGroup` ([`GroupContext.tsx:1688`](../../src/context/GroupContext.tsx)):
     owner-only, batches-deletes the group doc + its `chats` docs + its `expenses`
     docs (capped at 450 ops, throws past that). **Does not delete matching
@@ -89,9 +99,14 @@ reviewer checks for it.
   (fixing, for this path only, the gap noted above — not touching client-side
   `deleteGroup` itself, out of scope here).
 - **Non-owner memberships get the same treatment as `leaveGroup`**: archived,
-  balance zeroed, system message posted ("X's account was deleted" instead of
-  "X left the group" — clearer to the remaining members than a generic leave
-  message).
+  balance zeroed in the stored record (the *real* balance still recomputes live
+  via `adaptGroup`, same as today), system message posted ("X's account was
+  deleted" instead of "X left the group" — clearer to the remaining members than
+  a generic leave message).
+- **Per doc 29: any group with a nonzero live balance also blocks deletion**,
+  same as `leaveGroup`'s new rule — not just owner-with-members. The blocker list
+  returned to the client distinguishes "transfer ownership" from "settle up"
+  reasons so the UI can give the right instruction per group.
 - **No re-authentication step** — per the Firestore-rules finding above, this is
   safe because deletion runs entirely through the Admin SDK server-side. A
   destructive-confirmation UI step (type "DELETE" or a two-tap confirm) still
@@ -110,11 +125,33 @@ reviewer checks for it.
    export interface DeletionBlocker {
      groupId: string;
      groupName: string;
-     memberCount: number;
+     reason: "transfer_ownership" | "unsettled_balance";
+     memberCount?: number;
+     balance?: number;
    }
 
-   /** Groups the caller owns with other members present — must be resolved
-    *  (ownership transferred, or the other members removed) before deletion. */
+   /** Admin-side port of adaptGroup's balance replay (GroupContext.tsx:127),
+    *  scoped to one group + one user — no client SDK available here. */
+   function computeMemberBalance(data: FirebaseFirestore.DocumentData, uid: string): number {
+     let balance = 0;
+     for (const expense of data.expenses ?? []) {
+       if (expense.paidBy === uid) balance += expense.amount;
+       for (const p of expense.participants ?? []) {
+         if (p.userId === uid) balance -= p.share;
+       }
+     }
+     for (const settlement of data.settlements ?? []) {
+       if (settlement.fromUserId === uid) balance += settlement.amount;
+       if (settlement.toUserId === uid) balance -= settlement.amount;
+     }
+     return balance;
+   }
+
+   /** Groups that must be resolved before deletion: owned-with-other-members
+    *  (transfer ownership first), or a nonzero live balance (settle up first —
+    *  see doc 29, mirrors leaveGroup's rule). Re-run inside deleteAccount itself,
+    *  not just trusted from an earlier client pre-check, to close the race where
+    *  group state changes between check and confirm. */
    export async function findDeletionBlockers(uid: string): Promise<DeletionBlocker[]> {
      const db = getFirestore();
      const snap = await db.collection("groups").where("memberIds", "array-contains", uid).get();
@@ -123,8 +160,14 @@ reviewer checks for it.
        const data = doc.data();
        const members = (data.members ?? []) as Array<{ userId: string; role: string }>;
        const me = members.find((m) => m.userId === uid);
+       const groupName = data.name ?? "Untitled group";
        if (me?.role === "owner" && members.length > 1) {
-         blockers.push({ groupId: doc.id, groupName: data.name ?? "Untitled group", memberCount: members.length });
+         blockers.push({ groupId: doc.id, groupName, reason: "transfer_ownership", memberCount: members.length });
+         continue; // ownership must be resolved first; balance is checked after re-running post-transfer
+       }
+       const balance = computeMemberBalance(data, uid);
+       if (Math.abs(balance) >= 0.005) {
+         blockers.push({ groupId: doc.id, groupName, reason: "unsettled_balance", balance });
        }
      }
      return blockers;
@@ -246,7 +289,15 @@ reviewer checks for it.
    export const checkDeletionBlockers = async () => {
      const fn = httpsCallable(getFunctions(), 'checkAccountDeletionBlockers');
      const { data } = await fn();
-     return (data as { blockers: Array<{ groupId: string; groupName: string; memberCount: number }> }).blockers;
+     return (data as {
+       blockers: Array<{
+         groupId: string;
+         groupName: string;
+         reason: 'transfer_ownership' | 'unsettled_balance';
+         memberCount?: number;
+         balance?: number;
+       }>;
+     }).blockers;
    };
 
    export const deleteAccount = async () => {
@@ -269,17 +320,22 @@ reviewer checks for it.
    (mirrors the existing destructive-action patterns like "Leave group"/"Remove
    from group" `appAlert` confirmations elsewhere in the app):
    - Tap → call `checkDeletionBlockers()`.
-   - If blockers non-empty → modal listing the group names, "Transfer ownership
-     or delete these groups first," with a link into each group's member list.
+   - If blockers non-empty → modal listing the group names, copy branched per
+     `reason`: `transfer_ownership` → "Transfer ownership or delete this group
+     first," linking into the group's member list; `unsettled_balance` →
+     "Settle up {amount} in this group first" (same message shape as
+     `leaveGroup`'s new error per doc 29), linking into the group's balances.
    - If clean → destructive confirm (`appAlert` with a "Delete" destructive
      button, or a typed-confirmation input for extra friction given this is
      irreversible) → `deleteAccountAndSignOut()` → on success, `user` becomes
      `null` and `AppNavigator` swaps to the auth stack automatically, same as any
      other sign-out.
 6. **Verify:** create a throwaway test account, put it in a solo group, a
-   multi-member group as a regular member, and a multi-member group as owner;
-   confirm the owner case blocks with the right group name, the other two get
-   cleaned up correctly, and the Firebase Auth user + Firestore doc are actually
+   multi-member group as a regular member (settled), a multi-member group as a
+   regular member with an unsettled balance, and a multi-member group as owner;
+   confirm the owner case and the unsettled-balance case both block with the
+   right copy, the settled/solo cases get cleaned up correctly, and the Firebase
+   Auth user + Firestore doc are actually
    gone afterward (check the Firebase console, not just the client UI).
 7. **Ship:** `functions` changes need `firebase deploy --only functions` (or
    `npm run ship:ios:full`, which does that first) — this is a backend-only

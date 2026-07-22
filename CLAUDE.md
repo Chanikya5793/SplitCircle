@@ -33,7 +33,14 @@ building) ·
 [ai_layer/docs/28](ai_layer/docs/28_account_deletion.md) (in-app account deletion —
 research + implementation plan, not yet built; App Store Guideline 5.1.1(v) compliance,
 zero existing account-deletion path; Cloud-Function-only since Firestore rules hard-deny
-client deletes on `users/{uid}`).
+client deletes on `users/{uid}`; updated by doc 29's balance-check rule) ·
+[ai_layer/docs/29](ai_layer/docs/29_group_departure_balance_integrity.md) (group
+departure balance integrity — research + fix plan, not yet built; CONFIRMED bug:
+editing an expense after a participant has left silently drops their share via
+`AddExpenseScreen.tsx`'s `billSplitParticipants` excluding archived members, corrupting
+the group ledger; also adds a settle-up-before-leaving gate to `leaveGroup`/
+`removeMember`; READ before touching expense editing, `leaveGroup`, `removeMember`, or
+doc 28's Cloud Function).
 
 ## Architecture DNA (do not break)
 

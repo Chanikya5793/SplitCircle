@@ -65,6 +65,25 @@ service cloud.firestore {
         ]);
     }
 
+    // Mirror of isGroupJoinUpdate: a current member departs (self-leave via
+    // leaveGroup, or an admin-initiated removeMember) — memberIds/members
+    // shrink by exactly one, the departed member moves into archivedMembers.
+    // Doesn't re-verify WHO can be removed (owner-block, admin-only removal);
+    // that role logic stays enforced client-side in GroupContext.tsx, same
+    // trust model isGroupMutableUpdate already uses for expenses/settlements.
+    function isGroupDepartureUpdate(groupId) {
+      return isGroupMemberById(groupId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'memberIds',
+          'members',
+          'archivedMembers',
+          'updatedAt',
+        ])
+        && resource.data.memberIds.hasAll(request.resource.data.memberIds)
+        && request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1
+        && request.resource.data.members.size() == resource.data.members.size() - 1;
+    }
+
     function isGroupMutableUpdate(groupId) {
       return isGroupMemberById(groupId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -137,7 +156,7 @@ service cloud.firestore {
       // collection queries like where('memberIds', 'array-contains', uid) —
       // get()-based rules deny list operations outright.
       allow read: if isSignedIn() && request.auth.uid in resource.data.memberIds;
-      allow update: if isGroupMutableUpdate(groupId) || isGroupJoinUpdate() || isGroupProfileSync(groupId);
+      allow update: if isGroupMutableUpdate(groupId) || isGroupJoinUpdate() || isGroupProfileSync(groupId) || isGroupDepartureUpdate(groupId);
       allow delete: if isSignedIn() && resource.data.createdBy == request.auth.uid;
     }
 

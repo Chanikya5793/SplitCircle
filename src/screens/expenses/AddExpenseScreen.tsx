@@ -208,26 +208,40 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
   }, []);
   const isRecurringExpense = expenseId ? group.expenses.find((e) => e.expenseId === expenseId)?.recurring : undefined;
 
+  // A departed (left/removed) member can still be a participant on THIS expense
+  // — their entry lives on in group.archivedMembers, never in group.members.
+  // Every split computation below must include them or their share silently
+  // drops on save, corrupting the expense total (doc 29). Only pull in archived
+  // members actually on this expense, not every former member ever.
+  const departedParticipants = useMemo(
+    () => (group.archivedMembers ?? []).filter((m) => selectedMembers.includes(m.userId)),
+    [group.archivedMembers, selectedMembers],
+  );
+  const splitBaseMembers = useMemo(
+    () => [...group.members, ...departedParticipants],
+    [group.members, departedParticipants],
+  );
+
   const memberDisplayNames = useMemo(
-    () => Object.fromEntries(group.members.map((member) => [member.userId, member.displayName])),
-    [group.members],
+    () => Object.fromEntries(splitBaseMembers.map((member) => [member.userId, member.displayName])),
+    [splitBaseMembers],
   );
 
   // ── BillSplit Integration ───────────────────────────────────────────────
   const historicalPaidMap = useMemo(() => {
     const map: Record<string, number> = {};
-    for (const m of group.members) map[m.userId] = 0;
+    for (const m of splitBaseMembers) map[m.userId] = 0;
     for (const exp of group.expenses) {
       if (exp.paidBy && map[exp.paidBy] !== undefined) {
         map[exp.paidBy] += exp.amount;
       }
     }
     return map;
-  }, [group.members, group.expenses]);
+  }, [splitBaseMembers, group.expenses]);
 
   const billSplitParticipants = useMemo<Participant[]>(() => {
     const configMap = new Map((splitMetadata?.participantConfig ?? []).map((participant) => [participant.userId, participant]));
-    const baseParticipants = group.members.map((m) => {
+    const baseParticipants = splitBaseMembers.map((m) => {
       const config = configMap.get(m.userId);
 
       return {
@@ -252,7 +266,7 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
     });
 
     return computeParticipantsFromSplitMetadata(Number(amount) || 0, baseParticipants, splitMetadata);
-  }, [amount, customShares, group.members, historicalPaidMap, selectedMembers, splitMetadata]);
+  }, [amount, customShares, splitBaseMembers, historicalPaidMap, selectedMembers, splitMetadata]);
 
   const participantShares = useMemo<ParticipantShare[]>(() => {
     const numericAmount = Number(amount) || 0;
@@ -290,8 +304,11 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
 
   // Toggle a member in/out directly from the summary chips. Keeps selectedMembers
   // and any active splitMetadata's participantConfig in sync so the preview and
-  // the split editor never disagree about who's included.
+  // the split editor never disagree about who's included. A departed member's
+  // share stays locked in as-is (doc 29) — dropping them should be a deliberate
+  // edit inside the split editor, never a stray tap on their chip.
   const toggleMember = useCallback((userId: string) => {
+    if (departedParticipants.some((m) => m.userId === userId)) return;
     lightHaptic();
     setSelectedMembers((prev) => (
       prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
@@ -306,7 +323,7 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
         )),
       };
     });
-  }, [selectedMembers]);
+  }, [selectedMembers, departedParticipants]);
 
   const handleBillSplitDone = (result: {
     paidBy: string;
@@ -983,23 +1000,25 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
                 drop them from the split right here, no need to open the editor. */}
             <View style={styles.splitPreview}>
               <View style={styles.members}>
-                {group.members.map((member) => {
+                {splitBaseMembers.map((member) => {
                   const isIn = selectedMembers.includes(member.userId);
+                  const isDeparted = departedParticipants.some((m) => m.userId === member.userId);
                   const share = participantShares.find((participant) => participant.userId === member.userId)?.share;
                   return (
                     <Chip
                       key={member.userId}
                       onPress={() => toggleMember(member.userId)}
                       showSelectedCheck={false}
+                      disabled={isDeparted}
                       style={{
                         backgroundColor: isIn ? theme.colors.secondaryContainer : 'transparent',
                         borderWidth: StyleSheet.hairlineWidth,
                         borderColor: isIn ? 'transparent' : theme.colors.outline,
-                        opacity: isIn ? 1 : 0.7,
+                        opacity: isDeparted ? 0.6 : isIn ? 1 : 0.7,
                       }}
-                      textStyle={{ color: isIn ? theme.colors.onSecondaryContainer : theme.colors.onSurfaceVariant }}
+                      textStyle={{ color: isIn ? theme.colors.onSecondaryContainer : theme.colors.onSurfaceVariant, fontStyle: isDeparted ? 'italic' : 'normal' }}
                     >
-                      {member.displayName}{isIn && typeof share === 'number' ? ` · ${formatCurrency(share, group.currency)}` : ''}
+                      {member.displayName}{isDeparted ? ' · left the group' : ''}{isIn && typeof share === 'number' ? ` · ${formatCurrency(share, group.currency)}` : ''}
                     </Chip>
                   );
                 })}
