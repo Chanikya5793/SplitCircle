@@ -39,11 +39,18 @@ export const publishMessageState = async (
   partial: Omit<MessageStateDoc, 'updatedAt'>,
 ): Promise<void> => {
   try {
-    await setDoc(
-      stateDoc(chatId, messageId),
-      { ...partial, updatedAt: serverTimestamp() },
-      { merge: true },
-    );
+    const data = { ...partial, updatedAt: serverTimestamp() };
+    // mergeFields (not bare `merge: true`) -- with merge:true, Firestore recursively
+    // merges nested map fields, so it can only ADD/overwrite keys already in `reactions`,
+    // never remove one that's absent from the new value. That silently broke every
+    // reaction removal: the emoji key (or the whole map, on a last-reaction removal)
+    // stayed on the server forever, and the always-on messageState listener echoed it
+    // straight back over the correct local removal -- including on the remover's own
+    // device. mergeFields makes each listed top-level field (reactions, etc.) a full
+    // replace instead, while fields not present in `partial` stay untouched.
+    await setDoc(stateDoc(chatId, messageId), data, {
+      mergeFields: Object.keys(data),
+    });
   } catch (error) {
     console.warn('publishMessageState failed, queuing for retry', error);
     const { enqueue } = await import('@/services/pendingStateQueue');

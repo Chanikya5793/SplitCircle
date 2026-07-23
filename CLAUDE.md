@@ -94,6 +94,29 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   matching rule branch — the client code shipping cleanly (`tsc`, tests, even a
   simulator run against cached/local state) proves nothing about whether Firestore
   will actually accept the write.
+- **Never `setDoc(ref, data, { merge: true })` when `data` has a nested map/object field
+  you might need to shrink (e.g. delete a key).** Firestore's plain `merge: true`
+  recursively merges nested objects — it can only ADD/overwrite keys present in the new
+  value, never remove one that's simply absent from it. This silently broke chat
+  reaction removal for good:
+  [`publishMessageState`](src/services/messageStateService.ts) published the toggled
+  `reactions` map (a `Record<emoji, userId[]>`) with bare `merge: true`; removing your
+  only/last reaction produced `{}`, which is a complete no-op server-side, so the old
+  reaction stayed forever. Worse, `subscribeToMessageStates` stays live on the writer's
+  OWN device while a chat is open, so the echo of that under-merged write flowed
+  straight back through `applyRemoteMessageState` and stomped the correct local
+  optimistic removal — the bug reproduced even for the person removing their own
+  reaction, not just other participants. A first fix attempt (2026-07-22) added a
+  `reactionsLocalVersion` ordering guard to `applyRemoteMessageState`
+  (`src/services/localMessageStorage.ts`) on the theory the culprit was a *stale*
+  replay; it didn't help, because the echoed doc isn't stale-by-timestamp, it's the
+  server's current-but-wrong state. Fixed by switching to Firestore's `mergeFields`
+  option (`mergeFields: Object.keys(data)`), which makes each *listed* top-level field
+  a full replace instead of a recursive merge, while leaving sibling fields untouched —
+  same "partial update" contract, correct deletion semantics. Before adding any new
+  `setDoc(..., { merge: true })` call whose payload includes a map/array-of-objects
+  field that a later write might need to shrink, use `mergeFields` (or per-key
+  `deleteField()` sentinels) instead.
 - **UIScene lifecycle is mandatory** (iOS 27 kills classic lifecycle, TN3187). Cold-start
   user activities arrive in `SceneDelegate` `connectionOptions.userActivities`, not
   `application(_:continue:)`. Keep the scene manifest through Expo upgrades.
