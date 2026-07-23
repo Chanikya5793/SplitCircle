@@ -26,10 +26,11 @@ binding contract for BOTH AI surfaces — READ BEFORE touching assistant/insight
 [ai_layer/docs/26](ai_layer/docs/26_recurring_bills_v2.md) (Recurring Bills v2 — stateful chat
 bill cards, fixed/variable, payer rotation, pattern detection, 1:1 accept-per-occurrence;
 locked contract, sequenced AFTER doc 25 Q1→Q3) ·
-[ai_layer/docs/27](ai_layer/docs/27_sign_in_with_apple.md) (Sign in with Apple — research +
-implementation plan, not yet built; App Store Guideline 4.8 compliance since Google is
-already offered; READ the nonce/first-run-name-capture/manual-entitlement gotchas before
-building) ·
+[ai_layer/docs/27](ai_layer/docs/27_sign_in_with_apple.md) (Sign in with Apple — BUILT &
+verified end-to-end on Simulator with a real Apple ID; App Store Guideline 4.8 compliance
+since Google is already offered; the actual bug wasn't the nonce/entitlement code, it was
+a missing GCIP Identity Providers registration — see the CLAUDE.md gotcha above and doc 27's
+"Real bug found & fixed" section; NOT yet verified on a real device or via `ship:ios`) ·
 [ai_layer/docs/28](ai_layer/docs/28_account_deletion.md) (in-app account deletion —
 research + implementation plan, not yet built; App Store Guideline 5.1.1(v) compliance,
 zero existing account-deletion path; Cloud-Function-only since Firestore rules hard-deny
@@ -83,6 +84,28 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
 
 ## Gotchas that have burned us
 
+- **This Firebase project is on Google Cloud Identity Platform (GCIP), not vanilla
+  Firebase Auth — check the Console page header ("Authentication with Identity
+  Platform" confirms it) before trusting any generic Firebase Auth tutorial/doc.**
+  GCIP has a THIRD provider-config surface beyond the Firebase Console's
+  "Authentication → Sign-in method" panel: the separate Google Cloud Console, at
+  `console.cloud.google.com/customer-identity/providers` → provider → Edit, with its
+  own "Platform" checkboxes (iOS/Android/Web) and a per-platform Bundle ID/Client ID
+  field. Sign in with Apple (doc 27) failed with `auth/invalid-credential` ("The
+  audience in ID Token [...] does not match the expected audience") for hours of
+  otherwise-correct setup — Firebase Console's Apple toggle was Enabled, the iOS
+  app's bundle ID was correctly registered in Project Settings, the identity
+  token's `aud`/nonce were both independently verified correct — because none of
+  that is where GCIP reads the expected native audience from. The fix was on the
+  Google Cloud Console's Identity Providers page: Apple provider had zero Platform
+  checkboxes checked. Diagnosed by decoding the identity token's own JWT claims
+  client-side and logging via `console.error` (production bundles need this, not
+  `debugLog`/`__DEV__`-gated logs) while capturing device logs live via `xcrun
+  simctl spawn <udid> log stream --predicate 'process == "SplitCircle"'` — don't
+  guess at Firebase/GCIP config errors from the generic error code alone, the real
+  `.message` and a decoded token tell you exactly what's wrong. Before adding ANY
+  new federated/OIDC sign-in provider, check the Google Cloud Console's Identity
+  Providers page, not just the Firebase Console.
 - **`firestore.rules`'s `groups/{groupId}` update rule must have a branch for every
   membership-shape change, or that write fails silently for everyone, forever.**
   `isGroupJoinUpdate` (grow `members`/`memberIds` by one, self only) had no mirror —

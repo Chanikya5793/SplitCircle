@@ -6,7 +6,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { friendlyAuthError } from '@/utils/authErrors';
-import { useRef, useState } from 'react';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -23,18 +24,25 @@ interface SignInScreenProps {
 }
 
 export const SignInScreen = ({ onSwitchToRegister, onForgotPassword }: SignInScreenProps) => {
-  const { signInWithEmail, signInWithGoogle } = useAuth();
-  const { theme } = useTheme();
+  const { signInWithEmail, signInWithGoogle, signInWithApple, authBusy } = useAuth();
+  const { theme, isDark } = useTheme();
   const { isOnline } = useOfflineSync();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
+  const [appleAvailable, setAppleAvailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const passwordRef = useRef<RNTextInput>(null);
 
-  const canSubmit = Boolean(email && password) && isOnline && !loading && !googleLoading;
+  useEffect(() => {
+    if (Platform.OS === 'ios') void AppleAuthentication.isAvailableAsync().then(setAppleAvailable);
+  }, []);
+
+  const canSubmit =
+    Boolean(email && password) && isOnline && !loading && !googleLoading && !appleLoading && !authBusy;
 
   const handleSignIn = async () => {
     if (!canSubmit) return;
@@ -55,9 +63,25 @@ export const SignInScreen = ({ onSwitchToRegister, onForgotPassword }: SignInScr
     try {
       await signInWithGoogle();
     } catch (err) {
-      setError(friendlyAuthError(err));
+      setError(friendlyAuthError(err, 'google'));
     } finally {
       setGoogleLoading(false);
+    }
+  };
+
+  const handleApple = async () => {
+    // Synchronous reentrancy guard: the button's own pointerEvents disable
+    // needs a state update + re-render + native bridge round trip to take
+    // effect, which a fast double-tap can beat — this check is immediate.
+    if (appleLoading) return;
+    setError(null);
+    setAppleLoading(true);
+    try {
+      await signInWithApple();
+    } catch (err) {
+      setError(friendlyAuthError(err, 'apple'));
+    } finally {
+      setAppleLoading(false);
     }
   };
 
@@ -137,11 +161,29 @@ export const SignInScreen = ({ onSwitchToRegister, onForgotPassword }: SignInScr
               style={styles.field}
               onPress={handleGoogle}
               loading={googleLoading}
-              disabled={!isOnline || loading || googleLoading}
+              disabled={!isOnline || loading || googleLoading || appleLoading || authBusy}
               icon="google"
             >
               Continue with Google
             </Button>
+            {Platform.OS === 'ios' && appleAvailable && (
+              <View
+                pointerEvents={!isOnline || loading || googleLoading || appleLoading || authBusy ? 'none' : 'auto'}
+                style={[styles.field, styles.appleButtonWrap, { opacity: appleLoading ? 0.6 : 1 }]}
+              >
+                <AppleAuthentication.AppleAuthenticationButton
+                  buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+                  buttonStyle={
+                    isDark
+                      ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE_OUTLINE
+                      : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+                  }
+                  cornerRadius={8}
+                  style={styles.appleButton}
+                  onPress={handleApple}
+                />
+              </View>
+            )}
             <View style={styles.links}>
               <Button compact onPress={onForgotPassword}>
                 Forgot password?
@@ -182,6 +224,12 @@ const styles = StyleSheet.create({
   },
   field: {
     marginBottom: 8,
+  },
+  appleButtonWrap: {
+    height: 44,
+  },
+  appleButton: {
+    height: 44,
   },
   links: {
     flexDirection: 'row',

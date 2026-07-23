@@ -16,13 +16,22 @@ const MESSAGES: Record<string, string> = {
   'auth/missing-email': 'Enter your email address first.',
 };
 
-export const friendlyAuthError = (error: unknown): string => {
+export const friendlyAuthError = (error: unknown, provider?: 'google' | 'apple'): string => {
   const code =
     (error as { code?: string })?.code ??
     // Firebase JS SDK messages embed the code: "Firebase: Error (auth/...)."
     (typeof (error as Error)?.message === 'string'
       ? /\((auth\/[a-z-]+)\)/.exec((error as Error).message)?.[1]
       : undefined);
+
+  // auth/invalid-credential is the code Firebase's OAuth (Google/Apple) token
+  // exchange throws too — MESSAGES' "Incorrect email or password" is actively
+  // wrong there, since neither flow involves typing either.
+  if (provider && code === 'auth/invalid-credential') {
+    return provider === 'apple'
+      ? "We couldn't verify your Apple sign-in. Please try again."
+      : "We couldn't verify your Google sign-in. Please try again.";
+  }
 
   if (code && MESSAGES[code]) return MESSAGES[code];
   return 'Something went wrong. Please try again.';

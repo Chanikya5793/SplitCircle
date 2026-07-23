@@ -4,12 +4,15 @@ import { clearLockSession } from '@/services/chatLockService';
 import { unregisterCurrentDevice } from '@/services/notificationService';
 import { clearCachedProfile, loadCachedProfile, persistProfile } from '@/services/profileCache';
 import { setLockedChatIds } from '@/utils/lockedChatRegistry';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Google from 'expo-auth-session/providers/google';
 import Constants from 'expo-constants';
+import * as Crypto from 'expo-crypto';
 import * as WebBrowser from 'expo-web-browser';
 import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
+  OAuthProvider,
   onAuthStateChanged,
   sendPasswordResetEmail,
   signInWithCredential,
@@ -19,8 +22,8 @@ import {
   type User as FirebaseUser,
 } from 'firebase/auth';
 import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Platform, Settings } from 'react-native';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState, Platform, Settings } from 'react-native';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -41,10 +44,15 @@ type LegacyManifestExtra = {
 interface AuthContextValue {
   user: UserProfile | null;
   loading: boolean;
+  // True while a Google credential exchange is in flight after promptAsync()
+  // has already returned — see the state declaration below for why screens
+  // need this in addition to their own per-button loading flags.
+  authBusy: boolean;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   registerWithEmail: (displayName: string, email: string, password: string) => Promise<void>;
   sendResetLink: (email: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
+  signInWithApple: () => Promise<void>;
   signOutUser: () => Promise<void>;
 }
 
@@ -83,6 +91,16 @@ const buildUserProfile = (firebaseUser: FirebaseUser, existing?: UserProfile): U
   },
 });
 
+// Sign in with Apple (doc 27): replay-protection nonce. The hashed value goes
+// to Apple's authorization request; the raw value goes into the Firebase
+// credential — Firebase verifies Apple's response was for THIS raw nonce.
+const randomNonce = async (): Promise<{ raw: string; hashed: string }> => {
+  const bytes = await Crypto.getRandomBytesAsync(32);
+  const raw = Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+  const hashed = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, raw);
+  return { raw, hashed };
+};
+
 /**
  * Remove undefined values from object before sending to Firestore
  * Firestore doesn't accept undefined as a value
@@ -100,6 +118,25 @@ const sanitizeForFirestore = <T extends Record<string, any>>(obj: T): T => {
 export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  // True while a Google credential exchange is in flight. signInWithGoogle()
+  // only awaits promptAsync() — the actual signInWithCredential happens in a
+  // separate, fire-and-forget effect below — so a caller's own loading flag
+  // (e.g. SignInScreen's googleLoading) clears before that exchange finishes,
+  // leaving a window where a DIFFERENT sign-in method (Apple, email) can fire
+  // concurrently against the same `auth` instance. Screens gate every sign-in
+  // trigger on this too, not just their own provider's loading flag.
+  const [authBusy, setAuthBusy] = useState(false);
+  // Set right after signInWithApple() completes its own credential exchange.
+  // Apple's getCredentialStateAsync has been observed returning REVOKED
+  // (state 0) for a session that's seconds old — a false positive that
+  // otherwise immediately signs the user back out right after a successful
+  // sign-in. A one-shot "skip the next check" flag wasn't reliable (React's
+  // effect scheduling around the onAuthStateChanged-triggered re-render
+  // races with exactly when this gets set, and the AppState listener can
+  // also fire its own check independently) — a time-based grace window is
+  // robust to that ordering regardless of how many checks fire or when.
+  const signedInWithAppleAtRef = useRef<number | null>(null);
+  const APPLE_REVOCATION_GRACE_MS = 60_000;
 
   const legacyExtra = (Constants as unknown as { manifest?: { extra?: LegacyManifestExtra } }).manifest?.extra;
   const googleConfig = Constants.expoConfig?.extra?.google ?? legacyExtra?.google ?? {};
@@ -214,6 +251,36 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     }
   }, [user, user?.lockedChats]);
 
+  // Doc 27: a user can revoke Apple sign-in from Settings → Apple ID →
+  // Sign-In & Security without ever opening the app. Checking only once on
+  // mount/account-change would miss a revocation that happens while the app
+  // stays warm in the background — re-check on every foreground too, not
+  // just at launch, or a revoked-but-still-running session never gets caught
+  // until the process is killed and relaunched.
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !user) return;
+    const checkAppleRevocation = () => {
+      const signedInAt = signedInWithAppleAtRef.current;
+      if (signedInAt !== null && Date.now() - signedInAt < APPLE_REVOCATION_GRACE_MS) {
+        return;
+      }
+      const appleLink = auth.currentUser?.providerData.find((p) => p.providerId === 'apple.com');
+      if (!appleLink) return;
+      AppleAuthentication.getCredentialStateAsync(appleLink.uid)
+        .then((state) => {
+          if (state === AppleAuthentication.AppleAuthenticationCredentialState.REVOKED) {
+            void signOutUser();
+          }
+        })
+        .catch(() => undefined);
+    };
+    checkAppleRevocation();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkAppleRevocation();
+    });
+    return () => sub.remove();
+  }, [user?.userId]);
+
   useEffect(() => {
     const handleGoogleResponse = async () => {
       if (response?.type !== 'success' || !response.authentication?.idToken) {
@@ -222,6 +289,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         }
         return;
       }
+      setAuthBusy(true);
       try {
         debugLog('Signing in with Google credential');
         const credential = GoogleAuthProvider.credential(response.authentication.idToken);
@@ -229,6 +297,8 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         debugLog('Google Sign-In successful');
       } catch (error) {
         console.error('Firebase Google Sign-In failed:', error);
+      } finally {
+        setAuthBusy(false);
       }
     };
     handleGoogleResponse();
@@ -286,6 +356,60 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     await promptAsync();
   };
 
+  const signInWithApple = async () => {
+    const { raw, hashed } = await randomNonce();
+    let credential: AppleAuthentication.AppleAuthenticationCredential;
+    try {
+      credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+        nonce: hashed,
+      });
+    } catch (err: any) {
+      if (err?.code === 'ERR_REQUEST_CANCELED') return; // user dismissed — not an error
+      throw err;
+    }
+    if (!credential.identityToken) {
+      throw new Error('Apple did not return an identity token.');
+    }
+    const provider = new OAuthProvider('apple.com');
+    const oauthCredential = provider.credential({ idToken: credential.identityToken, rawNonce: raw });
+    let signedInUser: FirebaseUser;
+    try {
+      ({ user: signedInUser } = await signInWithCredential(auth, oauthCredential));
+    } catch (err: any) {
+      console.error('Firebase Apple Sign-In failed:', err);
+      throw err;
+    }
+    signedInWithAppleAtRef.current = Date.now();
+
+    // First-authorization-only: Apple sends the name exactly once, ever — grab
+    // it now or it's gone. `!signedInUser.displayName` guards re-runs.
+    const fullName = [credential.fullName?.givenName, credential.fullName?.familyName]
+      .filter((part): part is string => Boolean(part?.trim()))
+      .join(' ');
+    if (fullName && !signedInUser.displayName) {
+      await updateProfile(signedInUser, { displayName: fullName });
+      // The onAuthStateChanged listener above already raced ahead and may have
+      // created users/{uid} via buildUserProfile(firebaseUser) BEFORE this
+      // updateProfile() call resolved — at that instant firebaseUser.displayName
+      // was still empty, so the doc can get created with displayName: '' and
+      // nothing else ever re-syncs it (Apple never sends the name again).
+      // Firestore guarantees same-client writes apply in the order they were
+      // issued, so this merge — issued only after updateProfile() resolves —
+      // deterministically wins over that earlier doc-creation write in every
+      // case where the race could otherwise have dropped the name. Best-effort:
+      // a failure here shouldn't fail an otherwise-successful sign-in.
+      await setDoc(
+        doc(db, 'users', signedInUser.uid),
+        { displayName: fullName, updatedAt: serverTimestamp() },
+        { merge: true },
+      ).catch(() => undefined);
+    }
+  };
+
   const signOutUser = async () => {
     if (user) {
       try {
@@ -301,13 +425,15 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     () => ({
       user,
       loading,
+      authBusy,
       signInWithEmail,
       registerWithEmail,
       sendResetLink,
       signInWithGoogle,
+      signInWithApple,
       signOutUser,
     }),
-    [loading, user],
+    [loading, user, authBusy],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -70,11 +70,17 @@ It's iOS-only by nature (no Android equivalent needed; this app is iOS-first per
    `AppleAuthentication.signInAsync()`, then build the Firebase credential with
    `OAuthProvider('apple.com').credential({ idToken, rawNonce: <the original raw
    nonce> })`. Needs `expo-crypto` for the digest (not currently a dependency).
-4. **Firebase console config is minimal for the native-only case.** Because this
-   app only needs Sign in with Apple on iOS (not web/Android), Firebase's Apple
-   provider can be toggled on with no Services ID / Team ID / private key
-   configuration — those are only required for the web-redirect OAuth flow, which
-   this app doesn't use.
+4. **CORRECTED (was wrong) — this project is on Google Cloud Identity Platform
+   (GCIP), which has a THIRD config surface beyond both consoles this doc
+   originally considered.** Originally assumed Firebase Console's Apple
+   toggle + Services ID/Team ID/key (correctly left blank) was the complete
+   picture. Wrong: GCIP-upgraded projects (check the Firebase Console page
+   header — "Authentication with Identity Platform" means yes) configure each
+   provider's native platforms in a **separate** Google Cloud Console page
+   (`console.cloud.google.com/customer-identity/providers` → provider → Edit
+   → Platform checkboxes + per-platform Bundle ID), not in the Firebase
+   Console panel this doc originally checked. Full story, including how this
+   was actually diagnosed, in "Real bug found & fixed" below.
 5. **Revocation:** a user can revoke the app's Apple sign-in grant from
    `Settings → Apple ID → Sign-In & Security → Apps Using Apple ID` without ever
    opening the app. Apple recommends checking `getCredentialStateAsync(appleUserId)`
@@ -253,6 +259,105 @@ actual `expo-apple-authentication` types when implementing.
    revocation path.
 8. **Ship:** this needs a fresh `npm run ship:ios` build (not a JS-only hot-swap) —
    new pod (`expo-apple-authentication`), new entitlement, new capability.
+
+## Real bug found & fixed post-implementation (2026-07-23)
+
+Everything above shipped and typechecked cleanly, but the very first real sign-in
+attempt (real Apple ID, real device flow, real native build — not Expo Go, not a
+simulator-with-no-Apple-ID edge case) failed every time with a UI message reading
+"Incorrect email or password" — actively misleading, since neither flow involves
+typing either.
+
+**Diagnosis method:** rather than guess, added a temporary diagnostic in
+`signInWithApple()` that decodes the Apple identity token's own JWT claims
+client-side (Hermes has no `atob`/`Buffer`, so a manual base64url decoder was
+needed) and logs them via `console.error` (not `debugLog`/`__DEV__`-gated —
+production bundles need `console.error` to actually surface), then captured
+device logs live via `xcrun simctl spawn <udid> log stream --predicate
+'process == "SplitCircle"'` while reproducing with a real Apple ID.
+
+**What the logs proved, definitively, ruling out every code-level theory:**
+```
+aud: "com.splitcircle.app"                    ✓ correct bundle ID
+nonce_in_token === expected_nonce              ✓ matches exactly (nonce logic is correct)
+```
+Yet `signInWithCredential` still threw, with the **actual** underlying message
+(the generic `auth/invalid-credential` code hides this — only visible by logging
+the raw error's `.message`):
+> "Firebase: The audience in ID Token [com.splitcircle.app] does not match the
+> expected audience. (auth/invalid-credential)."
+
+**Root cause:** point 4 above (now corrected) was wrong. Firebase's Apple
+provider does not automatically trust every iOS app registered in the Firebase
+project as a valid token audience just because the provider toggle is on —
+`com.splitcircle.app` needs to be explicitly registered as an authorized
+identifier for the Apple provider specifically (Firebase Console → Authentication
+→ Sign-in method → Apple → open/edit the provider row, not just the enabled
+toggle). Services ID/Team ID/private key genuinely can stay blank for a
+native-only app — that part of the original research held up — but the bundle ID
+registration step does not happen automatically.
+
+**Client-side fix (separate, smaller issue caught by the same investigation):**
+`friendlyAuthError()` mapped `auth/invalid-credential` to "Incorrect email or
+password" unconditionally — correct for the email/password flow (where that code
+genuinely means a wrong password), completely wrong for Apple/Google, where the
+same Firebase code can mean "OAuth token rejected" and the user never typed
+either field. Fixed by adding an optional `provider` param
+(`friendlyAuthError(err, 'apple' | 'google')`) that overrides the message for
+that one code when it came from an OAuth flow. This fix ships regardless of the
+Firebase-config root cause above — the old message was wrong on its own terms.
+
+**Root cause, confirmed:** this project has been upgraded to **Google Cloud
+Identity Platform (GCIP)** — the Firebase Console page header literally reads
+"Authentication with Identity Platform," not plain "Authentication." GCIP has
+a **separate** provider-configuration surface from the Firebase Console's
+"Authentication → Sign-in method → Apple" panel: the **Google Cloud Console**,
+at `console.cloud.google.com/customer-identity/providers` → Apple → Edit.
+That panel has its own "Platform" checkboxes (iOS / Android / Web) — **all
+three were unchecked**. Checking iOS revealed a required, empty "Bundle ID"
+field. GCIP validates a native token's `aud` against this explicit per-platform
+registration, not against "any bundle ID registered somewhere in the Firebase
+project" — so the Firebase Console's Apple toggle being "Enabled" and the iOS
+app's bundle ID being correctly registered in Project Settings were both true
+and both irrelevant; this third, separate registration was the actual gap.
+**Fix:** Google Cloud Console → Identity Platform → Providers → Apple → check
+"iOS" → enter Bundle ID `com.splitcircle.app` → Save. No client-side code
+changes were needed for this part — the nonce/token logic was correct all
+along, exactly as the diagnostic proved.
+
+**A second, distinct bug surfaced once the above was fixed:** sign-in would
+succeed (home screen visible) and then immediately revert to the sign-in
+screen. Device-log diagnostics showed the culprit precisely: the revocation
+check (`AppleAuthentication.getCredentialStateAsync`) was returning `REVOKED`
+(state `0`) for a session that was **milliseconds old**, triggering an
+immediate `signOutUser()`. This is very likely a Simulator-specific artifact
+(a manually-added Settings-level Apple ID may not have a fully-established
+Sign-In-with-Apple relationship the OS recognizes yet) rather than something
+that would reproduce on a real device — but the fix should hold regardless of
+which it is. A first attempt at a fix — a one-shot boolean ref consumed by the
+very next check — wasn't reliable: the check could fire either from the
+effect's own synchronous call OR from the `AppState` listener firing
+immediately on subscription, and which one runs "first" isn't deterministic
+relative to exactly when the ref gets set. The actual fix is a **60-second
+time-based grace window** (`signedInWithAppleAtRef` + `Date.now()` comparison)
+instead of a one-shot flag — robust regardless of how many checks fire or in
+what order, at the cost of not catching a revocation that happens in the first
+60 seconds of a brand-new session (an acceptable tradeoff; the next foreground
+check catches it). **If this turns out to still misfire on a real device**
+(i.e., the simulator theory is wrong and `getCredentialStateAsync` is
+genuinely unreliable more broadly), the grace window will only delay, not
+fix, a persistent false-positive — worth a real-device check before fully
+trusting this closed.
+
+**Status: shipped and verified end-to-end** on Simulator with a real Apple ID
+(name-sharing consent, password, the works) — reached the signed-in home
+screen and stayed there. The temporary diagnostics (`console.error('[AppleSignIn]
+...')` calls, the `base64UrlDecode` helper, the identity-token claims decode)
+have been removed now that the flow is confirmed working; `signInWithApple`'s
+failure path logs via `console.error('Firebase Apple Sign-In failed:', err)`,
+matching the existing Google flow's logging convention. Not yet verified on a
+real device or via a full `ship:ios`/TestFlight build — Simulator confirms the
+logic end-to-end but not code-signing with the real entitlement.
 
 ## Explicitly out of scope for this pass
 

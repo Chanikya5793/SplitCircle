@@ -217,6 +217,8 @@ PODS:
     - ReactCommon/turbomodule/core
     - SocketRocket
     - Yoga
+  - ExpoAppleAuthentication (55.0.15):
+    - ExpoModulesCore
   - ExpoAsset (55.0.8):
     - ExpoModulesCore
   - ExpoAudio (55.0.8):
@@ -229,7 +231,7 @@ PODS:
     - ZXingObjC/PDF417
   - ExpoClipboard (55.0.8):
     - ExpoModulesCore
-  - ExpoCrypto (55.0.8):
+  - ExpoCrypto (55.0.17):
     - ExpoModulesCore
   - ExpoDevice (55.0.9):
     - ExpoModulesCore
@@ -3616,6 +3618,7 @@ DEPENDENCIES:
   - expo-dev-launcher (from `../node_modules/expo-dev-launcher`)
   - expo-dev-menu (from `../node_modules/expo-dev-menu`)
   - expo-dev-menu-interface (from `../node_modules/expo-dev-menu-interface/ios`)
+  - ExpoAppleAuthentication (from `../node_modules/expo-apple-authentication/ios`)
   - ExpoAsset (from `../node_modules/expo-asset/ios`)
   - ExpoAudio (from `../node_modules/expo-audio/ios`)
   - ExpoBlur (from `../node_modules/expo-blur/ios`)
@@ -3789,6 +3792,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-dev-menu"
   expo-dev-menu-interface:
     :path: "../node_modules/expo-dev-menu-interface/ios"
+  ExpoAppleAuthentication:
+    :path: "../node_modules/expo-apple-authentication/ios"
   ExpoAsset:
     :path: "../node_modules/expo-asset/ios"
   ExpoAudio:
@@ -4075,12 +4080,13 @@ SPEC CHECKSUMS:
   expo-dev-launcher: 566db258bf5196cfcbde9329223a4b9df21269da
   expo-dev-menu: 5cbacd0703c3e3fda54a0ea709df7bd347c7fbcf
   expo-dev-menu-interface: bf6f816d29b45bec038080790963c635e8d588c2
+  ExpoAppleAuthentication: 99b5448e247e4238568b632ef80d2c9825d0cd55
   ExpoAsset: bdc7bc21fe25d197c3aa7547e14c12c42087d9c9
   ExpoAudio: af1b3b6271e309bfc1ea4626284a47d3af49c7e1
   ExpoBlur: aaa1443160dec73e53850f1f7010463d645c97d9
   ExpoCamera: bf0ce92035d27e22103bc7cad38e348c6ce2ffd3
   ExpoClipboard: 6bb321d2991652e6736d400f1d7c073aa02c41a0
-  ExpoCrypto: 40320a7d4caa13b1f55691241220d961c7757519
+  ExpoCrypto: c824505d1529d941e7ea150263b3924e8b905d18
   ExpoDevice: 8fb20656b96e38f8928cd069210a1aad0c759ac3
   ExpoDocumentPicker: 9d82b922be941a74ba52f82df7ba123b334fbb5a
   ExpoDomWebView: f101fb3db4b6eec4163fca51f7507189b7e48661

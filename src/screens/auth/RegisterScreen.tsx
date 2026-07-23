@@ -6,13 +6,15 @@ import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { friendlyAuthError } from '@/utils/authErrors';
-import { useRef, useState } from 'react';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   StyleSheet,
   TextInput as RNTextInput,
+  View,
 } from 'react-native';
 import { Button, Text, TextInput } from 'react-native-paper';
 
@@ -21,8 +23,8 @@ interface RegisterScreenProps {
 }
 
 export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
-  const { registerWithEmail, signInWithGoogle } = useAuth();
-  const { theme } = useTheme();
+  const { registerWithEmail, signInWithGoogle, signInWithApple, authBusy } = useAuth();
+  const { theme, isDark } = useTheme();
   const { isOnline } = useOfflineSync();
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -30,12 +32,23 @@ export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
+  const [appleAvailable, setAppleAvailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const emailRef = useRef<RNTextInput>(null);
   const passwordRef = useRef<RNTextInput>(null);
 
+  useEffect(() => {
+    if (Platform.OS === 'ios') void AppleAuthentication.isAvailableAsync().then(setAppleAvailable);
+  }, []);
+
   const canSubmit =
-    Boolean(displayName && email && password) && isOnline && !loading && !googleLoading;
+    Boolean(displayName && email && password) &&
+    isOnline &&
+    !loading &&
+    !googleLoading &&
+    !appleLoading &&
+    !authBusy;
 
   const clearError = () => {
     if (error) setError(null);
@@ -64,9 +77,25 @@ export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
     try {
       await signInWithGoogle();
     } catch (err) {
-      setError(friendlyAuthError(err));
+      setError(friendlyAuthError(err, 'google'));
     } finally {
       setGoogleLoading(false);
+    }
+  };
+
+  const handleApple = async () => {
+    // Synchronous reentrancy guard: the button's own pointerEvents disable
+    // needs a state update + re-render + native bridge round trip to take
+    // effect, which a fast double-tap can beat — this check is immediate.
+    if (appleLoading) return;
+    setError(null);
+    setAppleLoading(true);
+    try {
+      await signInWithApple();
+    } catch (err) {
+      setError(friendlyAuthError(err, 'apple'));
+    } finally {
+      setAppleLoading(false);
     }
   };
 
@@ -159,11 +188,29 @@ export const RegisterScreen = ({ onSwitchToSignIn }: RegisterScreenProps) => {
               mode="outlined"
               onPress={handleGoogle}
               loading={googleLoading}
-              disabled={!isOnline || loading || googleLoading}
+              disabled={!isOnline || loading || googleLoading || appleLoading || authBusy}
               icon="google"
             >
               Continue with Google
             </Button>
+            {Platform.OS === 'ios' && appleAvailable && (
+              <View
+                pointerEvents={!isOnline || loading || googleLoading || appleLoading || authBusy ? 'none' : 'auto'}
+                style={[styles.appleButtonWrap, { opacity: appleLoading ? 0.6 : 1 }]}
+              >
+                <AppleAuthentication.AppleAuthenticationButton
+                  buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP}
+                  buttonStyle={
+                    isDark
+                      ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE_OUTLINE
+                      : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+                  }
+                  cornerRadius={8}
+                  style={styles.appleButton}
+                  onPress={handleApple}
+                />
+              </View>
+            )}
             <Button compact onPress={onSwitchToSignIn} style={styles.link}>
               Already joined? Sign in
             </Button>
@@ -196,6 +243,13 @@ const styles = StyleSheet.create({
   },
   field: {
     marginBottom: 8,
+  },
+  appleButtonWrap: {
+    height: 44,
+    marginTop: 8,
+  },
+  appleButton: {
+    height: 44,
   },
   link: {
     marginTop: 8,
