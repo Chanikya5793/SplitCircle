@@ -35,12 +35,13 @@ research + implementation plan, not yet built; App Store Guideline 5.1.1(v) comp
 zero existing account-deletion path; Cloud-Function-only since Firestore rules hard-deny
 client deletes on `users/{uid}`; updated by doc 29's balance-check rule) ·
 [ai_layer/docs/29](ai_layer/docs/29_group_departure_balance_integrity.md) (group
-departure balance integrity — research + fix plan, not yet built; CONFIRMED bug:
-editing an expense after a participant has left silently drops their share via
-`AddExpenseScreen.tsx`'s `billSplitParticipants` excluding archived members, corrupting
-the group ledger; also adds a settle-up-before-leaving gate to `leaveGroup`/
-`removeMember`; READ before touching expense editing, `leaveGroup`, `removeMember`, or
-doc 28's Cloud Function).
+departure balance integrity — BUILT & shipped: fixed `AddExpenseScreen.tsx`'s
+`billSplitParticipants` silently dropping a departed participant's share on edit,
+added a settle-up-before-leaving gate to `leaveGroup` + a balance warning to
+`removeMember`, and fixed a separate pre-existing Firestore rules gap that made
+every `leaveGroup`/`removeMember` call fail outright — see the `isGroupDepartureUpdate`
+gotcha below. READ before touching expense editing, `leaveGroup`, `removeMember`, or
+doc 28's Cloud Function, which still needs the matching balance check doc 29 added).
 
 ## Architecture DNA (do not break)
 
@@ -82,6 +83,17 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
 
 ## Gotchas that have burned us
 
+- **`firestore.rules`'s `groups/{groupId}` update rule must have a branch for every
+  membership-shape change, or that write fails silently for everyone, forever.**
+  `isGroupJoinUpdate` (grow `members`/`memberIds` by one, self only) had no mirror —
+  `leaveGroup`/`removeMember` shrink the same fields plus grow `archivedMembers`, a
+  shape none of the three `allow update` branches permitted. Every call to either
+  function failed with `permission-denied` client-side (looked like an app bug, was a
+  rules bug) until `isGroupDepartureUpdate` was added (doc 29). Before adding any new
+  way a group doc's `members`/`memberIds`/`archivedMembers` can change, check it has a
+  matching rule branch — the client code shipping cleanly (`tsc`, tests, even a
+  simulator run against cached/local state) proves nothing about whether Firestore
+  will actually accept the write.
 - **UIScene lifecycle is mandatory** (iOS 27 kills classic lifecycle, TN3187). Cold-start
   user activities arrive in `SceneDelegate` `connectionOptions.userActivities`, not
   `application(_:continue:)`. Keep the scene manifest through Expo upgrades.

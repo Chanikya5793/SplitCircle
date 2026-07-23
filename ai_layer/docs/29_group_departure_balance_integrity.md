@@ -1,12 +1,16 @@
 # 29 — Group departure balance integrity
 
+**Status: built and shipped** (Fix #2: commit `08d82e3`; Fix #1: commit `92e1b32`;
+Firestore rules deployed live). This doc is kept for the research record — the
+"Implementation plan" sections below describe what shipped, not a future plan.
+
 Research + implementation plan for two related problems in how the app handles a
 member leaving/being removed from a group: (1) no requirement to settle up first,
 and (2) a confirmed, reproducible bug where editing an expense after someone has
 left silently corrupts the split. Raised as a follow-up to
 [doc 28](28_account_deletion.md), since account deletion's group-cleanup cascade
 was explicitly modeled on `leaveGroup`'s current behavior — this doc changes that
-model, so doc 28 is updated to match (see the end of this doc). Not yet built.
+model, so doc 28 is updated to match (see the end of this doc).
 
 ## Finding #1: leaving/removal doesn't require settling up (design gap, not corruption)
 
@@ -227,18 +231,49 @@ client-side pre-check and blocker-list UI in doc 28 step 5 already has a place
 for this — extend the modal copy to distinguish "transfer ownership" blockers
 from "settle up" blockers.
 
-## Verify
+## A third bug found while verifying this doc (fixed, deployed)
 
-- Create a throwaway group, three members, one expense split three ways. Have
-  member C leave while owing money — confirm `leaveGroup` now blocks with the
-  right amount in the message. Settle up, leave again — confirm it succeeds.
-- With a *pre-existing* departed member (seed data or a test account from before
-  this fix), edit one of their expenses — confirm their share is now preserved
-  and the expense total still matches `amount` after saving (this is the
-  regression test for Finding #2; it must pass even without ever exercising
-  Fix #1, since Fix #2 is the one guarding pre-existing data).
-- Admin-remove a member with a nonzero balance — confirm the warning copy shows
-  the right amount and direction, and that removal still succeeds.
+While trying to reproduce Fix #2 live, `removeMember` failed with Firestore
+`permission-denied` every time — traced to `firestore.rules`: the `groups/{groupId}`
+`allow update` rule had branches for joining (`isGroupJoinUpdate`), profile sync, and
+non-membership edits, but **none for a member departing**. `leaveGroup` and
+`removeMember` both write a shrinking `members`/`memberIds` + growing
+`archivedMembers` — a shape no branch permitted. Every call to either function had
+been failing, unconditionally, before this fix — unrelated to Fix #1/#2 above,
+pre-existing. Fixed by adding `isGroupDepartureUpdate` (the mirror image of
+`isGroupJoinUpdate`) and deploying it (`firebase deploy --only firestore:rules`).
+Committed in `08d82e3` alongside Fix #2.
+
+## Verify (what was actually done, live, against the real backend)
+
+- **Zero-balance leave**: signed in as a non-owner member with a $0 balance,
+  left a real group via `leaveGroup` — succeeded, group correctly disappeared
+  from that account's list. Confirms Fix #1's guard doesn't false-positive
+  block the already-common settled case.
+- **Fix #2, live end-to-end**: removed a member with a real nonzero balance
+  from a group (via the now-fixed rules), confirmed they appeared under
+  "Former members" with their true balance intact — then edited an expense
+  they'd been part of. The chip rendered exactly as designed: `"asd · left the
+  group · ₹1,006.00"`, locked, alongside the other participant's unchanged
+  share — total still matched the original expense amount. Saved and
+  re-verified after the round-trip: unchanged. Before this fix, the same edit
+  would have silently collapsed the full amount onto the remaining member.
+- **removeMember's balance warning**: triggered against a member owing
+  ₹3,341.40 — surfaced the real amount. Caught and fixed a grammar bug here
+  live ("X is still owes ₹Y" → "X still owes ₹Y" / "X is still owed ₹Y").
+- **`leaveGroup`'s own balance block (self-leave, nonzero balance)**: not
+  reproduced live — available test accounts didn't line up with a group where
+  the signed-in user was both non-owner and had a real outstanding balance.
+  High confidence by inference: identical guard shape, identical epsilon
+  (`0.005`), identical `balance` field — already proven correct live via the
+  two checks above. Flagged here rather than silently assumed.
+- Original plan items not superseded by the above:
+  - Create a throwaway group, three members, one expense split three ways. Have
+    member C leave while owing money — confirm `leaveGroup` blocks with the
+    right amount in the message. Settle up, leave again — confirm it succeeds.
+  - With a *pre-existing* departed member (seed data or a test account from
+    before this fix), edit one of their expenses — confirm their share is
+    preserved and the expense total still matches `amount` after saving.
 
 ## Out of scope for this pass
 
