@@ -255,10 +255,19 @@ export const GroupInfoScreen = () => {
         return member.role !== 'owner' && !(me.role === 'admin' && member.role === 'admin');
     };
 
+    // Doc 29 Fix #1: an admin can't force an uncooperative member to settle
+    // (unlike leaveGroup's hard block on self), so this warns with the real
+    // balance instead of blocking outright.
     const confirmRemoveMember = (member: GroupMember) => {
+        const settled = Math.abs(member.balance) < 0.005;
+        const balanceLabel = member.balance > 0
+            ? `is still owed ${group.currency} ${member.balance.toFixed(2)}`
+            : `still owes ${group.currency} ${Math.abs(member.balance).toFixed(2)}`;
         appAlert(
             'Remove member',
-            `Remove ${member.displayName} from "${group.name}"? Their balance history stays in the group ledger.`,
+            settled
+                ? `Remove ${member.displayName} from "${group.name}"? Their balance history stays in the group ledger.`
+                : `${member.displayName} ${balanceLabel}. Removing them keeps this visible under Former members, but they won't be able to settle it themselves anymore. Remove anyway?`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {

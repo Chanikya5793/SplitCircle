@@ -1628,6 +1628,16 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     if (me.role === 'owner') {
       throw new Error('Owners must promote another member to owner before leaving.');
     }
+    // Doc 29 Fix #1: leaving no longer silently zeroes a real balance — the
+    // leaving member must settle up first. `me.balance` is already the live,
+    // dynamically-recomputed number (adaptGroup), not a stale cached value.
+    if (Math.abs(me.balance) >= 0.005) {
+      throw new Error(
+        me.balance > 0
+          ? `You're owed ${formatCurrency(me.balance, group.currency)} — settle up before leaving.`
+          : `You owe ${formatCurrency(Math.abs(me.balance), group.currency)} — settle up before leaving.`,
+      );
+    }
 
     let nextParticipants: ChatParticipant[] | undefined;
     let nextParticipantIds: string[] | undefined;
