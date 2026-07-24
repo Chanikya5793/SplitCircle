@@ -49,7 +49,17 @@ added a settle-up-before-leaving gate to `leaveGroup` + a balance warning to
 `removeMember`, and fixed a separate pre-existing Firestore rules gap that made
 every `leaveGroup`/`removeMember` call fail outright — see the `isGroupDepartureUpdate`
 gotcha below. READ before touching expense editing, `leaveGroup`, `removeMember`, or
-doc 28's Cloud Function, which still needs the matching balance check doc 29 added).
+doc 28's Cloud Function, which still needs the matching balance check doc 29 added) ·
+[ai_layer/docs/30](ai_layer/docs/30_display_name_completeness.md) (display name
+completeness — Sign in with Apple's one-time-only name grant plus a real
+`AuthContext.tsx` write-ordering race can leave `displayName` permanently empty;
+~40+ places across the app then show inconsistent, mostly-broken ad-hoc fallback
+strings instead, including *zero* fallback in `AddExpenseScreen.tsx`'s split UI
+and four duplicated `getInitials()` — blank, unlabeled chips in money-attribution
+UI, the worst class of bug this doc found; universal `resolveDisplayName()`/
+`resolveInitials()` in `src/utils/identity.ts` is now the ONLY sanctioned way to
+handle a possibly-empty name, never hand-roll another `|| 'X'`/`?? 'X'` at a new
+call site — planned, implementation in progress).
 
 ## Architecture DNA (do not break)
 

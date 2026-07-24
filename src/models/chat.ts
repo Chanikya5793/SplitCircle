@@ -158,7 +158,39 @@ export interface ChatMessage {
   mentions?: string[];
   /** Money-in-chat card data — present when type === 'expense'. */
   expenseRef?: ExpenseRef;
+  /**
+   * type === 'system' only (doc 30). When present, the renderer prefers a
+   * live-resolved name (resolveDisplayName against the group's CURRENT
+   * member/archivedMembers list, keyed by relatedUserId) over the frozen
+   * `content` string — so a name fixed after this message was sent renders
+   * correctly everywhere, with no backfill. `content` stays populated too,
+   * as the fallback when live member data can't be resolved (and for search
+   * indexing / notification previews, which only ever see the frozen text).
+   *
+   * relatedUserId is NOT always senderId: for admin-initiated events
+   * (member_removed, role_changed_*) senderId is the ACTING admin but the
+   * name embedded in the message is the TARGET member — a different user.
+   */
+  systemEventKind?: SystemEventKind;
+  relatedUserId?: string;
 }
+
+/**
+ * Every system-message shape that embeds exactly one user's name (doc 30).
+ * Self-referential kinds (senderId IS relatedUserId): member_joined,
+ * member_left, account_deleted, money_in_chat_updated, group_renamed.
+ * Non-self-referential (relatedUserId is a DIFFERENT user than senderId):
+ * member_removed, role_changed_admin, role_changed_member.
+ */
+export type SystemEventKind =
+  | 'member_joined'
+  | 'member_left'
+  | 'member_removed'
+  | 'account_deleted'
+  | 'group_renamed'
+  | 'money_in_chat_updated'
+  | 'role_changed_admin'
+  | 'role_changed_member';
 
 export interface PinnedMessageRef {
   messageId: string;

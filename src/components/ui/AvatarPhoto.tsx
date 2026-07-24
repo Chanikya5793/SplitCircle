@@ -4,17 +4,11 @@
 
 import { useTheme } from '@/context/ThemeContext';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
+import { resolveInitials as initialsFor } from '@/utils/identity';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useState } from 'react';
 import { Image, StyleSheet, View } from 'react-native';
 import { Avatar } from 'react-native-paper';
-
-const initialsFor = (name?: string | null): string => {
-  const words = name?.trim().split(/\s+/).filter(Boolean) ?? [];
-  if (words.length >= 2) return (words[0][0] + words[words.length - 1][0]).toUpperCase();
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return '?';
-};
 
 interface UserAvatarProps {
   photoURL?: string | null;
