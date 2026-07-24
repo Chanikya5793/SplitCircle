@@ -121,7 +121,27 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   way a group doc's `members`/`memberIds`/`archivedMembers` can change, check it has a
   matching rule branch — the client code shipping cleanly (`tsc`, tests, even a
   simulator run against cached/local state) proves nothing about whether Firestore
-  will actually accept the write.
+  will actually accept the write. **Same bug bit `isGroupJoinUpdate` itself later
+  (2026-07-23):** `joinGroup` (`GroupContext.tsx`) always writes `archivedMembers` too
+  (purging the joiner's own stale archived entry on rejoin), but the rule's
+  `affectedKeys().hasOnly([...])` list didn't include it — every invite-code join
+  failed with `permission-denied`, discovered only while manually constructing
+  multi-member test data for doc 28's deletion-blocker verification (nothing in the
+  existing test suite exercises the real invite-code join path). Fixed by adding
+  `'archivedMembers'` to `isGroupJoinUpdate`'s allowed keys. **The invite-code LOOKUP
+  itself is a separate, still-unresolved bug** — `joinGroup`'s
+  `where('inviteCode', '==', code)` query against `groups` requires read access
+  (`allow read: if request.auth.uid in resource.data.memberIds`) that a non-member
+  provably can never satisfy; Firestore rejects the entire query outright (it
+  evaluates rules against a query's *potential* result set, not the actual matched
+  docs — a rule Firestore can't statically prove safe for a query denies unconditionally,
+  regardless of what the data actually contains). No fix has been applied — the
+  correct pattern is a separate `groupInvites/{code}` doc (or similar) with an
+  `allow read: if isSignedIn()` rule holding only what's needed to resolve
+  code→groupId, since the sensitive full group doc shouldn't be broadly readable.
+  Manually editing a group's `memberIds`/`members` via the Firebase Console (or an
+  Admin SDK script) is the only way to add a second account to a group for testing
+  until this is fixed.
 - **Never `setDoc(ref, data, { merge: true })` when `data` has a nested map/object field
   you might need to shrink (e.g. delete a key).** Firestore's plain `merge: true`
   recursively merges nested objects — it can only ADD/overwrite keys present in the new
@@ -145,6 +165,25 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   `setDoc(..., { merge: true })` call whose payload includes a map/array-of-objects
   field that a later write might need to shrink, use `mergeFields` (or per-key
   `deleteField()` sentinels) instead.
+- **`stripUndefinedDeep` (`GroupContext.tsx`) must never wrap an `arrayUnion()`/
+  `serverTimestamp()`/other Firestore `FieldValue` sentinel — only the plain-data
+  object nested inside one.** It recurses into ANY value where `typeof === 'object'`
+  via `Object.entries()` → `Object.fromEntries()`, including FieldValue sentinels
+  (e.g. `arrayUnion('x')` is really `ArrayUnionFieldValueImpl { _methodName:
+  'arrayUnion', _elements: ['x'] }` — verified by inspecting it directly in a Node
+  REPL). Reconstructing that via `Object.fromEntries` produces a plain object with
+  those same two keys, which is no longer `instanceof` the real sentinel class —
+  Firestore's SDK then serializes it as a literal garbage map field instead of
+  performing the union/timestamp write. This silently broke `joinGroup`,
+  `leaveGroup`, and `removeMember` (`stripUndefinedDeep({ ..., updatedAt:
+  serverTimestamp() })` at each call site) — found 2026-07-23 while debugging why
+  `joinGroup`'s batch write kept failing rules validation (the mangled `memberIds`/
+  `members` fields came back as `{_methodName, _elements}` maps instead of arrays,
+  so `.size()`/`.hasAll()` calls in the rule errored out). Confirm any FieldValue
+  sentinel with `Object.entries(arrayUnion('x'))` before trusting a generic
+  deep-sanitizer won't mangle it — the fix is to strip only the inner plain-data
+  object (e.g. `arrayUnion(stripUndefinedDeep({...plainFields}))`), never the
+  outer payload that contains the sentinel call itself.
 - **UIScene lifecycle is mandatory** (iOS 27 kills classic lifecycle, TN3187). Cold-start
   user activities arrive in `SceneDelegate` `connectionOptions.userActivities`, not
   `application(_:continue:)`. Keep the scene manifest through Expo upgrades.

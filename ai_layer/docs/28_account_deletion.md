@@ -14,14 +14,29 @@ follow-up request.
 > Firebase Console, not just the client UI: the Auth user is gone from the
 > Users list, `users/{uid}` reads "This document does not exist," and the
 > group's `archivedMembers` array now has a correctly-shaped entry
-> (`archivedReason: "account_deleted"`, `balance: 0`, right timestamp). The
-> owner-blocks and unsettled-balance-blocks paths were not separately
-> live-tested (no account in that state was on hand this pass) but share the
-> same `findDeletionBlockers` code exercised — clean — during this run, and
-> were adversarially code-reviewed (see below). See "Real bugs found & fixed
-> during review (pre-ship)" below — a multi-dimension adversarial review
-> caught six real issues in the first implementation pass, all fixed before
-> deploy.
+> (`archivedReason: "account_deleted"`, `balance: 0`, right timestamp).
+>
+> **Both blocker paths also now live-tested (2026-07-23, second pass):** built
+> a dedicated two-account test group (`BlockerTest`, Rose as owner + asd as a
+> member with a real $10 expense-derived balance) and confirmed both
+> `checkAccountDeletionBlockers` reasons render correctly against live
+> Firestore data — `transfer_ownership` ("Transfer ownership or delete this
+> group first") when the owner with another member present tries to delete,
+> and `unsettled_balance` ("Settle up $10.00 in this group first," correct
+> currency) when the non-owner member with the balance tries to delete.
+> Setting up that test data surfaced two *unrelated* pre-existing bugs in
+> `joinGroup` (not part of this feature, found only because the invite-code
+> join path had to actually work to get a second account into a group) — see
+> the CLAUDE.md gotchas on the `isGroupJoinUpdate` rules gap and the
+> `stripUndefinedDeep`/FieldValue-sentinel bug, both fixed. **The invite-code
+> *lookup* itself has a third, deeper, still-unresolved bug** (a Firestore
+> query-provability limitation, not a quick rule tweak) — also documented in
+> CLAUDE.md; test data for this doc's second pass had to be added directly
+> via the Firebase Console instead of the app's own join flow.
+>
+> See "Real bugs found & fixed during review (pre-ship)" below — a
+> multi-dimension adversarial review caught six real issues in the first
+> implementation pass, all fixed before deploy.
 
 > **Updated by [doc 29](29_group_departure_balance_integrity.md):** this doc
 > originally modeled account deletion's group-cleanup on `leaveGroup`'s
