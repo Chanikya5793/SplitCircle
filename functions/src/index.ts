@@ -31,6 +31,7 @@ import {
 } from "./friends";
 import { verifyGroupEntityExists } from "./entityGuards";
 import { deleteAccountCascade, findDeletionBlockers } from "./accountDeletion";
+import { joinGroupByInviteCode as joinGroupByInviteCodeImpl } from "./groupJoin";
 export { cleanupOldRtdbData, reapStaleRingingCalls } from "./cleanup";
 // Consolidated AI-layer ingestion fan-out (gated by AI_LAYER_ENABLED; no-op until
 // activated — see aiLayer.ts and ai_layer/docs/08_self_review.md).
@@ -1392,5 +1393,43 @@ export const deleteAccount = onCall(async (request) => {
         }
         logger.error("Account deletion failed", { uid, ...toSafeError(error) });
         throw new HttpsError("internal", "Failed to delete account. Please try again.");
+    }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Group Join (by invite code)
+// ─────────────────────────────────────────────────────────────
+// Cloud-Function-only: the invite-code lookup is a where('inviteCode', '==',
+// code) query against groups, whose read rule requires pre-existing
+// membership — Firestore evaluates rules against a query's potential result
+// set, so it rejects the query outright for a non-member regardless of what
+// the data contains. No client-side rule tweak fixes this; only a
+// privileged server-side read does. See the CLAUDE.md gotcha.
+
+export const joinGroupByInviteCode = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const inviteCode = getStringValue(request.data?.inviteCode).toUpperCase();
+    if (!inviteCode) {
+        throw new HttpsError("invalid-argument", "Missing required field: inviteCode");
+    }
+    const requestId = getStringValue(request.data?.requestId) || undefined;
+
+    try {
+        const result = await joinGroupByInviteCodeImpl(uid, inviteCode, requestId);
+        logger.info("User joined group via invite code", { uid, ...result });
+        return result;
+    } catch (error) {
+        if (error instanceof HttpsError) {
+            throw error;
+        }
+        if (error instanceof Error && error.message === "Invite code not found") {
+            throw new HttpsError("not-found", "Invite code not found.");
+        }
+        logger.error("joinGroupByInviteCode failed", { uid, inviteCode, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to join group. Please try again.");
     }
 });

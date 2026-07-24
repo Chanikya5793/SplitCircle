@@ -129,19 +129,26 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   multi-member test data for doc 28's deletion-blocker verification (nothing in the
   existing test suite exercises the real invite-code join path). Fixed by adding
   `'archivedMembers'` to `isGroupJoinUpdate`'s allowed keys. **The invite-code LOOKUP
-  itself is a separate, still-unresolved bug** — `joinGroup`'s
-  `where('inviteCode', '==', code)` query against `groups` requires read access
+  itself was a separate, deeper bug, fixed 2026-07-24:** `joinGroup`'s
+  `where('inviteCode', '==', code)` query against `groups` required read access
   (`allow read: if request.auth.uid in resource.data.memberIds`) that a non-member
   provably can never satisfy; Firestore rejects the entire query outright (it
   evaluates rules against a query's *potential* result set, not the actual matched
   docs — a rule Firestore can't statically prove safe for a query denies unconditionally,
-  regardless of what the data actually contains). No fix has been applied — the
-  correct pattern is a separate `groupInvites/{code}` doc (or similar) with an
-  `allow read: if isSignedIn()` rule holding only what's needed to resolve
-  code→groupId, since the sensitive full group doc shouldn't be broadly readable.
-  Manually editing a group's `memberIds`/`members` via the Firebase Console (or an
-  Admin SDK script) is the only way to add a second account to a group for testing
-  until this is fixed.
+  regardless of what the data actually contains). No client-side rule tweak could fix
+  this. Fixed by moving the ENTIRE join operation server-side: `joinGroupByInviteCode`
+  (`functions/src/groupJoin.ts`, wrapped as an `onCall` in `index.ts`) does the
+  invite-code lookup, archivedMembers purge, member/chat writes, and RTDB system
+  message all via the Admin SDK (bypasses rules entirely, matching the
+  `checkAccountDeletionBlockers`/`deleteAccount` pattern), and the client's `joinGroup`
+  (`GroupContext.tsx`) is now a thin wrapper calling it
+  (`src/services/groupJoinService.ts`). Verified end-to-end through the real app UI
+  (not just the Firebase Console workaround): a fresh account joined a group via
+  invite code and appeared correctly in that group's member list. Before adding any
+  OTHER client Firestore query that needs to run before the querying user has
+  read-granting membership/participant status on the target collection, assume it
+  will hit this same Firestore query-provability wall — route it through a Cloud
+  Function instead of trying to loosen the read rule.
 - **Never `setDoc(ref, data, { merge: true })` when `data` has a nested map/object field
   you might need to shrink (e.g. delete a key).** Firestore's plain `merge: true`
   recursively merges nested objects — it can only ADD/overwrite keys present in the new

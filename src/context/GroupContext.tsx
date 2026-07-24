@@ -11,6 +11,7 @@ import {
     syncRecurringBillsForGroupWithFallback,
 } from '@/services/recurringBillService';
 import { findHiddenLedgerGroup } from '@/services/hiddenLedgerService';
+import { joinGroupByInviteCode } from '@/services/groupJoinService';
 import { getRecurrenceSummary } from '@/utils/recurrence';
 import { detectRecurringCandidates } from '@/utils/recurringDetection';
 import { deleteFile, uploadFile } from '@/services/storageService';
@@ -403,109 +404,18 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     return groupId;
   };
 
+  // Runs entirely server-side (joinGroupByInviteCode Cloud Function) — the
+  // invite-code lookup is a where('inviteCode', '==', code) query against
+  // groups, whose read rule requires pre-existing membership, which a
+  // non-member can never satisfy. Firestore evaluates rules against a
+  // query's potential result set, not its actual matches, so it rejects the
+  // query outright regardless of data — no client-side rule tweak fixes
+  // this. See the CLAUDE.md gotcha on this. The Cloud Function performs the
+  // same writes (memberIds/members/archivedMembers, chat participant
+  // fan-out, RTDB system message) the old direct client write used to.
   const joinGroup = async (inviteCode: string, requestId?: string) => {
     if (!user) throw new Error('Missing user');
-    const groupsRef = collection(db, 'groups');
-    const q = query(groupsRef, where('inviteCode', '==', inviteCode));
-    const groupSnapshot = await getDocs(q);
-    if (groupSnapshot.empty) {
-      throw new Error('Invite code not found');
-    }
-
-    const groupDoc = groupSnapshot.docs[0];
-    const groupData = groupDoc.data() as Group;
-    if (groupData.memberIds?.includes(user.userId)) {
-      return;
-    }
-
-    // Update associated chat thread if it exists
-    const chatsRef = collection(db, 'chats');
-    const chatQ = query(chatsRef, where('groupId', '==', groupData.groupId));
-    const chatSnapshot = await getDocs(chatQ);
-    const batch = writeBatch(db);
-
-    // If the user previously left or was removed, drop them from
-    // archivedMembers so we don't have a duplicate identity record.
-    const purgedArchive = (groupData.archivedMembers ?? []).filter(
-      (member) => member.userId !== user.userId,
-    );
-    // stripUndefinedDeep must NOT wrap arrayUnion()/serverTimestamp() sentinel
-    // values — it recurses into any object via Object.entries/fromEntries,
-    // which silently rebuilds a FieldValue sentinel (e.g. ArrayUnionFieldValueImpl,
-    // whose real shape is { _methodName, _elements }) as a plain data object,
-    // so Firestore writes that garbage literal instead of performing the
-    // union. Only the plain member-data object needs stripping.
-    batch.update(groupDoc.ref, {
-      memberIds: arrayUnion(user.userId),
-      members: arrayUnion(stripUndefinedDeep({
-        userId: user.userId,
-        displayName: user.displayName,
-        photoURL: user.photoURL ?? null,
-        role: 'member',
-        balance: 0,
-      })),
-      archivedMembers: purgedArchive,
-      updatedAt: serverTimestamp(),
-    });
-
-    let systemMessage: ChatMessage | null = null;
-    let recipients: string[] = [];
-
-    if (!chatSnapshot.empty) {
-      const chatDoc = chatSnapshot.docs[0];
-      const chatId = chatDoc.id;
-      const chatData = chatDoc.data();
-
-      const newParticipant: ChatParticipant = {
-        userId: user.userId,
-        displayName: user.displayName,
-        ...(user.photoURL ? { photoURL: user.photoURL } : {}),
-        status: 'online',
-      };
-
-      const msgId = requestId ?? uuid();
-      const now = Date.now();
-      systemMessage = {
-        id: msgId,
-        messageId: msgId,
-        requestId: requestId ?? msgId,
-        chatId,
-        // RTDB queue rules require senderId to match auth.uid on create.
-        senderId: user.userId,
-        type: 'system',
-        content: `${user.displayName} joined the group`,
-        status: 'sent',
-        createdAt: now,
-        timestamp: now,
-        isFromMe: false,
-        deliveredTo: [],
-        readBy: [],
-      };
-
-      batch.update(chatDoc.ref, {
-        participantIds: arrayUnion(user.userId),
-        participants: arrayUnion(newParticipant),
-        lastMessage: { ...systemMessage, createdAt: serverTimestamp() },
-        updatedAt: serverTimestamp(),
-      });
-
-      // Queue system message for all participants (including the new user)
-      const currentParticipantIds = (chatData.participantIds as string[]) || [];
-      recipients = [...new Set([...currentParticipantIds, user.userId])];
-    }
-
-    await batch.commit();
-
-    if (systemMessage) {
-      for (const recipientId of recipients) {
-        try {
-          await queueMessage(recipientId, systemMessage, true); // isGroupChat = true
-        } catch (error) {
-          console.error(`Failed to queue system message for ${recipientId}:`, error);
-          // Continue to next recipient even if one fails
-        }
-      }
-    }
+    await joinGroupByInviteCode(inviteCode, requestId);
   };
 
   const addExpense = async (
