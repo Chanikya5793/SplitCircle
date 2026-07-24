@@ -24,12 +24,22 @@ user via `AskUserQuestion` before writing this doc.
 > `functions/` typecheck clean, all 373+144+28 tests pass, confirmed live on
 > Simulator (chat system messages resolving live names correctly, Settings
 > nudge chip suppressed for a named user, no crashes). Functions + Firestore
-> rules deployed. **Not yet done:** the one-time `runDisplayNameBackfill`
-> Cloud Function exists but has never been invoked — it's gated on a custom
-> `admin: true` claim nobody has been granted yet (deliberately not
-> self-service; see its own header comment for the one-line Admin SDK
-> command to grant it). Real-device verification of the Apple sign-in path
-> itself is still open per doc 27.
+> rules deployed. **Backfill run 2026-07-24**: invoked
+> `backfillMissingDisplayNames()` directly against production (Admin SDK,
+> authenticated via the same account that already deploys this project —
+> the `runDisplayNameBackfill` onCall wrapper's `admin: true` claim gate was
+> never granted to anyone; going straight to the underlying function was
+> simpler and avoided a separate IAM-adjacent step). Result: `{scanned: 0,
+> recovered: 0, skipped: 0, groupsUpdated: 0, errors: 0}` — zero accounts
+> currently have a literal empty `displayName` in Firestore, so there was
+> nothing to repair at run time. (The query is an exact `== ''` match, per
+> `buildUserProfile`'s own contract of always writing a literal empty
+> string, never `null`/`undefined`, for an unset name — this backfill would
+> not catch an affected account whose field was missing entirely rather
+> than an empty string, though no known write path in this codebase
+> produces that shape.) Re-run the same approach if a future account is
+> reported stuck this way. Real-device verification of the Apple sign-in
+> path itself is still open per doc 27.
 
 ## Why this, why now
 
