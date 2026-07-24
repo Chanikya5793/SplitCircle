@@ -27,10 +27,12 @@ binding contract for BOTH AI surfaces — READ BEFORE touching assistant/insight
 bill cards, fixed/variable, payer rotation, pattern detection, 1:1 accept-per-occurrence;
 locked contract, sequenced AFTER doc 25 Q1→Q3) ·
 [ai_layer/docs/27](ai_layer/docs/27_sign_in_with_apple.md) (Sign in with Apple — BUILT &
-verified end-to-end on Simulator with a real Apple ID; App Store Guideline 4.8 compliance
-since Google is already offered; the actual bug wasn't the nonce/entitlement code, it was
-a missing GCIP Identity Providers registration — see the CLAUDE.md gotcha above and doc 27's
-"Real bug found & fixed" section; NOT yet verified on a real device or via `ship:ios`) ·
+shipped to TestFlight 2026-07-24 (build 0.0.154), verified end-to-end on Simulator with a
+real Apple ID; App Store Guideline 4.8 compliance since Google is already offered; the actual
+bug wasn't the nonce/entitlement code, it was a missing GCIP Identity Providers registration
+— see the CLAUDE.md gotcha above and doc 27's "Real bug found & fixed" section; NOT yet
+verified on a physical device, TestFlight-only so far; see doc 30 for a related open issue —
+Apple's one-time-only name grant can leave `displayName` empty) ·
 [ai_layer/docs/28](ai_layer/docs/28_account_deletion.md) (in-app account deletion —
 BUILT & shipped 2026-07-23, verified end-to-end in production against a real account
 (Auth user + Firestore doc confirmed gone via the Firebase Console, group

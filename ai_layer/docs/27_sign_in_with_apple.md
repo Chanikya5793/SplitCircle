@@ -1,8 +1,17 @@
 # 27 — Sign In with Apple
 
 Research + implementation plan for adding native "Sign in with Apple" as a third
-sign-in method alongside email/password and Google. Not yet built — this is the
-proposal to review before implementation starts.
+sign-in method alongside email/password and Google.
+
+> **Status (2026-07-24): shipped to App Store Connect / TestFlight** in build
+> `0.0.154` (`SplitCircle-production-20260724-042330.ipa`) — the first real device/
+> TestFlight build to include this feature; previously Simulator-only. See the
+> "Real bug found & fixed" section below for the two production bugs found and
+> fixed while verifying this end-to-end, and
+> [ai_layer/docs/30](30_display_name_completeness.md) for a related, newly-found
+> issue: Apple's one-time-only name grant can leave `displayName` empty, which
+> the app's ~40 scattered ad-hoc fallback strings then paper over inconsistently
+> instead of prompting the user to complete their profile.
 
 ## Why this, why now
 
@@ -355,9 +364,11 @@ screen and stayed there. The temporary diagnostics (`console.error('[AppleSignIn
 ...')` calls, the `base64UrlDecode` helper, the identity-token claims decode)
 have been removed now that the flow is confirmed working; `signInWithApple`'s
 failure path logs via `console.error('Firebase Apple Sign-In failed:', err)`,
-matching the existing Google flow's logging convention. Not yet verified on a
-real device or via a full `ship:ios`/TestFlight build — Simulator confirms the
-logic end-to-end but not code-signing with the real entitlement.
+matching the existing Google flow's logging convention. Shipped via `ship:ios`
+to App Store Connect / TestFlight 2026-07-24 (build `0.0.154`) — code-signing
+with the real entitlement succeeded; a real-device TestFlight sign-in attempt
+is still the one remaining unverified step (Simulator + local build confirm
+the logic and signing, not an actual physical-device run).
 
 ## Explicitly out of scope for this pass
 
