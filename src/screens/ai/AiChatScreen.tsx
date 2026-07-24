@@ -36,7 +36,7 @@ import {
 import type { NavTarget } from '@/utils/assistantChat';
 import { formatCurrency } from '@/utils/currency';
 import { lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -147,15 +147,24 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   // drop to a plain gap while the keyboard is up — otherwise it stacks with
   // KeyboardAvoidingView's own padding and leaves a dead gap above the keyboard.
   const [keyboardVisible, setKeyboardVisible] = useState(false);
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const subs = [
-      Keyboard.addListener(showEvent, () => setKeyboardVisible(true)),
-      Keyboard.addListener(hideEvent, () => setKeyboardVisible(false)),
-    ];
-    return () => subs.forEach((s) => s.remove());
-  }, []);
+  // Scoped to focus (not a bare mount-effect): AiChatScreen stays mounted
+  // under whatever screen gets pushed on top of it (no freezeOnBlur on this
+  // stack), so an unscoped listener would react to a keyboard opened on a
+  // totally different, foregrounded screen and leave this one's flag stuck.
+  useFocusEffect(
+    useCallback(() => {
+      const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+      const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+      const subs = [
+        Keyboard.addListener(showEvent, () => setKeyboardVisible(true)),
+        Keyboard.addListener(hideEvent, () => setKeyboardVisible(false)),
+      ];
+      return () => {
+        subs.forEach((s) => s.remove());
+        setKeyboardVisible(false);
+      };
+    }, []),
+  );
 
   const append = useCallback(
     (msg: ChatMsg) => {
@@ -693,7 +702,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
         ) : null}
 
         <GlassView
-          style={[styles.inputBarShell, { marginBottom: keyboardVisible ? 8 : Math.max(insets.bottom, 8) }]}
+          style={[styles.inputBarShell, { marginBottom: keyboardVisible ? 6 : Math.max(insets.bottom, 10) }]}
           contentStyle={styles.inputBarRow}
         >
           <TextInput
@@ -704,7 +713,11 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
             multiline
             underlineColor="transparent"
             activeUnderlineColor="transparent"
-            selectionColor={theme.colors.primary}
+            // iOS ties the caret and the text-selection highlight to the same
+            // tintColor, so a fully opaque accent behind selected onSurface
+            // text fails WCAG contrast — a translucent tint keeps the caret
+            // clearly visible while letting selected text stay legible.
+            selectionColor={`${theme.colors.primary}66`}
             style={styles.textInput}
             onSubmitEditing={() => send()}
             blurOnSubmit
