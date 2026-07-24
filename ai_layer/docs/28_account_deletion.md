@@ -1,9 +1,27 @@
 # 28 — In-app account deletion
 
-Research + implementation-ready plan for letting a user permanently delete their
-account from inside the app. Not yet built. Written as a companion to
-[doc 27](27_sign_in_with_apple.md) — flagged there as a pre-existing gap, now
-researched and planned in full per follow-up request.
+Research + implementation plan for letting a user permanently delete their account
+from inside the app. Written as a companion to [doc 27](27_sign_in_with_apple.md) —
+flagged there as a pre-existing gap, now researched and planned in full per
+follow-up request.
+
+> **Status (2026-07-23): shipped and verified end-to-end in production.**
+> Functions deployed (`checkAccountDeletionBlockers`, `deleteAccount`, both
+> `us-central1`). Verified live against a real account (`six@six.six`, a
+> settled non-owner member of an 8-member group): blocker check ran clean →
+> destructive confirm → server log `{"message":"Account deleted","uid":
+> "Y6GxlcSTgpR3XVmM4tjiwZRMusy2"}` → client auto-signed-out. Confirmed via the
+> Firebase Console, not just the client UI: the Auth user is gone from the
+> Users list, `users/{uid}` reads "This document does not exist," and the
+> group's `archivedMembers` array now has a correctly-shaped entry
+> (`archivedReason: "account_deleted"`, `balance: 0`, right timestamp). The
+> owner-blocks and unsettled-balance-blocks paths were not separately
+> live-tested (no account in that state was on hand this pass) but share the
+> same `findDeletionBlockers` code exercised — clean — during this run, and
+> were adversarially code-reviewed (see below). See "Real bugs found & fixed
+> during review (pre-ship)" below — a multi-dimension adversarial review
+> caught six real issues in the first implementation pass, all fixed before
+> deploy.
 
 > **Updated by [doc 29](29_group_departure_balance_integrity.md):** this doc
 > originally modeled account deletion's group-cleanup on `leaveGroup`'s
@@ -67,14 +85,22 @@ reviewer checks for it.
   writes to RTDB at `messageQueue/{recipientId}/{messageId}` — a Cloud Function
   replicating this must write to that same path via `admin.database()`, it can't
   reuse the client function directly (different SDK, different auth context).
-- **Friends list lives in RTDB, one user's list per node:** `friends/{ownerUid}/
-  {friendUid}` ([`friendsService.ts`](../../src/services/friendsService.ts)),
-  one-sided by design (friending user A doesn't mirror into user B's list). Only
-  the deleted user's own `friends/{uid}` node needs cleanup; other users'
-  denormalized `displayName`/`photoURL` snapshots of the deleted user going stale
-  is already-accepted behavior — the same tradeoff `archivedMembers` makes
-  ("keeps displayName/photo resolvable forever so historical balances/debts don't
-  render as Unknown").
+- **Friends list lives in RTDB, one node per (owner, friend) pair:**
+  `friends/{ownerUid}/{friendUid}`. **Correction (found during review, was wrong
+  above):** this is NOT one-sided for the common case. Manual adds via
+  [`friendsService.ts`](../../src/services/friendsService.ts)'s
+  `addFriendManually` only write the adder's own node, but
+  [`functions/src/friends.ts`](../../functions/src/friends.ts)'s
+  `materializeMutualFriendship` — triggered for every shared-group or
+  shared-debt pair — writes **both** `friends/{A}/{B}` and `friends/{B}/{A}` via
+  the Admin SDK. So most real friendships in this app are bidirectional. Account
+  deletion only clears the deleted user's own `friends/{uid}` node; every other
+  user's `friends/{otherUid}/{uid}` reverse edge is left dangling on purpose —
+  RTDB has no reverse index from a uid to "who has me as a friend," so cleaning
+  those would need a full users scan. This is the same accepted tradeoff
+  `archivedMembers` makes (a friend/former-member entry keeps resolving to a
+  real name/photo forever instead of going "Unknown"), just not something that
+  happens to be free here — it costs a full scan, so it's skipped.
 - **No Firebase Storage rules file in this repo** (`firebase.json` has no
   `storage` key) and no profile-photo-upload code found — avatars in the current
   UI render as colored initials, not uploaded images. If a photo upload path gets
@@ -341,6 +367,83 @@ reviewer checks for it.
    `npm run ship:ios:full`, which does that first) — this is a backend-only
    change, no new native dependency, no new build required for the client side
    beyond a normal JS bundle update.
+
+## Real bugs found & fixed during review (pre-ship, 2026-07-23)
+
+The plan above was implemented close to verbatim, then put through a
+multi-dimension adversarial review before any deploy. Six real, reproducible
+issues surfaced — none were hypothetical, all were confirmed against actual
+file contents by an independent verification pass. All six are fixed in the
+code as it stands now.
+
+1. **`AuthContext.tsx`'s own `onSnapshot` listener on `users/{uid}` resurrected
+   the just-deleted profile doc.** The listener's "doc doesn't exist" branch
+   unconditionally treated a missing doc as "not created yet" and called
+   `setDoc` to recreate it — a comment even said "to be safe (and for Google
+   Sign In), we create it if missing." `deleteAccountCascade` deletes
+   `users/{uid}` mid-cascade, well before the callable RPC returns; while that
+   promise is still pending, the still-live listener sees the delete, and (since
+   `firestore.rules`'s `allow create: if isSelf(userId)` only checks the JWT is
+   still signature-valid, not that the Auth user still exists server-side)
+   happily recreates it. This fired on the deleting device's own session AND,
+   independently, on any other device signed into the same account — a second
+   phone left logged in would resurrect the doc on its own, unrelated to
+   whichever device actually ran the deletion. Fixed by tracking whether the
+   listener has ever observed the doc existing this sign-in session
+   (`hasSeenProfileDoc`, a local closure variable inside the
+   `onAuthStateChanged` callback — naturally resets per sign-in, no manual
+   reset needed): if it has, a later "missing" is a deletion, not a fresh
+   account, and the fix is to sign out locally instead of recreating.
+2. **`deleteAccountAndSignOut` resurrected the just-deleted `notificationDevices`
+   doc.** It called `deleteAccountCallable()` (which deletes the whole
+   `notificationDevices` subcollection server-side as part of the cascade)
+   *before* `unregisterCurrentDevice()` — whose Admin-SDK-backed
+   `set(..., {merge:true})` bypasses the client-side hard-deny rule and
+   recreates the doc, because the client's cached ID token is still valid for a
+   while after `admin.auth().deleteUser()` (Firebase doesn't check revocation
+   by default). This wasn't a rare race — it fired on essentially every
+   successful deletion. Fixed by reordering: unregister the device *before*
+   calling `deleteAccountCallable()`, not after.
+3. **Currency was silently dropped from the deletion-blocker alert.**
+   `DeletionBlocker` never carried a `currency` field, so
+   `SettingsScreen.tsx`'s "Settle up {amount} in this group first" copy always
+   formatted the balance as USD regardless of the group's actual currency —
+   every other `formatCurrency` call site in the codebase passes the group's
+   currency explicitly. Fixed by adding `currency?: string` to `DeletionBlocker`
+   (both the Cloud Function and the client mirror) and threading the group
+   doc's `currency` field through.
+4. **The two new callables skipped this codebase's error-observability
+   convention.** Every comparable cascading callable (`triggerRecurringBillsForGroup`,
+   `sendTestPushNotification`, `reportMissedCall`) wraps its cascading call in
+   try/catch, logs a structured `logger.error` with `uid` + context, and
+   rethrows a clean `HttpsError`. The new `checkAccountDeletionBlockers` and
+   `deleteAccount` had none of that — a mid-cascade failure would leave no
+   uid-tagged log entry to diagnose it by. Fixed by matching the existing
+   pattern exactly (rethrow `HttpsError`s untouched, wrap anything else).
+5. **`archivedReason: "account_deleted"` isn't a value `GroupMember`'s type
+   allows.** `src/models/group.ts` typed `archivedReason` as `'left' | 'removed'`
+   only, so `GroupInfoScreen.tsx`'s render (`archivedReason === 'left' ? 'Left'
+   : 'Removed'`) would label a self-deleted account "Removed" — implying an
+   admin kicked them, not that they closed their own account. Fixed by
+   extending the union to include `'account_deleted'` and adding a third
+   branch to the render ternary ("Account deleted").
+6. **Batch-chunk ordering in the solo-group cascade delete put the group doc
+   first**, so a group with enough linked docs to need multiple 450-op chunks
+   would have its group doc vanish in chunk #1 before later chunks (holding
+   most of the expenses/chats/bills) commit — if a later chunk then failed, the
+   linked docs orphan permanently under a `groupId` nothing resolves to
+   anymore. Fixed by moving the group doc's delete to the end of the list, so a
+   failure partway through leaves the group doc (and thus a re-queryable
+   `groupId`) intact for a retry to finish the job.
+
+Also **corrected**, not a bug fix: the "Current state" section above originally
+said the friends list is "one-sided by design." That's wrong for the common
+case — `functions/src/friends.ts` writes friendships bidirectionally for any
+shared-group/debt pair. The design decision (only clean the deleted user's own
+`friends/{uid}` node, leave other users' reverse edges stale) is unchanged and
+still correct, just for a different reason than originally stated (a full RTDB
+scan to find reverse edges is disproportionate, not "there are no reverse
+edges to clean").
 
 ## Out of scope for this pass
 

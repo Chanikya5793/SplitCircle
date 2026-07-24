@@ -32,9 +32,14 @@ since Google is already offered; the actual bug wasn't the nonce/entitlement cod
 a missing GCIP Identity Providers registration — see the CLAUDE.md gotcha above and doc 27's
 "Real bug found & fixed" section; NOT yet verified on a real device or via `ship:ios`) ·
 [ai_layer/docs/28](ai_layer/docs/28_account_deletion.md) (in-app account deletion —
-research + implementation plan, not yet built; App Store Guideline 5.1.1(v) compliance,
-zero existing account-deletion path; Cloud-Function-only since Firestore rules hard-deny
-client deletes on `users/{uid}`; updated by doc 29's balance-check rule) ·
+BUILT & shipped 2026-07-23, verified end-to-end in production against a real account
+(Auth user + Firestore doc confirmed gone via the Firebase Console, group
+`archivedMembers` entry confirmed correctly shaped); App Store Guideline 5.1.1(v)
+compliance; Cloud-Function-only since Firestore rules hard-deny client deletes on
+`users/{uid}`; honors doc 29's balance-check rule; a live Firestore `onSnapshot`
+listener resurrecting a just-deleted `users/{uid}` doc was the nastiest of six bugs
+an adversarial review caught pre-ship — see doc 28's "Real bugs found & fixed"
+section before touching any other cascading-delete feature) ·
 [ai_layer/docs/29](ai_layer/docs/29_group_departure_balance_integrity.md) (group
 departure balance integrity — BUILT & shipped: fixed `AddExpenseScreen.tsx`'s
 `billSplitParticipants` silently dropping a departed participant's share on edit,

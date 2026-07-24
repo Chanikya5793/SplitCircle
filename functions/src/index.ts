@@ -30,6 +30,7 @@ import {
     touchFriendInteraction,
 } from "./friends";
 import { verifyGroupEntityExists } from "./entityGuards";
+import { deleteAccountCascade, findDeletionBlockers } from "./accountDeletion";
 export { cleanupOldRtdbData, reapStaleRingingCalls } from "./cleanup";
 // Consolidated AI-layer ingestion fan-out (gated by AI_LAYER_ENABLED; no-op until
 // activated — see aiLayer.ts and ai_layer/docs/08_self_review.md).
@@ -1341,3 +1342,55 @@ export const generateLiveKitToken = onRequest(
         }
     }
 );
+
+// ─────────────────────────────────────────────────────────────
+// Account Deletion (App Store Guideline 5.1.1(v))
+// ─────────────────────────────────────────────────────────────
+// Cloud-Function-only: Firestore rules hard-deny client deletes on
+// users/{uid} and its notificationDevices subcollection, so this must run
+// server-side via the Admin SDK. See ai_layer/docs/28_account_deletion.md.
+
+export const checkAccountDeletionBlockers = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    try {
+        const blockers = await findDeletionBlockers(uid);
+        return { blockers };
+    } catch (error) {
+        if (error instanceof HttpsError) {
+            throw error;
+        }
+        logger.error("Failed to check account deletion blockers", { uid, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to check account deletion eligibility.");
+    }
+});
+
+export const deleteAccount = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    try {
+        // Re-checked here (not just trusted from the client's earlier pre-check)
+        // to close the race where group state changes between the check and
+        // the confirm tap — do not skip this as an "optimization".
+        const blockers = await findDeletionBlockers(uid);
+        if (blockers.length > 0) {
+            throw new HttpsError("failed-precondition", "Transfer ownership of your groups first.", { blockers });
+        }
+
+        await deleteAccountCascade(uid);
+        logger.info("Account deleted", { uid });
+        return { success: true };
+    } catch (error) {
+        if (error instanceof HttpsError) {
+            throw error;
+        }
+        logger.error("Account deletion failed", { uid, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to delete account. Please try again.");
+    }
+});

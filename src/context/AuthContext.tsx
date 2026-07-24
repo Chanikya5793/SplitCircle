@@ -1,5 +1,6 @@
 import { auth, db } from '@/firebase';
 import type { UserProfile } from '@/models';
+import { deleteAccount as deleteAccountCallable } from '@/services/accountDeletionService';
 import { clearLockSession } from '@/services/chatLockService';
 import { unregisterCurrentDevice } from '@/services/notificationService';
 import { clearCachedProfile, loadCachedProfile, persistProfile } from '@/services/profileCache';
@@ -54,6 +55,7 @@ interface AuthContextValue {
   signInWithGoogle: () => Promise<void>;
   signInWithApple: () => Promise<void>;
   signOutUser: () => Promise<void>;
+  deleteAccountAndSignOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -205,17 +207,25 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       setLoading(false);
 
       const docRef = doc(db, 'users', firebaseUser.uid);
+      let hasSeenProfileDoc = false;
 
       unsubscribeSnapshot = onSnapshot(docRef, async (docSnap) => {
         if (docSnap.exists()) {
+          hasSeenProfileDoc = true;
           const payload = buildUserProfile(firebaseUser, docSnap.data() as UserProfile);
           setUser(payload);
           setLoading(false);
           void persistProfile(payload);
+        } else if (hasSeenProfileDoc) {
+          // The doc existed earlier this session and is now gone — the account
+          // was deleted (by this device or another signed-in one; deleteAccount's
+          // server-side cascade removes users/{uid} directly). Never recreate it:
+          // reflect reality by signing out locally instead.
+          void signOut(auth).catch(() => undefined);
         } else {
-          // Document doesn't exist yet. 
-          // If we are registering, registerWithEmail will create it shortly.
-          // But to be safe (and for Google Sign In), we create it if missing.
+          // Document has never existed this session — a genuinely new sign-in
+          // (registerWithEmail will create it shortly, or this is first-time
+          // Google/Apple sign-in). Safe to create if still missing.
           const payload = buildUserProfile(firebaseUser);
           try {
             await setDoc(docRef, sanitizeForFirestore({
@@ -421,6 +431,23 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     await signOut(auth);
   };
 
+  const deleteAccountAndSignOut = async () => {
+    // Unregister BEFORE the account is gone: deleteAccountCallable's server-side
+    // cascade already deletes the notificationDevices subcollection, so calling
+    // unregisterCurrentDevice() after it returns would use its Admin-SDK-bypassing
+    // set({merge:true}) to resurrect a device doc under a uid that no longer has
+    // a user record — an orphan nothing will ever clean up.
+    if (user) {
+      try {
+        await unregisterCurrentDevice();
+      } catch (error) {
+        console.warn('Failed to unregister notification device during account deletion:', error);
+      }
+    }
+    await deleteAccountCallable();
+    await signOut(auth);
+  };
+
   const value = useMemo(
     () => ({
       user,
@@ -432,6 +459,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       signInWithGoogle,
       signInWithApple,
       signOutUser,
+      deleteAccountAndSignOut,
     }),
     [loading, user, authBusy],
   );

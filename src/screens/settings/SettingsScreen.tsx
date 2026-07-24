@@ -37,17 +37,24 @@ import {
   type WallpaperSlot,
 } from '@/services/wallpaperService';
 import { ACCENT_IDS, ACCENTS } from '@/theme';
-import { lightHaptic, selectionHaptic } from '@/utils/haptics';
+import { errorHaptic, lightHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { Animated, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Animated, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, SegmentedButtons, Switch, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { appAlert, appPrompt } from '@/utils/appAlert';
+import { checkDeletionBlockers } from '@/services/accountDeletionService';
+import { formatCurrency } from '@/utils/currency';
+
+const errorMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return fallback;
+};
 
 export const SettingsScreen = () => {
   const navigation = useNavigation();
-  const { user, signOutUser } = useAuth();
+  const { user, signOutUser, deleteAccountAndSignOut } = useAuth();
   const { isDark, theme, mode, setMode, accent, setAccent } = useTheme();
   const appWallpaper = useWallpaperSlot('app');
   const chatDefaultWallpaper = useWallpaperSlot('chat-default');
@@ -71,6 +78,7 @@ export const SettingsScreen = () => {
 
   const [wallpaperSlot, setWallpaperSlot] = useState<WallpaperSlot | null>(null);
   const [guardSheetOpen, setGuardSheetOpen] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const { settings: appLock } = useAppLock();
   const [bioLabel, setBioLabel] = useState('Face ID');
   const [bioAvailable, setBioAvailable] = useState(false);
@@ -317,6 +325,64 @@ export const SettingsScreen = () => {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign out', style: 'destructive', onPress: () => void signOutUser() },
     ]);
+  };
+
+  const confirmDeleteAccount = () => {
+    appAlert(
+      'Delete account',
+      `Permanently delete your ${APP_NAME} account? Your groups, expenses, and chats will be gone for good. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingAccount(true);
+            try {
+              await deleteAccountAndSignOut();
+              successHaptic();
+            } catch (error) {
+              errorHaptic();
+              setDeletingAccount(false);
+              appAlert('Could not delete account', errorMessage(error, 'Please try again.'));
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  // Pre-check for blocking groups (unresolved ownership / unsettled balance)
+  // before ever showing the irreversible confirm — re-checked server-side too
+  // inside deleteAccount itself, this is purely so the user sees exactly what
+  // to fix instead of a raw server error.
+  const handleDeleteAccount = () => {
+    lightHaptic();
+    setDeletingAccount(true);
+    void (async () => {
+      try {
+        const blockers = await checkDeletionBlockers();
+        setDeletingAccount(false);
+        if (blockers.length > 0) {
+          appAlert(
+            'Resolve these groups first',
+            blockers
+              .map((b) => `${b.groupName}\n${
+                b.reason === 'transfer_ownership'
+                  ? 'Transfer ownership or delete this group first'
+                  : `Settle up ${formatCurrency(Math.abs(b.balance ?? 0), b.currency)} in this group first`
+              }`)
+              .join('\n\n'),
+          );
+          return;
+        }
+        confirmDeleteAccount();
+      } catch (error) {
+        setDeletingAccount(false);
+        errorHaptic();
+        appAlert('Could not check account', errorMessage(error, 'Please try again.'));
+      }
+    })();
   };
 
   /**
@@ -636,6 +702,17 @@ export const SettingsScreen = () => {
             iconColor={theme.colors.error}
             chevron={false}
             onPress={handleSignOut}
+          />
+          {divider}
+          <ListRow
+            title="Delete account"
+            subtitle="Permanently erase your account and data"
+            icon="trash-can-outline"
+            destructive
+            chevron={false}
+            disabled={deletingAccount}
+            trailing={deletingAccount ? <ActivityIndicator size="small" color={theme.colors.danger} /> : undefined}
+            onPress={handleDeleteAccount}
           />
         </GlassCard>
 

@@ -16,7 +16,7 @@ export interface GroupMember {
   /** When the member was removed or left, if archived. */
   archivedAt?: number;
   /** How they exited the group. */
-  archivedReason?: 'left' | 'removed';
+  archivedReason?: 'left' | 'removed' | 'account_deleted';
 }
 
 export interface Settlement {

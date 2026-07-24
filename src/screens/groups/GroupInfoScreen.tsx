@@ -723,7 +723,13 @@ export const GroupInfoScreen = () => {
                                     <View key={member.userId}>
                                         <List.Item
                                             title={member.displayName}
-                                            description={`${member.archivedReason === 'left' ? 'Left' : 'Removed'} • ${balanceLabel}`}
+                                            description={`${
+                                                member.archivedReason === 'left'
+                                                    ? 'Left'
+                                                    : member.archivedReason === 'account_deleted'
+                                                        ? 'Account deleted'
+                                                        : 'Removed'
+                                            } • ${balanceLabel}`}
                                             titleStyle={{ color: theme.colors.onSurfaceVariant }}
                                             left={() => (
                                                 <Avatar.Text
