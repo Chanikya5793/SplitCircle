@@ -61,6 +61,10 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'memberIds',
           'members',
+          // joinGroup (GroupContext.tsx) always writes archivedMembers too, purging
+          // the joiner's own stale archived entry so rejoining after a prior leave/
+          // removal doesn't leave a duplicate identity record.
+          'archivedMembers',
           'updatedAt',
         ]);
     }

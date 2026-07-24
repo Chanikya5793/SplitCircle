@@ -429,18 +429,24 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     const purgedArchive = (groupData.archivedMembers ?? []).filter(
       (member) => member.userId !== user.userId,
     );
-    batch.update(groupDoc.ref, stripUndefinedDeep({
+    // stripUndefinedDeep must NOT wrap arrayUnion()/serverTimestamp() sentinel
+    // values — it recurses into any object via Object.entries/fromEntries,
+    // which silently rebuilds a FieldValue sentinel (e.g. ArrayUnionFieldValueImpl,
+    // whose real shape is { _methodName, _elements }) as a plain data object,
+    // so Firestore writes that garbage literal instead of performing the
+    // union. Only the plain member-data object needs stripping.
+    batch.update(groupDoc.ref, {
       memberIds: arrayUnion(user.userId),
-      members: arrayUnion({
+      members: arrayUnion(stripUndefinedDeep({
         userId: user.userId,
         displayName: user.displayName,
         photoURL: user.photoURL ?? null,
         role: 'member',
         balance: 0,
-      }),
+      })),
       archivedMembers: purgedArchive,
       updatedAt: serverTimestamp(),
-    }));
+    });
 
     let systemMessage: ChatMessage | null = null;
     let recipients: string[] = [];
@@ -1583,12 +1589,16 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
             archivedReason: 'removed',
           };
 
-      txn.update(ref, stripUndefinedDeep({
-        members: newMembers,
-        memberIds: newMemberIds,
-        archivedMembers: [...existingArchive, archivedEntry],
+      // stripUndefinedDeep must not wrap serverTimestamp() — see the comment
+      // at its joinGroup call site for why that silently corrupts the sentinel.
+      txn.update(ref, {
+        ...stripUndefinedDeep({
+          members: newMembers,
+          memberIds: newMemberIds,
+          archivedMembers: [...existingArchive, archivedEntry],
+        }),
         updatedAt: serverTimestamp(),
-      }));
+      });
     });
 
     // Mirror removal in the chat thread (best effort).
@@ -1665,12 +1675,16 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         archivedReason: 'left',
       };
 
-      txn.update(ref, stripUndefinedDeep({
-        members: newMembers,
-        memberIds: newMemberIds,
-        archivedMembers: [...existingArchive, archivedEntry],
+      // stripUndefinedDeep must not wrap serverTimestamp() — see the comment
+      // at its joinGroup call site for why that silently corrupts the sentinel.
+      txn.update(ref, {
+        ...stripUndefinedDeep({
+          members: newMembers,
+          memberIds: newMemberIds,
+          archivedMembers: [...existingArchive, archivedEntry],
+        }),
         updatedAt: serverTimestamp(),
-      }));
+      });
     });
 
     try {
