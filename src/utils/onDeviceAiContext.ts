@@ -13,6 +13,7 @@
  */
 
 import type { Expense } from '../models/expense';
+import { resolveDisplayName } from './identity';
 
 export interface ContextMemberName {
   userId: string;
@@ -88,7 +89,7 @@ export function rankExpenses(
   maxLines: number = MAX_CONTEXT_EXPENSES,
 ): Expense[] {
   const qTokens = new Set(tokenize(question));
-  const nameOf = new Map(members.map((m) => [m.userId, m.displayName]));
+  const nameOf = new Map(members.map((m) => [m.userId, resolveDisplayName(m, 'someone')]));
 
   const scored = expenses.map((e, i) => {
     const haystack = tokenize(
@@ -121,7 +122,7 @@ export function buildExpenseContext(
   currency: string,
   maxLines: number = MAX_CONTEXT_EXPENSES,
 ): ExpenseContext {
-  const nameOf = new Map(members.map((m) => [m.userId, m.displayName]));
+  const nameOf = new Map(members.map((m) => [m.userId, resolveDisplayName(m, 'someone')]));
   const selected = rankExpenses(expenses, question, members, maxLines).sort(
     (a, b) => a.createdAt - b.createdAt,
   );

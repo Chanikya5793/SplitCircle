@@ -11,7 +11,7 @@
 
 import type { Expense } from '@/models/expense';
 import type { Settlement } from '@/models/group';
-import { resolveDisplayName } from '@/utils/identity';
+import { resolveDisplayName } from './identity';
 import {
   buildExpenseAnalytics,
   comparisonWindows,

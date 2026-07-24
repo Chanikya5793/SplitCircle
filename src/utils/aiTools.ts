@@ -236,16 +236,16 @@ export function resolveMember(
   if (!q) return { matched: null, candidates: [] };
   const exact = members.filter((m) => norm(m.displayName) === q);
   if (exact.length === 1) return { matched: exact[0], candidates: [] };
-  if (exact.length > 1) return { matched: null, candidates: exact.map((m) => m.displayName) };
+  if (exact.length > 1) return { matched: null, candidates: exact.map((m) => resolveDisplayName(m)) };
   const prefix = members.filter((m) => {
     const first = norm(m.displayName).split(/\s+/)[0];
     return first.startsWith(q) || q.startsWith(first);
   });
   if (prefix.length === 1) return { matched: prefix[0], candidates: [] };
-  if (prefix.length > 1) return { matched: null, candidates: prefix.map((m) => m.displayName) };
+  if (prefix.length > 1) return { matched: null, candidates: prefix.map((m) => resolveDisplayName(m)) };
   const sub = members.filter((m) => norm(m.displayName).includes(q));
   if (sub.length === 1) return { matched: sub[0], candidates: [] };
-  return { matched: null, candidates: sub.map((m) => m.displayName) };
+  return { matched: null, candidates: sub.map((m) => resolveDisplayName(m)) };
 }
 
 /** Fuzzy merchant (expense-title) match: substring either direction, ranked by spend. */
@@ -469,7 +469,7 @@ const TOOLS: Record<
       if (!m.matched) {
         return m.candidates.length
           ? ok('member_stats', 'member stats', { ambiguous: m.candidates })
-          : err('member_stats', 'member stats', `no member matching "${req.member ?? ''}" — members: ${g.members.map((x) => x.displayName).join(', ')}`);
+          : err('member_stats', 'member stats', `no member matching "${req.member ?? ''}" — members: ${g.members.map((x) => resolveDisplayName(x)).join(', ')}`);
       }
       const p = resolvePeriod(req.month, ctx.now);
       const tf = p?.tf ?? null;
@@ -488,8 +488,8 @@ const TOOLS: Record<
           catTotals.set(c, (catTotals.get(c) ?? 0) + share);
         }
       }
-      return ok('member_stats', `${m.matched.displayName} stats`, {
-        name: m.matched.displayName,
+      return ok('member_stats', `${resolveDisplayName(m.matched)} stats`, {
+        name: resolveDisplayName(m.matched),
         period: periodLabel(p),
         currency: g.currency,
         paid: row?.paid ?? 0,
@@ -603,7 +603,7 @@ const TOOLS: Record<
       return ok('balances', 'balances', {
         currency: g.currency,
         perMember: g.members.map((m) => ({
-          name: m.displayName,
+          name: resolveDisplayName(m),
           net: cents(a.balances[m.userId] ?? 0),
         })),
         yourBalance: a.userBalance,
@@ -622,7 +622,7 @@ const TOOLS: Record<
         { groupId: g.groupId, expenses: g.expenses, settlements: g.settlements, updatedAt: g.updatedAt },
         ctx.currentUserId,
       );
-      const nameOf = new Map(g.members.map((m) => [m.userId, m.displayName]));
+      const nameOf = new Map(g.members.map((m) => [m.userId, resolveDisplayName(m, 'someone')]));
       return ok('settle_plan', 'settle-up plan', {
         currency: g.currency,
         transfers: a.debts.map((dbt) => ({
@@ -748,7 +748,7 @@ const TOOLS: Record<
           rows.push({ type, name, detail });
         }
       };
-      for (const m of ctx.group?.members ?? []) push('member', m.displayName, `member of ${ctx.group?.name}`);
+      for (const m of ctx.group?.members ?? []) push('member', resolveDisplayName(m), `member of ${ctx.group?.name}`);
       for (const g of ctx.personalGroups ?? []) {
         push('group', g.name, `${g.expenses?.length ?? 0} expenses`);
         for (const m0 of new Set((g.expenses ?? []).filter(isSpend).map((e) => e.title))) {

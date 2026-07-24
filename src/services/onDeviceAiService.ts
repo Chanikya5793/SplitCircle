@@ -27,6 +27,7 @@ import {
 } from '@/utils/onDeviceAiContext';
 import { getGroupAnalytics } from '@/utils/expenseAnalytics';
 import { answerExpenseQuery, type QueryContext } from '@/utils/expenseQuery';
+import { resolveDisplayName } from '@/utils/identity';
 // Side-effect import: wires the persistent SQLite index into `getGroupAnalytics`
 // so on-device answers are grounded from the index that survives app restarts.
 import '@/services/aiIndexStore';
@@ -134,7 +135,7 @@ export async function askExpenseAiOnDevice(
   const groundedContext = `${buildFactsBlock(group, currentUserId)}\n\nExpenses:\n${context}`;
   const result = await askOnDevice(question, groundedContext);
   const cited = resolveCitedExpenses(result.sourceIndexes ?? [], selected);
-  const nameOf = new Map(members.map((m) => [m.userId, m.displayName]));
+  const nameOf = new Map(members.map((m) => [m.userId, resolveDisplayName(m)]));
 
   // The on-device model doesn't self-report calibrated confidence; ground it
   // in citation behavior instead (cited answers are checkable by the user).

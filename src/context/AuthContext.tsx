@@ -262,11 +262,15 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
               if (snap.exists()) {
                 const existing = snap.data() as UserProfile;
                 const merged = buildUserProfile(firebaseUser, existing);
+                // merge: true — buildUserProfile only knows a fixed field list
+                // (its own comment elsewhere notes this), so a bare .set() here
+                // would silently wipe any other field already on the doc (e.g.
+                // phoneNumber, pushToken) that this branch never touches.
                 transaction.set(docRef, sanitizeForFirestore({
                   ...merged,
                   createdAt: existing.createdAt ?? serverTimestamp(),
                   updatedAt: serverTimestamp(),
-                }));
+                }), { merge: true });
               } else {
                 const payload = buildUserProfile(firebaseUser);
                 transaction.set(docRef, sanitizeForFirestore({

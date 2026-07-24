@@ -16,6 +16,7 @@
 import type { Expense } from '@/models/expense';
 import type { GroupMember, Settlement } from '@/models/group';
 import { calendarWindow, cents, isSpend, userShareOf, type Timeframe } from './expenseAnalytics';
+import { resolveDisplayName } from './identity';
 
 export type StatsRange = 'month' | 'quarter' | 'year' | 'all';
 
@@ -145,7 +146,7 @@ export function memberBreakdown(
   const spend = (expenses ?? []).filter(isSpend).filter((e) => inWindow(e, tf));
   const rows: MemberRow[] = members.map((m) => ({
     userId: m.userId,
-    name: m.displayName,
+    name: resolveDisplayName(m),
     paid: 0,
     share: 0,
   }));

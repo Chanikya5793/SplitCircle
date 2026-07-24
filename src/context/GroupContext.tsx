@@ -872,8 +872,9 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
   // source of truth, the chat is a mirror.
 
   const memberName = (group: Group | undefined, userId: string): string =>
-    [...(group?.members ?? []), ...(group?.archivedMembers ?? [])].find((m) => m.userId === userId)
-      ?.displayName ?? 'Someone';
+    resolveDisplayName(
+      [...(group?.members ?? []), ...(group?.archivedMembers ?? [])].find((m) => m.userId === userId),
+    );
 
   const postExpenseCard = (group: Group | undefined, groupId: string, expense: Expense) => {
     const policy = resolveMoneyInChat(group?.moneyInChat).autoPost;

@@ -10,6 +10,7 @@ import { ROUTES } from '@/constants';
 import { mediaExistsLocally, getOrDownloadMedia } from '@/services/mediaService';
 import { markMessageDeletedForUser, unmarkMessageDeletedForUser } from '@/services/localMessageStorage';
 import { warningHaptic } from '@/utils/haptics';
+import { resolveDisplayName } from '@/utils/identity';
 import { useVideoThumbnail } from '@/utils/videoThumbnail';
 import { appAlert } from '@/utils/appAlert';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -1557,7 +1558,7 @@ export const ChatMediaGalleryScreen = () => {
   const senderMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of params.participants ?? []) {
-      map.set(p.userId, p.userId === user?.userId ? 'You' : p.displayName);
+      map.set(p.userId, p.userId === user?.userId ? 'You' : resolveDisplayName(p));
     }
     return map;
   }, [params.participants, user?.userId]);

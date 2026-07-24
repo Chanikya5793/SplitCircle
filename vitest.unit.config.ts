@@ -4,6 +4,7 @@
  * recommender and the splitcircle-ai JS fallbacks. Run with `npm run test:unit`.
  */
 
+import path from 'path';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
@@ -13,5 +14,10 @@ export default defineConfig({
       'modules/splitcircle-ai/src/__tests__/**/*.test.ts',
     ],
     environment: 'node',
+  },
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
+    },
   },
 });

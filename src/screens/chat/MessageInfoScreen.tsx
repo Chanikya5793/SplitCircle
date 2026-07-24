@@ -6,6 +6,7 @@ import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage, ChatParticipant, ChatThread, MessageType } from '@/models';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
+import { resolveDisplayName, resolveInitials } from '@/utils/identity';
 import {
     listenForMessageReceipts,
     registerReceiptParticipant,
@@ -46,20 +47,6 @@ const getAvatarColor = (id: string): string => {
     hash = id.charCodeAt(i) + ((hash << 5) - hash);
   }
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-};
-
-const getInitials = (name: string): string => {
-  const normalized = name.trim();
-  if (!normalized) {
-    return '??';
-  }
-
-  const parts = normalized.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) {
-    return parts[0].slice(0, 2).toUpperCase();
-  }
-
-  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
 };
 
 const formatReceiptTime = (epochMs: number): string => {
@@ -204,7 +191,7 @@ export const MessageInfoScreen = () => {
 
     read.sort((a, b) => (b.readAt ?? b.deliveredAt ?? 0) - (a.readAt ?? a.deliveredAt ?? 0));
     delivered.sort((a, b) => (b.deliveredAt ?? 0) - (a.deliveredAt ?? 0));
-    pending.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    pending.sort((a, b) => resolveDisplayName(a).localeCompare(resolveDisplayName(b)));
 
     return {
       readByRows: read,
@@ -224,7 +211,7 @@ export const MessageInfoScreen = () => {
     return (
       <Avatar.Text
         size={42}
-        label={getInitials(participant.displayName)}
+        label={resolveInitials(participant.displayName)}
         style={{ backgroundColor: getAvatarColor(participant.userId) }}
         color="#FFF"
       />
@@ -258,7 +245,7 @@ export const MessageInfoScreen = () => {
         {renderAvatar(row.participant)}
         <View style={styles.recipientTextBlock}>
           <Text variant="titleSmall" style={{ color: theme.colors.onSurface }} numberOfLines={1}>
-            {row.participant.displayName}
+            {resolveDisplayName(row.participant)}
           </Text>
           {typeof timestamp === 'number' && (
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -276,7 +263,7 @@ export const MessageInfoScreen = () => {
         {renderAvatar(participant)}
         <View style={styles.recipientTextBlock}>
           <Text variant="titleSmall" style={{ color: theme.colors.onSurface }} numberOfLines={1}>
-            {participant.displayName}
+            {resolveDisplayName(participant)}
           </Text>
         </View>
       </View>
