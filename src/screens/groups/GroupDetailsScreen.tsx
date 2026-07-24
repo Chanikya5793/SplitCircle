@@ -15,6 +15,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Expense, Group, Settlement } from '@/models';
 import { syncRecurringBillsForGroupWithFallback } from '@/services/recurringBillService';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
+import { resolveDisplayName } from '@/utils/identity';
 import * as Clipboard from 'expo-clipboard';
 import { useNavigation } from '@react-navigation/native';
 import { BlurView } from 'expo-blur';
@@ -202,7 +203,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
       Object.fromEntries(
         [...(group.members ?? []), ...(group.archivedMembers ?? [])].map((m) => [
           m.userId,
-          m.displayName,
+          resolveDisplayName(m, 'Unknown'),
         ]),
       ),
     [group.members, group.archivedMembers]

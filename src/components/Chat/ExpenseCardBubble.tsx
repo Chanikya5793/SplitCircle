@@ -19,6 +19,7 @@ import { ReactionsRow } from '@/components/Chat/ReactionsRow';
 import type { ChatMessage } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
 import { lightHaptic } from '@/utils/haptics';
+import { resolveDisplayName } from '@/utils/identity';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import React from 'react';
@@ -108,7 +109,7 @@ export const ExpenseCardBubble = ({
     : recurringState === 'settled'
       ? 'Settled'
       : recurringState === 'generated'
-        ? `Added · paid by ${liveExpense ? (group?.members?.find((m) => m.userId === liveExpense.paidBy)?.displayName ?? ref.snapshot.payerName) : ref.snapshot.payerName}`
+        ? `Added · paid by ${liveExpense ? resolveDisplayName(group?.members?.find((m) => m.userId === liveExpense.paidBy), ref.snapshot.payerName) : ref.snapshot.payerName}`
         : recurringState === 'due'
           ? isRequest
             ? `Awaiting accept · requested by ${ref.snapshot.payerName}`
@@ -338,8 +339,10 @@ export const ExpenseCardBubble = ({
                   p.userId === liveExpense.paidBy ||
                   (liveExpense.settledParticipantIds ?? []).includes(p.userId);
                 const successColor = theme.colors.success ?? theme.colors.primary;
-                const name =
-                  group?.members?.find((m) => m.userId === p.userId)?.displayName ?? '?';
+                const name = resolveDisplayName(
+                  group?.members?.find((m) => m.userId === p.userId),
+                  '?',
+                );
                 return (
                   <View
                     key={p.userId}

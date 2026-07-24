@@ -24,6 +24,7 @@ import { AppState, Platform, Settings } from 'react-native';
 import { useGroups } from '@/context/GroupContext';
 import { computeSplit } from '@/utils/split';
 import { computeParticipantsFromSplitMetadata, toParticipantShares } from '@/utils/expenseSplit';
+import { resolveDisplayName } from '@/utils/identity';
 import type { Participant } from '@/components/BillSplit/types';
 import type { ExpenseSplitMetadata, Group, SplitType } from '@/models';
 
@@ -117,7 +118,7 @@ function materializeExpense(rec: QueuedExpense, group: Group) {
     const v = valueOf(m.userId);
     return {
       id: m.userId,
-      name: m.displayName || '',
+      name: resolveDisplayName(m, 'Someone'),
       included,
       exactAmount: method === 'exact' ? v : 0,
       percentage: method === 'percentage' ? v : 0,

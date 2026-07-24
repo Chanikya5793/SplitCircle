@@ -9,6 +9,7 @@ import { getDatabase } from "firebase-admin/database";
 import { getAuth } from "firebase-admin/auth";
 import * as logger from "firebase-functions/logger";
 import { v4 as uuidv4 } from "uuid";
+import { resolveDisplayName } from "./identity";
 
 const USERS_COLLECTION = "users";
 const GROUPS_COLLECTION = "groups";
@@ -204,7 +205,10 @@ const archiveDepartingMember = async (
 ): Promise<string> => {
     const members = (data.members ?? []) as GroupMemberRecord[];
     const me = members.find((member) => member.userId === uid);
-    const displayName = me?.displayName ?? "Deleted user";
+    // `?? "Deleted user"` was dead code here (doc 30 root cause #3.1) — a
+    // member record's displayName is '', not null/undefined, so `??` never
+    // fired for exactly the case this function exists to handle.
+    const displayName = resolveDisplayName(me, "Deleted user");
 
     const newMembers = members.filter((member) => member.userId !== uid);
     const newMemberIds = ((data.memberIds ?? []) as string[]).filter((id) => id !== uid);
@@ -269,6 +273,12 @@ const postAccountDeletedSystemMessage = async (
         mediaUrl: null,
         thumbnailUrl: null,
         isGroupChat: true,
+        // Doc 30: self-referential — relatedUserId is the deleted user
+        // themselves, same as senderId. Lets MessageBubble prefer a live
+        // resolveDisplayName() lookup (against archivedMembers, since this
+        // user is being removed) over this frozen `content` string.
+        systemEventKind: "account_deleted",
+        relatedUserId: uid,
     };
 
     const rtdb = getDatabase();

@@ -20,6 +20,7 @@ import {
 } from '@/services/friendsService';
 import { computeFriendBalances, type CurrencyAmount } from '@/utils/friendBalances';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
+import { resolveDisplayName, resolveInitials } from '@/utils/identity';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
@@ -185,10 +186,7 @@ export const FriendsScreen = () => {
       // folded into memberLookup) > the snapshot stored on the friend record
       // itself > a final last-resort label so we never render the literal
       // string "Friend" as a name.
-      const displayName =
-        member?.displayName?.trim() ||
-        friend.displayName?.trim() ||
-        'Removed user';
+      const displayName = resolveDisplayName(member, resolveDisplayName(friend, 'Removed user'));
       const photoURL = member?.photoURL || friend.photoURL;
       return {
         friend,
@@ -369,7 +367,7 @@ export const FriendsScreen = () => {
               ) : (
                 <Avatar.Text
                   size={48}
-                  label={(row.displayName || 'F').slice(0, 2).toUpperCase()}
+                  label={resolveInitials(row.displayName)}
                   style={{ backgroundColor: theme.colors.primary }}
                   color={theme.colors.onPrimary}
                 />

@@ -17,6 +17,7 @@
 import { writeWidgetSnapshot, type WidgetGroupBalance } from '../../modules/splitcircle-ai';
 import { getGroupAnalytics } from '@/utils/expenseAnalytics';
 import { writeWidgetSnapshotMirror } from '@/services/aiIndexStore';
+import { resolveDisplayName } from '@/utils/identity';
 import type { Group } from '@/models';
 
 /** Cap so the snapshot stays small — Siri/widgets only ever show a handful. */
@@ -38,12 +39,12 @@ export function publishWidgetSnapshot(userId: string, groups: Group[]): void {
       const nameOf = (uid: string): string => {
         const m = g.members.find((x) => x.userId === uid)
           ?? g.archivedMembers?.find((x) => x.userId === uid);
-        return m?.displayName || 'Someone';
+        return resolveDisplayName(m, 'Someone');
       };
 
       const members = g.members.map((m) => ({
         id: m.userId,
-        name: m.displayName || 'Someone',
+        name: resolveDisplayName(m, 'Someone'),
         balance: a.balances[m.userId] ?? 0,
       }));
 

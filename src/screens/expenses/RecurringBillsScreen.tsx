@@ -19,6 +19,7 @@ import {
 import { formatCurrency } from '@/utils/currency';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { findNextOccurrenceAt, getRecurrenceSummary, normalizeRecurrenceRule } from '@/utils/recurrence';
+import { resolveDisplayName } from '@/utils/identity';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Animated,
@@ -290,7 +291,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
     const canEditMonthsOfYear = frequency === 'yearly' && isCustomPreset;
 
     const memberMap = useMemo(
-        () => Object.fromEntries(group.members.map((member) => [member.userId, member.displayName])),
+        () => Object.fromEntries(group.members.map((member) => [member.userId, resolveDisplayName(member, 'Unknown')])),
         [group.members],
     );
 
@@ -998,7 +999,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                         style={[styles.chip, paidBy === member.userId && { backgroundColor: theme.colors.primary }]}
                                     >
                                         <Text style={{ color: paidBy === member.userId ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                            {member.displayName}
+                                            {resolveDisplayName(member)}
                                         </Text>
                                     </TouchableOpacity>
                                 ))}
@@ -1043,7 +1044,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                                     style={[styles.chip, selected && { backgroundColor: theme.colors.primary }]}
                                                 >
                                                     <Text style={{ color: selected ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                                        {selected ? `${position + 1}. ` : ''}{member.displayName}
+                                                        {selected ? `${position + 1}. ` : ''}{resolveDisplayName(member)}
                                                     </Text>
                                                 </TouchableOpacity>
                                             );
@@ -1072,7 +1073,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                             style={[styles.chip, selected && { backgroundColor: theme.colors.primary }]}
                                         >
                                             <Text style={{ color: selected ? theme.colors.onPrimary : theme.colors.onSurface }}>
-                                                {member.displayName}
+                                                {resolveDisplayName(member)}
                                             </Text>
                                         </TouchableOpacity>
                                     );

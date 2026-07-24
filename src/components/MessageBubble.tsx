@@ -11,6 +11,7 @@ import { updateMessageUrlPreview } from '@/services/localMessageStorage';
 import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
 import { formatRelativeTime } from '@/utils/format';
 import { hasGoogleMapsApiKey } from '@/utils/hasGoogleMapsApiKey';
+import { resolveDisplayName } from '@/utils/identity';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer, type AudioStatus } from 'expo-audio';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -50,6 +51,16 @@ interface MessageBubbleProps {
   searchQuery?: string;
   /** Map of userId → display name; used to render mentions as @Name. */
   mentionLabels?: Map<string, string>;
+  /**
+   * Doc 30: userId → LIVE resolved display name (already run through
+   * resolveDisplayName) for every CURRENT + ARCHIVED member of this
+   * message's group — not the same set as mentionLabels, which is built
+   * from thread.participants (excludes the viewer, and gets pruned when a
+   * member is removed/leaves). Used to re-render system messages
+   * (systemEventKind + relatedUserId) with a name that's correct as of now,
+   * instead of whatever was frozen into `content` at write time.
+   */
+  memberNames?: Map<string, string>;
   isGroupChat?: boolean;
   totalRecipients?: number;
   highlighted?: boolean;
@@ -173,6 +184,48 @@ const tokenizeContent = (
   searchQuery?: string,
 ): Span[] => splitHighlights(splitLinks(splitMentions(text, mentionLabels)), searchQuery);
 
+// Doc 30 — system-message live-name lookup. `content` is frozen text written
+// once (GroupContext.tsx's writeGroupSystemMessage); systemEventKind +
+// relatedUserId let us instead render from `memberNames`' CURRENT name for
+// that user, so a name fixed after the message was sent renders correctly
+// everywhere it's displayed, retroactively, with zero backfill. Falls back
+// to `content` whenever the live data isn't resolvable (no memberNames prop
+// — e.g. a direct chat, which has no group — or relatedUserId not found in
+// it) or the kind isn't one we know how to re-template.
+const buildSystemMessageText = (message: ChatMessage, memberNames?: Map<string, string>): string => {
+  const { systemEventKind, relatedUserId, content } = message;
+  if (!systemEventKind || !relatedUserId || !memberNames) return content;
+  const liveRaw = memberNames.get(relatedUserId);
+  if (liveRaw === undefined) return content;
+  const name = resolveDisplayName({ displayName: liveRaw }, 'Someone');
+  switch (systemEventKind) {
+    case 'member_joined':
+      return `${name} joined the group`;
+    case 'member_left':
+      return `${name} left the group`;
+    case 'member_removed':
+      return `${name} was removed from the group`;
+    case 'account_deleted':
+      return `${name}'s account was deleted`;
+    case 'money_in_chat_updated':
+      return `${name} updated Money in Chat settings`;
+    case 'role_changed_admin':
+      return `${name} is now an admin`;
+    case 'role_changed_member':
+      return `${name} is no longer an admin`;
+    case 'group_renamed': {
+      // The renamed-to group name isn't structured on the message — pull it
+      // from the frozen content's trailing quoted segment (the one other
+      // piece of data this template embeds besides the actor's name) so the
+      // live actor name can still be swapped in around it.
+      const match = content.match(/"([^"]*)"\s*$/);
+      return match ? `${name} renamed the group to "${match[1]}"` : content;
+    }
+    default:
+      return content;
+  }
+};
+
 // Helper to format file size
 const formatFileSize = (bytes?: number): string => {
   if (!bytes) return '';
@@ -278,7 +331,7 @@ const VideoPlayerComponent = ({ uri, style, showControls = true, showOverlay = f
   );
 };
 
-const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, onReplyPress, onMediaPress, onLongPress, onReactionsPress, onFilePress, onDoubleTap, selectionMode, selected, onToggleSelect, onMentionPress, searchQuery, mentionLabels, isGroupChat, totalRecipients, highlighted, dimmed }: MessageBubbleProps) => {
+const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply, onSwipeInfo, onReplyPress, onMediaPress, onLongPress, onReactionsPress, onFilePress, onDoubleTap, selectionMode, selected, onToggleSelect, onMentionPress, searchQuery, mentionLabels, memberNames, isGroupChat, totalRecipients, highlighted, dimmed }: MessageBubbleProps) => {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
@@ -539,7 +592,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
     return (
       <View style={styles.systemContainer}>
         <View style={[styles.systemBubble, { backgroundColor: isDark ? 'rgba(28, 31, 38, 0.8)' : 'rgba(255, 255, 255, 0.85)' }]}>
-          <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>{message.content}</Text>
+          <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>{buildSystemMessageText(message, memberNames)}</Text>
         </View>
       </View>
     );
@@ -551,7 +604,7 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
         {/* Call events land here too ("📞 Outgoing call · 00:39") — the chip
             needs a real surface to stay legible over loud wallpapers. */}
         <View style={[styles.systemBubble, { backgroundColor: isDark ? 'rgba(28, 31, 38, 0.8)' : 'rgba(255, 255, 255, 0.85)' }]}>
-          <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>{message.content}</Text>
+          <Text style={[styles.systemText, { color: theme.colors.onSurfaceVariant }]}>{buildSystemMessageText(message, memberNames)}</Text>
         </View>
       </View>
     );
@@ -1382,6 +1435,7 @@ export const MessageBubble = React.memo(MessageBubbleInner, (prev, next) => {
     prev.selected === next.selected &&
     prev.searchQuery === next.searchQuery &&
     prev.mentionLabels === next.mentionLabels &&
+    prev.memberNames === next.memberNames &&
     prev.isGroupChat === next.isGroupChat &&
     prev.totalRecipients === next.totalRecipients &&
     prev.highlighted === next.highlighted &&

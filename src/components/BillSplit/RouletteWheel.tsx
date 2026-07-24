@@ -1,6 +1,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
 import { heavyHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
+import { resolveInitials } from '@/utils/identity';
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -72,15 +73,6 @@ function describeArc(cx: number, cy: number, outerR: number, innerR: number, sta
     `A ${innerR} ${innerR} 0 ${largeArc} 1 ${innerEnd.x} ${innerEnd.y}`,
     'Z',
   ].join(' ');
-}
-
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -232,7 +224,7 @@ const RouletteWheel = React.forwardRef<RouletteWheelRef, RouletteWheelProps>(
               alignmentBaseline="central"
               transform={`rotate(${midAngle}, ${labelPos.x}, ${labelPos.y})`}
             >
-              {segmentCount > 8 ? getInitials(p.name) : p.name.length > 8 ? p.name.slice(0, 7) + '…' : p.name.split(' ')[0]}
+              {segmentCount > 8 ? resolveInitials(p.name) : p.name.length > 8 ? p.name.slice(0, 7) + '…' : p.name.split(' ')[0]}
             </SvgText>
           </G>
         );

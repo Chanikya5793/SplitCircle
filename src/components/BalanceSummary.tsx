@@ -7,6 +7,7 @@ import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { formatRelativeTime } from '@/utils/format';
 import { lightHaptic } from '@/utils/haptics';
+import { needsDisplayName, resolveDisplayName } from '@/utils/identity';
 import { useState } from 'react';
 import { Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -117,13 +118,17 @@ export const BalanceSummary = ({ group }: BalanceSummaryProps) => {
       : member.balance > 0
         ? theme.colors.moneyPositive
         : theme.colors.moneyNegative;
-    const labelColor = archived ? theme.colors.onSurfaceVariant : theme.colors.onSurface;
+    const isPlaceholder = needsDisplayName(member);
+    const labelColor = archived || isPlaceholder ? theme.colors.onSurfaceVariant : theme.colors.onSurface;
 
     return (
       <View key={member.userId} style={styles.row}>
         <View style={styles.nameWrap}>
-          <Text style={[styles.name, { color: labelColor }]} numberOfLines={1}>
-            {maskGroupText(member.displayName, group.groupId, 'person')}
+          <Text
+            style={[styles.name, { color: labelColor }, isPlaceholder && styles.placeholderName]}
+            numberOfLines={1}
+          >
+            {maskGroupText(resolveDisplayName(member), group.groupId, 'person')}
           </Text>
           {archived ? (
             <Text variant="labelSmall" style={[styles.formerTag, { color: theme.colors.onSurfaceVariant }]}>
@@ -201,6 +206,9 @@ const styles = StyleSheet.create({
   },
   name: {
     fontWeight: '500',
+  },
+  placeholderName: {
+    fontStyle: 'italic',
   },
   formerTag: {
     fontStyle: 'italic',

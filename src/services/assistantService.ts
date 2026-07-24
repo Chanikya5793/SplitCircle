@@ -29,6 +29,7 @@ import {
   getOnDeviceAiAvailability,
 } from '@/services/onDeviceAiService';
 import { categorizeText } from '@/utils/categoryMatch';
+import { resolveDisplayName } from '@/utils/identity';
 import {
   classifyMessage,
   detectExpenseModification,
@@ -129,7 +130,7 @@ export interface AgenticAssistContext {
 const money = (n: number, currency: string): string => `${n.toFixed(2)} ${currency}`;
 
 const nameOf = (group: Group, userId: string, selfId: string): string =>
-  userId === selfId ? 'you' : group.members.find((m) => m.userId === userId)?.displayName ?? 'someone';
+  userId === selfId ? 'you' : resolveDisplayName(group.members.find((m) => m.userId === userId), 'someone');
 
 /** First monetary number in the text, or null. */
 const firstAmount = (text: string): number | null => {

@@ -16,6 +16,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Group } from '@/models';
 import { tryPccPrompt } from '@/services/insightsAiService';
+import { resolveDisplayName } from '@/utils/identity';
 import { hashFacts, repeatsRecent, type AiThread } from '@/utils/aiThreads';
 import {
   ANSWER_CACHE_CAP,
@@ -253,7 +254,7 @@ function buildToolCtx(a: AgenticTurnArgs, now: number): ToolCtx {
         ? chatSearchProvider(
             a.chatId,
             (userId) =>
-              a.group?.members?.find((m) => m.userId === userId)?.displayName ?? 'someone',
+              resolveDisplayName(a.group?.members?.find((m) => m.userId === userId), 'someone'),
           )
         : undefined,
     callStats: callStatsProvider(a.chatId),

@@ -32,6 +32,7 @@ import {
 import { verifyGroupEntityExists } from "./entityGuards";
 import { deleteAccountCascade, findDeletionBlockers } from "./accountDeletion";
 import { joinGroupByInviteCode as joinGroupByInviteCodeImpl } from "./groupJoin";
+import { backfillMissingDisplayNames } from "./displayNameBackfill";
 export { cleanupOldRtdbData, reapStaleRingingCalls } from "./cleanup";
 // Consolidated AI-layer ingestion fan-out (gated by AI_LAYER_ENABLED; no-op until
 // activated — see aiLayer.ts and ai_layer/docs/08_self_review.md).
@@ -1431,5 +1432,43 @@ export const joinGroupByInviteCode = onCall(async (request) => {
         }
         logger.error("joinGroupByInviteCode failed", { uid, inviteCode, ...toSafeError(error) });
         throw new HttpsError("internal", "Failed to join group. Please try again.");
+    }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Display Name Backfill (ai_layer/docs/30_display_name_completeness.md §6)
+// ─────────────────────────────────────────────────────────────
+// One-time historical-data repair, NOT wired into any client UI (see
+// displayNameBackfill.ts's own header comment) — meant to be invoked
+// manually by a trusted operator (Firebase Console's function tester,
+// `firebase functions:shell`, or a one-off authenticated httpsCallable
+// call), not on a recurring schedule (the AuthContext.tsx capture-race fix,
+// doc 30 §1, is what stops NEW accounts from breaking this way going
+// forward — there's nothing new for a scheduled re-run to catch). Unlike
+// every other callable in this file, this one has no per-caller scoping at
+// all (no uid/groupId of the caller's own to check against) — it scans and
+// rewrites the entire users collection. Gated on a custom claim rather than
+// plain auth for that reason; set it once for the operator's own account
+// via the Admin SDK before invoking, e.g.:
+//   admin.auth().setCustomUserClaims('<operator-uid>', { admin: true })
+export const runDisplayNameBackfill = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+    if (request.auth?.token?.admin !== true) {
+        throw new HttpsError("permission-denied", "This operation requires admin privileges.");
+    }
+
+    try {
+        const result = await backfillMissingDisplayNames();
+        logger.info("Display name backfill run completed", { uid, ...result });
+        return result;
+    } catch (error) {
+        if (error instanceof HttpsError) {
+            throw error;
+        }
+        logger.error("Display name backfill run failed", { uid, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to run display name backfill.");
     }
 });

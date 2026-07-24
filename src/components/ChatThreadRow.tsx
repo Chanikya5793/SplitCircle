@@ -24,6 +24,7 @@ import { lockChat, unlockChat } from '@/services/chatLockService';
 import { getChatMessages, subscribeToLocalMessages } from '@/services/localMessageStorage';
 import { appAlert } from '@/utils/appAlert';
 import { isInChatMap } from '@/utils/chatOrganization';
+import { resolveDisplayName } from '@/utils/identity';
 import { heavyHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -224,7 +225,7 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
       return group?.name || 'Group Chat';
     }
     const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
-    return other?.displayName || 'Direct Chat';
+    return resolveDisplayName(other, 'Direct Chat');
   };
 
   const getChatAvatar = (): { kind: 'group' | 'user'; photoURL?: string; name: string } => {
@@ -233,7 +234,7 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
       return { kind: 'group', photoURL: group?.photoURL, name: group?.name || 'Group Chat' };
     }
     const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
-    return { kind: 'user', photoURL: other?.photoURL, name: other?.displayName || 'Direct Chat' };
+    return { kind: 'user', photoURL: other?.photoURL, name: resolveDisplayName(other, 'Direct Chat') };
   };
 
   const lastPreviewFor = (): string => {
@@ -366,7 +367,7 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
     if (!typingUserIds || typingUserIds.length === 0) return null;
     if (thread.type !== 'group') return 'typing…';
     const names = typingUserIds.map(
-      (uid) => thread.participants.find((p) => p.userId === uid)?.displayName?.split(' ')[0] ?? 'Someone',
+      (uid) => resolveDisplayName(thread.participants.find((p) => p.userId === uid), 'Someone').split(' ')[0],
     );
     if (names.length === 1) return `${names[0]} is typing…`;
     if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`;

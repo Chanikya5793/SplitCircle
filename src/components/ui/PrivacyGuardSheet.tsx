@@ -19,6 +19,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
 import { formatCurrency } from '@/utils/currency';
+import { resolveDisplayName } from '@/utils/identity';
 import {
   decoyAmount,
   getFailedAttempts,
@@ -532,7 +533,7 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
           label = groups.find((g) => g.groupId === t.groupId)?.name ?? 'Group';
         } else {
           const other = t.participants.find((p) => p.userId !== user?.userId) ?? t.participants[0];
-          label = other?.displayName ?? 'Direct';
+          label = resolveDisplayName(other, 'Direct');
         }
         return { id: t.chatId, label };
       }),

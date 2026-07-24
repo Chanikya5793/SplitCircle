@@ -5,6 +5,7 @@ import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallSt
 import { nativeCallService } from '@/services/nativeCallService';
 import { voipPushService } from '@/services/voipPushService';
 import { startVoipPushRegistration } from '@/services/voipPushRegistration';
+import { resolveDisplayName } from '@/utils/identity';
 import { MISSED_CALL_CATEGORY_ID, scheduleLocalNotification } from '@/utils/notifications';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppState, Platform, Settings } from 'react-native';
@@ -436,7 +437,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
           chatId: session.chatId,
           groupId: session.groupId,
           initiatorId: session.initiatorId,
-          initiatorName: initiator?.displayName || 'Unknown',
+          initiatorName: resolveDisplayName(initiator, 'Unknown'),
           type: session.type,
           startedAt: session.startedAt,
         });

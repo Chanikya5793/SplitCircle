@@ -11,6 +11,7 @@ import type { CallHistoryEntry } from '@/services/localCallStorage';
 import { deleteCallFromHistory, getChatCallHistory } from '@/services/localCallStorage';
 import { appAlert } from '@/utils/appAlert';
 import { formatCallDuration, formatCallTime, getCallDateSection } from '@/utils/format';
+import { resolveDisplayName, resolveInitials } from '@/utils/identity';
 import { lightHaptic, mediumHaptic } from '@/utils/haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -88,9 +89,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
     return e.direction === 'incoming' ? 'phone-incoming' : 'phone-outgoing';
   };
 
-  const initials = (entry.otherParticipant.displayName || 'U')
-    .slice(0, 2)
-    .toUpperCase();
+  const initials = resolveInitials(entry.otherParticipant.displayName, 'U');
 
   const handleDelete = () => {
     const performDelete = async () => {
@@ -152,7 +151,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
             />
           )}
           <Text style={[styles.profileName, { color: theme.colors.onSurface }]}>
-            {entry.otherParticipant.displayName || 'Unknown'}
+            {resolveDisplayName(entry.otherParticipant, 'Unknown')}
           </Text>
           {groupName && (
             <Text style={[styles.groupLabel, { color: theme.colors.onSurfaceVariant }]}>
@@ -209,7 +208,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
                 if (thread) {
                   navigation.navigate(ROUTES.APP.GROUP_CHAT, {
                     chatId: entry.chatId,
-                    initialTitle: groupName || entry.otherParticipant.displayName || 'Chat',
+                    initialTitle: groupName || resolveDisplayName(entry.otherParticipant, 'Chat'),
                     backTitle: getCallInfoTitle(entry),
                   });
                 }

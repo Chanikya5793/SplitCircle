@@ -42,9 +42,13 @@ import { AiMemoryScreen } from '@/screens/settings/AiMemoryScreen';
 import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
 import { OfflineSyncScreen } from '@/screens/settings/OfflineSyncScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
+import { EditNameScreen } from '@/screens/settings/EditNameScreen';
 import { SearchScreen } from '@/screens/search/SearchScreen';
 import type { NotificationData } from '@/utils/notifications';
 import { lightHaptic } from '@/utils/haptics';
+import { needsDisplayName } from '@/utils/identity';
+import { GlassToast } from '@/components/ui';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // Shared fallback for routes that need a group synced locally — extracted to
 // its own file so it can be unit-tested without importing the whole navigator.
 import { GroupLoadingFallback } from '@/navigation/GroupLoadingFallback';
@@ -743,7 +747,18 @@ const AuthStackNavigator = () => {
 
 const AppTabs = () => {
   const { theme, isDark } = useTheme();
+  const { user } = useAuth();
   const [androidIcons, setAndroidIcons] = useState<NativeIconMap>(EMPTY_NATIVE_ICON_MAP);
+  // Doc 30 tier-1 nudge: a persistent badge on the Settings tab, best-effort —
+  // `tabBarBadge` IS supported by the unstable native bottom-tabs types (unlike
+  // the doc's fallback-guess), but react-native-screens' RNSBottomTabsScreen
+  // treats an EMPTY-STRING badge as "no badge" (RCTNSStringFromStringNilIfEmpty
+  // collapses '' to nil — verified in RNSBottomTabsScreenComponentView.mm), so
+  // there's no real "dot with no text" primitive here. A bullet character is
+  // the closest practical stand-in for a dot. Clears itself the moment
+  // needsDisplayName(user) flips false — never independently dismissible, per
+  // doc 30's research (a dismiss-once badge gets ignored forever).
+  const settingsBadge = needsDisplayName(user) ? '•' : undefined;
 
   useEffect(() => {
     if (Platform.OS !== 'android') {
@@ -919,6 +934,7 @@ const AppTabs = () => {
           title: 'Settings',
           tabBarLabel: 'Settings',
           tabBarIcon: ({ focused }: { focused: boolean }) => getTabIcon('settings', focused),
+          tabBarBadge: settingsBadge,
         }}
       />
       {/*
@@ -1160,6 +1176,15 @@ const AppStackNavigator = () => {
         options={{ title: SCREEN_TITLES.aiMemory }}
       />
       <AppStack.Screen
+        name={ROUTES.APP.EDIT_NAME}
+        component={EditNameScreen}
+        options={{
+          title: SCREEN_TITLES.editName,
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <AppStack.Screen
         name={ROUTES.APP.OFFLINE_SYNC}
         component={OfflineSyncScreen}
         options={{ title: 'Offline sync' }}
@@ -1213,6 +1238,37 @@ const IncomingCallHandler = () => {
       callType={incomingCall?.type || 'audio'}
       onAccept={acceptIncomingCall}
       onDecline={dismissIncomingCall}
+    />
+  );
+};
+
+/**
+ * Doc 30 tier-3 nudge: a one-time, first-affected-session-only toast fired
+ * from the post-Apple-sign-in success path. `AuthContext.tsx` owns the actual
+ * capture-race fix and exposes `appleNameCaptureIncomplete` purely as a seam
+ * (see its own comment on the context value) — this is that seam's only
+ * consumer. Dismissible; acknowledging flips the flag false so it never
+ * fires again this session (tiers 1/2 — the tab badge + Settings row chip —
+ * stay up independently of this toast).
+ */
+const AppleNameNudgeToast = () => {
+  const { appleNameCaptureIncomplete, acknowledgeAppleNameCaptureIncomplete } = useAuth();
+  const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
+
+  return (
+    <GlassToast
+      visible={appleNameCaptureIncomplete}
+      message="We couldn't get your name from Apple — tap to add one."
+      bottomOffset={insets.bottom + 88}
+      onDismiss={acknowledgeAppleNameCaptureIncomplete}
+      action={{
+        label: 'Add name',
+        onPress: () => {
+          acknowledgeAppleNameCaptureIncomplete();
+          navigation.navigate(ROUTES.APP.EDIT_NAME);
+        },
+      }}
     />
   );
 };
@@ -1580,6 +1636,7 @@ export const AppNavigator = () => {
         {user && <ActiveCallHost />}
         {user && <DeepLinkHandler />}
         {user && <PendingExpenseHandler />}
+        {user && <AppleNameNudgeToast />}
       </View>
     </NavigationContainer>
   );

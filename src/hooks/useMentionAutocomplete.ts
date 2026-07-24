@@ -1,4 +1,5 @@
 import type { ChatParticipant } from '@/models';
+import { resolveDisplayName } from '@/utils/identity';
 import { useCallback, useRef, useState } from 'react';
 
 interface UseMentionAutocompleteOptions {
@@ -44,7 +45,10 @@ export const useMentionAutocomplete = ({ participants, inputRef }: UseMentionAut
 
   const handleMentionSelect = useCallback((participant: ChatParticipant, currentText: string, setText: (t: string) => void) => {
     if (!mentionAnchor) return;
-    const handle = participant.displayName.replace(/\s+/g, '');
+    // Fallback word ('Someone') MUST match ChatRoomScreen.tsx's mentionLabels
+    // map and finalMentions matcher, which reverse-look-up / re-match this
+    // exact inserted "@Handle" text.
+    const handle = resolveDisplayName(participant, 'Someone').replace(/\s+/g, '');
     const before = currentText.slice(0, mentionAnchor.start);
     const after = currentText.slice(mentionAnchor.end);
     const insertion = `@${handle} `;

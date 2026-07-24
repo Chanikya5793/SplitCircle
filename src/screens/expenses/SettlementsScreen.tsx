@@ -8,6 +8,7 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
 import { authenticate, isBiometricAvailable } from '@/services/biometrics';
+import { resolveDisplayName, resolveInitials } from '@/utils/identity';
 import type { Group, GroupMember } from '@/models';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
@@ -107,7 +108,7 @@ export const SettlementsScreen = ({
 
   const getMemberName = (id: string) => {
     const m = group.members.find((m) => m.userId === id);
-    return m ? m.displayName : 'Select User';
+    return m ? resolveDisplayName(m) : 'Select User';
   };
 
   const inputTheme = { colors: { background: isDark ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.5)' } };
@@ -209,12 +210,12 @@ export const SettlementsScreen = ({
                   <View style={styles.memberRow}>
                     <Avatar.Text
                       size={40}
-                      label={member.displayName.slice(0, 2).toUpperCase()}
+                      label={resolveInitials(member.displayName)}
                       style={{ backgroundColor: theme.colors.primaryContainer }}
                       color={theme.colors.onPrimaryContainer}
                     />
                     <Text variant="bodyLarge" style={{ marginLeft: 12, color: theme.colors.onSurface }}>
-                      {member.displayName}
+                      {resolveDisplayName(member)}
                     </Text>
                     {(selectionMode === 'from' ? fromUserId : toUserId) === member.userId && (
                       <IconButton icon="check" iconColor={theme.colors.primary} size={20} />

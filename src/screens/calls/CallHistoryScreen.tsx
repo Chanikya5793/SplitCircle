@@ -17,6 +17,7 @@ import {
     type CallHistoryEntry,
 } from '@/services/localCallStorage';
 import { formatCallDuration, formatCallTime, getCallDateSection } from '@/utils/format';
+import { resolveDisplayName, resolveInitials } from '@/utils/identity';
 import { lightHaptic, mediumHaptic, warningHaptic } from '@/utils/haptics';
 import { usePressScale } from '@/hooks/usePressScale';
 import { appAlert } from '@/utils/appAlert';
@@ -130,7 +131,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
   const { pressScaleStyle, onPressIn, onPressOut } = usePressScale();
   const missed = isMissedOrDeclined(entry);
   const nameColor = missed ? theme.colors.error : theme.colors.onSurface;
-  const initials = (entry.otherParticipant.displayName || 'U').slice(0, 2).toUpperCase();
+  const initials = resolveInitials(entry.otherParticipant.displayName, 'U');
 
   return (
     <Swipeable
@@ -206,7 +207,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
                   style={[styles.callName, { color: nameColor }]}
                   numberOfLines={1}
                 >
-                  {entry.otherParticipant.displayName || 'Unknown'}
+                  {resolveDisplayName(entry.otherParticipant, 'Unknown')}
                 </Text>
                 <View style={styles.callMeta}>
                   <MaterialCommunityIcons
@@ -425,7 +426,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
       return group?.name || 'Group';
     }
     const other = thread.participants.find((p) => p.userId !== user?.userId);
-    return other?.displayName || 'Unknown';
+    return resolveDisplayName(other, 'Unknown');
   };
 
   const getThreadPhoto = (thread: ChatThread): string | undefined => {
@@ -435,7 +436,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
   };
 
   const getThreadInitials = (thread: ChatThread): string => {
-    return getThreadDisplayName(thread).slice(0, 2).toUpperCase();
+    return resolveInitials(getThreadDisplayName(thread));
   };
 
   // Threads filtered by search query for new call sheet
@@ -490,7 +491,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
         { text: 'Delete from history', style: 'destructive', onPress: () => void handleDeleteCall(entry.callId) },
         { text: 'Cancel', style: 'cancel' },
       );
-      appAlert(entry.otherParticipant.displayName || 'Call', undefined, buttons);
+      appAlert(resolveDisplayName(entry.otherParticipant, 'Call'), undefined, buttons);
     },
     [threadByChatId, onStartCall, handleOpenInfo, handleDeleteCall],
   );

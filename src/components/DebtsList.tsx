@@ -6,6 +6,7 @@ import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { minimizeDebts, type Debt } from '@/utils/debtMinimizer';
 import { lightHaptic } from '@/utils/haptics';
+import { needsDisplayName, resolveDisplayName, resolveInitials } from '@/utils/identity';
 import { useMemo, useRef, useState } from 'react';
 import { Animated as RNAnimated, Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
@@ -39,6 +40,11 @@ const SwipeableDebtRow = ({
     const fmtMoney = useMoneyDisplay(groupId);
     const { maskGroupText } = usePrivacyMask();
     const swipeableRef = useRef<Swipeable>(null);
+
+    const fromName = maskGroupText(resolveDisplayName(fromMember), groupId, 'person');
+    const toName = maskGroupText(resolveDisplayName(toMember), groupId, 'person');
+    const fromIsPlaceholder = needsDisplayName(fromMember);
+    const toIsPlaceholder = needsDisplayName(toMember);
 
     const renderLeftActions = (
         progress: RNAnimated.AnimatedInterpolation<number>,
@@ -92,12 +98,19 @@ const SwipeableDebtRow = ({
                 <View style={styles.member}>
                     <Avatar.Text
                         size={28}
-                        label={maskGroupText(fromMember.displayName, groupId, 'person').slice(0, 2).toUpperCase()}
+                        label={resolveInitials(fromName)}
                         style={{ backgroundColor: theme.colors.errorContainer }}
                         color={theme.colors.onErrorContainer}
                     />
-                    <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                        {maskGroupText(fromMember.displayName, groupId, 'person')}
+                    <Text
+                        style={[
+                            styles.name,
+                            { color: fromIsPlaceholder ? theme.colors.onSurfaceVariant : theme.colors.onSurface },
+                            fromIsPlaceholder && styles.placeholderName,
+                        ]}
+                        numberOfLines={1}
+                    >
+                        {fromName}
                     </Text>
                 </View>
 
@@ -111,12 +124,19 @@ const SwipeableDebtRow = ({
                 <View style={styles.member}>
                     <Avatar.Text
                         size={28}
-                        label={maskGroupText(toMember.displayName, groupId, 'person').slice(0, 2).toUpperCase()}
+                        label={resolveInitials(toName)}
                         style={{ backgroundColor: theme.colors.primaryContainer }}
                         color={theme.colors.onPrimaryContainer}
                     />
-                    <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
-                        {maskGroupText(toMember.displayName, groupId, 'person')}
+                    <Text
+                        style={[
+                            styles.name,
+                            { color: toIsPlaceholder ? theme.colors.onSurfaceVariant : theme.colors.onSurface },
+                            toIsPlaceholder && styles.placeholderName,
+                        ]}
+                        numberOfLines={1}
+                    >
+                        {toName}
                     </Text>
                 </View>
 
@@ -327,7 +347,7 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                             </View>
 
                             <Text style={{ color: theme.colors.onSurfaceVariant, marginBottom: 16 }}>
-                                Why {maskGroupText(memberMap[selectedDebt.from]?.displayName ?? '', group.groupId, 'person')} owes {maskGroupText(memberMap[selectedDebt.to]?.displayName ?? '', group.groupId, 'person')} {fmtMoney(selectedDebt.amount, group.currency)}
+                                Why {maskGroupText(resolveDisplayName(memberMap[selectedDebt.from]), group.groupId, 'person')} owes {maskGroupText(resolveDisplayName(memberMap[selectedDebt.to]), group.groupId, 'person')} {fmtMoney(selectedDebt.amount, group.currency)}
                             </Text>
 
                             <ScrollView style={{ maxHeight: 400 }}>
@@ -344,10 +364,10 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                                                     {new Date(item.date).toLocaleDateString()} • {item.type === 'expense' ? 'Expense' : 'Settlement'}
                                                 </Text>
                                                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                                                    {item.direction === 'B_paid_for_A' ? `${memberMap[selectedDebt.to]?.displayName} paid` :
-                                                        item.direction === 'A_paid_for_B' ? `${memberMap[selectedDebt.from]?.displayName} paid` :
-                                                            item.direction === 'A_paid_B' ? `${memberMap[selectedDebt.from]?.displayName} settled` :
-                                                                `${memberMap[selectedDebt.to]?.displayName} settled`}
+                                                    {item.direction === 'B_paid_for_A' ? `${resolveDisplayName(memberMap[selectedDebt.to])} paid` :
+                                                        item.direction === 'A_paid_for_B' ? `${resolveDisplayName(memberMap[selectedDebt.from])} paid` :
+                                                            item.direction === 'A_paid_B' ? `${resolveDisplayName(memberMap[selectedDebt.from])} settled` :
+                                                                `${resolveDisplayName(memberMap[selectedDebt.to])} settled`}
                                                 </Text>
                                             </View>
                                             <Text style={{ color, fontWeight: 'bold' }}>
@@ -398,6 +418,9 @@ const styles = StyleSheet.create({
     name: {
         fontWeight: '500',
         flexShrink: 1,
+    },
+    placeholderName: {
+        fontStyle: 'italic',
     },
     amountContainer: {
         alignItems: 'center',

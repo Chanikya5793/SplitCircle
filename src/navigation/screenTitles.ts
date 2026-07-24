@@ -29,6 +29,7 @@ export const SCREEN_TITLES = {
   aiIndex: 'On-Device AI',
   aiEvals: 'AI Evals',
   aiMemory: 'AI Memory',
+  editName: 'Your Name',
 } as const;
 
 export const getGroupNameById = (

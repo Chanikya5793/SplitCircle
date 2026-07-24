@@ -3,6 +3,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { spacing } from '@/theme';
 import { formatCurrency, getCurrencySymbol } from '@/utils/currency';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
+import { resolveInitials } from '@/utils/identity';
 import React, { useCallback } from 'react';
 import { StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Checkbox, Text } from 'react-native-paper';
@@ -19,10 +20,6 @@ onExactChange: (id: string, value: string) => void;
 onPercentageChange: (id: string, value: string) => void;
 onSharesChange: (id: string, value: string) => void;
 onAdjustmentChange: (id: string, value: string) => void;
-}
-
-function getInitials(name: string): string {
-return name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 }
 
 export const ParticipantRow = React.memo(({
@@ -145,10 +142,17 @@ return (
     <View style={[styles.row, { opacity: p.included ? 1 : 0.45 }]}>
     <TouchableOpacity onPress={handleToggle} style={styles.leftSection} activeOpacity={0.7}>
         <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
-        <Text style={styles.initials}>{getInitials(p.name)}</Text>
+        <Text style={styles.initials}>{resolveInitials(p.name)}</Text>
         </View>
         <View style={styles.nameCol}>
-        <Text variant="bodyLarge" style={[styles.name, { color: theme.colors.onSurface }]}>
+        <Text
+            variant="bodyLarge"
+            style={[
+              styles.name,
+              { color: p.isPlaceholderName ? theme.colors.muted : theme.colors.onSurface },
+              p.isPlaceholderName ? styles.placeholderName : null,
+            ]}
+        >
             {p.name}
         </Text>
         {p.included && p.computedAmount > 0 && (
@@ -277,6 +281,9 @@ gap: 2,
 },
 name: {
 fontWeight: '600',
+},
+placeholderName: {
+fontStyle: 'italic',
 },
 rightSection: {
 flexDirection: 'row',

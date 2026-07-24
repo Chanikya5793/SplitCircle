@@ -8,6 +8,7 @@ import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import type { ChatMessage, MessageType } from '@/models';
 import { getChatMessages } from '@/services/localMessageStorage';
 import { formatRelativeTime } from '@/utils/format';
+import { resolveDisplayName } from '@/utils/identity';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useCallback, useEffect, useState } from 'react';
@@ -69,7 +70,7 @@ export const StarredMessagesScreen = () => {
               return params.title ?? 'Group';
             }
             const other = t.participants.find((p) => p.userId !== user.userId) ?? t.participants[0];
-            return other?.displayName ?? 'Direct';
+            return resolveDisplayName(other, 'Direct');
           })();
           return msgs
             .filter((m) => m.starredBy?.includes(user.userId) && !m.deletedFor?.includes(user.userId))

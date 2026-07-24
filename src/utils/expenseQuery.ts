@@ -11,6 +11,7 @@
 
 import type { Expense } from '@/models/expense';
 import type { Settlement } from '@/models/group';
+import { resolveDisplayName } from '@/utils/identity';
 import {
   buildExpenseAnalytics,
   comparisonWindows,
@@ -102,7 +103,7 @@ const wordIn = (haystack: string, word: string): boolean =>
 /** Resolve a member's display name (first name kept) or a friendly fallback. */
 const nameOf = (members: readonly QueryMember[], userId: string, selfId: string): string => {
   if (userId === selfId) return 'You';
-  return members.find((m) => m.userId === userId)?.displayName ?? 'Someone';
+  return resolveDisplayName(members.find((m) => m.userId === userId), 'Someone');
 };
 
 /** True when the question is scoped to the current user ("I", "my", "me"). */

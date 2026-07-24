@@ -12,6 +12,7 @@ import { radius, spacing } from '@/theme';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { getExpenseSplitDetails } from '@/utils/expenseSplit';
 import { buildReceiptInsightRows } from '@/utils/receiptInsights';
+import { resolveDisplayName } from '@/utils/identity';
 import { useNavigation } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -86,7 +87,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
         ? Object.fromEntries(
             [...(group.members ?? []), ...(group.archivedMembers ?? [])].map((m) => [
               m.userId,
-              m.displayName,
+              resolveDisplayName(m, 'Unknown'),
             ]),
           )
         : {},

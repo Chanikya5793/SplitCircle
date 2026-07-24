@@ -6,6 +6,7 @@
 
 import { getOnDeviceAiAvailability, parseExpenseFromText } from '../../modules/splitcircle-ai';
 import { mapNlExpense, type NlMember, type NlParsedExpense } from '@/utils/expenseNlParse';
+import { resolveDisplayName } from '@/utils/identity';
 
 export type { NlParsedExpense };
 
@@ -22,7 +23,7 @@ export const parseExpenseFromTextOnDevice = async (
   currentUserId: string,
 ): Promise<NlParsedExpense> => {
   const memberNames = members.map((m) => m.displayName).filter(Boolean).join(', ');
-  const currentUserName = members.find((m) => m.userId === currentUserId)?.displayName ?? 'me';
+  const currentUserName = resolveDisplayName(members.find((m) => m.userId === currentUserId), 'me');
   const raw = await parseExpenseFromText(text.trim(), memberNames, currentUserName);
   return mapNlExpense(raw, members, currentUserId);
 };

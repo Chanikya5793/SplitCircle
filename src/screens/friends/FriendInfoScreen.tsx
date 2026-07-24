@@ -10,6 +10,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { db } from '@/firebase';
 import { computeFriendBalances } from '@/utils/friendBalances';
 import { lightHaptic, selectionHaptic } from '@/utils/haptics';
+import { needsDisplayName, resolveDisplayName, resolveInitials } from '@/utils/identity';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -61,7 +62,7 @@ export const FriendInfoScreen = () => {
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: params.displayName ?? 'Friend',
+      title: resolveDisplayName({ displayName: params.displayName }, 'Friend'),
       headerTransparent: true,
     });
   }, [navigation, params.displayName]);
@@ -79,7 +80,10 @@ export const FriendInfoScreen = () => {
         const data = snapshot.data() as Record<string, unknown>;
         setProfile({
           userId: params.userId,
-          displayName: (data.displayName as string) ?? params.displayName,
+          displayName: resolveDisplayName(
+            { displayName: data.displayName as string | undefined },
+            params.displayName ?? '',
+          ),
           email: data.email as string | undefined,
           photoURL: (data.photoURL as string) ?? params.photoURL,
           bio: data.bio as string | undefined,
@@ -110,7 +114,7 @@ export const FriendInfoScreen = () => {
   const handleGroupPress = useCallback((group: { groupId: string; name: string }) => {
     lightHaptic();
     setNavigatingGroupId(group.groupId);
-    const backTitle = profile?.displayName ?? params.displayName ?? 'Friend';
+    const backTitle = resolveDisplayName(profile, resolveDisplayName({ displayName: params.displayName }, 'Friend'));
     setTimeout(() => {
       navigation.navigate(ROUTES.APP.ROOT, {
         screen: ROUTES.APP.GROUPS_TAB,
@@ -151,7 +155,7 @@ export const FriendInfoScreen = () => {
     try {
       const chatId = await ensureDirectThread({
         userId: profile.userId,
-        displayName: profile.displayName ?? 'Friend',
+        displayName: resolveDisplayName(profile, 'Friend'),
         photoURL: profile.photoURL,
         status: 'online',
       });
@@ -168,13 +172,13 @@ export const FriendInfoScreen = () => {
     try {
       const chatId = await ensureDirectThread({
         userId: profile.userId,
-        displayName: profile.displayName ?? 'Friend',
+        displayName: resolveDisplayName(profile, 'Friend'),
         photoURL: profile.photoURL,
         status: 'online',
       });
       navigation.navigate(ROUTES.APP.GROUP_CHAT, {
         chatId,
-        initialTitle: profile.displayName ?? 'Friend',
+        initialTitle: resolveDisplayName(profile, 'Friend'),
         backTitle: params.backTitle ?? 'Friend Info',
       });
     } catch (error) {
@@ -182,8 +186,11 @@ export const FriendInfoScreen = () => {
     }
   };
 
-  const displayName = profile?.displayName ?? params.displayName ?? 'Friend';
-  const initials = displayName.slice(0, 2).toUpperCase();
+  const displayName = resolveDisplayName(profile, resolveDisplayName({ displayName: params.displayName }, 'Friend'));
+  const initials = resolveInitials(displayName);
+  // A placeholder only counts if NEITHER the live profile NOR the route param
+  // carried a real name — if either did, `displayName` above is real, not a guess.
+  const isPlaceholderName = needsDisplayName(profile) && needsDisplayName({ displayName: params.displayName });
 
   return (
     <LiquidBackground>
@@ -205,7 +212,15 @@ export const FriendInfoScreen = () => {
               />
             )}
           </View>
-          <Text variant="headlineSmall" style={[styles.heroName, { color: theme.colors.onSurface }]}>
+          <Text
+            variant="headlineSmall"
+            style={[
+              styles.heroName,
+              isPlaceholderName
+                ? { color: theme.colors.onSurfaceVariant, fontStyle: 'italic' }
+                : { color: theme.colors.onSurface },
+            ]}
+          >
             {displayName}
           </Text>
           {profile?.email ? (
@@ -320,13 +335,13 @@ export const FriendInfoScreen = () => {
               try {
                 const chatId = await ensureDirectThread({
                   userId: profile.userId,
-                  displayName: profile.displayName ?? 'Friend',
+                  displayName: resolveDisplayName(profile, 'Friend'),
                   photoURL: profile.photoURL,
                   status: 'online',
                 });
                 navigation.navigate(ROUTES.APP.STARRED_MESSAGES, {
                   chatId,
-                  title: profile.displayName ?? 'Friend',
+                  title: resolveDisplayName(profile, 'Friend'),
                 });
               } catch (error) {
                 console.warn('FriendInfoScreen starred-open failed', error);

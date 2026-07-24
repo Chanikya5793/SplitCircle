@@ -13,6 +13,7 @@
 
 import { db } from '@/firebase';
 import type { Group } from '@/models';
+import { resolveDisplayName } from '@/utils/identity';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export interface LedgerPeer {
@@ -60,24 +61,33 @@ export const ensureHiddenLedgerGroup = async (
     const snapshot = await getDoc(ref);
     if (snapshot.exists()) return groupId;
 
+    // Both names are guarded via resolveDisplayName (doc 30) — an unguarded
+    // concatenation here would persist a permanent group name like " & Bob"
+    // or "Alice & " if either party's displayName is empty (e.g. a Sign in
+    // with Apple capture that never landed). The fallback ('Someone') is a
+    // clearly-marked placeholder, never an invented guess, and is safe to
+    // persist per doc 30's explicit rule.
+    const meName = resolveDisplayName(me);
+    const friendName = resolveDisplayName(friend);
+
     await setDoc(ref, {
         groupId,
         requestId: groupId,
-        name: `${me.displayName} & ${friend.displayName}`,
+        name: `${meName} & ${friendName}`,
         currency,
         inviteCode: groupId.slice(-6).toUpperCase(),
         hidden: true,
         members: [
             {
                 userId: me.userId,
-                displayName: me.displayName,
+                displayName: meName,
                 photoURL: me.photoURL ?? null,
                 role: 'owner',
                 balance: 0,
             },
             {
                 userId: friend.userId,
-                displayName: friend.displayName,
+                displayName: friendName,
                 photoURL: friend.photoURL ?? null,
                 role: 'member',
                 balance: 0,

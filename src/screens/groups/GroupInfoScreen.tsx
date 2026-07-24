@@ -12,6 +12,7 @@ import type { GroupMember } from '@/models';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
 import { errorHaptic, lightHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
+import { needsDisplayName, resolveDisplayName, resolveInitials } from '@/utils/identity';
 import * as Clipboard from 'expo-clipboard';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -266,8 +267,8 @@ export const GroupInfoScreen = () => {
         appAlert(
             'Remove member',
             settled
-                ? `Remove ${member.displayName} from "${group.name}"? Their balance history stays in the group ledger.`
-                : `${member.displayName} ${balanceLabel}. Removing them keeps this visible under Former members, but they won't be able to settle it themselves anymore. Remove anyway?`,
+                ? `Remove ${resolveDisplayName(member)} from "${group.name}"? Their balance history stays in the group ledger.`
+                : `${resolveDisplayName(member)} ${balanceLabel}. Removing them keeps this visible under Former members, but they won't be able to settle it themselves anymore. Remove anyway?`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
@@ -310,7 +311,7 @@ export const GroupInfoScreen = () => {
         if (options.length === 0) return;
 
         lightHaptic();
-        appAlert(member.displayName, member.role.charAt(0).toUpperCase() + member.role.slice(1), [
+        appAlert(resolveDisplayName(member), member.role.charAt(0).toUpperCase() + member.role.slice(1), [
             ...options,
             { text: 'Cancel', style: 'cancel' },
         ]);
@@ -606,7 +607,7 @@ export const GroupInfoScreen = () => {
                         <Divider />
                         <List.Item
                             title="Created by"
-                            description={group.members.find((m) => m.userId === group.createdBy)?.displayName || 'Unknown'}
+                            description={resolveDisplayName(group.members.find((m) => m.userId === group.createdBy), 'Unknown')}
                             left={(props) => <List.Icon {...props} icon="account" />}
                         />
                         <Divider />
@@ -668,15 +669,18 @@ export const GroupInfoScreen = () => {
                             const isSelf = member.userId === user?.userId;
                             const isInteractive = isAdmin && !isSelf && member.role !== 'owner';
                             const removable = canRemoveMember(member);
+                            const resolvedName = resolveDisplayName(member);
+                            const isPlaceholder = needsDisplayName(member);
                             const memberRow = (
                                 <List.Item
-                                    title={isSelf ? `${member.displayName} (you)` : member.displayName}
+                                    title={isSelf ? `${resolvedName} (you)` : resolvedName}
+                                    titleStyle={isPlaceholder ? { color: theme.colors.onSurfaceVariant, fontStyle: 'italic' } : undefined}
                                     description={member.role.charAt(0).toUpperCase() + member.role.slice(1)}
                                     onPress={isInteractive ? () => openMemberMenu(member) : undefined}
                                     left={() => (
                                         <Avatar.Text
                                             size={40}
-                                            label={member.displayName.slice(0, 2).toUpperCase()}
+                                            label={resolveInitials(member.displayName)}
                                             style={{ backgroundColor: theme.colors.primary }}
                                             color={theme.colors.onPrimary}
                                         />
@@ -689,7 +693,7 @@ export const GroupInfoScreen = () => {
                                     {removable ? (
                                         <SwipeableMemberRow
                                             onRemove={() => confirmRemoveMember(member)}
-                                            accessibilityLabel={`Remove ${member.displayName}`}
+                                            accessibilityLabel={`Remove ${resolvedName}`}
                                         >
                                             {memberRow}
                                         </SwipeableMemberRow>
@@ -719,10 +723,11 @@ export const GroupInfoScreen = () => {
                                         ? `Owed ${group.currency} ${member.balance.toFixed(2)}`
                                         : `Owes ${group.currency} ${Math.abs(member.balance).toFixed(2)}`
                                     : 'Settled up';
+                                const isPlaceholder = needsDisplayName(member);
                                 return (
                                     <View key={member.userId}>
                                         <List.Item
-                                            title={member.displayName}
+                                            title={resolveDisplayName(member)}
                                             description={`${
                                                 member.archivedReason === 'left'
                                                     ? 'Left'
@@ -730,11 +735,13 @@ export const GroupInfoScreen = () => {
                                                         ? 'Account deleted'
                                                         : 'Removed'
                                             } • ${balanceLabel}`}
-                                            titleStyle={{ color: theme.colors.onSurfaceVariant }}
+                                            titleStyle={isPlaceholder
+                                                ? { color: theme.colors.onSurfaceVariant, fontStyle: 'italic' }
+                                                : { color: theme.colors.onSurfaceVariant }}
                                             left={() => (
                                                 <Avatar.Text
                                                     size={40}
-                                                    label={member.displayName.slice(0, 2).toUpperCase()}
+                                                    label={resolveInitials(member.displayName)}
                                                     style={{ backgroundColor: theme.colors.surfaceVariant }}
                                                     color={theme.colors.onSurfaceVariant}
                                                 />

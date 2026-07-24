@@ -17,6 +17,7 @@
 
 import type { Expense } from '@/models/expense';
 import type { GroupMember, Settlement } from '@/models/group';
+import { resolveDisplayName } from './identity';
 import {
   calendarWindow,
   cents,
@@ -282,7 +283,7 @@ const expenseRow = (e: Expense, members: readonly Pick<GroupMember, 'userId' | '
   title: e.title,
   amount: cents(Number(e.amount) || 0),
   category: (e.category ?? 'General').trim() || 'General',
-  paidBy: members.find((m) => m.userId === e.paidBy)?.displayName ?? 'someone',
+  paidBy: resolveDisplayName(members.find((m) => m.userId === e.paidBy), 'someone'),
   date: dateLabel(e.createdAt),
 });
 

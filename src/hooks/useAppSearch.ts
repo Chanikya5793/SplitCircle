@@ -17,6 +17,7 @@ import { subscribeToFriends, type Friend } from '@/services/friendsService';
 import { getChatMessagesPaginated } from '@/services/localMessageStorage';
 import { searchIndex, type SearchItem } from '@/services/searchService';
 import { formatCurrency } from '@/utils/currency';
+import { resolveDisplayName } from '@/utils/identity';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 // Search is universal (doc 20: scope chips were deliberately removed), so
@@ -99,7 +100,7 @@ export const useAppSearch = () => {
       items.push({
         id: `friend-${f.userId}`,
         type: 'friend',
-        title: f.displayName || 'Someone',
+        title: resolveDisplayName(f, 'Someone'),
         subtitle: 'Friend',
         icon: 'account-circle-outline',
         route: ROUTES.APP.FRIEND_INFO,
@@ -114,7 +115,7 @@ export const useAppSearch = () => {
     for (const g of groups) {
       const names: Record<string, string> = {};
       for (const m of [...(g.members ?? []), ...(g.archivedMembers ?? [])]) {
-        names[m.userId] = (m as { displayName?: string }).displayName || m.userId;
+        names[m.userId] = resolveDisplayName(m, 'Someone');
       }
 
       if (!shielded('expenses', g.groupId)) {
@@ -245,7 +246,7 @@ export const useAppSearch = () => {
       const title =
         t.type === 'group'
           ? groups.find((g) => g.groupId === t.groupId)?.name ?? 'Group chat'
-          : t.participants.find((p) => p.userId !== user?.userId)?.displayName ?? 'Chat';
+          : resolveDisplayName(t.participants.find((p) => p.userId !== user?.userId), 'Chat');
       const preview =
         guard.active && guard.settings.hidePreviews
           ? undefined
@@ -270,7 +271,7 @@ export const useAppSearch = () => {
     // Calls
     if (!shielded('calls')) {
       for (const c of calls) {
-        const who = c.otherParticipant?.displayName || 'Unknown';
+        const who = resolveDisplayName(c.otherParticipant, 'Unknown');
         items.push({
           id: `call-${c.callId}`,
           type: 'call',
@@ -328,7 +329,7 @@ export const useAppSearch = () => {
         const chatTitle =
           t.type === 'group'
             ? groupsRef.current.find((g) => g.groupId === t.groupId)?.name ?? 'Group chat'
-            : t.participants.find((p) => p.userId !== user?.userId)?.displayName ?? 'Chat';
+            : resolveDisplayName(t.participants.find((p) => p.userId !== user?.userId), 'Chat');
 
         for (const m of page.messages) {
           if (m.type !== 'text') continue;
@@ -433,14 +434,14 @@ export const useAppSearch = () => {
             [...friends]
               .filter((f) => !f.hidden && !shielded('friends', f.userId))
               .sort((a, b) => byRecency(a.lastInteractionAt, b.lastInteractionAt))
-              .map((f) => f.displayName ?? ''),
+              .map((f) => resolveDisplayName(f, '')),
           );
       const callNames = shielded('calls')
         ? []
         : uniq(
             [...calls]
               .sort((a, b) => byRecency(a.startedAt, b.startedAt))
-              .map((c) => c.otherParticipant?.displayName ?? ''),
+              .map((c) => resolveDisplayName(c.otherParticipant, '')),
           );
 
       switch (scope) {

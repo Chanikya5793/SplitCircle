@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { needsDisplayName } from '@/utils/identity';
 
 const CALL_HISTORY_KEY = 'call_history';
 
@@ -43,6 +44,16 @@ export const isSameCall = (a: CallHistoryEntry, b: CallHistoryEntry): boolean =>
 };
 
 /**
+ * True when a record's peer name is a real, usable one — not empty/
+ * whitespace-only (doc 30: an unresolved Apple/GCIP name can persist as a
+ * literal `''`, not just the historical `'Unknown'` sentinel) and not the
+ * `'Unknown'` placeholder itself. Both "no name yet" shapes are treated
+ * identically so neither one is ever preferred over a real name when merging.
+ */
+const hasRealName = (entry: CallHistoryEntry): boolean =>
+    !needsDisplayName(entry.otherParticipant) && entry.otherParticipant.displayName.trim() !== 'Unknown';
+
+/**
  * Merge two records for the same call. Newest wins: the record with the later
  * endedAt reflects the final outcome (status/duration/final id); ties go to the
  * incoming write. The earliest startedAt and the most complete peer identity
@@ -55,9 +66,7 @@ export const mergeCallEntries = (
     const newer = incoming.endedAt >= existing.endedAt ? incoming : existing;
     const older = newer === incoming ? existing : incoming;
 
-    const named = [newer, older].find(
-        (e) => e.otherParticipant.displayName && e.otherParticipant.displayName !== 'Unknown',
-    );
+    const named = [newer, older].find(hasRealName);
     const withPhoto = [newer, older].find((e) => e.otherParticipant.photoURL);
 
     return {

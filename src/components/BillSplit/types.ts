@@ -7,6 +7,14 @@ export type TimeSplitVariant = 'dynamic' | 'standard';
 export interface Participant {
   id: string;
   name: string;
+  /**
+   * True when `name` is a resolveDisplayName() fallback (doc 30) — the
+   * member's real displayName was never captured (e.g. Sign in with Apple's
+   * one-time name grant was missed/raced), not an actual name. Render-time
+   * hint only, so money-attribution UI can mark it dimmed/italic (calm,
+   * provisional) instead of showing it as indistinguishable from a real name.
+   */
+  isPlaceholderName?: boolean;
   avatarUrl?: string;
   included: boolean;
   exactAmount: number;

@@ -5,6 +5,7 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatThread } from '@/models';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
+import { resolveDisplayName } from '@/utils/identity';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useMemo, useState } from 'react';
 import {
@@ -44,7 +45,7 @@ export const ForwardPickerSheet = ({
       return g?.name || 'Group Chat';
     }
     const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
-    return other?.displayName || 'Direct';
+    return resolveDisplayName(other, 'Direct');
   };
 
   const initialsFor = (thread: ChatThread) => titleFor(thread).slice(0, 2).toUpperCase();

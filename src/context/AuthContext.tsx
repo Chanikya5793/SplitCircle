@@ -4,6 +4,7 @@ import { deleteAccount as deleteAccountCallable } from '@/services/accountDeleti
 import { clearLockSession } from '@/services/chatLockService';
 import { unregisterCurrentDevice } from '@/services/notificationService';
 import { clearCachedProfile, loadCachedProfile, persistProfile } from '@/services/profileCache';
+import { needsDisplayName } from '@/utils/identity';
 import { setLockedChatIds } from '@/utils/lockedChatRegistry';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Google from 'expo-auth-session/providers/google';
@@ -22,7 +23,7 @@ import {
   updateProfile,
   type User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform, Settings } from 'react-native';
 
@@ -56,6 +57,17 @@ interface AuthContextValue {
   signInWithApple: () => Promise<void>;
   signOutUser: () => Promise<void>;
   deleteAccountAndSignOut: () => Promise<void>;
+  // Doc 30 nudge seam (deliberately NOT wired to any UI here — this file is
+  // scoped to the capture-race fix only). Flips true once per sign-in when
+  // signInWithApple() finishes and this user STILL has no displayName —
+  // Apple returned no name at all (declined share, or this wasn't the
+  // one-time-grant authorization). A toast system built elsewhere can
+  // `useAuth()`, watch this flag, show its one-time "we couldn't get your
+  // name from Apple" toast, then call `acknowledgeAppleNameCaptureIncomplete()`
+  // so it never fires again this session. TODO(doc 30 tier-3 nudge): wire a
+  // toast to this from the post-sign-in success path once that surface is built.
+  appleNameCaptureIncomplete: boolean;
+  acknowledgeAppleNameCaptureIncomplete: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -139,6 +151,8 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   // robust to that ordering regardless of how many checks fire or when.
   const signedInWithAppleAtRef = useRef<number | null>(null);
   const APPLE_REVOCATION_GRACE_MS = 60_000;
+  // Doc 30 nudge seam — see the AuthContextValue field comment above.
+  const [appleNameCaptureIncomplete, setAppleNameCaptureIncomplete] = useState(false);
 
   const legacyExtra = (Constants as unknown as { manifest?: { extra?: LegacyManifestExtra } }).manifest?.extra;
   const googleConfig = Constants.expoConfig?.extra?.google ?? legacyExtra?.google ?? {};
@@ -226,13 +240,42 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           // Document has never existed this session — a genuinely new sign-in
           // (registerWithEmail will create it shortly, or this is first-time
           // Google/Apple sign-in). Safe to create if still missing.
-          const payload = buildUserProfile(firebaseUser);
+          //
+          // Doc 30 root cause #2: this write races signInWithApple()'s
+          // name-capture merge write from a SEPARATE async chain — Firestore
+          // only guarantees same-client write ordering WITHIN one chain, not
+          // across two independent ones. A plain unmerged setDoc here, if it
+          // happened to reach the server AFTER that merge write, would
+          // silently and PERMANENTLY stomp the just-captured name back to ''
+          // using this stale buildUserProfile(firebaseUser) snapshot
+          // (captured before updateProfile() resolved) — Apple never resends
+          // the name, so there'd be no way to recover it. A transaction makes
+          // this deterministic instead of timing-dependent: re-read the doc
+          // as part of the same atomic operation, and if it now exists (the
+          // merge write got there first), fold into it via buildUserProfile's
+          // own existing-wins precedence instead of blindly overwriting —
+          // never regress an already-set name, regardless of which write the
+          // server happens to apply first.
           try {
-            await setDoc(docRef, sanitizeForFirestore({
-              ...payload,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            }));
+            await runTransaction(db, async (transaction) => {
+              const snap = await transaction.get(docRef);
+              if (snap.exists()) {
+                const existing = snap.data() as UserProfile;
+                const merged = buildUserProfile(firebaseUser, existing);
+                transaction.set(docRef, sanitizeForFirestore({
+                  ...merged,
+                  createdAt: existing.createdAt ?? serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                }));
+              } else {
+                const payload = buildUserProfile(firebaseUser);
+                transaction.set(docRef, sanitizeForFirestore({
+                  ...payload,
+                  createdAt: serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                }));
+              }
+            });
             // The snapshot listener will fire again after this write.
           } catch (error) {
             console.error('Error creating user profile:', error);
@@ -402,21 +445,49 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       .join(' ');
     if (fullName && !signedInUser.displayName) {
       await updateProfile(signedInUser, { displayName: fullName });
-      // The onAuthStateChanged listener above already raced ahead and may have
-      // created users/{uid} via buildUserProfile(firebaseUser) BEFORE this
-      // updateProfile() call resolved — at that instant firebaseUser.displayName
-      // was still empty, so the doc can get created with displayName: '' and
-      // nothing else ever re-syncs it (Apple never sends the name again).
-      // Firestore guarantees same-client writes apply in the order they were
-      // issued, so this merge — issued only after updateProfile() resolves —
-      // deterministically wins over that earlier doc-creation write in every
-      // case where the race could otherwise have dropped the name. Best-effort:
-      // a failure here shouldn't fail an otherwise-successful sign-in.
-      await setDoc(
-        doc(db, 'users', signedInUser.uid),
-        { displayName: fullName, updatedAt: serverTimestamp() },
-        { merge: true },
-      ).catch(() => undefined);
+
+      // Doc 30 root cause #2: don't wait on a Firestore round-trip (the merge
+      // write below, or the onAuthStateChanged-driven onSnapshot listener) to
+      // self-heal the in-memory profile. Correct it locally the instant
+      // updateProfile() resolves so nothing downstream can observe or persist
+      // the stale empty name in the window before Firestore catches up (e.g.
+      // GroupContext's createGroup reads `user.displayName` with no guard).
+      setUser((prev) => {
+        if (!prev) return prev;
+        const updated = { ...prev, displayName: fullName, updatedAt: Date.now() };
+        void persistProfile(updated);
+        return updated;
+      });
+
+      // The onAuthStateChanged effect's own doc-creation write (the
+      // `!docSnap.exists()` branch above) races this write from a SEPARATE
+      // async chain with no ordering guarantee between them — see that
+      // branch's comment. `mergeFields` makes THIS write a true partial
+      // update: it can only ever SET displayName/updatedAt, never regress
+      // them via some other field this call doesn't know about — combined
+      // with the creation write's own transaction guard, the two writes now
+      // converge to the correct name regardless of which one the server
+      // applies first. A failure here shouldn't fail an otherwise-successful
+      // sign-in, but it must be production-visible: this used to be a silent
+      // `.catch(() => undefined)`, and a failure here is exactly the
+      // "Apple gave us the name but we lost it" bug this doc exists to fix.
+      try {
+        await setDoc(
+          doc(db, 'users', signedInUser.uid),
+          { displayName: fullName, updatedAt: serverTimestamp() },
+          { mergeFields: ['displayName', 'updatedAt'] },
+        );
+      } catch (error) {
+        console.error('Failed to persist Apple-captured display name:', error);
+      }
+    }
+
+    // Doc 30 nudge seam — see the AuthContextValue field comment. Checked
+    // against the live `signedInUser` (updateProfile mutates it in place),
+    // so this is true only when Apple genuinely gave us no name to capture,
+    // not when the Firestore write above failed (Auth already has it there).
+    if (needsDisplayName(signedInUser)) {
+      setAppleNameCaptureIncomplete(true);
     }
   };
 
@@ -448,6 +519,9 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     await signOut(auth);
   };
 
+  // Doc 30 nudge seam — see the AuthContextValue field comment.
+  const acknowledgeAppleNameCaptureIncomplete = () => setAppleNameCaptureIncomplete(false);
+
   const value = useMemo(
     () => ({
       user,
@@ -460,8 +534,10 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       signInWithApple,
       signOutUser,
       deleteAccountAndSignOut,
+      appleNameCaptureIncomplete,
+      acknowledgeAppleNameCaptureIncomplete,
     }),
-    [loading, user, authBusy],
+    [loading, user, authBusy, appleNameCaptureIncomplete],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

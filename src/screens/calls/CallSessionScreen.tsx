@@ -8,6 +8,7 @@ import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { maskTextValue } from '@/services/privacyGuardService';
+import { resolveDisplayName } from '@/utils/identity';
 import { useCallManager } from '@/hooks/useCallManager';
 import type { CallStatus, CallType } from '@/models';
 import { ROUTES } from '@/constants/routes';
@@ -592,7 +593,7 @@ export const CallSessionScreen = ({
       } else if (thread) {
         const other = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
         raw = other
-          ? { name: other.displayName || 'Call', photoURL: other.photoURL, isGroup: false }
+          ? { name: resolveDisplayName(other, 'Call'), photoURL: other.photoURL, isGroup: false }
           : { name: type === 'video' ? 'Video call' : 'Audio call', isGroup: false };
       } else {
         raw = { name: type === 'video' ? 'Video call' : 'Audio call', isGroup: false };

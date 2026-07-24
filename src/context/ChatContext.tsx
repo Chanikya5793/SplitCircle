@@ -42,6 +42,7 @@ import {
 } from '@/services/messageQueueService';
 import { useAuth } from '@/context/AuthContext';
 import { dismissNotificationsForEntity } from '@/utils/notifications';
+import { resolveDisplayName } from '@/utils/identity';
 import { diffRemovedChatIds } from '@/utils/notificationEntityMatch';
 
 interface SendMessagePayload {
@@ -684,7 +685,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
       const me: ChatParticipant = {
         userId: user.userId,
-        displayName: user.displayName ?? 'You',
+        displayName: resolveDisplayName(user, 'You'),
         photoURL: user.photoURL ?? undefined,
         status: 'online',
       };

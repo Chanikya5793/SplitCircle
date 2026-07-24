@@ -12,6 +12,7 @@ import type { ChatThread } from '@/models';
 import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import { appAlert } from '@/utils/appAlert';
+import { resolveDisplayName } from '@/utils/identity';
 import { getChatMessages, subscribeToLocalMessages } from '@/services/localMessageStorage';
 import { isChatArchived } from '@/services/archiveService';
 import { isLockSessionUnlocked, markLockSessionUnlocked } from '@/services/chatLockService';
@@ -70,7 +71,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
       return group?.name || 'Group Chat';
     }
     const otherParticipant = thread.participants.find((p) => p.userId !== user?.userId) ?? thread.participants[0];
-    return otherParticipant?.displayName || 'Direct Chat';
+    return resolveDisplayName(otherParticipant, 'Direct Chat');
   }, [groups, user?.userId]);
 
   const { isShielded, isVanished, action, settings: guardSettings } = usePrivacyGuard();

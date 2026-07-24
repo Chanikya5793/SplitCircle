@@ -6,6 +6,7 @@ import type { ChatMessage, ChatParticipant, MessageType } from '@/models';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
 import { trimVideoInteractive } from '@/services/videoTrimService';
 import { warningHaptic } from '@/utils/haptics';
+import { resolveDisplayName } from '@/utils/identity';
 import { getInfoAsync } from 'expo-file-system/legacy';
 import { useCallback, useState } from 'react';
 import { v4 as uuid } from 'uuid';
@@ -156,7 +157,7 @@ export const useMediaSendPipeline = ({
       replyData = {
         messageId: replySource.messageId,
         senderId: replySource.senderId,
-        senderName: participant?.displayName || 'Unknown',
+        senderName: resolveDisplayName(participant, 'Unknown'),
         content: replySource.content,
         type: replySource.type,
       };

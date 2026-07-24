@@ -46,6 +46,7 @@ import type { ChatMessage, ChatParticipant, ChatThread, MessageType, PinnedMessa
 import { appAlert } from '@/utils/appAlert';
 import {
   markMessageDeletedForUser,
+  migrateLegacySystemMessageNames,
   toggleMessageReaction,
   toggleMessageStar,
   unmarkMessageDeletedForUser,
@@ -62,6 +63,7 @@ import {
 import { publishMessageState } from '@/services/messageStateService';
 import { clearChatDraft, getChatDraft, saveChatDraft } from '@/utils/chatDrafts';
 import { lightHaptic, mediumHaptic, successHaptic, warningHaptic } from '@/utils/haptics';
+import { resolveDisplayName, resolveInitials } from '@/utils/identity';
 import { useNavigation } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -453,10 +455,41 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   const participantMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of thread.participants) {
-      map.set(p.userId, p.displayName || 'Unknown');
+      map.set(p.userId, resolveDisplayName(p, 'Unknown'));
     }
     return map;
   }, [thread.participants]);
+
+  // Doc 30: userId -> LIVE resolved display name for every CURRENT + ARCHIVED
+  // member of this thread's group (not thread.participants, which
+  // mentionLabels/participantMap are built from — that list excludes the
+  // viewer and gets pruned when a member is removed or leaves, see
+  // GroupContext.tsx's removeMember/leaveGroup). Threaded into MessageBubble
+  // so system messages (systemEventKind + relatedUserId) can re-render with
+  // a name that's correct as of now instead of what was frozen into
+  // `content` at write time. undefined for direct chats (no group).
+  const memberNames = useMemo(() => {
+    if (!linkedGroup) return undefined;
+    const map = new Map<string, string>();
+    for (const m of linkedGroup.members) map.set(m.userId, resolveDisplayName(m, 'Someone'));
+    for (const m of linkedGroup.archivedMembers ?? []) map.set(m.userId, resolveDisplayName(m, 'Someone'));
+    return map;
+  }, [linkedGroup]);
+
+  // Doc 30 §7 backward migration: one-time-per-chat rewrite of legacy system
+  // messages (sent before systemEventKind existed) using each sender's
+  // CURRENT name, via the memberNames map above. Guarded by a ref (not a
+  // module-level flag) so it only fires once memberNames has real data —
+  // running it against an empty/undefined map on a cold-start render (before
+  // GroupContext's snapshot has delivered) would find nothing to resolve and
+  // shouldn't count as "done" for this chat.
+  const legacyNameMigrationRanForChatRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!memberNames || memberNames.size === 0) return;
+    if (legacyNameMigrationRanForChatRef.current === thread.chatId) return;
+    legacyNameMigrationRanForChatRef.current = thread.chatId;
+    void migrateLegacySystemMessageNames(thread.chatId, (userId) => memberNames.get(userId));
+  }, [memberNames, thread.chatId]);
 
   const {
     selectionMode,
@@ -769,19 +802,21 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
       replyData = {
         messageId: replyingTo.messageId,
         senderId: replyingTo.senderId,
-        senderName: participant?.displayName || 'Unknown',
+        senderName: resolveDisplayName(participant, 'Unknown'),
         content: replyingTo.content,
       };
     }
 
     // Mentions — only attach userIds whose handle still appears in the final text
-    // (user may have edited or removed them after picking).
+    // (user may have edited or removed them after picking). Fallback name MUST
+    // match useMentionAutocomplete.ts's handleMentionSelect, which is what
+    // actually inserted the "@Handle" text being matched against here.
     const finalMentions = (() => {
       if (pendingMentionUserIds.length === 0) return undefined;
       const lowered = trimmed.toLowerCase();
       return pendingMentionUserIds.filter((userId) => {
-        const name = thread.participants.find((p) => p.userId === userId)?.displayName?.replace(/\s+/g, '');
-        if (!name) return false;
+        const participant = thread.participants.find((p) => p.userId === userId);
+        const name = resolveDisplayName(participant, 'Someone').replace(/\s+/g, '');
         return lowered.includes(`@${name.toLowerCase()}`);
       });
     })();
@@ -1207,7 +1242,10 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
 
     for (const target of targetThreads) {
       for (const source of sources) {
-        const sourceSenderName = thread.participants.find((p) => p.userId === source.senderId)?.displayName;
+        const sourceSenderName = resolveDisplayName(
+          thread.participants.find((p) => p.userId === source.senderId),
+          'Someone',
+        );
         const baseHopCount = source.forwardedFrom?.hopCount ?? 0;
         await runSend(async (requestId) => {
           await sendMessage({
@@ -1408,7 +1446,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   );
   const title = thread.type === 'group'
     ? groupName || 'Group Chat'
-    : directParticipant?.displayName || 'Direct Chat';
+    : resolveDisplayName(directParticipant, 'Direct Chat');
   titleRef.current = title;
   // Masked title for the header pill only — navigation params keep the real
   // title so back buttons and Group Info still read correctly.
@@ -1431,7 +1469,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
       // @ts-ignore - navigation types
       navigation.navigate(ROUTES.APP.FRIEND_INFO, {
         userId: directParticipant.userId,
-        displayName: directParticipant.displayName,
+        displayName: resolveDisplayName(directParticipant, 'Someone'),
         photoURL: directParticipant.photoURL,
         backTitle: displayTitle,
       });
@@ -1444,8 +1482,8 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     if (thread.type === 'group' && groupName) {
       return groupName.slice(0, 2).toUpperCase();
     }
-    if (thread.type === 'direct' && directParticipant?.displayName) {
-      return directParticipant.displayName.slice(0, 2).toUpperCase();
+    if (thread.type === 'direct') {
+      return resolveInitials(directParticipant?.displayName, 'SC');
     }
     return 'SC';
   }, [thread.type, groupName, directParticipant?.displayName]);
@@ -1460,11 +1498,15 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
 
   // ──────────────────────────── Mentions ────────────────────────────
   // Build a userId → display-name map (no spaces) for mention rendering.
+  // Fallback word ('Someone') MUST match useMentionAutocomplete.ts's
+  // handleMentionSelect, which is what actually inserts the "@Handle" text
+  // this map's values get reverse-looked-up against (see MessageBubble's
+  // splitMentions).
   const mentionLabels = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of thread.participants) {
       if (p.userId === user?.userId) continue;
-      map.set(p.userId, p.displayName || 'user');
+      map.set(p.userId, resolveDisplayName(p, 'Someone'));
     }
     return map;
   }, [thread.participants, user?.userId]);
@@ -1473,7 +1515,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   const allParticipantNames = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of thread.participants) {
-      map.set(p.userId, p.displayName || 'User');
+      map.set(p.userId, resolveDisplayName(p, 'Someone'));
     }
     return map;
   }, [thread.participants]);
@@ -1530,7 +1572,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     // @ts-ignore — navigation typing
     navigation.navigate(ROUTES.APP.FRIEND_INFO, {
       userId: participant.userId,
-      displayName: participant.displayName,
+      displayName: resolveDisplayName(participant, 'Someone'),
       photoURL: participant.photoURL,
       backTitle: displayTitle,
     });
@@ -1603,6 +1645,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
         onToggleSelect={toggleSelected}
         searchQuery={searchOpen ? searchQuery : undefined}
         mentionLabels={mentionLabels}
+        memberNames={memberNames}
         isGroupChat={isGroupChat}
         totalRecipients={totalRecipients}
         highlighted={highlightedMessageId === itemId}
@@ -1629,6 +1672,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     searchOpen,
     searchQuery,
     mentionLabels,
+    memberNames,
     totalRecipients,
     highlightedMessageId,
     dimmedMessageId,
@@ -1668,7 +1712,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
                     {thread.type === 'direct' ? (
                       <UserAvatar
                         photoURL={directParticipant?.photoURL}
-                        displayName={directParticipant?.displayName ?? title}
+                        displayName={resolveDisplayName(directParticipant, title)}
                         size={36}
                       />
                     ) : (
@@ -1876,7 +1920,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
                 backgroundColor: theme.colors.skeleton,
               }]}>
                 <Text style={[styles.replyPreviewSender, { color: getSenderColor(replyingTo.senderId) }]}>
-                  {thread.participants.find(p => p.userId === replyingTo.senderId)?.displayName || 'Unknown'}
+                  {resolveDisplayName(thread.participants.find(p => p.userId === replyingTo.senderId), 'Unknown')}
                 </Text>
                 <Text numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant, fontSize: 13 }}>
                   {replyingTo.content}
@@ -2131,10 +2175,10 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
                           .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
                         const currency = sharedGroups[0]?.currency ?? 'USD';
                         const ledgerId = await ensureHiddenLedgerGroup(
-                          { userId: user.userId, displayName: user.displayName, photoURL: user.photoURL ?? undefined },
+                          { userId: user.userId, displayName: resolveDisplayName(user, 'You'), photoURL: user.photoURL ?? undefined },
                           {
                             userId: directParticipant.userId,
-                            displayName: directParticipant.displayName,
+                            displayName: resolveDisplayName(directParticipant, 'Someone'),
                             photoURL: directParticipant.photoURL ?? undefined,
                           },
                           currency,
@@ -2143,7 +2187,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
                         // @ts-ignore
                         navigation.navigate(ROUTES.APP.RECURRING_BILLS, {
                           groupId: ledgerId,
-                          backTitle: directParticipant.displayName,
+                          backTitle: resolveDisplayName(directParticipant, 'Someone'),
                         });
                       } catch (error) {
                         console.warn('ensureHiddenLedgerGroup failed', error);

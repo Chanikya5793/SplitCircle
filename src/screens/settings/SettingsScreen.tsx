@@ -46,6 +46,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { appAlert, appPrompt } from '@/utils/appAlert';
 import { checkDeletionBlockers } from '@/services/accountDeletionService';
 import { formatCurrency } from '@/utils/currency';
+import { needsDisplayName, resolveDisplayName } from '@/utils/identity';
 
 const errorMessage = (error: unknown, fallback: string): string => {
   if (error instanceof Error && error.message.trim()) return error.message;
@@ -437,7 +438,14 @@ export const SettingsScreen = () => {
           Settings
         </Text>
 
-        {/* Profile hero — identity only; sign-out lives at the bottom. */}
+        {/* Profile hero — identity only; sign-out lives at the bottom. Doc 30:
+            the own-name label uses resolveDisplayName (never a raw `||`) so
+            an Apple-capture-race-left-empty name reads as the calm "Your
+            profile" placeholder, dimmed/italic like GroupInfoScreen's
+            archived-member rows — never a blank or the raw '' from Firestore.
+            The "Add your name" chip is suppressed while the privacy guard is
+            hiding this card — it would otherwise open a real-identity screen
+            from behind an intentionally obscured profile. */}
         <GlassCard style={styles.card} contentStyle={styles.profileContent}>
           {hideOwnProfile ? (
             <View style={[styles.profileSilhouette, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
@@ -447,13 +455,41 @@ export const SettingsScreen = () => {
             <ProfilePhotoUploader size={64} editable />
           )}
           <View style={styles.profileText}>
-            <Text
-              variant="titleMedium"
-              numberOfLines={1}
-              style={{ fontWeight: '700', color: theme.colors.onSurface }}
-            >
-              {hideOwnProfile ? maskPersonName(user?.displayName || 'Your profile') : (user?.displayName || 'Your profile')}
-            </Text>
+            <View style={styles.profileNameRow}>
+              <Text
+                variant="titleMedium"
+                numberOfLines={1}
+                style={[
+                  styles.profileNameText,
+                  {
+                    color: needsDisplayName(user) && !hideOwnProfile
+                      ? theme.colors.onSurfaceVariant
+                      : theme.colors.onSurface,
+                    fontStyle: needsDisplayName(user) && !hideOwnProfile ? 'italic' : 'normal',
+                  },
+                ]}
+              >
+                {hideOwnProfile
+                  ? maskPersonName(resolveDisplayName(user, 'Your profile'))
+                  : resolveDisplayName(user, 'Your profile')}
+              </Text>
+              {needsDisplayName(user) && !hideOwnProfile ? (
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel="Add your name"
+                  activeOpacity={0.82}
+                  onPress={() => {
+                    lightHaptic();
+                    (navigation as any).navigate(ROUTES.APP.EDIT_NAME);
+                  }}
+                  style={[styles.addNameChip, { backgroundColor: theme.colors.primary }]}
+                >
+                  <Text variant="labelSmall" style={{ color: theme.colors.onPrimary, fontWeight: '700' }}>
+                    Add your name
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
             <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
               {hideOwnProfile ? '••••••••••' : user?.email}
             </Text>
@@ -797,6 +833,20 @@ const styles = StyleSheet.create({
   profileText: {
     flex: 1,
     gap: 2,
+  },
+  profileNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  profileNameText: {
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  addNameChip: {
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
   sectionLabel: {
     marginTop: 16,

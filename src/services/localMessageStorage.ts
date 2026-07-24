@@ -643,6 +643,121 @@ export const updateMessageUrlPreview = async (
   }
 };
 
+// ── Doc 30 §7: backward-compat rewrite of legacy system-message text ──────
+//
+// Messages written before `systemEventKind`/`relatedUserId` existed have a
+// frozen `content` string that may have baked in an empty display name
+// (e.g. " left the group", leading space, no name — see doc 30 root cause
+// #3). Going forward, MessageBubble prefers a live resolveDisplayName()
+// lookup over `content` whenever systemEventKind is present; this is the
+// backward half — a one-time, local-only rewrite of the stored string for
+// old messages that don't have it.
+//
+// Scoped deliberately to the SELF-REFERENTIAL templates only (senderId IS
+// the user whose name is embedded in the text): member_joined, member_left,
+// account_deleted, money_in_chat_updated, group_renamed. member_removed and
+// role_changed_admin/role_changed_member are excluded on purpose — for
+// those, senderId is the ACTING ADMIN, not the user named in the text, so
+// there is no reliable way to recover the right name from senderId alone;
+// guessing would be worse than leaving the old line as historical record.
+type LegacySystemMessageTemplate = {
+  regex: RegExp;
+  rebuild: (currentName: string, match: RegExpMatchArray) => string;
+};
+
+const LEGACY_SELF_REFERENTIAL_SYSTEM_MESSAGE_TEMPLATES: LegacySystemMessageTemplate[] = [
+  // "X joined the group"
+  { regex: /^(.+) joined the group$/, rebuild: (name) => `${name} joined the group` },
+  // "X left the group"
+  { regex: /^(.+) left the group$/, rebuild: (name) => `${name} left the group` },
+  // "X's account was deleted"
+  { regex: /^(.+)'s account was deleted$/, rebuild: (name) => `${name}'s account was deleted` },
+  // "X updated Money in Chat settings"
+  { regex: /^(.+) updated Money in Chat settings$/, rebuild: (name) => `${name} updated Money in Chat settings` },
+  // "X renamed the group to "..."" — the quoted new group name is captured
+  // separately so it survives the rewrite untouched; only the actor's name
+  // is swapped.
+  {
+    regex: /^(.+) renamed the group to "(.+)"$/,
+    rebuild: (name, match) => `${name} renamed the group to "${match[2]}"`,
+  },
+];
+
+// Best-effort rewrite for a single legacy system message. Returns the new
+// content string, or `undefined` when nothing should change (no template
+// matched, or the caller couldn't resolve a current name for this sender —
+// per doc 30, an unresolvable name means "leave it alone", never guess).
+const rebuildLegacySystemMessageContent = (
+  content: string,
+  senderId: string,
+  resolveCurrentName: (userId: string) => string | undefined,
+): string | undefined => {
+  for (const template of LEGACY_SELF_REFERENTIAL_SYSTEM_MESSAGE_TEMPLATES) {
+    const match = content.match(template.regex);
+    if (!match) continue;
+
+    const currentName = resolveCurrentName(senderId)?.trim();
+    if (!currentName) return undefined;
+
+    return template.rebuild(currentName, match);
+  }
+  return undefined;
+};
+
+/**
+ * Doc 30 §7 backward migration. Call lazily, once a chat's local history is
+ * loaded and a name resolver for its group is available (e.g. from
+ * ChatRoomScreen's `memberNames` map — userId → live resolveDisplayName()
+ * result over the group's current members + archivedMembers). Rewrites the
+ * stored `content` of any locally-saved `type: 'system'` message that:
+ *   - has no `systemEventKind` yet (i.e. predates this doc), and
+ *   - matches one of the five self-referential legacy templates above.
+ *
+ * Local-only, no network. Defensive by design: a message that doesn't
+ * cleanly match, or whose sender's current name can't be resolved, is left
+ * untouched; a single malformed entry is skipped rather than aborting the
+ * whole pass. Never throws.
+ */
+export const migrateLegacySystemMessageNames = async (
+  chatId: string,
+  resolveCurrentName: (userId: string) => string | undefined,
+): Promise<void> => {
+  try {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      let mutated = false;
+
+      for (let i = 0; i < messages.length; i++) {
+        const message = messages[i];
+        try {
+          if (message.type !== 'system' || message.systemEventKind || !message.senderId || !message.content) {
+            continue;
+          }
+
+          const nextContent = rebuildLegacySystemMessageContent(message.content, message.senderId, resolveCurrentName);
+          if (nextContent !== undefined && nextContent !== message.content) {
+            messages[i] = { ...message, content: nextContent };
+            mutated = true;
+          }
+        } catch (innerError) {
+          // One malformed message must never abort the rest of the pass.
+          console.error('⚠️ Skipping one message during legacy system-message name migration:', innerError);
+        }
+      }
+
+      if (!mutated) {
+        return;
+      }
+
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      notifyMessageListeners(chatId);
+    });
+  } catch (error) {
+    console.error('❌ Error migrating legacy system message names:', error);
+  }
+};
+
 // Update a message's local media path (after downloading media)
 export const updateMessageLocalPath = async (
   chatId: string,

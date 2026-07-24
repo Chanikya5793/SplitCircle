@@ -13,6 +13,7 @@ import { LiveKitService } from '@/services/LiveKitService';
 import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { nativeCallService } from '@/services/nativeCallService';
 import { requestCallPermissions } from '@/utils/permissions';
+import { resolveDisplayName } from '@/utils/identity';
 import { AudioSession } from '@livekit/react-native';
 import { getApp } from 'firebase/app';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -140,9 +141,10 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
     const thread = threads.find((item) => item.chatId === chatId);
     const isGroup = thread?.type === 'group';
     const directParticipant = thread?.participants.find((participant) => participant.userId !== user?.userId);
-    const displayName = directParticipant?.displayName
-      || fallbackDisplayName
-      || (isGroup ? 'Group Call' : 'SplitCircle Contact');
+    const displayName = resolveDisplayName(
+      directParticipant,
+      fallbackDisplayName || (isGroup ? 'Group Call' : 'SplitCircle Contact'),
+    );
     const handle = isGroup
       ? (chatId || displayName)
       : (directParticipant?.userId || fallbackUserId || chatId || displayName);
@@ -281,7 +283,10 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       if (otherP) {
         otherParticipantRef.current = {
           userId: otherP.userId,
-          displayName: otherP.displayName,
+          // otherP.displayName can be a real '' (doc 30) — guard it here, not
+          // just downstream in buildNativeHandle, since this ref also feeds
+          // saveCallToHistory directly (see endCall below).
+          displayName: resolveDisplayName(otherP, 'Unknown'),
           photoURL: otherP.photoURL,
         };
       }
@@ -292,7 +297,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
           chatId,
           groupId,
           userId: user.userId,
-          displayName: user.displayName || 'Unknown',
+          displayName: resolveDisplayName(user, 'Unknown'),
           photoURL: user.photoURL || undefined,
           participantIds: threadParticipantIds,
         },
@@ -332,7 +337,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       const { token: roomToken, url } = await LiveKitService.getToken(
         newCallId,
         chatId,
-        user.displayName || 'User'
+        resolveDisplayName(user, 'User')
       );
 
       if (sessionVersionRef.current !== sessionVersion || callIdRef.current !== newCallId) {
@@ -391,7 +396,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
           if (!otherParticipantRef.current) {
             const other = session.participants.find(p => p.userId !== user.userId);
             if (other) {
-              otherParticipantRef.current = { userId: other.userId, displayName: other.displayName, photoURL: other.photoURL };
+              otherParticipantRef.current = { userId: other.userId, displayName: resolveDisplayName(other, 'Unknown'), photoURL: other.photoURL };
             }
           }
         }
@@ -462,7 +467,9 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       if (threadOther) {
         otherParticipantRef.current = {
           userId: threadOther.userId,
-          displayName: threadOther.displayName,
+          // Same guard as startCall's mirror-image assignment above — thread
+          // data can carry a real '' displayName (doc 30).
+          displayName: resolveDisplayName(threadOther, 'Unknown'),
           photoURL: threadOther.photoURL,
         };
       }
@@ -495,14 +502,14 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       // Update from session if we got richer info (e.g. photoURL from initiator)
       const initiator = session.participants.find(p => p.userId === session.initiatorId);
       if (initiator) {
-        otherParticipantRef.current = { userId: initiator.userId, displayName: initiator.displayName, photoURL: initiator.photoURL };
+        otherParticipantRef.current = { userId: initiator.userId, displayName: resolveDisplayName(initiator, 'Unknown'), photoURL: initiator.photoURL };
       }
 
       // 1. Fetch LiveKit Token
       const { token: roomToken, url } = await LiveKitService.getToken(
         existingCallId,
         chatId,
-        user.displayName || 'User'
+        resolveDisplayName(user, 'User')
       );
 
       if (sessionVersionRef.current !== sessionVersion || callIdRef.current !== existingCallId) {
@@ -528,7 +535,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       // 3. Update Realtime DB (Join) - This also updates status to 'connected'
       await joinCall(existingCallId, {
         userId: user.userId,
-        displayName: user.displayName || 'Unknown',
+        displayName: resolveDisplayName(user, 'Unknown'),
         muted: false,
         cameraEnabled: session.type === 'video',
       });
@@ -613,7 +620,7 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
           const thread = threads.find((t) => t.chatId === chatId);
           const threadOther = thread?.participants.find((p) => p.userId !== user.userId);
           if (threadOther) {
-            participant = { userId: threadOther.userId, displayName: threadOther.displayName, photoURL: threadOther.photoURL };
+            participant = { userId: threadOther.userId, displayName: resolveDisplayName(threadOther, 'Unknown'), photoURL: threadOther.photoURL };
           }
         }
 
@@ -623,7 +630,14 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
           groupId,
           type: callType,
           direction: isInitiatorRef.current ? 'outgoing' : 'incoming',
-          otherParticipant: participant || { userId: 'unknown', displayName: 'Unknown' },
+          otherParticipant: {
+            userId: participant?.userId || 'unknown',
+            // Guard again even though every upstream writer of `participant`
+            // is now guarded — this is the sink that actually persists to
+            // AsyncStorage, so it must never let an empty name through.
+            displayName: resolveDisplayName(participant, 'Unknown'),
+            photoURL: participant?.photoURL,
+          },
           startedAt: endingStartedAt,
           endedAt,
           duration,

@@ -6,6 +6,7 @@ import {
 import { getDatabase } from "firebase-admin/database";
 import * as logger from "firebase-functions/logger";
 import { v4 as uuidv4 } from "uuid";
+import { resolveDisplayName } from "./identity";
 
 const GROUPS_COLLECTION = "groups";
 const CHATS_COLLECTION = "chats";
@@ -72,9 +73,9 @@ export async function joinGroupByInviteCode(
 
     const userDoc = await db.collection(USERS_COLLECTION).doc(uid).get();
     const userData = userDoc.data() ?? {};
-    const displayName = typeof userData.displayName === "string" && userData.displayName.trim()
-        ? userData.displayName.trim()
-        : "New member";
+    // "New member" is a literal fallback word, deliberately never persisted
+    // as-if-guessed — see identity.ts's header comment (doc 30).
+    const displayName = resolveDisplayName(userData, "New member");
     const photoURL = typeof userData.photoURL === "string" && userData.photoURL.trim()
         ? userData.photoURL.trim()
         : null;
@@ -125,6 +126,12 @@ export async function joinGroupByInviteCode(
                 mediaUrl: null,
                 thumbnailUrl: null,
                 isGroupChat: true,
+                // Doc 30: lets MessageBubble prefer a live resolveDisplayName()
+                // lookup over this frozen `content` string once the joiner's
+                // name is known/fixed. Self-referential — relatedUserId is the
+                // joiner themselves, same as senderId.
+                systemEventKind: "member_joined",
+                relatedUserId: uid,
             };
 
             await chatDoc.ref.update({

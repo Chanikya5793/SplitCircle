@@ -1,7 +1,8 @@
 import { db } from '@/firebase';
-import type { ChatMessage, ChatParticipant, Expense, ExpenseRef, ExpenseSplitMetadata, ExpenseSplitParticipantConfig, Group, GroupMember, MoneyInChatSettings, ParticipantShare, Settlement } from '@/models';
+import type { ChatMessage, ChatParticipant, Expense, ExpenseRef, ExpenseSplitMetadata, ExpenseSplitParticipantConfig, Group, GroupMember, MoneyInChatSettings, ParticipantShare, Settlement, SystemEventKind } from '@/models';
 import { resolveMoneyInChat } from '@/models/group';
 import { formatCurrency } from '@/utils/currency';
+import { resolveDisplayName } from '@/utils/identity';
 import { monthKey } from '@/utils/expenseAnalytics';
 import { aggregateRange, budgetStatus, detectAnomalies, memberBreakdown } from '@/utils/statsInsights';
 import { queueMessage } from '@/services/messageQueueService';
@@ -388,7 +389,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       members: [
         {
           userId: user.userId,
-          displayName: user.displayName,
+          displayName: resolveDisplayName(user),
           photoURL: user.photoURL,
           role: 'owner',
           balance: 0,
@@ -734,6 +735,14 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
        * from several members converge on ONE message in RTDB + local stores.
        */
       fixedMessageId?: string;
+      /**
+       * Doc 30: lets renderers prefer a live resolveDisplayName() lookup
+       * (keyed by relatedUserId, against the group's CURRENT member/
+       * archivedMembers list) over the frozen `content` string, so a name
+       * fixed after this message was sent renders correctly retroactively.
+       */
+      systemEventKind?: SystemEventKind;
+      relatedUserId?: string;
     } = {},
   ) => {
     if (!user) return;
@@ -772,6 +781,8 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         isFromMe: false,
         deliveredTo: [],
         readBy: [],
+        ...(options.systemEventKind !== undefined ? { systemEventKind: options.systemEventKind } : {}),
+        ...(options.relatedUserId !== undefined ? { relatedUserId: options.relatedUserId } : {}),
         ...options.messageOverrides,
       };
 
@@ -1228,7 +1239,11 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       return next;
     });
 
-    void writeGroupSystemMessage(groupId, `${me.displayName} updated Money in Chat settings`);
+    void writeGroupSystemMessage(
+      groupId,
+      `${resolveDisplayName(me)} updated Money in Chat settings`,
+      { systemEventKind: 'money_in_chat_updated', relatedUserId: me.userId },
+    );
   };
 
   const updateGroup = async (
@@ -1268,7 +1283,8 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     if (hasName && trimmedName && trimmedName !== group.name) {
       await writeGroupSystemMessage(
         groupId,
-        `${user.displayName} renamed the group to "${trimmedName}"`,
+        `${resolveDisplayName(user)} renamed the group to "${trimmedName}"`,
+        { systemEventKind: 'group_renamed', relatedUserId: user.userId },
       );
     }
   };
@@ -1433,8 +1449,12 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     await writeGroupSystemMessage(
       groupId,
       role === 'admin'
-        ? `${target.displayName} is now an admin`
-        : `${target.displayName} is no longer an admin`,
+        ? `${resolveDisplayName(target)} is now an admin`
+        : `${resolveDisplayName(target)} is no longer an admin`,
+      {
+        systemEventKind: role === 'admin' ? 'role_changed_admin' : 'role_changed_member',
+        relatedUserId: target.userId,
+      },
     );
   };
 
@@ -1482,6 +1502,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       const archivedEntry: GroupMember = removed
         ? {
             ...removed,
+            displayName: resolveDisplayName(removed),
             role: 'member',
             balance: 0,
             archived: true,
@@ -1490,7 +1511,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
           }
         : {
             userId,
-            displayName: target.displayName,
+            displayName: resolveDisplayName(target),
             ...(target.photoURL ? { photoURL: target.photoURL } : {}),
             role: 'member',
             balance: 0,
@@ -1530,10 +1551,12 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
 
     await writeGroupSystemMessage(
       groupId,
-      `${target.displayName} was removed from the group`,
+      `${resolveDisplayName(target)} was removed from the group`,
       {
         participantsOverride: nextParticipants,
         participantIdsOverride: nextParticipantIds,
+        systemEventKind: 'member_removed',
+        relatedUserId: target.userId,
       },
     );
   };
@@ -1576,7 +1599,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       );
       const archivedEntry: GroupMember = {
         userId: user.userId,
-        displayName: meRecord?.displayName ?? me.displayName,
+        displayName: resolveDisplayName(meRecord ?? me),
         ...(meRecord?.photoURL ? { photoURL: meRecord.photoURL } : me.photoURL ? { photoURL: me.photoURL } : {}),
         role: 'member',
         balance: 0,
@@ -1613,9 +1636,11 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       console.warn('leaveGroup chat sync prefetch failed', error);
     }
 
-    await writeGroupSystemMessage(groupId, `${me.displayName} left the group`, {
+    await writeGroupSystemMessage(groupId, `${resolveDisplayName(me)} left the group`, {
       participantsOverride: nextParticipants,
       participantIdsOverride: nextParticipantIds,
+      systemEventKind: 'member_left',
+      relatedUserId: me.userId,
     });
   };
 

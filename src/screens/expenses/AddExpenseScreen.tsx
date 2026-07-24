@@ -29,6 +29,7 @@ import { lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
 import { detectRecurringCandidates, matchCandidate } from '@/utils/recurringDetection';
 import { buildSplitHistory, recommendSplit } from '@/utils/smartSplitRecommender';
 import { detectExpenseAnomalies } from '@/utils/expenseAnomaly';
+import { needsDisplayName, resolveDisplayName } from '@/utils/identity';
 import { isOnDeviceExpenseNlAvailable, parseExpenseFromTextOnDevice } from '@/services/onDeviceExpenseNlService';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
@@ -223,7 +224,7 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
   );
 
   const memberDisplayNames = useMemo(
-    () => Object.fromEntries(splitBaseMembers.map((member) => [member.userId, member.displayName])),
+    () => Object.fromEntries(splitBaseMembers.map((member) => [member.userId, resolveDisplayName(member)])),
     [splitBaseMembers],
   );
 
@@ -246,7 +247,8 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
 
       return {
         id: m.userId,
-        name: m.displayName,
+        name: resolveDisplayName(m),
+        isPlaceholderName: needsDisplayName(m),
         avatarUrl: m.photoURL,
         included: config?.included ?? selectedMembers.includes(m.userId),
         exactAmount: config?.exactAmount ?? Number(customShares[m.userId] || '0'),
@@ -395,7 +397,7 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
     if (!text || nlBusy) return;
     setNlBusy(true);
     try {
-      const members = group.members.map((m) => ({ userId: m.userId, displayName: m.displayName }));
+      const members = group.members.map((m) => ({ userId: m.userId, displayName: resolveDisplayName(m) }));
       const draft = await parseExpenseFromTextOnDevice(
         text,
         members,
@@ -540,7 +542,8 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
       // Compute custom shares using the new advanced engine
       const tempParticipants = group.members.map(m => ({
         id: m.userId,
-        name: m.displayName,
+        name: resolveDisplayName(m),
+        isPlaceholderName: needsDisplayName(m),
         included: selectedMembers.includes(m.userId),
         exactAmount: 0, percentage: 0, shares: 1, adjustment: 0,
         incomeWeight: 50000, daysStayed: 1, partsConsumed: 0, rouletteWeight: 25,
@@ -1003,6 +1006,11 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
                 {splitBaseMembers.map((member) => {
                   const isIn = selectedMembers.includes(member.userId);
                   const isDeparted = departedParticipants.some((m) => m.userId === member.userId);
+                  // Name never captured (e.g. Sign in with Apple's one-time grant was
+                  // missed/raced — doc 30) — same calm, provisional styling as a
+                  // departed member, never plain body text indistinguishable from a
+                  // real name in this money-attribution UI.
+                  const isNameless = needsDisplayName(member);
                   const share = participantShares.find((participant) => participant.userId === member.userId)?.share;
                   return (
                     <Chip
@@ -1016,9 +1024,14 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
                         borderColor: isIn ? 'transparent' : theme.colors.outline,
                         opacity: isDeparted ? 0.6 : isIn ? 1 : 0.7,
                       }}
-                      textStyle={{ color: isIn ? theme.colors.onSecondaryContainer : theme.colors.onSurfaceVariant, fontStyle: isDeparted ? 'italic' : 'normal' }}
+                      textStyle={{
+                        color: isNameless
+                          ? theme.colors.onSurfaceVariant
+                          : isIn ? theme.colors.onSecondaryContainer : theme.colors.onSurfaceVariant,
+                        fontStyle: isDeparted || isNameless ? 'italic' : 'normal',
+                      }}
                     >
-                      {member.displayName}{isDeparted ? ' · left the group' : ''}{isIn && typeof share === 'number' ? ` · ${formatCurrency(share, group.currency)}` : ''}
+                      {resolveDisplayName(member)}{isDeparted ? ' · left the group' : ''}{isIn && typeof share === 'number' ? ` · ${formatCurrency(share, group.currency)}` : ''}
                     </Chip>
                   );
                 })}
@@ -1074,7 +1087,7 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
       >
         {showReceiptScanner && (
           <ReceiptScannerSheet
-            members={group.members.map(m => ({ id: m.userId, name: m.displayName, avatarUrl: m.photoURL }))}
+            members={group.members.map(m => ({ id: m.userId, name: resolveDisplayName(m), avatarUrl: m.photoURL }))}
             onComplete={handleReceiptScanComplete}
             onCancel={() => setShowReceiptScanner(false)}
           />
@@ -1108,7 +1121,7 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
         title="Who paid?"
         options={group.members.map((member) => ({
           key: member.userId,
-          label: member.displayName,
+          label: resolveDisplayName(member),
           selected: paidBy === member.userId,
           onPress: () => {
             setPaidBy(member.userId);

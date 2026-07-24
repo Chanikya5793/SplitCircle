@@ -41,6 +41,7 @@ export const ROUTES = {
     AI_EVALS: 'AiEvals',
     AI_MEMORY: 'AiMemory',
     PROFILE: 'Profile',
+    EDIT_NAME: 'EditName',
     CHAT_MEDIA_GALLERY: 'ChatMediaGallery',
     FILE_PREVIEW: 'FilePreview',
     STARRED_MESSAGES: 'StarredMessages',

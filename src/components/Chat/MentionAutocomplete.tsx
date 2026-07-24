@@ -2,6 +2,7 @@ import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatParticipant } from '@/models';
 import { lightHaptic } from '@/utils/haptics';
+import { resolveDisplayName, resolveInitials } from '@/utils/identity';
 import { useMemo } from 'react';
 import { FlatList, StyleSheet, TouchableOpacity } from 'react-native';
 import { Avatar, Text } from 'react-native-paper';
@@ -29,7 +30,7 @@ export const MentionAutocomplete = ({
     const q = query.trim().toLowerCase();
     return participants
       .filter((p) => p.userId !== excludeUserId)
-      .filter((p) => !q || p.displayName.toLowerCase().includes(q))
+      .filter((p) => !q || resolveDisplayName(p, 'Someone').toLowerCase().includes(q))
       .slice(0, MAX_VISIBLE);
   }, [participants, query, excludeUserId]);
 
@@ -43,37 +44,40 @@ export const MentionAutocomplete = ({
         data={filtered}
         keyboardShouldPersistTaps="always"
         keyExtractor={(item) => item.userId}
-        renderItem={({ item, index }) => (
-          <TouchableOpacity
-            onPress={() => {
-              lightHaptic();
-              onSelect(item);
-            }}
-            activeOpacity={0.7}
-            style={[
-              styles.row,
-              index < filtered.length - 1 && {
-                borderBottomColor: divider,
-                borderBottomWidth: StyleSheet.hairlineWidth,
-              },
-            ]}
-          >
-            {item.photoURL ? (
-              <Avatar.Image size={28} source={{ uri: item.photoURL }} />
-            ) : (
-              <Avatar.Text
-                size={28}
-                label={item.displayName.slice(0, 2).toUpperCase()}
-                style={{ backgroundColor: theme.colors.primary }}
-                labelStyle={{ fontSize: 11, lineHeight: 28 }}
-                color="#fff"
-              />
-            )}
-            <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
-              {item.displayName}
-            </Text>
-          </TouchableOpacity>
-        )}
+        renderItem={({ item, index }) => {
+          const name = resolveDisplayName(item, 'Someone');
+          return (
+            <TouchableOpacity
+              onPress={() => {
+                lightHaptic();
+                onSelect(item);
+              }}
+              activeOpacity={0.7}
+              style={[
+                styles.row,
+                index < filtered.length - 1 && {
+                  borderBottomColor: divider,
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                },
+              ]}
+            >
+              {item.photoURL ? (
+                <Avatar.Image size={28} source={{ uri: item.photoURL }} />
+              ) : (
+                <Avatar.Text
+                  size={28}
+                  label={resolveInitials(name)}
+                  style={{ backgroundColor: theme.colors.primary }}
+                  labelStyle={{ fontSize: 11, lineHeight: 28 }}
+                  color="#fff"
+                />
+              )}
+              <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
+                {name}
+              </Text>
+            </TouchableOpacity>
+          );
+        }}
       />
     </GlassCard>
   );

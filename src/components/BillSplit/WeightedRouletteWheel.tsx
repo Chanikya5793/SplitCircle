@@ -1,5 +1,6 @@
 import { useTheme } from '@/context/ThemeContext';
 import { heavyHaptic, successHaptic } from '@/utils/haptics';
+import { resolveInitials } from '@/utils/identity';
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -77,10 +78,6 @@ function describeArc(
     `A ${innerR} ${innerR} 0 ${largeArc} 1 ${innerEnd.x} ${innerEnd.y}`,
     'Z',
   ].join(' ');
-}
-
-function getInitials(name: string): string {
-  return name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 }
 
 // ── Percentage Option Generator ──────────────────────────────────────────────
@@ -272,7 +269,7 @@ const WeightedRouletteWheel = React.forwardRef<WeightedRouletteWheelRef, Props>(
               alignmentBaseline="central"
               transform={`rotate(${mid}, ${labelPos.x}, ${labelPos.y})`}
             >
-              {outerCount > 8 ? getInitials(p.name) : p.name.length > 7 ? p.name.slice(0, 6) + '…' : p.name}
+              {outerCount > 8 ? resolveInitials(p.name) : p.name.length > 7 ? p.name.slice(0, 6) + '…' : p.name}
             </SvgText>
           </G>
         );

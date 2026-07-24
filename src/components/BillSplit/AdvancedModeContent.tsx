@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/currency';
 import { heavyHaptic, lightHaptic, mediumHaptic, successHaptic } from '@/utils/haptics';
+import { resolveInitials } from '@/utils/identity';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LayoutChangeEvent, Pressable, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -28,10 +29,6 @@ function inputBorder(isDark: boolean): string {
 const SolidCard = ({ style, children }: { style?: any; children: React.ReactNode }) => {
   return <GlassCard style={style}>{children}</GlassCard>;
 };
-
-function getInitials(name: string): string {
-  return name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
-}
 
 function getDateChipLabel(value: string): string {
   const [year, month, day] = value.split('-').map(Number);
@@ -540,7 +537,7 @@ const ItemizedReceiptMode = React.memo(({
                     ]}
                   >
                     <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[pi % AVATAR_COLORS.length] }]}>
-                      <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
+                      <Text style={styles.miniInitials}>{resolveInitials(p.name)}</Text>
                     </View>
                     <Text style={[styles.assignName, { color: isAssigned ? theme.colors.primary : palette.muted }]}>{p.name.split(' ')[0]}</Text>
                   </TouchableOpacity>
@@ -646,7 +643,7 @@ const IncomeProportionalMode = React.memo(({ participants, onWeightChange, onTog
                 styles.miniAvatar,
                 { backgroundColor: p.included ? AVATAR_COLORS[index % AVATAR_COLORS.length] : palette.border },
               ]}>
-                <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
+                <Text style={styles.miniInitials}>{resolveInitials(p.name)}</Text>
               </View>
               <Text
                 style={[styles.incomeName, { color: p.included ? theme.colors.onSurface : palette.muted }]}
@@ -753,7 +750,7 @@ const ConsumptionMode = React.memo(({ totalParts, onTotalPartsChange, participan
               styles.miniAvatar,
               { backgroundColor: p.included ? AVATAR_COLORS[index % AVATAR_COLORS.length] : palette.border },
             ]}>
-              <Text style={styles.miniInitials}>{getInitials(p.name)}</Text>
+              <Text style={styles.miniInitials}>{resolveInitials(p.name)}</Text>
             </View>
             <Text
               style={[styles.incomeName, { color: p.included ? theme.colors.onSurface : palette.muted }]}
@@ -1387,7 +1384,7 @@ const TimeBasedMode = React.memo(({
                 <View style={styles.timeRowTop}>
                   <View style={styles.timeRowNameGroup}>
                     <View style={[styles.miniAvatar, { backgroundColor: avatarColor }]}>
-                      <Text style={styles.miniInitials}>{getInitials(participant.name)}</Text>
+                      <Text style={styles.miniInitials}>{resolveInitials(participant.name)}</Text>
                     </View>
                     <View style={styles.timeParticipantTitleBlock}>
                       <Text style={{ color: theme.colors.onSurface, fontWeight: '700', fontSize: 15 }} numberOfLines={1}>
@@ -2404,7 +2401,7 @@ const GamifiedMode_ = React.memo(({
                   index === karmaData.length - 1 && styles.lastRow,
                 ]}>
                   <View style={[styles.miniAvatar, { backgroundColor: AVATAR_COLORS[index % AVATAR_COLORS.length] }]}>
-                    <Text style={styles.miniInitials}>{getInitials(item.name)}</Text>
+                    <Text style={styles.miniInitials}>{resolveInitials(item.name)}</Text>
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.incomeName, { color: theme.colors.onSurface }]}>{item.name}</Text>
