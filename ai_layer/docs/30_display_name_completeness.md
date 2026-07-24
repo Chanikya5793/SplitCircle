@@ -8,7 +8,28 @@ Workflow (codebase audit + Apple's official docs + industry patterns + a 4-lens
 brainstorm + synthesis) per explicit request, decisions below locked in with the
 user via `AskUserQuestion` before writing this doc.
 
-> **Status: planned, not yet built.**
+> **Status (2026-07-24): BUILT & deployed.** Implemented via a 12-agent
+> Workflow (auth race fix, GroupContext system messages, money-critical UI
+> rollout, chat surfaces + the live-lookup renderer, calls, friends, AI/
+> search/stats narration, hidden-ledger, the new name-edit screen + 3-tier
+> nudge, the Cloud Function backfill, and the local-message migration).
+> The Workflow's own adversarial Review/Verify phases partially hit this
+> account's session spend limit mid-run (2 of 3 review dimensions and 0 of 2
+> verify dimensions completed) — the two completed reviews' findings were
+> checked by hand instead: several real gaps confirmed and fixed (see
+> CLAUDE.md's gotcha and the fix commit), everything else confirmed correct
+> by direct inspection (the `relatedUserId` self-referential-vs-not table
+> across all 7 write sites, the `MessageBubble` renderer's fallback
+> behavior, `resolveDisplayName`'s no-op-for-real-names guarantee). Root +
+> `functions/` typecheck clean, all 373+144+28 tests pass, confirmed live on
+> Simulator (chat system messages resolving live names correctly, Settings
+> nudge chip suppressed for a named user, no crashes). Functions + Firestore
+> rules deployed. **Not yet done:** the one-time `runDisplayNameBackfill`
+> Cloud Function exists but has never been invoked — it's gated on a custom
+> `admin: true` claim nobody has been granted yet (deliberately not
+> self-service; see its own header comment for the one-line Admin SDK
+> command to grant it). Real-device verification of the Apple sign-in path
+> itself is still open per doc 27.
 
 ## Why this, why now
 

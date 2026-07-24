@@ -51,15 +51,18 @@ every `leaveGroup`/`removeMember` call fail outright — see the `isGroupDepartu
 gotcha below. READ before touching expense editing, `leaveGroup`, `removeMember`, or
 doc 28's Cloud Function, which still needs the matching balance check doc 29 added) ·
 [ai_layer/docs/30](ai_layer/docs/30_display_name_completeness.md) (display name
-completeness — Sign in with Apple's one-time-only name grant plus a real
-`AuthContext.tsx` write-ordering race can leave `displayName` permanently empty;
-~40+ places across the app then show inconsistent, mostly-broken ad-hoc fallback
-strings instead, including *zero* fallback in `AddExpenseScreen.tsx`'s split UI
-and four duplicated `getInitials()` — blank, unlabeled chips in money-attribution
-UI, the worst class of bug this doc found; universal `resolveDisplayName()`/
-`resolveInitials()` in `src/utils/identity.ts` is now the ONLY sanctioned way to
-handle a possibly-empty name, never hand-roll another `|| 'X'`/`?? 'X'` at a new
-call site — planned, implementation in progress).
+completeness — BUILT & deployed 2026-07-24: Sign in with Apple's one-time-only
+name grant plus a real `AuthContext.tsx` write-ordering race could leave
+`displayName` permanently empty; ~40+ places across the app showed inconsistent,
+mostly-broken ad-hoc fallback strings instead, including *zero* fallback in
+`AddExpenseScreen.tsx`'s split UI and five (not four — a `MessageInfoScreen.tsx`
+copy was missed by the original audit) duplicated `getInitials()` — blank,
+unlabeled chips in money-attribution UI, the worst class of bug this doc found;
+universal `resolveDisplayName()`/`resolveInitials()` in `src/utils/identity.ts`
+is now the ONLY sanctioned way to handle a possibly-empty name, never hand-roll
+another `|| 'X'`/`?? 'X'` at a new call site; the one-time production backfill
+Cloud Function exists but hasn't been invoked yet, gated on a custom admin claim
+— see doc 30's status note before assuming existing broken accounts are fixed).
 
 ## Architecture DNA (do not break)
 
@@ -294,6 +297,19 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   build. Do NOT add `application-groups` to `SplitCircle.entitlements` until the capability is
   provisioned on the portal — it will break `ship:ios` signing otherwise. Until then the widget
   snapshot write no-ops and Siri intents fall back to the SQLite index (safe).
+- **`vitest.unit.config.ts` (pure-module unit tests) has no `@` alias resolution —
+  `vitest.services.config.ts` does.** Both suites run files that pass `tsc --noEmit` cleanly
+  (path aliases resolve fine there), but `test:unit` specifically will fail at collection time
+  with "Cannot find package '@/...'" the moment a `src/utils/` "pure module, no RN/native
+  imports" file (per its own doc-comment convention — `expenseQuery.ts`, `statsInsights.ts`,
+  `aiTools.ts`, `onDeviceAiContext.ts`, etc.) adds a REAL (non-`import type`) import via the
+  `@/` alias instead of a relative path. `import type` imports are erased before bundling, so
+  they never hit this; a real runtime import does. Found 2026-07-24 when doc 30's rollout added
+  `import { resolveDisplayName } from '@/utils/identity'` to `expenseQuery.ts`. Fixed at the
+  config level (added the same `resolve.alias` block `vitest.services.config.ts` already has),
+  not by chasing relative-import conventions file-by-file — before adding a NEW real import to
+  any file covered by `vitest.unit.config.ts`'s `include` globs, run `npm run test:unit` to
+  confirm collection still succeeds, don't trust `tsc --noEmit` alone to catch this class of bug.
 
 ## Backlog ideas (user's own notes)
 
