@@ -10,6 +10,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { ROUTES } from '@/constants/routes';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
 import {
+  confirmPairing,
   getCurrentDeviceId,
   revokeDevice,
   subscribeToPairedDevices,
@@ -45,10 +46,40 @@ export const LinkedDevicesScreen = () => {
   const ownDevice = devices?.find((d) => d.deviceId === ownDeviceId);
   const isMainDevice = ownDevice?.isMainDevice === true;
 
+  // Approving a device grants it full access to the account's messages and
+  // history, so it is deliberately a confirm-first destructive-weight action
+  // naming the device — not a one-tap toggle.
+  const handleApprove = (device: PairedDevice) => {
+    appAlert(
+      `Approve ${device.deviceName ?? 'this device'}?`,
+      'This device signed in to your account and is waiting for approval. Only approve it if it is yours and you are expecting it — once approved it can read your messages and history.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Approve',
+          onPress: async () => {
+            setRemovingId(device.deviceId);
+            try {
+              // confirmPairing resolves the caller's own device id internally.
+              await confirmPairing(device.deviceId, true);
+              lightHaptic();
+            } catch {
+              errorHaptic();
+              appAlert('Could not approve device', 'Please try again.');
+            } finally {
+              setRemovingId(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const handleRemove = (device: PairedDevice) => {
     const isSelf = device.deviceId === ownDeviceId;
     appAlert(
       isSelf ? 'Sign out this device?' : `Remove ${device.deviceName ?? 'this device'}?`,
+
       isSelf
         ? 'This device will be signed out and unlinked from your account.'
         : 'This device will lose access to your account immediately. Its chat history stays on that device but stops syncing.',
@@ -100,9 +131,33 @@ export const LinkedDevicesScreen = () => {
                       removingId === device.deviceId ? (
                         <ActivityIndicator size="small" color={theme.colors.primary} />
                       ) : (
-                        <Button compact textColor={theme.colors.danger} onPress={() => handleRemove(device)}>
-                          {device.deviceId === ownDeviceId ? 'Sign out' : 'Remove'}
-                        </Button>
+                        <View style={styles.rowActions}>
+                          {/* A device that registered itself by signing in
+                              directly (rather than through the QR flow) has no
+                              pairing session and therefore no confirmation
+                              code, so this is the ONLY place it can be
+                              approved. Without it such a device would sit
+                              blocked behind PendingPairingGate forever. Never
+                              offered for our own device: self-approval would
+                              defeat the entire gate. */}
+                          {device.pairingStatus === 'pending_confirmation' &&
+                          device.deviceId !== ownDeviceId ? (
+                            <Button
+                              compact
+                              disabled={confirmedCount >= MAX_DEVICES}
+                              onPress={() => handleApprove(device)}
+                            >
+                              Approve
+                            </Button>
+                          ) : null}
+                          <Button compact textColor={theme.colors.danger} onPress={() => handleRemove(device)}>
+                            {device.deviceId === ownDeviceId
+                              ? 'Sign out'
+                              : device.pairingStatus === 'pending_confirmation'
+                                ? 'Deny'
+                                : 'Remove'}
+                          </Button>
+                        </View>
                       )
                     }
                   />
@@ -149,6 +204,7 @@ export const LinkedDevicesScreen = () => {
 };
 
 const styles = StyleSheet.create({
+  rowActions: { flexDirection: 'row', alignItems: 'center' },
   container: {
     flexGrow: 1,
     padding: 24,

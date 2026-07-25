@@ -290,6 +290,19 @@ export async function confirmPairing(
         return { status: "denied" };
     }
 
+    // 4-device cap (doc 31 decision #21). redeemPairingCode enforces this at
+    // redemption, but a self-registered device (one that signed in directly
+    // and was written as pending by syncNotificationDeviceRecord) never goes
+    // through redemption — so without this check, approving here was a second
+    // way past the cap. The client disables the button too; this is the
+    // authoritative one.
+    const confirmedSnap = await devicesRef.where("pairingStatus", "==", "confirmed").get();
+    if (confirmedSnap.size >= MAX_ACTIVE_DEVICES) {
+        throw new Error(
+            `You can link at most ${MAX_ACTIVE_DEVICES} devices. Remove one before approving another.`,
+        );
+    }
+
     await targetRef.update({
         pairingStatus: "confirmed",
         confirmationCode: FieldValue.delete(),

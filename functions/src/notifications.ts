@@ -770,17 +770,72 @@ export const syncNotificationDeviceRecord = async (
     try {
         const pairedDeviceSnap = await pairedDeviceRef.get();
         if (!pairedDeviceSnap.exists) {
-            payload.role = "main";
-            await pairedDeviceRef.set({
-                deviceId,
-                platform: input.platform,
-                deviceName: normalizeString(input.deviceName),
-                modelName: normalizeString(input.modelName),
-                isMainDevice: true,
-                pairingStatus: "confirmed",
-                pairedAt: FieldValue.serverTimestamp(),
-                lastSeenAt: FieldValue.serverTimestamp(),
-            }, { merge: true });
+            // CRITICAL (fixed 2026-07-25): this used to unconditionally write
+            // `isMainDevice: true, pairingStatus: "confirmed"` for ANY device
+            // lacking a pairedDevices row. That silently defeated the entire
+            // main/companion model: a second phone signing in with plain
+            // email+password got auto-promoted to a CONFIRMED MAIN device, so
+            // it never went through pairing, `PendingPairingGate` never fired
+            // (nothing was ever `pending_confirmation`), the QR flow was
+            // bypassed, and the 4-device cap — which is only enforced in
+            // redeemPairingCode — never applied. Reproduced with two real
+            // iPhones on one account, both landing as "main".
+            //
+            // The backfill intent was only ever about devices that predated
+            // Phase 0/1 (see the comment above). Those users have ZERO
+            // pairedDevices rows, so gating on "is this the user's first
+            // device at all" preserves that migration path exactly while
+            // closing the bypass for genuinely additional devices.
+            const existingDevices = await getFirestore()
+                .collection(USER_COLLECTION)
+                .doc(userId)
+                .collection("pairedDevices")
+                .limit(1)
+                .get();
+            const isFirstDeviceEver = existingDevices.empty;
+
+            if (isFirstDeviceEver) {
+                payload.role = "main";
+                await pairedDeviceRef.set({
+                    deviceId,
+                    platform: input.platform,
+                    deviceName: normalizeString(input.deviceName),
+                    modelName: normalizeString(input.modelName),
+                    isMainDevice: true,
+                    pairingStatus: "confirmed",
+                    pairedAt: FieldValue.serverTimestamp(),
+                    lastSeenAt: FieldValue.serverTimestamp(),
+                }, { merge: true });
+            } else {
+                // An ADDITIONAL device that arrived without pairing. Register
+                // it as pending so PendingPairingGate blocks it and an
+                // existing device must explicitly approve it. Deliberately
+                // still written (rather than left absent) so the new device
+                // can show "waiting for confirmation" instead of looking
+                // broken, and so it appears in Linked devices for approval.
+                //
+                // No confirmationCode here: that code is the pairing
+                // channel's shared secret (§3.4), meaningful only when both
+                // sides derived it from the same pairing session. A
+                // self-registered device has no such session, so approval is
+                // an explicit human decision on an existing device instead.
+                payload.role = "companion";
+                await pairedDeviceRef.set({
+                    deviceId,
+                    platform: input.platform,
+                    deviceName: normalizeString(input.deviceName),
+                    modelName: normalizeString(input.modelName),
+                    isMainDevice: false,
+                    pairingStatus: "pending_confirmation",
+                    selfRegistered: true,
+                    createdAt: FieldValue.serverTimestamp(),
+                    lastSeenAt: FieldValue.serverTimestamp(),
+                }, { merge: true });
+                logger.info("syncNotificationDeviceRecord: additional device registered pending approval", {
+                    userId,
+                    deviceId,
+                });
+            }
         }
     } catch (error) {
         // Best-effort — the notificationDevices write below is the

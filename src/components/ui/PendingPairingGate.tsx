@@ -49,9 +49,18 @@ export const PendingPairingGate = () => {
   }, [user, deviceId]);
 
   const isPending = ownRecord?.pairingStatus === 'pending_confirmation';
-  // A record that existed and is now gone (denied/revoked) while we were
-  // still waiting — distinct from "hasn't loaded yet" (undefined).
-  const wasDeniedOrRevoked = ownRecord === null && deviceId !== null;
+  // A record that existed and is now GONE means denied/revoked — sign out.
+  // `ownRecord === null` alone is NOT sufficient evidence of that: on a fresh
+  // sign-in the pairedDevices row doesn't exist yet (it's created
+  // asynchronously by syncNotificationDeviceRecord), so the subscription's
+  // first emission is legitimately null and treating it as a denial signed
+  // brand-new devices straight back out. Only a null that FOLLOWS a record we
+  // actually saw is a revocation.
+  const [everSawRecord, setEverSawRecord] = useState(false);
+  useEffect(() => {
+    if (ownRecord) setEverSawRecord(true);
+  }, [ownRecord]);
+  const wasDeniedOrRevoked = ownRecord === null && deviceId !== null && everSawRecord;
 
   useEffect(() => {
     if (!wasDeniedOrRevoked || signingOut) return;
@@ -79,7 +88,13 @@ export const PendingPairingGate = () => {
             <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>
               {expired
                 ? "This device's pairing request wasn't confirmed in time. Try linking this device again."
-                : "Open SplitCircle on your other device to confirm this one. Make sure the code below matches what's shown there."}
+                : ownRecord?.confirmationCode
+                  ? "Open SplitCircle on your other device to confirm this one. Make sure the code below matches what's shown there."
+                  // Self-registered device (signed in directly rather than
+                  // through the pairing flow): there is no shared pairing
+                  // session, so there is no code to match — approval is an
+                  // explicit decision in Settings on a device you already use.
+                  : 'Approve this device from Settings → Linked devices on a device you already use.'}
             </Text>
             {!expired && ownRecord?.confirmationCode ? (
               <Text variant="displaySmall" style={[styles.code, { color: theme.colors.primary }]}>
