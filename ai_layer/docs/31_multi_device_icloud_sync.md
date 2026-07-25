@@ -1347,11 +1347,50 @@ when Phase 3 actually implements it.
   `inboundOK=true` (type 2 Whisper reply decrypted by our persistent store),
   `sessionPersisted=true`. The inbound leg is the one that matters — it only
   decrypts if our store really persisted the session the handshake produced.
-  **Still to wire before Phase 3 closes**: publishing bundles to
-  `users/{uid}/signalPrekeys/{deviceId}`, minting the small-integer libsignal
-  device id at pairing (§3.4 doesn't account for it yet), one-time-prekey
-  claiming/replenishment, and the actual message send/receive path. Group
-  (sender-key) messaging deliberately throws rather than being half-built.
+- **Key-distribution wiring BUILT + deployed 2026-07-25 (commit `7224079`).**
+  `functions/src/signalKeys.ts` adds two deployed callables, and
+  `src/services/signalCryptoService.ts` orchestrates them from the client
+  (invoked from `NotificationContext` immediately after device registration,
+  because publishing requires the confirmed `pairedDevices` row that
+  registration creates).
+  - `publishSignalPrekeys` — must be server-side: `signalPrekeys` is
+    client-READ (peers need public bundles) but write-denied, since a direct
+    client write would let an attacker publish their own identity key under
+    someone else's device and become that device's endpoint. Rejects
+    non-`confirmed` devices, so a device awaiting approval cannot become
+    addressable and quietly sidestep `PendingPairingGate`.
+  - **Small-integer libsignal device id is allocated here**, transactionally,
+    on first publish — resolving the protocol-design gap flagged above. One
+    place mints it, so both pairing paths converge without either knowing about
+    libsignal; the transaction prevents two devices receiving the same id,
+    which would make them share a `ProtocolAddress` and cross-decrypt.
+  - `claimSignalPreKey` — atomic pop of one one-time prekey. Concurrent senders
+    must not receive the same key (reuse destroys the forward secrecy that key
+    exists for). Uses a whole-array replace, NOT a merge: CLAUDE.md's
+    reaction-removal gotcha means a merged write cannot shrink the array and
+    would hand the same key out twice. Exhaustion is not an error —
+    `PreKeyBundle` has a signed-prekey-only form, and failing would make a
+    popular device undeliverable.
+  - `listSignalDevices` reads `signalPrekeys`, not `pairedDevices`: it is the
+    only cross-user-readable collection, and its rule doesn't depend on
+    document contents, so a LIST query is provable and dodges the Firestore
+    query-provability wall that forced group joining server-side.
+
+  **Verified on a physical iPhone 17 Pro** (Cloud Function log, real
+  authenticated call): `publishSignalPrekeys: published, oneTimeCount: 100,
+  signalDeviceId: 1` — the full chain (native identity bootstrap → prekey
+  generation → server allocation → Firestore write) works on device.
+  **NOT verified: allocation of a SECOND device id.** The 13 mini was running
+  but never published in the observation window — most likely not signed in on
+  that handset. So the transactional no-collision path (device 2 getting id 2)
+  is still untested against real concurrency; test it before trusting the
+  allocator.
+
+  **Still to wire before Phase 3 closes**: the actual message send/receive path
+  (encrypt on send via `encryptForAllDevices`, decrypt on receive), prekey
+  replenishment triggering, and §3.4's pairing flow recording the libsignal
+  device id. Group (sender-key) messaging deliberately throws rather than being
+  half-built.
 - Other risks carried from the original plan, still unresolved: no hot-swap
   iteration during this phase (§3.10 gotcha #6); Sender Key rekey volume
   against the RTDB reaper (§3.10 gotcha #8) — re-validate reaper batch sizing
