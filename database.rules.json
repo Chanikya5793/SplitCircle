@@ -51,6 +51,59 @@
         }
       }
     },
+    "messageQueueDevices": {
+      "$recipientId": {
+        "$deviceId": {
+          ".read": "auth != null && auth.uid == $recipientId && (auth.token.deviceId == null || auth.token.deviceId == $deviceId)",
+          "$messageId": {
+            ".write": "auth != null && auth.uid == $recipientId && !newData.exists() && (auth.token.deviceId == null || auth.token.deviceId == $deviceId)",
+            ".validate": "newData.exists() ? newData.hasChildren(['senderId', 'chatId', 'content', 'timestamp', 'type', 'isGroupChat']) : true",
+            "senderId": {
+              ".validate": "!newData.exists() || newData.isString()"
+            },
+            "chatId": {
+              ".validate": "!newData.exists() || newData.isString()"
+            },
+            "content": {
+              ".validate": "!newData.exists() || newData.isString()"
+            },
+            "timestamp": {
+              ".validate": "!newData.exists() || newData.isNumber()"
+            },
+            "type": {
+              ".validate": "!newData.exists() || (newData.isString() && (newData.val() == 'text' || newData.val() == 'image' || newData.val() == 'video' || newData.val() == 'audio' || newData.val() == 'system' || newData.val() == 'call' || newData.val() == 'file' || newData.val() == 'location' || newData.val() == 'expense'))"
+            },
+            "isGroupChat": {
+              ".validate": "!newData.exists() || newData.isBoolean()"
+            },
+            "mediaUrl": {
+              ".validate": "!newData.exists() || newData.isString() || newData.val() == null"
+            },
+            "thumbnailUrl": {
+              ".validate": "!newData.exists() || newData.isString() || newData.val() == null"
+            },
+            "location": {
+              ".validate": "!newData.exists() || newData.val() == null || (newData.hasChildren(['latitude', 'longitude']) && newData.child('latitude').isNumber() && newData.child('longitude').isNumber())"
+            },
+            "replyTo": {
+              ".validate": "!newData.exists() || newData.val() == null || newData.hasChildren(['messageId', 'senderId', 'senderName', 'content'])"
+            },
+            "mediaMetadata": {
+              ".validate": "!newData.exists() || newData.val() == null || (!newData.isString() && !newData.isNumber() && !newData.isBoolean())"
+            },
+            "forwardedFrom": {
+              ".validate": "!newData.exists() || newData.val() == null || (newData.hasChildren(['hopCount']) && newData.child('hopCount').isNumber())"
+            },
+            "requestId": {
+              ".validate": "!newData.exists() || newData.isString() || newData.val() == null"
+            },
+            "expenseRef": {
+              ".validate": "!newData.exists() || newData.val() == null || (newData.hasChildren(['kind', 'groupId', 'refId', 'snapshot']) && newData.child('kind').isString() && newData.child('groupId').isString() && newData.child('refId').isString())"
+            }
+          }
+        }
+      }
+    },
     "mediaQueue": {
       "$recipientId": {
         ".read": "auth != null && auth.uid == $recipientId",
@@ -149,6 +202,9 @@
         },
         "groupId": {
           ".validate": "!newData.exists() || newData.isString() || newData.val() == null"
+        },
+        "answeredBy": {
+          ".validate": "!newData.exists() || newData.isString()"
         },
         "deliveryState": {
           ".write": "auth != null && data.parent().child('allowedUserIds').child(auth.uid).val() == true",

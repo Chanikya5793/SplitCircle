@@ -56,6 +56,7 @@ const callKeepModule: CallKeepModule | null = isNativePlatform
 const RNCallKeep: CallKeepDefault | null = callKeepModule?.default ?? null;
 const AudioSessionCategoryOption = callKeepModule?.AudioSessionCategoryOption;
 const AudioSessionMode = callKeepModule?.AudioSessionMode;
+const CallKeepConstants = callKeepModule?.CONSTANTS;
 const RTCAudioSession: RTCAudioSessionType | null = isNativePlatform
   ? ((require('@livekit/react-native-webrtc') as typeof import('@livekit/react-native-webrtc')).RTCAudioSession ?? null)
   : null;
@@ -693,6 +694,34 @@ async function endCall(appCallId: string): Promise<void> {
 }
 
 /**
+ * Doc 31 §3.9/§5 Phase 2 — dismiss THIS device's incoming/in-progress call UI
+ * because a DIFFERENT device of the same account answered it, using CallKit's
+ * dedicated `.answeredElsewhere` reason (verified against Apple's own
+ * CXCallEndedReason docs) rather than endCall's plain "I hung up" reason —
+ * that distinction is what makes CallKit report the dismissal correctly
+ * instead of looking like a local hangup/decline. Requires
+ * reportNewIncomingCall to have already run for this UUID (it always has by
+ * the time this fires — the call was ringing on this device); calling it for
+ * a UUID CallKit doesn't know about is a silent no-op, not a crash.
+ */
+async function reportAnsweredElsewhere(appCallId: string): Promise<void> {
+  if (!RNCallKeep) {
+    return;
+  }
+
+  await initialize();
+  const nativeCallId = ensureMappedNativeCallId(appCallId);
+  RNCallKeep.reportEndCallWithUUID(
+    nativeCallId,
+    CallKeepConstants?.END_CALL_REASONS.ANSWERED_ELSEWHERE ?? 4
+  );
+  // Same rationale as endCall: CallKit may not fire didDeactivateAudioSession
+  // on this path either — reset so the next call's watchdog doesn't see a
+  // stuck "already active" flag.
+  resetAudioSession();
+}
+
+/**
  * End a CallKit call identified by its NATIVE UUID (no app-call mapping).
  * Used to dismiss the placeholder call CallKit creates for a Recents redial
  * via CXStartCallAction before the app launches its own outgoing call flow.
@@ -871,6 +900,7 @@ export const nativeCallService = {
   rejectIncomingCall,
   markCallConnected,
   endCall,
+  reportAnsweredElsewhere,
   dismissNativeCall,
   clearCall,
   bringAppToForeground,

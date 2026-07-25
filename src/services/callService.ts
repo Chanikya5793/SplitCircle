@@ -528,11 +528,32 @@ export function subscribeToIncomingCallForUser(
 }
 
 /**
+ * Doc 31 §3.9/§5 Phase 2 — thrown when THIS device's own account already
+ * joined the call from a DIFFERENT device by the time this transaction
+ * lands. Before this existed, that race silently no-op'd (the pre-existing
+ * per-userId dedup guard below just returned the call state unchanged) and
+ * the losing caller went on to request a LiveKit token and connect anyway —
+ * harmless only because every device previously shared one colliding
+ * `identity: uid`; now that each device has its own distinct
+ * `${uid}:${deviceId}` identity (see LiveKitService.getToken's deviceId
+ * param), that same silent no-op would produce two live room participants
+ * for one callee. This makes the loss explicit so the caller can bail out
+ * before ever touching LiveKit.
+ */
+export class AnsweredElsewhereError extends Error {
+  constructor(public readonly winningDeviceId: string) {
+    super('Call already answered on another device');
+    this.name = 'AnsweredElsewhereError';
+  }
+}
+
+/**
  * Join an existing call
  */
 export async function joinCall(
   callId: string,
-  participant: CallParticipant
+  participant: CallParticipant,
+  deviceId: string
 ): Promise<void> {
   const sanitizedParticipant: CallParticipant = {
     userId: participant.userId,
@@ -574,6 +595,9 @@ export async function joinCall(
         [participant.userId]: true,
       },
       status: 'connected',
+      // Only ever set on the branch that actually adds this participant —
+      // a no-op branch above must never overwrite an existing answeredBy.
+      answeredBy: deviceId,
     };
   });
 
@@ -581,8 +605,17 @@ export async function joinCall(
     throw new Error('Call not found');
   }
 
+  const finalSession = result.snapshot.val() as RawCallSession;
+  if (
+    finalSession.status === 'connected' &&
+    finalSession.answeredBy &&
+    finalSession.answeredBy !== deviceId
+  ) {
+    throw new AnsweredElsewhereError(finalSession.answeredBy);
+  }
+
   await syncUserActiveCallIndex(
-    result.snapshot.val() as RawCallSession,
+    finalSession,
     previousSession ? getAllowedUserIds(previousSession) : [],
   );
   debugLog('callService.joinCall applied');

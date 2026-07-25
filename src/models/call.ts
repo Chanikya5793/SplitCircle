@@ -30,6 +30,12 @@ export interface CallSession {
    * 'calling' = it wasn't (offline). Drives the WhatsApp-style caller label.
    */
   deliveryState?: 'calling' | 'ringing';
+  /**
+   * deviceId of whichever device won the race to join (doc 31 §3.9/§5 Phase
+   * 2) — lets every OTHER device belonging to the same account tell it was
+   * "answered elsewhere" instead of leaving them ringing forever.
+   */
+  answeredBy?: string;
   offer?: SessionDescriptionInit;
   answer?: SessionDescriptionInit;
   iceCandidates?: RTCIceCandidateInit[];

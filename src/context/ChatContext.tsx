@@ -33,8 +33,10 @@ import {
   initMediaDirectory,
   uploadMedia,
 } from '@/services/mediaService';
+import { getCurrentDeviceId } from '@/services/pairingService';
 import {
   listenForMessages,
+  listenForMessagesOnDevice,
   listenForReceipts,
   queueMessage,
   registerReceiptParticipant,
@@ -324,21 +326,43 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     void registerAll();
   }, [threads, user?.userId]);
 
-  // Singleton queue listener (always active while authenticated).
+  // Singleton queue listener (always active while authenticated). Doc 31
+  // §3.1/§5 Phase 2: dual-listens on BOTH the legacy per-user path and this
+  // device's fanned-out per-device path during the migration window — a
+  // recipient without a confirmed pairedDevices row yet (syncNotificationDeviceRecord
+  // backfills one on next app-launch sync, but that's not instant/guaranteed
+  // before a message could arrive) still gets messages via the legacy path,
+  // since fanOutQueuedMessage leaves it untouched when it finds zero
+  // confirmed devices. saveMessageLocally dedupes by message id, so the rare
+  // race where both paths deliver the same message is a harmless no-op
+  // re-save, not a duplicate.
   useEffect(() => {
     if (!user) {
       return () => undefined;
     }
 
-    const unsubscribe = listenForMessages(user.userId, async (message) => {
+    const onMessage = async (message: ChatMessage) => {
       await saveMessageLocally(message);
 
       if (activeChatIdsRef.current.has(message.chatId)) {
         await markChatAsRead(message.chatId);
       }
+    };
+
+    const unsubscribeLegacy = listenForMessages(user.userId, onMessage);
+
+    let unsubscribeDevice: (() => void) | undefined;
+    let cancelled = false;
+    void getCurrentDeviceId().then((deviceId) => {
+      if (cancelled) return;
+      unsubscribeDevice = listenForMessagesOnDevice(user.userId, deviceId, onMessage);
     });
 
-    return () => unsubscribe();
+    return () => {
+      cancelled = true;
+      unsubscribeLegacy();
+      unsubscribeDevice?.();
+    };
   }, [markChatAsRead, user?.userId]);
 
   const subscribeToMessages = useCallback((chatId: string, onData: (messages: ChatMessage[]) => void) => {

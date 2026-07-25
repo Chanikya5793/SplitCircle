@@ -877,6 +877,12 @@ export const onGroupDeleted = onDocumentDeleted(
 );
 
 // ─────────────────────────────────────────────────────────────
+// Per-device message fan-out (ai_layer/docs/31_multi_device_icloud_sync.md §3.1)
+// ─────────────────────────────────────────────────────────────
+
+export { fanOutQueuedMessage } from "./messageFanout";
+
+// ─────────────────────────────────────────────────────────────
 // Push Notifications — Incoming Calls
 // ─────────────────────────────────────────────────────────────
 
@@ -1261,6 +1267,13 @@ export const generateLiveKitToken = onRequest(
 
             const roomName = getStringValue(requestBody.roomName ?? req.query.roomName);
             const chatId = getStringValue(requestBody.chatId ?? req.query.chatId);
+            // Doc 31 §3.9/§5 Phase 2: per-device LiveKit room identity, so two
+            // of this user's own devices can hold distinct room participant
+            // identities instead of colliding under a shared `identity: uid`.
+            // Falls back to the old bare-uid identity if a caller doesn't
+            // send deviceId yet (defensive only — the app client always
+            // sends it as of this change).
+            const deviceId = getStringValue(requestBody.deviceId ?? req.query.deviceId);
             const participantName = sanitizeParticipantName(
                 getStringValue(requestBody.name ?? req.query.name),
                 uid
@@ -1324,7 +1337,7 @@ export const generateLiveKitToken = onRequest(
             }
 
             const accessToken = new AccessToken(livekitApiKey, livekitApiSecret, {
-                identity: uid,
+                identity: deviceId ? `${uid}:${deviceId}` : uid,
                 name: participantName,
             });
 

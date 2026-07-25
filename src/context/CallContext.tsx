@@ -5,6 +5,7 @@ import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallSt
 import { nativeCallService } from '@/services/nativeCallService';
 import { voipPushService } from '@/services/voipPushService';
 import { startVoipPushRegistration } from '@/services/voipPushRegistration';
+import { getCurrentDeviceId } from '@/services/pairingService';
 import { resolveDisplayName } from '@/utils/identity';
 import { MISSED_CALL_CATEGORY_ID, scheduleLocalNotification } from '@/utils/notifications';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
@@ -128,6 +129,19 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
 
   const incomingCallRef = useRef<IncomingCall | null>(null);
   const displayedIncomingCallIdRef = useRef<string | null>(null);
+  // Doc 31 §3.9/§5 Phase 2 — resolved once, used to tell "answered on THIS
+  // device" apart from "answered elsewhere" in the subscribeToIncomingCallForUser
+  // listener below.
+  const deviceIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void getCurrentDeviceId().then((id) => {
+      if (!cancelled) deviceIdRef.current = id;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // Recents-redial resolution: the deadline after which we stop retrying, and
   // the handle to the pending retry timer.
   const recentsRedialDeadlineRef = useRef<number | null>(null);
@@ -455,7 +469,17 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
       }
 
       if (session.status === 'connected' && currentIncomingCall?.callId === session.callId) {
-        void nativeCallService.endCall(currentIncomingCall.callId);
+        // acceptIncomingCall already synchronously clears incomingCallRef
+        // BEFORE joinCall runs, so this branch structurally only ever fires
+        // for a device that did NOT itself answer — session.answeredBy is
+        // still the only positive signal distinguishing "someone else
+        // answered" from "my own optimistic-UI clear raced this RTDB echo",
+        // so check it rather than assuming.
+        if (session.answeredBy && session.answeredBy !== deviceIdRef.current) {
+          void nativeCallService.reportAnsweredElsewhere(currentIncomingCall.callId);
+        } else {
+          void nativeCallService.endCall(currentIncomingCall.callId);
+        }
         displayedIncomingCallIdRef.current = null;
         setIncomingCall(null);
       }

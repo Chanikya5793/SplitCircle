@@ -1,6 +1,6 @@
 # 31 — Multi-Device Support + iCloud Backup/Sync
 
-Status: **ARCHITECTURE LOCKED, PHASES 0-1 BUILT** (2026-07-24, branch
+Status: **ARCHITECTURE LOCKED, PHASES 0-2 BUILT** (2026-07-24, branch
 `ui-revamp`).
 §1's 23 decisions and §3's full architecture are locked from two rounds of
 research→verify→synthesize→adversarially-critique (all sonnet, sequential, per the
@@ -8,9 +8,9 @@ user's explicit process instruction). The final adversarial critique
 (`wf_fd4b3134-d5d`) found real gaps in the first "final" draft — all resolved
 inline in §3, including the one genuine product/security tradeoff (§3.12,
 "lost every device" recovery model), confirmed by the product owner the same day.
-Phases 0 and 1 (§5) are built — see each entry for exactly what landed and
-what's still unverified (no real native/simulator build has exercised either
-phase end-to-end yet). Phases 2-8 are not started.
+Phases 0, 1, and 2 (§5) are built — see each entry for exactly what landed and
+what's still unverified (no real native/simulator build has exercised any
+phase end-to-end yet). Phases 3-8 are not started.
 
 ## 0. Goal (as stated by the user, 2026-07-24)
 
@@ -1000,22 +1000,121 @@ specific installed SDK version (`~55.0.9`) by a real build.
   (Phase 3); a "report this device lost/stolen without needing another
   trusted device" flow (still only cooperative Settings-page revoke exists).
 
-### Phase 2 — Per-device live sync (RTDB fan-out)
-**Goal**: messages, receipts, and read/delivered dedupe reach every paired
-device independently, phone-relay-free.
-- `messageQueueService.ts`: `queueMessage` → `queueMessageToAllDevices`, path
-  `messageQueue/{recipientId}/{deviceId}/{message.id}`.
-- Per-device `listenForMessages` scoping.
-- Receipt-sync fan-out for cross-device read/delivered dedupe, landing on
-  existing `applyRemoteMessageState`/`markMessagesRead`.
-- LiveKit identity fix (`${uid}:${deviceId}`), audit every token-minting
-  function.
-- "Answered elsewhere" via `transaction()` write + CallKit
-  `reportCall(..., reason: .answeredElsewhere)`.
+### Phase 2 — Per-device live sync (RTDB fan-out) — BUILT 2026-07-24 (branch `ui-revamp`)
+**Goal**: messages and call "answered elsewhere" reach every paired device
+independently, phone-relay-free.
+
+**A real design change from what this section originally said, made before
+writing any code** (verified via a dedicated research/verify workflow):
+`messageQueue` → `queueMessageToAllDevices` looping client-side over a
+recipient's device list, as originally written here, is **not possible** —
+`firestore.rules` only grants `isSelf(userId)` read access to `pairedDevices`,
+so a sender's client can never enumerate a *different* user's devices to fan
+a message out to them. This is the exact same Firestore query-provability
+wall CLAUDE.md already documents from the invite-code-join bug. The actual
+design built:
+
+- ✅ [`functions/src/messageFanout.ts`](../../functions/src/messageFanout.ts)
+  — a new `fanOutQueuedMessage` RTDB trigger (`onValueCreated` on
+  `/messageQueue/{recipientId}/{messageId}` — the first RTDB-to-RTDB trigger
+  in this codebase; the only prior `onValueCreated` precedent,`onCallCreated`,
+  only ever fans out to push, never writes back into RTDB). The **client's
+  `queueMessage` in `messageQueueService.ts` is completely unchanged** —
+  still one write per recipient, exactly as before. The trigger reads the
+  recipient's *confirmed* `pairedDevices` via the Admin SDK (bypasses rules
+  entirely, same pattern `collectVoipDevices`/`sendPushToUsers` already use
+  for push fan-out), fans the payload out to
+  `messageQueueDevices/{recipientId}/{deviceId}/{messageId}` for each one,
+  and deletes the original relay node. If a recipient has zero confirmed
+  devices, the legacy node is left untouched rather than dropping the
+  message.
+- ✅ `messageQueueService.ts` gained `listenForMessagesOnDevice(userId,
+  deviceId, ...)`, sharing its body with the legacy `listenForMessages` via a
+  new internal `attachQueueListener` helper. `ChatContext.tsx`'s singleton
+  queue-listener effect now **dual-listens** on both the legacy per-user path
+  and this device's fanned-out path simultaneously — a deliberate migration
+  safety net (see the backfill fix below for why), not a permanent design;
+  `saveMessageLocally` dedupes by message id, so a message the rare
+  transition-window race delivers via both paths is a harmless re-save, not a
+  duplicate.
+- ✅ **Fixed a real backward-compatibility gap found while planning this
+  phase**: Phase 1's "a device's first-ever registration becomes main"
+  logic in `syncNotificationDeviceRecord` was gated on the
+  `notificationDevices` doc being new — which is **never true** for any
+  device that registered before Phase 0/1 shipped (their `notificationDevices`
+  doc already existed). Every such existing, real device would have gotten
+  zero `pairedDevices` row, meaning `fanOutQueuedMessage` would find no
+  confirmed devices for them and (without the dual-listen fallback above)
+  messages would have silently stopped delivering. Fixed by checking
+  `pairedDevices` existence independently of `notificationDevices` — now ANY
+  device without one gets backfilled as main on its next routine sync, not
+  just a truly-first-ever device.
+- ✅ **LiveKit per-device identity** (`identity: uid` → `` identity:
+  `${uid}:${deviceId}` ``): `functions/src/index.ts`'s `generateLiveKitToken`,
+  `LiveKitService.ts`'s `getToken`, and **both** of `useCallManager.ts`'s call
+  sites (outgoing path *and* answering path — confirmed via the research pass
+  to be two distinct call sites, not one; an earlier draft of this section
+  would have fixed only one).
+- ✅ **"Answered elsewhere"**: `session.answeredBy: deviceId` is now written
+  inside the *existing* `joinCall` RTDB transaction (`callService.ts`, no
+  separate write) on the branch that actually adds the participant, never on
+  a no-op branch. A new `AnsweredElsewhereError` is thrown when this device's
+  `joinCall` call finds a *different* device of the same account already won
+  — closing a real gap the naive design would have shipped with: before this,
+  that race silently no-op'd and the losing device would go on to request a
+  LiveKit token and connect anyway, which the identity fix above would have
+  turned into two live room participants for one callee instead of the
+  pre-existing (accidentally safe) colliding-identity behavior. Only one
+  `joinCall` call site exists in the whole codebase (confirmed by grep), so
+  no other caller needed auditing. `nativeCallService.ts` gained
+  `reportAnsweredElsewhere()`, using react-native-callkeep's
+  `reportEndCallWithUUID(uuid, CONSTANTS.END_CALL_REASONS.ANSWERED_ELSEWHERE)`
+  — verified directly against Apple's own `CXCallEndedReason` documentation
+  and the callkeep package's actual source (not just its README) that
+  `.answeredElsewhere` is correct for a still-ringing, never-locally-answered
+  call, not only for ending an already-connected one. `CallContext.tsx`'s
+  connected-status listener now checks `session.answeredBy` against this
+  device's own id to choose between `reportAnsweredElsewhere` and the
+  pre-existing plain `endCall`.
+- ✅ `database.rules.json` gained a `messageQueueDevices` block (mirroring
+  `messageQueue`'s field validators, client access delete-only — creation is
+  Admin-SDK-only) with a `deviceId`-claim read check (`auth.token.deviceId ==
+  null || auth.token.deviceId == $deviceId`, RTDB rules' own syntax — **not**
+  Firestore rules' `'deviceId' in auth.token`, a real syntax difference
+  between the two rules languages caught before it could fail silently), and
+  an optional `answeredBy` string field on `calls/{callId}`.
+
+**Verification done**: `npx tsc --noEmit` clean (app + functions);
+`firebase deploy --only firestore:rules,database --dry-run` confirms both
+rules files compile against the real project. **Verification NOT done**: no
+simulator/device build has exercised message delivery or a real multi-device
+call race — the CallKit `.answeredElsewhere` API was verified against Apple's
+documentation and the callkeep source, not by actually triggering it on a
+device.
+
 - **Dependencies**: Phase 0 (device registry).
-- **Risk**: the per-device ringing toggle (#13) conflicts with the mandatory
-  `reportNewIncomingCall` CallKit privilege rule — needs real physical-device
-  verification, not just code review, as an exit criterion for this phase.
+- **Risks carried forward, not resolved by this phase**:
+  - Receipt-sync fan-out (cross-device read/delivered dedupe, #15) is
+    explicitly out of scope here — still needs its own design pass.
+  - The per-device ringing toggle (#13) is untouched — every paired device
+    still receives `reportNewIncomingCall` unconditionally (required to keep
+    the VoIP push privilege) and all devices ring simultaneously until the
+    `answeredBy` transaction race resolves; needs real physical-device
+    verification before it's addressed.
+  - `messageQueueDevices`' `$deviceId` read-rule asymmetry (main device
+    unrestricted across its own device subtrees, companion restricted to its
+    own claim) is inert today only because the client always calls
+    `listenForMessagesOnDevice` with its own resolved `deviceId` — verify no
+    future code path ever passes an arbitrary `deviceId` before relying on
+    this as a security boundary.
+  - `fanOutQueuedMessage` adds one extra RTDB round-trip (client write →
+    trigger fires → multi-path update) to message delivery latency versus
+    the old direct single write — not measured against real-world targets.
+  - Phase 3's E2E encryption will need to layer cleanly on top of this
+    fan-out shape (plaintext payloads currently move through
+    `messageQueueDevices`, same as `messageQueue` always has) — re-verify
+    this design still fits once Phase 3's per-device Signal sessions land,
+    rather than assuming it does.
 
 ### Phase 3 — E2E encryption core
 **Goal**: libsignal-backed per-device Signal sessions protecting message

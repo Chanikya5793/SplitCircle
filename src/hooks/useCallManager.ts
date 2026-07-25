@@ -2,6 +2,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import type { CallStatus, CallType } from '@/models';
 import {
+  AnsweredElsewhereError,
   createCallSession,
   getCallSession,
   joinCall,
@@ -12,6 +13,7 @@ import {
 import { LiveKitService } from '@/services/LiveKitService';
 import { saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { nativeCallService } from '@/services/nativeCallService';
+import { getCurrentDeviceId } from '@/services/pairingService';
 import { requestCallPermissions } from '@/utils/permissions';
 import { resolveDisplayName } from '@/utils/identity';
 import { AudioSession } from '@livekit/react-native';
@@ -119,6 +121,18 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
   const unsubscribes = useRef<Array<() => void>>([]);
   const audioWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoModeReapplyRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Doc 31 §3.9/§5 Phase 2 — resolved once, reused for the LiveKit identity
+  // fix and the answered-elsewhere joinCall/reportAnsweredElsewhere calls.
+  const deviceIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void getCurrentDeviceId().then((id) => {
+      if (!cancelled) deviceIdRef.current = id;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Cleanup subscriptions
   const cleanupSubscriptions = useCallback(() => {
@@ -334,10 +348,13 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       );
 
       // 2. Fetch LiveKit Token
+      const outgoingDeviceId = deviceIdRef.current ?? (await getCurrentDeviceId());
+      deviceIdRef.current = outgoingDeviceId;
       const { token: roomToken, url } = await LiveKitService.getToken(
         newCallId,
         chatId,
-        resolveDisplayName(user, 'User')
+        resolveDisplayName(user, 'User'),
+        outgoingDeviceId
       );
 
       if (sessionVersionRef.current !== sessionVersion || callIdRef.current !== newCallId) {
@@ -506,10 +523,13 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       }
 
       // 1. Fetch LiveKit Token
+      const answeringDeviceId = deviceIdRef.current ?? (await getCurrentDeviceId());
+      deviceIdRef.current = answeringDeviceId;
       const { token: roomToken, url } = await LiveKitService.getToken(
         existingCallId,
         chatId,
-        resolveDisplayName(user, 'User')
+        resolveDisplayName(user, 'User'),
+        answeringDeviceId
       );
 
       if (sessionVersionRef.current !== sessionVersion || callIdRef.current !== existingCallId) {
@@ -533,12 +553,16 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       await nativeCallService.answerIncomingCall(existingCallId);
 
       // 3. Update Realtime DB (Join) - This also updates status to 'connected'
-      await joinCall(existingCallId, {
-        userId: user.userId,
-        displayName: resolveDisplayName(user, 'Unknown'),
-        muted: false,
-        cameraEnabled: session.type === 'video',
-      });
+      await joinCall(
+        existingCallId,
+        {
+          userId: user.userId,
+          displayName: resolveDisplayName(user, 'Unknown'),
+          muted: false,
+          cameraEnabled: session.type === 'video',
+        },
+        answeringDeviceId
+      );
       debugLog('useCallManager joined call');
       connectedAtRef.current = Date.now();
       setStatus('connected'); // Immediately set to connected since we just joined
@@ -565,6 +589,28 @@ export const useCallManager = ({ chatId, groupId }: UseCallManagerArgs): UseCall
       unsubscribes.current.push(unsubSession);
 
     } catch (err) {
+      // Doc 31 §3.9/§5 Phase 2 — a different device of this same account
+      // already won the join race. This is an expected outcome, not a
+      // failure: report it to CallKit as answered-elsewhere (dismisses the
+      // incoming-call UI correctly) instead of "I hung up", and don't
+      // surface it as an error.
+      if (err instanceof AnsweredElsewhereError) {
+        debugLog('useCallManager: call answered on another device', err.winningDeviceId);
+        await nativeCallService.reportAnsweredElsewhere(existingCallId);
+        nativeCallService.clearCall(existingCallId);
+        if (audioWatchdogRef.current) {
+          clearTimeout(audioWatchdogRef.current);
+          audioWatchdogRef.current = null;
+        }
+        if (videoModeReapplyRef.current) {
+          clearInterval(videoModeReapplyRef.current);
+          videoModeReapplyRef.current = null;
+        }
+        nativeCallService.resetAudioSession();
+        setStatus('ended');
+        return;
+      }
+
       console.error('Error joining call', err);
       await nativeCallService.endCall(existingCallId);
       nativeCallService.clearCall(existingCallId);

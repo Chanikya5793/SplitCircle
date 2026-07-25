@@ -744,43 +744,54 @@ export const syncNotificationDeviceRecord = async (
 
     if (!existingSnap.exists) {
         payload.createdAt = FieldValue.serverTimestamp();
-        // Doc 31 §3 Phase 0 finding: this write's payload never included a
-        // `role` key before, so plain merge:true always left an existing
-        // value untouched — safe to add here. A device's first-ever contact
-        // with this function (no prior notificationDevices doc for this
-        // deviceId) can ONLY happen for an original/main device: a companion
-        // device's first-ever notificationDevices doc is always created by
-        // redeemPairingCode's transaction (pairing.ts) BEFORE the client
-        // even receives the custom token that lets it call this function at
-        // all, so by the time a companion reaches here, existingSnap.exists
-        // is already true and this branch never fires for it.
-        payload.role = "main";
-        try {
-            await getFirestore()
-                .collection(USER_COLLECTION)
-                .doc(userId)
-                .collection("pairedDevices")
-                .doc(deviceId)
-                .set({
-                    deviceId,
-                    platform: input.platform,
-                    deviceName: normalizeString(input.deviceName),
-                    modelName: normalizeString(input.modelName),
-                    isMainDevice: true,
-                    pairingStatus: "confirmed",
-                    pairedAt: FieldValue.serverTimestamp(),
-                    lastSeenAt: FieldValue.serverTimestamp(),
-                }, { merge: true });
-        } catch (error) {
-            // Best-effort — the notificationDevices write below is the
-            // primary record; a failure here just means the Linked Devices
-            // screen won't show this device until the next successful sync.
-            logger.warn("syncNotificationDeviceRecord: failed to write main pairedDevices record", {
-                userId,
+    }
+
+    // Doc 31 Phase 2 fix: this used to be gated on `!existingSnap.exists`
+    // (the notificationDevices doc), which only ever fires for a device's
+    // TRUE first-ever contact with this function. That silently orphaned
+    // every device that registered before Phase 0/1 shipped — their
+    // notificationDevices doc already existed, so they'd never get a
+    // pairedDevices row created at all, and Phase 2's fanOutQueuedMessage
+    // trigger (which fans a message out to a recipient's *confirmed*
+    // pairedDevices rows) would find zero devices for them and messages
+    // would silently stop delivering. Checking pairedDevices existence
+    // independently instead means ANY device without one — whether it's
+    // truly new, or an existing device syncing for the first time since
+    // this feature shipped — gets backfilled as main here. A confirmed
+    // companion (paired via redeemPairingCode, which always creates its
+    // pairedDevices row transactionally BEFORE this function can ever run
+    // for it) always has one already, so this branch correctly never
+    // touches it or its `role` field.
+    const pairedDeviceRef = getFirestore()
+        .collection(USER_COLLECTION)
+        .doc(userId)
+        .collection("pairedDevices")
+        .doc(deviceId);
+    try {
+        const pairedDeviceSnap = await pairedDeviceRef.get();
+        if (!pairedDeviceSnap.exists) {
+            payload.role = "main";
+            await pairedDeviceRef.set({
                 deviceId,
-                error: error instanceof Error ? { name: error.name, message: error.message } : { message: "Unknown error" },
-            });
+                platform: input.platform,
+                deviceName: normalizeString(input.deviceName),
+                modelName: normalizeString(input.modelName),
+                isMainDevice: true,
+                pairingStatus: "confirmed",
+                pairedAt: FieldValue.serverTimestamp(),
+                lastSeenAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
         }
+    } catch (error) {
+        // Best-effort — the notificationDevices write below is the
+        // primary record; a failure here just means the Linked Devices
+        // screen won't show this device (and Phase 2's message fan-out
+        // won't reach it) until the next successful sync.
+        logger.warn("syncNotificationDeviceRecord: failed to backfill/write main pairedDevices record", {
+            userId,
+            deviceId,
+            error: error instanceof Error ? { name: error.name, message: error.message } : { message: "Unknown error" },
+        });
     }
 
     if (safeToken && previousToken !== safeToken) {

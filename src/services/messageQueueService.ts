@@ -305,14 +305,24 @@ export const listenForMessageReceipts = (
 };
 
 /**
- * Listen for incoming messages in current user's queue.
- * Uses child listeners so each queue entry is processed once and avoids full path rescans.
+ * Shared body for listenForMessages (legacy, per-user path) and
+ * listenForMessagesOnDevice (doc 31 §3.1/§5 Phase 2, per-device path) — both
+ * run concurrently in ChatContext.tsx during the migration window (see that
+ * file's comment): a recipient without a confirmed pairedDevices row yet
+ * still gets messages via the legacy path (fanOutQueuedMessage leaves it
+ * untouched when it finds zero confirmed devices), while a recipient who
+ * has one gets them via the fanned-out per-device path instead.
+ * saveMessageLocally dedupes by message id, so a message the transition
+ * window's rare race delivers via both paths is a harmless double-write,
+ * not a duplicate message.
  */
-export const listenForMessages = (
+const attachQueueListener = (
+  queuePath: string,
+  deletePath: (messageId: string) => string,
   userId: string,
   onMessageReceived: (message: ChatMessage) => Promise<void>
 ): (() => void) => {
-  const queueRef = ref(rtdb, `messageQueue/${userId}`);
+  const queueRef = ref(rtdb, queuePath);
   const processingMessageIds = new Set<string>();
 
   const processMessageSnapshot = async (snapshot: DataSnapshot): Promise<void> => {
@@ -378,7 +388,7 @@ export const listenForMessages = (
 
       await onMessageReceived(message);
       await sendDeliveryReceipt(payload.chatId, messageId, userId, payload.isGroupChat ?? false);
-      await remove(ref(rtdb, `messageQueue/${userId}/${messageId}`));
+      await remove(ref(rtdb, deletePath(messageId)));
       console.log('✅ Message delivered and removed from queue:', messageId);
     } catch (error) {
       console.error('❌ Error processing message:', error);
@@ -400,6 +410,41 @@ export const listenForMessages = (
     unsubscribeChanged();
   };
 };
+
+/**
+ * Listen for incoming messages in current user's LEGACY (per-user, not
+ * per-device) queue. Kept as a dual-listen fallback (see
+ * attachQueueListener's comment) for any recipient without a confirmed
+ * pairedDevices row yet — new code should prefer listenForMessagesOnDevice.
+ */
+export const listenForMessages = (
+  userId: string,
+  onMessageReceived: (message: ChatMessage) => Promise<void>
+): (() => void) =>
+  attachQueueListener(
+    `messageQueue/${userId}`,
+    (messageId) => `messageQueue/${userId}/${messageId}`,
+    userId,
+    onMessageReceived
+  );
+
+/**
+ * Listen for incoming messages on THIS device's own fanned-out queue
+ * (doc 31 §3.1/§5 Phase 2) — messageQueueDevices/{userId}/{deviceId},
+ * populated server-side by functions/src/messageFanout.ts's
+ * fanOutQueuedMessage trigger, never written to directly by any client.
+ */
+export const listenForMessagesOnDevice = (
+  userId: string,
+  deviceId: string,
+  onMessageReceived: (message: ChatMessage) => Promise<void>
+): (() => void) =>
+  attachQueueListener(
+    `messageQueueDevices/${userId}/${deviceId}`,
+    (messageId) => `messageQueueDevices/${userId}/${deviceId}/${messageId}`,
+    userId,
+    onMessageReceived
+  );
 
 /**
  * Send delivery receipt to sender (supports both 1:1 and group chats)

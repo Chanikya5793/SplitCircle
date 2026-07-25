@@ -39,8 +39,11 @@ export const LiveKitService = {
      * @param roomName - The unique room id for the call session
      * @param chatId - Chat that owns the call
      * @param participantName - Display name for LiveKit participant
+     * @param deviceId - This device's own id (doc 31 §3.9/§5 Phase 2) —
+     *   gives each of this user's devices a distinct room identity
+     *   (`${uid}:${deviceId}`) instead of colliding under a shared `uid`.
      */
-    getToken: async (roomName: string, chatId: string, participantName: string): Promise<TokenResult> => {
+    getToken: async (roomName: string, chatId: string, participantName: string, deviceId: string): Promise<TokenResult> => {
         const endpointUrl = getValidatedTokenEndpoint();
 
         const currentUser = getAuth().currentUser;
@@ -61,6 +64,7 @@ export const LiveKitService = {
                 roomName,
                 chatId,
                 name: participantName,
+                deviceId,
             }),
         });
 
