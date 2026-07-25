@@ -1330,6 +1330,28 @@ when Phase 3 actually implements it.
   CDN fetch of the 153MB prebuilt archive is reliable in a headless CI build;
   release-build binary size impact once the archive is linked into a stripped
   Release slice.
+- **Crypto core BUILT 2026-07-25 (commit `68b05af`), round-trip verified.**
+  `modules/splitcircle-crypto/ios/` now holds the real engine: `SignalStorage`
+  (Keychain for the device secret + a file-per-record blob store, since a Signal
+  session is rewritten on every message; not SQLite, per CLAUDE.md's
+  libsqlite3/expo-sqlite linker caution), `SignalProtocolStores` (all six
+  libsignal protocols, signatures read from the vendored source rather than
+  guessed), `SignalSessionEngine` (identity bootstrap, prekey bundle export,
+  session establishment, encrypt/decrypt), and a JS bridge that serializes every
+  call on one queue — concurrent ops on one session corrupt the ratchet, the
+  same failure class as CLAUDE.md's `serializeFm` gotcha. Private keys never
+  cross the bridge.
+  **Verified** (simulator, Release) by a two-party round trip against
+  libsignal's own `InMemorySignalProtocolStore` as a synthetic peer:
+  `outboundOK=true` (type 3 PreKey handshake decrypted by the peer),
+  `inboundOK=true` (type 2 Whisper reply decrypted by our persistent store),
+  `sessionPersisted=true`. The inbound leg is the one that matters — it only
+  decrypts if our store really persisted the session the handshake produced.
+  **Still to wire before Phase 3 closes**: publishing bundles to
+  `users/{uid}/signalPrekeys/{deviceId}`, minting the small-integer libsignal
+  device id at pairing (§3.4 doesn't account for it yet), one-time-prekey
+  claiming/replenishment, and the actual message send/receive path. Group
+  (sender-key) messaging deliberately throws rather than being half-built.
 - Other risks carried from the original plan, still unresolved: no hot-swap
   iteration during this phase (§3.10 gotcha #6); Sender Key rekey volume
   against the RTDB reaper (§3.10 gotcha #8) — re-validate reaper batch sizing
