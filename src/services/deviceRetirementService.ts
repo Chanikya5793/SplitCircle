@@ -73,6 +73,15 @@ interface RestoreVerified {
   batchesDecrypted: number;
   totalMessagesSeen: number;
   attestationCreatedAt: number;
+  /**
+   * Signature over the canonical ack payload by the VERIFIER's identity key.
+   *
+   * Without this the ack was forgeable: the attestation was signed but the ack
+   * was not, so anyone who could write to the container could publish a
+   * "verified" record and unlock retirement without any backup ever being
+   * read. Found in the Phase 6/7 adversarial review.
+   */
+  signature: string;
 }
 
 const encodeJson = (value: unknown): string =>
@@ -88,6 +97,16 @@ const decodeJson = <T>(base64: string): T =>
  * verifier must reconstruct this byte-for-byte, so it can never depend on
  * JSON key ordering from elsewhere.
  */
+const ackPayload = (a: Omit<RestoreVerified, 'signature'>): string =>
+  encodeJson({
+    version: a.version,
+    verifierDeviceId: a.verifierDeviceId,
+    verifiedAt: a.verifiedAt,
+    batchesDecrypted: a.batchesDecrypted,
+    totalMessagesSeen: a.totalMessagesSeen,
+    attestationCreatedAt: a.attestationCreatedAt,
+  });
+
 const attestationPayload = (a: Omit<RetirementAttestation, 'signature' | 'identityKey'>): string =>
   encodeJson({
     version: a.version,
@@ -211,7 +230,7 @@ export const assessRetirementReadiness = async (
         message: 'Start the retirement check to publish your backup details for your other device.',
       });
     } else {
-      const ack = await readAnyVerification(passphrase, others.map((d) => d.deviceId));
+      const ack = await readVerifiedAck(userId, passphrase, others.map((d) => d.deviceId));
       if (!ack) {
         blockers.push({
           code: 'awaiting_verification',
@@ -249,22 +268,50 @@ const readAttestation = async (passphrase: string): Promise<RetirementAttestatio
   }
 };
 
-const readAnyVerification = async (
+/**
+ * Reads an ack from another device AND verifies its signature against that
+ * device's published identity key.
+ *
+ * An unverified ack is discarded rather than trusted: writing to the container
+ * proves only iCloud access, and this gate is what unlocks wiping a phone.
+ */
+const readVerifiedAck = async (
+  userId: string,
   passphrase: string,
   deviceIds: string[],
 ): Promise<RestoreVerified | null> => {
+  const candidates: RestoreVerified[] = [];
+
   await beginBackupSession(passphrase);
   try {
     for (const deviceId of deviceIds) {
       const chunk = await restoreChunk(RECORD_TYPE.manifest, `${VERIFIED_RECORD_ID_PREFIX}${deviceId}`);
-      if (chunk) return decodeJson<RestoreVerified>(chunk.payloadBase64);
+      if (chunk) candidates.push(decodeJson<RestoreVerified>(chunk.payloadBase64));
     }
-    return null;
   } catch {
     return null;
   } finally {
     await endBackupSession();
   }
+
+  for (const ack of candidates) {
+    const identityKey = await getIdentityKeyForDevice(userId, ack.verifierDeviceId);
+    if (!identityKey) continue;
+    const valid = await verifyWithIdentity(
+      ackPayload({
+        version: ack.version,
+        verifierDeviceId: ack.verifierDeviceId,
+        verifiedAt: ack.verifiedAt,
+        batchesDecrypted: ack.batchesDecrypted,
+        totalMessagesSeen: ack.totalMessagesSeen,
+        attestationCreatedAt: ack.attestationCreatedAt,
+      }),
+      ack.signature ?? '',
+      identityKey,
+    ).catch(() => false);
+    if (valid) return ack;
+  }
+  return null;
 };
 
 /**
@@ -331,6 +378,21 @@ export const verifyBackupAsSecondDevice = async (
     return { ok: false, batchesDecrypted: 0, failures: ['No attestation published yet.'] };
   }
 
+  // A device must not verify its OWN attestation. §3.7's trust anchor is an
+  // INDEPENDENT device proving the backup is readable; self-verification
+  // proves nothing and would collapse the two-device requirement to one.
+  // (readAnyVerification only looks at other devices' acks, so this was
+  // already mitigated — but relying on that coupling is fragile, so refuse
+  // explicitly at the source.)
+  const ownDeviceId = await getCurrentDeviceId();
+  if (attestation.deviceId === ownDeviceId) {
+    return {
+      ok: false,
+      batchesDecrypted: 0,
+      failures: ['This device published the attestation — another device has to verify it.'],
+    };
+  }
+
   const signatureValid = await verifyWithIdentity(
     attestationPayload(attestation),
     attestation.signature,
@@ -379,13 +441,17 @@ export const verifyBackupAsSecondDevice = async (
     return { ok: false, batchesDecrypted, failures };
   }
 
-  const ack: RestoreVerified = {
-    version: 1,
+  const ackBase = {
+    version: 1 as const,
     verifierDeviceId: await getCurrentDeviceId(),
     verifiedAt: Date.now(),
     batchesDecrypted,
     totalMessagesSeen,
     attestationCreatedAt: attestation.createdAt,
+  };
+  const ack: RestoreVerified = {
+    ...ackBase,
+    signature: await signWithIdentity(ackPayload(ackBase)),
   };
 
   await beginBackupSession(passphrase);

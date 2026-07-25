@@ -31,10 +31,11 @@ import { getChatMessages, getLocalMessageStats, saveMessageLocally } from '@/ser
 import { getCurrentDeviceId } from '@/services/pairingService';
 import {
   decryptEnvelope,
-  encryptForAllDevices,
+  ensureSessionWithDevice,
   getCachedSignalDeviceId,
   listSignalDevices,
 } from '@/services/signalCryptoService';
+import { encryptForDevice } from '../../modules/splitcircle-crypto';
 import type { ChatMessage } from '@/models';
 
 /** §3.3 / decision #9: the bounded window a new device receives. */
@@ -129,12 +130,17 @@ export const sendHistoryHandoff = async (
 
   const bundleKey = randomKeyBase64();
 
-  // The key travels inside a Signal envelope addressed to the target device,
-  // so CloudKit relays something it can never read. encryptForAllDevices is
-  // filtered to the single target rather than fanned out.
-  const envelopes = await encryptForAllDevices(userId, bundleKey);
-  const keyEnvelope = envelopes.find((e) => e.deviceId === targetDeviceId)?.envelope;
-  if (!keyEnvelope) return null;
+  // The key travels inside a Signal envelope addressed ONLY to the target.
+  //
+  // Previously this called encryptForAllDevices and discarded every envelope
+  // but one — which established sessions with, and encrypted the bundle key
+  // for, every device on the account just to talk to a single new one. Worse,
+  // an unrelated device that could not be encrypted for would reduce the
+  // result set and could drop the target's own envelope. Encrypt to exactly
+  // the device this handoff is for.
+  const ready = await ensureSessionWithDevice(userId, target.signalDeviceId, targetDeviceId);
+  if (!ready) return null;
+  const keyEnvelope = await encryptForDevice(userId, target.signalDeviceId, bundleKey);
 
   const chunkCount = Math.ceil(windowed.length / MESSAGES_PER_CHUNK);
   onProgress?.({ phase: 'preparing', chunksDone: 0, chunksTotal: chunkCount, messagesDone: 0 });
@@ -275,7 +281,22 @@ export const receiveHistoryHandoff = async (
       body: envelopeBody,
     });
 
-    const existing = await readCheckpoint();
+    // A checkpoint only applies to the handoff it was recorded against.
+    //
+    // Without this comparison, a SECOND handoff (new manifest, new key, new
+    // chunk set) inherited the previous run's importedChunks and skipped those
+    // indices outright — producing a silently incomplete window that then
+    // reported success, which is precisely the failure §5 Phase 6 says must
+    // not happen. Found in the Phase 6/7 adversarial review; manifestCreatedAt
+    // was being written to the checkpoint but never read back.
+    const manifestCreatedAt = Number(meta.createdAt ?? 0);
+    const existingRaw = await readCheckpoint();
+    const existing =
+      existingRaw && existingRaw.manifestCreatedAt === manifestCreatedAt ? existingRaw : null;
+    if (existingRaw && !existing) {
+      await clearHandoffCheckpoint();
+    }
+
     const imported = new Set(existing?.importedChunks ?? []);
     let messagesImported = existing?.messagesImported ?? 0;
 
@@ -300,7 +321,7 @@ export const receiveHistoryHandoff = async (
         // that chunk rather than skipping it. saveMessageLocally dedupes by
         // id, so re-importing is harmless.
         await writeCheckpoint({
-          manifestCreatedAt: Number(meta.createdAt ?? 0),
+          manifestCreatedAt,
           importedChunks: [...imported],
           messagesImported,
         });
