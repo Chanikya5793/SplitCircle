@@ -1446,7 +1446,61 @@ when Phase 3 actually implements it.
   against the RTDB reaper (§3.10 gotcha #8) — re-validate reaper batch sizing
   before shipping group E2E.
 
-### Phase 4 — CloudKit backup engine
+### Phase 4 — CloudKit backup engine — ENGINE BUILT + ROUND-TRIP VERIFIED 2026-07-25
+
+**Status**: the storage engine, passphrase layer and export/import orchestration
+are built and verified end-to-end against real iCloud on a physical iPhone 17
+Pro. What remains is the USER-FACING half: passphrase enrollment UX (§3.5),
+scheduling (§3.6, Phase 5), media/`CKAsset` and call-history record types, and
+the retirement gate that consumes the manifest (§3.7, Phase 7).
+
+**Provisioning gate, resolved 2026-07-25.** The App ID had iCloud ticked but
+ZERO containers, so the provisioning profile carried
+`icloud-container-identifiers` as an EMPTY array and every CloudKit call would
+have failed at runtime. Registered `iCloud.com.splitcircle.app` ("SplitCircle
+Backup"), assigned it to the App ID, THEN added the entitlement — that order
+matters, per the rule the App Group note in `SplitCircle.entitlements` already
+states. Verified by `codesign -d --entitlements` on the built app, not just by
+the file. Enabling the capability invalidated existing provisioning profiles;
+EAS regenerates on the next `ship:ios`.
+
+**Verified on device** (temporary probe, since reverted):
+```
+HEALTH    available=true
+EXPORT    ok  chats=10 msgs=153 ms=7293
+IMPORT    ok  restored=153 missing=0
+WRONGPASS ok: rejected as expected
+```
+153 messages out, 153 back, zero missing, and a wrong passphrase fails cleanly.
+
+**The bug the round trip caught — the reason it was worth running.** Export
+worked on the first try; import failed instantly with "the passphrase is wrong
+or the data is corrupt" against a backup written seconds earlier under the same
+passphrase. `importBackup` opened a session with the passphrase but no salt,
+minting a FRESH random salt and a key that decrypted nothing. The salt lives
+inside the backup, so a restore cannot know it up front — and reading the backup
+needs the key, which needs the salt. `backupService`'s own comment asserted the
+native layer extracted the salt from the envelope; `extractSalt` existed but was
+never called, so the mechanism the comment described simply did not exist.
+`unwrap` now re-derives from the envelope's salt/iterations, which is what makes
+the format genuinely self-describing. **A doc comment describing a mechanism is
+not evidence the mechanism is wired — this one read as correct for two
+commits.**
+
+**KDF caveat, unresolved by design.** §3.5 specifies "Argon2id, PBKDF2
+fallback"; what shipped is the PBKDF2 fallback (600k iterations, OWASP's floor),
+because Argon2id is absent from CryptoKit and libsignal's Swift bindings expose
+only HKDF, so adopting it means a new native dependency. Argon2id is memory-hard
+and materially better against offline GPU cracking of a backup passphrase —
+exactly this threat model. The envelope reserves `kdf = 2` so it can be adopted
+without stranding existing backups. **Decide this before backups ship to
+users.**
+
+**Left in the test account's iCloud**: the probe wrote a real backup under a
+throwaway passphrase. Record ids are stable (`manifest-current`,
+`msg-<chatId>-<n>`), so the first genuine backup overwrites it.
+
+#### Original plan (still accurate for the remaining work)
 **Goal**: main-device-only bulk export to CloudKit, provider-agnostic,
 passphrase + `encryptedValues` protected.
 - `CloudKitBackupProvider.swift` via raw `CKModifyRecordsOperation`/
