@@ -17,6 +17,7 @@ import {
 } from 'firebase/database';
 import type { ChatMessage, MessageType } from '@/models';
 import { downloadMedia } from '@/services/mediaService';
+import { decryptMessageEnvelope, encryptMessageForRecipient } from '@/services/messageEnvelope';
 
 // Get Realtime Database instance
 const rtdb = getDatabase();
@@ -255,8 +256,44 @@ export const queueMessage = async (
       };
     }
 
+    // E2E encryption (doc 31 §3.3). Encrypt the fields §3.3 scopes as private
+    // — content, and the replyTo/location snippets that quote it — once per
+    // recipient device, since every paired device is its own Signal endpoint
+    // with its own session. Left plaintext, deliberately and per §3.3: chatId,
+    // senderId, timestamp, type, delivery bookkeeping and expenseRef, which
+    // points at a Firestore doc that is not itself E2E'd.
+    //
+    // ALL-OR-NOTHING per message: if any one of the recipient's devices can't
+    // be encrypted for, the whole message goes plaintext. A partial send would
+    // silently drop the message on that device (it would receive an envelope
+    // it cannot open, or none at all), which is worse than the status quo.
+    // This fallback is a ROLLOUT measure, not the end state — it means an
+    // attacker who can suppress key publication can force plaintext, so it
+    // must be removed once every client publishes keys (doc 31 §5 Phase 3).
+    const encrypted = await encryptMessageForRecipient(recipientId, {
+      content: message.content,
+      replyToContent: message.replyTo?.content,
+      location: message.location,
+    });
+
+    if (encrypted) {
+      messageData.envelopes = encrypted.envelopes;
+      messageData.senderSignalDeviceId = encrypted.senderSignalDeviceId;
+      messageData.encrypted = true;
+      // Blank the plaintext copies now that ciphertext carries them. Not
+      // deleted outright: the receive path and every existing consumer expect
+      // these keys to exist, and RTDB treats undefined as "remove field".
+      messageData.content = '';
+      if (messageData.replyTo && typeof messageData.replyTo === 'object') {
+        (messageData.replyTo as Record<string, unknown>).content = '';
+      }
+      if (messageData.location) {
+        messageData.location = null;
+      }
+    }
+
     await set(messageQueueRef, messageData);
-    console.log('✅ Message queued for:', recipientId);
+    console.log('✅ Message queued for:', recipientId, encrypted ? '(encrypted)' : '(plaintext)');
   } catch (error) {
     console.error('❌ Error queuing message:', error);
     throw error;
@@ -335,10 +372,32 @@ const attachQueueListener = (
       return;
     }
 
-    const payload = parseQueuePayload(snapshot.val());
+    const raw = snapshot.val();
+    const payload = parseQueuePayload(raw);
     if (!payload) {
       console.warn('⚠️ Invalid queue message payload, skipping:', messageId);
       return;
+    }
+
+    // E2E decrypt (doc 31 §3.3). fanOutQueuedMessage hands each device only
+    // its OWN envelope, so `envelope` here is already the one addressed to us.
+    // On failure we keep going with whatever plaintext the payload carried:
+    // dropping the message would make a dead session (peer reinstalled, new
+    // identity) look like permanent message loss.
+    const envelope = raw?.envelope as { t?: number; b?: string } | undefined;
+    const senderSignalDeviceId = Number(raw?.senderSignalDeviceId);
+    if (envelope?.b != null && envelope?.t != null && Number.isFinite(senderSignalDeviceId)) {
+      const decrypted = await decryptMessageEnvelope(payload.senderId, senderSignalDeviceId, {
+        t: envelope.t,
+        b: envelope.b,
+      });
+      if (decrypted) {
+        if (typeof decrypted.content === 'string') payload.content = decrypted.content;
+        if (payload.replyTo && typeof decrypted.replyToContent === 'string') {
+          payload.replyTo.content = decrypted.replyToContent;
+        }
+        if (decrypted.location) payload.location = decrypted.location;
+      }
     }
 
     processingMessageIds.add(messageId);

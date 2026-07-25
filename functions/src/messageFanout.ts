@@ -63,9 +63,36 @@ export const fanOutQueuedMessage = onValueCreated(
                 return;
             }
 
+            // E2E (doc 31 §3.3): the sender encrypts once per recipient device
+            // and ships a { deviceId -> envelope } map, because each device is
+            // its own Signal endpoint with its own session. Hand each device
+            // ONLY its own envelope and strip the map — forwarding the whole
+            // thing would hand every device every other device's ciphertext.
+            const envelopes = (payload as Record<string, unknown>).envelopes as
+                | Record<string, unknown>
+                | undefined;
+
             const updates: Record<string, unknown> = {};
             for (const deviceDoc of devicesSnap.docs) {
-                updates[`messageQueueDevices/${recipientId}/${deviceDoc.id}/${messageId}`] = payload;
+                let devicePayload = payload;
+                if (envelopes) {
+                    const envelope = envelopes[deviceDoc.id];
+                    if (!envelope) {
+                        // No envelope for this device: it published keys after
+                        // the sender enumerated them. Skip rather than deliver
+                        // an unopenable message — the sender's all-or-nothing
+                        // rule means a genuinely undeliverable device should be
+                        // covered by the next message once it has keys.
+                        logger.warn("fanOutQueuedMessage: no envelope for device", {
+                            recipientId,
+                            messageId,
+                            deviceId: deviceDoc.id,
+                        });
+                        continue;
+                    }
+                    devicePayload = { ...payload, envelope, envelopes: null };
+                }
+                updates[`messageQueueDevices/${recipientId}/${deviceDoc.id}/${messageId}`] = devicePayload;
             }
             // This function is the sole deleter of the relay node — avoids a
             // multi-device race where each device's own listener tries to
