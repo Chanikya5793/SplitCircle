@@ -39,6 +39,7 @@ import {
   listenForMessagesOnDevice,
   listenForReceipts,
   queueMessage,
+  queueMessageToOwnDevices,
   registerReceiptParticipant,
   sendBulkReadReceipts,
 } from '@/services/messageQueueService';
@@ -635,6 +636,12 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         for (const recipientId of recipientIds) {
           await queueMessage(recipientId, message, isGroupChat);
         }
+
+        // Mirror to this user's OWN other devices (doc 31 §3.3). Once per
+        // message, deliberately outside the loop above — inside it, a group
+        // chat would mirror the same message to our devices once per
+        // participant. No-ops on a single-device account.
+        await queueMessageToOwnDevices(user.userId, message, isGroupChat);
 
         console.log(`✅ ${type} message sent and queued`);
 

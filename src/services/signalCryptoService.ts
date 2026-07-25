@@ -155,10 +155,17 @@ export const ensureSessionWithDevice = async (
 export const encryptForAllDevices = async (
   peerUserId: string,
   plaintextBase64: string,
+  excludeDeviceId?: string,
 ): Promise<{ deviceId: string; signalDeviceId: number; envelope: SignalEnvelope }[]> => {
   if (!isCryptoAvailable()) return [];
 
-  const devices = await listSignalDevices(peerUserId);
+  // `excludeDeviceId` exists for the sender's own fan-out: a device must never
+  // try to build a Signal session with ITSELF. Both sides would be the same
+  // identity in the same store, which is meaningless and would corrupt the
+  // store's view of that address.
+  const devices = (await listSignalDevices(peerUserId)).filter(
+    (device) => device.deviceId !== excludeDeviceId,
+  );
   const results: { deviceId: string; signalDeviceId: number; envelope: SignalEnvelope }[] = [];
 
   for (const device of devices) {

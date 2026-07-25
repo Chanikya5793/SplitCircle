@@ -72,8 +72,18 @@ export const fanOutQueuedMessage = onValueCreated(
                 | Record<string, unknown>
                 | undefined;
 
+            // Self-sync (doc 31 §3.3): when a user mirrors their own sent
+            // message to their other devices, the sending device must be
+            // skipped — it already has the message locally, and delivering it
+            // back would re-save it and, worse, hand it a ciphertext encrypted
+            // to a session it does not hold.
+            const originDeviceId = (payload as Record<string, unknown>).originDeviceId;
+
             const updates: Record<string, unknown> = {};
             for (const deviceDoc of devicesSnap.docs) {
+                if (originDeviceId && deviceDoc.id === originDeviceId) {
+                    continue;
+                }
                 let devicePayload = payload;
                 if (envelopes) {
                     const envelope = envelopes[deviceDoc.id];

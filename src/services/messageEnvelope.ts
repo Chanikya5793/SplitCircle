@@ -59,6 +59,7 @@ const fromBase64 = (input: string): string =>
 export const encryptMessageForRecipient = async (
   recipientId: string,
   fields: EncryptedFields,
+  excludeDeviceId?: string,
 ): Promise<EncryptedMessageParts | null> => {
   if (!isCryptoAvailable()) return null;
 
@@ -67,11 +68,16 @@ export const encryptMessageForRecipient = async (
   // decrypt against, so there is nothing safe to send.
   if (!senderSignalDeviceId) return null;
 
-  const devices = await listSignalDevices(recipientId);
+  const devices = (await listSignalDevices(recipientId)).filter(
+    (device) => device.deviceId !== excludeDeviceId,
+  );
+  // Zero devices is legitimate for a SELF fan-out (this is the account's only
+  // device), and means there is simply nothing to send — distinct from "we
+  // could not encrypt", which is why callers check for an empty envelope map.
   if (devices.length === 0) return null;
 
   const plaintext = toBase64(JSON.stringify(fields));
-  const results = await encryptForAllDevices(recipientId, plaintext);
+  const results = await encryptForAllDevices(recipientId, plaintext, excludeDeviceId);
 
   // Strict equality, not >= 1: see the all-or-nothing note above.
   if (results.length !== devices.length) return null;

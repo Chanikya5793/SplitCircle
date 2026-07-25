@@ -18,6 +18,7 @@ import {
 import type { ChatMessage, MessageType } from '@/models';
 import { downloadMedia } from '@/services/mediaService';
 import { decryptMessageEnvelope, encryptMessageForRecipient } from '@/services/messageEnvelope';
+import { getOrCreateInstallationId } from '@/services/notificationService';
 
 // Get Realtime Database instance
 const rtdb = getDatabase();
@@ -301,6 +302,79 @@ export const queueMessage = async (
 };
 
 /**
+ * Mirrors a message the user just sent to their OWN other devices (doc 31
+ * §3.3: "each recipient device — and each of the sender's own other devices —
+ * gets its own ciphertext").
+ *
+ * Called ONCE per message, never once per recipient: in a group chat
+ * queueMessage runs per participant, and doing this inside it would mirror the
+ * same message to our own devices N times.
+ *
+ * `originDeviceId` travels in the payload so fanOutQueuedMessage can skip the
+ * device that sent it — without that, this device would receive its own
+ * message straight back.
+ */
+export const queueMessageToOwnDevices = async (
+  senderId: string,
+  message: ChatMessage,
+  isGroupChat: boolean = false
+): Promise<void> => {
+  try {
+    const originDeviceId = await getOrCreateInstallationId();
+
+    const encrypted = await encryptMessageForRecipient(
+      senderId,
+      {
+        content: message.content,
+        replyToContent: message.replyTo?.content,
+        location: message.location,
+      },
+      // Never encrypt to ourselves — a device cannot hold a Signal session
+      // with its own identity.
+      originDeviceId,
+    );
+
+    // No other device of ours has published keys (single-device account, or
+    // the others haven't synced yet) — nothing to mirror, and falling back to
+    // plaintext here would put our own message content in transit for no
+    // benefit, since there is no device waiting to read it.
+    if (!encrypted || Object.keys(encrypted.envelopes).length === 0) {
+      return;
+    }
+
+    const messageData: Record<string, unknown> = {
+      senderId: message.senderId,
+      chatId: message.chatId,
+      requestId: message.requestId,
+      content: '',
+      type: message.type,
+      timestamp: message.timestamp,
+      mediaUrl: message.mediaUrl || null,
+      thumbnailUrl: message.thumbnailUrl || null,
+      isGroupChat,
+      originDeviceId,
+      envelopes: encrypted.envelopes,
+      senderSignalDeviceId: encrypted.senderSignalDeviceId,
+      encrypted: true,
+    };
+
+    if (message.mediaMetadata) messageData.mediaMetadata = message.mediaMetadata;
+    if (message.replyTo?.messageId) {
+      messageData.replyTo = { ...message.replyTo, content: '' };
+    }
+    if (message.forwardedFrom) messageData.forwardedFrom = message.forwardedFrom;
+    if (message.expenseRef) messageData.expenseRef = message.expenseRef;
+
+    await set(ref(rtdb, `messageQueue/${senderId}/${message.id}`), messageData);
+  } catch (error) {
+    // Never fail the send because self-sync failed: the message already
+    // reached its actual recipients, and the user's other devices catching up
+    // is a convenience, not a delivery guarantee.
+    console.warn('⚠️ Failed to mirror message to own devices:', error);
+  }
+};
+
+/**
  * Register the current user as a permitted receipt reader for a chat.
  * This is used by RTDB rules to scope receipt reads.
  */
@@ -373,6 +447,18 @@ const attachQueueListener = (
     }
 
     const raw = snapshot.val();
+
+    // An `envelopes` MAP means this is the shared relay node
+    // (messageQueue/{userId}/{id}) that fanOutQueuedMessage hasn't processed
+    // yet — its content is blanked and the per-device ciphertext hasn't been
+    // split out. The legacy dual-listen subscription sees that node too, so
+    // without this guard it would race the trigger and save the message with
+    // EMPTY content, blanking a message that is about to arrive properly.
+    // A correctly fanned-out payload carries a singular `envelope` and no map.
+    if (raw && typeof raw === 'object' && (raw as Record<string, unknown>).envelopes) {
+      return;
+    }
+
     const payload = parseQueuePayload(raw);
     if (!payload) {
       console.warn('⚠️ Invalid queue message payload, skipping:', messageId);
