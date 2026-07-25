@@ -1,31 +1,91 @@
 import ExpoModulesCore
 import LibSignalClient
 
-/// Phase 3 gate-2 spike (doc 31 §5). ONE function, calling ONE real
-/// libsignal API, to prove the LibSignalClient pod actually links and runs
-/// inside this repo's New-Architecture + STATIC-framework build — not to
-/// do anything useful yet. Real per-device identity/session/store logic is
-/// deliberately NOT here; it lands only once this spike is verified on a
-/// real build (gate 2 in doc 31's hard-gated sequence).
+/// JS bridge for per-device Signal sessions (doc 31 §3.3, Phase 3).
 ///
-/// VERIFIED 2026-07-25 on a physical iPhone 17 Pro (Release build, device
-/// arm64): this function ran and returned a real 69-byte serialized keypair.
-/// Nothing in the app calls it, so it is dead code at runtime — kept only as
-/// the executable proof that the libsignal toolchain works end-to-end. Delete
-/// it once real key management lands.
+/// Everything runs on ONE serial queue. This is not incidental: a Signal
+/// session's ratchet state is rewritten by every encrypt/decrypt, so two
+/// concurrent operations on the same session corrupt it — and this repo has
+/// already been burned once by exactly this class of bug, where concurrent
+/// Foundation Models calls raced the Expo module plumbing and corrupted the
+/// Hermes heap (CLAUDE.md's `serializeFm` gotcha). Serializing here is the
+/// native-side counterpart of that rule; JS callers get no way to opt out.
 ///
-/// Gotcha found while verifying: a Release build's JS `console.error` does NOT
-/// reach the device log, so JS-side probes are invisible there. Use `NSLog`
-/// from native (or write to the app container) when instrumenting a Release
-/// build on a real device.
+/// Private key material never crosses this bridge. JS sees only public prekey
+/// bundles, ciphertext, and plaintext it already had.
 public class SplitCircleCryptoModule: Module {
+  private let queue = DispatchQueue(label: "com.splitcircle.app.signal", qos: .userInitiated)
+  private var engineStorage: SignalSessionEngine?
+
+  private func engine() throws -> SignalSessionEngine {
+    if let existing = engineStorage { return existing }
+    let created = try SignalSessionEngine()
+    engineStorage = created
+    return created
+  }
+
+  /// Hops onto the serial queue and rethrows into Expo's promise machinery.
+  private func onQueue<T>(_ work: @escaping () throws -> T) throws -> T {
+    try queue.sync { try work() }
+  }
+
   public func definition() -> ModuleDefinition {
     Name("SplitCircleCrypto")
 
-    AsyncFunction("spikeGenerateIdentityKeyPair") { () -> String in
-      let identity = IdentityKeyPair.generate()
-      let serialized = identity.serialize()
-      return Data(serialized).base64EncodedString()
+    /// Creates this device's identity if absent and records who we are.
+    /// `deviceId` is libsignal's SMALL-INTEGER device id (1-127), NOT this
+    /// repo's UUID installation id — see SignalSessionEngine's note.
+    AsyncFunction("bootstrap") { (userId: String, deviceId: Int) -> [String: Any] in
+      try self.onQueue { try self.engine().bootstrap(userId: userId, deviceId: UInt32(deviceId)) }
     }
+
+    AsyncFunction("hasIdentity") { () -> Bool in
+      try self.onQueue { try self.engine().hasIdentity }
+    }
+
+    /// Returns PUBLIC prekey material for publishing to
+    /// `users/{uid}/signalPrekeys/{deviceId}`. Safe to hand to Firestore.
+    AsyncFunction("generatePublishableBundle") { (oneTimeCount: Int) -> [String: Any] in
+      try self.onQueue { try self.engine().generatePublishableBundle(oneTimeCount: oneTimeCount) }
+    }
+
+    AsyncFunction("establishSession") { (userId: String, deviceId: Int, bundle: [String: Any]) in
+      try self.onQueue {
+        try self.engine().establishSession(userId: userId, deviceId: UInt32(deviceId), bundle: bundle)
+      }
+    }
+
+    AsyncFunction("hasSession") { (userId: String, deviceId: Int) -> Bool in
+      try self.onQueue { try self.engine().hasSession(userId: userId, deviceId: UInt32(deviceId)) }
+    }
+
+    /// Plaintext in, `{ type, body }` out — both base64 at the JS boundary so
+    /// the envelope survives RTDB/JSON transport unchanged.
+    AsyncFunction("encrypt") { (userId: String, deviceId: Int, plaintextBase64: String) -> [String: Any] in
+      guard let plaintext = Data(base64Encoded: plaintextBase64) else {
+        throw Exception(name: "InvalidArgument", description: "plaintext must be base64")
+      }
+      return try self.onQueue {
+        try self.engine().encrypt(userId: userId, deviceId: UInt32(deviceId), plaintext: plaintext)
+      }
+    }
+
+    AsyncFunction("decrypt") { (userId: String, deviceId: Int, type: Int, bodyBase64: String) -> String in
+      guard let body = Data(base64Encoded: bodyBase64) else {
+        throw Exception(name: "InvalidArgument", description: "body must be base64")
+      }
+      let plaintext: Data = try self.onQueue {
+        try self.engine().decrypt(userId: userId, deviceId: UInt32(deviceId), type: type, body: body)
+      }
+      return plaintext.base64EncodedString()
+    }
+
+    /// Destroys all Signal state on this device. Called on revocation (§3.7)
+    /// and account deletion (doc 28) — stale sessions would otherwise keep
+    /// decrypting a revoked peer's ciphertext.
+    AsyncFunction("wipe") {
+      try self.onQueue { try self.engine().wipe() }
+    }
+
   }
 }
