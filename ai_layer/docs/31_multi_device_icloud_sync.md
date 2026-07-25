@@ -1,7 +1,7 @@
 # 31 — Multi-Device Support + iCloud Backup/Sync
 
-Status: **ARCHITECTURE LOCKED, PHASES 0-2 BUILT, PHASE 3 SPIKED (RESEARCH
-ONLY)** (2026-07-25, branch `ui-revamp`).
+Status: **ARCHITECTURE LOCKED, PHASES 0-2 BUILT, PHASE 3 BLOCKED ON A REAL
+BUILD ISSUE** (2026-07-25, branch `ui-revamp`).
 §1's 23 decisions and §3's full architecture are locked from two rounds of
 research→verify→synthesize→adversarially-critique (all sonnet, sequential, per the
 user's explicit process instruction). The final adversarial critique
@@ -10,11 +10,15 @@ inline in §3, including the one genuine product/security tradeoff (§3.12,
 "lost every device" recovery model), confirmed by the product owner the same day.
 Phases 0, 1, and 2 (§5) are built — see each entry for exactly what landed and
 what's still unverified (no real native/simulator build has exercised any
-phase end-to-end yet). Phase 3's own explicit pre-implementation spike
-requirement has been researched (2026-07-25) but **no code has been written for
-it** — the spike surfaced a real, previously-unflagged project-wide native
-linkage risk (see Phase 3's entry) that needs a real build to verify, not just
-research; that build has not happened. Phases 3-8 remain not built.
+phase end-to-end yet). Phase 3's own explicit pre-implementation spike is
+in progress: the module scaffold and libsignal dependency are written, but
+`pod install` under the dynamic-framework linkage libsignal requires is
+currently failing for real, confirmed reasons (a CocoaPods validation error,
+root-caused against CocoaPods' own source — see Phase 3's entry) — this
+directly caught and corrected an earlier false "Gate 1 passed" claim in this
+same doc, worth reading in full before trusting any future linkage-related
+claim in this section without the same level of direct verification. Phases
+3-8 remain not built.
 
 ## 0. Goal (as stated by the user, 2026-07-24)
 
@@ -1193,46 +1197,61 @@ when Phase 3 actually implements it.
 
 - **Dependencies**: Phase 1 (device identities to build sessions against),
   Phase 2 (fan-out path to carry per-device ciphertext).
-- **Gate 1 — DONE and PASSED, 2026-07-25.** Flipped `ios.useFrameworks` to
-  `"dynamic"` in `Podfile.properties.json` (no crypto code at all — this
-  alone is the actual foundation the original risk callout was worried
-  about). `pod install` completed and surfaced exactly the kind of real,
-  concrete friction the spike existed to find: a CocoaPods warning that
-  `Pods-SplitCircle` has transitive dependencies with statically-linked
-  binaries (`ExpoModulesCore`, `ExpoModulesJSI`) — informational, not fatal,
-  but a genuine signal to be aware of if link errors ever surface on this
-  target later. **A full headless Xcode build then succeeded**
-  (`xcodebuild`, Debug config, iOS Simulator, ~1068s / 18 minutes, 7611
-  compiler warnings — all pre-existing header/deprecation noise unrelated to
-  this change, zero errors) — this is real, direct evidence that New
-  Architecture + `ios.buildReactNativeFromSource` + all five hand-maintained
-  native patches (react-native, callkeep, livekit-webrtc, bottom-tabs,
-  expo-sqlite) **do** compile and link cleanly under dynamic framework
-  linkage. Installed and launched the built `.app` on a real booted
-  simulator via `simctl install`/`simctl launch` (the Claude Code sim
-  panel's own attach tool has a known harness-side detection gap against
-  this simulator setup, unrelated to this change — worked around with direct
-  `simctl` calls, the CLAUDE.md-sanctioned fallback). App launched cleanly,
-  process stayed alive, rendered its native dev-client shell correctly
-  (fonts, native tab bar, touch-responsive UI), and `simctl log show`
-  filtered for fault/crash/error/exception showed nothing beyond expected
-  "no Metro dev server running" noise and one benign, unrelated
-  `PointerUI` XPC warning — no crash, no native-module-init failure. **Not
-  tested**: the actual JS bundle/React app UI (sign-in, chat, calls) — no
-  Metro dev server was started for this smoke test, so verification stopped
-  at "native shell launches and runs cleanly," not "every feature still
-  works." That's a real, meaningfully smaller remaining gap than the
-  dynamic-linkage question this gate existed to answer, but still an honest
-  one to name rather than silently claim full coverage. `Podfile.lock`
-  itself shows no diff from this change — expected, it tracks dependency
-  *versions*, not linkage mode, which lives in generated Xcode build
-  settings instead.
-- **Gate 2 — not started.** Scaffold `modules/splitcircle-crypto` with the
-  actual `LibSignalClient` pod dependency and one trivial function calling
-  `IdentityKeyPair.generate()`, confirm it links and returns a real value on
-  a real build. Only after this passes does writing the store protocols,
-  session establishment, and send/receive wiring described above make
-  sense.
+- **Gate 1 — CORRECTED 2026-07-25: the earlier "PASSED" claim in this doc was
+  wrong, and it's worth recording exactly how, since it's a real instance of
+  this codebase's own repeated lesson ("code shipping cleanly proves nothing
+  about whether the underlying system actually accepted it") biting the
+  verification process itself.** What actually happened: flipped
+  `ios.useFrameworks` to `"dynamic"`, ran `pod install`, saw a CocoaPods
+  message about `Pods-SplitCircle` having transitive dependencies with
+  statically-linked binaries (`ExpoModulesCore`, `ExpoModulesJSI`), read it
+  as an informational warning, and moved on to a full Xcode build — which
+  succeeded (~1068s, 7611 pre-existing warnings, zero errors), so it was
+  logged as Gate 1 passing. **That build success didn't mean what it looked
+  like it meant.** While investigating Gate 2's failure (below), a direct
+  check of `ios/Pods/Pods.xcodeproj/project.pbxproj` showed every single pod
+  target still built as `com.apple.product-type.library.static` — the file's
+  own mtime predates this entire session by three days. `pod install` had
+  actually been **exiting 1** (confirmed by capturing its exit code
+  explicitly, which the first pass never did) via CocoaPods'
+  `TargetValidator#verify_no_static_framework_transitive_dependencies`
+  (real source: `cocoapods-1.16.2/lib/cocoapods/installer/xcode/target_validator.rb:72-95`)
+  — a hard validation failure, not a warning, that aborts before CocoaPods
+  ever regenerates `Pods.xcodeproj` or rewrites `Podfile.lock`. The
+  subsequent Xcode build "succeeded" because it silently built against the
+  **stale, still-statically-linked project left over from before this
+  session** — it never touched dynamic framework linkage at all. Setting
+  Expo's `ios.forceStaticLinking` to `["ExpoModulesCore", "ExpoModulesJSI"]`
+  (its documented escape hatch for exactly this validator, per
+  `expo-modules-autolinking/scripts/ios/autolinking_manager.rb:40-46`) did
+  **not** resolve it either — same error, same exit code, on a clean rerun.
+  **Corrected status: the dynamic-linkage question Gate 1 exists to answer
+  is still open.** `pod install` under `use_frameworks!` fails validation in
+  this project's current Expo Modules configuration, independent of
+  libsignal entirely — this is a real, currently-unresolved blocker, not
+  informational noise, and it was true before `modules/splitcircle-crypto`
+  was ever scaffolded.
+- **Gate 2 — attempted, blocked on the same underlying Gate 1 issue.**
+  Scaffolded `modules/splitcircle-crypto` (podspec depending on
+  `LibSignalClient, '0.99.1'`, one Swift `AsyncFunction` calling
+  `IdentityKeyPair.generate()`) and added the required Podfile-level
+  `pod 'LibSignalClient', :podspec => 'https://raw.githubusercontent.com/signalapp/libsignal/v0.99.1/LibSignalClient.podspec'`
+  line — libsignal isn't on the public CocoaPods Trunk registry, so a
+  sub-module's `s.dependency` alone can't resolve it; only a top-level
+  Podfile `pod` line can carry a `:podspec`/`:git` source. With that fix,
+  `pod install` correctly located and started downloading `LibSignalClient`
+  — but then hit the exact same `verify_no_static_framework_transitive_dependencies`
+  failure Gate 1 actually had all along, so nothing downstream of it (the
+  spike function link/run check) has been reached yet.
+- **Confirmed blocker (not just "unverified"), 2026-07-25**: `pod install`
+  under `use_frameworks! :linkage => :dynamic` fails hard in this project's
+  current state via CocoaPods' `verify_no_static_framework_transitive_dependencies`
+  validator, and Expo's own `ios.forceStaticLinking` escape hatch did not
+  resolve it on a direct retry. Root-caused to CocoaPods source directly
+  (not guessed) — see the corrected Gate 1 entry above. This is upstream of
+  everything else in this phase; nothing past it (New Arch + patch-stack
+  compatibility, libsignal linking, the identity-keypair spike call) has
+  actually been exercised under real dynamic linkage yet.
 - **What remains genuinely unverified without a real build** (not resolvable
   by research alone): whether the dynamic-linkage flip actually succeeds
   against New Architecture + RN-from-source + the five patches; whether the
