@@ -1193,23 +1193,46 @@ when Phase 3 actually implements it.
 
 - **Dependencies**: Phase 1 (device identities to build sessions against),
   Phase 2 (fan-out path to carry per-device ciphertext).
-- **Recommended next step (not yet started)**: do **not** jump to full
-  session/key-management implementation. The spike research's own
-  recommendation is a hard-gated, throwaway-scoped build sequence: (1) flip
-  `ios.useFrameworks` to dynamic in `Podfile.properties.json` alone, no
-  crypto code at all, `pod install` + a real build, confirm the app still
-  launches/calls/chats correctly — this is the actual foundation the
-  original risk callout was worried about and it has never been touched; (2)
-  only if that's clean, scaffold `modules/splitcircle-crypto` with one
-  trivial function calling `IdentityKeyPair.generate()` and confirm it
-  **links and runs on a real device** (not the simulator, and not the
-  jsbundle hot-swap, which is native-change-blind per CLAUDE.md); (3) only
-  after both gates pass does writing the store protocols, session
-  establishment, and send/receive wiring described above make sense. If gate
-  (1) fails or destabilizes the existing patch stack, stop and escalate
-  rather than push forward — that would mean a materially different approach
-  is needed (e.g. isolating libsignal into a separate dynamic-framework-only
-  target).
+- **Gate 1 — DONE and PASSED, 2026-07-25.** Flipped `ios.useFrameworks` to
+  `"dynamic"` in `Podfile.properties.json` (no crypto code at all — this
+  alone is the actual foundation the original risk callout was worried
+  about). `pod install` completed and surfaced exactly the kind of real,
+  concrete friction the spike existed to find: a CocoaPods warning that
+  `Pods-SplitCircle` has transitive dependencies with statically-linked
+  binaries (`ExpoModulesCore`, `ExpoModulesJSI`) — informational, not fatal,
+  but a genuine signal to be aware of if link errors ever surface on this
+  target later. **A full headless Xcode build then succeeded**
+  (`xcodebuild`, Debug config, iOS Simulator, ~1068s / 18 minutes, 7611
+  compiler warnings — all pre-existing header/deprecation noise unrelated to
+  this change, zero errors) — this is real, direct evidence that New
+  Architecture + `ios.buildReactNativeFromSource` + all five hand-maintained
+  native patches (react-native, callkeep, livekit-webrtc, bottom-tabs,
+  expo-sqlite) **do** compile and link cleanly under dynamic framework
+  linkage. Installed and launched the built `.app` on a real booted
+  simulator via `simctl install`/`simctl launch` (the Claude Code sim
+  panel's own attach tool has a known harness-side detection gap against
+  this simulator setup, unrelated to this change — worked around with direct
+  `simctl` calls, the CLAUDE.md-sanctioned fallback). App launched cleanly,
+  process stayed alive, rendered its native dev-client shell correctly
+  (fonts, native tab bar, touch-responsive UI), and `simctl log show`
+  filtered for fault/crash/error/exception showed nothing beyond expected
+  "no Metro dev server running" noise and one benign, unrelated
+  `PointerUI` XPC warning — no crash, no native-module-init failure. **Not
+  tested**: the actual JS bundle/React app UI (sign-in, chat, calls) — no
+  Metro dev server was started for this smoke test, so verification stopped
+  at "native shell launches and runs cleanly," not "every feature still
+  works." That's a real, meaningfully smaller remaining gap than the
+  dynamic-linkage question this gate existed to answer, but still an honest
+  one to name rather than silently claim full coverage. `Podfile.lock`
+  itself shows no diff from this change — expected, it tracks dependency
+  *versions*, not linkage mode, which lives in generated Xcode build
+  settings instead.
+- **Gate 2 — not started.** Scaffold `modules/splitcircle-crypto` with the
+  actual `LibSignalClient` pod dependency and one trivial function calling
+  `IdentityKeyPair.generate()`, confirm it links and returns a real value on
+  a real build. Only after this passes does writing the store protocols,
+  session establishment, and send/receive wiring described above make
+  sense.
 - **What remains genuinely unverified without a real build** (not resolvable
   by research alone): whether the dynamic-linkage flip actually succeeds
   against New Architecture + RN-from-source + the five patches; whether the
