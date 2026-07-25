@@ -12,7 +12,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, View } from 'react-native';
-import { Text } from 'react-native-paper';
+import { Icon, Text } from 'react-native-paper';
 import { GlassCard } from './GlassCard';
 
 export interface GlassToastAction {
@@ -29,6 +29,8 @@ export interface GlassToastProps {
   action?: GlassToastAction;
   /** Bottom offset (safe-area inset + composer height, etc). */
   bottomOffset: number;
+  /** Optional MaterialCommunityIcons name, leading the message. */
+  icon?: string;
 }
 
 export const GlassToast = ({
@@ -38,6 +40,7 @@ export const GlassToast = ({
   duration = 4000,
   action,
   bottomOffset,
+  icon,
 }: GlassToastProps) => {
   const { theme } = useTheme();
   const translate = useRef(new Animated.Value(24)).current;
@@ -87,6 +90,9 @@ export const GlassToast = ({
     <View pointerEvents="box-none" style={[styles.wrapper, { bottom: bottomOffset }]}>
       <Animated.View style={{ transform: [{ translateY: translate }] }}>
         <GlassCard style={styles.toast} contentStyle={styles.toastContent} radius={16}>
+          {icon ? (
+            <Icon source={icon} size={20} color={theme.colors.primary} />
+          ) : null}
           <Text numberOfLines={2} style={[styles.message, { color: theme.colors.onSurface }]}>
             {message}
           </Text>

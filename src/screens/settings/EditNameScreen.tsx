@@ -23,6 +23,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { auth, db } from '@/firebase';
 import { propagateProfileToGroups } from '@/services/profilePropagation';
 import { appAlert } from '@/utils/appAlert';
+import { formatDate } from '@/utils/format';
 import { errorHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
@@ -43,6 +44,15 @@ const errorMessage = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
+// Cooldown between explicit name changes (product decision, 2026-07-24):
+// deters disruptive back-and-forth renames in shared expense/chat history
+// without gating the FIRST time a user ever sets/fixes their name (which is
+// exactly the low-friction path doc 30 was built to protect — see
+// `displayNameChangedAt`'s doc comment in models/user.ts, null until this
+// screen's first successful save).
+const COOLDOWN_DAYS = 30;
+const COOLDOWN_MS = COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+
 export const EditNameScreen = () => {
   const navigation = useNavigation();
   const { user } = useAuth();
@@ -53,8 +63,17 @@ export const EditNameScreen = () => {
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<RNTextInput>(null);
 
+  const changedAt = user?.displayNameChangedAt ?? null;
+  const cooldownEndsAt = changedAt !== null ? changedAt + COOLDOWN_MS : null;
+  const cooldownActive = cooldownEndsAt !== null && Date.now() < cooldownEndsAt;
+
   const trimmed = name.trim();
-  const canSubmit = Boolean(trimmed) && trimmed !== (user?.displayName ?? '').trim() && !saving && Boolean(user);
+  const canSubmit =
+    Boolean(trimmed) &&
+    trimmed !== (user?.displayName ?? '').trim() &&
+    !saving &&
+    !cooldownActive &&
+    Boolean(user);
 
   const handleSave = async () => {
     if (!canSubmit || !user) return;
@@ -63,7 +82,11 @@ export const EditNameScreen = () => {
     try {
       // 1. Firestore — authoritative copy every other screen reads from.
       const userRef = doc(db, 'users', user.userId);
-      await updateDoc(userRef, { displayName: trimmed, updatedAt: serverTimestamp() });
+      await updateDoc(userRef, {
+        displayName: trimmed,
+        displayNameChangedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
 
       // 2. Firebase Auth — keeps the provider-facing profile in step (matches
       // buildUserProfile's existing-wins precedence: existing?.displayName
@@ -122,13 +145,19 @@ export const EditNameScreen = () => {
                 setName(next);
                 if (error) setError(null);
               }}
-              autoFocus
+              editable={!cooldownActive}
+              autoFocus={!cooldownActive}
               autoComplete="name"
               textContentType="name"
               returnKeyType="done"
               onSubmitEditing={handleSave}
               containerStyle={styles.field}
             />
+            {cooldownActive && cooldownEndsAt ? (
+              <Text style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>
+                You can change your name again on {formatDate(cooldownEndsAt)}.
+              </Text>
+            ) : null}
             {error ? (
               <Text style={{ color: theme.colors.danger, textAlign: 'center' }}>{error}</Text>
             ) : null}

@@ -101,4 +101,11 @@ export interface UserProfile {
    * devices (the biometric unlock itself is always device-local).
    */
   lockedChats?: Record<string, number>;
+  /**
+   * Ms epoch of the last successful displayName change, or null if it's
+   * never been explicitly changed (first-time set from empty is NOT gated —
+   * only EditNameScreen re-submits after a name already exists). Drives the
+   * 30-day change cooldown; see EditNameScreen.tsx.
+   */
+  displayNameChangedAt?: number | null;
 }

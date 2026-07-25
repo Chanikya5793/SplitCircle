@@ -2,6 +2,17 @@
 // inline error line. Replaces FloatingLabelInput (which reimplemented Paper's
 // own floating label with hardcoded rgba surfaces and font-size magic numbers
 // that broke under OS accessibility scaling).
+//
+// Background MUST be near-opaque, not a light glassTint wash: Paper's
+// outlined-mode floating label has no real notch cut into the border stroke —
+// it fakes one by painting a small rect matching this exact backgroundColor
+// on top of the border where the label sits (react-native-paper's
+// LabelBackground). A translucent fill lets the active (2px, brighter) border
+// bleed through that rect, so the focused label reads as sliced-through
+// instead of floating cleanly above the box. `glassFallback` — the same token
+// GlassCard uses for its own "blur can't render here" Android path — is
+// exactly this app's answer to "translucent doesn't work here, but stay in
+// the glass family": tinted like glass, opaque enough for the mask trick.
 
 import { useTheme } from '@/context/ThemeContext';
 import React, { type Ref } from 'react';
@@ -23,7 +34,7 @@ export interface AppTextInputProps extends Omit<TextInputProps, 'mode' | 'theme'
 }
 
 export const AppTextInput = ({ errorText, containerStyle, style, ref, ...rest }: AppTextInputProps) => {
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
 
   return (
     <View style={containerStyle}>
@@ -37,7 +48,7 @@ export const AppTextInput = ({ errorText, containerStyle, style, ref, ...rest }:
         style={[
           styles.input,
           {
-            backgroundColor: isDark ? 'rgba(0, 0, 0, 0.2)' : 'rgba(255, 255, 255, 0.5)',
+            backgroundColor: theme.colors.glassFallback,
           },
           style,
         ]}

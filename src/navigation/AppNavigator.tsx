@@ -1260,6 +1260,8 @@ const AppleNameNudgeToast = () => {
     <GlassToast
       visible={appleNameCaptureIncomplete}
       message="We couldn't get your name from Apple — tap to add one."
+      icon="account-edit-outline"
+      duration={10000}
       bottomOffset={insets.bottom + 88}
       onDismiss={acknowledgeAppleNameCaptureIncomplete}
       action={{

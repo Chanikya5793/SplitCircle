@@ -72,6 +72,18 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+// existing?.displayNameChangedAt comes straight off a Firestore snapshot cast
+// `as UserProfile` — a TS lie, not a runtime conversion, so a real save
+// writes a Timestamp object here, not the `number` the type claims. Same
+// defensive-normalization pattern as notificationService.ts's toMillis().
+const toMillisOrNull = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (value && typeof (value as { toMillis?: () => number }).toMillis === 'function') {
+    return (value as { toMillis: () => number }).toMillis();
+  }
+  return null;
+};
+
 const buildUserProfile = (firebaseUser: FirebaseUser, existing?: UserProfile): UserProfile => ({
   userId: firebaseUser.uid,
   email: firebaseUser.email ?? '',
@@ -90,6 +102,7 @@ const buildUserProfile = (firebaseUser: FirebaseUser, existing?: UserProfile): U
   archivedChats: existing?.archivedChats ?? {},
   pinnedChats: existing?.pinnedChats ?? {},
   lockedChats: existing?.lockedChats ?? {},
+  displayNameChangedAt: toMillisOrNull(existing?.displayNameChangedAt),
   createdAt: existing?.createdAt ?? Date.now(),
   updatedAt: Date.now(),
   preferences: existing?.preferences ?? {
