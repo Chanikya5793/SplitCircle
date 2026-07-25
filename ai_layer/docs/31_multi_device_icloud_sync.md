@@ -1,8 +1,9 @@
 # 31 — Multi-Device Support + iCloud Backup/Sync
 
-Status: **ARCHITECTURE LOCKED, PHASES 0-2 BUILT, PHASE 3 BUILD-INTEGRATION
-SOLVED (libsignal links + app launches; the spike call itself still
-un-executed)** (2026-07-25, branch `ui-revamp`).
+Status: **ARCHITECTURE LOCKED, PHASES 0-2 BUILT, PHASE 3 GATES 1+2 PASSED
+(libsignal links, app launches, and a real libsignal call verified executing on
+a physical iPhone) — Phase 3's crypto logic itself NOT yet built**
+(2026-07-25, branch `ui-revamp`).
 §1's 23 decisions and §3's full architecture are locked from two rounds of
 research→verify→synthesize→adversarially-critique (all sonnet, sequential, per the
 user's explicit process instruction). The final adversarial critique
@@ -1125,7 +1126,7 @@ device.
     this design still fits once Phase 3's per-device Signal sessions land,
     rather than assuming it does.
 
-### Phase 3 — E2E encryption core — BUILD INTEGRATION SOLVED 2026-07-25, CRYPTO LOGIC NOT YET BUILT
+### Phase 3 — E2E encryption core — GATES 1+2 PASSED 2026-07-25 (verified on device), CRYPTO LOGIC NOT YET BUILT
 **Goal**: libsignal-backed per-device Signal sessions protecting message
 content end-to-end, integrated into the Phase 2 send/receive path.
 
@@ -1288,14 +1289,28 @@ when Phase 3 actually implements it.
   archive's 10,826 available symbols were pulled, which is why plain-path
   linking was kept instead of `-force_load` (no whole-archive bloat).
 
-- **Gate 2 is NOT fully passed — one step remains.** Linking and launching are
-  proven; **actually executing `IdentityKeyPair.generate()` is still
-  unverified.** Nothing in the app calls `spikeGenerateIdentityKeyPair` yet, so
-  it is dead code at runtime — which is also why the shipped app is safe even
-  if the Rust FFI misbehaves on first call. Do this before writing any real
-  session/store logic: it is the half of "links **and runs**" that the spike
-  exists to answer, and it needs a JS-side trigger (and ideally a physical
-  device, since the real stores will be Keychain-backed).
+- **Gate 2 — FULLY PASSED 2026-07-25 on a physical iPhone 17 Pro.** Beyond the
+  linkage/launch evidence above, `IdentityKeyPair.generate()` was actually
+  **executed on device arm64** (Release config, signed with Apple Development
+  via `-allowProvisioningUpdates`, installed with `devicectl`). It returned a
+  real 69-byte serialized keypair; the base64 head decodes to `0x0A 0x21 0x05…`
+  — protobuf field 1 carrying a 33-byte key with libsignal's `0x05` Curve25519
+  type prefix, i.e. genuine output, not a stub. Entry and completion were logged
+  separately so a hang inside the Rust FFI would have been distinguishable from
+  never being called; both fired in the same millisecond. The temporary probes
+  (an `index.ts` startup call + `NSLog`s in the Swift module) were reverted
+  immediately after — `spikeGenerateIdentityKeyPair` is back to being uncalled
+  dead code, kept only as the executable proof.
+- **Two device-verification gotchas worth reusing** (both cost a build cycle
+  here): (1) a Release build's JS **`console.error` does NOT reach the device
+  log** — the JS probe produced nothing while native `NSLog` from the same code
+  path appeared immediately, so instrument Release-on-device from native, not
+  JS; (2) `xcrun devicectl` has **no `console` subcommand** and `log stream` has
+  no `--device-name` on this toolchain — the working capture is
+  `devicectl device process launch --console`, which streams stdout/stderr only.
+  A local device build also needs `-allowProvisioningUpdates`: the automatic
+  profile initially lacked this device, Sign In with Apple, and the PCC
+  entitlement, and failed signing outright without it.
 - **Environment hazard hit repeatedly, worth knowing before any future iOS
   build here**: this Mac ran to **0 bytes free twice**, hard enough that even
   `df`/`rm`/`true` failed with `ENOSPC` (the tool harness can't write its own
