@@ -21,6 +21,13 @@ import {
   isPassphraseEnrolled,
   type PassphraseAssessment,
 } from '@/services/backupPassphraseService';
+import {
+  BackupBlockedError,
+  getLastBackupInfo,
+  runBackupNow,
+  type LastBackupInfo,
+} from '@/services/backupRunner';
+import { useAuth } from '@/context/AuthContext';
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
@@ -42,6 +49,7 @@ const verdictLabel: Record<PassphraseAssessment['verdict'], string> = {
 export const BackupPassphraseScreen = () => {
   const navigation = useNavigation();
   const { theme } = useTheme();
+  const { user } = useAuth();
 
   const [enrolled, setEnrolled] = useState<boolean | null>(null);
   const [enrolledAt, setEnrolledAt] = useState<number | null>(null);
@@ -50,11 +58,15 @@ export const BackupPassphraseScreen = () => {
   const [acknowledged, setAcknowledged] = useState(false);
   const [reveal, setReveal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [lastBackup, setLastBackup] = useState<LastBackupInfo | null>(null);
+  const [backingUp, setBackingUp] = useState(false);
+  const [progressLabel, setProgressLabel] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
       setEnrolled(await isPassphraseEnrolled());
       setEnrolledAt(await getEnrolledAt());
+      setLastBackup(await getLastBackupInfo());
     })();
   }, []);
 
@@ -86,6 +98,10 @@ export const BackupPassphraseScreen = () => {
       appAlert(
         'Backup passphrase set',
         'Your iCloud backup will be encrypted with this passphrase. Keep your written copy somewhere safe.',
+        [
+          { text: 'Later', style: 'cancel' },
+          { text: 'Back up now', onPress: () => void handleBackupNow() },
+        ],
       );
     } catch (error) {
       errorHaptic();
@@ -95,6 +111,37 @@ export const BackupPassphraseScreen = () => {
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleBackupNow = async () => {
+    if (!user) return;
+    setBackingUp(true);
+    setProgressLabel('Preparing…');
+    try {
+      const info = await runBackupNow(user.userId, (progress) => {
+        setProgressLabel(
+          progress.phase === 'messages'
+            ? `Backing up ${progress.messagesDone} messages (${progress.chatsDone}/${progress.chatsTotal} chats)…`
+            : progress.phase === 'manifest'
+              ? 'Finishing up…'
+              : 'Preparing…',
+        );
+      });
+      setLastBackup(info);
+      successHaptic();
+      appAlert('Backup complete', `${info.messageCount} messages across ${info.chatCount} chats.`);
+    } catch (error) {
+      errorHaptic();
+      // BackupBlockedError carries a specific reason so this can say WHY
+      // rather than showing a generic failure.
+      appAlert(
+        error instanceof BackupBlockedError ? 'Can’t back up yet' : 'Backup failed',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
+    } finally {
+      setBackingUp(false);
+      setProgressLabel(null);
     }
   };
 
@@ -146,6 +193,24 @@ export const BackupPassphraseScreen = () => {
                 : ''}
               Your iCloud backup is encrypted with it. {IRRECOVERABLE_WARNING}
             </Text>
+            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+              {lastBackup
+                ? `Last backup: ${new Date(lastBackup.completedAt).toLocaleString()} — ${lastBackup.messageCount} messages across ${lastBackup.chatCount} chats.`
+                : 'No backup has run on this device yet.'}
+            </Text>
+            {progressLabel ? (
+              <Text variant="bodySmall" style={{ color: theme.colors.primary }}>
+                {progressLabel}
+              </Text>
+            ) : null}
+            <Button
+              mode="contained"
+              loading={backingUp}
+              disabled={backingUp}
+              onPress={handleBackupNow}
+            >
+              Back up now
+            </Button>
             <Button mode="text" textColor={theme.colors.danger} onPress={handleForget}>
               Forget on this device
             </Button>
