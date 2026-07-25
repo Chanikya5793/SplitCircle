@@ -74,6 +74,15 @@ public class SplitCircleBackupModule: Module {
       return ["salt": resolved.base64EncodedString()]
     }
 
+    /// Opens a session from a raw 32-byte key (Phase 6 history handoff, where
+    /// the key arrives over a Signal session rather than from a passphrase).
+    AsyncFunction("beginSessionWithKey") { (keyBase64: String) in
+      guard let key = Data(base64Encoded: keyBase64) else {
+        throw Exception(name: "InvalidArgument", description: "key must be base64")
+      }
+      try self.crypto.beginSessionWithRawKey(key)
+    }
+
     /// Drops the derived key. Call as soon as a backup/restore finishes.
     AsyncFunction("endSession") {
       self.crypto.endSession()
@@ -118,6 +127,19 @@ public class SplitCircleBackupModule: Module {
         "payloadBase64": unwrapped.base64EncodedString(),
         "metadata": chunk.metadata,
       ]
+    }
+
+    /// Metadata ONLY — no decryption, so no session is required.
+    ///
+    /// Phase 6's handoff bootstraps from this: the bundle key arrives as a
+    /// Signal envelope carried in a record's metadata, and the receiver cannot
+    /// decrypt that record's payload until it has read and opened that
+    /// envelope. Fetching the payload first would be circular.
+    AsyncFunction("restoreChunkMetadata") { (recordType: String, recordId: String) async throws -> [String: Any]? in
+      guard let chunk = try await self.withRetry({
+        try await self.provider.restoreChunk(recordType: recordType, recordId: recordId)
+      }) else { return nil }
+      return ["recordId": chunk.recordId, "metadata": chunk.metadata]
     }
 
     AsyncFunction("listChunkIds") { (recordType: String, metadata: [String: String]) async throws -> [String] in

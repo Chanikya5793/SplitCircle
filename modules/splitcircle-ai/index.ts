@@ -71,6 +71,22 @@ function serializeFm<T>(run: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Runs `work` on the SAME single-flight queue as every Foundation Models call.
+ *
+ * Exported for non-FM work that must not run CONCURRENTLY with a model call —
+ * specifically doc 31 Phase 6's bulk history import, whose own spec calls the
+ * SIGSEGV risk "real and specific to this phase" and requires explicit gating
+ * rather than assuming safety by inheritance. A long import racing an
+ * `askOnDevice` is exactly the two-things-at-once shape that corrupted the
+ * Hermes heap before.
+ *
+ * Use sparingly: anything queued here blocks model calls for its duration.
+ */
+export function runExclusiveOfFoundationModels<T>(work: () => Promise<T>): Promise<T> {
+  return serializeFm(work);
+}
+
+/**
  * Availability of the on-device Apple Foundation Models LLM (Apple
  * Intelligence). "unsupportedOS" covers non-iOS platforms, iOS < 26, and
  * builds without the native module.

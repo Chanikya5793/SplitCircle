@@ -101,6 +101,21 @@ public final class BackupCrypto {
     return resolvedSalt
   }
 
+  /// Opens a session from a RAW 32-byte key instead of a passphrase.
+  ///
+  /// For doc 31 Phase 6's history handoff, where the key is a fresh random
+  /// one-time key delivered over a Signal session rather than something a user
+  /// types. No KDF is involved and none should be: the key already has full
+  /// entropy, so stretching it would only cost time.
+  public func beginSessionWithRawKey(_ key: Data) throws {
+    guard key.count == 32 else { throw BackupCryptoError.malformedPayload }
+    activeKey = SymmetricKey(data: key)
+    // No salt and no passphrase: `unwrap` must NOT try to re-derive for these
+    // blobs, and the nil passphrase is what tells it so.
+    activeSalt = nil
+    activePassphrase = nil
+  }
+
   /// Drops the derived key. Call as soon as a backup/restore finishes — an
   /// unlocked backup key sitting in memory for the app's lifetime is a
   /// needlessly long exposure window.
@@ -118,9 +133,10 @@ public final class BackupCrypto {
   /// Self-describing on purpose — a restore must be able to read a blob written
   /// by an older build without out-of-band knowledge of the parameters used.
   public func wrap(_ plaintext: Data) throws -> Data {
-    guard let key = activeKey, let salt = activeSalt else {
-      throw BackupCryptoError.noActiveSession
-    }
+    guard let key = activeKey else { throw BackupCryptoError.noActiveSession }
+    // Raw-key sessions carry an empty salt: the envelope stays the same shape
+    // so one unwrap path serves both, and there is simply nothing to derive.
+    let salt = activeSalt ?? Data()
 
     // Fresh nonce per chunk (CryptoKit generates one when omitted). Reusing a
     // nonce under the same key would be catastrophic for AES-GCM, which is why
@@ -151,7 +167,9 @@ public final class BackupCrypto {
     // (Caught by the first real device round trip: export succeeded, import
     // failed with "wrong passphrase" against a backup written seconds earlier.)
     let (blobSalt, blobIterations) = try Self.extractSalt(from: blob)
-    if blobSalt != activeSalt || blobIterations != activeIterations {
+    // A raw-key session has no passphrase to re-derive from, and none is
+    // needed — the key was delivered out of band, not derived from the salt.
+    if activePassphrase != nil && (blobSalt != activeSalt || blobIterations != activeIterations) {
       guard let passphrase = activePassphrase else { throw BackupCryptoError.noActiveSession }
       let derived = try Self.pbkdf2(passphrase: passphrase, salt: blobSalt, iterations: blobIterations)
       activeKey = SymmetricKey(data: derived)

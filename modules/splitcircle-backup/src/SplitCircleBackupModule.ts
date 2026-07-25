@@ -16,6 +16,8 @@ export interface BackupChunkRaw {
 export interface SplitCircleBackupNativeModule {
   /** Derives the passphrase key; returns the KDF salt. Pass a salt to restore. */
   beginSession(passphrase: string, saltBase64: string | null): Promise<{ salt: string }>;
+  /** Opens a session from a raw 32-byte key (Phase 6 handoff). */
+  beginSessionWithKey(keyBase64: string): Promise<void>;
   endSession(): Promise<void>;
   hasSession(): Promise<boolean>;
   /** Cheap iCloud-account presence check — see doc 31 §3.6/§3.7. Not a full CloudKit health check until Phase 4. */
@@ -28,6 +30,11 @@ export interface SplitCircleBackupNativeModule {
     metadata: Record<string, string>,
   ): Promise<void>;
   restoreChunk(recordType: string, recordId: string): Promise<BackupChunkRaw | null>;
+  /** Metadata only, no decryption — Phase 6 handoff bootstrap. */
+  restoreChunkMetadata(
+    recordType: string,
+    recordId: string,
+  ): Promise<{ recordId: string; metadata: Record<string, string> } | null>;
   listChunkIds(recordType: string, metadata: Record<string, string>): Promise<string[]>;
   estimateSize(): Promise<number>;
   verifyIntegrity(recordType: string, recordId: string, expectedChecksum: string): Promise<boolean>;

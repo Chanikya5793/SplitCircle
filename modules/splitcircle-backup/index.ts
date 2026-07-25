@@ -52,6 +52,15 @@ export async function beginBackupSession(
   return requireModule().beginSession(passphrase, saltBase64 ?? null);
 }
 
+/**
+ * Opens a session from a raw 32-byte key rather than a passphrase — doc 31
+ * Phase 6's history handoff, where the key is random and delivered over a
+ * Signal session, so there is nothing to stretch.
+ */
+export async function beginBackupSessionWithKey(keyBase64: string): Promise<void> {
+  return requireModule().beginSessionWithKey(keyBase64);
+}
+
 /** Drops the derived key. Always call when a run finishes, including on failure. */
 export async function endBackupSession(): Promise<void> {
   return requireModule().endSession();
@@ -75,6 +84,19 @@ export async function restoreChunk(
   recordId: string,
 ): Promise<BackupChunkRaw | null> {
   return requireModule().restoreChunk(recordType, recordId);
+}
+
+/**
+ * Reads a record's metadata WITHOUT decrypting its payload, so no session is
+ * needed. Phase 6's handoff bootstraps from this — the bundle key travels as a
+ * Signal envelope in metadata, and the payload cannot be opened until that
+ * envelope has been read.
+ */
+export async function restoreChunkMetadata(
+  recordType: string,
+  recordId: string,
+): Promise<{ recordId: string; metadata: Record<string, string> } | null> {
+  return requireModule().restoreChunkMetadata(recordType, recordId);
 }
 
 export async function listChunkIds(
