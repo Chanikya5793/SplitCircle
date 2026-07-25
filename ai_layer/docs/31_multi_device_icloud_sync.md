@@ -1414,11 +1414,33 @@ when Phase 3 actually implements it.
   runs, treat the message path as built-but-unproven — the crypto engine itself
   is round-trip verified, but the transport wiring around it is not.
 
-  **Still to wire before Phase 3 closes**: sender-side fan-out to the sender's
-  OWN other devices (§3.3 requires it; today `queueMessage` targets only the
-  recipient), prekey replenishment triggering, and §3.4's pairing flow
-  recording the libsignal device id. Group (sender-key) messaging deliberately
-  throws rather than being half-built.
+- **Sender's own-device fan-out WIRED 2026-07-25 (commit `bf3e6d1`).**
+  `queueMessageToOwnDevices` mirrors a sent message to the user's other
+  devices, carrying `originDeviceId`; `fanOutQueuedMessage` skips that device
+  (it already has the message, and could not decrypt a ciphertext addressed to
+  a session it doesn't hold). Called once per message in `ChatContext`,
+  deliberately OUTSIDE the per-recipient loop — inside it, a group chat would
+  mirror the same message to our own devices once per participant. Encryption
+  excludes the origin device because a device cannot hold a Signal session with
+  its own identity. When no other device of ours has keys, the mirror is
+  skipped entirely rather than sent plaintext: putting our own content in
+  transit buys nothing when no device is waiting to read it.
+- **Race fixed that also affected ORDINARY recipient delivery**, found while
+  building the above: the legacy dual-listen subscription (§5 Phase 2) watches
+  the same shared relay node `fanOutQueuedMessage` consumes, so it could pick
+  up an encrypted message BEFORE fan-out split it per-device — `content`
+  blanked, per-device `envelope` not yet present — and save it with EMPTY
+  content, blanking a message that was about to arrive correctly. The listener
+  now skips any payload still carrying an `envelopes` MAP, which is exactly the
+  un-fanned-out relay node (a delivered payload has a singular `envelope` and
+  no map). Plaintext messages are unaffected, so the legacy fallback for
+  recipients with no confirmed devices still works.
+
+  **Still to wire before Phase 3 closes**: prekey replenishment triggering, and
+  §3.4's pairing flow recording the libsignal device id. Group (sender-key)
+  messaging deliberately throws rather than being half-built. Message STATUS
+  for a self-synced message is also unresolved — a mirrored message arrives on
+  the other device with no delivery/read state attached.
 - Other risks carried from the original plan, still unresolved: no hot-swap
   iteration during this phase (§3.10 gotcha #6); Sender Key rekey volume
   against the RTDB reaper (§3.10 gotcha #8) — re-validate reaper batch sizing
