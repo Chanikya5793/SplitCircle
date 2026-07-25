@@ -11,7 +11,7 @@
  */
 
 import { app, db } from '@/firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
   bootstrapSignalIdentity,
@@ -82,7 +82,44 @@ export const initializeSignalForDevice = async (
   // form its own ProtocolAddress. Bootstrapping with a placeholder and then
   // re-bootstrapping with the real id is safe: ensureIdentity() is idempotent
   // and never mints a second identity.
-  await bootstrapSignalIdentity(userId, 1);
+  const identity = await bootstrapSignalIdentity(userId, cachedSignalDeviceId ?? 1);
+
+  // Reuse an existing healthy publication instead of rotating on every call.
+  // This runs on EVERY notification-registration sync (app launch, foreground,
+  // token refresh), and republishing each time regenerated 100 one-time
+  // keypairs and rewrote the whole Firestore bundle — observed 7 republishes
+  // for one device in ~20 minutes. Beyond the waste, every generated one-time
+  // key is persisted locally forever (they're only dropped when consumed), so
+  // unconditional rotation grows the on-device store without bound.
+  //
+  // The identityKey comparison matters: an app reinstall keeps the Keychain
+  // identity but wipes the file-backed stores, so a published bundle whose
+  // identity no longer matches ours is stale and MUST be replaced — otherwise
+  // peers would keep encrypting to prekeys we can no longer use.
+  try {
+    const existing = await getDoc(doc(db, 'users', userId, 'signalPrekeys', deviceId));
+    if (existing.exists()) {
+      const data = existing.data();
+      const remaining = Array.isArray(data?.oneTimePreKeys) ? data.oneTimePreKeys.length : 0;
+      const publishedSignalDeviceId = Number(data?.signalDeviceId);
+      const identityMatches = data?.identityKey === identity.identityKey;
+
+      if (
+        identityMatches &&
+        remaining > REPLENISH_THRESHOLD &&
+        Number.isFinite(publishedSignalDeviceId) &&
+        publishedSignalDeviceId > 0
+      ) {
+        await bootstrapSignalIdentity(userId, publishedSignalDeviceId);
+        cachedSignalDeviceId = publishedSignalDeviceId;
+        return publishedSignalDeviceId;
+      }
+    }
+  } catch {
+    // Unreadable bundle (offline, rules) — fall through and publish. A
+    // redundant publish is wasteful but correct; skipping one is not.
+  }
+
   const bundle = await generatePublishableBundle(ONE_TIME_PREKEY_COUNT);
   const { data } = await publishCallable({ deviceId, bundle });
 

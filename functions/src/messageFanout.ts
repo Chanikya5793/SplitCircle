@@ -110,10 +110,17 @@ export const fanOutQueuedMessage = onValueCreated(
             updates[`messageQueue/${recipientId}/${messageId}`] = null;
 
             await getDatabase().ref().update(updates);
+            // Count actual per-device writes, not devicesSnap.size: the query
+            // size includes devices we skipped (the self-sync origin device,
+            // or one with no envelope), so logging it claimed a fan-out wider
+            // than what really happened — misleading exactly when diagnosing
+            // "why didn't my other device get this".
             logger.info("fanOutQueuedMessage: fanned out", {
                 recipientId,
                 messageId,
-                deviceCount: devicesSnap.size,
+                deviceCount: Object.keys(updates).length - 1,
+                encrypted: Boolean(envelopes),
+                skippedOrigin: Boolean(originDeviceId),
             });
         } catch (error) {
             // Best-effort by design, matching the reaper/relay pattern
