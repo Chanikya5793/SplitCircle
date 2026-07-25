@@ -30,6 +30,8 @@ export const SCREEN_TITLES = {
   aiEvals: 'AI Evals',
   aiMemory: 'AI Memory',
   editName: 'Your Name',
+  linkedDevices: 'Linked Devices',
+  linkDevice: 'Link a Device',
 } as const;
 
 export const getGroupNameById = (

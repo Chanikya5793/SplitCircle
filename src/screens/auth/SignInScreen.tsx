@@ -21,9 +21,10 @@ import { Button, Text, TextInput } from 'react-native-paper';
 interface SignInScreenProps {
   onSwitchToRegister?: () => void;
   onForgotPassword?: () => void;
+  onLinkDevice?: () => void;
 }
 
-export const SignInScreen = ({ onSwitchToRegister, onForgotPassword }: SignInScreenProps) => {
+export const SignInScreen = ({ onSwitchToRegister, onForgotPassword, onLinkDevice }: SignInScreenProps) => {
   const { signInWithEmail, signInWithGoogle, signInWithApple, authBusy } = useAuth();
   const { theme, isDark } = useTheme();
   const { isOnline } = useOfflineSync();
@@ -192,6 +193,9 @@ export const SignInScreen = ({ onSwitchToRegister, onForgotPassword }: SignInScr
                 Create account
               </Button>
             </View>
+            <Button compact onPress={onLinkDevice} icon="qrcode-scan">
+              Have a code? Link this device
+            </Button>
           </GlassCard>
         </ScrollView>
       </KeyboardAvoidingView>

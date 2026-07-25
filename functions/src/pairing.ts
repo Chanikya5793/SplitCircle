@@ -1,0 +1,368 @@
+import {
+    FieldValue,
+    getFirestore,
+    type DocumentData,
+} from "firebase-admin/firestore";
+import { getAuth } from "firebase-admin/auth";
+import { getDatabase } from "firebase-admin/database";
+import * as logger from "firebase-functions/logger";
+import { randomInt } from "crypto";
+import { sendPushToUsers } from "./notifications";
+
+/**
+ * Companion-device pairing (ai_layer/docs/31_multi_device_icloud_sync.md §3.4).
+ * Cloud-Function-only, Admin SDK — mirrors the joinGroupByInviteCode pattern
+ * (groupJoin.ts): impl functions here, thin onCall wrappers in index.ts.
+ *
+ * Phase 1 scope note: the "secondary out-of-band confirmation" code below is
+ * a server-generated random 6-digit code tied to THIS pairing transaction —
+ * NOT yet a hash of both devices' Signal identity public keys as doc 31 §3.4
+ * point 3 ultimately specifies. Signal identity keys don't exist until
+ * Phase 3 (E2E encryption core) publishes them to signalPrekeys. This is
+ * still a real MITM check on the PAIRING CHANNEL itself (a photographed/
+ * intercepted QR redeemed in a different session shows a different code),
+ * it just doesn't yet cryptographically bind to a persistent device
+ * identity — Phase 3 should upgrade this derivation once real keys exist,
+ * without changing the pairing flow's API shape.
+ */
+
+const PAIRING_CODES_COLLECTION = "pairingCodes";
+const USERS_COLLECTION = "users";
+const PAIRED_DEVICES_SUBCOLLECTION = "pairedDevices";
+const NOTIFICATION_DEVICES_SUBCOLLECTION = "notificationDevices";
+const RTDB_PAIRING_CONFIRM_PATH = "pairingConfirm";
+
+const PAIRING_CODE_TTL_MS = 5 * 60 * 1000; // 5 minutes — bounds redemption only
+const CONFIRMATION_TTL_MS = 24 * 60 * 60 * 1000; // 24h — bounds confirmation, doc 31 §3.4 point 6
+const MAX_ACTIVE_DEVICES = 4; // doc 31 decision #21
+
+const toSafeError = (error: unknown): { name?: string; message?: string } => {
+    if (error instanceof Error) {
+        return { name: error.name, message: error.message };
+    }
+    return { message: "Unknown error" };
+};
+
+const generatePairingCode = (): string => {
+    // 8 uppercase alphanumeric chars, ambiguous glyphs (0/O, 1/I/L) excluded
+    // for the manual-entry fallback (doc 31 decision #8).
+    const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    let code = "";
+    for (let i = 0; i < 8; i += 1) {
+        code += alphabet[randomInt(0, alphabet.length)];
+    }
+    return code;
+};
+
+const generateConfirmationCode = (): string => {
+    return String(randomInt(0, 1_000_000)).padStart(6, "0");
+};
+
+export interface CreatePairingResult {
+    code: string;
+    expiresAt: number;
+}
+
+/**
+ * Main device: generate a short-lived, single-use pairing code. Caller must
+ * already have passed a biometric re-auth gate CLIENT-SIDE before reaching
+ * this — doc 31 §3.4 point 1 — this function doesn't re-verify that (there's
+ * no server-side signal for "did Face ID just succeed"), so the client is
+ * trusted for that specific gate, same trust model this app already uses for
+ * settlement confirmation (SettlementsScreen.tsx).
+ */
+export async function createPairingCode(uid: string): Promise<CreatePairingResult> {
+    const db = getFirestore();
+    const code = generatePairingCode();
+    const expiresAt = Date.now() + PAIRING_CODE_TTL_MS;
+
+    await db.collection(PAIRING_CODES_COLLECTION).doc(code).set({
+        uid,
+        createdAt: FieldValue.serverTimestamp(),
+        expiresAt,
+        consumedBy: null,
+        consumedAt: null,
+    });
+
+    return { code, expiresAt };
+}
+
+export interface RedeemPairingInput {
+    code: string;
+    deviceId: string;
+    platform: "ios" | "android";
+    deviceName: string | null;
+    modelName: string | null;
+}
+
+export interface RedeemPairingResult {
+    customToken: string;
+    confirmationCode: string;
+    confirmationExpiresAt: number;
+}
+
+/**
+ * New device: redeem a pairing code. One Firestore transaction covers the
+ * idempotent code-consumption check-and-set AND the new device's record
+ * writes (pairedDevices, notificationDevices) atomically — a genuinely
+ * different guarantee than groupJoin.ts's single `.update()` precedent,
+ * required here because "was this code already consumed" must be checked
+ * and set in the same atomic step or a retried redemption after a dropped
+ * response could either double-pair or false-negative (doc 31 §3.4/§4).
+ * Custom-token minting and the RTDB nudge happen AFTER the transaction
+ * commits — neither is a Firestore operation, so neither can be inside it;
+ * both only run once the transactional state is already safely committed.
+ */
+export async function redeemPairingCode(
+    uid: string,
+    input: RedeemPairingInput,
+): Promise<RedeemPairingResult> {
+    const db = getFirestore();
+    const codeRef = db.collection(PAIRING_CODES_COLLECTION).doc(input.code);
+    const pairedDeviceRef = db
+        .collection(USERS_COLLECTION)
+        .doc(uid)
+        .collection(PAIRED_DEVICES_SUBCOLLECTION)
+        .doc(input.deviceId);
+    const notificationDeviceRef = db
+        .collection(USERS_COLLECTION)
+        .doc(uid)
+        .collection(NOTIFICATION_DEVICES_SUBCOLLECTION)
+        .doc(input.deviceId);
+
+    const confirmationCode = generateConfirmationCode();
+    const confirmationExpiresAt = Date.now() + CONFIRMATION_TTL_MS;
+
+    await db.runTransaction(async (tx) => {
+        const codeSnap = await tx.get(codeRef);
+        if (!codeSnap.exists) {
+            throw new Error("Pairing code not found");
+        }
+        const codeData = codeSnap.data() as DocumentData;
+        if (codeData.uid !== uid) {
+            // A pairing code is scoped to the account that generated it —
+            // redeeming it links a device to THAT account, never a different one.
+            throw new Error("Pairing code not found");
+        }
+        if (codeData.consumedBy) {
+            throw new Error("Pairing code already used");
+        }
+        if (typeof codeData.expiresAt !== "number" || codeData.expiresAt < Date.now()) {
+            throw new Error("Pairing code expired");
+        }
+
+        // 4-device cap (doc 31 decision #21) — an expired, never-confirmed
+        // pending pairing doesn't count against the cap, so a stale
+        // abandoned pairing attempt can't permanently squat a slot.
+        const activeDevicesSnap = await tx.get(
+            db.collection(USERS_COLLECTION).doc(uid).collection(PAIRED_DEVICES_SUBCOLLECTION),
+        );
+        const now = Date.now();
+        const activeCount = activeDevicesSnap.docs.filter((docSnap) => {
+            const data = docSnap.data();
+            if (data.pairingStatus === "confirmed") return true;
+            if (data.pairingStatus === "pending_confirmation") {
+                return typeof data.confirmationExpiresAt === "number" && data.confirmationExpiresAt > now;
+            }
+            return false;
+        }).length;
+        if (activeCount >= MAX_ACTIVE_DEVICES) {
+            throw new Error("Device limit reached");
+        }
+
+        tx.update(codeRef, {
+            consumedBy: input.deviceId,
+            consumedAt: FieldValue.serverTimestamp(),
+        });
+
+        tx.set(pairedDeviceRef, {
+            deviceId: input.deviceId,
+            platform: input.platform,
+            deviceName: input.deviceName,
+            modelName: input.modelName,
+            isMainDevice: false,
+            pairingStatus: "pending_confirmation",
+            confirmationCode,
+            confirmationExpiresAt,
+            pairedAt: FieldValue.serverTimestamp(),
+            lastSeenAt: FieldValue.serverTimestamp(),
+        });
+
+        // Merge, not overwrite: if this deviceId already has a
+        // notificationDevices doc (e.g. it registered for push before
+        // pairing completed — unlikely but not impossible), preserve its
+        // push-token fields and just layer role/pairing status on top.
+        tx.set(
+            notificationDeviceRef,
+            {
+                role: "companion",
+                updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+        );
+    });
+
+    const customToken = await getAuth().createCustomToken(uid, {
+        deviceId: input.deviceId,
+    });
+
+    // Best-effort nudge for a main device that already has the app open —
+    // the mandatory push below is the reliable path, this is just lower
+    // latency when it lands. Mirrors groupJoin.ts's "atomic primary write,
+    // best-effort secondary side-effect" shape.
+    try {
+        await getDatabase()
+            .ref(`${RTDB_PAIRING_CONFIRM_PATH}/${uid}/${input.code}`)
+            .set({ deviceId: input.deviceId, deviceName: input.deviceName, at: Date.now() });
+    } catch (error) {
+        logger.warn("redeemPairingCode: RTDB nudge failed (redemption still succeeded)", {
+            uid,
+            deviceId: input.deviceId,
+            error: toSafeError(error),
+        });
+    }
+
+    try {
+        // "general" has no per-category user mute toggle (see
+        // NotificationPreference in models/user.ts) — deliberate, this
+        // confirmation must be mandatory, not something a notification
+        // setting can silently suppress. Fans out to ALL of this user's
+        // registered devices (sendPushToUsers has no per-device targeting),
+        // including the brand-new pending device itself — harmless
+        // overinclusion, not a security issue, but a known Phase 1
+        // imperfection worth fixing if per-device push targeting is ever
+        // added generally.
+        await sendPushToUsers(
+            [uid],
+            "New device wants to link",
+            `${input.deviceName ?? "A device"} is trying to link to your account. Confirm in Settings if this is you.`,
+            {
+                type: "device_pairing_confirmation",
+                deviceId: input.deviceId,
+                confirmationCode,
+            },
+            "general",
+        );
+    } catch (error) {
+        logger.warn("redeemPairingCode: confirmation push failed (redemption still succeeded)", {
+            uid,
+            deviceId: input.deviceId,
+            error: toSafeError(error),
+        });
+    }
+
+    return { customToken, confirmationCode, confirmationExpiresAt };
+}
+
+/**
+ * Main device only: confirm or deny a pending companion pairing. Requires
+ * the CALLER's own deviceId to currently be marked isMainDevice — prevents
+ * a companion (even one whose confirmation push it also received, per the
+ * fan-out note above) from confirming its own pairing.
+ */
+export async function confirmPairing(
+    uid: string,
+    callerDeviceId: string,
+    targetDeviceId: string,
+    confirm: boolean,
+): Promise<{ status: "confirmed" | "denied" }> {
+    const db = getFirestore();
+    const devicesRef = db.collection(USERS_COLLECTION).doc(uid).collection(PAIRED_DEVICES_SUBCOLLECTION);
+    const callerRef = devicesRef.doc(callerDeviceId);
+    const targetRef = devicesRef.doc(targetDeviceId);
+
+    const callerSnap = await callerRef.get();
+    if (!callerSnap.exists || callerSnap.data()?.isMainDevice !== true) {
+        throw new Error("Only the main device can confirm a new device");
+    }
+
+    const targetSnap = await targetRef.get();
+    if (!targetSnap.exists) {
+        throw new Error("Pending device not found");
+    }
+    const targetData = targetSnap.data() as DocumentData;
+    if (targetData.pairingStatus !== "pending_confirmation") {
+        throw new Error("Device is not awaiting confirmation");
+    }
+
+    if (!confirm) {
+        await revokeDeviceRecords(uid, targetDeviceId);
+        return { status: "denied" };
+    }
+
+    await targetRef.update({
+        pairingStatus: "confirmed",
+        confirmationCode: FieldValue.delete(),
+        confirmationExpiresAt: FieldValue.delete(),
+        confirmedAt: FieldValue.serverTimestamp(),
+    });
+
+    return { status: "confirmed" };
+}
+
+/**
+ * Deletes pairedDevices + notificationDevices + signalPrekeys for a device
+ * in one atomic WriteBatch (doc 31 §3.4 point 5 / §3.11 — must be a literal
+ * atomic multi-doc operation, not sequential awaits, or a partial failure
+ * here reproduces the archivedMembers/isGroupJoinUpdate class of bug).
+ * Shared by confirmPairing's deny path and revokeDevice below.
+ */
+async function revokeDeviceRecords(uid: string, deviceId: string): Promise<void> {
+    const db = getFirestore();
+    const userRef = db.collection(USERS_COLLECTION).doc(uid);
+    const batch = db.batch();
+    batch.delete(userRef.collection(PAIRED_DEVICES_SUBCOLLECTION).doc(deviceId));
+    batch.delete(userRef.collection(NOTIFICATION_DEVICES_SUBCOLLECTION).doc(deviceId));
+    batch.delete(userRef.collection("signalPrekeys").doc(deviceId));
+    await batch.commit();
+}
+
+/**
+ * Revoke a linked device. Either the caller revoking itself (sign this
+ * device out), or the main device revoking any other device — a non-main
+ * device may not revoke a DIFFERENT device.
+ */
+export async function revokeDevice(
+    uid: string,
+    callerDeviceId: string,
+    targetDeviceId: string,
+): Promise<void> {
+    const db = getFirestore();
+
+    if (callerDeviceId === targetDeviceId) {
+        // Self-revoking the MAIN device is deliberately blocked here — that's
+        // the device-retirement flow's job (doc 31 §3.7, Phase 7, not yet
+        // built), which gates it on a verified-complete backup first so this
+        // simple function can't be used to accidentally strand an account
+        // with no main device and no path to promote a companion.
+        const selfSnap = await db
+            .collection(USERS_COLLECTION)
+            .doc(uid)
+            .collection(PAIRED_DEVICES_SUBCOLLECTION)
+            .doc(callerDeviceId)
+            .get();
+        if (selfSnap.exists && selfSnap.data()?.isMainDevice === true) {
+            throw new Error("Cannot remove the main device this way — use device retirement instead");
+        }
+    } else {
+        const callerSnap = await db
+            .collection(USERS_COLLECTION)
+            .doc(uid)
+            .collection(PAIRED_DEVICES_SUBCOLLECTION)
+            .doc(callerDeviceId)
+            .get();
+        if (!callerSnap.exists || callerSnap.data()?.isMainDevice !== true) {
+            throw new Error("Only the main device can remove a different device");
+        }
+    }
+
+    await revokeDeviceRecords(uid, targetDeviceId);
+
+    // TODO(Phase 1 follow-up / noted in doc 31): this deletes the Firestore
+    // records but does NOT yet force-invalidate the revoked device's already
+    //-cached Firebase Auth session — that requires the deviceId custom-claim
+    // check landing in firestore.rules/database.rules.json (this same phase,
+    // see the rules changes) so the NEXT read/write from that cached client
+    // fails under the new rule, rather than surviving until natural token
+    // TTL expiry. Revocation is "hard" only once both pieces are in place.
+}

@@ -43,6 +43,7 @@ export const SETTING_IDS = {
   appLock: 'app-lock',
   autoLock: 'auto-lock',
   confirmSettlements: 'confirm-settlements',
+  linkedDevices: 'linked-devices',
   notifications: 'notifications',
   offlineSync: 'offline-sync',
   notifMaster: 'notif-master',
@@ -141,6 +142,15 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     icon: 'shield-check-outline',
     section: 'Security',
     route: ROUTES.APP.SETTINGS,
+  },
+  {
+    id: SETTING_IDS.linkedDevices,
+    title: 'Linked devices',
+    subtitle: 'Manage devices linked to your account',
+    keywords: ['linked', 'devices', 'multi-device', 'pairing', 'companion', 'qr', 'link'],
+    icon: 'devices',
+    section: 'Security',
+    route: ROUTES.APP.LINKED_DEVICES,
   },
 
   // General ------------------------------------------------------------------

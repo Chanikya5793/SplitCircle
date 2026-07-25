@@ -3,6 +3,7 @@ export const ROUTES = {
     SIGN_IN: 'SignIn',
     REGISTER: 'Register',
     FORGOT_PASSWORD: 'ForgotPassword',
+    SCAN_PAIRING_CODE: 'ScanPairingCode',
   },
   APP: {
     ROOT: 'Root',
@@ -37,6 +38,8 @@ export const ROUTES = {
     SETTINGS: 'Settings',
     NOTIFICATION_SETTINGS: 'NotificationSettings',
     OFFLINE_SYNC: 'OfflineSync',
+    LINKED_DEVICES: 'LinkedDevices',
+    LINK_DEVICE: 'LinkDevice',
     AI_INDEX: 'AiIndex',
     AI_EVALS: 'AiEvals',
     AI_MEMORY: 'AiMemory',

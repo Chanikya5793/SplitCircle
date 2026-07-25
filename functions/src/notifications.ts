@@ -744,6 +744,43 @@ export const syncNotificationDeviceRecord = async (
 
     if (!existingSnap.exists) {
         payload.createdAt = FieldValue.serverTimestamp();
+        // Doc 31 §3 Phase 0 finding: this write's payload never included a
+        // `role` key before, so plain merge:true always left an existing
+        // value untouched — safe to add here. A device's first-ever contact
+        // with this function (no prior notificationDevices doc for this
+        // deviceId) can ONLY happen for an original/main device: a companion
+        // device's first-ever notificationDevices doc is always created by
+        // redeemPairingCode's transaction (pairing.ts) BEFORE the client
+        // even receives the custom token that lets it call this function at
+        // all, so by the time a companion reaches here, existingSnap.exists
+        // is already true and this branch never fires for it.
+        payload.role = "main";
+        try {
+            await getFirestore()
+                .collection(USER_COLLECTION)
+                .doc(userId)
+                .collection("pairedDevices")
+                .doc(deviceId)
+                .set({
+                    deviceId,
+                    platform: input.platform,
+                    deviceName: normalizeString(input.deviceName),
+                    modelName: normalizeString(input.modelName),
+                    isMainDevice: true,
+                    pairingStatus: "confirmed",
+                    pairedAt: FieldValue.serverTimestamp(),
+                    lastSeenAt: FieldValue.serverTimestamp(),
+                }, { merge: true });
+        } catch (error) {
+            // Best-effort — the notificationDevices write below is the
+            // primary record; a failure here just means the Linked Devices
+            // screen won't show this device until the next successful sync.
+            logger.warn("syncNotificationDeviceRecord: failed to write main pairedDevices record", {
+                userId,
+                deviceId,
+                error: error instanceof Error ? { name: error.name, message: error.message } : { message: "Unknown error" },
+            });
+        }
     }
 
     if (safeToken && previousToken !== safeToken) {

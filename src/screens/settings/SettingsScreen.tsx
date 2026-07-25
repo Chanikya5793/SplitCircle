@@ -688,6 +688,20 @@ export const SettingsScreen = () => {
             }
           />
           ))}
+          {divider}
+          {wrapAnchor(SETTING_IDS.linkedDevices, (
+          <ListRow
+            title="Linked devices"
+            subtitle="Manage devices linked to your account"
+            icon="devices"
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate(ROUTES.APP.LINKED_DEVICES, {
+                backTitle: ROOT_SCREEN_TITLES.settings,
+              });
+            }}
+          />
+          ))}
         </GlassCard>
 
         <SectionLabel style={styles.sectionLabel}>General</SectionLabel>

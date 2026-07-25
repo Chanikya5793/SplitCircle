@@ -32,6 +32,12 @@ import {
 import { verifyGroupEntityExists } from "./entityGuards";
 import { deleteAccountCascade, findDeletionBlockers } from "./accountDeletion";
 import { joinGroupByInviteCode as joinGroupByInviteCodeImpl } from "./groupJoin";
+import {
+    createPairingCode as createPairingCodeImpl,
+    redeemPairingCode as redeemPairingCodeImpl,
+    confirmPairing as confirmPairingImpl,
+    revokeDevice as revokeDeviceImpl,
+} from "./pairing";
 import { backfillMissingDisplayNames } from "./displayNameBackfill";
 export { cleanupOldRtdbData, reapStaleRingingCalls } from "./cleanup";
 // Consolidated AI-layer ingestion fan-out (gated by AI_LAYER_ENABLED; no-op until
@@ -1432,6 +1438,138 @@ export const joinGroupByInviteCode = onCall(async (request) => {
         }
         logger.error("joinGroupByInviteCode failed", { uid, inviteCode, ...toSafeError(error) });
         throw new HttpsError("internal", "Failed to join group. Please try again.");
+    }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Device pairing (ai_layer/docs/31_multi_device_icloud_sync.md §3.4)
+// ─────────────────────────────────────────────────────────────
+// Cloud-Function-only, same reasoning as joinGroupByInviteCode above:
+// pairedDevices/notificationDevices/signalPrekeys are all client-write-locked
+// in firestore.rules, so every mutation goes through here via the Admin SDK.
+
+export const createPairingCode = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    try {
+        const result = await createPairingCodeImpl(uid);
+        logger.info("Pairing code created", { uid });
+        return result;
+    } catch (error) {
+        logger.error("createPairingCode failed", { uid, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to create a pairing code. Please try again.");
+    }
+});
+
+export const redeemPairingCode = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const code = getStringValue(request.data?.code).toUpperCase();
+    const deviceId = getStringValue(request.data?.deviceId);
+    const platform = request.data?.platform === "android" ? "android" : "ios";
+    const deviceName = getStringValue(request.data?.deviceName) || null;
+    const modelName = getStringValue(request.data?.modelName) || null;
+
+    if (!code) {
+        throw new HttpsError("invalid-argument", "Missing required field: code");
+    }
+    if (!deviceId || !isSafeIdentifier(deviceId)) {
+        throw new HttpsError("invalid-argument", "Missing or invalid field: deviceId");
+    }
+
+    try {
+        const result = await redeemPairingCodeImpl(uid, { code, deviceId, platform, deviceName, modelName });
+        logger.info("Pairing code redeemed", { uid, deviceId });
+        return result;
+    } catch (error) {
+        if (error instanceof Error) {
+            if (error.message === "Pairing code not found") {
+                throw new HttpsError("not-found", "Pairing code not found.");
+            }
+            if (error.message === "Pairing code already used") {
+                throw new HttpsError("failed-precondition", "This pairing code has already been used.");
+            }
+            if (error.message === "Pairing code expired") {
+                throw new HttpsError("deadline-exceeded", "This pairing code has expired.");
+            }
+            if (error.message === "Device limit reached") {
+                throw new HttpsError("resource-exhausted", "You've reached the maximum number of linked devices.");
+            }
+        }
+        logger.error("redeemPairingCode failed", { uid, deviceId, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to link this device. Please try again.");
+    }
+});
+
+export const confirmPairing = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const callerDeviceId = getStringValue(request.data?.callerDeviceId);
+    const targetDeviceId = getStringValue(request.data?.targetDeviceId);
+    const confirm = request.data?.confirm === true;
+
+    if (!callerDeviceId || !targetDeviceId) {
+        throw new HttpsError("invalid-argument", "Missing required device id fields.");
+    }
+
+    try {
+        const result = await confirmPairingImpl(uid, callerDeviceId, targetDeviceId, confirm);
+        logger.info("Pairing confirmation resolved", { uid, targetDeviceId, status: result.status });
+        return result;
+    } catch (error) {
+        if (error instanceof Error) {
+            if (error.message === "Only the main device can confirm a new device") {
+                throw new HttpsError("permission-denied", error.message);
+            }
+            if (error.message === "Pending device not found") {
+                throw new HttpsError("not-found", error.message);
+            }
+            if (error.message === "Device is not awaiting confirmation") {
+                throw new HttpsError("failed-precondition", error.message);
+            }
+        }
+        logger.error("confirmPairing failed", { uid, targetDeviceId, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to resolve device confirmation. Please try again.");
+    }
+});
+
+export const revokeDevice = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const callerDeviceId = getStringValue(request.data?.callerDeviceId);
+    const targetDeviceId = getStringValue(request.data?.targetDeviceId);
+
+    if (!callerDeviceId || !targetDeviceId) {
+        throw new HttpsError("invalid-argument", "Missing required device id fields.");
+    }
+
+    try {
+        await revokeDeviceImpl(uid, callerDeviceId, targetDeviceId);
+        logger.info("Device revoked", { uid, targetDeviceId });
+        return { success: true };
+    } catch (error) {
+        if (error instanceof Error) {
+            if (error.message === "Only the main device can remove a different device") {
+                throw new HttpsError("permission-denied", error.message);
+            }
+            if (error.message === "Cannot remove the main device this way — use device retirement instead") {
+                throw new HttpsError("failed-precondition", error.message);
+            }
+        }
+        logger.error("revokeDevice failed", { uid, targetDeviceId, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to remove device. Please try again.");
     }
 });
 

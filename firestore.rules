@@ -9,6 +9,41 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    // Hard device revocation (doc 31 §3.4 point 5) — a companion device's
+    // Firebase Auth session carries a `deviceId` custom claim (minted by
+    // pairing.ts's createCustomToken); the ORIGINAL/main device's session
+    // does not (it signs in via email/Google/Apple, never a custom token),
+    // so it always short-circuits true here. Once revokeDevice deletes a
+    // companion's pairedDevices doc, this starts failing immediately for
+    // that device's cached session, instead of waiting for its ID token to
+    // naturally expire/refresh.
+    //
+    // Deliberately NOT folded into isSignedIn()/isSelf() themselves: this
+    // function calls exists(), and this file's own isGroupMemberById fix
+    // (see the comment on groups/{groupId}'s read rule) already documents
+    // that Firestore denies LIST/collection-group queries outright the
+    // moment ANY exists()/get() appears anywhere in an applicable rule,
+    // regardless of what it's checking. isSignedIn()/isSelf() back list
+    // queries all over this app (groups, chats, pairedDevices' own read
+    // rule among them) — embedding this there would silently break every
+    // one of them for companion-device sessions specifically, the exact
+    // "shipped clean, broken in production" failure mode this codebase has
+    // already been burned by once. Only apply this to rule branches
+    // confirmed (by grepping the client) to be single-document reads/writes
+    // ONLY, never a collection query — currently: users/{userId},
+    // notificationDevices/{deviceId} (read), settings/{settingKey}.
+    // Extending this to chats/messages/groups needs its own Firebase-
+    // emulator-verified pass (no rules test harness exists in this repo
+    // yet) — do not casually widen this without one.
+    function hasLiveDeviceSession() {
+      return !('deviceId' in request.auth.token)
+        || exists(/databases/$(database)/documents/users/$(request.auth.uid)/pairedDevices/$(request.auth.token.deviceId));
+    }
+
+    function isSelfWithLiveDevice(userId) {
+      return isSelf(userId) && hasLiveDeviceSession();
+    }
+
     function groupExists(groupId) {
       return exists(/databases/$(database)/documents/groups/$(groupId));
     }
@@ -143,12 +178,12 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read, update, create: if isSelf(userId);
+      allow read, update, create: if isSelfWithLiveDevice(userId);
       allow delete: if false;
     }
 
     match /users/{userId}/notificationDevices/{deviceId} {
-      allow read: if isSelf(userId);
+      allow read: if isSelfWithLiveDevice(userId);
       allow create, update, delete: if false;
     }
 
@@ -182,7 +217,7 @@ service cloud.firestore {
     // preference data (same trust model as the users/{userId} doc itself),
     // so it's client-writable directly rather than Cloud-Function-only.
     match /users/{userId}/settings/{settingKey} {
-      allow read, write: if isSelf(userId);
+      allow read, write: if isSelfWithLiveDevice(userId);
     }
 
     match /groups/{groupId} {

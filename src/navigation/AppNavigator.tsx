@@ -11,6 +11,7 @@ import type { CallType, Group, PresenceStatus } from '@/models';
 import { ForgotPasswordScreen } from '@/screens/auth/ForgotPasswordScreen';
 import { RegisterScreen } from '@/screens/auth/RegisterScreen';
 import { SignInScreen } from '@/screens/auth/SignInScreen';
+import { ScanPairingCodeScreen } from '@/screens/auth/ScanPairingCodeScreen';
 import { CallHistoryScreen } from '@/screens/calls/CallHistoryScreen';
 import { CallInfoScreen } from '@/screens/calls/CallInfoScreen';
 import { CallSessionScreen } from '@/screens/calls/CallSessionScreen';
@@ -41,6 +42,8 @@ import { AiEvalsScreen } from '@/screens/settings/AiEvalsScreen';
 import { AiMemoryScreen } from '@/screens/settings/AiMemoryScreen';
 import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
 import { OfflineSyncScreen } from '@/screens/settings/OfflineSyncScreen';
+import { LinkedDevicesScreen } from '@/screens/settings/LinkedDevicesScreen';
+import { LinkDeviceScreen } from '@/screens/settings/LinkDeviceScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { EditNameScreen } from '@/screens/settings/EditNameScreen';
 import { SearchScreen } from '@/screens/search/SearchScreen';
@@ -313,6 +316,7 @@ const SignInRoute = ({ navigation }: any) => (
   <SignInScreen
     onSwitchToRegister={() => navigation.navigate(ROUTES.AUTH.REGISTER)}
     onForgotPassword={() => navigation.navigate(ROUTES.AUTH.FORGOT_PASSWORD)}
+    onLinkDevice={() => navigation.navigate(ROUTES.AUTH.SCAN_PAIRING_CODE)}
   />
 );
 
@@ -322,6 +326,10 @@ const RegisterRoute = ({ navigation }: any) => (
 
 const ForgotPasswordRoute = ({ navigation }: any) => (
   <ForgotPasswordScreen onBack={() => navigation.goBack()} />
+);
+
+const ScanPairingCodeRoute = ({ navigation }: any) => (
+  <ScanPairingCodeScreen onBack={() => navigation.goBack()} />
 );
 
 const GroupListRoute = ({ navigation }: any) => (
@@ -741,6 +749,7 @@ const AuthStackNavigator = () => {
       <AuthStack.Screen name={ROUTES.AUTH.SIGN_IN} component={SignInRoute} />
       <AuthStack.Screen name={ROUTES.AUTH.REGISTER} component={RegisterRoute} />
       <AuthStack.Screen name={ROUTES.AUTH.FORGOT_PASSWORD} component={ForgotPasswordRoute} />
+      <AuthStack.Screen name={ROUTES.AUTH.SCAN_PAIRING_CODE} component={ScanPairingCodeRoute} />
     </AuthStack.Navigator>
   );
 };
@@ -1188,6 +1197,20 @@ const AppStackNavigator = () => {
         name={ROUTES.APP.OFFLINE_SYNC}
         component={OfflineSyncScreen}
         options={{ title: 'Offline sync' }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.LINKED_DEVICES}
+        component={LinkedDevicesScreen}
+        options={{ title: SCREEN_TITLES.linkedDevices }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.LINK_DEVICE}
+        component={LinkDeviceScreen}
+        options={{
+          title: SCREEN_TITLES.linkDevice,
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
       />
       <AppStack.Screen
         name={ROUTES.APP.CHAT_MEDIA_GALLERY}

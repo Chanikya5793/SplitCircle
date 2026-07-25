@@ -12,6 +12,7 @@ import { NotificationProvider } from '@/context/NotificationContext';
 import { PrivacyGuardProvider } from '@/context/PrivacyGuardContext';
 import { AppLockProvider } from '@/context/AppLockContext';
 import { AppLockGate, GuardTransitionVeil, LockedOverlay, PanicTapZone } from '@/components/ui';
+import { PendingPairingGate } from '@/components/ui/PendingPairingGate';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { AppNavigator } from '@/navigation/AppNavigator';
 import { StatusBar } from 'expo-status-bar';
@@ -47,6 +48,7 @@ function AppContent() {
                     </PrivacyGuardProvider>
                     </DisplayCurrencyProvider>
                     <AppLockGate />
+                    <PendingPairingGate />
                   </AppLockProvider>
                 </CallProvider>
               </ChatProvider>

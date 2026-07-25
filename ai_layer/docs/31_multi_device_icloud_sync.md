@@ -1,15 +1,16 @@
 # 31 — Multi-Device Support + iCloud Backup/Sync
 
-Status: **ARCHITECTURE LOCKED, PHASE 0 BUILT** (2026-07-24, branch `ui-revamp`).
+Status: **ARCHITECTURE LOCKED, PHASES 0-1 BUILT** (2026-07-24, branch
+`ui-revamp`).
 §1's 23 decisions and §3's full architecture are locked from two rounds of
 research→verify→synthesize→adversarially-critique (all sonnet, sequential, per the
 user's explicit process instruction). The final adversarial critique
 (`wf_fd4b3134-d5d`) found real gaps in the first "final" draft — all resolved
 inline in §3, including the one genuine product/security tradeoff (§3.12,
 "lost every device" recovery model), confirmed by the product owner the same day.
-Phase 0 (§5) is built — see its entry for exactly what landed and what's still
-unverified (no real native build has run against the new Swift yet). Phases 1-8
-are not started.
+Phases 0 and 1 (§5) are built — see each entry for exactly what landed and
+what's still unverified (no real native/simulator build has exercised either
+phase end-to-end yet). Phases 2-8 are not started.
 
 ## 0. Goal (as stated by the user, 2026-07-24)
 
@@ -882,25 +883,122 @@ built twice.
   `deviceId` custom-auth-token claim exists (§3.4 point 5) — flagged in the
   rules file comment, not yet resolved.
 
-### Phase 1 — Pairing infrastructure
+### Phase 1 — Pairing infrastructure — BUILT 2026-07-24 (branch `ui-revamp`)
 **Goal**: ship §3.4 in full — QR + manual fallback + secondary confirmation +
 revoke UI + the "paired but not yet trusted" state machine.
-- `functions/src/pairing.ts`: `createPairingCode`/`redeemPairingCode`
-  (idempotent redemption).
-- Biometric re-auth gate before the pairing screen is reachable.
-- Push-based mandatory main-device confirmation sheet + safety-number-style
-  code comparison.
-- Manual 8-character code entry fallback UI.
-- `pending_confirmation` device state + "waiting for confirmation" chat UX
-  (closes the paired-but-blind gap).
-- Linked-devices Settings screen + `revokeDevice` (verified atomic multi-doc
-  transaction).
-- `deviceId` custom-claim + matching `firestore.rules`/RTDB-rules checks.
+
+**What shipped:**
+- [`functions/src/pairing.ts`](../../functions/src/pairing.ts):
+  `createPairingCode`, `redeemPairingCode`, `confirmPairing`, `revokeDevice`,
+  wired as thin `onCall` wrappers in `functions/src/index.ts`, mirroring
+  `groupJoin.ts`'s impl-file/thin-wrapper split. Unlike `groupJoin.ts`'s
+  single-`.update()` precedent, `redeemPairingCode` uses a real
+  `db.runTransaction()` (idempotent code-consumption check-and-set + the new
+  device's `pairedDevices`/`notificationDevices` writes, all atomic) and
+  `revokeDevice` uses a `db.batch()` for the atomic 3-doc delete — both
+  genuinely new patterns for this codebase, not adaptations of existing code.
+- `syncNotificationDeviceRecord` (`functions/src/notifications.ts`) now
+  writes `role: 'main'` and a matching `pairedDevices` doc
+  (`isMainDevice: true, pairingStatus: 'confirmed'`) the first time a device
+  ever registers — this is how "before any pairing happens, there's just one
+  device, and it's main" actually gets encoded; no separate onboarding step
+  needed.
+- Biometric re-auth (`src/services/biometrics.ts`, the exact
+  `SettlementsScreen.tsx` pattern) gates `requestPairingCode` client-side
+  before a pairing code is ever requested.
+- Main device: [`LinkDeviceScreen.tsx`](../../src/screens/settings/LinkDeviceScreen.tsx)
+  — QR (`react-native-qrcode-svg`, **new dependency**, peer-compatible with
+  the installed `react-native-svg@15.15.3`) + 8-char manual code, live
+  confirmation UI for any pending companion with its own comparison code.
+- New device: [`ScanPairingCodeScreen.tsx`](../../src/screens/auth/ScanPairingCodeScreen.tsx)
+  in the **Auth** stack (reachable from `SignInScreen` before the device is
+  signed in at all — redeeming a code IS how it signs in, via the custom
+  token `pairing.ts` mints). First live `expo-camera` `CameraView`/barcode-
+  scanning usage anywhere in this codebase — no in-repo precedent existed to
+  copy (confirmed by discovery: `expo-camera` was previously only used for
+  permission checks).
+- [`PendingPairingGate.tsx`](../../src/components/ui/PendingPairingGate.tsx),
+  mounted at the `App.tsx` root next to `AppLockGate` — blocks the app behind
+  a "waiting for confirmation" panel (showing the comparison code) whenever
+  this device's own `pairedDevices` record is `pending_confirmation`. This
+  exists because of a real navigation-structure constraint: the moment
+  `signInWithCustomToken` succeeds, `user` goes truthy and `AppNavigator`
+  unmounts the Auth stack (including `ScanPairingCodeScreen`) in favor of the
+  App stack — the waiting UI can't live in the screen that redeemed the code,
+  it has to live somewhere that survives the stack swap.
+- [`LinkedDevicesScreen.tsx`](../../src/screens/settings/LinkedDevicesScreen.tsx)
+  — lists `pairedDevices`, self-revoke always available, revoking a
+  *different* device only offered when this device `isMainDevice`. Wired
+  into `SettingsScreen.tsx`'s Security section + both settings registries
+  (the UI-search one and the new sync-scope one — these are unrelated files
+  that happen to share a naming pattern, see Phase 0's note).
+- [`src/services/pairingService.ts`](../../src/services/pairingService.ts) —
+  thin `httpsCallable` wrappers (mirrors `groupJoinService.ts`) + Firestore
+  subscriptions for the two screens/gate above.
+
+**Deliberate Phase 1 scope simplification (documented, not silently
+shipped):** the "secondary out-of-band confirmation" code is a
+server-generated random 6-digit number tied to the specific pairing
+transaction, **not yet** a hash of both devices' Signal identity public keys
+as §3.4 point 3 ultimately specifies — Signal identity keys don't exist until
+Phase 3 publishes them to `signalPrekeys`. It still catches "wrong pairing
+session" confusion (a photographed/intercepted QR redeemed in a different
+session shows a different code) but doesn't yet cryptographically bind to a
+persistent device identity. Phase 3 must upgrade the derivation without
+changing the pairing flow's API shape (see `pairing.ts`'s header comment).
+
+**`deviceId` custom-claim rules enforcement — built narrower than §3.4 point
+5 originally specified, for a concrete, documented reason:** the claim itself
+is minted correctly (`getAuth().createCustomToken(uid, {deviceId})`), and a
+new `hasLiveDeviceSession()` Firestore rules function checks it — but it is
+**deliberately NOT folded into `isSignedIn()`/`isSelf()`**, and therefore
+does **NOT** yet gate `chats`, `messages`, `groups`, `expenses`, or
+`recurringBills`. Reason: this file's own existing comment on
+`groups/{groupId}`'s read rule documents that Firestore denies **list**
+queries outright the moment *any* `get()`/`exists()` appears in an
+applicable rule, regardless of what it's checking — and this repo has no
+Firestore-emulator rules test harness to safely verify a change of that
+scope. `hasLiveDeviceSession()` is applied only to three collections
+confirmed (by grepping the client) to be single-document access only:
+`users/{userId}`, `notificationDevices` (read), `settings`. **This means a
+revoked companion device's cached session can still read/write chats,
+messages, groups, and expenses until its Firebase ID token naturally
+expires/refreshes (~hourly)** — `revokeDevice` immediately removes the
+device from the paired-devices list, stops it receiving future pushes, and
+prevents it from redeeming a new pairing code, but is not yet a full
+instant kill switch for in-flight sessions on the sensitive collections.
+Extending `hasLiveDeviceSession()` to those needs its own Firebase-emulator-
+verified pass — **carried forward as an explicit open risk, not resolved
+here.**
+- RTDB `deviceId`-claim rules (the other half of §3.4 point 5) are **not
+  built yet** — deferred to Phase 2, where the `messageQueue` path shape
+  actually changes to include `deviceId`; there's no per-device RTDB path to
+  gate until then.
+
+**4-device-cap UX for a rejected 5th pairing attempt**: resolved as a hard
+block (`redeemPairingCode` throws `resource-exhausted`) for Phase 1, per
+decision #21's stated base cap — the paywall/subscription idea for more
+devices is explicitly a later monetization feature, not required to close
+this phase.
+
+**Verification done**: `npx tsc --noEmit` clean for both the app and
+`functions/` (exit 0 each); `firebase deploy --only firestore:rules
+--dry-run` compiles successfully against the real project.
+**Verification NOT done**: no simulator or device build has exercised this
+flow end-to-end (QR scan → redeem → confirm → linked-devices list → revoke)
+— per this repo's own native-change/hot-swap gotcha and the general lesson
+that a clean typecheck proves nothing about runtime correctness, treat the
+whole pairing flow as unverified-by-a-real-run until it is. In particular:
+`CameraView`'s `barcodeScannerSettings`/`onBarcodeScanned` prop shape was
+written from general `expo-camera` API knowledge, not confirmed against this
+specific installed SDK version (`~55.0.9`) by a real build.
+
 - **Dependencies**: Phase 0.
-- **Risks**: per-device Firebase Auth session revocation via custom claims is
-  unprototyped plumbing — spike before committing to the exact claim/rule
-  shape. 4-device-cap UX on a 5th pairing attempt (hard block vs. paywall
-  upsell) is undecided — resolve before this phase closes.
+- **Risks carried forward into later phases**: full `chats`/`messages`/
+  `groups` hard-revocation enforcement (needs an emulator-verified pass);
+  RTDB `deviceId` rules (Phase 2); confirmation-code cryptographic upgrade
+  (Phase 3); a "report this device lost/stolen without needing another
+  trusted device" flow (still only cooperative Settings-page revoke exists).
 
 ### Phase 2 — Per-device live sync (RTDB fan-out)
 **Goal**: messages, receipts, and read/delivered dedupe reach every paired
