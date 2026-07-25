@@ -236,6 +236,24 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   already-undefined symbol, no re-scan). Verify with
   `nm -arch arm64 <binary> | grep -c " T _<prefix>"` **and** `nm -u`, plus
   `ls .app/Frameworks/`, not by the build going green.
+- **A Cloud Function that exists in `functions/src/` is NOT deployed, and
+  nothing in the normal workflow tells you.** `npm run ship:ios` builds and
+  submits the APP only — it never touches Firebase (`ship:ios:full` does).
+  Found 2026-07-25: doc 31's Phase 1 pairing backend (`createPairingCode`,
+  `redeemPairingCode`, `revokeDevice`) and Phase 2's `fanOutQueuedMessage` had
+  been written, typechecked, committed and documented as "BUILT" for days while
+  **never having been pushed** — `firebase functions:list` showed 22 deployed
+  functions, none of them these. The client called callables that did not
+  exist, so device pairing could not have worked for anyone, and per-device
+  message fan-out was inert. The failure is silent from the app side (a missing
+  callable looks like a generic network/internal error) and invisible to
+  `tsc`, the test suites, and code review. Before believing any server-side
+  feature is live, diff `firebase functions:list` against the `export const
+  … = onCall`/`onValue*` names in `functions/src/index.ts` — and note the
+  exported callable name can differ from the impl function's name
+  (`syncNotificationDevice` wraps `syncNotificationDeviceRecord`), so deploy
+  filters must use the EXPORT name or `firebase deploy` fails with "No function
+  matches the filter".
 - **UIScene lifecycle is mandatory** (iOS 27 kills classic lifecycle, TN3187). Cold-start
   user activities arrive in `SceneDelegate` `connectionOptions.userActivities`, not
   `application(_:continue:)`. Keep the scene manifest through Expo upgrades.

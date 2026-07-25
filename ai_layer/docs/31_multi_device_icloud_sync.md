@@ -1453,6 +1453,58 @@ decision #22 (no feature flag).
   are immediately user-facing at full scale — do not compress the adversarial
   review to hit a ship date.
 
+## 5b. Bugs found by the first real two-device test (2026-07-25)
+
+Two physical iPhones signed into one account exposed a cluster of defects that
+every prior check had missed. Recorded because the pattern matters more than
+the individual fixes: **`tsc` clean + tests green + "Phase N built" said nothing
+about whether any of it was reachable, or even present, in production.**
+
+1. **The entire pairing backend was never deployed.** `createPairingCode`,
+   `redeemPairingCode`, `revokeDevice` (Phase 1) and `fanOutQueuedMessage`
+   (Phase 2) existed in `functions/src/`, passed typecheck, were committed and
+   documented as "BUILT" — and had **never been pushed to Firebase**.
+   `firebase functions:list` showed 22 deployed functions, none of them these.
+   So the QR flow could not have worked for anyone: the client called a
+   callable that did not exist. Phase 2's per-device message fan-out was
+   likewise inert. **"Built" in this doc has meant "code exists and
+   typechecks"; it has NOT meant deployed. Check `functions:list` against
+   `functions/src/index.ts`'s exports before believing any server-side phase is
+   live.**
+
+2. **Every new device auto-promoted itself to confirmed main.**
+   `syncNotificationDeviceRecord` wrote `isMainDevice: true, pairingStatus:
+   "confirmed"` for any device without a `pairedDevices` row. That was Phase
+   2's backward-compat backfill for pre-Phase-0/1 devices, but it applied to
+   brand-new devices too — so a second phone signing in with plain
+   email+password became a confirmed main device. Pairing was bypassed,
+   `PendingPairingGate` never fired (nothing was ever `pending_confirmation`,
+   which is why no QR/confirmation UI ever appeared), and the 4-device cap —
+   enforced only inside `redeemPairingCode` — never applied. Fixed by gating
+   the backfill on "does this user have ZERO devices", which preserves the
+   migration path exactly (those users have no rows) while closing the bypass.
+   Additional devices are now written `pending_confirmation` + `selfRegistered`.
+
+3. **`PendingPairingGate` signed brand-new devices straight back out.** It read
+   `ownRecord === null` as denied/revoked, but on a fresh sign-in the row does
+   not exist yet — it is created asynchronously — so the subscription's first
+   emission is legitimately null. Latent before; fix #2 would have made it fire
+   on every new device. Now only a null that FOLLOWS a seen record counts.
+
+4. **No way to approve a self-registered device.** `confirmPairing` was
+   reachable only from the QR flow, so a device that signed in directly would
+   have sat blocked behind the gate forever. Linked devices now offers
+   Approve/Deny on pending devices — never for your own device, since
+   self-approval defeats the gate.
+
+5. **`confirmPairing` did not enforce the 4-device cap.** `redeemPairingCode`
+   did, but a self-registered device never goes through redemption, so approval
+   was a second path past the cap. Now enforced server-side.
+
+Not retroactive: devices that already hold a main/confirmed row keep it. Two
+devices that both became "main" under bug #2 stay that way until one is removed
+and re-added.
+
 ## 6. Open risks carried forward (not yet fully closed by the design above)
 
 - CallKit's mandatory-`reportNewIncomingCall` requirement vs. the per-device
