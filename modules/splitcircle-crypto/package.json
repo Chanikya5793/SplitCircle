@@ -1,0 +1,12 @@
+{
+  "name": "splitcircle-crypto",
+  "version": "1.0.0",
+  "description": "End-to-end message encryption for SplitCircle via libsignal (doc 31 §3.3). Phase 3 gate-2 spike: proves LibSignalClient links and runs inside this repo's Expo-module pattern before real session/key-management code is built on top.",
+  "main": "index.ts",
+  "scripts": {},
+  "keywords": [],
+  "license": "MIT",
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

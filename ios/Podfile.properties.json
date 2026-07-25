@@ -3,7 +3,7 @@
   "EX_DEV_CLIENT_NETWORK_INSPECTOR": "true",
   "newArchEnabled": "true",
   "ios.buildReactNativeFromSource": "true",
-  "ios.forceStaticLinking": "[]",
-  "ios.useFrameworks": "dynamic",
+  "ios.forceStaticLinking": "[\"ExpoModulesCore\", \"ExpoModulesJSI\"]",
+  "ios.useFrameworks": "static",
   "apple.privacyManifestAggregationEnabled": "true"
 }

@@ -206,6 +206,36 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   deep-sanitizer won't mangle it — the fix is to strip only the inner plain-data
   object (e.g. `arrayUnion(stripUndefinedDeep({...plainFields}))`), never the
   outer payload that contains the sentinel call itself.
+- **A pod that ships its own `OTHER_LDFLAGS` to link a vendored archive is BROKEN
+  under this project's static linkage — and every wrong fix for it still builds
+  green.** This project must stay on `use_frameworks! :linkage => :static`
+  (Expo's `ExpoModulesCore`/`ExpoModulesJSI` set `static_framework = true`, so a
+  dynamic default hard-fails CocoaPods'
+  `verify_no_static_framework_transitive_dependencies` validator — and that
+  failure aborts *before* `Pods.xcodeproj`/`Podfile.lock` are regenerated, so a
+  later Xcode build silently succeeds against the STALE static project. Never
+  trust `pod install`'s exit code or a downstream green build: grep the
+  generated xcconfig/pbxproj for the setting you think you changed). A static
+  framework target is assembled by `libtool`/`ar`, which never invokes `ld`, so
+  any `OTHER_LDFLAGS` in a pod's `pod_target_xcconfig` is **silently discarded**
+  — this is how `LibSignalClient` (doc 31 Phase 3) ended up with hundreds of
+  undefined `_signal_*` symbols at the app link. Forcing just that pod's
+  `MACH_O_TYPE = mh_dylib` in `post_install` looks like the fix and is a trap:
+  it links, archives, and uploads fine, but CocoaPods computed the app's
+  `[CP] Embed Pods Frameworks` list at INSTALL time from the pod's *declared*
+  (static) type, so the resulting dylib is never copied into
+  `.app/Frameworks/` — build 0.0.156 shipped to TestFlight and crashed on
+  every launch (dyld, before any JS), with App Store Connect flagging the same
+  defect as **ITMS-90863**. The correct pattern: keep every pod static and put
+  the archive on the **app target's** `OTHER_LDFLAGS` via `post_install`
+  (`$(inherited)` first), because the app target is the only build step in the
+  workspace that really runs `ld`. It must go on the target, NOT in a podspec's
+  `user_target_xcconfig`: CocoaPods *sorts* merged OTHER_LDFLAGS tokens and put
+  the archive *before* `-framework "LibSignalClient"`, and static-archive
+  linking is order-dependent (`ld` pulls only members resolving an
+  already-undefined symbol, no re-scan). Verify with
+  `nm -arch arm64 <binary> | grep -c " T _<prefix>"` **and** `nm -u`, plus
+  `ls .app/Frameworks/`, not by the build going green.
 - **UIScene lifecycle is mandatory** (iOS 27 kills classic lifecycle, TN3187). Cold-start
   user activities arrive in `SceneDelegate` `connectionOptions.userActivities`, not
   `application(_:continue:)`. Keep the scene manifest through Expo upgrades.

@@ -1,7 +1,8 @@
 # 31 — Multi-Device Support + iCloud Backup/Sync
 
-Status: **ARCHITECTURE LOCKED, PHASES 0-2 BUILT, PHASE 3 BLOCKED ON A REAL
-BUILD ISSUE** (2026-07-25, branch `ui-revamp`).
+Status: **ARCHITECTURE LOCKED, PHASES 0-2 BUILT, PHASE 3 BUILD-INTEGRATION
+SOLVED (libsignal links + app launches; the spike call itself still
+un-executed)** (2026-07-25, branch `ui-revamp`).
 §1's 23 decisions and §3's full architecture are locked from two rounds of
 research→verify→synthesize→adversarially-critique (all sonnet, sequential, per the
 user's explicit process instruction). The final adversarial critique
@@ -1124,7 +1125,7 @@ device.
     this design still fits once Phase 3's per-device Signal sessions land,
     rather than assuming it does.
 
-### Phase 3 — E2E encryption core — SPIKE RESEARCH DONE 2026-07-25, NOT YET BUILT
+### Phase 3 — E2E encryption core — BUILD INTEGRATION SOLVED 2026-07-25, CRYPTO LOGIC NOT YET BUILT
 **Goal**: libsignal-backed per-device Signal sessions protecting message
 content end-to-end, integrated into the Phase 2 send/receive path.
 
@@ -1148,8 +1149,12 @@ actual shipped podspec does exactly this (`s.dependency 'ExpoModulesCore'` +
 `s.dependency 'LibSignalClient'` side by side), independently confirmed by
 downloading and inspecting the real tarball, not just reading its docs.
 
-**A real, previously-unflagged risk found instead**: libsignal's pod requires
-`use_frameworks! :linkage => :dynamic` at the Podfile level. This repo
+**A real, previously-unflagged risk found instead** — *superseded: see the
+Gates 1 & 2 entry below, which resolves this. libsignal's pod does NOT in fact
+require dynamic linkage; it can be linked statically by putting
+`libsignal_ffi.a` on the app target's link line. The original concern, and why
+it looked mandatory, is preserved here for context.* libsignal's pod appears to
+require `use_frameworks! :linkage => :dynamic` at the Podfile level. This repo
 currently builds with **plain static linking** for every pod
 (`ios.useFrameworks` is unset in `Podfile.properties.json`), New Architecture
 on, React Native built from source
@@ -1197,75 +1202,119 @@ when Phase 3 actually implements it.
 
 - **Dependencies**: Phase 1 (device identities to build sessions against),
   Phase 2 (fan-out path to carry per-device ciphertext).
-- **Gate 1 — CORRECTED 2026-07-25: the earlier "PASSED" claim in this doc was
-  wrong, and it's worth recording exactly how, since it's a real instance of
-  this codebase's own repeated lesson ("code shipping cleanly proves nothing
-  about whether the underlying system actually accepted it") biting the
-  verification process itself.** What actually happened: flipped
-  `ios.useFrameworks` to `"dynamic"`, ran `pod install`, saw a CocoaPods
-  message about `Pods-SplitCircle` having transitive dependencies with
-  statically-linked binaries (`ExpoModulesCore`, `ExpoModulesJSI`), read it
-  as an informational warning, and moved on to a full Xcode build — which
-  succeeded (~1068s, 7611 pre-existing warnings, zero errors), so it was
-  logged as Gate 1 passing. **That build success didn't mean what it looked
-  like it meant.** While investigating Gate 2's failure (below), a direct
-  check of `ios/Pods/Pods.xcodeproj/project.pbxproj` showed every single pod
-  target still built as `com.apple.product-type.library.static` — the file's
-  own mtime predates this entire session by three days. `pod install` had
-  actually been **exiting 1** (confirmed by capturing its exit code
-  explicitly, which the first pass never did) via CocoaPods'
-  `TargetValidator#verify_no_static_framework_transitive_dependencies`
+- **Gates 1 & 2 — RESOLVED 2026-07-25, but only after shipping one genuinely
+  broken build to TestFlight. The whole arc is recorded here because every
+  wrong turn was a *plausible* fix that produced a green build, and the only
+  thing that ever caught them was inspecting the actual artifact.**
+
+  **Wrong turn #1 — a false "Gate 1 PASSED".** Flipped `ios.useFrameworks` to
+  `"dynamic"`, ran `pod install`, read CocoaPods' complaint about
+  `Pods-SplitCircle` having statically-linked transitive dependencies
+  (`ExpoModulesCore`, `ExpoModulesJSI`) as an informational warning, then ran
+  a full Xcode build that succeeded (~1068s, zero errors) and logged the gate
+  as passed. **That build success didn't mean what it looked like it meant.**
+  A direct check of `ios/Pods/Pods.xcodeproj/project.pbxproj` later showed
+  every pod still built as `com.apple.product-type.library.static`, with an
+  mtime three days older than the session: `pod install` had been **exiting 1**
+  all along via `TargetValidator#verify_no_static_framework_transitive_dependencies`
   (real source: `cocoapods-1.16.2/lib/cocoapods/installer/xcode/target_validator.rb:72-95`)
-  — a hard validation failure, not a warning, that aborts before CocoaPods
-  ever regenerates `Pods.xcodeproj` or rewrites `Podfile.lock`. The
-  subsequent Xcode build "succeeded" because it silently built against the
-  **stale, still-statically-linked project left over from before this
-  session** — it never touched dynamic framework linkage at all. Setting
-  Expo's `ios.forceStaticLinking` to `["ExpoModulesCore", "ExpoModulesJSI"]`
-  (its documented escape hatch for exactly this validator, per
-  `expo-modules-autolinking/scripts/ios/autolinking_manager.rb:40-46`) did
-  **not** resolve it either — same error, same exit code, on a clean rerun.
-  **Corrected status: the dynamic-linkage question Gate 1 exists to answer
-  is still open.** `pod install` under `use_frameworks!` fails validation in
-  this project's current Expo Modules configuration, independent of
-  libsignal entirely — this is a real, currently-unresolved blocker, not
-  informational noise, and it was true before `modules/splitcircle-crypto`
-  was ever scaffolded.
-- **Gate 2 — attempted, blocked on the same underlying Gate 1 issue.**
-  Scaffolded `modules/splitcircle-crypto` (podspec depending on
-  `LibSignalClient, '0.99.1'`, one Swift `AsyncFunction` calling
-  `IdentityKeyPair.generate()`) and added the required Podfile-level
-  `pod 'LibSignalClient', :podspec => 'https://raw.githubusercontent.com/signalapp/libsignal/v0.99.1/LibSignalClient.podspec'`
-  line — libsignal isn't on the public CocoaPods Trunk registry, so a
-  sub-module's `s.dependency` alone can't resolve it; only a top-level
-  Podfile `pod` line can carry a `:podspec`/`:git` source. With that fix,
-  `pod install` correctly located and started downloading `LibSignalClient`
-  — but then hit the exact same `verify_no_static_framework_transitive_dependencies`
-  failure Gate 1 actually had all along, so nothing downstream of it (the
-  spike function link/run check) has been reached yet.
-- **Confirmed blocker (not just "unverified"), 2026-07-25**: `pod install`
-  under `use_frameworks! :linkage => :dynamic` fails hard in this project's
-  current state via CocoaPods' `verify_no_static_framework_transitive_dependencies`
-  validator, and Expo's own `ios.forceStaticLinking` escape hatch did not
-  resolve it on a direct retry. Root-caused to CocoaPods source directly
-  (not guessed) — see the corrected Gate 1 entry above. This is upstream of
-  everything else in this phase; nothing past it (New Arch + patch-stack
-  compatibility, libsignal linking, the identity-keypair spike call) has
-  actually been exercised under real dynamic linkage yet.
-- **What remains genuinely unverified without a real build** (not resolvable
-  by research alone): whether the dynamic-linkage flip actually succeeds
-  against New Architecture + RN-from-source + the five patches; whether the
-  153MB prebuilt archive libsignal fetches at pod-install time contains
-  slices compatible with this repo's build matrix and whether that CDN fetch
-  is reliable in a headless CI build; whether libsignal's Rust-FFI core is
-  safe to call concurrently from this specific RN bridge or needs the same
-  `serializeFm`-style single-flight discipline Foundation Models already
-  required (§3.10 gotcha #5's "hot-path module" caution extends here, not
-  just to `require()` guarding); whether a duplicate-symbol/ODR linker
-  conflict arises between libsignal's compiled binary and any existing pod;
-  whether the two existing `splitcircle-*` podspecs' `static_framework = true`
-  directive behaves safely once dynamic linkage is on project-wide for the
-  first time.
+  — a hard failure that aborts *before* regenerating `Pods.xcodeproj` or
+  `Podfile.lock`, so Xcode had silently rebuilt the stale, still-static
+  project. Expo's documented escape hatch (`ios.forceStaticLinking`) did not
+  fix it either. **Lesson, now a standing rule for this repo: never trust
+  `pod install`'s exit code or a downstream build's success — grep the
+  generated xcconfig/pbxproj for the setting you think you changed.**
+
+  **Resolution of the linkage question: don't go dynamic at all.** The
+  validator conflict is unavoidable here (Expo's modules set
+  `static_framework = true` on themselves), so the project stays on
+  `use_frameworks! :linkage => :static`. Two more discoveries followed from
+  libsignal's own podspec (read directly, not assumed): it links its fetched
+  Rust FFI archive via `pod_target_xcconfig => { OTHER_LDFLAGS =>
+  $(LIBSIGNAL_FFI_LIB_TO_LINK) }` and ships an **empty**
+  `user_target_xcconfig`. `OTHER_LDFLAGS` is a *linker* flag, and a static
+  framework target is assembled by `libtool`/`ar` — which never invokes `ld`
+  — so that flag was silently discarded and `libsignal_ffi.a` was linked by
+  nothing. Hence hundreds of undefined `_signal_*` symbols at the app link.
+
+  **Wrong turn #2 — the one that shipped broken (build 0.0.156).** Forced the
+  `LibSignalClient` pod target's `MACH_O_TYPE` to `mh_dylib` in `post_install`
+  so its own `OTHER_LDFLAGS` trick would run. This **linked, built, archived,
+  and uploaded cleanly** — and crashed every launch. CocoaPods computes the
+  app's `[CP] Embed Pods Frameworks` list at **install** time from each pod's
+  *declared* build type (static), so a `post_install` `MACH_O_TYPE` flip
+  yields a real dylib that is **never copied into `SplitCircle.app/Frameworks/`**.
+  The app therefore linked against `@rpath/LibSignalClient.framework/
+  LibSignalClient` that wasn't in the bundle → dyld failure at process start,
+  before any JS ran. App Store Connect independently flagged the same defect
+  as **ITMS-90863** ("links with libraries that aren't present in macOS").
+  The evidence was already on disk and went unread: a bundle inspection during
+  that session listed 10 embedded frameworks with LibSignalClient absent.
+  **Lesson: for any pod switched to dynamic, verifying the link step is not
+  enough — verify the framework is actually inside `.app/Frameworks/`.**
+
+  **The actual fix (verified).** Keep every pod static and link
+  `libsignal_ffi.a` from the **app target** — the only build step in the
+  workspace that really runs `ld`:
+  - `modules/splitcircle-crypto/ios/SplitCircleCrypto.podspec` gained a
+    `user_target_xcconfig` (merged into the aggregate `Pods-SplitCircle.*
+    .xcconfig`, i.e. it reaches the app target) **defining** the archive's
+    location. `PROJECT_TEMP_DIR` is per-project, so the path is reconstructed
+    as `$(PROJECT_TEMP_ROOT)/Pods.build/libsignal_ffi/target/
+    $(CARGO_BUILD_TARGET)/release/libsignal_ffi.a`; the `CARGO_BUILD_TARGET`
+    triples must be duplicated there too (they live in LibSignalClient's
+    `pod_target_xcconfig` and aren't visible to the app target), and were
+    checked against the real archive's contents
+    (`{aarch64-apple-ios-sim,aarch64-apple-ios,x86_64-apple-ios}`).
+  - **The link flag itself is deliberately NOT in that podspec.** Static
+    archive linking is order-dependent (`ld` pulls only members resolving an
+    already-undefined symbol, and does not re-scan), so the archive must come
+    *after* `-framework "LibSignalClient"`. CocoaPods **sorts** the
+    OTHER_LDFLAGS tokens it merges, and an `OTHER_LDFLAGS` set in the podspec
+    landed *before* that `-framework` (confirmed in the generated
+    `Pods-SplitCircle.release.xcconfig`) — which would have linked nothing and
+    failed identically. The flag is applied in `ios/Podfile`'s `post_install`
+    directly on the app target instead, where `$(inherited)` expands to the
+    xcconfig's flags first and pins the archive last (Xcodeproj serializes it
+    as an ordered array — verified in `SplitCircle.xcodeproj/project.pbxproj`).
+
+  **What is actually verified** (simulator, single-arch, `DEBUG_INFORMATION_FORMAT=dwarf`
+  — dSYM generation is what exhausted the Mac's disk twice, see below):
+  `BUILD SUCCEEDED`; **826 `_signal_*` symbols defined (`T`) in the app binary
+  and 0 undefined**; no `LibSignalClient.framework` in `.app/Frameworks/`
+  (correct now — nothing for dyld to miss, nothing for ITMS-90863 to flag);
+  app **installs and launches without crashing** (PID alive, `launchctl`
+  status 0, no crash report, dev-launcher UI rendered). Only 826 of the
+  archive's 10,826 available symbols were pulled, which is why plain-path
+  linking was kept instead of `-force_load` (no whole-archive bloat).
+
+- **Gate 2 is NOT fully passed — one step remains.** Linking and launching are
+  proven; **actually executing `IdentityKeyPair.generate()` is still
+  unverified.** Nothing in the app calls `spikeGenerateIdentityKeyPair` yet, so
+  it is dead code at runtime — which is also why the shipped app is safe even
+  if the Rust FFI misbehaves on first call. Do this before writing any real
+  session/store logic: it is the half of "links **and runs**" that the spike
+  exists to answer, and it needs a JS-side trigger (and ideally a physical
+  device, since the real stores will be Keychain-backed).
+- **Environment hazard hit repeatedly, worth knowing before any future iOS
+  build here**: this Mac ran to **0 bytes free twice**, hard enough that even
+  `df`/`rm`/`true` failed with `ENOSPC` (the tool harness can't write its own
+  output file). Both times the proximate cause was `GenerateDSYMFile`
+  (`dsymutil` → `LLVM ERROR: IO failure on output stream`). Cleaning ~14GB of
+  accumulated `DerivedData` recovered it once, but a single full clean build
+  re-consumed it, so the headroom problem is real and not just leftover
+  artifacts. For verification builds prefer
+  `-derivedDataPath` in a scratch dir + `DEBUG_INFORMATION_FORMAT=dwarf` +
+  `ONLY_ACTIVE_ARCH=YES`.
+- **What remains genuinely unverified without a physical-device build**:
+  whether libsignal's Rust-FFI core is safe to call concurrently from this RN
+  bridge or needs the same `serializeFm`-style single-flight discipline
+  Foundation Models already required (§3.10 gotcha #5 extends here); whether
+  the device (`aarch64-apple-ios`) slice links as cleanly as the simulator one
+  did — the ship build exercises this, but a device *run* has not; whether the
+  CDN fetch of the 153MB prebuilt archive is reliable in a headless CI build;
+  release-build binary size impact once the archive is linked into a stripped
+  Release slice.
 - Other risks carried from the original plan, still unresolved: no hot-swap
   iteration during this phase (§3.10 gotcha #6); Sender Key rekey volume
   against the RTDB reaper (§3.10 gotcha #8) — re-validate reaper batch sizing

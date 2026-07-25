@@ -46,6 +46,54 @@ target 'SplitCircle' do
   use_frameworks! :linkage => podfile_properties['ios.useFrameworks'].to_sym if podfile_properties['ios.useFrameworks']
   use_frameworks! :linkage => ENV['USE_FRAMEWORKS'].to_sym if ENV['USE_FRAMEWORKS']
 
+  # libsignal (doc 31 §3.3/§5 Phase 3) isn't published to the public CocoaPods
+  # Trunk registry — its podspec lives at the root of signalapp/libsignal's own
+  # GitHub repo. A sub-module's `s.dependency 'LibSignalClient', ...` (see
+  # modules/splitcircle-crypto/ios/SplitCircleCrypto.podspec) can only declare
+  # the dependency by name/version; it can't embed a :git/:podspec source for
+  # itself — only a top-level Podfile `pod` line can, hence this explicit entry.
+  # MUST use :git/:tag (full repo clone), not :podspec => a raw single-file
+  # URL — the archive-download build script needs the podspec's other
+  # preserved files (bin/fetch_archive.py) alongside it, not just the
+  # isolated podspec text.
+  #
+  # LIBSIGNAL_FFI_PREBUILD_CHECKSUM: the podspec reads this from
+  # ENV.fetch('LIBSIGNAL_FFI_PREBUILD_CHECKSUM', '') at POD-INSTALL time and
+  # bakes it into the generated pod_target_xcconfig — it is NOT computed or
+  # embedded by the podspec itself. Signal's own CI uploads the real value as
+  # a `.sha256` GitHub Release asset alongside each tag (see
+  # .github/workflows/ios_artifacts.yml's "Upload checksum to release" step);
+  # this one was fetched directly from
+  # https://github.com/signalapp/libsignal/releases/download/v0.99.1/libsignal-client-ios-build-v0.99.1.tar.gz.sha256
+  # and verified end-to-end (pod install + a real Xcode build both succeeded
+  # with it, doc 31 §5 Phase 3 gate 2). An empty/unset value doesn't just
+  # skip verification — it makes the build-time download script fail
+  # outright with "LIBSIGNAL_FFI_PREBUILD_CHECKSUM: unbound variable" (the
+  # xcconfig ends up with no usable value for the shell script's `set -u`
+  # mode), so this must be set here, not left to whoever happens to run
+  # `pod install` remembering to export it. MUST be updated by hand if
+  # LibSignalClient's pinned tag below is ever bumped — fetch the new
+  # version's own .sha256 release asset the same way.
+  ENV['LIBSIGNAL_FFI_PREBUILD_CHECKSUM'] ||= 'c7b1ad515b0698497f051cb7a65e0d9a6e1e5d707db82aa334fa8c834e3e4fd8'
+  # Pinned, not floated — the prebuilt archive fetch above is keyed to this
+  # exact version (and therefore this exact checksum).
+  #
+  # NOTE — linkage: LibSignalClient's own podspec embeds the fetched
+  # libsignal_ffi.a into itself via `OTHER_LDFLAGS => LIBSIGNAL_FFI_LIB_TO_LINK`
+  # (a direct file-path linker flag) — but OTHER_LDFLAGS is a LINKER flag, and
+  # a STATIC library/framework target is produced via libtool/ar, which never
+  # invokes the linker at all, so that flag is silently a no-op under this
+  # project's static default. Confirmed by a real build (doc 31 §5 Phase 3
+  # gate 2): under project-wide static linkage, the final app link failed
+  # with hundreds of undefined `_signal_*` symbols — libsignal_ffi.a's object
+  # code never made it into anything. LibSignalClient's own README ("make
+  # sure you're using use_frameworks!", no :linkage qualifier) implicitly
+  # assumes dynamic linkage for this exact reason. CocoaPods 1.16.2 has no
+  # per-pod `:linkage` override on a `pod` line (confirmed: raises
+  # "Unrecognized options [:linkage]") — the fix lives in the post_install
+  # hook below instead, which flips MACH_O_TYPE for just this one target.
+  pod 'LibSignalClient', :git => 'https://github.com/signalapp/libsignal', :tag => 'v0.99.1'
+
   use_react_native!(
     :path => config[:reactNativePath],
     :hermes_enabled => podfile_properties['expo.jsEngine'] == nil || podfile_properties['expo.jsEngine'] == 'hermes',
@@ -73,6 +121,42 @@ target 'SplitCircle' do
           config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
         end
       end
+    end
+
+    # NOTE — libsignal_ffi linkage: do NOT "fix" LibSignalClient's undefined
+    # `_signal_*` symbols by flipping its MACH_O_TYPE to mh_dylib here. That
+    # was tried (doc 31 §5 Phase 3 gate 2) and it DID link + build + ship, but
+    # it shipped a broken app: CocoaPods computes the app's "[CP] Embed Pods
+    # Frameworks" list at INSTALL time from the pod's declared build type
+    # (static, per use_frameworks! :linkage => :static above), so a
+    # post_install MACH_O_TYPE flip produces a real dylib that is never
+    # copied into SplitCircle.app/Frameworks/. Build 0.0.156 crashed on
+    # launch (dyld could not find @rpath/LibSignalClient.framework/
+    # LibSignalClient) and App Store Connect flagged it as ITMS-90863. The
+    # correct fix keeps every pod static and instead puts libsignal_ffi.a on
+    # the APP target's link line — see SplitCircleCrypto.podspec's
+    # user_target_xcconfig, which is the only xcconfig that reaches the one
+    # build step that actually invokes `ld`.
+    #
+    # That podspec defines WHERE the archive is ($(LIBSIGNAL_FFI_LIB_TO_LINK));
+    # this hook is what actually links it. It has to be applied here, on the
+    # app target itself, rather than as an OTHER_LDFLAGS in the podspec:
+    # linking a static archive is order-dependent (`ld` pulls only members
+    # resolving an already-undefined symbol, with no re-scan), so the archive
+    # must come AFTER `-framework "LibSignalClient"` — and CocoaPods sorts the
+    # OTHER_LDFLAGS tokens it merges into the aggregate xcconfig, which put the
+    # archive FIRST and would silently link none of it. Setting it on the
+    # target makes `$(inherited)` expand to the aggregate xcconfig's flags
+    # (including that -framework) and pins the archive strictly after them.
+    installer.aggregate_targets.each do |aggregate_target|
+      next unless aggregate_target.name == 'Pods-SplitCircle'
+      aggregate_target.user_targets.each do |user_target|
+        user_target.build_configurations.each do |config|
+          config.build_settings['OTHER_LDFLAGS'] =
+            '$(inherited) $(LIBSIGNAL_FFI_LIB_TO_LINK)'
+        end
+      end
+      aggregate_target.user_project.save
     end
 
     # ExpoSQLite's umbrella header can resolve to system sqlite3.h; force pod-scoped header.
