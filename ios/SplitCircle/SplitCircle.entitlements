@@ -18,6 +18,25 @@
     <array>
       <string>Default</string>
     </array>
+    <!-- iCloud / CloudKit backup (doc 31 §3.2, Phase 4). Container
+         `iCloud.com.splitcircle.app` ("SplitCircle Backup") was registered on
+         the portal and assigned to the com.splitcircle.app App ID 2026-07-25 —
+         BEFORE this key was committed, per the same rule the App Group note
+         below states. Verified after saving: iCloud enabled, "Include CloudKit
+         support" on, Enabled iCloud Containers (1). Prior to that the App ID
+         had iCloud ticked but ZERO containers, which is why the provisioning
+         profile carried `icloud-container-identifiers` as an EMPTY array and
+         every CloudKit call would have failed at runtime.
+         If signing ever rejects these keys, check the container is still
+         assigned on the portal — don't delete the keys. -->
+    <key>com.apple.developer.icloud-container-identifiers</key>
+    <array>
+      <string>iCloud.com.splitcircle.app</string>
+    </array>
+    <key>com.apple.developer.icloud-services</key>
+    <array>
+      <string>CloudKit</string>
+    </array>
     <!-- NOTE: the App Group capability
            com.apple.security.application-groups → group.com.splitcircle.app
          is added here as part of the one-time widget setup (ai_layer/docs/19 runbook),
