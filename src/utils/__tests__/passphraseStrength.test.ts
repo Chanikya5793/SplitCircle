@@ -34,6 +34,23 @@ describe('assessPassphrase', () => {
     expect(assessPassphrase('Aaa!!!bbbccc111x').issues.some((i) => /repeated/i.test(i))).toBe(true);
   });
 
+  it('rejects a short word repeated, however long the result', () => {
+    // Regression: a real user chose "ChanChanChan", which scored 68 bits and
+    // "fair" with NO warnings before repeated-substring detection existed.
+    // Repeating it further made it score "strong", which is backwards.
+    for (const candidate of ['ChanChanChan', 'ChanChanChanChanChan', 'abcabcabcabcabc']) {
+      const result = assessPassphrase(candidate);
+      expect(result.meetsMinimum).toBe(false);
+      expect(result.issues.some((i) => /repeating a short word/i.test(i))).toBe(true);
+    }
+  });
+
+  it('does not punish a long passphrase that merely reuses some letters', () => {
+    // Guard against over-correcting: periodicity must mean EXACT repetition,
+    // not incidental letter reuse.
+    expect(assessPassphrase('Chan-Rivera-Tokyo-92!').meetsMinimum).toBe(true);
+  });
+
   it('accepts a genuinely strong mixed passphrase', () => {
     const result = assessPassphrase('Tr0ub4dor&3-Xylo#Kn');
     expect(result.meetsMinimum).toBe(true);

@@ -28,6 +28,23 @@ export interface PassphraseAssessment {
   issues: string[];
 }
 
+/**
+ * Smallest unit the string is an exact repetition of, or the full length when
+ * it isn't periodic. "ChanChanChan" -> 4.
+ *
+ * Repeating a short unit is one of the cheapest attacks there is — repeat rules
+ * are standard in every serious cracker — but length × log2(charset) sees only
+ * a long string and rewards it. Found when a real user chose exactly this
+ * shape: it scored 68 bits and "fair" with no warnings at all.
+ */
+const smallestPeriod = (value: string): number => {
+  for (let period = 1; period <= Math.floor(value.length / 2); period += 1) {
+    if (value.length % period !== 0) continue;
+    if (value.slice(0, period).repeat(value.length / period) === value) return period;
+  }
+  return value.length;
+};
+
 /** Sequences and repeats that inflate naive entropy estimates without adding real work for an attacker. */
 const hasObviousPattern = (value: string): boolean => {
   const lower = value.toLowerCase();
@@ -62,7 +79,21 @@ export const assessPassphrase = (passphrase: string): PassphraseAssessment => {
   if (/[0-9]/.test(passphrase)) charset += 10;
   if (/[^A-Za-z0-9]/.test(passphrase)) charset += 33;
 
-  let entropyBits = charset > 0 ? Math.round(passphrase.length * Math.log2(charset)) : 0;
+  // Score the REPEATING UNIT, not the full string, when the passphrase is an
+  // exact repetition. The repeat count adds only log2(repeats) — an attacker
+  // trying "unit × n" pays almost nothing for larger n.
+  const period = smallestPeriod(passphrase);
+  const effectiveLength = period < passphrase.length ? period : passphrase.length;
+  let entropyBits =
+    charset > 0
+      ? Math.round(
+          effectiveLength * Math.log2(charset) +
+            (period < passphrase.length ? Math.log2(passphrase.length / period) : 0),
+        )
+      : 0;
+  if (period < passphrase.length) {
+    issues.push('Repeating a short word doesn’t make it stronger — use unrelated words instead.');
+  }
 
   const lower = passphrase.toLowerCase();
   if (COMMON_WORDS.some((word) => lower.includes(word))) {
