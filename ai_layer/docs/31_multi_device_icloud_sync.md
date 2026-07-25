@@ -1,7 +1,7 @@
 # 31 — Multi-Device Support + iCloud Backup/Sync
 
-Status: **ARCHITECTURE LOCKED, PHASES 0-2 BUILT** (2026-07-24, branch
-`ui-revamp`).
+Status: **ARCHITECTURE LOCKED, PHASES 0-2 BUILT, PHASE 3 SPIKED (RESEARCH
+ONLY)** (2026-07-25, branch `ui-revamp`).
 §1's 23 decisions and §3's full architecture are locked from two rounds of
 research→verify→synthesize→adversarially-critique (all sonnet, sequential, per the
 user's explicit process instruction). The final adversarial critique
@@ -10,7 +10,11 @@ inline in §3, including the one genuine product/security tradeoff (§3.12,
 "lost every device" recovery model), confirmed by the product owner the same day.
 Phases 0, 1, and 2 (§5) are built — see each entry for exactly what landed and
 what's still unverified (no real native/simulator build has exercised any
-phase end-to-end yet). Phases 3-8 are not started.
+phase end-to-end yet). Phase 3's own explicit pre-implementation spike
+requirement has been researched (2026-07-25) but **no code has been written for
+it** — the spike surfaced a real, previously-unflagged project-wide native
+linkage risk (see Phase 3's entry) that needs a real build to verify, not just
+research; that build has not happened. Phases 3-8 remain not built.
 
 ## 0. Goal (as stated by the user, 2026-07-24)
 
@@ -1116,27 +1120,114 @@ device.
     this design still fits once Phase 3's per-device Signal sessions land,
     rather than assuming it does.
 
-### Phase 3 — E2E encryption core
+### Phase 3 — E2E encryption core — SPIKE RESEARCH DONE 2026-07-25, NOT YET BUILT
 **Goal**: libsignal-backed per-device Signal sessions protecting message
 content end-to-end, integrated into the Phase 2 send/receive path.
-- Native Swift module `modules/splitcircle-crypto/ios/` wrapping official
-  libsignal Swift bindings.
-- `requireOptionalNativeModule()`-style guarded loading on this hot-path
-  module specifically (§3.10 gotcha #5).
-- Per-device identity keys + prekey bundle publish/rotate.
-- 1:1 Double Ratchet sessions; group Sender Keys + rekey-on-membership-change
-  design (unspecced protocol detail, resolve here).
-- Wire encryption/decryption into the Phase 2 send/receive path.
-- Media pre-upload client-side encryption, key delivered in the Signal
-  envelope.
+
+**Pre-implementation spike (research/verify workflow, per this phase's own
+risk callout) completed 2026-07-25 — findings below change the plan
+materially. Do not start writing crypto code from the bullet list that used
+to be here without reading this first.**
+
+**Good news, resolves the roadmap's original stated risk**: libsignal ships
+an official CocoaPods podspec (`LibSignalClient.podspec` at the repo root of
+`signalapp/libsignal`) — Signal's own README states the CocoaPods build is
+"canonical," SPM is explicitly "not supported" for external consumption. This
+repo's established `modules/<name>/ios/<Name>.podspec` +
+`expo-module.config.json` + Swift `Module` class pattern (already proven
+twice: `splitcircle-ai`, `splitcircle-backup`) can declare `s.dependency
+'LibSignalClient', '0.99.1'` (pin exact — the podspec's `script_phases` fetch
+a matching prebuilt archive from `build-artifacts.signal.org` by exact
+version+checksum) directly, no SPM bridge or XCFramework vendoring needed. A
+real precedent exists: the npm package `react-native-libsignal-client`'s
+actual shipped podspec does exactly this (`s.dependency 'ExpoModulesCore'` +
+`s.dependency 'LibSignalClient'` side by side), independently confirmed by
+downloading and inspecting the real tarball, not just reading its docs.
+
+**A real, previously-unflagged risk found instead**: libsignal's pod requires
+`use_frameworks! :linkage => :dynamic` at the Podfile level. This repo
+currently builds with **plain static linking** for every pod
+(`ios.useFrameworks` is unset in `Podfile.properties.json`), New Architecture
+on, React Native built from source
+(`ios.buildReactNativeFromSource: true`), and **five hand-maintained native
+patches** (`react-native+0.83.2.patch`, `react-native-callkeep+4.3.16.patch`,
+`livekit+react-native-webrtc+137.0.2.patch`,
+`react-navigation+bottom-tabs+7.10.1.patch`, `expo-sqlite+55.0.10.patch`) —
+none of which have ever been built or tested under dynamic-framework
+linkage. Flipping this is a **project-wide** switch, not scoped to the new
+crypto module — it changes how RN core, every third-party pod, and both
+existing `splitcircle-*` modules link. This is genuinely higher-risk than
+libsignal's own API surface (which is fully verified against real source,
+zero invented names) and was not evaluated by the original roadmap text.
+
+**Verified real Swift API surface** (fetched and cross-checked directly
+against `signalapp/libsignal`'s actual source, not summaries — safe to build
+against): `IdentityKeyPair.generate()` for per-device identity;
+**no registration-ID generator exists in the Swift bindings** (Java-only) —
+must roll our own matching libsignal's own test-store pattern
+(`UInt32.random(in: 0...0x3FFF)`); `PrivateKey.generate()` +
+`KEMKeyPair.generate()` for prekeys (`PreKeyBundle`'s constructors always
+require Kyber/post-quantum fields — there is no classic-X3DH-only path in
+this version); **no `SessionBuilder` or `SessionCipher` classes exist** —
+session establishment and encrypt/decrypt are free functions:
+`processPreKeyBundle(...)` establishes a session, `signalEncrypt` sends,
+receive-side dispatches on `CiphertextMessage.MessageType`
+(`.whisper`→`signalDecrypt`, `.preKey`→`signalDecryptPreKey`,
+`.senderKey`→`groupDecrypt`); groups use `processSenderKeyDistributionMessage`
++ `groupEncrypt`/`groupDecrypt`. Five store protocols to implement for real
+(libsignal's own in-memory reference store is confirmed test-only):
+`IdentityKeyStore`, `PreKeyStore`, `SignedPreKeyStore`, `KyberPreKeyStore`,
+`SessionStore`, `SenderKeyStore`.
+
+**A real protocol-design gap found, not previously specced**: libsignal's
+`DeviceId` type is `Int8`-backed (effectively 1–127) and is what
+`ProtocolAddress` uses to key sessions — this is **not** the same identifier
+as this repo's existing UUID-string `deviceId`
+(`getOrCreateInstallationId()`, used everywhere in `notificationDevices`/
+`pairedDevices`/RTDB paths since Phase 0). Phase 3 needs a small-integer
+device-id allocation scheme (e.g. a per-user monotonic counter minted at
+pairing time) purely for libsignal's `ProtocolAddress`, stored alongside —
+never replacing — the existing string `deviceId`. §3.4's pairing flow
+(Phase 1) does not currently account for this and will need a small addition
+when Phase 3 actually implements it.
+
 - **Dependencies**: Phase 1 (device identities to build sessions against),
   Phase 2 (fan-out path to carry per-device ciphertext).
-- **Risks**: spike the official libsignal Swift bindings inside an
-  RN-embedded native module *before* committing further engineering time —
-  they target native Swift apps generally, not proven specifically inside an
-  RN bridge in this codebase. No hot-swap iteration during this phase (§3.10
-  gotcha #6). Sender Key rekey volume against the RTDB reaper (§3.10
-  gotcha #8) — re-validate reaper batch sizing before shipping group E2E.
+- **Recommended next step (not yet started)**: do **not** jump to full
+  session/key-management implementation. The spike research's own
+  recommendation is a hard-gated, throwaway-scoped build sequence: (1) flip
+  `ios.useFrameworks` to dynamic in `Podfile.properties.json` alone, no
+  crypto code at all, `pod install` + a real build, confirm the app still
+  launches/calls/chats correctly — this is the actual foundation the
+  original risk callout was worried about and it has never been touched; (2)
+  only if that's clean, scaffold `modules/splitcircle-crypto` with one
+  trivial function calling `IdentityKeyPair.generate()` and confirm it
+  **links and runs on a real device** (not the simulator, and not the
+  jsbundle hot-swap, which is native-change-blind per CLAUDE.md); (3) only
+  after both gates pass does writing the store protocols, session
+  establishment, and send/receive wiring described above make sense. If gate
+  (1) fails or destabilizes the existing patch stack, stop and escalate
+  rather than push forward — that would mean a materially different approach
+  is needed (e.g. isolating libsignal into a separate dynamic-framework-only
+  target).
+- **What remains genuinely unverified without a real build** (not resolvable
+  by research alone): whether the dynamic-linkage flip actually succeeds
+  against New Architecture + RN-from-source + the five patches; whether the
+  153MB prebuilt archive libsignal fetches at pod-install time contains
+  slices compatible with this repo's build matrix and whether that CDN fetch
+  is reliable in a headless CI build; whether libsignal's Rust-FFI core is
+  safe to call concurrently from this specific RN bridge or needs the same
+  `serializeFm`-style single-flight discipline Foundation Models already
+  required (§3.10 gotcha #5's "hot-path module" caution extends here, not
+  just to `require()` guarding); whether a duplicate-symbol/ODR linker
+  conflict arises between libsignal's compiled binary and any existing pod;
+  whether the two existing `splitcircle-*` podspecs' `static_framework = true`
+  directive behaves safely once dynamic linkage is on project-wide for the
+  first time.
+- Other risks carried from the original plan, still unresolved: no hot-swap
+  iteration during this phase (§3.10 gotcha #6); Sender Key rekey volume
+  against the RTDB reaper (§3.10 gotcha #8) — re-validate reaper batch sizing
+  before shipping group E2E.
 
 ### Phase 4 — CloudKit backup engine
 **Goal**: main-device-only bulk export to CloudKit, provider-agnostic,
