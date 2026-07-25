@@ -1,0 +1,32 @@
+import { requireOptionalNativeModule } from 'expo';
+
+export interface BackupHealthRaw {
+  isAvailable: boolean;
+  reason: string | null;
+}
+
+/** Base64-encoded payload — the native side never sees plaintext (doc 31 §3.3/§3.5). */
+export interface BackupChunkRaw {
+  recordType: string;
+  recordId: string;
+  payloadBase64: string;
+  metadata: Record<string, string>;
+}
+
+export interface SplitCircleBackupNativeModule {
+  /** Cheap iCloud-account presence check — see doc 31 §3.6/§3.7. Not a full CloudKit health check until Phase 4. */
+  isHealthy(): Promise<BackupHealthRaw>;
+  /** Throws SplitCircleBackup.notImplemented until Phase 4's CloudKitBackupProvider lands. */
+  backupChunk(
+    recordType: string,
+    recordId: string,
+    payloadBase64: string,
+    metadata: Record<string, string>,
+  ): Promise<void>;
+  restoreChunk(recordType: string, recordId: string): Promise<BackupChunkRaw | null>;
+  listChunkIds(recordType: string, metadata: Record<string, string>): Promise<string[]>;
+  estimateSize(): Promise<number>;
+  verifyIntegrity(recordType: string, recordId: string, expectedChecksum: string): Promise<boolean>;
+}
+
+export default requireOptionalNativeModule<SplitCircleBackupNativeModule>('SplitCircleBackup');

@@ -1,0 +1,12 @@
+{
+  "name": "splitcircle-backup",
+  "version": "1.0.0",
+  "description": "iCloud (CloudKit) chat backup/restore for SplitCircle — main-device-only bulk export/import, never live sync (doc 31 §3.2)",
+  "main": "index.ts",
+  "scripts": {},
+  "keywords": [],
+  "license": "MIT",
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

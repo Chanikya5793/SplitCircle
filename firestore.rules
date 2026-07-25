@@ -152,6 +152,39 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Cloud-Function-only (createPairingCode/redeemPairingCode/revokeDevice,
+    // doc 31 §3.4) — same reasoning as notificationDevices above: the client
+    // never writes this collection directly, so there is no per-field-shape
+    // rule to maintain here as the pairing flow evolves.
+    match /users/{userId}/pairedDevices/{deviceId} {
+      allow read: if isSelf(userId);
+      allow create, update, delete: if false;
+    }
+
+    // Signal prekey bundles (doc 31 §3.3) are deliberately readable by ANY
+    // signed-in user, not just the owner: another participant's device needs
+    // to fetch this bundle to establish an E2E session with this device —
+    // this collection holds public key material only, by construction, never
+    // a private key. Cloud-Function-only for now (redeemPairingCode writes
+    // the initial bundle); Phase 3 may need to loosen create/update to allow
+    // a device to rotate its OWN one-time prekeys directly once the
+    // deviceId custom-auth-token claim (doc 31 §3.4 point 5) exists to scope
+    // that safely — don't open this broadly without that claim in place.
+    match /users/{userId}/signalPrekeys/{deviceId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if false;
+    }
+
+    // Per-device-setting sync (doc 31 §3.8) — one flat doc per settings key
+    // ({value, updatedAt}), never a nested map, so plain client writes are
+    // safe without the merge:true/mergeFields gotcha ever coming into play.
+    // Unlike the device-identity collections above, this is plain per-user
+    // preference data (same trust model as the users/{userId} doc itself),
+    // so it's client-writable directly rather than Cloud-Function-only.
+    match /users/{userId}/settings/{settingKey} {
+      allow read, write: if isSelf(userId);
+    }
+
     match /groups/{groupId} {
       allow create: if isSignedIn()
         && request.resource.data.createdBy == request.auth.uid

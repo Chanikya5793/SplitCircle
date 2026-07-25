@@ -198,6 +198,51 @@ export const getChatMessagesPaginated = async (
   }
 };
 
+export interface LocalMessageStats {
+  chatId: string;
+  count: number;
+  /** createdAt (numeric) of the newest message in this chat, or null if empty. */
+  latestTimestamp: number | null;
+}
+
+const listLocalChatIds = async (): Promise<string[]> => {
+  const allKeys = await AsyncStorage.getAllKeys();
+  return allKeys
+    .filter((key) => key.startsWith(MESSAGES_KEY_PREFIX))
+    .map((key) => key.slice(MESSAGES_KEY_PREFIX.length));
+};
+
+/**
+ * Per-chat message count + latest timestamp, read straight from AsyncStorage.
+ * Feeds the CloudKit `BackupManifest` record (doc 31 §3.2) and the
+ * device-retirement reconciliation check (doc 31 §3.7) — this is the LOCAL
+ * side of that comparison only; the manifest itself is computed at
+ * backup-write time (Phase 4), never re-derived from this function later
+ * (E2E encryption makes after-the-fact plaintext diffing on the CloudKit
+ * side mechanically impossible by design — see doc 31 §3.10 gotcha #2).
+ *
+ * Pass a chatId for a single chat's stats; omit it for every chat this
+ * device currently has local messages for.
+ */
+export const getLocalMessageStats = async (chatId?: string): Promise<LocalMessageStats[]> => {
+  const chatIds = chatId ? [chatId] : await listLocalChatIds();
+
+  return Promise.all(
+    chatIds.map(async (id): Promise<LocalMessageStats> => {
+      try {
+        const messages = await readMessages(id);
+        const latestTimestamp = messages.reduce<number | null>((latest, message) => {
+          return latest === null || message.createdAt > latest ? message.createdAt : latest;
+        }, null);
+        return { chatId: id, count: messages.length, latestTimestamp };
+      } catch (error) {
+        console.error('❌ Error computing local message stats:', error);
+        return { chatId: id, count: 0, latestTimestamp: null };
+      }
+    }),
+  );
+};
+
 // Update a message's status in local storage
 export const updateMessageStatus = async (
   chatId: string,
