@@ -48,13 +48,31 @@ const fromBase64 = (input: string): string =>
   // eslint-disable-next-line no-undef
   decodeURIComponent(escape(globalThis.atob(input)));
 
+/** Thrown when a recipient HAS encryption keys but we could not encrypt for all of their devices. */
+export class EncryptionRequiredError extends Error {
+  constructor(recipientId: string, covered: number, total: number) {
+    super(
+      `Could not encrypt for all of ${recipientId}'s devices (${covered}/${total}). ` +
+        'Refusing to send this message unencrypted.',
+    );
+    this.name = 'EncryptionRequiredError';
+  }
+}
+
 /**
  * Encrypts a message's private fields for every device of `recipientId`.
  *
- * Returns null — meaning "send plaintext" — when crypto is unavailable, the
- * recipient has published no keys, or ANY device could not be encrypted for.
- * Partial coverage is deliberately treated as failure: a device that receives
- * no envelope it can open would silently lose the message.
+ * Returns null — meaning "send plaintext" — ONLY when the recipient has no
+ * published keys at all (a client that predates E2E), or crypto is unavailable
+ * on this device. That is the sole remaining downgrade path and it exists
+ * purely so messaging to not-yet-upgraded accounts keeps working.
+ *
+ * THROWS `EncryptionRequiredError` when the recipient demonstrably HAS keys but
+ * we could not encrypt for every device. That case used to fall back to
+ * plaintext too, which was a downgrade vector: anyone able to make one device's
+ * key material unavailable could force the whole message into the clear. A
+ * visible send failure is the correct outcome — silently weakening the
+ * guarantee is not.
  */
 export const encryptMessageForRecipient = async (
   recipientId: string,
@@ -79,8 +97,12 @@ export const encryptMessageForRecipient = async (
   const plaintext = toBase64(JSON.stringify(fields));
   const results = await encryptForAllDevices(recipientId, plaintext, excludeDeviceId);
 
-  // Strict equality, not >= 1: see the all-or-nothing note above.
-  if (results.length !== devices.length) return null;
+  // Strict equality, not >= 1: partial coverage means at least one device
+  // would receive nothing it can open. The recipient HAS keys here, so this is
+  // a genuine failure, not a reason to downgrade — see the doc comment.
+  if (results.length !== devices.length) {
+    throw new EncryptionRequiredError(recipientId, results.length, devices.length);
+  }
 
   const envelopes: Record<string, StoredEnvelope> = {};
   for (const result of results) {

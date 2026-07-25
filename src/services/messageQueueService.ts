@@ -353,6 +353,9 @@ export const queueMessageToOwnDevices = async (
       thumbnailUrl: message.thumbnailUrl || null,
       isGroupChat,
       originDeviceId,
+      // The sending device's own view of the message, so the mirrored copy
+      // doesn't have to invent one.
+      status: message.status ?? 'sent',
       envelopes: encrypted.envelopes,
       senderSignalDeviceId: encrypted.senderSignalDeviceId,
       encrypted: true,
@@ -486,6 +489,10 @@ const attachQueueListener = (
       }
     }
 
+    // Our own message arriving via the self-sync mirror (doc 31 §3.3), as
+    // opposed to a message from someone else. Several behaviours below differ.
+    const isSelfAuthored = payload.senderId === userId;
+
     processingMessageIds.add(messageId);
 
     try {
@@ -525,14 +532,31 @@ const attachQueueListener = (
         location: payload.location,
         forwardedFrom: payload.forwardedFrom,
         expenseRef: payload.expenseRef,
-        status: 'delivered',
+        // A message we authored, arriving here via the self-sync mirror
+        // (doc 31 §3.3), is NOT "delivered to us" — that would claim the real
+        // recipient received it. Carry the sending device's own status
+        // instead, defaulting to 'sent'.
+        status: isSelfAuthored
+          ? ((typeof raw?.status === 'string' ? raw.status : 'sent') as ChatMessage['status'])
+          : 'delivered',
+        // Left false even for our own mirrored messages, deliberately: this
+        // flag drives MEDIA resolution (useResolvedMediaUri / AlbumBubble),
+        // and the mirroring device genuinely does not hold the local file, so
+        // it must download like any receiver. Bubble alignment does not depend
+        // on it — MessageBubble derives that from senderId.
         isFromMe: false,
         deliveredTo: [],
         readBy: [],
       };
 
       await onMessageReceived(message);
-      await sendDeliveryReceipt(payload.chatId, messageId, userId, payload.isGroupChat ?? false);
+      // Never acknowledge our OWN message. A delivery receipt is keyed by the
+      // acknowledging user, so self-sync would write the sender's own id into
+      // deliveredTo — making a message look delivered to a recipient purely
+      // because the sender has a second device.
+      if (!isSelfAuthored) {
+        await sendDeliveryReceipt(payload.chatId, messageId, userId, payload.isGroupChat ?? false);
+      }
       await remove(ref(rtdb, deletePath(messageId)));
       console.log('✅ Message delivered and removed from queue:', messageId);
     } catch (error) {

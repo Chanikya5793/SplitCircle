@@ -633,8 +633,23 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           .map((participant) => participant.userId)
           .filter((participantId) => participantId !== user.userId);
 
+        // Attempt EVERY recipient before failing. queueMessage can now throw
+        // rather than silently downgrading to plaintext when a recipient has
+        // keys we can't fully encrypt for (EncryptionRequiredError), and in a
+        // group an early throw would starve every recipient after the failing
+        // one. Collect instead, then fail the message as a whole so the user
+        // retries — retry is safe because the message id is stable, so a
+        // re-send overwrites the same queue node rather than duplicating.
+        const sendFailures: unknown[] = [];
         for (const recipientId of recipientIds) {
-          await queueMessage(recipientId, message, isGroupChat);
+          try {
+            await queueMessage(recipientId, message, isGroupChat);
+          } catch (error) {
+            sendFailures.push(error);
+          }
+        }
+        if (sendFailures.length > 0) {
+          throw sendFailures[0];
         }
 
         // Mirror to this user's OWN other devices (doc 31 §3.3). Once per
