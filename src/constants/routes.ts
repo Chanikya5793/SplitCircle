@@ -41,6 +41,7 @@ export const ROUTES = {
     LINKED_DEVICES: 'LinkedDevices',
     LINK_DEVICE: 'LinkDevice',
     BACKUP_PASSPHRASE: 'BackupPassphrase',
+    DEVICE_RETIREMENT: 'DeviceRetirement',
     AI_INDEX: 'AiIndex',
     AI_EVALS: 'AiEvals',
     AI_MEMORY: 'AiMemory',

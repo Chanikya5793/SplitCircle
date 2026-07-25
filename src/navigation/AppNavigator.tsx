@@ -45,6 +45,7 @@ import { OfflineSyncScreen } from '@/screens/settings/OfflineSyncScreen';
 import { LinkedDevicesScreen } from '@/screens/settings/LinkedDevicesScreen';
 import { LinkDeviceScreen } from '@/screens/settings/LinkDeviceScreen';
 import { BackupPassphraseScreen } from '@/screens/settings/BackupPassphraseScreen';
+import { DeviceRetirementScreen } from '@/screens/settings/DeviceRetirementScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { EditNameScreen } from '@/screens/settings/EditNameScreen';
 import { SearchScreen } from '@/screens/search/SearchScreen';
@@ -1208,6 +1209,11 @@ const AppStackNavigator = () => {
         name={ROUTES.APP.BACKUP_PASSPHRASE}
         component={BackupPassphraseScreen}
         options={{ title: 'Backup passphrase' }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.DEVICE_RETIREMENT}
+        component={DeviceRetirementScreen}
+        options={{ title: 'Retire this device' }}
       />
       <AppStack.Screen
         name={ROUTES.APP.LINK_DEVICE}

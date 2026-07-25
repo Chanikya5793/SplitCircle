@@ -237,6 +237,27 @@ final class SignalSessionEngine {
     )
   }
 
+  // MARK: - Identity-key attestation
+
+  /// Signs arbitrary bytes with THIS device's Signal identity key.
+  ///
+  /// The trust anchor for §3.7's retirement attestation: a device claiming
+  /// "my backup is complete" must prove it is the device peers already know,
+  /// not merely something that can write to the user's CloudKit container.
+  func signWithIdentity(_ payload: Data) throws -> Data {
+    let (identity, _) = try store.ensureIdentity()
+    return identity.privateKey.generateSignature(message: payload)
+  }
+
+  /// Verifies a signature against a peer's published identity key.
+  func verifyWithIdentity(_ payload: Data, signature: Data, identityKeyBase64: String) throws -> Bool {
+    guard let keyData = Data(base64Encoded: identityKeyBase64) else {
+      throw SignalEngineError.malformedBundle("identityKey")
+    }
+    let identityKey = try IdentityKey(bytes: keyData)
+    return try identityKey.publicKey.verifySignature(message: payload, signature: signature)
+  }
+
   func hasSession(userId: String, deviceId: UInt32) throws -> Bool {
     let address = try ProtocolAddress(name: userId, deviceId: deviceId)
     return try store.loadSession(for: address, context: context) != nil

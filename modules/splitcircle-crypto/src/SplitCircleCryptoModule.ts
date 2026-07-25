@@ -48,6 +48,13 @@ export interface SplitCircleCryptoNativeModule {
   encrypt(userId: string, deviceId: number, plaintextBase64: string): Promise<SignalEnvelope>;
   /** Returns base64 plaintext. */
   decrypt(userId: string, deviceId: number, type: number, bodyBase64: string): Promise<string>;
+  /** Signs base64 bytes with this device's Signal identity key (§3.7 attestation). */
+  signWithIdentity(payloadBase64: string): Promise<string>;
+  verifyWithIdentity(
+    payloadBase64: string,
+    signatureBase64: string,
+    identityKey: string,
+  ): Promise<boolean>;
   wipe(): Promise<void>;
 }
 

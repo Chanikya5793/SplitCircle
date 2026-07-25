@@ -80,6 +80,26 @@ public class SplitCircleCryptoModule: Module {
       return plaintext.base64EncodedString()
     }
 
+    /// Signs bytes with this device's Signal identity key (§3.7 attestation).
+    AsyncFunction("signWithIdentity") { (payloadBase64: String) -> String in
+      guard let payload = Data(base64Encoded: payloadBase64) else {
+        throw Exception(name: "InvalidArgument", description: "payload must be base64")
+      }
+      return try self.onQueue { try self.engine().signWithIdentity(payload).base64EncodedString() }
+    }
+
+    AsyncFunction("verifyWithIdentity") { (payloadBase64: String, signatureBase64: String, identityKey: String) -> Bool in
+      guard
+        let payload = Data(base64Encoded: payloadBase64),
+        let signature = Data(base64Encoded: signatureBase64)
+      else {
+        throw Exception(name: "InvalidArgument", description: "payload and signature must be base64")
+      }
+      return try self.onQueue {
+        try self.engine().verifyWithIdentity(payload, signature: signature, identityKeyBase64: identityKey)
+      }
+    }
+
     /// Destroys all Signal state on this device. Called on revocation (§3.7)
     /// and account deletion (doc 28) — stale sessions would otherwise keep
     /// decrypting a revoked peer's ciphertext.

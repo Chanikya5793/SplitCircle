@@ -714,6 +714,18 @@ export const SettingsScreen = () => {
               });
             }}
           />
+          {divider}
+          <ListRow
+            title="Retire this device"
+            subtitle="Check it's safe before wiping or giving it away"
+            icon="cellphone-remove"
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate(ROUTES.APP.DEVICE_RETIREMENT, {
+                backTitle: ROOT_SCREEN_TITLES.settings,
+              });
+            }}
+          />
         </GlassCard>
 
         <SectionLabel style={styles.sectionLabel}>General</SectionLabel>

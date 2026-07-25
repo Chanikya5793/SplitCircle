@@ -154,6 +154,20 @@ export const listSignalDevices = async (
 };
 
 /**
+ * The published identity key for one device, or null if it hasn't published.
+ * Read from `signalPrekeys` so a caller checks the SAME key peers see, rather
+ * than trusting anything held locally (§3.7 attestation verification).
+ */
+export const getIdentityKeyForDevice = async (
+  userId: string,
+  deviceId: string,
+): Promise<string | null> => {
+  const snap = await getDoc(doc(db, 'users', userId, 'signalPrekeys', deviceId));
+  const key = snap.exists() ? snap.data()?.identityKey : null;
+  return typeof key === 'string' ? key : null;
+};
+
+/**
  * Ensures a session exists with one peer device, claiming a one-time prekey
  * and running the handshake only when there isn't one already.
  *

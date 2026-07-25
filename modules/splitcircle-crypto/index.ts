@@ -81,6 +81,24 @@ export function decryptFromDevice(
 }
 
 /**
+ * Signs bytes with this device's Signal identity key — the trust anchor for
+ * §3.7's retirement attestation. A device claiming its backup is complete must
+ * prove it is the device peers already know, not just something able to write
+ * to the user's CloudKit container.
+ */
+export function signWithIdentity(payloadBase64: string): Promise<string> {
+  return requireModule().signWithIdentity(payloadBase64);
+}
+
+export function verifyWithIdentity(
+  payloadBase64: string,
+  signatureBase64: string,
+  identityKey: string,
+): Promise<boolean> {
+  return requireModule().verifyWithIdentity(payloadBase64, signatureBase64, identityKey);
+}
+
+/**
  * Destroys all Signal state on this device (revocation §3.7, account deletion
  * doc 28). Stale sessions would otherwise keep decrypting a revoked peer's
  * ciphertext.
