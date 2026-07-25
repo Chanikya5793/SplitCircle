@@ -40,6 +40,7 @@ export const ROUTES = {
     OFFLINE_SYNC: 'OfflineSync',
     LINKED_DEVICES: 'LinkedDevices',
     LINK_DEVICE: 'LinkDevice',
+    BACKUP_PASSPHRASE: 'BackupPassphrase',
     AI_INDEX: 'AiIndex',
     AI_EVALS: 'AiEvals',
     AI_MEMORY: 'AiMemory',

@@ -702,6 +702,18 @@ export const SettingsScreen = () => {
             }}
           />
           ))}
+          {divider}
+          <ListRow
+            title="Backup passphrase"
+            subtitle="Encrypt your iCloud chat backup"
+            icon="lock-outline"
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate(ROUTES.APP.BACKUP_PASSPHRASE, {
+                backTitle: ROOT_SCREEN_TITLES.settings,
+              });
+            }}
+          />
         </GlassCard>
 
         <SectionLabel style={styles.sectionLabel}>General</SectionLabel>

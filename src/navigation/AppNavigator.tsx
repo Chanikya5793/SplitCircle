@@ -44,6 +44,7 @@ import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
 import { OfflineSyncScreen } from '@/screens/settings/OfflineSyncScreen';
 import { LinkedDevicesScreen } from '@/screens/settings/LinkedDevicesScreen';
 import { LinkDeviceScreen } from '@/screens/settings/LinkDeviceScreen';
+import { BackupPassphraseScreen } from '@/screens/settings/BackupPassphraseScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
 import { EditNameScreen } from '@/screens/settings/EditNameScreen';
 import { SearchScreen } from '@/screens/search/SearchScreen';
@@ -1202,6 +1203,11 @@ const AppStackNavigator = () => {
         name={ROUTES.APP.LINKED_DEVICES}
         component={LinkedDevicesScreen}
         options={{ title: SCREEN_TITLES.linkedDevices }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.BACKUP_PASSPHRASE}
+        component={BackupPassphraseScreen}
+        options={{ title: 'Backup passphrase' }}
       />
       <AppStack.Screen
         name={ROUTES.APP.LINK_DEVICE}
