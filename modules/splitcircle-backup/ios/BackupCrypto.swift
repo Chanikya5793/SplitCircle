@@ -57,6 +57,12 @@ public final class BackupCrypto {
   private var activeKey: SymmetricKey?
   private var activeSalt: Data?
   private var activeIterations: UInt32 = defaultIterations
+  /// Retained for the session so `unwrap` can RE-DERIVE when it meets a blob
+  /// sealed under a different salt. Restore is otherwise impossible: the salt
+  /// lives inside the backup, but reading the backup needs the key, which needs
+  /// the salt. Holding the passphrase for the session breaks that circle. It is
+  /// cleared by `endSession` along with the key.
+  private var activePassphrase: String?
 
   public init() {}
 
@@ -91,6 +97,7 @@ public final class BackupCrypto {
     activeKey = SymmetricKey(data: derived)
     activeSalt = resolvedSalt
     activeIterations = iterations
+    activePassphrase = passphrase
     return resolvedSalt
   }
 
@@ -100,6 +107,7 @@ public final class BackupCrypto {
   public func endSession() {
     activeKey = nil
     activeSalt = nil
+    activePassphrase = nil
   }
 
   public var hasActiveSession: Bool { activeKey != nil }
@@ -132,8 +140,25 @@ public final class BackupCrypto {
   }
 
   public func unwrap(_ blob: Data) throws -> Data {
-    guard let key = activeKey else { throw BackupCryptoError.noActiveSession }
+    guard activeKey != nil else { throw BackupCryptoError.noActiveSession }
     guard blob.count > 7 else { throw BackupCryptoError.malformedPayload }
+
+    // Re-derive when this blob was sealed under a different salt than the
+    // current session's. A restore cannot know the salt up front — it lives
+    // inside the backup — so beginSession(passphrase) alone mints a FRESH salt
+    // and a key that decrypts nothing. Reading the salt back out of the
+    // envelope here is what makes the format genuinely self-describing.
+    // (Caught by the first real device round trip: export succeeded, import
+    // failed with "wrong passphrase" against a backup written seconds earlier.)
+    let (blobSalt, blobIterations) = try Self.extractSalt(from: blob)
+    if blobSalt != activeSalt || blobIterations != activeIterations {
+      guard let passphrase = activePassphrase else { throw BackupCryptoError.noActiveSession }
+      let derived = try Self.pbkdf2(passphrase: passphrase, salt: blobSalt, iterations: blobIterations)
+      activeKey = SymmetricKey(data: derived)
+      activeSalt = blobSalt
+      activeIterations = blobIterations
+    }
+    guard let key = activeKey else { throw BackupCryptoError.noActiveSession }
 
     var offset = blob.startIndex
     let version = blob[offset]; offset += 1

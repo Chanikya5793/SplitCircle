@@ -130,6 +130,7 @@ public class SplitCircleBackupModule: Module {
       Int(try await self.provider.estimateSize())
     }
 
+
     AsyncFunction("verifyIntegrity") { (recordType: String, recordId: String, expectedChecksum: String) async throws -> Bool in
       try await self.withRetry {
         try await self.provider.verifyIntegrity(
