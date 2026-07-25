@@ -1386,11 +1386,39 @@ when Phase 3 actually implements it.
   is still untested against real concurrency; test it before trusting the
   allocator.
 
-  **Still to wire before Phase 3 closes**: the actual message send/receive path
-  (encrypt on send via `encryptForAllDevices`, decrypt on receive), prekey
-  replenishment triggering, and §3.4's pairing flow recording the libsignal
-  device id. Group (sender-key) messaging deliberately throws rather than being
-  half-built.
+- **Message path WIRED 2026-07-25 (commit `e15a7d1`, fan-out redeployed).**
+  `src/services/messageEnvelope.ts` bundles the fields §3.3 scopes as private
+  (content, the `replyTo` snippet quoting it, `location`) into one JSON payload
+  and encrypts it once per recipient device; `queueMessage` attaches the
+  resulting `{ deviceId -> envelope }` map plus the sender's libsignal device
+  id (which the receiver needs to name the session it decrypts against).
+  `fanOutQueuedMessage` hands each device ONLY its own envelope and strips the
+  map — forwarding it whole would give every device every other device's
+  ciphertext. `attachQueueListener` decrypts before processing, so everything
+  downstream is untouched.
+  - **ALL-OR-NOTHING per message**: if any one recipient device can't be
+    encrypted for, the whole message goes plaintext. Partial coverage would
+    silently lose the message on the uncovered device. This is explicitly a
+    ROLLOUT measure — an attacker able to suppress key publication can force
+    plaintext — and MUST be removed once every client publishes keys.
+  - A failed decrypt falls back to whatever plaintext the payload carried
+    rather than dropping the message: a peer that reinstalled has a new
+    identity, so dead sessions are normal and must not look like message loss.
+  - No RTDB rules change was needed: `messageQueue` has no `$other` deny so the
+    new fields validate, and blanking `content` to `''` still satisfies the
+    existing `hasChildren(['content', …])` check.
+
+  **NOT verified at runtime**: an encrypted message actually round-tripping
+  between two devices. That needs both handsets signed in and publishing keys,
+  which has not happened yet (only the 17 Pro has published). Until that test
+  runs, treat the message path as built-but-unproven — the crypto engine itself
+  is round-trip verified, but the transport wiring around it is not.
+
+  **Still to wire before Phase 3 closes**: sender-side fan-out to the sender's
+  OWN other devices (§3.3 requires it; today `queueMessage` targets only the
+  recipient), prekey replenishment triggering, and §3.4's pairing flow
+  recording the libsignal device id. Group (sender-key) messaging deliberately
+  throws rather than being half-built.
 - Other risks carried from the original plan, still unresolved: no hot-swap
   iteration during this phase (§3.10 gotcha #6); Sender Key rekey volume
   against the RTDB reaper (§3.10 gotcha #8) — re-validate reaper batch sizing
