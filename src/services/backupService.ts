@@ -15,7 +15,6 @@ import {
   backupChunk,
   beginBackupSession,
   endBackupSession,
-  listChunkIds,
   restoreChunk,
   verifyBackupIntegrity,
 } from '../../modules/splitcircle-backup';
@@ -199,9 +198,12 @@ export const exportBackup = async (
  * for subsequent chunks.
  */
 export const readBackupManifest = async (passphrase: string): Promise<BackupManifest | null> => {
-  const manifestIds = await listChunkIds(RECORD_TYPE.manifest, {});
-  if (manifestIds.length === 0) return null;
-
+  // Fetched by its KNOWN id rather than discovered by query. CloudKit does not
+  // auto-create queryable indexes, so a TRUEPREDICATE query fails with
+  // "Field 'recordName' is not marked queryable" until someone adds an index
+  // in the CloudKit Dashboard by hand — which a fresh install of this app can
+  // never rely on. Fetch-by-id needs no schema configuration at all, and the
+  // manifest is the index by design (§3.2), so nothing here needs a query.
   await beginBackupSession(passphrase);
   try {
     const chunk = await restoreChunk(RECORD_TYPE.manifest, 'manifest-current');
@@ -302,24 +304,32 @@ export const importBackup = async (
  * backup claims is not a gate.
  */
 export const verifyBackup = async (
+  passphrase: string,
   manifest: BackupManifest,
 ): Promise<{ ok: boolean; missing: string[] }> => {
   const missing: string[] = [];
 
-  for (const chat of manifest.chats) {
-    const recomputed = checksum(chat.batchIds.join('|'));
-    if (recomputed !== chat.batchChecksum) {
-      // The manifest disagrees with itself — treat every batch in this chat as
-      // suspect rather than trying to guess which entry is wrong.
-      missing.push(...chat.batchIds);
-      continue;
-    }
-    for (const id of chat.batchIds) {
-      const present = await listChunkIds(RECORD_TYPE.message, { chatId: chat.chatId });
-      if (!present.includes(id)) {
-        missing.push(id);
+  await beginBackupSession(passphrase);
+  try {
+    for (const chat of manifest.chats) {
+      const recomputed = checksum(chat.batchIds.join('|'));
+      if (recomputed !== chat.batchChecksum) {
+        // The manifest disagrees with itself — treat every batch in this chat
+        // as suspect rather than guessing which entry is wrong.
+        missing.push(...chat.batchIds);
+        continue;
+      }
+      for (const id of chat.batchIds) {
+        // Fetch-by-id, not a query: same CloudKit indexing constraint as
+        // readBackupManifest. This also verifies each batch actually DECRYPTS,
+        // which a presence check alone would not — §3.7's gate needs to know a
+        // backup is restorable, not merely that records exist.
+        const chunk = await restoreChunk(RECORD_TYPE.message, id);
+        if (!chunk) missing.push(id);
       }
     }
+  } finally {
+    await endBackupSession();
   }
 
   return { ok: missing.length === 0, missing };
