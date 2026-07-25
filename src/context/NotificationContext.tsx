@@ -11,6 +11,7 @@ import {
   subscribeToCurrentDeviceRecord,
   syncCurrentDeviceRegistration,
 } from '@/services/notificationService';
+import { initializeSignalForDevice } from '@/services/signalCryptoService';
 import {
   clearBadgeCount,
   scheduleLocalNotification,
@@ -172,6 +173,21 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             const attempt = await syncCurrentDeviceRegistration(nextOptions);
             setPermission(attempt.permission);
             setPushToken(attempt.expoPushToken ?? currentDeviceRef.current?.expoPushToken ?? null);
+
+            // Publish this device's Signal prekeys (doc 31 §3.3). Deliberately
+            // sequenced AFTER the registration sync: publishSignalPrekeys
+            // requires a CONFIRMED pairedDevices row, which that sync is what
+            // creates. A device still awaiting approval is rejected server-side
+            // — that's correct, not a failure to report, since an unapproved
+            // device must not become addressable as a message recipient.
+            // Never allowed to break notification registration: encryption
+            // rolling out is not a reason for pushes to stop working.
+            const currentUserId = user?.userId;
+            if (currentUserId) {
+              void initializeSignalForDevice(currentUserId).catch((error) => {
+                console.warn('Signal prekey publish skipped', error);
+              });
+            }
           } catch (error) {
             console.warn('Failed to sync notification device registration', error);
           }

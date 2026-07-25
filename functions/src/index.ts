@@ -38,6 +38,11 @@ import {
     confirmPairing as confirmPairingImpl,
     revokeDevice as revokeDeviceImpl,
 } from "./pairing";
+import {
+    publishSignalPrekeys as publishSignalPrekeysImpl,
+    claimSignalPreKey as claimSignalPreKeyImpl,
+    type PublishablePrekeyBundle,
+} from "./signalKeys";
 import { backfillMissingDisplayNames } from "./displayNameBackfill";
 export { cleanupOldRtdbData, reapStaleRingingCalls } from "./cleanup";
 // Consolidated AI-layer ingestion fan-out (gated by AI_LAYER_ENABLED; no-op until
@@ -1621,5 +1626,56 @@ export const runDisplayNameBackfill = onCall(async (request) => {
         }
         logger.error("Display name backfill run failed", { uid, ...toSafeError(error) });
         throw new HttpsError("internal", "Failed to run display name backfill.");
+    }
+});
+
+// ── Signal prekey publishing / claiming (doc 31 §3.3, Phase 3) ─────────────
+
+export const publishSignalPrekeys = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const deviceId = getStringValue(request.data?.deviceId);
+    const bundle = request.data?.bundle;
+    if (!deviceId || !bundle || typeof bundle !== "object") {
+        throw new HttpsError("invalid-argument", "Missing deviceId or bundle.");
+    }
+
+    try {
+        return await publishSignalPrekeysImpl(uid, deviceId, bundle as PublishablePrekeyBundle);
+    } catch (error) {
+        if (error instanceof Error && (
+            error.message === "This device is not registered on your account" ||
+            error.message === "This device is not confirmed yet"
+        )) {
+            throw new HttpsError("failed-precondition", error.message);
+        }
+        logger.error("publishSignalPrekeys failed", { uid, deviceId, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to publish encryption keys.");
+    }
+});
+
+export const claimSignalPreKey = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const targetUserId = getStringValue(request.data?.targetUserId);
+    const targetDeviceId = getStringValue(request.data?.targetDeviceId);
+    if (!targetUserId || !targetDeviceId) {
+        throw new HttpsError("invalid-argument", "Missing target user or device id.");
+    }
+
+    try {
+        return await claimSignalPreKeyImpl(targetUserId, targetDeviceId);
+    } catch (error) {
+        if (error instanceof Error && error.message === "That device has not published encryption keys yet") {
+            throw new HttpsError("failed-precondition", error.message);
+        }
+        logger.error("claimSignalPreKey failed", { uid, targetUserId, targetDeviceId, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to fetch encryption keys.");
     }
 });
