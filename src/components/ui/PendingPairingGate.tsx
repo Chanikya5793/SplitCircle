@@ -16,6 +16,7 @@ import {
   type PairedDevice,
 } from '@/services/pairingService';
 import { errorHaptic } from '@/utils/haptics';
+import { wipeSignalState } from '../../../modules/splitcircle-crypto';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
@@ -66,7 +67,24 @@ export const PendingPairingGate = () => {
     if (!wasDeniedOrRevoked || signingOut) return;
     setSigningOut(true);
     errorHaptic();
-    void signOutUser().finally(() => setSigningOut(false));
+    // Destroy this device's Signal identity and sessions before signing out
+    // (doc 31 §3.7). Revocation means this device is no longer trusted: the
+    // server has already deleted its published prekeys, and leaving the
+    // identity + session state on disk would let a re-registration silently
+    // reuse a revoked identity, and keep already-delivered ciphertext
+    // decryptable on a device the owner deliberately cut off.
+    //
+    // Deliberately NOT done on ordinary sign-out: the identity is what peers'
+    // existing sessions are built against, so wiping on every sign-out would
+    // break every peer session until each re-handshakes — and during that
+    // window their messages would fail to decrypt.
+    void wipeSignalState()
+      .catch(() => {
+        // Best-effort: never block the sign-out that removes access.
+      })
+      .finally(() => {
+        void signOutUser().finally(() => setSigningOut(false));
+      });
   }, [wasDeniedOrRevoked, signingOut]);
 
   if (!isPending) {
