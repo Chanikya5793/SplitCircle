@@ -50,7 +50,8 @@ public final class BackupCrypto {
 
   /// OWASP's current floor for PBKDF2-HMAC-SHA256. Stored per-blob rather than
   /// assumed, so raising it later doesn't strand backups written today.
-  private static let defaultIterations: UInt32 = 600_000
+  /// Internal-but-visible so it can serve as a public default argument.
+  public static let defaultIterations: UInt32 = 600_000
   private static let saltBytes = 16
 
   private var activeKey: SymmetricKey?

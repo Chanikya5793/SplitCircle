@@ -36,6 +36,31 @@ const requireModule = () => {
   return NativeModule;
 };
 
+/**
+ * Derives the backup key from a passphrase (doc 31 §3.5) and returns the KDF
+ * salt. PERSIST THE SALT with the backup — without it the backup cannot be
+ * opened again even with the correct passphrase. Pass `saltBase64` when
+ * restoring an existing backup.
+ *
+ * Derivation is intentionally expensive, so this is called ONCE per
+ * backup/restore run, never per chunk.
+ */
+export async function beginBackupSession(
+  passphrase: string,
+  saltBase64?: string,
+): Promise<{ salt: string }> {
+  return requireModule().beginSession(passphrase, saltBase64 ?? null);
+}
+
+/** Drops the derived key. Always call when a run finishes, including on failure. */
+export async function endBackupSession(): Promise<void> {
+  return requireModule().endSession();
+}
+
+export async function hasBackupSession(): Promise<boolean> {
+  return requireModule().hasSession();
+}
+
 export async function backupChunk(
   recordType: string,
   recordId: string,

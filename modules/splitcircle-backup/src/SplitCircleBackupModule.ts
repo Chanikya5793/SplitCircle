@@ -14,6 +14,10 @@ export interface BackupChunkRaw {
 }
 
 export interface SplitCircleBackupNativeModule {
+  /** Derives the passphrase key; returns the KDF salt. Pass a salt to restore. */
+  beginSession(passphrase: string, saltBase64: string | null): Promise<{ salt: string }>;
+  endSession(): Promise<void>;
+  hasSession(): Promise<boolean>;
   /** Cheap iCloud-account presence check — see doc 31 §3.6/§3.7. Not a full CloudKit health check until Phase 4. */
   isHealthy(): Promise<BackupHealthRaw>;
   /** Throws SplitCircleBackup.notImplemented until Phase 4's CloudKitBackupProvider lands. */
