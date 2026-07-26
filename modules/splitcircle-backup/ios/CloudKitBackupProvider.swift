@@ -100,12 +100,39 @@ public final class CloudKitBackupProvider: BackupProvider {
       // Backup is explicitly background work and must not compete with
       // interactive traffic; §3.6 schedules it opportunistically.
       operation.qualityOfService = .utility
+
+      /// PER-RECORD result, not just the operation's.
+      ///
+      /// `modifyRecordsResultBlock` reports whether the OPERATION ran, which
+      /// is not the same question as whether the record was stored. Without
+      /// this block a per-record rejection — a record type absent from the
+      /// PRODUCTION schema, a field CloudKit won't accept, a quota refusal —
+      /// was invisible, and the save resolved as success.
+      ///
+      /// That is exactly the reported symptom: a backup reports "194
+      /// messages, 612 KB" and then every read, including the metadata read
+      /// that needs no passphrase, finds nothing. It also silently broke the
+      /// history handoff, which writes its chunks the same way, so a paired
+      /// companion received nothing with no error anywhere.
+      ///
+      /// Resolution is guarded because both blocks fire and either may arrive
+      /// first; whichever reports a failure first wins.
+      var settled = false
+      let finish: (Error?) -> Void = { error in
+        guard !settled else { return }
+        settled = true
+        if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+      }
+
+      operation.perRecordSaveBlock = { _, result in
+        if case .failure(let error) = result { finish(error) }
+      }
       operation.modifyRecordsResultBlock = { result in
         switch result {
         case .success:
-          continuation.resume()
+          finish(nil)
         case .failure(let error):
-          continuation.resume(throwing: error)
+          finish(error)
         }
       }
       database.add(operation)

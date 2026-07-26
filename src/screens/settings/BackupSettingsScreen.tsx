@@ -231,7 +231,18 @@ export const BackupSettingsScreen = () => {
       const passphrase = await restorePassphrase();
       const manifest = await readBackupManifest(passphrase);
       if (!manifest) {
-        appAlert('No backup found', 'There’s no SplitCircle backup in this iCloud account yet.');
+        // Says WHICH of several situations this is. "No backup found" was
+        // shown for record-absent, iCloud-unreachable AND provider-error
+        // alike, which is precisely the ambiguity that makes a backup
+        // reporting success and then reading back as missing impossible to
+        // diagnose from the phone.
+        const health = await isBackupHealthy();
+        const detail = !health.isAvailable
+          ? `iCloud is not reachable right now (${health.reason ?? 'unknown reason'}), so we cannot tell whether a backup exists.`
+          : lastSummaryReadError
+            ? `The backup record could not be read: ${lastSummaryReadError}`
+            : 'The manifest record is not in this iCloud account. A backup that just reported success did not actually reach iCloud.';
+        appAlert('No backup found', detail);
         return;
       }
       setRemoteManifest(manifest);
