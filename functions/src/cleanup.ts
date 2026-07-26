@@ -98,6 +98,78 @@ export const cleanupOldRtdbData = onSchedule("every 24 hours", async (event) => 
             }
         }
 
+        // 2b. Per-device fan-out queue (doc 31 Phase 2).
+        // Path: messageQueueDevices/{userId}/{deviceId}/{messageId}
+        //
+        // ADDED because Phase 2 introduced this path and nothing reaped it,
+        // breaking CLAUDE.md's "never let RTDB accumulate" rule for a node
+        // that grows FASTER than the legacy one it replaced: fan-out writes a
+        // copy per device, and a device only deletes its own copy when it
+        // comes online to consume it. A revoked, switched-off, or uninstalled
+        // device therefore left its copy of every message it never received
+        // sitting in RTDB permanently, at N copies per message.
+        const deviceQueueRef = db.ref("messageQueueDevices");
+        const deviceQueueSnapshot = await deviceQueueRef.get();
+
+        if (deviceQueueSnapshot.exists()) {
+            const deviceUpdates: Record<string, null> = {};
+            let deletedDeviceMessages = 0;
+
+            deviceQueueSnapshot.forEach((userSnapshot) => {
+                const userId = userSnapshot.key;
+                userSnapshot.forEach((deviceSnapshot) => {
+                    const deviceId = deviceSnapshot.key;
+                    deviceSnapshot.forEach((messageSnapshot) => {
+                        const messageId = messageSnapshot.key;
+                        const data = messageSnapshot.val();
+                        if (data && typeof data.timestamp === "number" && data.timestamp < cutoffTime) {
+                            deviceUpdates[`messageQueueDevices/${userId}/${deviceId}/${messageId}`] = null;
+                            deletedDeviceMessages++;
+                        }
+                    });
+                });
+            });
+
+            if (Object.keys(deviceUpdates).length > 0) {
+                await applyInChunks(db, deviceUpdates);
+                logger.info(`Deleted ${deletedDeviceMessages} old per-device queued messages.`);
+            }
+        }
+
+        // 2c. Pairing-confirm nudges (doc 31 §3.4).
+        // Path: pairingConfirm/{uid}/{code}
+        //
+        // redeemPairingCode writes these as a low-latency hint to a main
+        // device that already has the app open, and NOTHING has ever deleted
+        // them — not the client that consumes one, not any reaper. Small, but
+        // unbounded and permanent, and each one names a real pairing event.
+        // Pairing codes live 5 minutes, so anything past the general cutoff is
+        // long dead.
+        const pairingConfirmRef = db.ref("pairingConfirm");
+        const pairingConfirmSnapshot = await pairingConfirmRef.get();
+
+        if (pairingConfirmSnapshot.exists()) {
+            const pairingUpdates: Record<string, null> = {};
+            let deletedNudges = 0;
+
+            pairingConfirmSnapshot.forEach((userSnapshot) => {
+                const uid = userSnapshot.key;
+                userSnapshot.forEach((codeSnapshot) => {
+                    const code = codeSnapshot.key;
+                    const data = codeSnapshot.val();
+                    if (data && typeof data.at === "number" && data.at < cutoffTime) {
+                        pairingUpdates[`pairingConfirm/${uid}/${code}`] = null;
+                        deletedNudges++;
+                    }
+                });
+            });
+
+            if (Object.keys(pairingUpdates).length > 0) {
+                await applyInChunks(db, pairingUpdates);
+                logger.info(`Deleted ${deletedNudges} stale pairing-confirm nudges.`);
+            }
+        }
+
         // 3. Cleanup stale call entries — any call older than 1 hour is dead.
         //    Calls stuck in "ringing" because the client crashed / lost network
         //    will linger forever without this, and the client may surface them
