@@ -113,12 +113,43 @@ export interface RedeemPairingResult {
  * commits — neither is a Firestore operation, so neither can be inside it;
  * both only run once the transactional state is already safely committed.
  */
+/**
+ * Redeems a pairing code from a device that is NOT signed in.
+ *
+ * This is deliberately callable WITHOUT auth, and that is the entire point of
+ * pairing: the new phone has no credentials yet, which is why the user is
+ * scanning a QR instead of typing a password. The pairing CODE is the
+ * credential, and `uid` is derived from the code document — never taken from
+ * the caller.
+ *
+ * It previously required `request.auth.uid` while simultaneously returning a
+ * custom token for the caller to sign in WITH, which is circular: you needed
+ * to be signed in to obtain the token that signs you in. Scanning a QR on a
+ * fresh device therefore always failed with "Authentication required."
+ *
+ * What keeps an unauthenticated endpoint safe here:
+ *  - the code is 8 chars from a 32-symbol alphabet (~2^40) and lives 5 minutes;
+ *  - it is single-use (`consumedBy`);
+ *  - redemption only ever yields a device in `pending_confirmation`, which
+ *    still requires explicit approval on an existing device before it can read
+ *    anything. Redeeming a code is not, by itself, access.
+ */
 export async function redeemPairingCode(
-    uid: string,
     input: RedeemPairingInput,
 ): Promise<RedeemPairingResult> {
     const db = getFirestore();
     const codeRef = db.collection(PAIRING_CODES_COLLECTION).doc(input.code);
+
+    // uid comes from the CODE, not the caller — the caller has no identity yet.
+    const preflight = await codeRef.get();
+    if (!preflight.exists) {
+        throw new Error("Pairing code not found");
+    }
+    const uid = (preflight.data() as DocumentData).uid as string;
+    if (!uid || typeof uid !== "string") {
+        throw new Error("Pairing code not found");
+    }
+
     const pairedDeviceRef = db
         .collection(USERS_COLLECTION)
         .doc(uid)
@@ -140,8 +171,8 @@ export async function redeemPairingCode(
         }
         const codeData = codeSnap.data() as DocumentData;
         if (codeData.uid !== uid) {
-            // A pairing code is scoped to the account that generated it —
-            // redeeming it links a device to THAT account, never a different one.
+            // Re-read inside the transaction: guards against the code being
+            // rewritten between the preflight lookup above and here.
             throw new Error("Pairing code not found");
         }
         if (codeData.consumedBy) {

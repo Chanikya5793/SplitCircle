@@ -1482,12 +1482,12 @@ export const createPairingCode = onCall(async (request) => {
     }
 });
 
+// Deliberately UNAUTHENTICATED: a device redeeming a pairing code has no
+// credentials yet — that is what pairing is for. The code is the credential and
+// the uid is derived from it server-side. Requiring auth here made the QR flow
+// impossible ("Authentication required" on every scan) because the token this
+// returns is what the device signs in WITH.
 export const redeemPairingCode = onCall(async (request) => {
-    const uid = request.auth?.uid;
-    if (!uid) {
-        throw new HttpsError("unauthenticated", "Authentication required.");
-    }
-
     const code = getStringValue(request.data?.code).toUpperCase();
     const deviceId = getStringValue(request.data?.deviceId);
     const platform = request.data?.platform === "android" ? "android" : "ios";
@@ -1502,8 +1502,8 @@ export const redeemPairingCode = onCall(async (request) => {
     }
 
     try {
-        const result = await redeemPairingCodeImpl(uid, { code, deviceId, platform, deviceName, modelName });
-        logger.info("Pairing code redeemed", { uid, deviceId });
+        const result = await redeemPairingCodeImpl({ code, deviceId, platform, deviceName, modelName });
+        logger.info("Pairing code redeemed", { deviceId });
         return result;
     } catch (error) {
         if (error instanceof Error) {
@@ -1520,7 +1520,7 @@ export const redeemPairingCode = onCall(async (request) => {
                 throw new HttpsError("resource-exhausted", "You've reached the maximum number of linked devices.");
             }
         }
-        logger.error("redeemPairingCode failed", { uid, deviceId, ...toSafeError(error) });
+        logger.error("redeemPairingCode failed", { deviceId, ...toSafeError(error) });
         throw new HttpsError("internal", "Failed to link this device. Please try again.");
     }
 });
