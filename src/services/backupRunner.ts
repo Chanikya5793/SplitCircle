@@ -15,6 +15,8 @@ import { getStoredPassphrase } from '@/services/backupPassphraseService';
 import { publishRecoveryVerifier } from '@/services/accountRecoveryService';
 import { checkNetworkAllowance } from '@/services/backupSettingsService';
 import { getCurrentDeviceId, subscribeToPairedDevices } from '@/services/pairingService';
+import { recordBackupRun } from '@/services/backupHistoryService';
+import * as Device from 'expo-device';
 
 const LAST_BACKUP_KEY = 'splitcircle.backup.last';
 
@@ -101,13 +103,38 @@ const isThisDeviceMain = async (userId: string): Promise<boolean> =>
 export const runBackupNow = async (
   userId: string,
   onProgress?: (progress: BackupProgress) => void,
+  trigger: 'manual' | 'scheduled' = 'manual',
 ): Promise<LastBackupInfo> => {
+  const startedAt = Date.now();
+
+  /**
+   * Every terminal outcome is logged, INCLUDING refusals.
+   *
+   * A blocked run is the single most useful thing to record: "no backup for
+   * three days" reads as neglect, while nine consecutive
+   * `network_not_allowed` entries names a setting the user can change. The
+   * old code kept only successes, so the interesting case left no trace.
+   */
+  const log = (
+    outcome: 'success' | 'failed' | 'blocked',
+    extra: Record<string, unknown> = {},
+  ) =>
+    recordBackupRun({
+      at: Date.now(),
+      outcome,
+      durationMs: Date.now() - startedAt,
+      trigger,
+      deviceName: Device.deviceName ?? null,
+      ...extra,
+    } as Parameters<typeof recordBackupRun>[0]);
+
   if (running) {
     throw new BackupBlockedError('already_running', 'A backup is already in progress.');
   }
 
   const passphrase = await getStoredPassphrase();
   if (!passphrase) {
+    await log('blocked', { reason: 'no_passphrase', message: 'No backup passphrase is set.' });
     throw new BackupBlockedError(
       'no_passphrase',
       'Set a backup passphrase before backing up.',
@@ -119,6 +146,10 @@ export const runBackupNow = async (
   // here, "Back Up Now" would quietly spend mobile data the user said not to.
   const network = await checkNetworkAllowance(userId);
   if (!network.allowed) {
+    await log('blocked', {
+      reason: 'network_not_allowed',
+      message: network.reason ?? 'This connection can\u2019t be used for backups.',
+    });
     throw new BackupBlockedError(
       'network_not_allowed',
       network.reason ?? 'This connection can’t be used for backups right now.',
@@ -127,6 +158,10 @@ export const runBackupNow = async (
 
   const health = await isBackupHealthy();
   if (!health.isAvailable) {
+    await log('blocked', {
+      reason: 'icloud_unavailable',
+      message: health.reason ?? 'iCloud is unavailable.',
+    });
     throw new BackupBlockedError(
       'icloud_unavailable',
       health.reason === 'not_signed_into_icloud'
@@ -136,6 +171,10 @@ export const runBackupNow = async (
   }
 
   if (!(await isThisDeviceMain(userId))) {
+    await log('blocked', {
+      reason: 'not_main_device',
+      message: 'Only the main device backs up.',
+    });
     throw new BackupBlockedError(
       'not_main_device',
       'Only your main device can back up your chat history.',
@@ -163,7 +202,24 @@ export const runBackupNow = async (
     // Recorded only after a successful export, so a failed run never makes the
     // UI claim a backup exists — the retirement gate (§3.7) reads this.
     await AsyncStorage.setItem(LAST_BACKUP_KEY, JSON.stringify(info));
+
+    const sizes = manifest.sizes ?? {};
+    await log('success', {
+      messageCount: manifest.totalMessages,
+      chatCount: manifest.chats.length,
+      bytes: Object.values(sizes).reduce((sum, n) => sum + (n ?? 0), 0),
+      sizes,
+      mediaSkippedTooLarge: manifest.mediaSkippedTooLarge,
+    });
     return info;
+  } catch (error) {
+    // A run that got past every precondition and then broke is a different
+    // condition from a refusal, and the screen says so — this is the one the
+    // user cannot fix by changing a setting.
+    await log('failed', {
+      message: error instanceof Error ? error.message : 'Backup failed.',
+    });
+    throw error;
   } finally {
     running = false;
   }

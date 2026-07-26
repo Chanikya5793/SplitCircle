@@ -37,7 +37,9 @@ TaskManager.defineTask(BACKUP_TASK_NAME, async () => {
     // reachability, main-device-only, AND the cellular preference. That is why
     // those checks live in the runner rather than the UI: this headless path
     // gets them for free instead of re-deriving them and drifting.
-    await runBackupNow(userId);
+    // Tagged as scheduled so the history log can distinguish an OS-driven run
+    // from one the user asked for — they fail for different reasons.
+    await runBackupNow(userId, undefined, 'scheduled');
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch {
     // A blocked or failed run is NOT a task failure — reporting failure would

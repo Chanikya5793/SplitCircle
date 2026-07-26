@@ -38,6 +38,16 @@ import {
   type BackupSelection,
 } from '@/services/backupContentService';
 import { isBackupScheduled, syncBackupSchedule } from '@/services/backupScheduler';
+import { getBackupHistory, type BackupRunEntry } from '@/services/backupHistoryService';
+import { assessBackupReadiness, type BackupReadiness } from '@/services/backupReadinessService';
+import {
+  BackupHistoryCard,
+  BackupSizeCard,
+  EncryptionCard,
+  NextBackupCard,
+  RestorePreviewCard,
+  formatBytes,
+} from '@/components/backup/BackupInsightCards';
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
@@ -83,6 +93,10 @@ export const BackupSettingsScreen = () => {
   /** Real OS-level registration state, not just the stored preference. */
   const [scheduled, setScheduled] = useState(false);
   const [selection, setSelection] = useState<BackupSelection>(DEFAULT_SELECTION);
+  const [history, setHistory] = useState<BackupRunEntry[]>([]);
+  const [readiness, setReadiness] = useState<BackupReadiness | null>(null);
+  /** Manifest of the backup currently in iCloud, for size / restore preview. */
+  const [localManifest, setLocalManifest] = useState<BackupManifest | null>(null);
 
   const refresh = useCallback(async () => {
     if (!user) return;
@@ -96,6 +110,8 @@ export const BackupSettingsScreen = () => {
       getBackupSelection(),
     ]);
     setSelection(contents);
+    setHistory(await getBackupHistory());
+    setReadiness(await assessBackupReadiness(user.userId));
     setEnrolled(isEnrolled);
     setEnrolledAt(at);
     setLastBackup(last);
@@ -107,6 +123,21 @@ export const BackupSettingsScreen = () => {
     await syncBackupSchedule(freq);
     setScheduled(await isBackupScheduled());
     setLoading(false);
+
+    // Read the manifest in the BACKGROUND, after first paint. It needs a
+    // network round trip and a key derivation, so blocking the screen on it
+    // would make opening Settings feel broken; the size and restore-preview
+    // cards simply appear a moment later.
+    if (isEnrolled) {
+      void (async () => {
+        try {
+          const stored = await getStoredPassphrase();
+          if (stored) setLocalManifest(await readBackupManifest(stored));
+        } catch {
+          // Offline or unreadable — the cards stay hidden rather than lying.
+        }
+      })();
+    }
   }, [user]);
 
   useEffect(() => {
@@ -121,12 +152,25 @@ export const BackupSettingsScreen = () => {
     setProgress(0);
     try {
       const info = await runBackupNow(user.userId, (p) => {
+        // Per-category, with a running byte total. A 300MB photo backup
+        // reporting only "backing up messages" looks frozen for minutes;
+        // naming the file count and bytes is what makes a long run feel
+        // accountable, and shows exactly where it stalls if it does.
+        const uploaded = p.bytesDone ? ` · ${formatBytes(p.bytesDone)}` : '';
         if (p.phase === 'messages' && p.chatsTotal > 0) {
-          setProgress(Math.min(p.chatsDone / p.chatsTotal, 0.99));
-          setBusy(`Backing up ${p.messagesDone} messages…`);
+          setProgress(Math.min((p.chatsDone / p.chatsTotal) * 0.6, 0.6));
+          setBusy(`Messages: ${p.messagesDone.toLocaleString()}${uploaded}`);
+        } else if (p.phase === 'media') {
+          const done = p.filesDone ?? 0;
+          const total = p.filesTotal ?? 0;
+          setProgress(total > 0 ? 0.6 + (done / total) * 0.35 : 0.6);
+          setBusy(`Photos & videos: ${done} of ${total}${uploaded}`);
+        } else if (p.phase === 'extras') {
+          setProgress(0.96);
+          setBusy(`Saving ${p.category === 'wallpapers' ? 'wallpapers' : p.category === 'callHistory' ? 'call history' : 'settings'}${uploaded}`);
         } else if (p.phase === 'manifest') {
           setProgress(0.99);
-          setBusy('Finishing up…');
+          setBusy(`Finishing up${uploaded}`);
         }
       });
       setLastBackup(info);
@@ -443,6 +487,12 @@ export const BackupSettingsScreen = () => {
             and come back automatically when you sign in — they don&apos;t need a backup.
           </Text>
         </GlassCard>
+
+        <NextBackupCard readiness={readiness} />
+        <BackupSizeCard manifest={localManifest} />
+        <RestorePreviewCard manifest={localManifest} />
+        <EncryptionCard enrolled={enrolled} enrolledAt={enrolledAt} />
+        <BackupHistoryCard history={history} />
 
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
           <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>

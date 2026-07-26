@@ -114,14 +114,37 @@ export interface BackupManifest {
   mediaSkippedTooLarge?: number;
   /** Number of call-history entries stored, when that category was included. */
   callHistoryCount?: number;
+  /**
+   * Bytes written per category, measured AS WE UPLOAD.
+   *
+   * Deliberately not derived from CloudKit. There is no per-container usage
+   * API, and enumerating our own records needs a queryable index CloudKit
+   * never creates automatically — a TRUEPREDICATE query fails at runtime
+   * (`Field 'recordName' is not marked queryable`), which is exactly why
+   * `estimateSize()` in the provider has never worked. Counting at write time
+   * is accurate for everything we put there, needs no schema setup, and works
+   * offline.
+   */
+  sizes?: Partial<Record<BackupCategory, number>>;
 }
 
 export interface BackupProgress {
-  phase: 'preparing' | 'messages' | 'manifest' | 'complete';
+  phase: 'preparing' | 'messages' | 'media' | 'extras' | 'manifest' | 'complete';
   chatsDone: number;
   chatsTotal: number;
   messagesDone: number;
+  /** Which category is being written, for per-category live progress. */
+  category?: BackupCategory;
+  /** Files done/total within the current category (media). */
+  filesDone?: number;
+  filesTotal?: number;
+  /** Bytes uploaded so far this run, across all categories. */
+  bytesDone?: number;
 }
+
+/** Running total of bytes written this export, for live progress. */
+const totalBytesWritten = (): number =>
+  Object.values(sizeAccumulator).reduce((sum: number, n) => sum + (n ?? 0), 0);
 
 const encodeJson = (value: unknown): string =>
   // eslint-disable-next-line no-undef
@@ -175,6 +198,31 @@ const WALLPAPER_DIRECTORY = `${documentDirectory}wallpapers/`;
 const mediaRecordId = (messageId: string): string => `media-${messageId}`;
 
 /**
+ * Bytes written per category during the current export.
+ *
+ * Module-scoped rather than threaded through every helper, which is safe
+ * because `backupRunner` enforces one export at a time process-wide (two
+ * concurrent runs would race the manifest regardless). Reset at the start of
+ * every export so a failed run can't leak totals into the next one.
+ */
+let sizeAccumulator: Partial<Record<BackupCategory, number>> = {};
+
+/** base64 expands 3 bytes to 4 chars, so this recovers the real byte count. */
+const base64Bytes = (payload: string): number => Math.floor((payload.length * 3) / 4);
+
+/** Writes a chunk and records its size against a category. */
+const trackedChunk = async (
+  category: BackupCategory,
+  recordType: string,
+  recordId: string,
+  payload: string,
+  metadata: Record<string, string> = {},
+): Promise<void> => {
+  await backupChunk(recordType, recordId, payload, metadata);
+  sizeAccumulator[category] = (sizeAccumulator[category] ?? 0) + base64Bytes(payload);
+};
+
+/**
  * Largest media file backed up via the base64 bridge path.
  *
  * mediaService allows uploads up to 100MB; this is deliberately far lower,
@@ -190,7 +238,7 @@ const MAX_INLINE_MEDIA_BYTES = 24 * 1024 * 1024;
 const exportCallHistory = async (): Promise<number> => {
   const entries = await getCallHistory();
   if (entries.length === 0) return 0;
-  await backupChunk(RECORD_TYPE.callHistory, 'callHistory-current', encodeJson(entries), {});
+  await trackedChunk('callHistory', RECORD_TYPE.callHistory, 'callHistory-current', encodeJson(entries));
   return entries.length;
 };
 
@@ -221,7 +269,7 @@ const exportWallpapers = async (): Promise<void> => {
     }
   }
 
-  await backupChunk(RECORD_TYPE.wallpapers, 'wallpapers-current', encodeJson({ map, files }), {});
+  await trackedChunk('wallpapers', RECORD_TYPE.wallpapers, 'wallpapers-current', encodeJson({ map, files }));
 };
 
 /** Backs up the allow-listed device-scoped preferences. */
@@ -232,7 +280,7 @@ const exportLocalSettings = async (): Promise<void> => {
     if (typeof value === 'string') values[key] = value;
   }
   if (Object.keys(values).length === 0) return;
-  await backupChunk(RECORD_TYPE.localSettings, 'localSettings-current', encodeJson(values), {});
+  await trackedChunk('localSettings', RECORD_TYPE.localSettings, 'localSettings-current', encodeJson(values));
 };
 
 /**
@@ -246,11 +294,21 @@ const exportLocalSettings = async (): Promise<void> => {
  */
 const exportMedia = async (
   chatIds: string[],
-  onFile?: (done: number) => void,
+  onFile?: (done: number, total: number) => void,
 ): Promise<{ ids: string[]; skippedTooLarge: number }> => {
   const ids: string[] = [];
   let done = 0;
   let skippedTooLarge = 0;
+
+  // Counted up front so progress can read "34 of 210" rather than a number
+  // climbing toward an unknown ceiling — the difference between a backup that
+  // feels accountable and one that feels stuck.
+  let total = 0;
+  for (const chatId of chatIds) {
+    for (const message of await getChatMessages(chatId)) {
+      if (message.localMediaPath && message.mediaDownloaded) total += 1;
+    }
+  }
 
   for (const chatId of chatIds) {
     for (const message of await getChatMessages(chatId)) {
@@ -282,14 +340,14 @@ const exportMedia = async (
 
         const payload = await readAsStringAsync(message.localMediaPath, { encoding: 'base64' });
         const id = mediaRecordId(message.messageId);
-        await backupChunk(RECORD_TYPE.media, id, payload, {
+        await trackedChunk('media', RECORD_TYPE.media, id, payload, {
           chatId,
           messageId: message.messageId,
           fileName: message.mediaMetadata?.fileName ?? '',
         });
         ids.push(id);
         done += 1;
-        onFile?.(done);
+        onFile?.(done, total);
       } catch {
         // One unreadable file must not abort an otherwise good backup.
       }
@@ -335,7 +393,7 @@ export const exportBackup = async (
       for (let offset = 0; offset < ordered.length; offset += MESSAGES_PER_BATCH) {
         const slice = ordered.slice(offset, offset + MESSAGES_PER_BATCH);
         const id = batchId(chatId, batchIds.length);
-        await backupChunk(RECORD_TYPE.message, id, encodeJson(slice), {
+        await trackedChunk('messages', RECORD_TYPE.message, id, encodeJson(slice), {
           chatId,
           index: String(batchIds.length),
         });
@@ -346,6 +404,8 @@ export const exportBackup = async (
           chatsDone: chatIndex,
           chatsTotal: chatIds.length,
           messagesDone,
+          category: 'messages',
+          bytesDone: totalBytesWritten(),
         });
       }
 
@@ -362,16 +422,40 @@ export const exportBackup = async (
     // Non-message categories, each honouring the user's selection. Ordered
     // before the manifest for the same reason the message batches are: the
     // manifest must only ever describe records that already landed.
-    const callHistoryCount = selection.callHistory ? await exportCallHistory() : 0;
-    if (selection.wallpapers) await exportWallpapers();
-    if (selection.localSettings) await exportLocalSettings();
+    const reportExtra = (category: BackupCategory) =>
+      onProgress?.({
+        phase: 'extras',
+        chatsDone: chatIds.length,
+        chatsTotal: chatIds.length,
+        messagesDone,
+        category,
+        bytesDone: totalBytesWritten(),
+      });
+
+    let callHistoryCount = 0;
+    if (selection.callHistory) {
+      reportExtra('callHistory');
+      callHistoryCount = await exportCallHistory();
+    }
+    if (selection.wallpapers) {
+      reportExtra('wallpapers');
+      await exportWallpapers();
+    }
+    if (selection.localSettings) {
+      reportExtra('localSettings');
+      await exportLocalSettings();
+    }
     const media = selection.media
-      ? await exportMedia(chatIds, () =>
+      ? await exportMedia(chatIds, (filesDone, filesTotal) =>
           onProgress?.({
-            phase: 'messages',
+            phase: 'media',
             chatsDone: chatIds.length,
             chatsTotal: chatIds.length,
             messagesDone,
+            category: 'media',
+            filesDone,
+            filesTotal,
+            bytesDone: totalBytesWritten(),
           }),
         )
       : { ids: [], skippedTooLarge: 0 };
@@ -390,6 +474,7 @@ export const exportBackup = async (
       mediaIds: media.ids,
       mediaSkippedTooLarge: media.skippedTooLarge,
       callHistoryCount,
+      sizes: { ...sizeAccumulator },
     };
     onProgress?.({
       phase: 'manifest',
