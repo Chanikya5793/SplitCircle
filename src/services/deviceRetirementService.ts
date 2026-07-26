@@ -40,7 +40,8 @@ export interface RetirementBlocker {
     | 'no_attestation'
     | 'no_verifier'
     | 'awaiting_verification'
-    | 'icloud_unavailable';
+    | 'icloud_unavailable'
+    | 'messages_excluded';
   /** Plain language, per §3.7 point 5 — shown to the user verbatim. */
   message: string;
 }
@@ -198,8 +199,26 @@ export const assessRetirementReadiness = async (
     });
   }
 
+  // Selectable content (backupContentService) means "is the backup complete?"
+  // is only meaningful relative to what was MEANT to be in it. A backup with
+  // messages turned off still reconciles as a gap against local history — the
+  // check below catches it — but it would report "N chats haven't finished
+  // backing up", blaming a transfer that never started. Naming the real cause
+  // matters here more than anywhere else in the app: the user is about to wipe
+  // the only device holding these messages.
+  const messagesIncluded = manifest.contents
+    ? manifest.contents.messages === true
+    : true; // Pre-selection backups are messages-only by definition.
+  if (!messagesIncluded) {
+    blockers.push({
+      code: 'messages_excluded',
+      message:
+        'Chat messages are turned off in your backup settings, so your conversations are not in this backup. Turn them on and back up again before retiring this device.',
+    });
+  }
+
   const gap = await reconcile(manifest);
-  if (!gap.ok) {
+  if (!gap.ok && messagesIncluded) {
     blockers.push({
       code: 'count_mismatch',
       message:

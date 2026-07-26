@@ -18,12 +18,24 @@ import {
   restoreChunk,
   verifyBackupIntegrity,
 } from '../../modules/splitcircle-backup';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  documentDirectory,
+  getInfoAsync,
+  makeDirectoryAsync,
+  readAsStringAsync,
+  writeAsStringAsync,
+} from 'expo-file-system/legacy';
 import {
   getChatMessages,
   getLocalMessageStats,
   saveMessageLocally,
+  updateMessageLocalPath,
 } from '@/services/localMessageStorage';
+import { getCallHistory, saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
+import { getLocalMediaPath } from '@/services/mediaService';
 import { getOrCreateRecoverySecret } from '@/services/backupPassphraseService';
+import { getBackupSelection, type BackupCategory } from '@/services/backupContentService';
 import type { ChatMessage } from '@/models';
 
 /**
@@ -38,6 +50,12 @@ export const RECORD_TYPE = {
   message: 'message',
   callHistory: 'callHistory',
   manifest: 'manifest',
+  /** One record per media file, always a CKAsset in practice. */
+  media: 'media',
+  /** Wallpaper images + their slot configuration, one record for the lot. */
+  wallpapers: 'wallpapers',
+  /** Device-scoped preferences (the synced ones already live in Firestore). */
+  localSettings: 'localSettings',
 } as const;
 
 /**
@@ -73,6 +91,22 @@ export interface BackupManifest {
    * the no-backup path rather than failing, so those users are not stranded.
    */
   recoverySecret?: string;
+  /**
+   * Which categories this backup actually contains.
+   *
+   * Load-bearing for §3.7's retirement gate, not decoration: the gate asks
+   * "is the backup complete?", and once content is selectable that question
+   * only means anything relative to what was MEANT to be in it. Without this
+   * the gate would either flag every deselected category as missing data, or
+   * (worse) pass a backup that silently omitted messages. Absent on backups
+   * written before selection existed, which are read as messages-only —
+   * exactly what they were.
+   */
+  contents?: Partial<Record<BackupCategory, boolean>>;
+  /** Media file record ids, when the media category was included. */
+  mediaIds?: string[];
+  /** Number of call-history entries stored, when that category was included. */
+  callHistoryCount?: number;
 }
 
 export interface BackupProgress {
@@ -105,6 +139,127 @@ const checksum = (input: string): string => {
 const batchId = (chatId: string, index: number): string => `msg-${chatId}-${index}`;
 
 /**
+ * Device-scoped preferences worth carrying to a new phone.
+ *
+ * An ALLOW-LIST, never "every AsyncStorage key". Two categories are excluded
+ * on purpose rather than by oversight:
+ *   - `app_lock_v1`, `privacy_guard_v1`, `guard_lockout_v1` — security state.
+ *     Restoring a lock configuration onto a different device is a decision the
+ *     user should make on that device, and restoring a lockout counter could
+ *     hand an attacker a way to reset a lockout by restoring an older backup.
+ *   - `auth_profile_v1` and the `ai_*` caches — identity comes from the server,
+ *     and the caches regenerate themselves. Backing them up is pure bloat.
+ */
+const LOCAL_SETTINGS_KEYS = [
+  'appearance_v1',
+  'display_currency_v1',
+  'personal_budgets_v1',
+  'receipt_use_ai_v1',
+  'receipt_strict_review_mode_v1',
+  'insights_engine_v1',
+  'pcc_deep_analysis_v1',
+  'ai_pipeline_v1',
+];
+
+/** Wallpaper images live as files; their slot map lives in AsyncStorage. */
+const WALLPAPER_CONFIG_KEY = 'wallpapers_v1';
+const WALLPAPER_DIRECTORY = `${documentDirectory}wallpapers/`;
+
+const mediaRecordId = (messageId: string): string => `media-${messageId}`;
+
+/**
+ * Backs up the local call log. Small, so one record.
+ */
+const exportCallHistory = async (): Promise<number> => {
+  const entries = await getCallHistory();
+  if (entries.length === 0) return 0;
+  await backupChunk(RECORD_TYPE.callHistory, 'callHistory-current', encodeJson(entries), {});
+  return entries.length;
+};
+
+/**
+ * Backs up wallpapers: the slot map plus every photo file it references.
+ *
+ * Blob wallpapers are pure configuration (colour triples rendered live), so
+ * they need no file at all — only photo slots have bytes. The stored map holds
+ * FILE NAMES rather than absolute paths, deliberately (see wallpaperService):
+ * the container UUID changes on every install, so a path from the old device
+ * would be meaningless here anyway.
+ */
+const exportWallpapers = async (): Promise<void> => {
+  const raw = await AsyncStorage.getItem(WALLPAPER_CONFIG_KEY);
+  if (!raw) return;
+
+  const files: Record<string, string> = {};
+  const map = JSON.parse(raw) as Record<string, { kind?: string; file?: string } | undefined>;
+  for (const entry of Object.values(map)) {
+    if (entry?.kind !== 'photo' || !entry.file) continue;
+    try {
+      files[entry.file] = await readAsStringAsync(`${WALLPAPER_DIRECTORY}${entry.file}`, {
+        encoding: 'base64',
+      });
+    } catch {
+      // A slot pointing at a file that no longer exists is a pre-existing
+      // local inconsistency; skip it rather than failing the whole backup.
+    }
+  }
+
+  await backupChunk(RECORD_TYPE.wallpapers, 'wallpapers-current', encodeJson({ map, files }), {});
+};
+
+/** Backs up the allow-listed device-scoped preferences. */
+const exportLocalSettings = async (): Promise<void> => {
+  const pairs = await AsyncStorage.multiGet(LOCAL_SETTINGS_KEYS);
+  const values: Record<string, string> = {};
+  for (const [key, value] of pairs) {
+    if (typeof value === 'string') values[key] = value;
+  }
+  if (Object.keys(values).length === 0) return;
+  await backupChunk(RECORD_TYPE.localSettings, 'localSettings-current', encodeJson(values), {});
+};
+
+/**
+ * Backs up downloaded chat media, one record per file.
+ *
+ * One record each rather than batched, because a single video can exceed
+ * CloudKit's per-record non-asset ceiling on its own — the provider promotes
+ * anything over its inline threshold to a CKAsset, which only works if each
+ * file is its own record. Files that are no longer on disk are skipped, not
+ * treated as failures: the media cache is prunable by design.
+ */
+const exportMedia = async (
+  chatIds: string[],
+  onFile?: (done: number) => void,
+): Promise<string[]> => {
+  const ids: string[] = [];
+  let done = 0;
+
+  for (const chatId of chatIds) {
+    for (const message of await getChatMessages(chatId)) {
+      if (!message.localMediaPath || !message.mediaDownloaded) continue;
+      try {
+        const info = await getInfoAsync(message.localMediaPath);
+        if (!info.exists) continue;
+        const payload = await readAsStringAsync(message.localMediaPath, { encoding: 'base64' });
+        const id = mediaRecordId(message.messageId);
+        await backupChunk(RECORD_TYPE.media, id, payload, {
+          chatId,
+          messageId: message.messageId,
+          fileName: message.mediaMetadata?.fileName ?? '',
+        });
+        ids.push(id);
+        done += 1;
+        onFile?.(done);
+      } catch {
+        // One unreadable file must not abort an otherwise good backup.
+      }
+    }
+  }
+
+  return ids;
+};
+
+/**
  * Full export to the backup store.
  *
  * `passphrase` derives the key ONCE for the whole run (§3.5) — the session is
@@ -119,6 +274,7 @@ export const exportBackup = async (
   onProgress?: (progress: BackupProgress) => void,
 ): Promise<BackupManifest> => {
   const { salt } = await beginBackupSession(passphrase);
+  const selection = await getBackupSelection();
 
   try {
     // getLocalMessageStats enumerates every locally-stored chat; it is the
@@ -129,7 +285,7 @@ export const exportBackup = async (
     const chats: ChatManifestEntry[] = [];
     let messagesDone = 0;
 
-    for (const [chatIndex, chatId] of chatIds.entries()) {
+    for (const [chatIndex, chatId] of selection.messages ? chatIds.entries() : []) {
       const messages = await getChatMessages(chatId);
       // Oldest-first so batch N always holds the same messages across runs,
       // which keeps re-exports overwriting rather than duplicating.
@@ -163,6 +319,23 @@ export const exportBackup = async (
       });
     }
 
+    // Non-message categories, each honouring the user's selection. Ordered
+    // before the manifest for the same reason the message batches are: the
+    // manifest must only ever describe records that already landed.
+    const callHistoryCount = selection.callHistory ? await exportCallHistory() : 0;
+    if (selection.wallpapers) await exportWallpapers();
+    if (selection.localSettings) await exportLocalSettings();
+    const mediaIds = selection.media
+      ? await exportMedia(chatIds, () =>
+          onProgress?.({
+            phase: 'messages',
+            chatsDone: chatIds.length,
+            chatsTotal: chatIds.length,
+            messagesDone,
+          }),
+        )
+      : [];
+
     // Manifest LAST, deliberately: it is the index a restore reads first, so
     // writing it only after every batch landed means a crash mid-export leaves
     // no manifest rather than one promising records that don't exist.
@@ -173,6 +346,9 @@ export const exportBackup = async (
       chats,
       totalMessages: messagesDone,
       recoverySecret: await getOrCreateRecoverySecret(),
+      contents: selection,
+      mediaIds,
+      callHistoryCount,
     };
     onProgress?.({
       phase: 'manifest',
@@ -245,6 +421,89 @@ export interface RestoreResult {
  * device is given away. Silently succeeding on a partial restore would be the
  * dangerous outcome, so the caller gets the list.
  */
+/**
+ * Whether a manifest claims to contain a category.
+ *
+ * A manifest with no `contents` predates selectable content and is
+ * messages-only — which is exactly what those backups are, so reading the
+ * absence that way is accurate rather than a guess.
+ */
+const manifestHas = (manifest: BackupManifest, category: BackupCategory): boolean =>
+  manifest.contents ? manifest.contents[category] === true : category === 'messages';
+
+const importCallHistory = async (manifest: BackupManifest): Promise<void> => {
+  if (!manifestHas(manifest, 'callHistory')) return;
+  const chunk = await restoreChunk(RECORD_TYPE.callHistory, 'callHistory-current');
+  if (!chunk) return;
+  for (const entry of decodeJson<CallHistoryEntry[]>(chunk.payloadBase64)) {
+    // saveCallToHistory dedupes, so a re-run merges instead of duplicating.
+    await saveCallToHistory(entry);
+  }
+};
+
+const importWallpapers = async (manifest: BackupManifest): Promise<void> => {
+  if (!manifestHas(manifest, 'wallpapers')) return;
+  const chunk = await restoreChunk(RECORD_TYPE.wallpapers, 'wallpapers-current');
+  if (!chunk) return;
+
+  const { map, files } = decodeJson<{
+    map: Record<string, unknown>;
+    files: Record<string, string>;
+  }>(chunk.payloadBase64);
+
+  // Files first: writing the slot map before the images exist would leave the
+  // UI briefly pointing at photos that aren't there yet.
+  await makeDirectoryAsync(WALLPAPER_DIRECTORY, { intermediates: true }).catch(() => {});
+  for (const [fileName, base64] of Object.entries(files ?? {})) {
+    await writeAsStringAsync(`${WALLPAPER_DIRECTORY}${fileName}`, base64, {
+      encoding: 'base64',
+    }).catch(() => {});
+  }
+  await AsyncStorage.setItem(WALLPAPER_CONFIG_KEY, JSON.stringify(map));
+};
+
+const importLocalSettings = async (manifest: BackupManifest): Promise<void> => {
+  if (!manifestHas(manifest, 'localSettings')) return;
+  const chunk = await restoreChunk(RECORD_TYPE.localSettings, 'localSettings-current');
+  if (!chunk) return;
+
+  const values = decodeJson<Record<string, string>>(chunk.payloadBase64);
+  // Re-filtered against the allow-list on the way IN as well as out. A backup
+  // is attacker-influenced input in the threat model where someone restores a
+  // crafted one, and this keeps a future key from being written just because
+  // an older/other build put it in the payload.
+  const entries = Object.entries(values).filter(([key]) => LOCAL_SETTINGS_KEYS.includes(key));
+  if (entries.length > 0) {
+    await AsyncStorage.multiSet(entries);
+  }
+};
+
+const importMedia = async (manifest: BackupManifest): Promise<void> => {
+  if (!manifestHas(manifest, 'media')) return;
+
+  for (const id of manifest.mediaIds ?? []) {
+    try {
+      const chunk = await restoreChunk(RECORD_TYPE.media, id);
+      if (!chunk) continue;
+      const { chatId, messageId, fileName } = chunk.metadata;
+      if (!chatId || !messageId) continue;
+
+      const localPath = getLocalMediaPath(chatId, messageId, fileName || messageId);
+      await makeDirectoryAsync(localPath.slice(0, localPath.lastIndexOf('/')), {
+        intermediates: true,
+      }).catch(() => {});
+      await writeAsStringAsync(localPath, chunk.payloadBase64, { encoding: 'base64' });
+      // Point the restored message at the restored file, or the media would
+      // sit on disk unreferenced and the bubble would still show as
+      // not-downloaded.
+      await updateMessageLocalPath(chatId, messageId, localPath);
+    } catch {
+      // Media is a best-effort category: a file that fails to restore must not
+      // take the message history down with it.
+    }
+  }
+};
+
 export const importBackup = async (
   passphrase: string,
   onProgress?: (progress: RestoreProgress) => void,
@@ -289,6 +548,15 @@ export const importBackup = async (
         messagesRestored,
       });
     }
+
+    // Non-message categories. Each is driven by what the manifest says is
+    // PRESENT, never by this device's own selection — the selection governs
+    // what gets written, and a restore must read back whatever the backup
+    // actually contains.
+    await importCallHistory(manifest);
+    await importWallpapers(manifest);
+    await importLocalSettings(manifest);
+    await importMedia(manifest);
 
     onProgress?.({
       phase: 'complete',

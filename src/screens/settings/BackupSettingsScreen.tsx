@@ -29,6 +29,14 @@ import {
 } from '@/services/backupSettingsService';
 import { BackupBlockedError, getLastBackupInfo, runBackupNow, type LastBackupInfo } from '@/services/backupRunner';
 import { importBackup, readBackupManifest, type BackupManifest } from '@/services/backupService';
+import {
+  BACKUP_CATEGORIES,
+  DEFAULT_SELECTION,
+  getBackupSelection,
+  setBackupSelection,
+  type BackupCategory,
+  type BackupSelection,
+} from '@/services/backupContentService';
 import { isBackupScheduled, syncBackupSchedule } from '@/services/backupScheduler';
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
@@ -67,17 +75,20 @@ export const BackupSettingsScreen = () => {
   const [remoteManifest, setRemoteManifest] = useState<BackupManifest | null>(null);
   /** Real OS-level registration state, not just the stored preference. */
   const [scheduled, setScheduled] = useState(false);
+  const [selection, setSelection] = useState<BackupSelection>(DEFAULT_SELECTION);
 
   const refresh = useCallback(async () => {
     if (!user) return;
-    const [isEnrolled, at, last, freq, cellular, health] = await Promise.all([
+    const [isEnrolled, at, last, freq, cellular, health, contents] = await Promise.all([
       isPassphraseEnrolled(),
       getEnrolledAt(),
       getLastBackupInfo(),
       getBackupFrequency(user.userId),
       getBackupAllowCellular(user.userId),
       isBackupHealthy(),
+      getBackupSelection(),
     ]);
+    setSelection(contents);
     setEnrolled(isEnrolled);
     setEnrolledAt(at);
     setLastBackup(last);
@@ -209,6 +220,12 @@ export const BackupSettingsScreen = () => {
     await setBackupAllowCellular(user.userId, next);
   };
 
+  const handleCategory = async (key: BackupCategory, next: boolean) => {
+    const updated = { ...selection, [key]: next };
+    setSelection(updated);
+    await setBackupSelection(updated);
+  };
+
   if (loading) {
     return (
       <LiquidBackground>
@@ -335,6 +352,46 @@ export const BackupSettingsScreen = () => {
             </View>
             <Switch value={allowCellular} onValueChange={(v) => void handleCellular(v)} />
           </View>
+        </GlassCard>
+
+        <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+          <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>
+            What gets backed up
+          </Text>
+          {BACKUP_CATEGORIES.map((category) => (
+            <View key={category.key} style={styles.switchRow}>
+              <View style={styles.switchLabel}>
+                <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+                  {category.label}
+                </Text>
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                  {category.description}
+                </Text>
+              </View>
+              <Switch
+                value={selection[category.key]}
+                onValueChange={(v) => void handleCategory(category.key, v)}
+              />
+            </View>
+          ))}
+          {!selection.messages ? (
+            // Stated here rather than only at the retirement gate: by the time
+            // someone reaches that screen they are already planning to wipe
+            // this phone.
+            <Text variant="bodySmall" style={{ color: theme.colors.danger }}>
+              With messages off, your conversations are not backed up — and this device can&apos;t be
+              safely retired.
+            </Text>
+          ) : null}
+          <Divider />
+          {/* Named explicitly so the omissions don't read as gaps. Copying
+              server-held data into iCloud would spend the user's personal
+              quota duplicating something that isn't at risk, and a restore
+              could put a stale copy over the authoritative one. */}
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            Your expenses, groups, balances, profile and synced settings are stored on our servers
+            and come back automatically when you sign in — they don&apos;t need a backup.
+          </Text>
         </GlassCard>
 
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
