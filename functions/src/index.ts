@@ -88,8 +88,9 @@ type MaybeCallParticipant = {
 };
 
 type SafeErrorPayload = {
-    message?: string;
-    name?: string;
+    errorMessage?: string;
+    errorName?: string;
+    errorStack?: string;
 };
 
 const getStringValue = (input: unknown): string => {
@@ -133,11 +134,29 @@ const isSafeIdentifier = (value: string): boolean => {
     return /^[A-Za-z0-9_-]{1,128}$/.test(value);
 };
 
+/**
+ * Keys are `errorName`/`errorMessage`, NOT `name`/`message`, and that matters.
+ *
+ * firebase-functions' logger builds its own entry with a top-level `message`
+ * field, so spreading a payload that also has `message` silently OVERWRITES the
+ * real cause with the wrapper's text. Every `logger.error("X failed", {
+ * ...toSafeError(e) })` in this file — 45 call sites — was therefore throwing
+ * away the one piece of information it existed to capture. It cost a full
+ * debugging cycle on redeemPairingCode: the logs showed only "redeemPairingCode
+ * failed" with no cause, for an error that had already been caught and
+ * formatted.
+ */
 const toSafeError = (error: unknown): SafeErrorPayload => {
     if (error instanceof Error) {
-        return { name: error.name, message: error.message };
+        return {
+            errorName: error.name,
+            errorMessage: error.message,
+            // Truncated: enough to locate the throw, not enough to bloat every
+            // error log line in the project.
+            errorStack: error.stack?.split("\n").slice(0, 4).join(" | "),
+        };
     }
-    return { message: "Unknown error" };
+    return { errorMessage: String(error) };
 };
 
 const getSecretOrEnv = (secret: SecretLike, envName: string): string => {
@@ -1522,6 +1541,12 @@ export const redeemPairingCode = onCall(async (request) => {
             if (error.message === "Pairing code expired") {
                 throw new HttpsError("deadline-exceeded", "This pairing code has expired.");
             }
+            if (error.message === "Could not issue a sign-in token for this device") {
+                // Surfaced distinctly so this never again looks like a generic
+                // network blip — it is a server misconfiguration, and the code
+                // has been released for a clean retry.
+                throw new HttpsError("internal", "Couldn't finish linking (server couldn't issue a sign-in token). Try again.");
+            }
             if (error.message === "Device limit reached") {
                 throw new HttpsError("resource-exhausted", "You've reached the maximum number of linked devices.");
             }
@@ -1816,3 +1841,4 @@ export const authorizeScannedDevice = onCall(async (request) => {
         throw new HttpsError("internal", "Couldn't link that device. Please try again.");
     }
 });
+

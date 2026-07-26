@@ -261,9 +261,44 @@ export async function redeemPairingCode(
         );
     });
 
-    const customToken = await getAuth().createCustomToken(uid, {
-        deviceId: input.deviceId,
-    });
+    /**
+     * THE CODE IS ALREADY CONSUMED BY THE TIME WE GET HERE.
+     *
+     * The transaction above committed, so a failure in this step is not
+     * recoverable by retrying with the same code — the next attempt gets
+     * "already used". That is exactly the loop that was reported: the device
+     * paired server-side (its pairedDevices row exists, the main device can
+     * even approve it) while the companion never received the token it signs
+     * in with, so nothing on screen ever changed.
+     *
+     * `createCustomToken` is the ONLY call in this entire backend that needs
+     * to SIGN something, which is why no other function ever exposed this. In
+     * Gen2 the runtime service account needs `iam.serviceAccounts.signBlob`
+     * (roles/iam.serviceAccountTokenCreator) on itself, and it does not have
+     * it by default. Named explicitly here so the cause is unmistakable in
+     * the logs instead of arriving as a bare "internal" error.
+     */
+    let customToken: string;
+    try {
+        customToken = await getAuth().createCustomToken(uid, {
+            deviceId: input.deviceId,
+        });
+    } catch (error) {
+        logger.error("redeemPairingCode: createCustomToken FAILED — the code is now consumed", {
+            uid,
+            deviceId: input.deviceId,
+            hint: "Grant roles/iam.serviceAccountTokenCreator to the function's runtime service account",
+            errorMessage: error instanceof Error ? error.message : String(error),
+        });
+        // Release the code so the user's next scan is a clean retry rather
+        // than a permanent "already used" dead end.
+        try {
+            await codeRef.update({ consumedBy: null, consumedAt: null });
+        } catch {
+            // Best-effort; the error below is what matters.
+        }
+        throw new Error("Could not issue a sign-in token for this device");
+    }
 
     // Best-effort nudge for a main device that already has the app open —
     // the mandatory push below is the reliable path, this is just lower
