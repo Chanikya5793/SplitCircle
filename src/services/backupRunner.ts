@@ -12,6 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isBackupHealthy } from '../../modules/splitcircle-backup';
 import { exportBackup, type BackupProgress } from '@/services/backupService';
 import { getStoredPassphrase } from '@/services/backupPassphraseService';
+import { publishRecoveryVerifier } from '@/services/accountRecoveryService';
 import { checkNetworkAllowance } from '@/services/backupSettingsService';
 import { getCurrentDeviceId, subscribeToPairedDevices } from '@/services/pairingService';
 
@@ -142,6 +143,15 @@ export const runBackupNow = async (
   running = true;
   try {
     const manifest = await exportBackup(passphrase, onProgress);
+
+    // Publish the §3.12 recovery verifier for the backup that just landed.
+    // After EVERY run, not only the first: this is what lets a device that
+    // lost its local secret (app reinstall) mint a new one and have the
+    // server's copy follow. Never throws — see publishRecoveryVerifier.
+    if (manifest.recoverySecret) {
+      await publishRecoveryVerifier(manifest.recoverySecret);
+    }
+
     const info: LastBackupInfo = {
       completedAt: Date.now(),
       chatCount: manifest.chats.length,

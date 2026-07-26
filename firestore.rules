@@ -210,6 +210,20 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Backup recovery verifier (doc 31 §3.12). DENIED FOR READ AS WELL AS
+    // WRITE, which is the whole point: this holds the SHA-256 the recovery
+    // flow must present the preimage of, so a client that could read it back
+    // would be able to replay the expected value and promote itself to main
+    // with stolen credentials alone — collapsing §3.12's three factors
+    // (SplitCircle auth + iCloud account access + passphrase) down to one.
+    // Cloud Functions use the Admin SDK and bypass rules entirely, so
+    // setBackupRecoveryVerifier/recoverAsNewMainDevice are unaffected.
+    // `hasBackupRecovery` exists precisely so the UI can learn whether a
+    // backup exists without this document ever reaching a client.
+    match /users/{userId}/backupRecovery/{docId} {
+      allow read, write: if false;
+    }
+
     // Per-device-setting sync (doc 31 §3.8) — one flat doc per settings key
     // ({value, updatedAt}), never a nested map, so plain client writes are
     // safe without the merge:true/mergeFields gotcha ever coming into play.

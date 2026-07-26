@@ -43,6 +43,11 @@ import {
     claimSignalPreKey as claimSignalPreKeyImpl,
     type PublishablePrekeyBundle,
 } from "./signalKeys";
+import {
+    setBackupRecoveryVerifier as setBackupRecoveryVerifierImpl,
+    hasBackupRecoveryVerifier as hasBackupRecoveryVerifierImpl,
+    recoverAsNewMainDevice as recoverAsNewMainDeviceImpl,
+} from "./accountRecovery";
 import { backfillMissingDisplayNames } from "./displayNameBackfill";
 export { cleanupOldRtdbData, reapStaleRingingCalls } from "./cleanup";
 // Consolidated AI-layer ingestion fan-out (gated by AI_LAYER_ENABLED; no-op until
@@ -1677,5 +1682,92 @@ export const claimSignalPreKey = onCall(async (request) => {
         }
         logger.error("claimSignalPreKey failed", { uid, targetUserId, targetDeviceId, ...toSafeError(error) });
         throw new HttpsError("internal", "Failed to fetch encryption keys.");
+    }
+});
+
+/**
+ * Publishes the backup recovery verifier (doc 31 §3.12). Called after every
+ * successful backup so the server's copy always describes the backup that
+ * actually exists — see accountRecovery.ts for why re-publishing matters.
+ */
+export const setBackupRecoveryVerifier = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const verifier = getStringValue(request.data?.verifier);
+    if (!verifier) {
+        throw new HttpsError("invalid-argument", "Missing verifier.");
+    }
+
+    try {
+        await setBackupRecoveryVerifierImpl(uid, verifier);
+        return { status: "ok" };
+    } catch (error) {
+        if (error instanceof Error && error.message === "Malformed recovery verifier") {
+            throw new HttpsError("invalid-argument", error.message);
+        }
+        logger.error("setBackupRecoveryVerifier failed", { uid, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to publish the recovery verifier.");
+    }
+});
+
+/**
+ * Whether this account has a recoverable backup. Returns a BOOLEAN only —
+ * never the verifier itself, which stays Cloud-Function-readable so stolen
+ * credentials can't read the expected value back and replay it.
+ */
+export const hasBackupRecovery = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    try {
+        return { hasBackup: await hasBackupRecoveryVerifierImpl(uid) };
+    } catch (error) {
+        logger.error("hasBackupRecovery failed", { uid, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to check for a backup.");
+    }
+});
+
+/**
+ * Promotes the calling device to main without any existing device's help
+ * (doc 31 §3.12) — the escape from the lockout described in
+ * accountRecovery.ts's header. Revokes every other device by design.
+ */
+export const recoverAsNewMainDevice = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const deviceId = getStringValue(request.data?.deviceId);
+    if (!deviceId) {
+        throw new HttpsError("invalid-argument", "Missing deviceId.");
+    }
+
+    try {
+        return await recoverAsNewMainDeviceImpl(uid, {
+            deviceId,
+            verifier: getStringValue(request.data?.verifier) || undefined,
+            acknowledgedNoBackup: request.data?.acknowledgedNoBackup === true,
+        });
+    } catch (error) {
+        if (error instanceof Error) {
+            // These are user-actionable states, not faults — the client
+            // branches its copy on them, so they must survive as codes.
+            if (error.message === "BACKUP_PROOF_REQUIRED" ||
+                error.message === "BACKUP_PROOF_INVALID" ||
+                error.message === "NO_BACKUP_ACKNOWLEDGEMENT_REQUIRED") {
+                throw new HttpsError("failed-precondition", error.message);
+            }
+            if (error.message === "A device id is required") {
+                throw new HttpsError("invalid-argument", error.message);
+            }
+        }
+        logger.error("recoverAsNewMainDevice failed", { uid, deviceId, ...toSafeError(error) });
+        throw new HttpsError("internal", "Recovery failed.");
     }
 });

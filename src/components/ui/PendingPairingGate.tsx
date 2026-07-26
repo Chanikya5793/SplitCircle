@@ -15,6 +15,7 @@ import {
   subscribeToOwnPairedDevice,
   type PairedDevice,
 } from '@/services/pairingService';
+import { RecoverAccountPanel } from '@/components/ui/RecoverAccountPanel';
 import { errorHaptic } from '@/utils/haptics';
 import { wipeSignalState } from '../../../modules/splitcircle-crypto';
 import { useEffect, useState } from 'react';
@@ -27,6 +28,7 @@ export const PendingPairingGate = () => {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [ownRecord, setOwnRecord] = useState<PairedDevice | null | undefined>(undefined);
   const [signingOut, setSigningOut] = useState(false);
+  const [recovering, setRecovering] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,6 +96,26 @@ export const PendingPairingGate = () => {
   const expiresAt = ownRecord?.confirmationExpiresAt ?? null;
   const expired = typeof expiresAt === 'number' && Date.now() > expiresAt;
 
+  // Recovery (doc 31 §3.12). Rendered in place of the waiting panel because
+  // this gate covers the whole app — a user whose only approver is a device
+  // they no longer own has no other surface to reach.
+  if (recovering) {
+    return (
+      <View style={StyleSheet.absoluteFill} pointerEvents="auto">
+        <LiquidBackground>
+          <RecoverAccountPanel
+            onCancel={() => setRecovering(false)}
+            onRecovered={() => {
+              // No navigation needed: the pairedDevices subscription above sees
+              // this device flip to confirmed and the gate unmounts itself.
+              setRecovering(false);
+            }}
+          />
+        </LiquidBackground>
+      </View>
+    );
+  }
+
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="auto">
       <LiquidBackground>
@@ -119,6 +141,13 @@ export const PendingPairingGate = () => {
                 {ownRecord.confirmationCode}
               </Text>
             ) : null}
+            {/* The escape from a total lockout (doc 31 §3.12). Without this,
+                the only action here is Cancel — which signs out into exactly
+                the same state — and a user whose old phone is gone can never
+                reach their own account again. */}
+            <Button mode="contained-tonal" disabled={signingOut} onPress={() => setRecovering(true)}>
+              I don&apos;t have my other device
+            </Button>
             <Button
               mode="text"
               loading={signingOut}

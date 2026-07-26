@@ -9,6 +9,7 @@
  * than only a score.
  */
 
+import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import {
   assessPassphrase,
@@ -21,6 +22,39 @@ export type { PassphraseAssessment, PassphraseVerdict };
 
 const PASSPHRASE_KEY = 'splitcircle.backup.passphrase';
 const ENROLLED_AT_KEY = 'splitcircle.backup.enrolledAt';
+const RECOVERY_SECRET_KEY = 'splitcircle.backup.recoverySecret';
+
+/**
+ * The random secret written into every manifest, whose SHA-256 the server
+ * holds as the §3.12 recovery verifier. Presenting the preimage is what proves
+ * a recovering device really opened the backup.
+ *
+ * Kept on-device only so it stays STABLE across re-exports — the copy that
+ * matters during recovery is the one inside the manifest, which is why losing
+ * this (app reinstall) is harmless: the next export mints a fresh secret,
+ * rewrites the manifest and re-publishes the verifier, and the two stay in
+ * step. It is deliberately NOT derived from the passphrase: a value derived
+ * from the passphrase and then published server-side would hand an attacker
+ * who reads Firestore an offline oracle to test passphrase guesses against.
+ */
+export const getOrCreateRecoverySecret = async (): Promise<string> => {
+  const existing = await SecureStore.getItemAsync(RECOVERY_SECRET_KEY);
+  if (existing) return existing;
+
+  // btoa over a binary string, matching backupService's encoding convention.
+  // Deliberately NOT `Buffer` — it is not polyfilled in this Hermes runtime,
+  // and @types/node makes that mistake typecheck cleanly while crashing on
+  // device.
+  const bytes = Crypto.getRandomBytes(32);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  // eslint-disable-next-line no-undef
+  const secret = globalThis.btoa(binary);
+  await SecureStore.setItemAsync(RECOVERY_SECRET_KEY, secret, {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
+  return secret;
+};
 
 
 export class PassphraseTooWeakError extends Error {
@@ -94,4 +128,8 @@ export const getStoredPassphrase = async (): Promise<string | null> => {
 export const clearPassphrase = async (): Promise<void> => {
   await SecureStore.deleteItemAsync(PASSPHRASE_KEY);
   await SecureStore.deleteItemAsync(ENROLLED_AT_KEY);
+  // The recovery secret is deliberately KEPT. It identifies the backup sitting
+  // in iCloud, which this does not delete; dropping it here would mint a new
+  // secret on the next enrollment and leave the old backup's manifest holding
+  // one the server no longer knows — unrecoverable for no reason.
 };

@@ -23,6 +23,7 @@ import {
   getLocalMessageStats,
   saveMessageLocally,
 } from '@/services/localMessageStorage';
+import { getOrCreateRecoverySecret } from '@/services/backupPassphraseService';
 import type { ChatMessage } from '@/models';
 
 /**
@@ -65,6 +66,13 @@ export interface BackupManifest {
   salt: string;
   chats: ChatManifestEntry[];
   totalMessages: number;
+  /**
+   * Random per-backup secret whose SHA-256 the server holds as the §3.12
+   * recovery verifier. Optional because backups written before recovery
+   * existed have none — `recoverAsNewMainDevice` treats a missing verifier as
+   * the no-backup path rather than failing, so those users are not stranded.
+   */
+  recoverySecret?: string;
 }
 
 export interface BackupProgress {
@@ -164,6 +172,7 @@ export const exportBackup = async (
       salt,
       chats,
       totalMessages: messagesDone,
+      recoverySecret: await getOrCreateRecoverySecret(),
     };
     onProgress?.({
       phase: 'manifest',
