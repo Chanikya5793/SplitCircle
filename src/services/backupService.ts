@@ -105,6 +105,12 @@ export interface BackupManifest {
   contents?: Partial<Record<BackupCategory, boolean>>;
   /** Media file record ids, when the media category was included. */
   mediaIds?: string[];
+  /**
+   * Files too large to back up through the base64 bridge (exportMedia).
+   * Recorded so the UI can say so — a backup that silently omitted the user's
+   * videos while reporting success is exactly what §3.7's gate guards against.
+   */
+  mediaSkippedTooLarge?: number;
   /** Number of call-history entries stored, when that category was included. */
   callHistoryCount?: number;
 }
@@ -166,6 +172,16 @@ const WALLPAPER_CONFIG_KEY = 'wallpapers_v1';
 const WALLPAPER_DIRECTORY = `${documentDirectory}wallpapers/`;
 
 const mediaRecordId = (messageId: string): string => `media-${messageId}`;
+
+/**
+ * Largest media file backed up via the base64 bridge path.
+ *
+ * mediaService allows uploads up to 100MB; this is deliberately far lower,
+ * because the constraint here is JS heap during a background task, not the
+ * transport. See exportMedia for why exceeding it is a crash rather than a
+ * slow backup.
+ */
+const MAX_INLINE_MEDIA_BYTES = 24 * 1024 * 1024;
 
 /**
  * Backs up the local call log. Small, so one record.
@@ -230,9 +246,10 @@ const exportLocalSettings = async (): Promise<void> => {
 const exportMedia = async (
   chatIds: string[],
   onFile?: (done: number) => void,
-): Promise<string[]> => {
+): Promise<{ ids: string[]; skippedTooLarge: number }> => {
   const ids: string[] = [];
   let done = 0;
+  let skippedTooLarge = 0;
 
   for (const chatId of chatIds) {
     for (const message of await getChatMessages(chatId)) {
@@ -240,6 +257,28 @@ const exportMedia = async (
       try {
         const info = await getInfoAsync(message.localMediaPath);
         if (!info.exists) continue;
+
+        // SIZE GUARD. `readAsStringAsync` materialises the ENTIRE file as a
+        // base64 JS string (~1.33x the bytes) and then copies it across the
+        // bridge — so a 100MB video, which mediaService explicitly allows,
+        // becomes ~133MB resident in Hermes plus a native copy. A scheduled
+        // backup runs inside a BGProcessingTask, where the memory ceiling is
+        // far tighter than in the foreground, so this is a crash rather than
+        // a slowdown, and it would take the whole backup with it.
+        //
+        // Skipping is COUNTED and reported, never silent: a backup that
+        // quietly omitted the user's videos while reporting success is the
+        // failure mode §3.7's retirement gate exists to prevent.
+        //
+        // The real fix is to hand the native side a file PATH and let it
+        // build the CKAsset directly, never crossing the bridge — that needs
+        // a new native function, so it is deliberately not bundled into a
+        // build we want to test today.
+        if (typeof info.size === 'number' && info.size > MAX_INLINE_MEDIA_BYTES) {
+          skippedTooLarge += 1;
+          continue;
+        }
+
         const payload = await readAsStringAsync(message.localMediaPath, { encoding: 'base64' });
         const id = mediaRecordId(message.messageId);
         await backupChunk(RECORD_TYPE.media, id, payload, {
@@ -256,7 +295,7 @@ const exportMedia = async (
     }
   }
 
-  return ids;
+  return { ids, skippedTooLarge };
 };
 
 /**
@@ -325,7 +364,7 @@ export const exportBackup = async (
     const callHistoryCount = selection.callHistory ? await exportCallHistory() : 0;
     if (selection.wallpapers) await exportWallpapers();
     if (selection.localSettings) await exportLocalSettings();
-    const mediaIds = selection.media
+    const media = selection.media
       ? await exportMedia(chatIds, () =>
           onProgress?.({
             phase: 'messages',
@@ -334,7 +373,7 @@ export const exportBackup = async (
             messagesDone,
           }),
         )
-      : [];
+      : { ids: [], skippedTooLarge: 0 };
 
     // Manifest LAST, deliberately: it is the index a restore reads first, so
     // writing it only after every batch landed means a crash mid-export leaves
@@ -347,7 +386,8 @@ export const exportBackup = async (
       totalMessages: messagesDone,
       recoverySecret: await getOrCreateRecoverySecret(),
       contents: selection,
-      mediaIds,
+      mediaIds: media.ids,
+      mediaSkippedTooLarge: media.skippedTooLarge,
       callHistoryCount,
     };
     onProgress?.({

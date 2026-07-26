@@ -131,7 +131,16 @@ export const BackupSettingsScreen = () => {
       });
       setLastBackup(info);
       successHaptic();
-      appAlert('Backup complete', `${info.messageCount} messages across ${info.chatCount} chats.`);
+      // Named explicitly rather than folded into a cheerful summary: a
+      // backup that omitted the user's videos while saying "complete" is the
+      // dishonest-success case the retirement gate exists to prevent.
+      const skipped = info.mediaSkippedTooLarge ?? 0;
+      appAlert(
+        skipped > 0 ? 'Backed up, with some files skipped' : 'Backup complete',
+        skipped > 0
+          ? `${info.messageCount} messages across ${info.chatCount} chats. ${skipped} large file${skipped === 1 ? '' : 's'} couldn't be included — those stay on this device only.`
+          : `${info.messageCount} messages across ${info.chatCount} chats.`,
+      );
     } catch (error) {
       errorHaptic();
       appAlert(

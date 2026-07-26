@@ -22,6 +22,8 @@ export interface LastBackupInfo {
   completedAt: number;
   chatCount: number;
   messageCount: number;
+  /** Media files skipped for being too large to move through the bridge. */
+  mediaSkippedTooLarge?: number;
 }
 
 export type BackupBlockedReason =
@@ -156,6 +158,7 @@ export const runBackupNow = async (
       completedAt: Date.now(),
       chatCount: manifest.chats.length,
       messageCount: manifest.totalMessages,
+      mediaSkippedTooLarge: manifest.mediaSkippedTooLarge,
     };
     // Recorded only after a successful export, so a failed run never makes the
     // UI claim a backup exists — the retirement gate (§3.7) reads this.
