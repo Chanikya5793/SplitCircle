@@ -43,7 +43,7 @@ import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
-import { Button, Divider, List, ProgressBar, Switch, Text } from 'react-native-paper';
+import { Button, Divider, List, ProgressBar, Switch, Text, TextInput } from 'react-native-paper';
 
 const FREQUENCIES: BackupFrequency[] = ['daily', 'every3days', 'weekly', 'off'];
 
@@ -73,6 +73,9 @@ export const BackupSettingsScreen = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [remoteManifest, setRemoteManifest] = useState<BackupManifest | null>(null);
+  // Typed on a device that has no passphrase of its own — the new-phone case.
+  const [restorePass, setRestorePass] = useState('');
+  const [revealRestorePass, setRevealRestorePass] = useState(false);
   /** Real OS-level registration state, not just the stored preference. */
   const [scheduled, setScheduled] = useState(false);
   const [selection, setSelection] = useState<BackupSelection>(DEFAULT_SELECTION);
@@ -141,11 +144,29 @@ export const BackupSettingsScreen = () => {
   // Restore is deliberately two-step: look at what's in iCloud FIRST, then
   // decide. A one-tap restore gives no chance to notice the backup is from the
   // wrong account or far older than expected.
+  /**
+   * The passphrase to restore WITH.
+   *
+   * Falls back to whatever the user typed, because the stored one is the wrong
+   * source on the only device that ever really needs to restore. `getStored...`
+   * reads THIS device's keychain, which on a newly set-up phone is empty — so
+   * restore used to fail with "Set your backup passphrase first" precisely
+   * when it mattered, and the button was disabled on top of that. Restoring is
+   * not the same act as enrolling: it proves you know an EXISTING backup's
+   * passphrase, it doesn't establish one for future backups.
+   */
+  const restorePassphrase = async (): Promise<string> => {
+    const typed = restorePass.trim();
+    if (typed) return typed;
+    const stored = await getStoredPassphrase();
+    if (stored) return stored;
+    throw new Error('Enter the backup passphrase from your old device.');
+  };
+
   const handleCheckBackup = async () => {
     setBusy('Reading backup…');
     try {
-      const passphrase = await getStoredPassphrase();
-      if (!passphrase) throw new Error('Set your backup passphrase first.');
+      const passphrase = await restorePassphrase();
       const manifest = await readBackupManifest(passphrase);
       if (!manifest) {
         appAlert('No backup found', 'There’s no SplitCircle backup in this iCloud account yet.');
@@ -175,8 +196,7 @@ export const BackupSettingsScreen = () => {
               setBusy('Restoring…');
               setProgress(0);
               try {
-                const passphrase = await getStoredPassphrase();
-                if (!passphrase) throw new Error('Set your backup passphrase first.');
+                const passphrase = await restorePassphrase();
                 const result = await importBackup(passphrase, (p) => {
                   if (p.chatsTotal > 0) setProgress(Math.min(p.chatsDone / p.chatsTotal, 0.99));
                   setBusy(`Restored ${p.messagesRestored} messages…`);
@@ -414,7 +434,34 @@ export const BackupSettingsScreen = () => {
                 Check what’s stored in iCloud before restoring. Restoring adds missing messages and
                 keeps everything already on this device.
               </Text>
-              <Button mode="outlined" disabled={busy !== null || !enrolled} onPress={handleCheckBackup}>
+              {/* Shown whenever this device has no passphrase of its own —
+                  i.e. exactly the new-phone case restore exists for. Gating
+                  this on enrollment made restore reachable only on devices
+                  that had already been backing up, which are the ones least
+                  likely to need it. */}
+              {!enrolled ? (
+                <TextInput
+                  mode="outlined"
+                  label="Backup passphrase"
+                  value={restorePass}
+                  onChangeText={setRestorePass}
+                  secureTextEntry={!revealRestorePass}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  disabled={busy !== null}
+                  right={
+                    <TextInput.Icon
+                      icon={revealRestorePass ? 'eye-off' : 'eye'}
+                      onPress={() => setRevealRestorePass((value) => !value)}
+                    />
+                  }
+                />
+              ) : null}
+              <Button
+                mode="outlined"
+                disabled={busy !== null || (!enrolled && restorePass.trim().length === 0)}
+                onPress={handleCheckBackup}
+              >
                 Check iCloud for a backup
               </Button>
             </>

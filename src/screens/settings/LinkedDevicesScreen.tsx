@@ -158,19 +158,32 @@ export const LinkedDevicesScreen = () => {
                               Approve
                             </Button>
                           ) : null}
-                          <Button
-                            compact
-                            textColor={theme.colors.danger}
-                            loading={removingId === device.deviceId && pendingAction === 'remove'}
-                            disabled={removingId === device.deviceId}
-                            onPress={() => handleRemove(device)}
-                          >
-                            {device.deviceId === ownDeviceId
-                              ? 'Sign out'
-                              : device.pairingStatus === 'pending_confirmation'
-                                ? 'Deny'
-                                : 'Remove'}
-                          </Button>
+                          {/* Removing a device that ISN'T this one is a
+                              main-device power. A companion offering "Remove"
+                              next to the main device was a dead button: the
+                              server refuses it (revokeDevice requires the
+                              caller to be main), so the only thing it could
+                              produce was an error. Worse, it implied a
+                              companion could orphan the account by cutting off
+                              the only device allowed to approve, back up, or
+                              retire anything. Signing THIS device out stays
+                              available to everyone — that's self-revocation,
+                              not a power over another device. */}
+                          {device.deviceId === ownDeviceId || isMainDevice ? (
+                            <Button
+                              compact
+                              textColor={theme.colors.danger}
+                              loading={removingId === device.deviceId && pendingAction === 'remove'}
+                              disabled={removingId === device.deviceId}
+                              onPress={() => handleRemove(device)}
+                            >
+                              {device.deviceId === ownDeviceId
+                                ? 'Sign out'
+                                : device.pairingStatus === 'pending_confirmation'
+                                  ? 'Deny'
+                                  : 'Remove'}
+                            </Button>
+                          ) : null}
                         </View>
                     )}
                   />

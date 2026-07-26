@@ -21,7 +21,7 @@ import {
 } from '@/services/pairingService';
 import { errorHaptic, successHaptic } from '@/utils/haptics';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { ActivityIndicator, Button, Text, TextInput } from 'react-native-paper';
@@ -85,8 +85,18 @@ export const ScanPairingCodeScreen = ({ onBack }: ScanPairingCodeScreenProps) =>
           clearInterval(timer);
           successHaptic();
         })
-        .catch(() => {
-          // Expected until the main device scans — not surfaced as an error.
+        .catch((err) => {
+          // "Not yet authorized" is the expected answer on every tick before
+          // the main device scans, so it is not surfaced. A CONSUMED code is
+          // different in kind: this nonce is single-use, so no future tick can
+          // ever succeed. Polling on would spin forever showing a spinner that
+          // means nothing — mint a fresh offer instead.
+          if (String((err as { message?: string })?.message ?? '').includes('already used')) {
+            stopped = true;
+            clearInterval(timer);
+            setOffer(null);
+            setError('That code was already used. Showing a new one — scan it again.');
+          }
         })
         .finally(() => {
           inFlight = false;
@@ -99,7 +109,8 @@ export const ScanPairingCodeScreen = ({ onBack }: ScanPairingCodeScreenProps) =>
   }, [mode, offer, redeeming]);
 
   const submitCode = async (code: string) => {
-    if (redeeming) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setRedeeming(true);
     setError(null);
     try {
@@ -110,15 +121,42 @@ export const ScanPairingCodeScreen = ({ onBack }: ScanPairingCodeScreenProps) =>
     } catch (err) {
       errorHaptic();
       setError(errorMessage(err));
+      // Re-arm for a DIFFERENT code only. `attemptedRef` still holds this one,
+      // so the camera can keep running without re-firing on the same QR.
+      busyRef.current = false;
       setScannedOnce(false);
       setRedeeming(false);
     }
   };
 
+  /**
+   * REFS, NOT STATE — this is the whole fix for the scan loop.
+   *
+   * `onBarcodeScanned` fires once per camera frame, so ~30x a second while a
+   * code is in view. React state updates are asynchronous, so `setScannedOnce`
+   * had not applied yet when the next several frames arrived: every one of them
+   * passed the `if (scannedOnce)` check and called submitCode. The first
+   * consumed the pairing code, and the rest came back "code already used".
+   * Worse, that error path reset the guard while the camera was still pointed
+   * at the same QR, so it immediately re-scanned it — an endless loop of
+   * failures and error haptics, which is exactly what was reported.
+   *
+   * A ref updates synchronously, so the very next frame sees the guard. And
+   * remembering every code we've already tried means a code that failed is
+   * never retried automatically, no matter how long it stays in frame.
+   */
+  const busyRef = useRef(false);
+  const attemptedRef = useRef<Set<string>>(new Set());
+
   const handleScan = (result: BarcodeScanningResult) => {
-    if (scannedOnce || redeeming) return;
+    const code = result.data;
+    if (busyRef.current || attemptedRef.current.has(code)) return;
+    attemptedRef.current.add(code);
     setScannedOnce(true);
-    void submitCode(result.data);
+    // submitCode sets busyRef synchronously (before its first await), so the
+    // next camera frame is already locked out — don't set it here as well or
+    // submitCode's own guard would see it and bail immediately.
+    void submitCode(code);
   };
 
   return (
