@@ -16,6 +16,7 @@ import {
   subscribeToPairedDevices,
   type PairedDevice,
 } from '@/services/pairingService';
+import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, successHaptic } from '@/utils/haptics';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import { useNavigation } from '@react-navigation/native';
@@ -57,11 +58,9 @@ export const LinkDeviceScreen = () => {
   /**
    * Reverse pairing: authorize the device whose code we just scanned.
    *
-   * No extra confirmation step follows. Scanning is a deliberate act on an
-   * already-trusted device, and the code is bound server-side to the scanned
-   * device's installation id — so unlike the forward flow, an intercepted or
-   * photographed code is useless to anyone else. Asking the user to confirm
-   * on the same device they just aimed the camera with would be ceremony.
+   * Gated behind an explicit confirmation that NAMES the device — see the
+   * reasoning at the call site for why the earlier "scanning is itself the
+   * consent" argument was wrong.
    */
   const handleScannedOffer = (result: BarcodeScanningResult) => {
     if (linking) return;
@@ -70,18 +69,50 @@ export const LinkDeviceScreen = () => {
       setLinkError("That doesn't look like a SplitCircle device code.");
       return;
     }
-    setLinking(true);
-    setLinkError(null);
-    void authorizeScannedDevice(offer)
-      .then(() => {
-        successHaptic();
-        setScanning(false);
-      })
-      .catch((error) => {
-        errorHaptic();
-        setLinkError(errorMessage(error));
-      })
-      .finally(() => setLinking(false));
+    // CONFIRM BEFORE AUTHORIZING — this is not ceremony, and an earlier
+    // version of this comment arguing that it was got the threat model wrong.
+    //
+    // The forward flow is safe because the secret ORIGINATES on the trusted
+    // device: nothing an attacker displays can be a valid code. The reverse
+    // flow inverts that — whatever QR the camera happens to see names the
+    // device to admit, and `autoConfirm` means it skips the approval step
+    // every other path requires. A QR pasted into a chat, printed, or shown on
+    // someone else's screen is visually indistinguishable from your own
+    // tablet's, so without this the whole attack is "get them to scan a
+    // picture" and the reward is a fully-confirmed device on the account.
+    //
+    // `preauthorizedDeviceId` does not help here: it binds the code to the
+    // ATTACKER's device id, which is exactly what their QR contains. It stops
+    // a third party stealing someone else's code, not the person who made it.
+    //
+    // Naming the device is what makes the difference — it is the one moment
+    // the user can notice the code says "Pixel 7" while they are holding an
+    // iPad.
+    const label = offer.deviceName ?? offer.modelName ?? 'this device';
+    appAlert(
+      `Link ${label}?`,
+      `${label}${offer.modelName && offer.deviceName ? ` (${offer.modelName})` : ''} will be added to your account and can read your messages and history. Only continue if this is your own device and you are looking at its screen right now.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Link device',
+          onPress: () => {
+            setLinking(true);
+            setLinkError(null);
+            void authorizeScannedDevice(offer)
+              .then(() => {
+                successHaptic();
+                setScanning(false);
+              })
+              .catch((error) => {
+                errorHaptic();
+                setLinkError(errorMessage(error));
+              })
+              .finally(() => setLinking(false));
+          },
+        },
+      ],
+    );
   };
 
   useEffect(() => {
