@@ -34,6 +34,7 @@ import {
 } from '@/services/localMessageStorage';
 import { getCallHistory, saveCallToHistory, type CallHistoryEntry } from '@/services/localCallStorage';
 import { getLocalMediaPath } from '@/services/mediaService';
+import { hydrateWallpapers } from '@/services/wallpaperService';
 import { getOrCreateRecoverySecret } from '@/services/backupPassphraseService';
 import { getBackupSelection, type BackupCategory } from '@/services/backupContentService';
 import type { ChatMessage } from '@/models';
@@ -500,6 +501,16 @@ const importWallpapers = async (manifest: BackupManifest): Promise<void> => {
     }).catch(() => {});
   }
   await AsyncStorage.setItem(WALLPAPER_CONFIG_KEY, JSON.stringify(map));
+
+  // wallpaperService keeps the slot map in a module-level cache and only reads
+  // AsyncStorage once, so writing the key behind its back changes nothing on
+  // screen — the restored wallpapers would sit on disk, correct and invisible,
+  // until the next app launch. Re-hydrating publishes them to its listeners
+  // now, which is what makes the restore look like it worked.
+  await hydrateWallpapers().catch(() => {
+    // A stale cache is cosmetic and self-heals on relaunch; never fail an
+    // otherwise-good restore over it.
+  });
 };
 
 const importLocalSettings = async (manifest: BackupManifest): Promise<void> => {
