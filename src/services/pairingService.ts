@@ -86,6 +86,8 @@ interface RedeemPairingCodeResponse {
   customToken: string;
   confirmationCode: string;
   confirmationExpiresAt: number;
+  /** Reverse pairing: a trusted device scanned us, so we're already confirmed. */
+  autoConfirmed?: boolean;
 }
 
 const redeemPairingCodeCallable = httpsCallable<RedeemPairingCodeRequest, RedeemPairingCodeResponse>(
@@ -116,6 +118,92 @@ export const redeemPairingCode = async (
   });
 
   await signInWithCustomToken(auth, data.customToken);
+  return data;
+};
+
+// ── Reverse pairing: the MAIN device scans the NEW device's code ────────────
+
+/**
+ * What a new device encodes in the QR it displays. Versioned so a future shape
+ * change can be rejected with a clear message instead of being misparsed.
+ */
+export interface DeviceOfferPayload {
+  v: 1;
+  kind: 'device-offer';
+  code: string;
+  deviceId: string;
+  platform: 'ios' | 'android';
+  deviceName: string | null;
+  modelName: string | null;
+}
+
+/**
+ * Nonce a new device mints for itself.
+ *
+ * It has no account, so the server cannot issue it a code — but the nonce only
+ * becomes a real pairing code once an authenticated device authorizes it, and
+ * it is bound to this device's installation id when that happens. 20 chars of
+ * a 31-symbol alphabet is ~2^99, which matters more here than in the forward
+ * flow: this code sits visible on screen while the user fetches their other
+ * phone, rather than living for one scan.
+ */
+const generateOfferNonce = (): string => {
+  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 20; i += 1) {
+    code += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return code;
+};
+
+/** Builds the payload this device should display for a main device to scan. */
+export const createDeviceOffer = async (): Promise<DeviceOfferPayload> => {
+  const deviceId = await getCurrentDeviceId();
+  const { deviceName, modelName, platform } = currentDeviceInfo();
+  return {
+    v: 1,
+    kind: 'device-offer',
+    code: generateOfferNonce(),
+    deviceId,
+    platform,
+    deviceName,
+    modelName,
+  };
+};
+
+/** Parses a scanned QR, returning null when it isn't a device offer. */
+export const parseDeviceOffer = (raw: string): DeviceOfferPayload | null => {
+  try {
+    const parsed = JSON.parse(raw) as Partial<DeviceOfferPayload>;
+    if (parsed.kind !== 'device-offer' || parsed.v !== 1) return null;
+    if (!parsed.code || !parsed.deviceId) return null;
+    if (parsed.platform !== 'ios' && parsed.platform !== 'android') return null;
+    return parsed as DeviceOfferPayload;
+  } catch {
+    return null;
+  }
+};
+
+const authorizeScannedDeviceCallable = httpsCallable<
+  Omit<DeviceOfferPayload, 'v' | 'kind'>,
+  { expiresAt: number }
+>(functions, 'authorizeScannedDevice');
+
+/**
+ * MAIN DEVICE: authorizes a device whose QR we just scanned. The scanning
+ * device is already trusted, so this completes pairing outright — the new
+ * device redeems and lands confirmed, with no second approval step.
+ */
+export const authorizeScannedDevice = async (
+  offer: DeviceOfferPayload,
+): Promise<{ expiresAt: number }> => {
+  const { data } = await authorizeScannedDeviceCallable({
+    code: offer.code,
+    deviceId: offer.deviceId,
+    platform: offer.platform,
+    deviceName: offer.deviceName,
+    modelName: offer.modelName,
+  });
   return data;
 };
 

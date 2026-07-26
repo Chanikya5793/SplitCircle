@@ -14,11 +14,16 @@
 import { GlassCard } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useTheme } from '@/context/ThemeContext';
-import { redeemPairingCode } from '@/services/pairingService';
+import {
+  createDeviceOffer,
+  redeemPairingCode,
+  type DeviceOfferPayload,
+} from '@/services/pairingService';
 import { errorHaptic, successHaptic } from '@/utils/haptics';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
+import QRCode from 'react-native-qrcode-svg';
 import { ActivityIndicator, Button, Text, TextInput } from 'react-native-paper';
 
 interface ScanPairingCodeScreenProps {
@@ -45,11 +50,53 @@ const errorMessage = (error: unknown): string => {
 export const ScanPairingCodeScreen = ({ onBack }: ScanPairingCodeScreenProps) => {
   const { theme } = useTheme();
   const [permission, requestPermission] = useCameraPermissions();
-  const [mode, setMode] = useState<'scan' | 'manual'>('scan');
+  const [mode, setMode] = useState<'scan' | 'manual' | 'show'>('scan');
   const [manualCode, setManualCode] = useState('');
   const [redeeming, setRedeeming] = useState(false);
   const [scannedOnce, setScannedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [offer, setOffer] = useState<DeviceOfferPayload | null>(null);
+
+  // Reverse pairing (product-owner request 2026-07-25): this device shows a
+  // code and the MAIN device scans it. The nonce is minted locally because
+  // this device has no account yet — it only becomes a usable pairing code
+  // once an authenticated device authorizes it, bound to this installation id.
+  useEffect(() => {
+    if (mode !== 'show' || offer) return;
+    void createDeviceOffer().then(setOffer);
+  }, [mode, offer]);
+
+  // Nothing pushes to a device with no session, so the only way to learn the
+  // scan happened is to ask. Redemption fails until the main device
+  // authorizes the nonce, so polling it IS the wait — no separate signal.
+  useEffect(() => {
+    if (mode !== 'show' || !offer || redeeming) return;
+    // Single-flight: a redemption that outlives the tick would otherwise be
+    // joined by a second one, and the loser consumes an already-consumed code
+    // and reports a spurious failure.
+    let inFlight = false;
+    let stopped = false;
+    const timer = setInterval(() => {
+      if (inFlight || stopped) return;
+      inFlight = true;
+      void redeemPairingCode(offer.code)
+        .then(() => {
+          stopped = true;
+          clearInterval(timer);
+          successHaptic();
+        })
+        .catch(() => {
+          // Expected until the main device scans — not surfaced as an error.
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    }, 2500);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [mode, offer, redeeming]);
 
   const submitCode = async (code: string) => {
     if (redeeming) return;
@@ -85,7 +132,25 @@ export const ScanPairingCodeScreen = ({ onBack }: ScanPairingCodeScreenProps) =>
             On your other device, go to Settings → Linked Devices → Link a device to get a code.
           </Text>
 
-          {mode === 'scan' ? (
+          {mode === 'show' ? (
+            <View style={styles.cameraWrap}>
+              {offer ? (
+                <>
+                  <QRCode value={JSON.stringify(offer)} size={200} />
+                  <Text
+                    variant="bodySmall"
+                    style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}
+                  >
+                    On your other device: Settings → Linked devices → Link a device → Scan a
+                    device&apos;s code.
+                  </Text>
+                  <ActivityIndicator size="small" color={theme.colors.primary} />
+                </>
+              ) : (
+                <ActivityIndicator size="large" color={theme.colors.primary} />
+              )}
+            </View>
+          ) : mode === 'scan' ? (
             <View style={styles.cameraWrap}>
               {!permission ? (
                 <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -150,6 +215,15 @@ export const ScanPairingCodeScreen = ({ onBack }: ScanPairingCodeScreenProps) =>
             }}
           >
             {mode === 'scan' ? 'Enter code manually instead' : 'Scan a QR code instead'}
+          </Button>
+          <Button
+            compact
+            onPress={() => {
+              setMode(mode === 'show' ? 'scan' : 'show');
+              setError(null);
+            }}
+          >
+            {mode === 'show' ? 'Scan a code instead' : 'Show a code for my other device to scan'}
           </Button>
           <Button compact onPress={onBack}>
             Back to sign in

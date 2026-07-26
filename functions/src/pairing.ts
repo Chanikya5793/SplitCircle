@@ -99,6 +99,12 @@ export interface RedeemPairingResult {
     customToken: string;
     confirmationCode: string;
     confirmationExpiresAt: number;
+    /**
+     * True for a reverse-pairing redemption: a trusted device scanned this one,
+     * so it is already `confirmed` and the client must NOT show the
+     * waiting-for-confirmation UI.
+     */
+    autoConfirmed: boolean;
 }
 
 /**
@@ -163,6 +169,9 @@ export async function redeemPairingCode(
 
     const confirmationCode = generateConfirmationCode();
     const confirmationExpiresAt = Date.now() + CONFIRMATION_TTL_MS;
+    // Set inside the transaction, read after it commits — the post-commit
+    // push and the return value both need to know which path ran.
+    let wasAutoConfirmed = false;
 
     await db.runTransaction(async (tx) => {
         const codeSnap = await tx.get(codeRef);
@@ -180,6 +189,18 @@ export async function redeemPairingCode(
         }
         if (typeof codeData.expiresAt !== "number" || codeData.expiresAt < Date.now()) {
             throw new Error("Pairing code expired");
+        }
+
+        // Reverse-pairing codes are bound to the exact device the main device
+        // scanned. Without this check the flow would be strictly WEAKER than
+        // the forward one: the companion's on-screen nonce is long-lived by
+        // comparison (it sits visible while the user fetches the other phone)
+        // and there is no confirmation step behind it.
+        if (
+            typeof codeData.preauthorizedDeviceId === "string" &&
+            codeData.preauthorizedDeviceId !== input.deviceId
+        ) {
+            throw new Error("Pairing code not found");
         }
 
         // 4-device cap (doc 31 decision #21) — an expired, never-confirmed
@@ -206,15 +227,22 @@ export async function redeemPairingCode(
             consumedAt: FieldValue.serverTimestamp(),
         });
 
+        // An auto-confirm code was authorized by a trusted device that
+        // physically scanned this one, so the scan already served as the
+        // out-of-band confirmation and no confirmationCode is issued.
+        const autoConfirm = codeData.autoConfirm === true;
+        wasAutoConfirmed = autoConfirm;
+
         tx.set(pairedDeviceRef, {
             deviceId: input.deviceId,
             platform: input.platform,
             deviceName: input.deviceName,
             modelName: input.modelName,
             isMainDevice: false,
-            pairingStatus: "pending_confirmation",
-            confirmationCode,
-            confirmationExpiresAt,
+            pairingStatus: autoConfirm ? "confirmed" : "pending_confirmation",
+            ...(autoConfirm
+                ? { confirmedAt: FieldValue.serverTimestamp() }
+                : { confirmationCode, confirmationExpiresAt }),
             pairedAt: FieldValue.serverTimestamp(),
             lastSeenAt: FieldValue.serverTimestamp(),
         });
@@ -265,12 +293,17 @@ export async function redeemPairingCode(
         // added generally.
         await sendPushToUsers(
             [uid],
-            "New device wants to link",
-            `${input.deviceName ?? "A device"} is trying to link to your account. Confirm in Settings if this is you.`,
+            wasAutoConfirmed ? "New device linked" : "New device wants to link",
+            wasAutoConfirmed
+                // Still notified, even though nothing needs approving: the
+                // user should always learn that a device joined their account,
+                // and this is the only signal reaching their OTHER devices.
+                ? `${input.deviceName ?? "A device"} was linked to your account. Remove it in Settings if this wasn't you.`
+                : `${input.deviceName ?? "A device"} is trying to link to your account. Confirm in Settings if this is you.`,
             {
-                type: "device_pairing_confirmation",
+                type: wasAutoConfirmed ? "device_pairing_linked" : "device_pairing_confirmation",
                 deviceId: input.deviceId,
-                confirmationCode,
+                ...(wasAutoConfirmed ? {} : { confirmationCode }),
             },
             "general",
         );
@@ -282,7 +315,12 @@ export async function redeemPairingCode(
         });
     }
 
-    return { customToken, confirmationCode, confirmationExpiresAt };
+    return {
+        customToken,
+        confirmationCode,
+        confirmationExpiresAt,
+        autoConfirmed: wasAutoConfirmed,
+    };
 }
 
 /**
@@ -409,4 +447,80 @@ export async function revokeDevice(
     // see the rules changes) so the NEXT read/write from that cached client
     // fails under the new rule, rather than surviving until natural token
     // TTL expiry. Revocation is "hard" only once both pieces are in place.
+}
+
+export interface AuthorizeScannedDeviceInput {
+    /** Nonce the companion generated and encoded in its own QR. */
+    code: string;
+    /** The companion's installation id, from the same QR. */
+    deviceId: string;
+    platform: "ios" | "android";
+    deviceName: string | null;
+    modelName: string | null;
+}
+
+/**
+ * REVERSE PAIRING (product-owner request 2026-07-25): the MAIN device scans a
+ * code displayed by the new device, rather than the other way round.
+ *
+ * The companion has no account, so it cannot be issued a code by the server —
+ * it mints a high-entropy nonce itself, shows it, and polls redemption. This
+ * call is what turns that nonce into a real pairing code, and it can only be
+ * made by an already-authenticated device, which is where the trust comes from.
+ *
+ * Two properties make this SAFER than the forward flow rather than merely
+ * equivalent:
+ *
+ *  - The code is bound to `preauthorizedDeviceId`. Photographing the
+ *    companion's screen is useless: only the device whose installation id is
+ *    in the QR can redeem it. The forward flow has no such binding, which is
+ *    exactly why it needs a separate confirmation step.
+ *  - Because a trusted device performed the scan deliberately, that scan IS
+ *    the out-of-band confirmation §3.4 point 3 asks for. The companion is
+ *    therefore redeemed straight to `confirmed`, with no second approval —
+ *    asking the user to confirm on the same device they just scanned with
+ *    would be ceremony, not security.
+ *
+ * `create()` rather than `set()`: a nonce that already exists belongs to some
+ * other pairing attempt, and silently overwriting it would hijack that one.
+ */
+export async function authorizeScannedDevice(
+    uid: string,
+    input: AuthorizeScannedDeviceInput,
+): Promise<{ expiresAt: number }> {
+    const db = getFirestore();
+
+    // Only a CONFIRMED device may bring another device onto the account —
+    // otherwise a phone still sitting behind PendingPairingGate could pair
+    // further devices and bootstrap itself past approval entirely.
+    const callerDevices = await db
+        .collection(USERS_COLLECTION)
+        .doc(uid)
+        .collection(PAIRED_DEVICES_SUBCOLLECTION)
+        .where("pairingStatus", "==", "confirmed")
+        .limit(1)
+        .get();
+    if (callerDevices.empty) {
+        throw new Error("Only a confirmed device can link a new device");
+    }
+
+    const expiresAt = Date.now() + PAIRING_CODE_TTL_MS;
+    try {
+        await db.collection(PAIRING_CODES_COLLECTION).doc(input.code).create({
+            uid,
+            createdAt: FieldValue.serverTimestamp(),
+            expiresAt,
+            consumedBy: null,
+            consumedAt: null,
+            preauthorizedDeviceId: input.deviceId,
+            autoConfirm: true,
+            scannedDeviceName: input.deviceName,
+            scannedPlatform: input.platform,
+            scannedModelName: input.modelName,
+        });
+    } catch {
+        throw new Error("That code is no longer valid — ask the other device for a fresh one");
+    }
+
+    return { expiresAt };
 }

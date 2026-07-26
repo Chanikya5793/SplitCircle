@@ -8,13 +8,16 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import {
+  authorizeScannedDevice,
   confirmPairing,
   getCurrentDeviceId,
+  parseDeviceOffer,
   requestPairingCode,
   subscribeToPairedDevices,
   type PairedDevice,
 } from '@/services/pairingService';
 import { errorHaptic, successHaptic } from '@/utils/haptics';
+import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
@@ -42,6 +45,40 @@ export const LinkDeviceScreen = () => {
   const [pendingDevices, setPendingDevices] = useState<PairedDevice[]>([]);
   /** Which device AND which action is resolving — see handleConfirm. */
   const [resolving, setResolving] = useState<{ deviceId: string; confirm: boolean } | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [permission, requestPermission] = useCameraPermissions();
+
+  /**
+   * Reverse pairing: authorize the device whose code we just scanned.
+   *
+   * No extra confirmation step follows. Scanning is a deliberate act on an
+   * already-trusted device, and the code is bound server-side to the scanned
+   * device's installation id — so unlike the forward flow, an intercepted or
+   * photographed code is useless to anyone else. Asking the user to confirm
+   * on the same device they just aimed the camera with would be ceremony.
+   */
+  const handleScannedOffer = (result: BarcodeScanningResult) => {
+    if (linking) return;
+    const offer = parseDeviceOffer(result.data);
+    if (!offer) {
+      setLinkError("That doesn't look like a SplitCircle device code.");
+      return;
+    }
+    setLinking(true);
+    setLinkError(null);
+    void authorizeScannedDevice(offer)
+      .then(() => {
+        successHaptic();
+        setScanning(false);
+      })
+      .catch((error) => {
+        errorHaptic();
+        setLinkError(errorMessage(error));
+      })
+      .finally(() => setLinking(false));
+  };
 
   useEffect(() => {
     void getCurrentDeviceId().then(setOwnDeviceId);
@@ -162,6 +199,48 @@ export const LinkDeviceScreen = () => {
             </>
           ) : null}
 
+          {/* Reverse pairing: scan the NEW device's code with this one. Asked
+              for 2026-07-25 alongside the existing direction, not instead of
+              it — this way round is easier when the new phone is the one
+              already in your hand. */}
+          {state.kind === 'ready' && !scanning ? (
+            <Button mode="outlined" onPress={() => setScanning(true)}>
+              Scan a device&apos;s code instead
+            </Button>
+          ) : null}
+
+          {scanning ? (
+            <>
+              <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>
+                On the new device, choose &quot;Show a code for my other device to scan&quot;, then
+                point this camera at it.
+              </Text>
+              <View style={styles.qrWrap}>
+                {!permission?.granted ? (
+                  <Button mode="contained" onPress={() => void requestPermission()}>
+                    Allow camera
+                  </Button>
+                ) : (
+                  <CameraView
+                    style={styles.camera}
+                    facing="back"
+                    barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                    onBarcodeScanned={handleScannedOffer}
+                  />
+                )}
+              </View>
+              {linkError ? (
+                <Text variant="bodyMedium" style={{ color: theme.colors.danger, textAlign: 'center' }}>
+                  {linkError}
+                </Text>
+              ) : null}
+              {linking ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
+              <Button compact onPress={() => { setScanning(false); setLinkError(null); }}>
+                Show my code instead
+              </Button>
+            </>
+          ) : null}
+
           {pendingDevices
             .filter((device) => device.deviceId !== ownDeviceId)
             .map((device) => (
@@ -232,6 +311,10 @@ const styles = StyleSheet.create({
     padding: 16,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
+  },
+  camera: {
+    width: 240,
+    height: 240,
   },
   manualCode: {
     fontWeight: '800',

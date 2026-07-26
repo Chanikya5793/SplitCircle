@@ -37,6 +37,7 @@ import {
     redeemPairingCode as redeemPairingCodeImpl,
     confirmPairing as confirmPairingImpl,
     revokeDevice as revokeDeviceImpl,
+    authorizeScannedDevice as authorizeScannedDeviceImpl,
 } from "./pairing";
 import {
     publishSignalPrekeys as publishSignalPrekeysImpl,
@@ -1769,5 +1770,49 @@ export const recoverAsNewMainDevice = onCall(async (request) => {
         }
         logger.error("recoverAsNewMainDevice failed", { uid, deviceId, ...toSafeError(error) });
         throw new HttpsError("internal", "Recovery failed.");
+    }
+});
+
+/**
+ * Reverse pairing (doc 31 §3.4, extended 2026-07-25): the MAIN device scanned
+ * a code displayed by a new device. Authorizes that specific device to redeem
+ * the nonce it is showing. See authorizeScannedDevice for why this binding
+ * makes the flow stronger than the forward one, not merely equivalent.
+ */
+export const authorizeScannedDevice = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const code = getStringValue(request.data?.code);
+    const deviceId = getStringValue(request.data?.deviceId);
+    const platform = getStringValue(request.data?.platform);
+    if (!code || !deviceId || (platform !== "ios" && platform !== "android")) {
+        throw new HttpsError("invalid-argument", "That QR code isn't a SplitCircle device code.");
+    }
+    // Both come from a scanned QR, i.e. attacker-controllable input that is
+    // about to be stored and later rendered in Linked devices.
+    if (!isSafeIdentifier(deviceId) || !isSafeIdentifier(code)) {
+        throw new HttpsError("invalid-argument", "That QR code isn't a SplitCircle device code.");
+    }
+
+    try {
+        return await authorizeScannedDeviceImpl(uid, {
+            code,
+            deviceId,
+            platform,
+            deviceName: truncate(getStringValue(request.data?.deviceName), 64) || null,
+            modelName: truncate(getStringValue(request.data?.modelName), 64) || null,
+        });
+    } catch (error) {
+        if (error instanceof Error && (
+            error.message === "Only a confirmed device can link a new device" ||
+            error.message.startsWith("That code is no longer valid")
+        )) {
+            throw new HttpsError("failed-precondition", error.message);
+        }
+        logger.error("authorizeScannedDevice failed", { uid, deviceId, ...toSafeError(error) });
+        throw new HttpsError("internal", "Couldn't link that device. Please try again.");
     }
 });
