@@ -28,7 +28,12 @@ import {
   type BackupFrequency,
 } from '@/services/backupSettingsService';
 import { BackupBlockedError, getLastBackupInfo, runBackupNow, type LastBackupInfo } from '@/services/backupRunner';
-import { importBackup, readBackupManifest, type BackupManifest } from '@/services/backupService';
+import {
+  importBackup,
+  lastSummaryReadError,
+  readBackupManifest,
+  type BackupManifest,
+} from '@/services/backupService';
 import {
   BACKUP_CATEGORIES,
   DEFAULT_SELECTION,

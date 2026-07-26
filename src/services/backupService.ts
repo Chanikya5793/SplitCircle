@@ -560,6 +560,8 @@ export interface BackupSummary {
  * Returns null when there is no backup, or when iCloud isn't reachable. Both
  * are legitimately "we don't know", never "there is nothing".
  */
+export let lastSummaryReadError: string | null = null;
+
 export const readBackupSummary = async (): Promise<BackupSummary | null> => {
   try {
     const chunk = await restoreChunkMetadata(RECORD_TYPE.manifest, 'manifest-current');
@@ -577,7 +579,12 @@ export const readBackupSummary = async (): Promise<BackupSummary | null> => {
       bytes: num(meta.summaryBytes),
       deviceName: meta.summaryDeviceName || null,
     };
-  } catch {
+  } catch (error) {
+    // Recorded rather than swallowed. "No backup found" was being shown for
+    // THREE different situations — record genuinely absent, iCloud
+    // unreachable, and a provider error — which made a backup that reported
+    // success but read back as missing impossible to diagnose from the phone.
+    lastSummaryReadError = error instanceof Error ? error.message : String(error);
     return null;
   }
 };

@@ -157,7 +157,43 @@ extension SplitCircleSignalStore: IdentityKeyStore {
       // contact impossible.
       return true
     }
-    return existing == identity.serialize()
+
+    if existing == identity.serialize() { return true }
+
+    /// A CHANGED identity is ACCEPTED, and this is the bug fix that matters
+    /// most in this file.
+    ///
+    /// Returning false here — comparing and refusing — is a permanent,
+    /// unrecoverable deadlock, not a safety measure. libsignal consults this
+    /// BEFORE processing the message, so a rejected identity means
+    /// `saveIdentity` is never reached and the stored key can never be
+    /// updated. Every subsequent message from that address fails the same way,
+    /// forever. Observed on real devices as
+    /// `LibSignalClient.SignalError error 17` (untrustedIdentity) on every
+    /// message in both directions.
+    ///
+    /// Worse, it made the obvious remedy actively harmful: "reset encryption"
+    /// mints a NEW identity, which the peer then distrusts even harder. Each
+    /// reset dug the hole deeper.
+    ///
+    /// An identity legitimately changes whenever a device reinstalls, restores
+    /// from backup, or is re-paired — all routine here, and doubly so because
+    /// a reinstalled device keeps its installation id and is handed the SAME
+    /// libsignal device id, so it returns to an address peers already hold a
+    /// key for.
+    ///
+    /// THE TRADEOFF, STATED PLAINLY: accepting means a MITM who can substitute
+    /// key material is not blocked at this layer. That is the same default
+    /// WhatsApp ships (accept, then notify), and the honest comparison is not
+    /// "secure vs insecure" — it is "accept a changed key" versus "messaging
+    /// stops working permanently and the user is given no way out". The real
+    /// answer is a safety-number/security-code notice surfacing the change to
+    /// the user; until that UI exists, refusing silently protects nobody
+    /// because there is no one to tell.
+    ///
+    /// `saveIdentity` records the replacement and returns `.replacedExisting`,
+    /// which is the hook that notice should be built on.
+    return true
   }
 
   func identity(for address: ProtocolAddress, context: StoreContext) throws -> IdentityKey? {
