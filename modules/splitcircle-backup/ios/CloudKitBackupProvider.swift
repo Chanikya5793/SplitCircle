@@ -20,7 +20,15 @@ public final class CloudKitBackupProvider: BackupProvider {
   /// Matches the container that must exist on the App ID. If this string and
   /// the provisioned container ever disagree, every operation fails at runtime
   /// with a container-not-found error rather than anything more descriptive.
-  public static let containerIdentifier = "iCloud.com.splitcircle.app"
+  ///
+  /// Named `...ManaSplit`, not `...app`, because iOS Settings → iCloud →
+  /// Manage Storage displays the LAST PATH COMPONENT of the container
+  /// identifier verbatim. The original `iCloud.com.splitcircle.app` therefore
+  /// showed up as a bare, meaningless "app" in the user's storage list. The
+  /// old container still exists (containers cannot be deleted) but is no
+  /// longer assigned to the App ID, so its data is orphaned — a deliberate,
+  /// approved trade to fix the naming before real users exist.
+  public static let containerIdentifier = "iCloud.com.splitcircle.ManaSplit"
 
   private let database: CKDatabase
   private let container: CKContainer

@@ -31,7 +31,7 @@
          assigned on the portal — don't delete the keys. -->
     <key>com.apple.developer.icloud-container-identifiers</key>
     <array>
-      <string>iCloud.com.splitcircle.app</string>
+      <string>iCloud.com.splitcircle.ManaSplit</string>
     </array>
     <key>com.apple.developer.icloud-services</key>
     <array>
