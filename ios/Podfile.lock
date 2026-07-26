@@ -224,6 +224,9 @@ PODS:
     - ExpoModulesCore
   - ExpoAudio (55.0.8):
     - ExpoModulesCore
+  - ExpoBackgroundTask (55.0.20):
+    - ExpoModulesCore
+    - ExpoTaskManager
   - ExpoBlur (55.0.8):
     - ExpoModulesCore
   - ExpoCamera (55.0.9):
@@ -320,7 +323,7 @@ PODS:
     - ExpoModulesCore
   - ExpoSystemUI (55.0.9):
     - ExpoModulesCore
-  - ExpoTaskManager (55.0.9):
+  - ExpoTaskManager (55.0.18):
     - ExpoModulesCore
     - UMAppLoader
   - ExpoVideo (55.0.10):
@@ -3576,7 +3579,7 @@ PODS:
     - ExpoModulesCore
     - LibSignalClient (= 0.99.1)
   - SwiftUIIntrospect (1.3.0)
-  - UMAppLoader (55.0.2)
+  - UMAppLoader (55.0.5)
   - VideoTrim (8.1.0):
     - boost
     - DoubleConversion
@@ -3629,6 +3632,7 @@ DEPENDENCIES:
   - ExpoAppleAuthentication (from `../node_modules/expo-apple-authentication/ios`)
   - ExpoAsset (from `../node_modules/expo-asset/ios`)
   - ExpoAudio (from `../node_modules/expo-audio/ios`)
+  - ExpoBackgroundTask (from `../node_modules/expo-background-task/ios`)
   - ExpoBlur (from `../node_modules/expo-blur/ios`)
   - ExpoCamera (from `../node_modules/expo-camera/ios`)
   - ExpoClipboard (from `../node_modules/expo-clipboard/ios`)
@@ -3809,6 +3813,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-asset/ios"
   ExpoAudio:
     :path: "../node_modules/expo-audio/ios"
+  ExpoBackgroundTask:
+    :path: "../node_modules/expo-background-task/ios"
   ExpoBlur:
     :path: "../node_modules/expo-blur/ios"
   ExpoCamera:
@@ -4106,6 +4112,7 @@ SPEC CHECKSUMS:
   ExpoAppleAuthentication: 99b5448e247e4238568b632ef80d2c9825d0cd55
   ExpoAsset: bdc7bc21fe25d197c3aa7547e14c12c42087d9c9
   ExpoAudio: af1b3b6271e309bfc1ea4626284a47d3af49c7e1
+  ExpoBackgroundTask: b3a67fa50311e297c2da253d477bbab111206b67
   ExpoBlur: aaa1443160dec73e53850f1f7010463d645c97d9
   ExpoCamera: bf0ce92035d27e22103bc7cad38e348c6ce2ffd3
   ExpoClipboard: 6bb321d2991652e6736d400f1d7c073aa02c41a0
@@ -4136,7 +4143,7 @@ SPEC CHECKSUMS:
   ExpoSplashScreen: 6452aefb424acc76347d62482caef9b4e613e59e
   ExpoSQLite: 46f6faf09117364adddd7cfd3be06559dbc8cbcd
   ExpoSystemUI: ae936ff8f78ca3d6c13884704beb7705fe26d136
-  ExpoTaskManager: 6038b80fbe63915383dcf57fa0156b23e2615fab
+  ExpoTaskManager: 22659519f56ef2f490cc02a6dacf32f0eb80aa8b
   ExpoVideo: e26820485c2d3143290afb9dc91493c5befd5e91
   ExpoVideoThumbnails: 6b61a682d9bb1facf3f4e366e2355e0d4518db67
   ExpoWebBrowser: f13a6e46e44049bbb8ce49ff8aaa4d819c87d1fe
@@ -4246,7 +4253,7 @@ SPEC CHECKSUMS:
   SplitCircleBackup: 2ab08d943d66dbb947e2a508c4f3ad561eb495f2
   SplitCircleCrypto: 579ebfd5855cd893dfd6aac045b3a5bc2709268d
   SwiftUIIntrospect: fee9aa07293ee280373a591e1824e8ddc869ba5d
-  UMAppLoader: 71b50bcc31d86495e52c0b4cd17e2708bf297be3
+  UMAppLoader: 045699ef1cc6afda399a5c78bde728f23bcce213
   VideoTrim: b0599b22411e2d1cbb03ee82648cae545b380110
   WebRTC-SDK: 40d4f5ba05cadff14e4db5614aec402a633f007e
   Yoga: 89dfd64939cad2d0d2cc2dc48193100cef28bd98

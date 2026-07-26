@@ -29,6 +29,7 @@ import {
 } from '@/services/backupSettingsService';
 import { BackupBlockedError, getLastBackupInfo, runBackupNow, type LastBackupInfo } from '@/services/backupRunner';
 import { importBackup, readBackupManifest, type BackupManifest } from '@/services/backupService';
+import { isBackupScheduled, syncBackupSchedule } from '@/services/backupScheduler';
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
@@ -64,6 +65,8 @@ export const BackupSettingsScreen = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [remoteManifest, setRemoteManifest] = useState<BackupManifest | null>(null);
+  /** Real OS-level registration state, not just the stored preference. */
+  const [scheduled, setScheduled] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!user) return;
@@ -81,6 +84,10 @@ export const BackupSettingsScreen = () => {
     setFrequency(freq);
     setAllowCellular(cellular);
     setIcloud({ available: health.isAvailable, reason: health.reason });
+    // Keep the OS schedule in step with the synced preference — another device
+    // may have changed it since this one last ran.
+    await syncBackupSchedule(freq);
+    setScheduled(await isBackupScheduled());
     setLoading(false);
   }, [user]);
 
@@ -190,6 +197,10 @@ export const BackupSettingsScreen = () => {
     setFrequency(next);
     lightHaptic();
     await setBackupFrequency(user.userId, next);
+    // Push the change to the OS scheduler too — storing the preference without
+    // this would leave the picker claiming automation that never happens.
+    await syncBackupSchedule(next);
+    setScheduled(await isBackupScheduled());
   };
 
   const handleCellular = async (next: boolean) => {
@@ -252,10 +263,17 @@ export const BackupSettingsScreen = () => {
               : 'No backup has completed on this device yet.'}
           </Text>
           {/* Static explanation, never a predicted next run (§3.6). */}
-          {frequency !== 'off' ? (
+          {frequency !== 'off' && scheduled ? (
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
               Automatic backups are on — they usually happen overnight while charging and connected
               to Wi-Fi, but iOS decides exactly when.
+            </Text>
+          ) : frequency !== 'off' ? (
+            // Claiming automation we could not actually register would be the
+            // same class of dishonesty as predicting a next-run time.
+            <Text variant="bodySmall" style={{ color: theme.colors.danger }}>
+              Automatic backups couldn’t be scheduled on this device. Use “Back up now” until this
+              resolves.
             </Text>
           ) : null}
 

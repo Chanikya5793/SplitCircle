@@ -32,6 +32,8 @@ export const LinkedDevicesScreen = () => {
   const [devices, setDevices] = useState<PairedDevice[] | null>(null);
   const [ownDeviceId, setOwnDeviceId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  /** Which action is in flight, so only that button shows a spinner. */
+  const [pendingAction, setPendingAction] = useState<'approve' | 'remove' | null>(null);
 
   useEffect(() => {
     void getCurrentDeviceId().then(setOwnDeviceId);
@@ -59,6 +61,7 @@ export const LinkedDevicesScreen = () => {
           text: 'Approve',
           onPress: async () => {
             setRemovingId(device.deviceId);
+            setPendingAction('approve');
             try {
               // confirmPairing resolves the caller's own device id internally.
               await confirmPairing(device.deviceId, true);
@@ -68,6 +71,7 @@ export const LinkedDevicesScreen = () => {
               appAlert('Could not approve device', 'Please try again.');
             } finally {
               setRemovingId(null);
+              setPendingAction(null);
             }
           },
         },
@@ -90,6 +94,7 @@ export const LinkedDevicesScreen = () => {
           style: 'destructive',
           onPress: async () => {
             setRemovingId(device.deviceId);
+            setPendingAction('remove');
             try {
               await revokeDevice(device.deviceId);
               lightHaptic();
@@ -98,6 +103,7 @@ export const LinkedDevicesScreen = () => {
               appAlert('Could not remove device', 'Please try again.');
             } finally {
               setRemovingId(null);
+              setPendingAction(null);
             }
           },
         },
@@ -127,10 +133,11 @@ export const LinkedDevicesScreen = () => {
                     left={() => (
                       <List.Icon icon={device.isMainDevice ? 'cellphone' : 'tablet-cellphone'} color={theme.colors.primary} />
                     )}
-                    right={() =>
-                      removingId === device.deviceId ? (
-                        <ActivityIndicator size="small" color={theme.colors.primary} />
-                      ) : (
+                    right={() => (
+                        // Per-action loading, not one spinner for the whole
+                        // row: replacing both buttons with a single indicator
+                        // leaves the user unable to tell whether they approved
+                        // or denied.
                         <View style={styles.rowActions}>
                           {/* A device that registered itself by signing in
                               directly (rather than through the QR flow) has no
@@ -144,13 +151,20 @@ export const LinkedDevicesScreen = () => {
                           device.deviceId !== ownDeviceId ? (
                             <Button
                               compact
-                              disabled={confirmedCount >= MAX_DEVICES}
+                              loading={removingId === device.deviceId && pendingAction === 'approve'}
+                              disabled={confirmedCount >= MAX_DEVICES || removingId === device.deviceId}
                               onPress={() => handleApprove(device)}
                             >
                               Approve
                             </Button>
                           ) : null}
-                          <Button compact textColor={theme.colors.danger} onPress={() => handleRemove(device)}>
+                          <Button
+                            compact
+                            textColor={theme.colors.danger}
+                            loading={removingId === device.deviceId && pendingAction === 'remove'}
+                            disabled={removingId === device.deviceId}
+                            onPress={() => handleRemove(device)}
+                          >
                             {device.deviceId === ownDeviceId
                               ? 'Sign out'
                               : device.pairingStatus === 'pending_confirmation'
@@ -158,8 +172,7 @@ export const LinkedDevicesScreen = () => {
                                 : 'Remove'}
                           </Button>
                         </View>
-                      )
-                    }
+                    )}
                   />
                   {index < devices.length - 1 ? <Divider /> : null}
                 </View>

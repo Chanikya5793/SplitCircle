@@ -8,6 +8,10 @@ import App from './App';
 // — required for the OS to find the task when it launches the app headlessly
 // for a silent "revoke" push (stale-notification cleanup while killed).
 import { registerBackgroundNotificationTask } from './src/utils/backgroundNotificationTask';
+// Imported at the entry point so TaskManager.defineTask runs in module scope —
+// iOS can launch the app headlessly straight into the scheduled-backup handler
+// (doc 31 §3.6), and a task defined later would not exist yet.
+import './src/services/backupScheduler';
 
 if (!__DEV__) {
         const noOp = () => undefined;

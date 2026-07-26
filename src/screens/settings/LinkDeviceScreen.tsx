@@ -40,7 +40,8 @@ export const LinkDeviceScreen = () => {
   const [state, setState] = useState<ScreenState>({ kind: 'requesting' });
   const [ownDeviceId, setOwnDeviceId] = useState<string | null>(null);
   const [pendingDevices, setPendingDevices] = useState<PairedDevice[]>([]);
-  const [resolvingDeviceId, setResolvingDeviceId] = useState<string | null>(null);
+  /** Which device AND which action is resolving — see handleConfirm. */
+  const [resolving, setResolving] = useState<{ deviceId: string; confirm: boolean } | null>(null);
 
   useEffect(() => {
     void getCurrentDeviceId().then(setOwnDeviceId);
@@ -82,14 +83,18 @@ export const LinkDeviceScreen = () => {
   }, [user]);
 
   const handleConfirm = async (deviceId: string, confirm: boolean) => {
-    setResolvingDeviceId(deviceId);
+    // Track WHICH action is in flight, not just which device. Keying both
+    // buttons off the device id alone spun BOTH of them on either tap, so the
+    // user could not tell whether they had approved or denied — the single
+    // most consequential choice on this screen.
+    setResolving({ deviceId, confirm });
     try {
       await confirmPairing(deviceId, confirm);
       confirm ? successHaptic() : errorHaptic();
     } catch (error) {
       errorHaptic();
     } finally {
-      setResolvingDeviceId(null);
+      setResolving(null);
     }
   };
 
@@ -178,14 +183,18 @@ export const LinkDeviceScreen = () => {
                 <View style={styles.confirmActions}>
                   <Button
                     mode="outlined"
-                    loading={resolvingDeviceId === device.deviceId}
+                    loading={resolving?.deviceId === device.deviceId && resolving.confirm === false}
+                    // Both disable while either runs, so a second tap can't
+                    // fire the opposite action mid-flight.
+                    disabled={resolving?.deviceId === device.deviceId}
                     onPress={() => handleConfirm(device.deviceId, false)}
                   >
                     Deny
                   </Button>
                   <Button
                     mode="contained"
-                    loading={resolvingDeviceId === device.deviceId}
+                    loading={resolving?.deviceId === device.deviceId && resolving.confirm === true}
+                    disabled={resolving?.deviceId === device.deviceId}
                     onPress={() => handleConfirm(device.deviceId, true)}
                   >
                     Confirm
