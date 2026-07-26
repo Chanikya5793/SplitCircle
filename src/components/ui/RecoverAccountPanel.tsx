@@ -20,6 +20,7 @@ import {
 import { errorHaptic, successHaptic } from '@/utils/haptics';
 import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Text, TextInput } from 'react-native-paper';
 
 /** Typed verbatim to proceed without a backup — deliberately effortful. */
@@ -32,6 +33,10 @@ interface Props {
 
 export const RecoverAccountPanel = ({ onCancel, onRecovered }: Props) => {
   const { theme } = useTheme();
+  // Real device insets, not a guessed constant: this renders as a full-screen
+  // overlay with no navigator chrome, so nothing else clears the Dynamic
+  // Island above or the home indicator below.
+  const insets = useSafeAreaInsets();
   const [passphrase, setPassphrase] = useState('');
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -66,7 +71,13 @@ export const RecoverAccountPanel = ({ onCancel, onRecovered }: Props) => {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      contentContainerStyle={[
+        styles.scroll,
+        { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 32 },
+      ]}
+      keyboardShouldPersistTaps="handled"
+    >
       <GlassCard style={styles.card} contentStyle={styles.cardContent}>
         <Text variant="headlineSmall" style={[styles.title, { color: theme.colors.onSurface }]}>
           Use this as your main device
@@ -179,7 +190,6 @@ export const RecoverAccountPanel = ({ onCancel, onRecovered }: Props) => {
 const styles = StyleSheet.create({
   scroll: {
     padding: 20,
-    paddingTop: 60,
     gap: 14,
   },
   card: {

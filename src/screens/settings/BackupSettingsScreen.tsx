@@ -41,6 +41,8 @@ import { isBackupScheduled, syncBackupSchedule } from '@/services/backupSchedule
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useHeaderHeight } from '@react-navigation/elements';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Divider, List, ProgressBar, Switch, Text, TextInput } from 'react-native-paper';
@@ -62,6 +64,8 @@ export const BackupSettingsScreen = () => {
   const navigation = useNavigation();
   const { user } = useAuth();
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
 
   const [loading, setLoading] = useState(true);
   const [enrolled, setEnrolled] = useState(false);
@@ -258,7 +262,7 @@ export const BackupSettingsScreen = () => {
 
   return (
     <LiquidBackground>
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView contentContainerStyle={[styles.container, { paddingTop: headerHeight + 16, paddingBottom: insets.bottom + 32 }]}>
         {/* iCloud unavailable gets its own distinct message (§3.6 / #18): live
             sync is unaffected, and saying so prevents a scarier reading. */}
         {!icloud.available ? (

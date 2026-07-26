@@ -19,6 +19,8 @@ import {
 import { errorHaptic, successHaptic } from '@/utils/haptics';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
@@ -40,6 +42,8 @@ export const LinkDeviceScreen = () => {
   const navigation = useNavigation();
   const { user } = useAuth();
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
   const [state, setState] = useState<ScreenState>({ kind: 'requesting' });
   const [ownDeviceId, setOwnDeviceId] = useState<string | null>(null);
   const [pendingDevices, setPendingDevices] = useState<PairedDevice[]>([]);
@@ -137,7 +141,7 @@ export const LinkDeviceScreen = () => {
 
   return (
     <LiquidBackground>
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.container, { paddingTop: headerHeight + 16, paddingBottom: insets.bottom + 32 }]} showsVerticalScrollIndicator={false}>
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
           <Text variant="headlineSmall" style={[styles.title, { color: theme.colors.onSurface }]}>
             Link a device
@@ -308,6 +312,11 @@ const styles = StyleSheet.create({
     paddingVertical: 32,
   },
   qrWrap: {
+    // DELIBERATE solid white, not a liquid-glass miss (DESIGN.md's self-audit
+    // greps for exactly this literal). A QR code needs a high-contrast opaque
+    // quiet zone to be scannable at all — glass behind the modules would put a
+    // moving, translucent backdrop under the very thing a camera must resolve.
+    // Same class of exception as the roulette hub.
     padding: 16,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,

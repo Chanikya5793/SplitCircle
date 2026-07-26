@@ -19,6 +19,8 @@ import {
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Button, Divider, List, Text } from 'react-native-paper';
@@ -29,6 +31,8 @@ export const LinkedDevicesScreen = () => {
   const navigation = useNavigation();
   const { user } = useAuth();
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
   const [devices, setDevices] = useState<PairedDevice[] | null>(null);
   const [ownDeviceId, setOwnDeviceId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -113,7 +117,7 @@ export const LinkedDevicesScreen = () => {
 
   return (
     <LiquidBackground>
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.container, { paddingTop: headerHeight + 16, paddingBottom: insets.bottom + 32 }]} showsVerticalScrollIndicator={false}>
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
           {devices === null ? (
             <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loading} />

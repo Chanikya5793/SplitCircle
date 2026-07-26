@@ -1204,22 +1204,38 @@ const AppStackNavigator = () => {
       <AppStack.Screen
         name={ROUTES.APP.LINKED_DEVICES}
         component={LinkedDevicesScreen}
-        options={{ title: SCREEN_TITLES.linkedDevices }}
+        options={{
+          title: SCREEN_TITLES.linkedDevices,
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
       />
       <AppStack.Screen
         name={ROUTES.APP.BACKUP_SETTINGS}
         component={BackupSettingsScreen}
-        options={{ title: 'iCloud backup' }}
+        options={{
+          title: 'iCloud backup',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
       />
       <AppStack.Screen
         name={ROUTES.APP.BACKUP_PASSPHRASE}
         component={BackupPassphraseScreen}
-        options={{ title: 'Backup passphrase' }}
+        options={{
+          title: 'Backup passphrase',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
       />
       <AppStack.Screen
         name={ROUTES.APP.DEVICE_RETIREMENT}
         component={DeviceRetirementScreen}
-        options={{ title: 'Retire this device' }}
+        options={{
+          title: 'Retire this device',
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
       />
       <AppStack.Screen
         name={ROUTES.APP.LINK_DEVICE}

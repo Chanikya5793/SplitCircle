@@ -27,11 +27,15 @@ import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, successHaptic } from '@/utils/haptics';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useHeaderHeight } from '@react-navigation/elements';
 import { Button, Text, TextInput } from 'react-native-paper';
 
 export const DeviceRetirementScreen = () => {
   const { user } = useAuth();
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
 
   const [readiness, setReadiness] = useState<RetirementReadiness | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -143,7 +147,7 @@ export const DeviceRetirementScreen = () => {
 
   return (
     <LiquidBackground>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={[styles.container, { paddingTop: headerHeight + 16, paddingBottom: insets.bottom + 32 }]} keyboardShouldPersistTaps="handled">
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
           <Text variant="titleMedium" style={{ color: theme.colors.onSurface }}>
             {readiness.canRetire ? 'Safe to retire this device' : 'Not yet safe to retire'}

@@ -31,6 +31,8 @@ import { useAuth } from '@/context/AuthContext';
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Checkbox, Text, TextInput } from 'react-native-paper';
@@ -49,6 +51,8 @@ const verdictLabel: Record<PassphraseAssessment['verdict'], string> = {
 export const BackupPassphraseScreen = () => {
   const navigation = useNavigation();
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
   const { user } = useAuth();
 
   const [enrolled, setEnrolled] = useState<boolean | null>(null);
@@ -181,7 +185,7 @@ export const BackupPassphraseScreen = () => {
 
   return (
     <LiquidBackground>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={[styles.container, { paddingTop: headerHeight + 16, paddingBottom: insets.bottom + 32 }]} keyboardShouldPersistTaps="handled">
         {enrolled ? (
           <GlassCard style={styles.card} contentStyle={styles.cardContent}>
             <Text variant="titleMedium" style={{ color: theme.colors.onSurface }}>
