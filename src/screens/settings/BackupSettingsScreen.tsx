@@ -217,11 +217,21 @@ export const BackupSettingsScreen = () => {
                 successHaptic();
                 // Partial restores are reported, never smoothed over — §3.2's
                 // importBackup returns exactly which batches were unreadable.
-                appAlert(
-                  result.missingBatches.length === 0 ? 'Restore complete' : 'Restored with gaps',
+                // App settings (theme, currency, budgets) are read once at
+                // launch by their own contexts, so a restored value sits on
+                // disk correct but unapplied. Saying so is the honest option —
+                // silence reads as "the restore didn't work". Wallpapers are
+                // NOT in this list: importWallpapers re-hydrates its service.
+                const needsRestart = remoteManifest?.contents?.localSettings === true;
+                const base =
                   result.missingBatches.length === 0
                     ? `${result.messagesRestored} messages restored.`
-                    : `${result.messagesRestored} messages restored, but ${result.missingBatches.length} part(s) of the backup couldn’t be read.`,
+                    : `${result.messagesRestored} messages restored, but ${result.missingBatches.length} part(s) of the backup couldn’t be read.`;
+                appAlert(
+                  result.missingBatches.length === 0 ? 'Restore complete' : 'Restored with gaps',
+                  needsRestart
+                    ? `${base}\n\nRestart the app to apply your restored appearance and currency settings.`
+                    : base,
                 );
               } catch (error) {
                 errorHaptic();
