@@ -44,32 +44,56 @@ const sha256Hex = async (input: string): Promise<string> =>
  * than a verifier that catches up on the next one. It is re-published after
  * EVERY export precisely so a missed publish is self-healing.
  */
-export const publishRecoveryVerifier = async (recoverySecret: string): Promise<void> => {
+export interface BackupSummary {
+  createdAt: number;
+  totalMessages: number;
+  chatCount: number;
+  bytes: number;
+  mediaCount: number;
+  deviceName?: string | null;
+}
+
+export const publishRecoveryVerifier = async (
+  recoverySecret: string,
+  summary?: BackupSummary,
+): Promise<void> => {
   try {
     const verifier = await sha256Hex(recoverySecret);
-    await httpsCallable(functions, 'setBackupRecoveryVerifier')({ verifier });
+    await httpsCallable(functions, 'setBackupRecoveryVerifier')({ verifier, summary });
   } catch (error) {
     console.warn('Could not publish the backup recovery verifier', error);
   }
 };
 
 /** Whether this account has a backup that recovery could verify against. */
-export const hasRecoverableBackup = async (): Promise<boolean> => {
+/**
+ * Whether a backup exists, plus its non-secret summary.
+ *
+ * The summary is what lets a brand-new phone show "last backup 2 hours ago,
+ * 4,182 messages, 340 MB" BEFORE the user commits to anything — the manifest
+ * itself cannot be read without the passphrase, so without this the choice
+ * would be blind.
+ */
+export const hasRecoverableBackup = async (): Promise<{
+  hasBackup: boolean;
+  summary: BackupSummary | null;
+}> => {
   try {
-    const result = await httpsCallable<unknown, { hasBackup: boolean }>(
+    const result = await httpsCallable<unknown, { hasBackup: boolean; summary: BackupSummary | null }>(
       functions,
       'hasBackupRecovery',
     )({});
-    return result.data.hasBackup === true;
+    return { hasBackup: result.data.hasBackup === true, summary: result.data.summary ?? null };
   } catch {
     // Unknown is reported as "no backup" only for choosing which explanation
     // to show; the server re-checks for real and will still demand proof.
-    return false;
+    return { hasBackup: false, summary: null };
   }
 };
 
 export interface RecoveryResult {
   revokedDeviceIds: string[];
+  demotedDeviceIds: string[];
   backupVerified: boolean;
 }
 
@@ -79,7 +103,10 @@ export interface RecoveryResult {
  * Reads and DECRYPTS the manifest locally first — that is what makes the
  * passphrase a real factor rather than a string the server takes on trust.
  */
-export const recoverWithPassphrase = async (passphrase: string): Promise<RecoveryResult> => {
+export const recoverWithPassphrase = async (
+  passphrase: string,
+  keepOtherDevices = false,
+): Promise<RecoveryResult> => {
   const manifest = await readBackupManifest(passphrase);
   if (!manifest) {
     throw new BackupProofError(
@@ -104,7 +131,7 @@ export const recoverWithPassphrase = async (passphrase: string): Promise<Recover
     const result = await httpsCallable<unknown, RecoveryResult>(
       functions,
       'recoverAsNewMainDevice',
-    )({ deviceId, verifier });
+    )({ deviceId, verifier, keepOtherDevices });
     return result.data;
   } catch (error) {
     const message = error instanceof Error ? error.message : '';
@@ -129,11 +156,11 @@ export const recoverWithPassphrase = async (passphrase: string): Promise<Recover
  * states plainly that chat history is not coming back, matching §3.7 point 5's
  * rule that an escape hatch must always exist.
  */
-export const recoverWithoutBackup = async (): Promise<RecoveryResult> => {
+export const recoverWithoutBackup = async (keepOtherDevices = false): Promise<RecoveryResult> => {
   const deviceId = await getCurrentDeviceId();
   const result = await httpsCallable<unknown, RecoveryResult>(
     functions,
     'recoverAsNewMainDevice',
-  )({ deviceId, acknowledgedNoBackup: true });
+  )({ deviceId, acknowledgedNoBackup: true, keepOtherDevices });
   return result.data;
 };

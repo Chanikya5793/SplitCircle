@@ -190,7 +190,19 @@ export const runBackupNow = async (
     // lost its local secret (app reinstall) mint a new one and have the
     // server's copy follow. Never throws — see publishRecoveryVerifier.
     if (manifest.recoverySecret) {
-      await publishRecoveryVerifier(manifest.recoverySecret);
+      // The summary travels with the verifier so a brand-new phone can show
+      // WHAT it would restore before the user commits — the manifest itself is
+      // unreadable without the passphrase, so without this the choice on the
+      // setup screen would be blind.
+      const sizes = manifest.sizes ?? {};
+      await publishRecoveryVerifier(manifest.recoverySecret, {
+        createdAt: manifest.createdAt,
+        totalMessages: manifest.totalMessages,
+        chatCount: manifest.chats.length,
+        bytes: Object.values(sizes).reduce((sum: number, n) => sum + (n ?? 0), 0),
+        mediaCount: manifest.mediaIds?.length ?? 0,
+        deviceName: Device.deviceName ?? null,
+      });
     }
 
     const info: LastBackupInfo = {

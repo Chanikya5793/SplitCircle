@@ -63,9 +63,19 @@ const recoveryDocRef = (uid: string) =>
  * describing the backup that actually exists. A stale verifier would fail
  * recovery against a perfectly good backup.
  */
+export interface BackupSummary {
+    createdAt: number;
+    totalMessages: number;
+    chatCount: number;
+    bytes: number;
+    mediaCount: number;
+    deviceName?: string | null;
+}
+
 export async function setBackupRecoveryVerifier(
     uid: string,
     verifier: string,
+    summary?: BackupSummary,
 ): Promise<void> {
     if (!VERIFIER_PATTERN.test(verifier)) {
         throw new Error("Malformed recovery verifier");
@@ -74,16 +84,30 @@ export async function setBackupRecoveryVerifier(
     await recoveryDocRef(uid).set(
         {
             verifier,
+            // NON-SECRET summary, stored so a device that has not yet proved
+            // the passphrase can still be shown WHAT it would be restoring —
+            // "last backup 2 hours ago, 4,182 messages" — before committing to
+            // anything. The backup itself stays opaque: this is counts, bytes
+            // and a timestamp, never content, and the server can already infer
+            // that a user has chats. Deliberately kept to the minimum that
+            // makes the choice informed.
+            ...(summary ? { summary } : {}),
             updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true },
     );
 }
 
-/** Whether this account has a recoverable backup, for UI copy only. */
-export async function hasBackupRecoveryVerifier(uid: string): Promise<boolean> {
+/** Whether this account has a recoverable backup, plus its non-secret summary. */
+export async function hasBackupRecoveryVerifier(
+    uid: string,
+): Promise<{ hasBackup: boolean; summary: BackupSummary | null }> {
     const snap = await recoveryDocRef(uid).get();
-    return snap.exists && typeof snap.data()?.verifier === "string";
+    const data = snap.exists ? snap.data() : undefined;
+    return {
+        hasBackup: typeof data?.verifier === "string",
+        summary: (data?.summary as BackupSummary | undefined) ?? null,
+    };
 }
 
 export interface RecoverAsNewMainInput {
@@ -95,12 +119,26 @@ export interface RecoverAsNewMainInput {
      * acknowledgement phrase. Never a substitute for a verifier that exists.
      */
     acknowledgedNoBackup?: boolean;
+    /**
+     * "I still have my old phone" — demote the other devices to companions
+     * instead of revoking them.
+     *
+     * The distinction is the user's to make and cannot be inferred: a phone
+     * that was lost or sold must be cut off immediately (this flow is the only
+     * one that can, per §3.7 point 6), while a phone still in their hand
+     * should keep working as a secondary device rather than being silently
+     * bricked. Defaults to revoking, because that is the safe reading when
+     * nobody has said otherwise.
+     */
+    keepOtherDevices?: boolean;
 }
 
 export interface RecoverAsNewMainResult {
     status: "recovered";
     /** Devices whose access was revoked, so the UI can say what happened. */
     revokedDeviceIds: string[];
+    /** Devices demoted to companion instead of revoked. */
+    demotedDeviceIds: string[];
     /** False when recovery ran on the no-backup path. */
     backupVerified: boolean;
 }
@@ -193,6 +231,17 @@ export async function recoverAsNewMainDevice(
     );
 
     for (const otherId of otherDeviceIds) {
+        if (input.keepOtherDevices) {
+            // Demote, don't remove. The device keeps its session, its keys and
+            // its history; it simply stops being the one that backs up, which
+            // is exactly what "I still have my old phone" means.
+            batch.set(
+                userRef.collection(PAIRED_DEVICES_SUBCOLLECTION).doc(otherId),
+                { isMainDevice: false, demotedAt: FieldValue.serverTimestamp() },
+                { merge: true },
+            );
+            continue;
+        }
         batch.delete(userRef.collection(PAIRED_DEVICES_SUBCOLLECTION).doc(otherId));
         batch.delete(userRef.collection(NOTIFICATION_DEVICES_SUBCOLLECTION).doc(otherId));
         // Prekeys must go too, or peers keep encrypting to a revoked device's
@@ -210,5 +259,10 @@ export async function recoverAsNewMainDevice(
         revokedCount: otherDeviceIds.length,
     });
 
-    return { status: "recovered", revokedDeviceIds: otherDeviceIds, backupVerified };
+    return {
+        status: "recovered",
+        revokedDeviceIds: input.keepOtherDevices ? [] : otherDeviceIds,
+        demotedDeviceIds: input.keepOtherDevices ? otherDeviceIds : [],
+        backupVerified,
+    };
 }

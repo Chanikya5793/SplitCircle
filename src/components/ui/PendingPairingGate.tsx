@@ -1,35 +1,33 @@
-// Blocks the app behind a full-screen "waiting for confirmation" panel while
-// THIS device's own pairing is pending_confirmation — doc 31 §3.4 point 6,
-// closing the "paired but blind" gap the adversarial critique found (a newly
-// redeemed companion receiving pushes/fan-out before it's actually trusted,
-// with no UI explaining why nothing is decryptable/visible yet). Mirrors
-// AppLockGate's mounting pattern (App.tsx, absolute sibling of AppNavigator).
+// Blocks the app while THIS device's pairing is pending_confirmation (doc 31
+// §3.4 point 6) — a device that has signed in but is not yet trusted must not
+// see account data, and must be told why.
+//
+// It no longer renders a waiting panel itself: DeviceSetupChoice does, because
+// "waiting" turned out to be only one of the answers. This file's remaining
+// job is deciding WHEN the gate applies, and handling revocation while it is
+// up. Mirrors AppLockGate's mounting pattern (App.tsx, absolute sibling of
+// AppNavigator).
 
-import { GlassCard } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
-import { useTheme } from '@/context/ThemeContext';
 import {
   getCurrentDeviceId,
   revokeDevice,
   subscribeToOwnPairedDevice,
   type PairedDevice,
 } from '@/services/pairingService';
-import { RecoverAccountPanel } from '@/components/ui/RecoverAccountPanel';
+import { DeviceSetupChoice } from '@/components/ui/DeviceSetupChoice';
 import { resetHandoffState } from '@/services/deviceSyncCoordinator';
 import { errorHaptic } from '@/utils/haptics';
 import { wipeSignalState } from '../../../modules/splitcircle-crypto';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import { Button, Text } from 'react-native-paper';
+import { StyleSheet, View } from 'react-native';
 
 export const PendingPairingGate = () => {
   const { user, signOutUser } = useAuth();
-  const { theme } = useTheme();
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [ownRecord, setOwnRecord] = useState<PairedDevice | null | undefined>(undefined);
   const [signingOut, setSigningOut] = useState(false);
-  const [recovering, setRecovering] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,98 +99,35 @@ export const PendingPairingGate = () => {
   const expiresAt = ownRecord?.confirmationExpiresAt ?? null;
   const expired = typeof expiresAt === 'number' && Date.now() > expiresAt;
 
-  // Recovery (doc 31 §3.12). Rendered in place of the waiting panel because
-  // this gate covers the whole app — a user whose only approver is a device
-  // they no longer own has no other surface to reach.
-  if (recovering) {
-    return (
-      <View style={StyleSheet.absoluteFill} pointerEvents="auto">
-        <LiquidBackground>
-          <RecoverAccountPanel
-            onCancel={() => setRecovering(false)}
-            onRecovered={() => {
-              // No navigation needed: the pairedDevices subscription above sees
-              // this device flip to confirmed and the gate unmounts itself.
-              setRecovering(false);
-            }}
-          />
-        </LiquidBackground>
-      </View>
-    );
-  }
-
+  /**
+   * The fork REPLACES the old waiting panel outright.
+   *
+   * Previously this rendered "waiting for confirmation" with a Cancel button,
+   * which asked the user to go and approve from a device they may not have,
+   * and offered no other route. Recovery was reachable only through a
+   * secondary button framed as an escape hatch. Now the choice — new phone or
+   * extra device — IS the screen, and the approval spinner is just one branch
+   * of it, so nobody is ever parked with nothing to do.
+   */
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="auto">
       <LiquidBackground>
-        <View style={styles.center}>
-          <GlassCard style={styles.card} contentStyle={styles.cardContent}>
-            <ActivityIndicator size="large" color={theme.colors.primary} />
-            <Text variant="headlineSmall" style={[styles.title, { color: theme.colors.onSurface }]}>
-              {expired ? 'Confirmation expired' : 'Waiting for confirmation'}
-            </Text>
-            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>
-              {expired
-                ? "This device's pairing request wasn't confirmed in time. Try linking this device again."
-                : ownRecord?.confirmationCode
-                  ? "Open SplitCircle on your other device to confirm this one. Make sure the code below matches what's shown there."
-                  // Self-registered device (signed in directly rather than
-                  // through the pairing flow): there is no shared pairing
-                  // session, so there is no code to match — approval is an
-                  // explicit decision in Settings on a device you already use.
-                  : 'Approve this device from Settings → Linked devices on a device you already use.'}
-            </Text>
-            {!expired && ownRecord?.confirmationCode ? (
-              <Text variant="displaySmall" style={[styles.code, { color: theme.colors.primary }]}>
-                {ownRecord.confirmationCode}
-              </Text>
-            ) : null}
-            {/* The escape from a total lockout (doc 31 §3.12). Without this,
-                the only action here is Cancel — which signs out into exactly
-                the same state — and a user whose old phone is gone can never
-                reach their own account again. */}
-            <Button mode="contained-tonal" disabled={signingOut} onPress={() => setRecovering(true)}>
-              I don&apos;t have my other device
-            </Button>
-            <Button
-              mode="text"
-              loading={signingOut}
-              onPress={() => {
-                if (deviceId) void revokeDevice(deviceId).catch(() => {});
-                setSigningOut(true);
-                void signOutUser().finally(() => setSigningOut(false));
-              }}
-            >
-              Cancel
-            </Button>
-          </GlassCard>
-        </View>
+        <DeviceSetupChoice
+          confirmationCode={expired ? null : (ownRecord?.confirmationCode ?? null)}
+          waitingForApproval={!expired}
+          onCancel={() => {
+            if (deviceId) void revokeDevice(deviceId).catch(() => {});
+            setSigningOut(true);
+            void signOutUser().finally(() => setSigningOut(false));
+          }}
+          onBecameMain={() => {
+            // Nothing to navigate: the pairedDevices subscription sees this
+            // device flip to confirmed main and the gate unmounts itself.
+          }}
+        />
       </LiquidBackground>
     </View>
   );
 };
 
-const styles = StyleSheet.create({
-  center: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  card: {
-    width: '100%',
-    borderRadius: 20,
-  },
-  cardContent: {
-    padding: 24,
-    gap: 14,
-    alignItems: 'center',
-  },
-  title: {
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  code: {
-    fontWeight: '800',
-    letterSpacing: 4,
-  },
-});
+const styles = StyleSheet.create({});
