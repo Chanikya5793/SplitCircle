@@ -1867,6 +1867,82 @@ recovery flow itself. **Everything in this section is deployed and typechecked;
 none of it has been exercised by a person on a phone.** That is precisely the
 distinction §5c exists to make.
 
+## 5f. Deep audit round (2026-07-26) — what a real device found, then a code sweep
+
+Ordered by how they were discovered, because the ORDER is the lesson: the
+device found what no amount of reading had, and reading then found what the
+device could not have reached yet.
+
+### Found by using it on two phones
+
+1. **QR pairing failed for a reason no client fix could touch.**
+   `createCustomToken` is the only call in this backend that SIGNS anything,
+   and the Gen2 runtime service account lacks `iam.serviceAccounts.signBlob`.
+   The Firestore transaction commits first, so the device paired server-side
+   while the companion never received the token it signs in with — and the
+   code was consumed, so every retry said "already used". Proved with a
+   throwaway probe (`canSign: false`), not inferred. Requires an IAM grant of
+   `roles/iam.serviceAccountTokenCreator`; the callable now names the failure
+   and RELEASES the code so a retry is clean.
+
+2. **Diagnosis was blocked by our own logger.** `toSafeError` returned a
+   `message` key, and firebase-functions' logger puts its own `message` at the
+   top level of the entry — so the spread OVERWROTE the cause. All 45 error
+   sites in `index.ts` were discarding the one thing they existed to record.
+   Now `errorName`/`errorMessage`/`errorStack`.
+
+3. **A reinstall deadlocked messaging permanently.** iOS clears files and
+   AsyncStorage on delete but NOT the Keychain. The Signal identity is in the
+   Keychain, sessions are file-backed, and `getOrCreateInstallationId` uses
+   SecureStore — so the app came back as the same device, same identity, no
+   sessions. The reinstalled side saw its published identity match and skipped
+   republishing; peers saw a live session and never rebuilt. Every message was
+   encrypted to a session that no longer existed. And since the sender BLANKS
+   `content` when it encrypts, the documented "fall back to whatever plaintext
+   the payload carried" was a FICTION — there is no plaintext — so messages
+   rendered as empty bubbles, forever. Fixed with an install marker, a
+   peer-identity comparison before session reuse, and a visible
+   "Couldn't decrypt" instead of a blank.
+
+### Found by sweeping the code afterwards
+
+4. **Reverse QR admitted any scanned code with no confirmation.** The forward
+   flow is safe because the secret ORIGINATES on the trusted device. Reverse
+   QR inverts that, and `autoConfirm` skipped the approval step every other
+   path requires — so the attack was "get them to scan a picture".
+   `preauthorizedDeviceId` does not help: it binds to the ATTACKER's device id,
+   which is what their QR contains. Now confirms with the device NAME.
+
+5. **RTDB was leaking, against Architecture DNA.** `messageQueueDevices`
+   grows FASTER than the node it replaced (one copy per device, deleted only
+   when that device comes online), and `pairingConfirm` was deleted by nothing
+   at all. Both now age out in `cleanup.ts`.
+
+6. **A 100MB video would crash the backup.** `readAsStringAsync` base64 loads
+   the whole file into the JS heap and copies it over the bridge, inside a
+   BGProcessingTask. Files over 24MB are skipped, COUNTED, and named in the
+   result — silence here is the dishonest-success case §3.7 exists to prevent.
+
+7. **Every new screen had broken scaffolding.** Four shipped with the
+   navigator's default OPAQUE header, so LiquidBackground stopped at a hard
+   line instead of running edge to edge; they also had zero safe-area padding.
+   `LinkDeviceScreen` had the inverse (transparent header, no top inset, so
+   content slid under the Dynamic Island). `ScreenScaffold` exists in this repo
+   and is used by ZERO screens — the canonical pattern is actually
+   `NotificationSettingsScreen`: `headerTransparent` + `useHeaderHeight()` +
+   real bottom insets.
+
+8. **Restored wallpapers were invisible until relaunch** (module-level cache
+   in `wallpaperService`), and restored app settings still are — surfaced in
+   the completion message rather than pretended away. Verified first that
+   ThemeContext's `hydrated` guard means the restored value is not clobbered.
+
+### The pattern worth keeping
+
+Three of these (the plaintext fallback, "scanning is itself the consent", and
+the salt extraction from §5e) were PROSE ASSERTING A PROPERTY THE CODE DID NOT
+HAVE. That is now four times in this build. A comment is not evidence.
+
 ## 6. Open risks carried forward (not yet fully closed by the design above)
 
 - CallKit's mandatory-`reportNewIncomingCall` requirement vs. the per-device
