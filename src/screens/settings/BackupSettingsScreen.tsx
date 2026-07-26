@@ -566,8 +566,8 @@ export const BackupSettingsScreen = () => {
           />
           <Divider />
           <List.Item
-            title="Retire this device"
-            description="Check it’s safe before wiping or giving it away"
+            title="Wipe or sell this phone"
+            description="Verify your backup is readable before you erase it"
             left={() => <List.Icon icon="cellphone-remove" color={theme.colors.primary} />}
             onPress={() => {
               lightHaptic();

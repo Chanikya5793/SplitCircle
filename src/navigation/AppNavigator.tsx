@@ -1232,7 +1232,7 @@ const AppStackNavigator = () => {
         name={ROUTES.APP.DEVICE_RETIREMENT}
         component={DeviceRetirementScreen}
         options={{
-          title: 'Retire this device',
+          title: 'Wipe or sell this phone',
           headerTransparent: true,
           headerTintColor: theme.colors.primary,
         }}

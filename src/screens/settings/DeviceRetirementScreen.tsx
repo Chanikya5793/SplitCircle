@@ -1,35 +1,52 @@
-// Device retirement / promotion safety gate (doc 31 §3.7, Phase 7).
+// "Before you sell or wipe this phone" (doc 31 §3.7, reframed 2026-07-26).
 //
-// This screen's job is to tell someone whether it is safe to wipe or give away
-// a phone. It therefore defaults to "not safe" and only ever unlocks on
-// positive evidence — never on the absence of a detected problem.
+// WHAT THIS USED TO BE, AND WHY IT DIDN'T WORK. This screen tried to be both a
+// migration wizard and a disposal check, and the migration half required a
+// two-device attestation handshake driven from here. That made it
+// undiscoverable in the most literal way: to verify a backup so you could
+// retire your OLD phone, you had to open a screen titled "Retire this device"
+// on your NEW phone and tap "Verify backup here". Nobody finds that. It also
+// called getStoredPassphrase() on the verifying device, which on a
+// newly-paired phone is empty — so even a user who did find it hit "No backup
+// passphrase is set on this device."
 //
-// §3.7 point 5: the retire action is DISABLED until the two-device handshake
-// completes, not warn-and-allow. The escape hatch exists (never make leaving
-// literally impossible) but is deliberately effortful: a typed phrase, not a
-// second "are you sure".
+// Migration now happens where it belongs: on the new phone, at sign-in
+// (DeviceSetupChoice). That leaves this screen one honest job — answering "is
+// it safe to wipe this?" — which it can do without another device's help.
+//
+// The check is still REAL DECRYPTION, not a metadata comparison (§3.7 point
+// 3): every batch is fetched back out of CloudKit and decrypted. The bytes
+// genuinely round-trip through the server, which is the property that
+// mattered — a structurally-intact-but-corrupt backup still fails.
 
 import { GlassCard } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { getStoredPassphrase } from '@/services/backupPassphraseService';
-import { runBackupNow } from '@/services/backupRunner';
-import {
-  FORCE_RETIRE_PHRASE,
-  assessRetirementReadiness,
-  publishRetirementAttestation,
-  verifyBackupAsSecondDevice,
-  type RetirementReadiness,
-} from '@/services/deviceRetirementService';
-import { getCurrentDeviceId, revokeDevice } from '@/services/pairingService';
+import { getLastBackupInfo, runBackupNow } from '@/services/backupRunner';
+import { readBackupManifest, verifyBackup, type BackupManifest } from '@/services/backupService';
+import { getCurrentDeviceId, revokeDevice, subscribeToPairedDevices } from '@/services/pairingService';
+import { formatBytes } from '@/components/backup/BackupInsightCards';
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, successHaptic } from '@/utils/haptics';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHeaderHeight } from '@react-navigation/elements';
-import { Button, Text, TextInput } from 'react-native-paper';
+import { Button, Divider, Text, TextInput } from 'react-native-paper';
+
+/** Typed verbatim to sign out without a verified backup. */
+const FORCE_PHRASE = 'DELETE MY CHAT HISTORY';
+
+/** Older than this and we won't call it safe without a fresh run. */
+const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
+
+type CheckState =
+  | { kind: 'idle' }
+  | { kind: 'running'; message: string }
+  | { kind: 'verified'; batches: number }
+  | { kind: 'failed'; message: string };
 
 export const DeviceRetirementScreen = () => {
   const { user } = useAuth();
@@ -37,103 +54,112 @@ export const DeviceRetirementScreen = () => {
   const insets = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
 
-  const [readiness, setReadiness] = useState<RetirementReadiness | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [manifest, setManifest] = useState<BackupManifest | null>(null);
+  const [lastBackupAt, setLastBackupAt] = useState<number | null>(null);
+  const [otherDevices, setOtherDevices] = useState(0);
+  const [enrolled, setEnrolled] = useState(false);
+  const [check, setCheck] = useState<CheckState>({ kind: 'idle' });
+  const [loading, setLoading] = useState(true);
   const [forcePhrase, setForcePhrase] = useState('');
   const [showEscapeHatch, setShowEscapeHatch] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!user) return;
     const passphrase = await getStoredPassphrase();
-    if (!passphrase) {
-      setReadiness({
-        canRetire: false,
-        blockers: [
-          {
-            code: 'no_backup',
-            message: 'Set a backup passphrase first, then back up this device.',
-          },
-        ],
-        manifest: null,
-        otherDeviceCount: 0,
-      });
-      return;
+    setEnrolled(Boolean(passphrase));
+    setLastBackupAt((await getLastBackupInfo())?.completedAt ?? null);
+    if (passphrase) {
+      try {
+        setManifest(await readBackupManifest(passphrase));
+      } catch {
+        setManifest(null);
+      }
     }
-    setReadiness(await assessRetirementReadiness(user.userId, passphrase));
+    setLoading(false);
   }, [user]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const withBusy = async (label: string, fn: () => Promise<void>) => {
-    setBusy(label);
+  useEffect(() => {
+    if (!user) return;
+    return subscribeToPairedDevices(user.userId, (devices) => {
+      void getCurrentDeviceId().then((own) => {
+        setOtherDevices(
+          devices.filter((d) => d.deviceId !== own && d.pairingStatus === 'confirmed').length,
+        );
+      });
+    });
+  }, [user]);
+
+  const stale = lastBackupAt === null || Date.now() - lastBackupAt > MAX_BACKUP_AGE_MS;
+  // Pre-selection backups are messages-only by definition, so an absent
+  // `contents` map means messages ARE included.
+  const messagesIncluded = manifest?.contents ? manifest.contents.messages === true : true;
+  const safe = check.kind === 'verified' && !stale && messagesIncluded;
+
+  /**
+   * Back up, then read every batch back out of iCloud and decrypt it.
+   *
+   * The download-and-decrypt is the whole point. Comparing counts against a
+   * manifest we wrote ourselves proves nothing — only fetching the ciphertext
+   * back from the server and opening it shows the backup is genuinely
+   * restorable, which is the single claim that justifies telling someone it is
+   * safe to erase their phone.
+   */
+  const runSafetyCheck = async () => {
+    if (!user) return;
     try {
-      await fn();
+      const passphrase = await getStoredPassphrase();
+      if (!passphrase) throw new Error('Set a backup passphrase first.');
+
+      setCheck({ kind: 'running', message: 'Backing up…' });
+      await runBackupNow(user.userId, (p) => {
+        setCheck({
+          kind: 'running',
+          message:
+            p.phase === 'media'
+              ? `Backing up photos: ${p.filesDone ?? 0} of ${p.filesTotal ?? 0}`
+              : `Backing up ${p.messagesDone.toLocaleString()} messages…`,
+        });
+      });
+
+      setCheck({ kind: 'running', message: 'Reading it back from iCloud…' });
+      const fresh = await readBackupManifest(passphrase);
+      if (!fresh) throw new Error('The backup could not be read back from iCloud.');
+      setManifest(fresh);
+
+      const result = await verifyBackup(passphrase, fresh);
+      if (!result.ok) {
+        throw new Error(
+          `${result.missing.length} part(s) of the backup could not be read. It is NOT safe to wipe this phone yet.`,
+        );
+      }
+
+      const batches = fresh.chats.reduce((sum, chat) => sum + chat.batchIds.length, 0);
+      successHaptic();
+      setCheck({ kind: 'verified', batches });
+      setLastBackupAt(Date.now());
     } catch (error) {
       errorHaptic();
-      appAlert('Something went wrong', error instanceof Error ? error.message : 'Please try again.');
-    } finally {
-      setBusy(null);
-      await refresh();
+      setCheck({
+        kind: 'failed',
+        message: error instanceof Error ? error.message : 'The check could not finish.',
+      });
     }
   };
 
-  // §3.7 point 3: force a fresh backup, then publish the signed snapshot the
-  // other device will verify against.
-  const handleStartCheck = () =>
-    withBusy('Backing up…', async () => {
-      if (!user) return;
-      const passphrase = await getStoredPassphrase();
-      if (!passphrase) throw new Error('No backup passphrase is set on this device.');
-      await runBackupNow(user.userId);
-      const current = await assessRetirementReadiness(user.userId, passphrase);
-      if (!current.manifest) throw new Error('Backup could not be read after completing.');
-      await publishRetirementAttestation(user.userId, passphrase, current.manifest);
-      successHaptic();
-    });
-
-  // Run on the OTHER device. Actually decrypts every batch, per §3.7 point 3.
-  const handleVerifyHere = () =>
-    withBusy('Verifying backup…', async () => {
-      const passphrase = await getStoredPassphrase();
-      if (!passphrase) throw new Error('No backup passphrase is set on this device.');
-      const result = await verifyBackupAsSecondDevice(passphrase);
-      if (!result.ok) {
-        throw new Error(
-          `Could not read ${result.failures.length} part(s) of the backup. It is NOT safe to retire the other device yet.`,
-        );
-      }
-      successHaptic();
-      appAlert(
-        'Backup verified',
-        `Decrypted ${result.batchesDecrypted} batches successfully. Your other device can now be retired.`,
-      );
-    });
-
-  const handleRetire = () =>
-    appAlert(
-      'Retire this device?',
-      'This device will be signed out and unlinked. Your chat history stays in your verified iCloud backup.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Retire',
-          style: 'destructive',
-          onPress: () =>
-            void withBusy('Retiring…', async () => {
-              await revokeDevice(await getCurrentDeviceId());
-            }),
-        },
-      ],
-    );
-
-  const handleForceRetire = () =>
-    withBusy('Retiring…', async () => {
+  const signOutThisDevice = async () => {
+    try {
       await revokeDevice(await getCurrentDeviceId());
-    });
+    } catch (error) {
+      errorHaptic();
+      appAlert('Could not sign out', error instanceof Error ? error.message : 'Please try again.');
+    }
+  };
 
-  if (!readiness) {
+  if (loading) {
     return (
       <LiquidBackground>
         <View style={styles.center}>
@@ -143,102 +169,160 @@ export const DeviceRetirementScreen = () => {
     );
   }
 
-  const isVerifierRole = readiness.blockers.some((b) => b.code === 'awaiting_verification');
-
   return (
     <LiquidBackground>
-      <ScrollView contentContainerStyle={[styles.container, { paddingTop: headerHeight + 16, paddingBottom: insets.bottom + 32 }]} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={[
+          styles.container,
+          { paddingTop: headerHeight + 16, paddingBottom: insets.bottom + 32 },
+        ]}
+      >
+        <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+          <Text variant="headlineSmall" style={{ color: theme.colors.onSurface }}>
+            {safe ? 'Safe to wipe this phone' : 'Check before you wipe this phone'}
+          </Text>
+          <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+            {safe
+              ? 'Your chat history is in iCloud and we read it back successfully. You can sign out and erase this phone.'
+              : 'Your chats live only on this phone. Before you erase, sell or give it away, make sure they exist somewhere else.'}
+          </Text>
+          <Divider />
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            Your groups, expenses, balances and settlements are stored on our servers and are not
+            affected by wiping this phone — they come back the moment you sign in anywhere.
+          </Text>
+        </GlassCard>
+
+        {/* Saying this out loud IS the fix for the old flow: people came here
+            looking for migration and found an unsatisfiable checklist. */}
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
           <Text variant="titleMedium" style={{ color: theme.colors.onSurface }}>
-            {readiness.canRetire ? 'Safe to retire this device' : 'Not yet safe to retire'}
+            Moving to a new phone?
           </Text>
-
-          {readiness.canRetire ? (
-            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-              Another device has confirmed it can read your backup. Your history is recoverable.
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            You don&apos;t need this screen. Install SplitCircle on the new phone, sign in, and
+            choose &ldquo;This is my new phone&rdquo; — it restores from this backup and asks what
+            to do with this one.
+          </Text>
+          {otherDevices > 0 ? (
+            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+              You have {otherDevices} other device{otherDevices === 1 ? '' : 's'} signed in to this
+              account.
             </Text>
-          ) : (
-            readiness.blockers.map((blocker) => (
-              <Text
-                key={blocker.code}
-                variant="bodyMedium"
-                style={{ color: theme.colors.onSurfaceVariant }}
-              >
-                • {blocker.message}
-              </Text>
-            ))
-          )}
-
-          {busy ? (
-            <View style={styles.busyRow}>
-              <ActivityIndicator size="small" color={theme.colors.primary} />
-              <Text variant="bodySmall" style={{ color: theme.colors.primary }}>
-                {busy}
-              </Text>
-            </View>
           ) : null}
         </GlassCard>
 
-        {!readiness.canRetire ? (
-          <GlassCard style={styles.card} contentStyle={styles.cardContent}>
-            <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>
-              {readiness.otherDeviceCount === 0 ? 'Pair your new device first' : 'Run the safety check'}
-            </Text>
-            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              {readiness.otherDeviceCount === 0
-                ? 'Set up SplitCircle on your new phone and link it to this account. Only another device can prove your backup is actually readable — this one cannot check its own work.'
-                : 'This backs up now, then asks your other device to confirm it can genuinely read the result.'}
-            </Text>
-            {readiness.otherDeviceCount > 0 ? (
-              <Button mode="contained" disabled={busy !== null} onPress={handleStartCheck}>
-                Back up and start check
-              </Button>
-            ) : null}
-            {isVerifierRole ? (
-              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                On your OTHER device, open this screen and tap “Verify backup here”.
-              </Text>
-            ) : null}
-          </GlassCard>
-        ) : null}
-
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
-          <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>
-            Verifying for another device?
+          <Text variant="titleMedium" style={{ color: theme.colors.onSurface }}>
+            Backup check
           </Text>
-          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-            If your other phone is waiting on confirmation, run this here. It downloads and actually
-            decrypts every part of the backup.
-          </Text>
-          <Button mode="outlined" disabled={busy !== null} onPress={handleVerifyHere}>
-            Verify backup here
+
+          {!enrolled ? (
+            <Text variant="bodyMedium" style={{ color: theme.colors.danger }}>
+              No backup passphrase is set, so nothing has ever been backed up. Set one in iCloud
+              backup first.
+            </Text>
+          ) : (
+            <>
+              <Text
+                variant="bodyMedium"
+                style={{ color: stale ? theme.colors.danger : theme.colors.onSurface }}
+              >
+                {lastBackupAt
+                  ? stale
+                    ? 'Your last backup is more than a day old.'
+                    : 'Backed up recently.'
+                  : 'This phone has never completed a backup.'}
+              </Text>
+              {!messagesIncluded ? (
+                <Text variant="bodyMedium" style={{ color: theme.colors.danger }}>
+                  Chat messages are switched OFF in your backup settings, so your conversations are
+                  not in the backup at all.
+                </Text>
+              ) : null}
+              {manifest ? (
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                  {manifest.totalMessages.toLocaleString()} messages across {manifest.chats.length}{' '}
+                  chats
+                  {manifest.sizes
+                    ? ` · ${formatBytes(
+                        Object.values(manifest.sizes).reduce((sum: number, n) => sum + (n ?? 0), 0),
+                      )}`
+                    : ''}
+                </Text>
+              ) : null}
+            </>
+          )}
+
+          {check.kind === 'running' ? (
+            <View style={styles.busyRow}>
+              <ActivityIndicator size="small" color={theme.colors.primary} />
+              <Text variant="bodySmall" style={{ color: theme.colors.primary }}>
+                {check.message}
+              </Text>
+            </View>
+          ) : null}
+
+          {check.kind === 'verified' ? (
+            <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+              ✓ Read back and decrypted {check.batches} batch{check.batches === 1 ? '' : 'es'} from
+              iCloud.
+            </Text>
+          ) : null}
+
+          {check.kind === 'failed' ? (
+            <Text variant="bodyMedium" style={{ color: theme.colors.danger }}>
+              {check.message}
+            </Text>
+          ) : null}
+
+          <Button
+            mode="contained"
+            disabled={!enrolled || check.kind === 'running'}
+            onPress={() => void runSafetyCheck()}
+          >
+            {check.kind === 'verified' ? 'Check again' : 'Back up and verify now'}
           </Button>
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            This backs up, then downloads every part again and decrypts it — proving the backup is
+            genuinely readable, not just that it exists.
+          </Text>
         </GlassCard>
 
         <Button
           mode="contained"
-          // Disabled, not warn-and-allow (§3.7 point 5).
-          disabled={!readiness.canRetire || busy !== null}
-          onPress={handleRetire}
+          // Disabled rather than warn-and-allow (§3.7 point 5). The escape
+          // hatch below keeps leaving from ever being literally impossible.
+          disabled={!safe}
+          onPress={() =>
+            appAlert(
+              'Sign out and unlink this phone?',
+              'Your chat history stays in your verified iCloud backup. This phone will lose access to your account.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Sign out', style: 'destructive', onPress: () => void signOutThisDevice() },
+              ],
+            )
+          }
         >
-          Retire this device
+          Sign out and unlink this phone
         </Button>
 
-        {!readiness.canRetire ? (
+        {!safe ? (
           <GlassCard style={styles.card} contentStyle={styles.cardContent}>
             {showEscapeHatch ? (
               <>
                 <Text variant="titleSmall" style={{ color: theme.colors.danger }}>
-                  Retire without a verified backup
+                  Sign out without a verified backup
                 </Text>
                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                  Your chat history on this device will be permanently lost and cannot be recovered
-                  by anyone, including us. To confirm you understand, type{' '}
-                  <Text style={{ color: theme.colors.danger }}>{FORCE_RETIRE_PHRASE}</Text> below.
+                  Your chat history on this phone will be permanently lost and cannot be recovered
+                  by anyone, including us. Type{' '}
+                  <Text style={{ color: theme.colors.danger }}>{FORCE_PHRASE}</Text> to confirm.
                 </Text>
                 <TextInput
                   mode="outlined"
-                  label="Confirmation phrase"
+                  label="Confirmation"
                   value={forcePhrase}
                   onChangeText={setForcePhrase}
                   autoCapitalize="characters"
@@ -247,15 +331,19 @@ export const DeviceRetirementScreen = () => {
                 <Button
                   mode="contained"
                   buttonColor={theme.colors.danger}
-                  disabled={forcePhrase.trim() !== FORCE_RETIRE_PHRASE || busy !== null}
-                  onPress={handleForceRetire}
+                  disabled={forcePhrase.trim().toUpperCase() !== FORCE_PHRASE}
+                  onPress={() => void signOutThisDevice()}
                 >
-                  Permanently retire and lose history
+                  Sign out anyway
                 </Button>
               </>
             ) : (
-              <Button mode="text" textColor={theme.colors.danger} onPress={() => setShowEscapeHatch(true)}>
-                Retire anyway and lose my history
+              <Button
+                mode="text"
+                textColor={theme.colors.danger}
+                onPress={() => setShowEscapeHatch(true)}
+              >
+                Sign out anyway, without a backup
               </Button>
             )}
           </GlassCard>
@@ -270,5 +358,5 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   card: { borderRadius: 20 },
   cardContent: { padding: 20, gap: 12 },
-  busyRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  busyRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
 });
