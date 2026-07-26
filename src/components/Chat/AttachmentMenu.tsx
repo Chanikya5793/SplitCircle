@@ -109,6 +109,13 @@ const ATTACHMENT_OPTIONS: Pick<AttachmentOption, 'id' | 'icon' | 'label'>[] = [
   { id: 'location', icon: 'location', label: 'Location' },
 ];
 
+/**
+ * How long the sheet waits for the parent to accept a selection before
+ * dismissing itself anyway. Generous enough that the normal case still shows
+ * its progress copy, short enough that a stall never looks like a frozen app.
+ */
+const HANDOFF_DEADLINE_MS = 4000;
+
 // Loading messages shown inside the menu after native picker returns
 const getProcessingMessage = (type: AttachmentType): string => {
   switch (type) {
@@ -148,6 +155,41 @@ const getSelectionMessage = (type: AttachmentType): string => {
 };
 
 export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: AttachmentMenuProps) => {
+  /**
+   * Hands the selection to the parent and ALWAYS tears the sheet down.
+   *
+   * Every handler here used to clear `status` only on cancel or error, never
+   * after a successful hand-off — and `status` is otherwise reset only when
+   * the menu is re-OPENED. So a successful pick left `isProcessing` stuck
+   * true, which disables the pan gesture and keeps the blocking overlay
+   * mounted: the picker appeared to vanish while the whole chat stopped
+   * responding, recoverable only by navigating away and back. That is the
+   * reported freeze, and it happened on the success path, which is why it
+   * looked like "nothing is happening".
+   *
+   * It also no longer depends on the parent to close: if `onMediaSelected`
+   * rejects, the parent may never get the chance, and the sheet would sit
+   * there swallowing every touch.
+   */
+  const deliverSelection = async (media: SelectedMedia | SelectedMedia[]) => {
+    try {
+      // RACED AGAINST A DEADLINE, because `finally` only runs if the promise
+      // SETTLES. The parent's handler uploads the file and encrypts it for
+      // every recipient device — a network stall or a hung callable there
+      // would otherwise keep this sheet mounted forever, and the sheet is
+      // what blocks the chat. Losing the race is not an error: the send keeps
+      // running and the message bubble carries its own sent/failed state, so
+      // the right outcome is to get out of the user's way.
+      await Promise.race([
+        Promise.resolve(onMediaSelected(media)),
+        new Promise((resolve) => setTimeout(resolve, HANDOFF_DEADLINE_MS)),
+      ]);
+    } finally {
+      setStatus(null);
+      onClose();
+    }
+  };
+
   const { theme, isDark } = useTheme();
   const { loading: selectingAttachment, run: runAttachmentSelection } = usePreventDoubleSubmit();
   const [status, setStatus] = useState<{ type: AttachmentType; message: string } | null>(null);
@@ -272,7 +314,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
         await new Promise<void>((resolve) => {
           requestAnimationFrame(() => resolve());
         });
-        await Promise.resolve(onMediaSelected({
+        await deliverSelection({
           type: 'camera',
           uri: asset.uri,
           fileName: asset.fileName || `IMG_${Date.now()}.jpg`,
@@ -280,7 +322,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           mimeType: asset.mimeType || 'image/jpeg',
           width: asset.width,
           height: asset.height,
-        }));
+        });
       } else {
         setStatus(null);
       }
@@ -367,7 +409,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
             };
       });
 
-      await Promise.resolve(onMediaSelected(batch.length === 1 ? batch[0] : batch));
+      await deliverSelection(batch.length === 1 ? batch[0] : batch);
     } catch (error) {
       console.error('Gallery media error:', error);
       setStatus(null);
@@ -388,13 +430,13 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
         await new Promise<void>((resolve) => {
           requestAnimationFrame(() => resolve());
         });
-        await Promise.resolve(onMediaSelected({
+        await deliverSelection({
           type: 'document',
           uri: asset.uri,
           fileName: asset.name,
           fileSize: asset.size,
           mimeType: asset.mimeType || 'application/octet-stream',
-        }));
+        });
       } else {
         setStatus(null);
       }
@@ -427,14 +469,14 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
         await new Promise<void>((resolve) => {
           requestAnimationFrame(() => resolve());
         });
-        await Promise.resolve(onMediaSelected({
+        await deliverSelection({
           type: 'audio',
           uri: asset.uri,
           fileName: asset.name,
           fileSize: asset.size,
           mimeType: asset.mimeType || 'audio/mpeg',
           duration: duration,
-        }));
+        });
       } else {
         setStatus(null);
       }
@@ -447,10 +489,10 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
 
   const handleLocation = useCallback(async () => {
     setStatus({ type: 'location', message: getProcessingMessage('location') });
-    await Promise.resolve(onMediaSelected({
+    await deliverSelection({
       type: 'location',
       uri: '', // No URI needed for initial selection
-    }));
+    });
   }, [onMediaSelected]);
 
   const handleOptionPress = useCallback((option: AttachmentOption) => {
