@@ -254,6 +254,62 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   (`syncNotificationDevice` wraps `syncNotificationDeviceRecord`), so deploy
   filters must use the EXPORT name or `firebase deploy` fails with "No function
   matches the filter".
+- **Verifying native/iOS work: the traps that cost the most time (doc 31 build,
+  2026-07-25).** Each of these produced a GREEN build or a clean exit code while
+  being wrong.
+  - **A Release build's JS `console.*` never reaches the device log.** A JS
+    probe logged nothing while `NSLog` from native on the same code path
+    appeared instantly. Instrument Release-on-device from NATIVE, or write to
+    the app container and pull the file — never from JS.
+  - **`xcrun devicectl` has no `console` subcommand, and `log stream` has no
+    `--device-name` on this toolchain.** The capture that works is
+    `xcrun devicectl device process launch --device <udid> --console <bundleid>`
+    (stdout/stderr only). For simulators, `xcrun simctl spawn <udid> log stream`.
+  - **A local device build needs `-allowProvisioningUpdates`.** Without it,
+    signing fails on missing device registration / Sign in with Apple / PCC.
+  - **Adding a new .swift file to `modules/<name>/ios/` requires `pod install`
+    BEFORE the build proves anything.** A file absent from `Pods.xcodeproj`
+    compiles to nothing, and the build stays green until something references
+    it — one new file sat un-compiled through a "successful" build this way.
+  - **Expo config plugins DO NOT run in this project** (committed `ios/` folder,
+    non-CNG). `npx expo install <pkg>` adds the plugin to app.config.ts and it
+    silently never applies. Info.plist keys (`UIBackgroundModes`,
+    `BGTaskSchedulerPermittedIdentifiers`, …) must be added BY HAND, and the
+    identifier read from the module's own source, not guessed. Verify in the
+    BUILT app's Info.plist (`plutil -extract … <app>/Info.plist`), not the
+    source one.
+  - **Any App-ID capability change invalidates provisioning profiles.** EAS
+    regenerates on next `ship:ios`; local builds need
+    `-allowProvisioningUpdates`. Expected, not a failure.
+- **CloudKit: never `CKQuery` your own records unless you have added a queryable
+  index by hand.** A `TRUEPREDICATE` query fails at runtime with
+  `Field 'recordName' is not marked queryable` — CloudKit does not auto-create
+  indexes, and a fresh install can never rely on someone having clicked through
+  the CloudKit Dashboard. Fetch by KNOWN record id instead and keep an index
+  record (doc 31's backup manifest is exactly that). Also: **iOS Settings →
+  iCloud → Manage Storage displays the LAST PATH COMPONENT of the container
+  identifier verbatim** — `iCloud.com.splitcircle.app` showed as a meaningless
+  "app", which is why the container is now `iCloud.com.splitcircle.ManaSplit`.
+  Containers can be neither renamed nor deleted, so get the name right first
+  time; the old one is unassigned and its data orphaned.
+- **A callable that mints a credential must not REQUIRE that credential.**
+  `redeemPairingCode` demanded `request.auth.uid` while returning the custom
+  token the device signs in WITH — so QR pairing failed with "Authentication
+  required" on every scan, for its entire existence, and the only way into the
+  app was the sign-in path that bypasses pairing altogether. Any onboarding/
+  recovery endpoint reached by a device that has no session yet must derive
+  identity from the artefact it presents (here: the pairing code document), and
+  its safety must come from that artefact being short-lived, single-use,
+  high-entropy AND from what it grants being gated afterwards (a redeemed code
+  yields only a `pending_confirmation` device that still needs approval).
+- **Doc-comments in this repo have three times asserted a mechanism that was
+  never wired.** `extractSalt` was documented as breaking the restore
+  key-derivation circle and was never called (restore failed with "wrong
+  passphrase" against a backup written seconds earlier); a handoff checkpoint
+  wrote `manifestCreatedAt` and never compared it (a second handoff silently
+  skipped chunks); a retirement attestation was signed while the ack that
+  actually unlocks retirement was left unsigned and forgeable. When a comment
+  claims a safety property, grep that the code path exists before believing it.
 - **UIScene lifecycle is mandatory** (iOS 27 kills classic lifecycle, TN3187). Cold-start
   user activities arrive in `SceneDelegate` `connectionOptions.userActivities`, not
   `application(_:continue:)`. Keep the scene manifest through Expo upgrades.

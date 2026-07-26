@@ -1,9 +1,12 @@
 # 31 — Multi-Device Support + iCloud Backup/Sync
 
-Status: **ARCHITECTURE LOCKED, PHASES 0-2 BUILT, PHASE 3 GATES 1+2 PASSED
-(libsignal links, app launches, and a real libsignal call verified executing on
-a physical iPhone) — Phase 3's crypto logic itself NOT yet built**
-(2026-07-25, branch `ui-revamp`).
+Status: **PHASES 0-7 BUILT (Phase 8 not started). Engines verified on real
+hardware; several user-facing paths still unexercised.** (2026-07-25, branch
+`ui-revamp`.)
+
+**Read §5c "Reality check" before trusting any phase label below.** This build
+repeatedly produced code that typechecked, deployed, and reported success while
+being unreachable or wrong, and the phase headings alone will mislead you.
 §1's 23 decisions and §3's full architecture are locked from two rounds of
 research→verify→synthesize→adversarially-critique (all sonnet, sequential, per the
 user's explicit process instruction). The final adversarial critique
@@ -1647,6 +1650,125 @@ about whether any of it was reachable, or even present, in production.**
 Not retroactive: devices that already hold a main/confirmed row keep it. Two
 devices that both became "main" under bug #2 stay that way until one is removed
 and re-added.
+
+
+## 5c. Reality check — what "built" has and hasn't meant here
+
+Written after a real two-device test, because the phase labels above were
+consistently more optimistic than the truth. Four distinct failure levels showed
+up, and every one of them passed the check below it:
+
+| Level | Passed | Still broken |
+|---|---|---|
+| Compiles | `tsc`, tests, review | libsignal linked nothing (§5 Phase 3 gate 1) |
+| Deployed | code committed, "BUILT" | Phase 1/2 functions were NEVER pushed (§5b) |
+| Reachable | function deployed | `redeemPairingCode` required auth it can't have |
+| Correct | reachable + runs | ack forgeable, checkpoint skipped chunks (§5d) |
+
+**The rule that came out of it: a phase is not done until the USER-FACING path
+has been exercised on a device.** Engine-level verification — symbol tables,
+round trips, deployment checks — passed on every one of these while the thing a
+person actually touches was broken. The QR pairing bug existed from Phase 1 and
+survived until after Phase 7 because the flow was never once run.
+
+### The pairing bug, in full (found 2026-07-25)
+
+Scanning the QR on a companion always failed with "Authentication required."
+`redeemPairingCode` was an `onCall` that rejected the request unless
+`request.auth.uid` already existed — while returning the custom token the device
+signs in WITH. Circular by construction: you needed a session to obtain the
+token that creates a session.
+
+Consequences beyond the obvious: because QR could never work, the only route in
+was email/Google/Apple sign-in, which bypasses pairing entirely and lands in the
+self-registration path — so the "approval by signing in is broken" complaint was
+the same bug wearing a different hat. Fixed by making redemption
+UNAUTHENTICATED with `uid` derived from the pairing-code document. Safety comes
+from the code being ~2^40, 5-minute TTL, single-use, AND from redemption
+yielding only a `pending_confirmation` device that still needs approval.
+
+### Phase 5 was skipped, then built
+
+Work jumped Phase 4 → 6 → 7 on request, and Phase 5 — which contains ALL the
+user-facing backup UX — was silently passed over. The result was a passphrase
+field and a button with a text label, correctly described by the product owner
+as "so bad and underpolished". Phase 5 now exists: `BackupSettingsScreen` with
+status, frequency, cellular toggle, both banners, and restore. Lesson: when a
+phase is skipped, say so at the time.
+
+## 5d. Adversarial review of Phases 6 & 7 (2026-07-25)
+
+Four defects, all in code written in the preceding two commits.
+
+1. **The verification ack was forgeable.** The retirement attestation was signed
+   with the Signal identity key; the `RestoreVerified` ack that actually unlocks
+   retirement was not signed at all. Anyone able to write to the container could
+   publish a "verified" record and unlock wiping a phone without a byte of
+   backup being read. The signed attestation made the chain LOOK covered.
+2. **A stale checkpoint silently skipped chunks.** `receiveHistoryHandoff` wrote
+   `manifestCreatedAt` and never read it back, so a second handoff inherited the
+   previous run's `importedChunks` and skipped those indices — a silently
+   incomplete window reporting success, the exact failure §5 Phase 6 forbids.
+3. **A device could verify its own attestation** (mitigated only by an
+   accidental coupling elsewhere; now refused explicitly).
+4. **The handoff key was encrypted to every device** and all but one envelope
+   discarded; an unrelated undecryptable device could drop the target's own.
+
+Findings 1 and 2 are the pattern to remember: prose asserting a property the
+code did not have. Same shape as `extractSalt` (documented as breaking the
+restore key-derivation circle, never called — restore failed against a backup
+written seconds earlier).
+
+
+## 5e. Verification ledger + open items (as of 2026-07-25)
+
+**Verified on real hardware** (iPhone 17 Pro unless noted):
+- libsignal links and RUNS on device arm64 — 826 `_signal_*` symbols resolved,
+  `IdentityKeyPair.generate()` returned a real 69-byte keypair.
+- Signal engine round trip against libsignal's own in-memory store: type-3
+  prekey handshake out, type-2 whisper back, session persisted.
+- Per-device prekey publish + transactional small-int device-id allocation
+  (Pro got 1, mini got 2 — no collision).
+- E2E messaging + self-mirror to the sender's own devices, confirmed by the
+  product owner seeing messages on both phones.
+- CloudKit round trip: export 10 chats / 153 messages, import 153, 0 missing,
+  wrong passphrase cleanly rejected.
+- CROSS-DEVICE restore: backup written on the Pro restored onto a simulator
+  with an empty local store (before 0 → after 153).
+- New container `iCloud.com.splitcircle.ManaSplit` — storage label confirmed
+  reading "ManaSplit" by the product owner.
+
+**NOT verified — do not assume these work:**
+- QR pairing end-to-end. The fix is deployed but has never had a successful
+  scan. THIS IS THE TOP PRIORITY; a second real device depends on it.
+- The Phase 7 two-device retirement handshake (needs both devices paired).
+- The Phase 6 history handoff (needs a genuinely fresh pairing) — and it is
+  NOT wired into the pairing flow: nothing calls `sendHistoryHandoff` when a
+  device is confirmed.
+- Automatic scheduled backups actually firing. The task registers and the UI
+  reports real registration state, but iOS deciding to run it has not been
+  observed.
+
+**Open decisions for the product owner:**
+- **Argon2id vs the shipped PBKDF2 fallback** (§3.5). PBKDF2 at 600k iterations
+  is what exists; Argon2id is memory-hard and materially better against offline
+  GPU cracking of a backup passphrase, but is absent from CryptoKit and
+  libsignal's Swift bindings, so it needs a new native dependency. The envelope
+  reserves `kdf = 2` so it can be adopted without stranding backups. DECIDE
+  BEFORE REAL USERS HAVE BACKUPS.
+- The plaintext fallback for recipients with NO published keys is the last
+  remaining downgrade path. It exists so not-yet-upgraded accounts keep
+  receiving messages; remove it once every client publishes keys.
+
+**Requested but not built** (product owner, 2026-07-25):
+- **Selective backup content** — let the user choose messages / media /
+  settings / expenses / profile pics / wallpapers. Not a toggle: it changes the
+  manifest schema, the export loop, the restore path, AND §3.7's reconciliation,
+  which reads that schema. Needs a design pass.
+- **Reverse QR** — main device scans a code DISPLAYED by the companion. The
+  companion has no account yet, so the code must be self-describing and the
+  main device becomes the redeemer; a different flow from today's, plus a
+  second scanner surface.
 
 ## 6. Open risks carried forward (not yet fully closed by the design above)
 
