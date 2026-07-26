@@ -299,13 +299,20 @@ export const BackupSettingsScreen = () => {
 
         {stale && enrolled ? (
           <GlassCard style={styles.card} contentStyle={styles.cardContent}>
-            <Text variant="titleSmall" style={{ color: theme.colors.danger }}>
-              Your backup is out of date
+            {/* Two genuinely different situations, so they don't share a
+                heading: "out of date" is alarming and simply untrue for
+                someone who enrolled a minute ago and has never run a backup
+                — there is nothing stale, there is nothing yet. */}
+            <Text
+              variant="titleSmall"
+              style={{ color: lastBackup ? theme.colors.danger : theme.colors.onSurface }}
+            >
+              {lastBackup ? 'Your backup is out of date' : 'No backup yet'}
             </Text>
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
               {lastBackup
                 ? `The last successful backup was ${relativeTime(lastBackup.completedAt)}.`
-                : 'No backup has completed on this device yet.'}
+                : 'Your chat history is only on this device until the first backup runs.'}
             </Text>
             <Button mode="contained" disabled={busy !== null} onPress={handleBackupNow}>
               Back up now
