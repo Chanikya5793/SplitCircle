@@ -63,19 +63,9 @@ const recoveryDocRef = (uid: string) =>
  * describing the backup that actually exists. A stale verifier would fail
  * recovery against a perfectly good backup.
  */
-export interface BackupSummary {
-    createdAt: number;
-    totalMessages: number;
-    chatCount: number;
-    bytes: number;
-    mediaCount: number;
-    deviceName?: string | null;
-}
-
 export async function setBackupRecoveryVerifier(
     uid: string,
     verifier: string,
-    summary?: BackupSummary,
 ): Promise<void> {
     if (!VERIFIER_PATTERN.test(verifier)) {
         throw new Error("Malformed recovery verifier");
@@ -84,30 +74,26 @@ export async function setBackupRecoveryVerifier(
     await recoveryDocRef(uid).set(
         {
             verifier,
-            // NON-SECRET summary, stored so a device that has not yet proved
-            // the passphrase can still be shown WHAT it would be restoring —
-            // "last backup 2 hours ago, 4,182 messages" — before committing to
-            // anything. The backup itself stays opaque: this is counts, bytes
-            // and a timestamp, never content, and the server can already infer
-            // that a user has chats. Deliberately kept to the minimum that
-            // makes the choice informed.
-            ...(summary ? { summary } : {}),
+            // ONLY the verifier lives here.
+            //
+            // The backup's summary (dates, counts, size) deliberately does NOT:
+            // it rides in the manifest record's CloudKit metadata instead, where
+            // any device on the user's Apple ID can read it without a passphrase.
+            // That keeps the user's own data in the user's own storage and means
+            // this server never learns how many messages they have. What stays
+            // here is the one thing that MUST be tamper-proof and unreadable by
+            // the client.
             updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true },
     );
 }
 
-/** Whether this account has a recoverable backup, plus its non-secret summary. */
-export async function hasBackupRecoveryVerifier(
-    uid: string,
-): Promise<{ hasBackup: boolean; summary: BackupSummary | null }> {
+/** Whether this account has a recoverable backup. Existence only — the
+ * summary comes from the user's own iCloud, not from us. */
+export async function hasBackupRecoveryVerifier(uid: string): Promise<{ hasBackup: boolean }> {
     const snap = await recoveryDocRef(uid).get();
-    const data = snap.exists ? snap.data() : undefined;
-    return {
-        hasBackup: typeof data?.verifier === "string",
-        summary: (data?.summary as BackupSummary | undefined) ?? null,
-    };
+    return { hasBackup: typeof snap.data()?.verifier === "string" };
 }
 
 export interface RecoverAsNewMainInput {

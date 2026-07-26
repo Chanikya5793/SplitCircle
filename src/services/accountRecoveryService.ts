@@ -15,7 +15,7 @@
 import * as Crypto from 'expo-crypto';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { app } from '@/firebase';
-import { readBackupManifest } from '@/services/backupService';
+import { readBackupManifest, readBackupSummary, type BackupSummary } from '@/services/backupService';
 import { getCurrentDeviceId } from '@/services/pairingService';
 
 const functions = getFunctions(app);
@@ -44,22 +44,12 @@ const sha256Hex = async (input: string): Promise<string> =>
  * than a verifier that catches up on the next one. It is re-published after
  * EVERY export precisely so a missed publish is self-healing.
  */
-export interface BackupSummary {
-  createdAt: number;
-  totalMessages: number;
-  chatCount: number;
-  bytes: number;
-  mediaCount: number;
-  deviceName?: string | null;
-}
+export type { BackupSummary };
 
-export const publishRecoveryVerifier = async (
-  recoverySecret: string,
-  summary?: BackupSummary,
-): Promise<void> => {
+export const publishRecoveryVerifier = async (recoverySecret: string): Promise<void> => {
   try {
     const verifier = await sha256Hex(recoverySecret);
-    await httpsCallable(functions, 'setBackupRecoveryVerifier')({ verifier, summary });
+    await httpsCallable(functions, 'setBackupRecoveryVerifier')({ verifier });
   } catch (error) {
     console.warn('Could not publish the backup recovery verifier', error);
   }
@@ -67,26 +57,41 @@ export const publishRecoveryVerifier = async (
 
 /** Whether this account has a backup that recovery could verify against. */
 /**
- * Whether a backup exists, plus its non-secret summary.
+ * Whether a backup exists, plus what's in it — answered from iCloud FIRST.
  *
- * The summary is what lets a brand-new phone show "last backup 2 hours ago,
- * 4,182 messages, 340 MB" BEFORE the user commits to anything — the manifest
- * itself cannot be read without the passphrase, so without this the choice
- * would be blind.
+ * The summary rides in the manifest record's CloudKit metadata, which our
+ * passphrase layer does not wrap, so `restoreChunkMetadata` reads it with no
+ * session and no passphrase (verified: the native function skips decryption
+ * entirely — Phase 6's handoff already bootstraps from that same property).
+ * A phone that has just signed in can therefore show what a restore would
+ * bring back before the user types anything.
+ *
+ * iCloud is the PRIMARY source deliberately, not a fallback. This is the
+ * user's own data sitting in the user's own storage, so nothing about their
+ * message counts needs to reach our servers — which also means this screen
+ * keeps working as the app moves off Firebase.
+ *
+ * The server is consulted only as a secondary signal, for the case where the
+ * summary is unreadable (no iCloud on this device, or a backup written before
+ * summaries existed). The recovery VERIFIER stays server-side regardless: it
+ * has to be tamper-proof and unreadable by the client, which is exactly what
+ * iCloud storage cannot provide.
  */
 export const hasRecoverableBackup = async (): Promise<{
   hasBackup: boolean;
   summary: BackupSummary | null;
 }> => {
+  const summary = await readBackupSummary().catch(() => null);
+  // A summary we could actually read IS the backup — no second opinion needed.
+  if (summary) return { hasBackup: true, summary };
+
   try {
-    const result = await httpsCallable<unknown, { hasBackup: boolean; summary: BackupSummary | null }>(
+    const result = await httpsCallable<unknown, { hasBackup: boolean }>(
       functions,
       'hasBackupRecovery',
     )({});
-    return { hasBackup: result.data.hasBackup === true, summary: result.data.summary ?? null };
+    return { hasBackup: result.data.hasBackup === true, summary: null };
   } catch {
-    // Unknown is reported as "no backup" only for choosing which explanation
-    // to show; the server re-checks for real and will still demand proof.
     return { hasBackup: false, summary: null };
   }
 };

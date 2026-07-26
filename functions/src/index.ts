@@ -1726,20 +1726,8 @@ export const setBackupRecoveryVerifier = onCall(async (request) => {
     if (!verifier) {
         throw new HttpsError("invalid-argument", "Missing verifier.");
     }
-    const rawSummary = request.data?.summary;
-    const summary = rawSummary && typeof rawSummary === "object"
-        ? {
-            createdAt: Number((rawSummary as Record<string, unknown>).createdAt) || 0,
-            totalMessages: Number((rawSummary as Record<string, unknown>).totalMessages) || 0,
-            chatCount: Number((rawSummary as Record<string, unknown>).chatCount) || 0,
-            bytes: Number((rawSummary as Record<string, unknown>).bytes) || 0,
-            mediaCount: Number((rawSummary as Record<string, unknown>).mediaCount) || 0,
-            deviceName: getStringValue((rawSummary as Record<string, unknown>).deviceName) || null,
-        }
-        : undefined;
-
     try {
-        await setBackupRecoveryVerifierImpl(uid, verifier, summary);
+        await setBackupRecoveryVerifierImpl(uid, verifier);
         return { status: "ok" };
     } catch (error) {
         if (error instanceof Error && error.message === "Malformed recovery verifier") {

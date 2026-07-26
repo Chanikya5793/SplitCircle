@@ -16,6 +16,7 @@ import {
   beginBackupSession,
   endBackupSession,
   restoreChunk,
+  restoreChunkMetadata,
   verifyBackupIntegrity,
 } from '../../modules/splitcircle-backup';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -37,6 +38,7 @@ import { getLocalMediaPath } from '@/services/mediaService';
 import { hydrateWallpapers } from '@/services/wallpaperService';
 import { getOrCreateRecoverySecret } from '@/services/backupPassphraseService';
 import { getBackupSelection, type BackupCategory } from '@/services/backupContentService';
+import * as Device from 'expo-device';
 import type { ChatMessage } from '@/models';
 
 /**
@@ -371,6 +373,7 @@ export const exportBackup = async (
   passphrase: string,
   onProgress?: (progress: BackupProgress) => void,
 ): Promise<BackupManifest> => {
+  const deviceLabel = Device.deviceName;
   const { salt } = await beginBackupSession(passphrase);
   const selection = await getBackupSelection();
 
@@ -482,7 +485,36 @@ export const exportBackup = async (
       chatsTotal: chatIds.length,
       messagesDone,
     });
-    await backupChunk(RECORD_TYPE.manifest, 'manifest-current', encodeJson(manifest), {});
+    /**
+     * The manifest's METADATA carries a plaintext summary.
+     *
+     * CloudKit record metadata is not wrapped by our passphrase layer, so
+     * `restoreChunkMetadata` can read it WITHOUT the passphrase — which is the
+     * whole point. A new phone needs to show "last backup 2 hours ago, 4,182
+     * messages" before the user has typed anything, and the manifest payload
+     * itself is unreadable until they do.
+     *
+     * It is not unprotected: this lives in the user's PRIVATE CloudKit
+     * database, reachable only from their own Apple ID, which is the same
+     * protection as the rest of their iCloud data. And it is counts, bytes and
+     * a timestamp — never content.
+     *
+     * Deliberately here rather than in Firestore: this is the user's own data
+     * in the user's own storage, so our server never has to learn how many
+     * messages they have. The recovery VERIFIER stays server-side, because
+     * that one must be tamper-proof and unreadable by the client — see
+     * functions/src/accountRecovery.ts.
+     */
+    await backupChunk(RECORD_TYPE.manifest, 'manifest-current', encodeJson(manifest), {
+      summaryCreatedAt: String(manifest.createdAt),
+      summaryTotalMessages: String(manifest.totalMessages),
+      summaryChatCount: String(chats.length),
+      summaryMediaCount: String(media.ids.length),
+      summaryBytes: String(
+        Object.values(sizeAccumulator).reduce((sum: number, n) => sum + (n ?? 0), 0),
+      ),
+      summaryDeviceName: deviceLabel ?? '',
+    });
 
     onProgress?.({
       phase: 'complete',
@@ -508,6 +540,48 @@ export const exportBackup = async (
  * envelope to derive the key, and the copy inside is what a caller then uses
  * for subsequent chunks.
  */
+export interface BackupSummary {
+  createdAt: number;
+  totalMessages: number;
+  chatCount: number;
+  mediaCount: number;
+  bytes: number;
+  deviceName: string | null;
+}
+
+/**
+ * Reads the backup summary WITHOUT the passphrase.
+ *
+ * Metadata-only fetch: the manifest payload stays encrypted and untouched.
+ * This is what lets a device that has just signed in show what a restore would
+ * bring back before asking for anything — the choice on the setup screen would
+ * otherwise be blind.
+ *
+ * Returns null when there is no backup, or when iCloud isn't reachable. Both
+ * are legitimately "we don't know", never "there is nothing".
+ */
+export const readBackupSummary = async (): Promise<BackupSummary | null> => {
+  try {
+    const chunk = await restoreChunkMetadata(RECORD_TYPE.manifest, 'manifest-current');
+    const meta = chunk?.metadata;
+    if (!meta?.summaryCreatedAt) return null;
+    const num = (value: string | undefined): number => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    return {
+      createdAt: num(meta.summaryCreatedAt),
+      totalMessages: num(meta.summaryTotalMessages),
+      chatCount: num(meta.summaryChatCount),
+      mediaCount: num(meta.summaryMediaCount),
+      bytes: num(meta.summaryBytes),
+      deviceName: meta.summaryDeviceName || null,
+    };
+  } catch {
+    return null;
+  }
+};
+
 export const readBackupManifest = async (passphrase: string): Promise<BackupManifest | null> => {
   // Fetched by its KNOWN id rather than discovered by query. CloudKit does not
   // auto-create queryable indexes, so a TRUEPREDICATE query fails with
