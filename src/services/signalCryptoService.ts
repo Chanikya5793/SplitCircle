@@ -266,6 +266,35 @@ export const getIdentityKeyForDevice = async (
 const peerIdentityKey = (peerUserId: string, peerDeviceId: string) =>
   `splitcircle.signal.peerIdentity.${peerUserId}.${peerDeviceId}`;
 
+const repairFlagKey = (peerUserId: string, peerDeviceId: string) =>
+  `splitcircle.signal.needsRebuild.${peerUserId}.${peerDeviceId}`;
+
+/**
+ * Marks a peer's session as broken so the next send rebuilds it.
+ *
+ * THE CASE THE IDENTITY COMPARISON ALONE CANNOT COVER. That check only fires
+ * when a PREVIOUSLY CACHED identity differs from the published one — so for
+ * any session established before the cache existed, `known` is null, no change
+ * is detected, `hasSession()` reports true, and the dead session is reused
+ * forever. Every session predating that fix is in exactly this state.
+ *
+ * A failed decrypt is the ground truth that no amount of comparing keys can
+ * replace: it means the session is unusable RIGHT NOW, whatever the metadata
+ * says. Recording it here makes the next outbound message rebuild from a fresh
+ * prekey bundle, which also hands the peer a new PreKey message so their side
+ * re-establishes too. One round trip and the pair is healed.
+ */
+export const markSessionForRebuild = async (
+  peerUserId: string,
+  peerDeviceId: string,
+): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(repairFlagKey(peerUserId, peerDeviceId), '1');
+  } catch {
+    // Best-effort; the identity comparison is still a second line of defence.
+  }
+};
+
 export const ensureSessionWithDevice = async (
   peerUserId: string,
   peerSignalDeviceId: number,
@@ -276,16 +305,28 @@ export const ensureSessionWithDevice = async (
   if (!isCryptoAvailable()) return false;
 
   const cacheKey = peerIdentityKey(peerUserId, peerDeviceId);
+  const flagKey = repairFlagKey(peerUserId, peerDeviceId);
+
+  // A decrypt against this peer has already failed, so the session is known
+  // bad regardless of what the keys look like. Checked FIRST because it is
+  // evidence, not inference.
+  const needsRebuild = (await AsyncStorage.getItem(flagKey)) !== null;
+
   let identityChanged = false;
   if (currentIdentityKey) {
     const known = await AsyncStorage.getItem(cacheKey);
     identityChanged = known !== null && known !== currentIdentityKey;
+    // Adopt on first sight so a LATER change is detectable. Without this, a
+    // session that predates the cache never becomes comparable.
+    if (known === null) await AsyncStorage.setItem(cacheKey, currentIdentityKey);
   }
 
   // Reuse only when the peer is still the same peer. A changed identity means
   // the device rebuilt itself (reinstall, restore, revoke-and-repair), so our
   // session is addressed to a keypair that no longer exists.
-  if (!identityChanged && (await hasSession(peerUserId, peerSignalDeviceId))) return true;
+  if (!needsRebuild && !identityChanged && (await hasSession(peerUserId, peerSignalDeviceId))) {
+    return true;
+  }
 
   try {
     const { data } = await claimCallable({
@@ -296,6 +337,7 @@ export const ensureSessionWithDevice = async (
     // so this is also the repair path, not just first contact.
     await establishSession(peerUserId, peerSignalDeviceId, data);
     if (currentIdentityKey) await AsyncStorage.setItem(cacheKey, currentIdentityKey);
+    await AsyncStorage.removeItem(flagKey);
     return true;
   } catch {
     return false;

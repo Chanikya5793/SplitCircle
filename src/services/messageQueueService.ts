@@ -17,7 +17,11 @@ import {
 } from 'firebase/database';
 import type { ChatMessage, MessageType } from '@/models';
 import { downloadMedia } from '@/services/mediaService';
-import { decryptMessageEnvelope, encryptMessageForRecipient } from '@/services/messageEnvelope';
+import {
+  consumeLastDecryptError,
+  decryptMessageEnvelope,
+  encryptMessageForRecipient,
+} from '@/services/messageEnvelope';
 import { getOrCreateInstallationId } from '@/services/notificationService';
 
 // Get Realtime Database instance
@@ -476,10 +480,12 @@ const attachQueueListener = (
     const envelope = raw?.envelope as { t?: number; b?: string } | undefined;
     const senderSignalDeviceId = Number(raw?.senderSignalDeviceId);
     if (envelope?.b != null && envelope?.t != null && Number.isFinite(senderSignalDeviceId)) {
-      const decrypted = await decryptMessageEnvelope(payload.senderId, senderSignalDeviceId, {
-        t: envelope.t,
-        b: envelope.b,
-      });
+      const decrypted = await decryptMessageEnvelope(
+        payload.senderId,
+        senderSignalDeviceId,
+        { t: envelope.t, b: envelope.b },
+        typeof raw?.originDeviceId === 'string' ? raw.originDeviceId : undefined,
+      );
       if (decrypted) {
         if (typeof decrypted.content === 'string') payload.content = decrypted.content;
         if (payload.replyTo && typeof decrypted.replyToContent === 'string') {
@@ -497,7 +503,14 @@ const attachQueueListener = (
         // for a resend, and the identity-change repair in
         // ensureSessionWithDevice fixes the next one); a blank bubble looks
         // like the sender sent nothing, and silently loses real content.
-        payload.content = '⚠️ Couldn’t decrypt this message';
+        // Carries the REASON. "Couldn't decrypt" alone left us guessing at
+        // which of several failure modes was happening on a real phone, and
+        // Release-build JS logs never reach the device console — so the
+        // message itself has to be the diagnostic.
+        const reason = consumeLastDecryptError();
+        payload.content = reason
+          ? `⚠️ Couldn’t decrypt this message (${reason.slice(0, 80)})`
+          : '⚠️ Couldn’t decrypt this message';
       }
     }
 

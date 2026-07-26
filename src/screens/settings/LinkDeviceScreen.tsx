@@ -22,7 +22,7 @@ import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'ex
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHeaderHeight } from '@react-navigation/elements';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
 import QRCode from 'react-native-qrcode-svg';
@@ -62,13 +62,36 @@ export const LinkDeviceScreen = () => {
    * reasoning at the call site for why the earlier "scanning is itself the
    * consent" argument was wrong.
    */
+  /**
+   * REFS, NOT STATE — the same fix ScanPairingCodeScreen already needed, which
+   * this screen was missing.
+   *
+   * `onBarcodeScanned` fires once per camera FRAME (~30/s). `if (linking)`
+   * reads React state, which had not applied yet when the next frames arrived,
+   * so every one of them got through. Once a confirmation dialog was added in
+   * front of the authorize call, that turned into an endless stack of
+   * identical "Link this device?" alerts that only stopped when the camera was
+   * pointed away — exactly what was reported.
+   *
+   * A ref updates synchronously, so the very next frame is already locked out,
+   * and remembering codes we have already prompted for means holding the
+   * camera on the same QR never re-asks.
+   */
+  const scanBusyRef = useRef(false);
+  const promptedRef = useRef<Set<string>>(new Set());
+
   const handleScannedOffer = (result: BarcodeScanningResult) => {
-    if (linking) return;
+    if (scanBusyRef.current || promptedRef.current.has(result.data)) return;
     const offer = parseDeviceOffer(result.data);
     if (!offer) {
+      // Remembered too: an unrecognisable QR in frame would otherwise re-set
+      // this error 30 times a second.
+      promptedRef.current.add(result.data);
       setLinkError("That doesn't look like a SplitCircle device code.");
       return;
     }
+    promptedRef.current.add(result.data);
+    scanBusyRef.current = true;
     // CONFIRM BEFORE AUTHORIZING — this is not ceremony, and an earlier
     // version of this comment arguing that it was got the threat model wrong.
     //
@@ -93,7 +116,16 @@ export const LinkDeviceScreen = () => {
       `Link ${label}?`,
       `${label}${offer.modelName && offer.deviceName ? ` (${offer.modelName})` : ''} will be added to your account and can read your messages and history. Only continue if this is your own device and you are looking at its screen right now.`,
       [
-        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          // Released so a DIFFERENT device can still be scanned after
+          // declining; the code just declined stays in promptedRef, so
+          // pointing at it again does not re-prompt.
+          onPress: () => {
+            scanBusyRef.current = false;
+          },
+        },
         {
           text: 'Link device',
           onPress: () => {
@@ -108,7 +140,10 @@ export const LinkDeviceScreen = () => {
                 errorHaptic();
                 setLinkError(errorMessage(error));
               })
-              .finally(() => setLinking(false));
+              .finally(() => {
+                setLinking(false);
+                scanBusyRef.current = false;
+              });
           },
         },
       ],

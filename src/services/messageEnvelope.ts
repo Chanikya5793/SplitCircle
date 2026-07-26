@@ -14,6 +14,7 @@ import {
   decryptEnvelope,
   getCachedSignalDeviceId,
   listSignalDevices,
+  markSessionForRebuild,
 } from '@/services/signalCryptoService';
 import { isCryptoAvailable, type SignalEnvelope } from '../../modules/splitcircle-crypto';
 
@@ -117,10 +118,22 @@ export const encryptMessageForRecipient = async (
  * isn't encrypted or can't be opened; callers fall back to whatever plaintext
  * the payload carried rather than dropping the message entirely.
  */
+/** Reason the most recent decrypt failed, surfaced in the placeholder so a
+ *  broken session is diagnosable from the phone instead of by guesswork. */
+let lastDecryptError: string | null = null;
+
+export const consumeLastDecryptError = (): string | null => {
+  const value = lastDecryptError;
+  lastDecryptError = null;
+  return value;
+};
+
 export const decryptMessageEnvelope = async (
   senderId: string,
   senderSignalDeviceId: number,
   envelope: StoredEnvelope,
+  /** The peer's string device id, needed to flag the session for rebuild. */
+  senderDeviceId?: string,
 ): Promise<EncryptedFields | null> => {
   if (!isCryptoAvailable()) return null;
 
@@ -133,6 +146,13 @@ export const decryptMessageEnvelope = async (
     // has a new identity, so old sessions are dead) and must never take the
     // listener down — the message is surfaced with whatever plaintext exists.
     console.warn('Failed to decrypt message envelope', error);
+    // GROUND TRUTH, recorded. Comparing published identity keys can miss a
+    // dead session (a session predating the identity cache looks unchanged);
+    // a decrypt that just failed cannot be argued with. This makes the next
+    // outbound message to this peer rebuild from a fresh bundle, which also
+    // hands them a PreKey message so their side re-establishes.
+    lastDecryptError = error instanceof Error ? error.message : String(error);
+    void markSessionForRebuild(senderId, senderDeviceId ?? '').catch(() => {});
     return null;
   }
 };
