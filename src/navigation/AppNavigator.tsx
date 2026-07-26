@@ -1670,7 +1670,7 @@ export const AppNavigator = () => {
   const { theme, isDark } = useTheme();
 
   if (loading) {
-    return <LoadingScreen />;
+    return <LoadingScreen nativeSplashHandoff />;
   }
 
   const navigationBackground = theme.colors.appBackground;

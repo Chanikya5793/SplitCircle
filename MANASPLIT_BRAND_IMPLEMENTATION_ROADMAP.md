@@ -1,7 +1,42 @@
 # ManaSplit Muggu Brand Implementation Roadmap
 
-Status: planned and validated, not yet implemented  
+Status: implemented and locally validated; signed-device launch validation pending
 Source package: `/Users/chanakya/Downloads/ManaSplit logo`
+
+## Implementation snapshot — 2026-07-26
+
+Completed:
+
+- Preserved the supplied SVG/HTML sources under `assets/brand/source/` with
+  SHA-256 checksums.
+- Added deterministic generation for Expo, iOS, and Android icon, splash,
+  monochrome, favicon, and notification assets.
+- Added fixed brand tokens and one canonical geometry/timing module.
+- Added static, animated, reversed, simplified, and Reduce Motion-aware React
+  Native muggu components.
+- Added the native-splash-to-React handoff, branded auth/bootstrap state,
+  branded blocking overlay, and glass-shell skeleton presets.
+- Wired light, dark, tinted, adaptive, and notification identity configuration.
+- Updated checked-in iOS asset catalogs/storyboard and the current generated
+  Android resource tree.
+
+Validated:
+
+- Source checksums, 53 required PNG dimensions, opaque iOS icons, palette
+  samples, asset-catalog references, Expo config references, and Android
+  duplicate-resource checks pass through `npm run validate:brand`.
+- TypeScript, 387 pure unit tests, 144 service tests, and 14 DOM component tests
+  pass.
+- Xcode `actool` compiles the complete iOS asset catalog without warnings.
+- Gradle `:app:processDebugResources` completes successfully.
+- Default icon and light/dark splash artwork pass direct visual inspection.
+
+Still required before release sign-off:
+
+- A signed preview/TestFlight build and clean-install cold-launch recordings on
+  representative iPhone/iPad devices.
+- Android launcher mask/themed-icon checks on representative devices.
+- Reduce Motion and VoiceOver/TalkBack checks on real hardware.
 
 ## Outcome
 
@@ -344,7 +379,10 @@ isolate.
 
 ```bash
 npx tsc --noEmit
-npm test -- --run
+npm run validate:brand
+npm run test:unit
+npm run test:services
+npm run test:dom
 ```
 
 If the full repository typecheck is blocked by the known unrelated `ai_layer`

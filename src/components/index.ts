@@ -1,5 +1,6 @@
 export * from './BalanceSummary';
 export * from './BillSplit';
+export * from './brand';
 export * from './CallControls';
 export * from './Chat/MapErrorBoundary';
 export * from './ExpenseCard';

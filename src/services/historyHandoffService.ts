@@ -104,16 +104,36 @@ export interface HandoffProgress {
  * Returns null when there is nothing to send or the target has no published
  * keys yet — both are normal, not failures.
  */
+/**
+ * Why the last handoff attempt did what it did.
+ *
+ * This service had EIGHT distinct silent `return null` paths, so a companion
+ * that received no history looked identical to one where nothing needed
+ * sending — from either device there was simply nothing to see. That is
+ * precisely the state the product owner reported ("no data transfer, nothing
+ * shows"), and it was undiagnosable from the phone because Release-build JS
+ * logs never reach the device console.
+ *
+ * Every bail-out now records a reason instead of vanishing.
+ */
+export let lastHandoffStatus: string | null = null;
+
+const handoffStatus = (reason: string): null => {
+  lastHandoffStatus = reason;
+  console.warn(`History handoff: ${reason}`);
+  return null;
+};
+
 export const sendHistoryHandoff = async (
   userId: string,
   targetDeviceId: string,
   onProgress?: (progress: HandoffProgress) => void,
 ): Promise<{ chunkCount: number; totalMessages: number } | null> => {
   const senderSignalDeviceId = getCachedSignalDeviceId();
-  if (!senderSignalDeviceId) return null;
+  if (!senderSignalDeviceId) return handoffStatus('this device has no libsignal id yet');
 
   const target = (await listSignalDevices(userId)).find((d) => d.deviceId === targetDeviceId);
-  if (!target) return null;
+  if (!target) return handoffStatus('target device has not published encryption keys');
 
   const windowStart = Date.now() - HANDOFF_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   const chatIds = (await getLocalMessageStats()).map((s) => s.chatId);
@@ -126,7 +146,7 @@ export const sendHistoryHandoff = async (
     windowed.push(...messages.filter((m) => m.createdAt >= windowStart));
   }
   windowed.sort((a, b) => a.createdAt - b.createdAt);
-  if (windowed.length === 0) return null;
+  if (windowed.length === 0) return handoffStatus('no messages in the 90-day window to send');
 
   const bundleKey = randomKeyBase64();
 
@@ -139,7 +159,7 @@ export const sendHistoryHandoff = async (
   // result set and could drop the target's own envelope. Encrypt to exactly
   // the device this handoff is for.
   const ready = await ensureSessionWithDevice(userId, target.signalDeviceId, targetDeviceId);
-  if (!ready) return null;
+  if (!ready) return handoffStatus('could not establish a Signal session with the target');
   const keyEnvelope = await encryptForDevice(userId, target.signalDeviceId, bundleKey);
 
   const chunkCount = Math.ceil(windowed.length / MESSAGES_PER_CHUNK);
@@ -261,7 +281,7 @@ export const receiveHistoryHandoff = async (
     // Signal envelope, so the payload cannot be decrypted until after it has
     // been read. Fetching the payload first would be circular.
     const manifestChunk = await restoreChunkMetadata(RECORD_TYPE, manifestId(ownDeviceId));
-    if (!manifestChunk) return null;
+    if (!manifestChunk) return handoffStatus('no handoff manifest in iCloud for this device yet');
 
     const meta = manifestChunk.metadata;
     const envelopeType = Number(meta.keyEnvelopeType);
@@ -275,7 +295,7 @@ export const receiveHistoryHandoff = async (
     // The handoff always comes from another device of the SAME account, so the
     // Signal address to decrypt against is our own user id.
     const senderUserId = manifestChunk.metadata.senderUserId ?? '';
-    if (!senderUserId) return null;
+    if (!senderUserId) return handoffStatus('handoff manifest is missing its sender id');
     const bundleKey = await decryptEnvelope(senderUserId, senderSignalDeviceId, {
       type: envelopeType,
       body: envelopeBody,

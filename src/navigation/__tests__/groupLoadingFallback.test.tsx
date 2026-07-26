@@ -18,6 +18,11 @@ vi.mock('@/components/LiquidBackground', () => ({
   LiquidBackground: ({ children }: any) => <div data-testid="liquid-bg">{children}</div>,
 }));
 
+vi.mock('@/components/brand', () => ({
+  BrandedBootScreen: () => <div data-testid="branded-boot-screen" />,
+  MugguLoader: () => <div role="progressbar" data-testid="spinner" />,
+}));
+
 vi.mock('@/components/ui', () => ({
   EmptyState: ({ title, hint, actionLabel, onAction }: any) => (
     <div>

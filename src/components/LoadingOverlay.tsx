@@ -1,7 +1,8 @@
-import { GlassView } from '@/components/GlassView';
-import { colors } from '@/constants';
+import { MugguLoader } from '@/components/brand';
+import { GlassCard } from '@/components/ui';
+import { useTheme } from '@/context/ThemeContext';
 import { Modal, StyleSheet, View } from 'react-native';
-import { ActivityIndicator, Text } from 'react-native-paper';
+import { Text } from 'react-native-paper';
 
 interface LoadingOverlayProps {
   visible: boolean;
@@ -9,13 +10,20 @@ interface LoadingOverlayProps {
 }
 
 export const LoadingOverlay = ({ visible, message = 'Loading…' }: LoadingOverlayProps) => {
+  const { isDark, theme } = useTheme();
+
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent>
-      <View style={styles.backdrop}>
-        <GlassView style={styles.container}>
-          <ActivityIndicator animating size="large" color={colors.primary} />
-          <Text style={styles.text}>{message}</Text>
-        </GlassView>
+      <View style={[styles.backdrop, { backgroundColor: theme.colors.overlay }]}>
+        <GlassCard style={styles.container} contentStyle={styles.content}>
+          <MugguLoader
+            size={48}
+            variant={isDark ? 'reversed' : 'primary'}
+            showPen={false}
+            accessibilityLabel={message}
+          />
+          <Text style={[styles.text, { color: theme.colors.onSurface }]}>{message}</Text>
+        </GlassCard>
       </View>
     </Modal>
   );
@@ -32,12 +40,13 @@ const styles = StyleSheet.create({
   container: {
     width: '100%',
     maxWidth: 320,
+  },
+  content: {
     padding: 24,
-    borderRadius: 16,
     alignItems: 'center',
     gap: 12,
   },
   text: {
-    marginTop: 8,
+    textAlign: 'center',
   },
 });

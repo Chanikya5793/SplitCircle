@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ManaSplit — Muggu mark, perfected</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=Inter:wght@400;500;600;700&family=Noto+Sans+Telugu:wght@500&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#3B1259;--gold:#E8A13D;--cream:#FBF7F0;--plum:#2A0B40;--deep:#1B0730;
+ --paper:#FAF7F2;--card:#fff;--line:#EDE6DC;--sub:#7A7288;}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--paper);color:#1B1626;font-family:'Inter',system-ui,sans-serif;
+ padding:30px 18px 80px;max-width:1080px;margin:0 auto;font-size:15px;-webkit-font-smoothing:antialiased}
+h1{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:clamp(32px,7vw,52px);line-height:1.0;letter-spacing:-.02em}
+h1 .g{color:var(--gold)}
+.eyebrow{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--sub);margin-bottom:10px}
+.lede{margin-top:14px;color:var(--sub);max-width:62ch;line-height:1.62;font-size:15px}
+h2{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:12px;letter-spacing:.18em;
+ text-transform:uppercase;color:var(--sub);margin:0 0 18px}
+.rule{height:1px;background:var(--line);margin:44px 0 24px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:24px;margin-bottom:20px}
+.ttl{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:19px;margin-bottom:6px}
+.txt{color:var(--sub);font-size:13.5px;line-height:1.6;max-width:66ch}
+.grid{display:grid;gap:20px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:12px}
+.tw{display:flex;flex-direction:column;gap:8px}
+.tile{border-radius:16px;display:flex;align-items:center;justify-content:center;aspect-ratio:1;border:1px solid var(--line);overflow:hidden}
+.tile svg{width:66%;height:66%}
+.t-w{background:#fff}.t-p{background:#F3EDE3}.t-d{background:var(--plum);border-color:var(--plum)}
+.t-deep{background:var(--deep);border-color:var(--deep)}.t-gold{background:var(--gold);border-color:var(--gold)}
+.cap{font-size:10px;color:var(--sub);text-align:center;letter-spacing:.09em;text-transform:uppercase}
+.metric{display:flex;gap:26px;flex-wrap:wrap;margin-top:16px}
+.metric div{font-size:12px;color:var(--sub)}
+.metric b{display:block;font-family:'Bricolage Grotesque',sans-serif;font-size:23px;color:var(--ink);font-weight:700}
+.metric b.bad{color:#C0392B}
+/* lockups */
+.lock{display:flex;align-items:center;gap:15px}
+.lock>svg{flex:none}
+.word{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;letter-spacing:-.018em;line-height:1}
+.word .l{font-weight:500}
+.stackl{display:flex;flex-direction:column;align-items:center;gap:12px}
+.te{font-family:'Noto Sans Telugu','Inter',sans-serif;font-size:13px;color:var(--sub);letter-spacing:.32em;margin-top:2px}
+/* scale ladder */
+.ladder{display:flex;align-items:flex-end;gap:22px;flex-wrap:wrap}
+.ladder .s{display:flex;flex-direction:column;align-items:center;gap:8px}
+/* app icons */
+.ios{border-radius:24%;display:flex;align-items:center;justify-content:center;box-shadow:0 10px 26px rgba(30,15,50,.22)}
+.ios svg{width:64%;height:64%}
+.rnd{border-radius:50%}
+/* phone */
+.phone{width:230px;background:#120C1B;border-radius:34px;padding:9px;flex:none;box-shadow:0 18px 40px rgba(25,12,45,.28)}
+.pscr{border-radius:27px;overflow:hidden;min-height:430px;position:relative}
+.pstat{display:flex;justify-content:space-between;padding:11px 16px 6px;font-size:10px;font-weight:600;color:#fff;opacity:.9}
+.home{background:linear-gradient(165deg,#6B4593,#2A0B40 55%,#150525)}
+.hgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px 6px;padding:14px 12px}
+.hap{display:flex;flex-direction:column;align-items:center;gap:5px}
+.hap .ios{width:42px;height:42px;box-shadow:none;border-radius:11px}
+.hap span{font-size:7.5px;color:#fff;opacity:.9;height:9px}
+.hic{width:42px;height:42px;border-radius:11px;opacity:.42}
+.dock{position:absolute;left:12px;right:12px;bottom:12px;background:rgba(255,255,255,.14);border-radius:18px;
+ padding:8px;display:flex;justify-content:space-around;backdrop-filter:blur(6px)}
+.dock .hic,.dock .ios{width:38px;height:38px;border-radius:10px}
+/* app UI */
+.appui{background:var(--cream);height:100%;display:flex;flex-direction:column}
+.aunav{background:var(--plum);padding:10px 14px 14px;color:#fff}
+.aurow{display:flex;align-items:center;gap:9px}
+.aurow svg{width:24px;height:24px;flex:none}
+.autitle{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:15px}
+.aubal{margin-top:14px;background:rgba(255,255,255,.12);border-radius:13px;padding:10px 12px}
+.aubal .k{font-size:9px;opacity:.75;letter-spacing:.1em;text-transform:uppercase}
+.aubal .v{font-family:'Bricolage Grotesque',sans-serif;font-size:21px;font-weight:700;margin-top:2px}
+.aubal .v em{font-style:normal;color:var(--gold)}
+.aulist{padding:12px 12px 0;flex:1;display:flex;flex-direction:column;gap:8px}
+.auit{background:#fff;border-radius:13px;padding:9px 11px;display:flex;align-items:center;gap:9px;
+ border:1px solid #EFE7DC}
+.auav{width:28px;height:28px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;
+ font-size:10px;font-weight:700;color:#fff}
+.auinfo{flex:1;min-width:0}
+.auinfo b{display:block;font-size:11.5px;font-weight:600}
+.auinfo span{font-size:9.5px;color:var(--sub)}
+.auamt{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:12px}
+.auamt.pos{color:#1B8A5A}.auamt.neg{color:#C0392B}
+.autab{display:flex;justify-content:space-around;padding:9px 0 12px;background:#fff;border-top:1px solid #EFE7DC}
+.autab i{width:19px;height:19px;border-radius:6px;background:#DDD3E6;display:block}
+.autab i.on{background:var(--ink)}
+/* splash */
+.splash{width:230px;height:452px;border-radius:34px;display:flex;flex-direction:column;
+ align-items:center;justify-content:center;gap:18px;flex:none;
+ background:radial-gradient(120% 90% at 50% 30%,#6B4593,#2A0B40 60%,#150525);
+ box-shadow:0 18px 40px rgba(25,12,45,.28)}
+.splash svg{width:88px;height:88px}
+/* browser */
+.brow{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff}
+.btabs{background:#EDE7E0;padding:8px 8px 0;display:flex;gap:6px;align-items:flex-end}
+.btab{background:#fff;border-radius:9px 9px 0 0;padding:7px 12px;display:flex;align-items:center;gap:7px;
+ font-size:11px;font-weight:500;max-width:190px}
+.btab svg{width:14px;height:14px;flex:none}
+.btab.off{background:#E1D9D1;color:#8A8290;font-weight:400}
+.burl{background:#fff;padding:8px 10px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
+.burl .u{background:#F2EDE6;border-radius:20px;padding:5px 12px;font-size:11px;color:var(--sub);flex:1}
+.bhero{padding:16px 18px 26px}
+.bnav{display:flex;align-items:center;gap:11px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+.bnav svg{width:28px;height:28px}
+.bnav .lk{margin-left:auto;display:flex;gap:16px;font-size:11.5px;color:var(--sub)}
+.bnav .cta{background:var(--ink);color:#fff;padding:6px 13px;border-radius:20px;font-size:11px;font-weight:600}
+.bh1{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:26px;line-height:1.1;margin-top:22px;letter-spacing:-.02em}
+.bh1 em{font-style:normal;color:var(--gold)}
+.bp{color:var(--sub);font-size:12.5px;margin-top:9px;max-width:44ch;line-height:1.55}
+/* social */
+.soc{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.sban{height:64px;background:linear-gradient(110deg,#4A1B6E,#2A0B40)}
+.sbody{padding:0 14px 14px;margin-top:-26px}
+.savt{width:60px;height:60px;border-radius:50%;border:3px solid #fff;display:flex;align-items:center;justify-content:center}
+.savt svg{width:64%;height:64%}
+.sname{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:15px;margin-top:8px}
+.shandle{font-size:11.5px;color:var(--sub)}
+.sbio{font-size:11.5px;margin-top:7px;line-height:1.5}
+.sstat{display:flex;gap:16px;margin-top:9px;font-size:11px;color:var(--sub)}
+.sstat b{color:#1B1626}
+/* card */
+.bcard{width:270px;height:158px;border-radius:12px;padding:18px;display:flex;flex-direction:column;
+ justify-content:space-between;flex:none;box-shadow:0 8px 22px rgba(30,15,50,.14)}
+.bc-f{background:var(--plum);color:#fff}
+.bc-b{background:var(--cream);color:var(--ink);border:1px solid var(--line)}
+.bcard svg{width:34px;height:34px}
+.bcn{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:14px}
+.bcr{font-size:10px;opacity:.7;margin-top:2px}
+.bcm{font-size:9.5px;opacity:.75;line-height:1.6;margin-top:8px}
+/* merch */
+.tee{width:180px;height:196px;position:relative;flex:none}
+.tee svg.mk{position:absolute;left:50%;top:74px;transform:translateX(-50%);width:52px;height:52px}
+.tote{width:150px;height:174px;border-radius:6px 6px 10px 10px;background:#E4DACA;position:relative;flex:none;
+ display:flex;align-items:center;justify-content:center;box-shadow:inset 0 -18px 30px rgba(0,0,0,.05)}
+.tote:before,.tote:after{content:"";position:absolute;top:-30px;width:12px;height:44px;border:6px solid #E4DACA;
+ border-bottom:none;border-radius:20px 20px 0 0}
+.tote:before{left:24px}.tote:after{right:24px}
+.tote svg{width:60px;height:60px}
+/* stickers */
+.stick{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.sk{width:74px;height:74px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+ border:4px solid #fff;box-shadow:0 4px 12px rgba(30,15,50,.16)}
+.sk.sq{border-radius:16px}
+.sk svg{width:62%;height:62%}
+/* email sig */
+.sig{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;font-size:12px}
+.sigrow{display:flex;gap:13px;align-items:center}
+.sigrow svg{width:42px;height:42px;flex:none}
+.sigbar{width:2px;align-self:stretch;background:var(--gold);border-radius:2px}
+.signm{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:13.5px}
+.sigmt{color:var(--sub);font-size:10.5px;line-height:1.6}
+/* spinner + pattern */
+.spin{animation:sp 2.6s linear infinite;transform-origin:50% 50%}
+@keyframes sp{to{transform:rotate(360deg)}}
+.spinbox{display:flex;align-items:center;gap:14px;background:var(--plum);border-radius:16px;padding:18px 20px;color:#fff}
+.spinbox svg{width:44px;height:44px}
+.spinbox .st{font-size:12px;opacity:.85}
+.pat{height:170px;border-radius:16px;background-color:#2A0B40;background-size:64px 64px;border:1px solid var(--line)}
+.pat2{height:170px;border-radius:16px;background-color:#FBF7F0;background-size:56px 56px;border:1px solid var(--line)}
+/* notification */
+.notif{background:rgba(255,255,255,.94);border-radius:16px;padding:11px 13px;display:flex;gap:10px;align-items:flex-start;
+ box-shadow:0 8px 22px rgba(20,10,40,.18);max-width:290px}
+.notif .ios{width:32px;height:32px;border-radius:9px;box-shadow:none;flex:none}
+.notif b{font-size:11.5px;display:block}
+.notif span{font-size:11px;color:var(--sub);line-height:1.45;display:block;margin-top:1px}
+/* palette */
+.pal{display:flex;gap:10px;flex-wrap:wrap}
+.pw{width:86px}
+.pw i{display:block;height:56px;border-radius:12px;border:1px solid rgba(0,0,0,.06)}
+.pw b{display:block;font-size:10.5px;font-weight:600;margin-top:7px}
+.pw em{display:block;font-size:9.5px;color:var(--sub);font-style:normal;letter-spacing:.04em}
+/* dos donts */
+.dd{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:12px}
+.ddi{border:1px solid var(--line);border-radius:14px;padding:12px;text-align:center}
+.ddi .b{height:76px;display:flex;align-items:center;justify-content:center;margin-bottom:9px}
+.ddi .b svg{width:58px;height:58px}
+.ddi p{font-size:10.5px;color:var(--sub);line-height:1.45}
+.ddi .tag{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px}
+.ok .tag{color:#1B8A5A}.no .tag{color:#C0392B}
+.note{font-size:12.5px;color:var(--sub);margin-top:16px;line-height:1.6;padding-left:13px;border-left:2px solid var(--line)}
+.flex{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
+
+.seq{display:flex;flex-direction:column;gap:9px}
+.sq{display:flex;gap:11px;align-items:baseline;font-size:11.5px;color:var(--sub);line-height:1.45}
+.sq b{font-family:'Bricolage Grotesque',sans-serif;color:var(--ink);font-size:11px;
+ min-width:42px;letter-spacing:-.01em}
+.ctrl{display:flex;gap:7px;flex-wrap:wrap;margin-top:18px}
+.ctrl button{font-family:inherit;font-size:11px;font-weight:600;padding:7px 13px;border-radius:20px;
+ border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
+.ctrl button:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
+.splashload{background:radial-gradient(120% 90% at 50% 34%,#6B4593,#2A0B40 60%,#150525);
+ display:flex;flex-direction:column}
+.loadmid{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+.loadtx{font-size:11.5px;color:#D9C7EC}
+.inline-load{display:flex;align-items:center;gap:10px;background:var(--plum);color:#fff;
+ border-radius:12px;padding:10px 14px;font-size:11.5px}
+.inline-load.light{background:#fff;color:var(--ink);border:1px solid var(--line)}
+.inline-load svg{flex:none}
+
+@keyframes d1s00{
+ 0%,10.037%{stroke-dashoffset:15.783;animation-timing-function:linear}
+ 11.749%,100%{stroke-dashoffset:0}}
+@keyframes d1p00{
+ 0%,10.037%{offset-distance:0%;opacity:0}
+ 10.401%{offset-distance:21.2%;opacity:1;animation-timing-function:linear}
+ 11.749%{offset-distance:100%;opacity:1}
+ 12.84%,100%{offset-distance:100%;opacity:0}}
+@keyframes d1s01{
+ 0%,0.0%{stroke-dashoffset:92.541;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 10.037%,100%{stroke-dashoffset:0}}
+@keyframes d1p01{
+ 0%,0.0%{offset-distance:0%;opacity:0}
+ 0.364%{offset-distance:3.6%;opacity:1;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 10.037%{offset-distance:100%;opacity:1}
+ 11.128%,100%{offset-distance:100%;opacity:0}}
+@keyframes d1s10{
+ 0%,24.219%{stroke-dashoffset:15.783;animation-timing-function:linear}
+ 25.931%,100%{stroke-dashoffset:0}}
+@keyframes d1p10{
+ 0%,24.219%{offset-distance:0%;opacity:0}
+ 24.583%{offset-distance:21.2%;opacity:1;animation-timing-function:linear}
+ 25.931%{offset-distance:100%;opacity:1}
+ 27.022%,100%{offset-distance:100%;opacity:0}}
+@keyframes d1s11{
+ 0%,14.182%{stroke-dashoffset:92.541;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 24.219%,100%{stroke-dashoffset:0}}
+@keyframes d1p11{
+ 0%,14.182%{offset-distance:0%;opacity:0}
+ 14.545%{offset-distance:3.6%;opacity:1;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 24.219%{offset-distance:100%;opacity:1}
+ 25.31%,100%{offset-distance:100%;opacity:0}}
+@keyframes d1s20{
+ 0%,38.401%{stroke-dashoffset:15.783;animation-timing-function:linear}
+ 40.113%,100%{stroke-dashoffset:0}}
+@keyframes d1p20{
+ 0%,38.401%{offset-distance:0%;opacity:0}
+ 38.764%{offset-distance:21.2%;opacity:1;animation-timing-function:linear}
+ 40.113%{offset-distance:100%;opacity:1}
+ 41.203%,100%{offset-distance:100%;opacity:0}}
+@keyframes d1s21{
+ 0%,28.364%{stroke-dashoffset:92.541;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 38.401%,100%{stroke-dashoffset:0}}
+@keyframes d1p21{
+ 0%,28.364%{offset-distance:0%;opacity:0}
+ 28.727%{offset-distance:3.6%;opacity:1;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 38.401%{offset-distance:100%;opacity:1}
+ 39.492%,100%{offset-distance:100%;opacity:0}}
+@keyframes d1s30{
+ 0%,52.583%{stroke-dashoffset:15.783;animation-timing-function:linear}
+ 54.294%,100%{stroke-dashoffset:0}}
+@keyframes d1p30{
+ 0%,52.583%{offset-distance:0%;opacity:0}
+ 52.946%{offset-distance:21.2%;opacity:1;animation-timing-function:linear}
+ 54.294%{offset-distance:100%;opacity:1}
+ 55.385%,100%{offset-distance:100%;opacity:0}}
+@keyframes d1s31{
+ 0%,42.545%{stroke-dashoffset:92.541;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 52.583%,100%{stroke-dashoffset:0}}
+@keyframes d1p31{
+ 0%,42.545%{offset-distance:0%;opacity:0}
+ 42.909%{offset-distance:3.6%;opacity:1;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 52.583%{offset-distance:100%;opacity:1}
+ 53.673%,100%{offset-distance:100%;opacity:0}}
+@keyframes d1ctr{
+ 0%,57.091%{opacity:0;transform:scale(0)}
+ 59.345%{opacity:1;transform:scale(1.3)}
+ 60.727%,100%{opacity:1;transform:scale(1)}}
+@keyframes d1d0{
+ 0%,61.455%{opacity:0;transform:scale(0)}
+ 64.073%{opacity:1;transform:scale(1.35)}
+ 65.818%,100%{opacity:1;transform:scale(1)}}
+@keyframes d1d1{
+ 0%,64.364%{opacity:0;transform:scale(0)}
+ 66.982%{opacity:1;transform:scale(1.35)}
+ 68.727%,100%{opacity:1;transform:scale(1)}}
+@keyframes d1d2{
+ 0%,67.273%{opacity:0;transform:scale(0)}
+ 69.891%{opacity:1;transform:scale(1.35)}
+ 71.636%,100%{opacity:1;transform:scale(1)}}
+@keyframes d1d3{
+ 0%,70.182%{opacity:0;transform:scale(0)}
+ 72.8%{opacity:1;transform:scale(1.35)}
+ 74.545%,100%{opacity:1;transform:scale(1)}}
+@keyframes d1fade{
+ 0%,91.818%{opacity:1} 100%{opacity:0}}
+.d1g{animation:d1fade var(--cyc,5.5s) linear infinite}
+.d1g path{fill:none;stroke-width:7.2;stroke-linecap:round;stroke-linejoin:round}
+.d1g circle{transform-box:fill-box;transform-origin:center}
+.d1s00{stroke-dasharray:15.783;stroke-dashoffset:15.783;animation:d1s00 var(--cyc,5.5s) linear infinite}
+.d1p00{offset-path:path('M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823');offset-rotate:0deg;opacity:0;animation:d1p00 var(--cyc,5.5s) linear infinite}
+.d1s01{stroke-dasharray:92.541;stroke-dashoffset:92.541;animation:d1s01 var(--cyc,5.5s) linear infinite}
+.d1p01{offset-path:path('M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000');offset-rotate:0deg;opacity:0;animation:d1p01 var(--cyc,5.5s) linear infinite}
+.d1s10{stroke-dasharray:15.783;stroke-dashoffset:15.783;animation:d1s10 var(--cyc,5.5s) linear infinite}
+.d1p10{offset-path:path('M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823');offset-rotate:0deg;opacity:0;animation:d1p10 var(--cyc,5.5s) linear infinite}
+.d1s11{stroke-dasharray:92.541;stroke-dashoffset:92.541;animation:d1s11 var(--cyc,5.5s) linear infinite}
+.d1p11{offset-path:path('M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000');offset-rotate:0deg;opacity:0;animation:d1p11 var(--cyc,5.5s) linear infinite}
+.d1s20{stroke-dasharray:15.783;stroke-dashoffset:15.783;animation:d1s20 var(--cyc,5.5s) linear infinite}
+.d1p20{offset-path:path('M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823');offset-rotate:0deg;opacity:0;animation:d1p20 var(--cyc,5.5s) linear infinite}
+.d1s21{stroke-dasharray:92.541;stroke-dashoffset:92.541;animation:d1s21 var(--cyc,5.5s) linear infinite}
+.d1p21{offset-path:path('M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000');offset-rotate:0deg;opacity:0;animation:d1p21 var(--cyc,5.5s) linear infinite}
+.d1s30{stroke-dasharray:15.783;stroke-dashoffset:15.783;animation:d1s30 var(--cyc,5.5s) linear infinite}
+.d1p30{offset-path:path('M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823');offset-rotate:0deg;opacity:0;animation:d1p30 var(--cyc,5.5s) linear infinite}
+.d1s31{stroke-dasharray:92.541;stroke-dashoffset:92.541;animation:d1s31 var(--cyc,5.5s) linear infinite}
+.d1p31{offset-path:path('M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000');offset-rotate:0deg;opacity:0;animation:d1p31 var(--cyc,5.5s) linear infinite}
+.d1ctr{opacity:0;animation:d1ctr var(--cyc,5.5s) linear infinite}
+.d1d0{opacity:0;animation:d1d0 var(--cyc,5.5s) linear infinite}
+.d1d1{opacity:0;animation:d1d1 var(--cyc,5.5s) linear infinite}
+.d1d2{opacity:0;animation:d1d2 var(--cyc,5.5s) linear infinite}
+.d1d3{opacity:0;animation:d1d3 var(--cyc,5.5s) linear infinite}
+@keyframes d2s00{
+ 0%,10.037%{stroke-dashoffset:15.783;animation-timing-function:linear}
+ 11.749%,100%{stroke-dashoffset:0}}
+@keyframes d2s01{
+ 0%,0.0%{stroke-dashoffset:92.541;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 10.037%,100%{stroke-dashoffset:0}}
+@keyframes d2s10{
+ 0%,24.219%{stroke-dashoffset:15.783;animation-timing-function:linear}
+ 25.931%,100%{stroke-dashoffset:0}}
+@keyframes d2s11{
+ 0%,14.182%{stroke-dashoffset:92.541;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 24.219%,100%{stroke-dashoffset:0}}
+@keyframes d2s20{
+ 0%,38.401%{stroke-dashoffset:15.783;animation-timing-function:linear}
+ 40.113%,100%{stroke-dashoffset:0}}
+@keyframes d2s21{
+ 0%,28.364%{stroke-dashoffset:92.541;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 38.401%,100%{stroke-dashoffset:0}}
+@keyframes d2s30{
+ 0%,52.583%{stroke-dashoffset:15.783;animation-timing-function:linear}
+ 54.294%,100%{stroke-dashoffset:0}}
+@keyframes d2s31{
+ 0%,42.545%{stroke-dashoffset:92.541;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 52.583%,100%{stroke-dashoffset:0}}
+@keyframes d2ctr{
+ 0%,57.091%{opacity:0;transform:scale(0)}
+ 59.345%{opacity:1;transform:scale(1.3)}
+ 60.727%,100%{opacity:1;transform:scale(1)}}
+@keyframes d2d0{
+ 0%,61.455%{opacity:0;transform:scale(0)}
+ 64.073%{opacity:1;transform:scale(1.35)}
+ 65.818%,100%{opacity:1;transform:scale(1)}}
+@keyframes d2d1{
+ 0%,64.364%{opacity:0;transform:scale(0)}
+ 66.982%{opacity:1;transform:scale(1.35)}
+ 68.727%,100%{opacity:1;transform:scale(1)}}
+@keyframes d2d2{
+ 0%,67.273%{opacity:0;transform:scale(0)}
+ 69.891%{opacity:1;transform:scale(1.35)}
+ 71.636%,100%{opacity:1;transform:scale(1)}}
+@keyframes d2d3{
+ 0%,70.182%{opacity:0;transform:scale(0)}
+ 72.8%{opacity:1;transform:scale(1.35)}
+ 74.545%,100%{opacity:1;transform:scale(1)}}
+@keyframes d2fade{
+ 0%,91.818%{opacity:1} 100%{opacity:0}}
+.d2g{animation:d2fade var(--cyc,5.5s) linear infinite}
+.d2g path{fill:none;stroke-width:7.2;stroke-linecap:round;stroke-linejoin:round}
+.d2g circle{transform-box:fill-box;transform-origin:center}
+.d2s00{stroke-dasharray:15.783;stroke-dashoffset:15.783;animation:d2s00 var(--cyc,5.5s) linear infinite}
+.d2s01{stroke-dasharray:92.541;stroke-dashoffset:92.541;animation:d2s01 var(--cyc,5.5s) linear infinite}
+.d2s10{stroke-dasharray:15.783;stroke-dashoffset:15.783;animation:d2s10 var(--cyc,5.5s) linear infinite}
+.d2s11{stroke-dasharray:92.541;stroke-dashoffset:92.541;animation:d2s11 var(--cyc,5.5s) linear infinite}
+.d2s20{stroke-dasharray:15.783;stroke-dashoffset:15.783;animation:d2s20 var(--cyc,5.5s) linear infinite}
+.d2s21{stroke-dasharray:92.541;stroke-dashoffset:92.541;animation:d2s21 var(--cyc,5.5s) linear infinite}
+.d2s30{stroke-dasharray:15.783;stroke-dashoffset:15.783;animation:d2s30 var(--cyc,5.5s) linear infinite}
+.d2s31{stroke-dasharray:92.541;stroke-dashoffset:92.541;animation:d2s31 var(--cyc,5.5s) linear infinite}
+.d2ctr{opacity:0;animation:d2ctr var(--cyc,5.5s) linear infinite}
+.d2d0{opacity:0;animation:d2d0 var(--cyc,5.5s) linear infinite}
+.d2d1{opacity:0;animation:d2d1 var(--cyc,5.5s) linear infinite}
+.d2d2{opacity:0;animation:d2d2 var(--cyc,5.5s) linear infinite}
+.d2d3{opacity:0;animation:d2d3 var(--cyc,5.5s) linear infinite}
+@keyframes d3s00{
+ 0%,10.037%{stroke-dashoffset:15.783;animation-timing-function:linear}
+ 11.749%,100%{stroke-dashoffset:0}}
+@keyframes d3p00{
+ 0%,10.037%{offset-distance:0%;opacity:0}
+ 10.401%{offset-distance:21.2%;opacity:1;animation-timing-function:linear}
+ 11.749%{offset-distance:100%;opacity:1}
+ 12.84%,100%{offset-distance:100%;opacity:0}}
+@keyframes d3s01{
+ 0%,0.0%{stroke-dashoffset:92.541;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 10.037%,100%{stroke-dashoffset:0}}
+@keyframes d3p01{
+ 0%,0.0%{offset-distance:0%;opacity:0}
+ 0.364%{offset-distance:3.6%;opacity:1;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 10.037%{offset-distance:100%;opacity:1}
+ 11.128%,100%{offset-distance:100%;opacity:0}}
+@keyframes d3s10{
+ 0%,24.219%{stroke-dashoffset:15.783;animation-timing-function:linear}
+ 25.931%,100%{stroke-dashoffset:0}}
+@keyframes d3p10{
+ 0%,24.219%{offset-distance:0%;opacity:0}
+ 24.583%{offset-distance:21.2%;opacity:1;animation-timing-function:linear}
+ 25.931%{offset-distance:100%;opacity:1}
+ 27.022%,100%{offset-distance:100%;opacity:0}}
+@keyframes d3s11{
+ 0%,14.182%{stroke-dashoffset:92.541;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 24.219%,100%{stroke-dashoffset:0}}
+@keyframes d3p11{
+ 0%,14.182%{offset-distance:0%;opacity:0}
+ 14.545%{offset-distance:3.6%;opacity:1;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 24.219%{offset-distance:100%;opacity:1}
+ 25.31%,100%{offset-distance:100%;opacity:0}}
+@keyframes d3s20{
+ 0%,38.401%{stroke-dashoffset:15.783;animation-timing-function:linear}
+ 40.113%,100%{stroke-dashoffset:0}}
+@keyframes d3p20{
+ 0%,38.401%{offset-distance:0%;opacity:0}
+ 38.764%{offset-distance:21.2%;opacity:1;animation-timing-function:linear}
+ 40.113%{offset-distance:100%;opacity:1}
+ 41.203%,100%{offset-distance:100%;opacity:0}}
+@keyframes d3s21{
+ 0%,28.364%{stroke-dashoffset:92.541;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 38.401%,100%{stroke-dashoffset:0}}
+@keyframes d3p21{
+ 0%,28.364%{offset-distance:0%;opacity:0}
+ 28.727%{offset-distance:3.6%;opacity:1;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 38.401%{offset-distance:100%;opacity:1}
+ 39.492%,100%{offset-distance:100%;opacity:0}}
+@keyframes d3s30{
+ 0%,52.583%{stroke-dashoffset:15.783;animation-timing-function:linear}
+ 54.294%,100%{stroke-dashoffset:0}}
+@keyframes d3p30{
+ 0%,52.583%{offset-distance:0%;opacity:0}
+ 52.946%{offset-distance:21.2%;opacity:1;animation-timing-function:linear}
+ 54.294%{offset-distance:100%;opacity:1}
+ 55.385%,100%{offset-distance:100%;opacity:0}}
+@keyframes d3s31{
+ 0%,42.545%{stroke-dashoffset:92.541;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 52.583%,100%{stroke-dashoffset:0}}
+@keyframes d3p31{
+ 0%,42.545%{offset-distance:0%;opacity:0}
+ 42.909%{offset-distance:3.6%;opacity:1;animation-timing-function:cubic-bezier(.5,0,.72,.62)}
+ 52.583%{offset-distance:100%;opacity:1}
+ 53.673%,100%{offset-distance:100%;opacity:0}}
+@keyframes d3ctr{
+ 0%,57.091%{opacity:0;transform:scale(0)}
+ 59.345%{opacity:1;transform:scale(1.3)}
+ 60.727%,100%{opacity:1;transform:scale(1)}}
+@keyframes d3d0{
+ 0%,61.455%{opacity:0;transform:scale(0)}
+ 64.073%{opacity:1;transform:scale(1.35)}
+ 65.818%,100%{opacity:1;transform:scale(1)}}
+@keyframes d3d1{
+ 0%,64.364%{opacity:0;transform:scale(0)}
+ 66.982%{opacity:1;transform:scale(1.35)}
+ 68.727%,100%{opacity:1;transform:scale(1)}}
+@keyframes d3d2{
+ 0%,67.273%{opacity:0;transform:scale(0)}
+ 69.891%{opacity:1;transform:scale(1.35)}
+ 71.636%,100%{opacity:1;transform:scale(1)}}
+@keyframes d3d3{
+ 0%,70.182%{opacity:0;transform:scale(0)}
+ 72.8%{opacity:1;transform:scale(1.35)}
+ 74.545%,100%{opacity:1;transform:scale(1)}}
+@keyframes d3fade{
+ 0%,91.818%{opacity:1} 100%{opacity:0}}
+.d3g{animation:d3fade var(--cyc,5.5s) linear infinite}
+.d3g path{fill:none;stroke-width:7.2;stroke-linecap:round;stroke-linejoin:round}
+.d3g circle{transform-box:fill-box;transform-origin:center}
+.d3s00{stroke-dasharray:15.783;stroke-dashoffset:15.783;animation:d3s00 var(--cyc,5.5s) linear infinite}
+.d3p00{offset-path:path('M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823');offset-rotate:0deg;opacity:0;animation:d3p00 var(--cyc,5.5s) linear infinite}
+.d3s01{stroke-dasharray:92.541;stroke-dashoffset:92.541;animation:d3s01 var(--cyc,5.5s) linear infinite}
+.d3p01{offset-path:path('M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000');offset-rotate:0deg;opacity:0;animation:d3p01 var(--cyc,5.5s) linear infinite}
+.d3s10{stroke-dasharray:15.783;stroke-dashoffset:15.783;animation:d3s10 var(--cyc,5.5s) linear infinite}
+.d3p10{offset-path:path('M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823');offset-rotate:0deg;opacity:0;animation:d3p10 var(--cyc,5.5s) linear infinite}
+.d3s11{stroke-dasharray:92.541;stroke-dashoffset:92.541;animation:d3s11 var(--cyc,5.5s) linear infinite}
+.d3p11{offset-path:path('M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000');offset-rotate:0deg;opacity:0;animation:d3p11 var(--cyc,5.5s) linear infinite}
+.d3s20{stroke-dasharray:15.783;stroke-dashoffset:15.783;animation:d3s20 var(--cyc,5.5s) linear infinite}
+.d3p20{offset-path:path('M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823');offset-rotate:0deg;opacity:0;animation:d3p20 var(--cyc,5.5s) linear infinite}
+.d3s21{stroke-dasharray:92.541;stroke-dashoffset:92.541;animation:d3s21 var(--cyc,5.5s) linear infinite}
+.d3p21{offset-path:path('M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000');offset-rotate:0deg;opacity:0;animation:d3p21 var(--cyc,5.5s) linear infinite}
+.d3s30{stroke-dasharray:15.783;stroke-dashoffset:15.783;animation:d3s30 var(--cyc,5.5s) linear infinite}
+.d3p30{offset-path:path('M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823');offset-rotate:0deg;opacity:0;animation:d3p30 var(--cyc,5.5s) linear infinite}
+.d3s31{stroke-dasharray:92.541;stroke-dashoffset:92.541;animation:d3s31 var(--cyc,5.5s) linear infinite}
+.d3p31{offset-path:path('M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000');offset-rotate:0deg;opacity:0;animation:d3p31 var(--cyc,5.5s) linear infinite}
+.d3ctr{opacity:0;animation:d3ctr var(--cyc,5.5s) linear infinite}
+.d3d0{opacity:0;animation:d3d0 var(--cyc,5.5s) linear infinite}
+.d3d1{opacity:0;animation:d3d1 var(--cyc,5.5s) linear infinite}
+.d3d2{opacity:0;animation:d3d2 var(--cyc,5.5s) linear infinite}
+.d3d3{opacity:0;animation:d3d3 var(--cyc,5.5s) linear infinite}</style></head><body>
+
+<div class="eyebrow">ManaSplit · Muggu mark · perfected + applied</div>
+<h1>Mana<span class="g">Split</span></h1>
+<p class="lede">You were right that something was off. The old mark wasn't woven — it was stacked, so each
+petal sat arbitrarily on top of the last and the gold one ended up buried under everything, chopped into
+three pieces. This is the same drawing, rebuilt as a true kolam interlace.</p>
+
+<div class="rule"></div>
+<h2>What was wrong</h2>
+<section class="card">
+  <div class="flex" style="gap:28px">
+    <div class="tw"><div class="tile t-w" style="width:150px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div><div class="cap">Before — stacked</div></div>
+    <div class="tw"><div class="tile t-w" style="width:150px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div><div class="cap">After — woven</div></div>
+    <div style="flex:1;min-width:250px">
+      <div class="ttl">A stack, not a weave</div>
+      <p class="txt">Measured off your screenshot: the gold petal was drawn first, so all three ink petals
+      crossed over it and broke it into three separate fragments. The left petal sat on top of everything.
+      Rotate the old mark 90° and the line structure no longer matches itself.</p>
+      <p class="txt" style="margin-top:10px">The fix is a <strong>pinwheel interlace</strong>: every petal passes
+      over its clockwise neighbour and under its anti-clockwise one. Each petal now breaks exactly once, at
+      exactly the same point along its own curve — so the whole mark is identical under a 90° turn, and the
+      gold petal is a single continuous ribbon like every other.</p>
+      <div class="metric">
+        <div>Old — 90° rotation<b class="bad">58.9%</b>line mismatch</div>
+        <div>New — 90° rotation<b>0.08%</b>line mismatch</div>
+        <div>New — mirrored<b>13.5%</b>proves a real weave</div>
+      </div>
+    </div>
+  </div>
+  <p class="note">The 13.5% mirror figure is the point, not a flaw: a genuine over-under weave is chiral,
+  so it <em>should</em> differ from its reflection. The old mark reflected almost perfectly, which is what
+  gave it that flat, slightly wrong look.</p>
+</section>
+
+<div class="rule"></div>
+<h2>Construction</h2>
+<div class="grid g2">
+  <section class="card">
+    <div class="ttl">Geometry</div>
+    <p class="txt">One petal, rotated 4×90° about the centre. Adjacent petals cross at exactly one point,
+    26.3 units from centre on each diagonal (circled red). The break is cut at 20.6% along each petal's
+    path — the same number for all four.</p>
+    <div style="display:flex;justify-content:center;margin-top:14px"><svg width='250' height='250' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><rect x="4" y="4" width="112" height="112" rx="10" fill="none" stroke="#D9CFE6" stroke-width="0.7" stroke-dasharray="3 3"/><circle cx="60" cy="60" r="48" fill="none" stroke="#D9CFE6" stroke-width="0.7"/><circle cx="60" cy="60" r="41" fill="none" stroke="#C9B6E0" stroke-width="0.7" stroke-dasharray="2 2"/><line x1="60" y1="4" x2="60" y2="116" stroke="#D9CFE6" stroke-width="0.7"/><line x1="4" y1="60" x2="116" y2="60" stroke="#D9CFE6" stroke-width="0.7"/><line x1="20" y1="20" x2="100" y2="100" stroke="#E4DCEE" stroke-width="0.7"/><line x1="100" y1="20" x2="20" y2="100" stroke="#E4DCEE" stroke-width="0.7"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="78.60" cy="41.40" r="8" fill="none" stroke="#E23E2B" stroke-width="0.8"/><circle cx="78.60" cy="78.60" r="8" fill="none" stroke="#E23E2B" stroke-width="0.8"/><circle cx="41.40" cy="78.60" r="8" fill="none" stroke="#E23E2B" stroke-width="0.8"/><circle cx="41.40" cy="41.40" r="8" fill="none" stroke="#E23E2B" stroke-width="0.8"/></svg></div>
+  </section>
+  <section class="card">
+    <div class="ttl">Clear space</div>
+    <p class="txt">Keep free space of <strong>x</strong> on all sides, where x is the diameter of one pulli dot.
+    Never crowd the mark closer than this, and never set it smaller than 20px with the dots showing.</p>
+    <div style="display:flex;justify-content:center;margin-top:14px"><svg width='250' height='250' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><rect x="2" y="2" width="116" height="116" fill="#F4EFF8"/><rect x="20" y="20" width="80" height="80" fill="#fff" stroke="#C9B6E0" stroke-width="0.8" stroke-dasharray="3 2"/><g transform="translate(20,20) scale(0.667)"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></g><circle cx="12" cy="12" r="5.5" fill="#E8A13D"/><text x="12" y="14.6" font-size="6" font-family="Inter,sans-serif" font-weight="700" fill="#3B1259" text-anchor="middle">x</text></svg></div>
+  </section>
+</div>
+
+<div class="rule"></div>
+<h2>The mark</h2>
+<section class="card">
+  <div class="tiles">
+    <div class="tw"><div class="tile t-w"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div><div class="cap">Primary</div></div>
+    <div class="tw"><div class="tile t-p"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div><div class="cap">Symmetric</div></div>
+    <div class="tw"><div class="tile t-d"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#F5C15C" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E9D5FF"/><circle cx="88.99" cy="88.99" r="4.2" fill="#F5C15C"/><circle cx="31.01" cy="88.99" r="4.2" fill="#F5C15C"/><circle cx="31.01" cy="31.01" r="4.2" fill="#F5C15C"/><circle cx="88.99" cy="31.01" r="4.2" fill="#F5C15C"/></svg></div><div class="cap">Reversed</div></div>
+    <div class="tw"><div class="tile t-deep"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#F5C15C"/><circle cx="31.01" cy="88.99" r="4.2" fill="#F5C15C"/><circle cx="31.01" cy="31.01" r="4.2" fill="#F5C15C"/><circle cx="88.99" cy="31.01" r="4.2" fill="#F5C15C"/></svg></div><div class="cap">On deep plum</div></div>
+    <div class="tw"><div class="tile t-w"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#3B1259"/><circle cx="31.01" cy="88.99" r="4.2" fill="#3B1259"/><circle cx="31.01" cy="31.01" r="4.2" fill="#3B1259"/><circle cx="88.99" cy="31.01" r="4.2" fill="#3B1259"/></svg></div><div class="cap">Mono ink</div></div>
+    <div class="tw"><div class="tile t-gold"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#fff" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#fff" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#fff" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#fff" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#fff"/><circle cx="88.99" cy="88.99" r="4.2" fill="#fff"/><circle cx="31.01" cy="88.99" r="4.2" fill="#fff"/><circle cx="31.01" cy="31.01" r="4.2" fill="#fff"/><circle cx="88.99" cy="31.01" r="4.2" fill="#fff"/></svg></div><div class="cap">Mono white</div></div>
+  </div>
+  <p class="note"><strong>Primary</strong> carries one gold petal — your share of the whole — on an ink centre.
+  <strong>Symmetric</strong> drops the accent and puts the gold in the middle instead; use it for app icons,
+  favicons and repeating patterns, where perfect four-fold balance matters more than the story.</p>
+</section>
+
+<div class="rule"></div>
+<h2>Lockups</h2>
+<section class="card">
+  <div class="flex" style="gap:44px;align-items:center">
+    <div>
+      <div class="lock"><svg width='54' height='54' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg><div class="word" style="font-size:34px;color:#3B1259">Mana<span class="l" style="color:#E8A13D">Split</span></div></div>
+      <div class="cap" style="text-align:left;margin-top:11px">Horizontal — default</div>
+    </div>
+    <div class="stackl">
+      <svg width='64' height='64' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg>
+      <div class="word" style="font-size:27px;color:#3B1259">Mana<span class="l" style="color:#E8A13D">Split</span></div>
+      <div class="te">మన</div>
+      <div class="cap">Stacked</div>
+    </div>
+    <div class="stackl">
+      <svg width='58' height='58' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg>
+      <div class="cap">Mark alone</div>
+    </div>
+  </div>
+</section>
+
+<div class="rule"></div>
+<h2>Scale</h2>
+<section class="card">
+  <div class="ladder">
+    <div class="s"><svg width='120' height='120' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg><div class="cap">120px</div></div>
+    <div class="s"><svg width='72' height='72' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg><div class="cap">72px</div></div>
+    <div class="s"><svg width='48' height='48' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg><div class="cap">48px</div></div>
+    <div class="s"><svg width='32' height='32' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg><div class="cap">32px</div></div>
+    <div class="s"><svg width='24' height='24' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#3B1259" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14.27 25.46 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14.27 25.46 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14.27 25.46 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14.27 25.46 130.76"/><circle cx="60" cy="60" r="7" fill="#3B1259"/></svg><div class="cap">24px · simplified</div></div>
+    <div class="s"><svg width='16' height='16' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#3B1259" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14.27 25.46 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14.27 25.46 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14.27 25.46 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14.27 25.46 130.76"/><circle cx="60" cy="60" r="7" fill="#3B1259"/></svg><div class="cap">16px · favicon</div></div>
+  </div>
+  <p class="note">Below about 28px the dots and the weave gaps stop resolving. Switch to the simplified
+  cut — no dots, heavier stroke, tighter breaks — rather than shrinking the full mark.</p>
+</section>
+
+<div class="rule"></div>
+<h2>Product</h2>
+<section class="card">
+  <div class="flex">
+    <div class="tw">
+      <div class="phone"><div class="pscr home">
+        <div class="pstat"><span>9:41</span><span>▮▮▮ ⌁</span></div>
+        <div class="hgrid">
+          <div class="hap"><div class="ios " style="width:42px;height:42px;background:#2A0B40"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div><span>ManaSplit</span></div>
+          <div class="hap"><div class="hic" style="background:#C9C4D6"></div><span></span></div><div class="hap"><div class="hic" style="background:#D6CFC2"></div><span></span></div><div class="hap"><div class="hic" style="background:#BFCBD6"></div><span></span></div><div class="hap"><div class="hic" style="background:#D2C6D6"></div><span></span></div><div class="hap"><div class="hic" style="background:#C6D6CB"></div><span></span></div><div class="hap"><div class="hic" style="background:#D6CBC0"></div><span></span></div><div class="hap"><div class="hic" style="background:#CDC9D9"></div><span></span></div><div class="hap"><div class="hic" style="background:#C4CEDA"></div><span></span></div><div class="hap"><div class="hic" style="background:#D8CCC4"></div><span></span></div><div class="hap"><div class="hic" style="background:#C8D2C6"></div><span></span></div><div class="hap"><div class="hic" style="background:#D0C8DA"></div><span></span></div>
+        </div>
+        <div class="dock"><div class="ios " style="width:38px;height:38px;background:#2A0B40"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div><div class="hic" style="background:#C9C4D6"></div>
+          <div class="hic" style="background:#D6CFC2"></div><div class="hic" style="background:#BFCBD6"></div></div>
+      </div></div>
+      <div class="cap">Home screen</div>
+    </div>
+
+    <div class="tw">
+      <div class="phone"><div class="pscr"><div class="appui">
+        <div class="aunav">
+          <div class="pstat" style="padding:2px 2px 8px"><span>9:41</span><span>▮▮▮ ⌁</span></div>
+          <div class="aurow"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#fff" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#fff" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#fff" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#fff" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#fff"/><circle cx="88.99" cy="88.99" r="4.2" fill="#fff"/><circle cx="31.01" cy="88.99" r="4.2" fill="#fff"/><circle cx="31.01" cy="31.01" r="4.2" fill="#fff"/><circle cx="88.99" cy="31.01" r="4.2" fill="#fff"/></svg><div class="autitle">Goa Trip</div></div>
+          <div class="aubal"><div class="k">You are owed</div><div class="v">₹<em>615</em></div></div>
+        </div>
+        <div class="aulist"><div class="auit"><div class="auav" style="background:#7A4AA8">AK</div><div class="auinfo"><b>Dinner at Bawarchi</b><span>Akhila paid · split 4 ways</span></div><div class="auamt pos">+₹640</div></div><div class="auit"><div class="auav" style="background:#C0392B">RV</div><div class="auinfo"><b>Cab to airport</b><span>You paid · split 3 ways</span></div><div class="auamt pos">+₹410</div></div><div class="auit"><div class="auav" style="background:#1B8A5A">SM</div><div class="auinfo"><b>Beach shack lunch</b><span>Sriram paid · split 4 ways</span></div><div class="auamt neg">−₹285</div></div><div class="auit"><div class="auav" style="background:#7A4AA8">AK</div><div class="auinfo"><b>Scooter rental</b><span>Akhila paid · split 2 ways</span></div><div class="auamt neg">−₹150</div></div></div>
+        <div class="autab"><i class="on"></i><i></i><i></i><i></i></div>
+      </div></div></div>
+      <div class="cap">In-app</div>
+    </div>
+
+    <div class="tw">
+      <div class="splash"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg>
+        <div class="word" style="font-size:25px;color:#fff">Mana<span class="l" style="color:#E8A13D">Split</span></div>
+        <div class="te" style="color:#C9B6E0">మన</div>
+      </div>
+      <div class="cap">Splash</div>
+    </div>
+
+    <div class="tw" style="justify-content:center;gap:14px">
+      <div class="ios " style="width:104px;height:104px;background:#2A0B40"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div>
+      <div class="cap">iOS</div>
+      <div class="ios rnd " style="width:104px;height:104px;background:linear-gradient(150deg,#4A1B6E,#2A0B40)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div>
+      <div class="cap">Android</div>
+    </div>
+  </div>
+
+  <div style="margin-top:22px" class="flex">
+    <div class="tw"><div class="notif"><div class="ios " style="width:32px;height:32px;background:#2A0B40"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div>
+      <div><b>ManaSplit</b><span>Akhila added “Dinner at Bawarchi” — you owe ₹640</span></div></div>
+      <div class="cap" style="text-align:left">Push notification</div></div>
+    <div class="tw"><div class="spinbox"><svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg"><g class="d3g"><g transform="rotate(0 60 60)"><path class="d3s00" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#F5C15C"/><path class="d3s01" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#F5C15C"/><circle class="d3p00" r="3.1" fill="#F5C15C"/><circle class="d3p01" r="3.1" fill="#F5C15C"/></g><g transform="rotate(90 60 60)"><path class="d3s10" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E9D5FF"/><path class="d3s11" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E9D5FF"/><circle class="d3p10" r="3.1" fill="#E9D5FF"/><circle class="d3p11" r="3.1" fill="#E9D5FF"/></g><g transform="rotate(180 60 60)"><path class="d3s20" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E9D5FF"/><path class="d3s21" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E9D5FF"/><circle class="d3p20" r="3.1" fill="#E9D5FF"/><circle class="d3p21" r="3.1" fill="#E9D5FF"/></g><g transform="rotate(270 60 60)"><path class="d3s30" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E9D5FF"/><path class="d3s31" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E9D5FF"/><circle class="d3p30" r="3.1" fill="#E9D5FF"/><circle class="d3p31" r="3.1" fill="#E9D5FF"/></g><circle class="d3ctr" cx="60" cy="60" r="8.5" fill="#E9D5FF"/><circle class="d3d0" cx="88.99" cy="31.01" r="4.2" fill="#F5C15C"/><circle class="d3d1" cx="88.99" cy="88.99" r="4.2" fill="#F5C15C"/><circle class="d3d2" cx="31.01" cy="88.99" r="4.2" fill="#F5C15C"/><circle class="d3d3" cx="31.01" cy="31.01" r="4.2" fill="#F5C15C"/></g></svg>
+      <div><div style="font-weight:600;font-size:13px">Settling up…</div>
+      <div class="st">The muggu draws itself, petal by petal, then the dots</div></div></div>
+      <div class="cap" style="text-align:left">Loading state</div></div>
+  </div>
+</section>
+
+<div class="rule"></div>
+<h2>Drawing the muggu</h2>
+<section class="card">
+  <div class="ttl">Hand-drawn, not spun</div>
+  <p class="txt">A muggu is laid down by hand, one continuous stroke at a time, and the pulli dots are
+  pressed in as it goes. So the loader draws: each petal opens at the crown, sweeps over the top, comes
+  down the far side into the centre and carries straight on into the short inner stroke — one unbroken
+  pen movement — before slipping under its neighbour to close the loop. Four petals, then the centre,
+  then the four dots, one after another.</p>
+
+  <div class="flex" id="drawstage" style="margin-top:22px;align-items:flex-start;gap:30px">
+    <div class="tw">
+      <div class="tile t-w" style="width:230px"><svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg"><g class="d1g"><g transform="rotate(0 60 60)"><path class="d1s00" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E8A13D"/><path class="d1s01" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E8A13D"/><circle class="d1p00" r="3.1" fill="#E8A13D"/><circle class="d1p01" r="3.1" fill="#E8A13D"/></g><g transform="rotate(90 60 60)"><path class="d1s10" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#3B1259"/><path class="d1s11" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#3B1259"/><circle class="d1p10" r="3.1" fill="#3B1259"/><circle class="d1p11" r="3.1" fill="#3B1259"/></g><g transform="rotate(180 60 60)"><path class="d1s20" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#3B1259"/><path class="d1s21" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#3B1259"/><circle class="d1p20" r="3.1" fill="#3B1259"/><circle class="d1p21" r="3.1" fill="#3B1259"/></g><g transform="rotate(270 60 60)"><path class="d1s30" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#3B1259"/><path class="d1s31" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#3B1259"/><circle class="d1p30" r="3.1" fill="#3B1259"/><circle class="d1p31" r="3.1" fill="#3B1259"/></g><circle class="d1ctr" cx="60" cy="60" r="8.5" fill="#3B1259"/><circle class="d1d0" cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/><circle class="d1d1" cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle class="d1d2" cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle class="d1d3" cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/></g></svg></div>
+      <div class="cap">With pen · onboarding &amp; splash</div>
+    </div>
+    <div class="tw">
+      <div class="tile t-w" style="width:170px"><svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg"><g class="d2g"><g transform="rotate(0 60 60)"><path class="d2s00" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E8A13D"/><path class="d2s01" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E8A13D"/></g><g transform="rotate(90 60 60)"><path class="d2s10" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#3B1259"/><path class="d2s11" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#3B1259"/></g><g transform="rotate(180 60 60)"><path class="d2s20" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#3B1259"/><path class="d2s21" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#3B1259"/></g><g transform="rotate(270 60 60)"><path class="d2s30" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#3B1259"/><path class="d2s31" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#3B1259"/></g><circle class="d2ctr" cx="60" cy="60" r="8.5" fill="#3B1259"/><circle class="d2d0" cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/><circle class="d2d1" cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle class="d2d2" cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle class="d2d3" cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/></g></svg></div>
+      <div class="cap">Clean · production loader</div>
+    </div>
+    <div class="tw">
+      <div class="tile t-d" style="width:170px"><svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg"><g class="d3g"><g transform="rotate(0 60 60)"><path class="d3s00" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#F5C15C"/><path class="d3s01" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#F5C15C"/><circle class="d3p00" r="3.1" fill="#F5C15C"/><circle class="d3p01" r="3.1" fill="#F5C15C"/></g><g transform="rotate(90 60 60)"><path class="d3s10" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E9D5FF"/><path class="d3s11" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E9D5FF"/><circle class="d3p10" r="3.1" fill="#E9D5FF"/><circle class="d3p11" r="3.1" fill="#E9D5FF"/></g><g transform="rotate(180 60 60)"><path class="d3s20" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E9D5FF"/><path class="d3s21" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E9D5FF"/><circle class="d3p20" r="3.1" fill="#E9D5FF"/><circle class="d3p21" r="3.1" fill="#E9D5FF"/></g><g transform="rotate(270 60 60)"><path class="d3s30" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E9D5FF"/><path class="d3s31" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E9D5FF"/><circle class="d3p30" r="3.1" fill="#E9D5FF"/><circle class="d3p31" r="3.1" fill="#E9D5FF"/></g><circle class="d3ctr" cx="60" cy="60" r="8.5" fill="#E9D5FF"/><circle class="d3d0" cx="88.99" cy="31.01" r="4.2" fill="#F5C15C"/><circle class="d3d1" cx="88.99" cy="88.99" r="4.2" fill="#F5C15C"/><circle class="d3d2" cx="31.01" cy="88.99" r="4.2" fill="#F5C15C"/><circle class="d3d3" cx="31.01" cy="31.01" r="4.2" fill="#F5C15C"/></g></svg></div>
+      <div class="cap">Reversed</div>
+    </div>
+    <div style="flex:1;min-width:210px">
+      <div class="seq">
+        <div class="sq"><b>0.00s</b><span>the pen lands on the crown of petal one and sweeps over the top</span></div>
+        <div class="sq"><b>0.55s</b><span>rides down the far side and arrives at the centre</span></div>
+        <div class="sq"><b>0.65s</b><span>carries straight on into the short inner stroke — no lift, no jump</span></div>
+        <div class="sq"><b>0.78s</b><span>slips under its neighbour to close the loop; petal two begins</span></div>
+        <div class="sq"><b>3.12s</b><span>fourth petal lands; the centre pulli seals the knot</span></div>
+        <div class="sq"><b>3.38s</b><span>four dots pressed in clockwise from top-right</span></div>
+      </div>
+      <div class="ctrl">
+        <button onclick="replay()">Replay</button>
+        <button onclick="spd('4s')">Fast</button>
+        <button onclick="spd('5.5s')">Normal</button>
+        <button onclick="spd('8s')">Slow</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex" style="margin-top:26px">
+    <div class="tw">
+      <div class="phone"><div class="pscr splashload">
+        <div class="pstat"><span>9:41</span><span>▮▮▮ ⌁</span></div>
+        <div class="loadmid"><svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" width='96' height='96'><g class="d3g"><g transform="rotate(0 60 60)"><path class="d3s00" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#F5C15C"/><path class="d3s01" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#F5C15C"/><circle class="d3p00" r="3.1" fill="#F5C15C"/><circle class="d3p01" r="3.1" fill="#F5C15C"/></g><g transform="rotate(90 60 60)"><path class="d3s10" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E9D5FF"/><path class="d3s11" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E9D5FF"/><circle class="d3p10" r="3.1" fill="#E9D5FF"/><circle class="d3p11" r="3.1" fill="#E9D5FF"/></g><g transform="rotate(180 60 60)"><path class="d3s20" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E9D5FF"/><path class="d3s21" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E9D5FF"/><circle class="d3p20" r="3.1" fill="#E9D5FF"/><circle class="d3p21" r="3.1" fill="#E9D5FF"/></g><g transform="rotate(270 60 60)"><path class="d3s30" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E9D5FF"/><path class="d3s31" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E9D5FF"/><circle class="d3p30" r="3.1" fill="#E9D5FF"/><circle class="d3p31" r="3.1" fill="#E9D5FF"/></g><circle class="d3ctr" cx="60" cy="60" r="8.5" fill="#E9D5FF"/><circle class="d3d0" cx="88.99" cy="31.01" r="4.2" fill="#F5C15C"/><circle class="d3d1" cx="88.99" cy="88.99" r="4.2" fill="#F5C15C"/><circle class="d3d2" cx="31.01" cy="88.99" r="4.2" fill="#F5C15C"/><circle class="d3d3" cx="31.01" cy="31.01" r="4.2" fill="#F5C15C"/></g></svg>
+          <div class="loadtx">Getting your groups…</div></div>
+      </div></div>
+      <div class="cap">App launch</div>
+    </div>
+    <div class="tw" style="justify-content:flex-start;gap:12px">
+      <div class="inline-load"><svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" width='26' height='26'><g class="d2g"><g transform="rotate(0 60 60)"><path class="d2s00" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E8A13D"/><path class="d2s01" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E8A13D"/></g><g transform="rotate(90 60 60)"><path class="d2s10" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#3B1259"/><path class="d2s11" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#3B1259"/></g><g transform="rotate(180 60 60)"><path class="d2s20" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#3B1259"/><path class="d2s21" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#3B1259"/></g><g transform="rotate(270 60 60)"><path class="d2s30" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#3B1259"/><path class="d2s31" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#3B1259"/></g><circle class="d2ctr" cx="60" cy="60" r="8.5" fill="#3B1259"/><circle class="d2d0" cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/><circle class="d2d1" cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle class="d2d2" cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle class="d2d3" cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/></g></svg><span>Splitting ₹2,560 four ways…</span></div>
+      <div class="inline-load light"><svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" width='26' height='26'><g class="d2g"><g transform="rotate(0 60 60)"><path class="d2s00" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#E8A13D"/><path class="d2s01" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#E8A13D"/></g><g transform="rotate(90 60 60)"><path class="d2s10" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#3B1259"/><path class="d2s11" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#3B1259"/></g><g transform="rotate(180 60 60)"><path class="d2s20" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#3B1259"/><path class="d2s21" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#3B1259"/></g><g transform="rotate(270 60 60)"><path class="d2s30" d="M60.0000 60.0000 C54.5593 57.2796, 50.3268 54.1817, 47.2145 50.8823" stroke="#3B1259"/><path class="d2s31" d="M41.1989 30.3497 C43.2975 22.9415, 49.8657 16.2226, 60.0000 12.0000 C84.0000 22.0000, 88.0000 46.0000, 60.0000 60.0000" stroke="#3B1259"/></g><circle class="d2ctr" cx="60" cy="60" r="8.5" fill="#3B1259"/><circle class="d2d0" cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/><circle class="d2d1" cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle class="d2d2" cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle class="d2d3" cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/></g></svg><span>Syncing with Akhila…</span></div>
+      <div class="cap" style="text-align:left">Inline · 26px</div>
+    </div>
+  </div>
+
+  <p class="note">Pen speed stays constant across the whole petal, including the stretch it spends
+  hidden underneath — so the loop closes exactly where your eye expects. Because the crown stroke ends
+  at the centre and the inner stroke begins there, the two read as a single hand movement rather than
+  two separate marks. At 26px drop the pen dot and the dots stop resolving, so the clean cut runs alone.</p>
+</section>
+
+<div class="rule"></div>
+<h2>Web</h2>
+<section class="card">
+  <div class="brow">
+    <div class="btabs">
+      <div class="btab"><svg width='14' height='14' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#3B1259" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14.27 25.46 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14.27 25.46 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14.27 25.46 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14.27 25.46 130.76"/><circle cx="60" cy="60" r="7" fill="#3B1259"/></svg><span>ManaSplit — split bills with your people</span></div>
+      <div class="btab off">Inbox (3)</div>
+      <div class="btab off">GitHub</div>
+    </div>
+    <div class="burl"><div class="u">manasplit.app</div></div>
+    <div class="bhero">
+      <div class="bnav"><svg width='28' height='28' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg>
+        <div class="word" style="font-size:17px;color:#3B1259">Mana<span class="l" style="color:#E8A13D">Split</span></div>
+        <div class="lk"><span>How it works</span><span>Groups</span><span>Pricing</span>
+        <span class="cta">Get the app</span></div>
+      </div>
+      <div class="bh1">Split the bill.<br>Keep the <em>friendship</em>.</div>
+      <p class="bp">Track shared expenses, chat about them, and call the group — all in one place.
+      No spreadsheets, no awkward reminders.</p>
+    </div>
+  </div>
+  <div class="cap" style="text-align:left;margin-top:10px">Site header, nav and favicon in the tab</div>
+</section>
+
+<div class="rule"></div>
+<h2>Identity</h2>
+<div class="grid g2">
+  <section class="card">
+    <div class="ttl">Business card</div>
+    <div class="flex" style="margin-top:14px">
+      <div class="bcard bc-f"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#fff" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#fff" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#fff" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#fff" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#fff"/><circle cx="88.99" cy="88.99" r="4.2" fill="#fff"/><circle cx="31.01" cy="88.99" r="4.2" fill="#fff"/><circle cx="31.01" cy="31.01" r="4.2" fill="#fff"/><circle cx="88.99" cy="31.01" r="4.2" fill="#fff"/></svg>
+        <div><div class="bcn">Chanakya</div><div class="bcr">Founder · ManaSplit</div></div></div>
+      <div class="bcard bc-b" style="align-items:center;justify-content:center">
+        <div class="lock"><svg width='32' height='32' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg><div class="word" style="font-size:20px;color:#3B1259">Mana<span class="l" style="color:#E8A13D">Split</span></div></div>
+        <div class="bcm">manasplit.app<br>hello@manasplit.app</div></div>
+    </div>
+  </section>
+  <section class="card">
+    <div class="ttl">Social</div>
+    <div class="soc" style="margin-top:14px">
+      <div class="sban"></div>
+      <div class="sbody">
+        <div class="savt" style="background:#2A0B40"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div>
+        <div class="sname">ManaSplit</div>
+        <div class="shandle">@manasplit</div>
+        <div class="sbio">Split bills with your people. Built in Hyderabad. మన లెక్క, మన యాప్.</div>
+        <div class="sstat"><span><b>2,481</b> following</span><span><b>18.3K</b> followers</span></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="ttl">Merch &amp; stickers</div>
+  <div class="flex" style="margin-top:16px;align-items:center">
+    <div class="tw"><div class="tote"><svg width='60' height='60' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#3B1259"/><circle cx="31.01" cy="88.99" r="4.2" fill="#3B1259"/><circle cx="31.01" cy="31.01" r="4.2" fill="#3B1259"/><circle cx="88.99" cy="31.01" r="4.2" fill="#3B1259"/></svg></div><div class="cap">Tote</div></div>
+    <div class="tw"><div class="tile t-d" style="width:150px;border-radius:14px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#F5C15C"/><circle cx="31.01" cy="88.99" r="4.2" fill="#F5C15C"/><circle cx="31.01" cy="31.01" r="4.2" fill="#F5C15C"/><circle cx="88.99" cy="31.01" r="4.2" fill="#F5C15C"/></svg></div>
+      <div class="cap">Embroidered patch</div></div>
+    <div>
+      <div class="stick">
+        <div class="sk" style="background:#2A0B40"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#FBF7F0" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div>
+        <div class="sk sq" style="background:#E8A13D"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#3B1259"/><circle cx="31.01" cy="88.99" r="4.2" fill="#3B1259"/><circle cx="31.01" cy="31.01" r="4.2" fill="#3B1259"/><circle cx="88.99" cy="31.01" r="4.2" fill="#3B1259"/></svg></div>
+        <div class="sk" style="background:#FBF7F0"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div>
+        <div class="sk sq" style="background:#fff"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div>
+      </div>
+      <div class="cap" style="text-align:left;margin-top:10px">Sticker sheet</div>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="ttl">Email signature</div>
+  <div class="sig" style="margin-top:12px">
+    <div class="sigrow"><svg width='42' height='42' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg><div class="sigbar"></div>
+      <div><div class="signm">Chanakya</div>
+      <div class="sigmt">Founder, ManaSplit<br>manasplit.app · +91 ·· ··· ····</div></div></div>
+  </div>
+</section>
+
+<div class="rule"></div>
+<h2>Pattern</h2>
+<section class="card">
+  <p class="txt">Because it's a rosette on a square grid, the mark tiles the way a real muggu does —
+  useful for empty states, onboarding backgrounds and packaging.</p>
+  <div class="grid g2" style="margin-top:16px">
+    <div class="tw"><div class="pat" style="background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%20120%20120%22%20fill%3D%22none%22%3E%3Cpath%20d%3D%22M60%2060%20C%2032%2046%2C%2036%2022%2C%2060%2012%20C%2084%2022%2C%2088%2046%2C%2060%2060%20Z%22%20transform%3D%22rotate%280%2060%2060%29%22%20fill%3D%22none%22%20stroke%3D%22%235A2E86%22%20stroke-width%3D%227.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-dasharray%3D%2215.78%2022.43%20130.76%22/%3E%3Cpath%20d%3D%22M60%2060%20C%2032%2046%2C%2036%2022%2C%2060%2012%20C%2084%2022%2C%2088%2046%2C%2060%2060%20Z%22%20transform%3D%22rotate%2890%2060%2060%29%22%20fill%3D%22none%22%20stroke%3D%22%235A2E86%22%20stroke-width%3D%227.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-dasharray%3D%2215.78%2022.43%20130.76%22/%3E%3Cpath%20d%3D%22M60%2060%20C%2032%2046%2C%2036%2022%2C%2060%2012%20C%2084%2022%2C%2088%2046%2C%2060%2060%20Z%22%20transform%3D%22rotate%28180%2060%2060%29%22%20fill%3D%22none%22%20stroke%3D%22%235A2E86%22%20stroke-width%3D%227.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-dasharray%3D%2215.78%2022.43%20130.76%22/%3E%3Cpath%20d%3D%22M60%2060%20C%2032%2046%2C%2036%2022%2C%2060%2012%20C%2084%2022%2C%2088%2046%2C%2060%2060%20Z%22%20transform%3D%22rotate%28270%2060%2060%29%22%20fill%3D%22none%22%20stroke%3D%22%235A2E86%22%20stroke-width%3D%227.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-dasharray%3D%2215.78%2022.43%20130.76%22/%3E%3Ccircle%20cx%3D%2260%22%20cy%3D%2260%22%20r%3D%228.5%22%20fill%3D%22%235A2E86%22/%3E%3Ccircle%20cx%3D%2288.99%22%20cy%3D%2288.99%22%20r%3D%223.4%22%20fill%3D%22%237A4AA8%22/%3E%3Ccircle%20cx%3D%2231.01%22%20cy%3D%2288.99%22%20r%3D%223.4%22%20fill%3D%22%237A4AA8%22/%3E%3Ccircle%20cx%3D%2231.01%22%20cy%3D%2231.01%22%20r%3D%223.4%22%20fill%3D%22%237A4AA8%22/%3E%3Ccircle%20cx%3D%2288.99%22%20cy%3D%2231.01%22%20r%3D%223.4%22%20fill%3D%22%237A4AA8%22/%3E%3C/svg%3E")"></div><div class="cap">Dark tile</div></div>
+    <div class="tw"><div class="pat2" style="background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%20120%20120%22%20fill%3D%22none%22%3E%3Cpath%20d%3D%22M60%2060%20C%2032%2046%2C%2036%2022%2C%2060%2012%20C%2084%2022%2C%2088%2046%2C%2060%2060%20Z%22%20transform%3D%22rotate%280%2060%2060%29%22%20fill%3D%22none%22%20stroke%3D%22%23E7DCEF%22%20stroke-width%3D%227.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-dasharray%3D%2215.78%2022.43%20130.76%22/%3E%3Cpath%20d%3D%22M60%2060%20C%2032%2046%2C%2036%2022%2C%2060%2012%20C%2084%2022%2C%2088%2046%2C%2060%2060%20Z%22%20transform%3D%22rotate%2890%2060%2060%29%22%20fill%3D%22none%22%20stroke%3D%22%23E7DCEF%22%20stroke-width%3D%227.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-dasharray%3D%2215.78%2022.43%20130.76%22/%3E%3Cpath%20d%3D%22M60%2060%20C%2032%2046%2C%2036%2022%2C%2060%2012%20C%2084%2022%2C%2088%2046%2C%2060%2060%20Z%22%20transform%3D%22rotate%28180%2060%2060%29%22%20fill%3D%22none%22%20stroke%3D%22%23E7DCEF%22%20stroke-width%3D%227.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-dasharray%3D%2215.78%2022.43%20130.76%22/%3E%3Cpath%20d%3D%22M60%2060%20C%2032%2046%2C%2036%2022%2C%2060%2012%20C%2084%2022%2C%2088%2046%2C%2060%2060%20Z%22%20transform%3D%22rotate%28270%2060%2060%29%22%20fill%3D%22none%22%20stroke%3D%22%23E7DCEF%22%20stroke-width%3D%227.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-dasharray%3D%2215.78%2022.43%20130.76%22/%3E%3Ccircle%20cx%3D%2260%22%20cy%3D%2260%22%20r%3D%228.5%22%20fill%3D%22%23E7DCEF%22/%3E%3Ccircle%20cx%3D%2288.99%22%20cy%3D%2288.99%22%20r%3D%223.4%22%20fill%3D%22%23F0DFC2%22/%3E%3Ccircle%20cx%3D%2231.01%22%20cy%3D%2288.99%22%20r%3D%223.4%22%20fill%3D%22%23F0DFC2%22/%3E%3Ccircle%20cx%3D%2231.01%22%20cy%3D%2231.01%22%20r%3D%223.4%22%20fill%3D%22%23F0DFC2%22/%3E%3Ccircle%20cx%3D%2288.99%22%20cy%3D%2231.01%22%20r%3D%223.4%22%20fill%3D%22%23F0DFC2%22/%3E%3C/svg%3E")"></div><div class="cap">Light tile</div></div>
+  </div>
+</section>
+
+<div class="rule"></div>
+<h2>Palette</h2>
+<section class="card">
+  <div class="pal">
+    <div class="pw"><i style="background:#3B1259"></i><b>Ink</b><em>#3B1259</em></div>
+    <div class="pw"><i style="background:#2A0B40"></i><b>Plum</b><em>#2A0B40</em></div>
+    <div class="pw"><i style="background:#1B0730"></i><b>Deep</b><em>#1B0730</em></div>
+    <div class="pw"><i style="background:#E8A13D"></i><b>Gold</b><em>#E8A13D</em></div>
+    <div class="pw"><i style="background:#FBF7F0"></i><b>Cream</b><em>#FBF7F0</em></div>
+  </div>
+  <p class="note">Ink carries the structure, gold carries the money. Keep gold to one petal, the dots and
+  the centre — the moment a second petal turns gold the weave stops reading.</p>
+</section>
+
+<div class="rule"></div>
+<h2>Do &amp; don't</h2>
+<section class="card">
+  <div class="dd">
+    <div class="ddi ok"><div class="tag">Do</div><div class="b"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div>
+      <p>Keep the pinwheel direction: every petal over its clockwise neighbour.</p></div>
+    <div class="ddi no"><div class="tag">Don't</div><div class="b"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div>
+      <p>Don't stack the petals flat — the weave collapses and the gold breaks up.</p></div>
+    <div class="ddi no"><div class="tag">Don't</div>
+      <div class="b"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E8A13D"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div>
+      <p>Don't render the whole mark in gold — there's no contrast to read the crossings.</p></div>
+    <div class="ddi no"><div class="tag">Don't</div>
+      <div class="b"><div style="transform:skewX(-14deg)"><svg width='58' height='58' xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#E8A13D" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#3B1259" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#3B1259"/><circle cx="88.99" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="88.99" r="4.2" fill="#E8A13D"/><circle cx="31.01" cy="31.01" r="4.2" fill="#E8A13D"/><circle cx="88.99" cy="31.01" r="4.2" fill="#E8A13D"/></svg></div></div>
+      <p>Don't skew, stretch or rotate off the square. It's built on a four-fold grid.</p></div>
+    <div class="ddi ok"><div class="tag">Do</div>
+      <div class="b" style="background:#2A0B40;border-radius:12px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none"><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(0 60 60)" fill="none" stroke="#F5C15C" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(90 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(180 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><path d="M60 60 C 32 46, 36 22, 60 12 C 84 22, 88 46, 60 60 Z" transform="rotate(270 60 60)" fill="none" stroke="#E9D5FF" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="15.78 22.43 130.76"/><circle cx="60" cy="60" r="8.5" fill="#E9D5FF"/><circle cx="88.99" cy="88.99" r="4.2" fill="#F5C15C"/><circle cx="31.01" cy="88.99" r="4.2" fill="#F5C15C"/><circle cx="31.01" cy="31.01" r="4.2" fill="#F5C15C"/><circle cx="88.99" cy="31.01" r="4.2" fill="#F5C15C"/></svg></div>
+      <p>Use the reversed cut on plum or any dark ground, never ink-on-dark.</p></div>
+  </div>
+</section>
+
+<script>
+function replay(){
+  var st=document.getElementById('drawstage');
+  st.querySelectorAll('svg *').forEach(function(n){n.style.animation='none';});
+  void st.offsetWidth;
+  st.querySelectorAll('svg *').forEach(function(n){n.style.animation='';});
+}
+function spd(v){
+  document.querySelectorAll('svg').forEach(function(n){n.style.setProperty('--cyc',v);});
+  replay();
+}
+</script>
+</body></html>

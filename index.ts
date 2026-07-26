@@ -1,6 +1,7 @@
 import { registerGlobals } from '@livekit/react-native';
 import '@expo/metro-runtime';
 import { registerRootComponent } from 'expo';
+import * as SplashScreen from 'expo-splash-screen';
 import 'react-native-get-random-values';
 
 import App from './App';
@@ -12,6 +13,12 @@ import { registerBackgroundNotificationTask } from './src/utils/backgroundNotifi
 // iOS can launch the app headlessly straight into the scheduled-backup handler
 // (doc 31 §3.6), and a task defined later would not exist yet.
 import './src/services/backupScheduler';
+
+// Keep the OS-owned static launch frame in place until the pixel-matched React
+// boot screen has painted. This must run in module scope or the splash can
+// auto-hide before React gets a chance to take over.
+void SplashScreen.preventAutoHideAsync();
+SplashScreen.setOptions({ duration: 220, fade: true });
 
 if (!__DEV__) {
         const noOp = () => undefined;

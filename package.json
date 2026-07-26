@@ -11,6 +11,8 @@
     "ios": "EXPO_UNSTABLE_BONJOUR=0 expo run:ios",
     "web": "EXPO_UNSTABLE_BONJOUR=0 expo start --web",
     "postinstall": "patch-package && node scripts/fix-expo-ngrok.js",
+    "generate:brand": "node scripts/generate-brand-assets.mjs",
+    "validate:brand": "node scripts/validate-brand-assets.mjs",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:services": "vitest run --config vitest.services.config.ts",
     "test:dom": "vitest run --config vitest.dom.config.ts",

@@ -17,6 +17,8 @@ import {
   type PairedDevice,
 } from '@/services/pairingService';
 import { resetEncryptionIdentity } from '@/services/signalCryptoService';
+import { runDeviceSyncPass } from '@/services/deviceSyncCoordinator';
+import { lastHandoffStatus } from '@/services/historyHandoffService';
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
@@ -40,6 +42,8 @@ export const LinkedDevicesScreen = () => {
   /** Which action is in flight, so only that button shows a spinner. */
   const [pendingAction, setPendingAction] = useState<'approve' | 'remove' | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [handoffNote, setHandoffNote] = useState<string | null>(null);
 
   useEffect(() => {
     void getCurrentDeviceId().then(setOwnDeviceId);
@@ -289,6 +293,43 @@ export const LinkedDevicesScreen = () => {
             onPress={handleResetEncryption}
           >
             Reset encryption on this device
+          </Button>
+        </GlassCard>
+
+        {/* History transfer, with its REASON. Previously this ran entirely in
+            the background across eight silent bail-out paths, so a companion
+            that got no history was indistinguishable from one that needed
+            none — from either device there was nothing to see at all. */}
+        <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+          <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>
+            Chat history transfer
+          </Text>
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            {handoffNote ??
+              'Your main device sends recent history to each companion over an encrypted channel.'}
+          </Text>
+          <Button
+            mode="outlined"
+            icon="history"
+            loading={syncing}
+            disabled={syncing || !user}
+            onPress={async () => {
+              if (!user) return;
+              setSyncing(true);
+              setHandoffNote(null);
+              try {
+                await runDeviceSyncPass(user.userId);
+                setHandoffNote(lastHandoffStatus ?? 'History transfer ran with no problems reported.');
+                lightHaptic();
+              } catch (error) {
+                errorHaptic();
+                setHandoffNote(error instanceof Error ? error.message : 'Transfer failed.');
+              } finally {
+                setSyncing(false);
+              }
+            }}
+          >
+            Retry history transfer
           </Button>
         </GlassCard>
       </ScrollView>
