@@ -292,6 +292,35 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   "app", which is why the container is now `iCloud.com.splitcircle.ManaSplit`.
   Containers can be neither renamed nor deleted, so get the name right first
   time; the old one is unassigned and its data orphaned.
+- **"Is it deployed?" is not the last question — ask "does anything CALL
+  it?"** A 2026-07-26 audit of doc 31 found three functions written,
+  committed, deployed and documented as BUILT with zero callers anywhere:
+  `sendHistoryHandoff`/`receiveHistoryHandoff` (so a newly paired device
+  got no history — the entire point of that phase) and
+  `replenishPrekeysIfLow` (so a device silently degraded to
+  signed-prekey-only once its 100 one-time prekeys were consumed, losing
+  the forward secrecy they exist for). This is one rung BELOW the
+  compiles/deployed/reachable/correct ladder doc 31 §5c already
+  documents — the code was reachable and correct, and simply never
+  invoked. `tsc`, tests, review and `functions:list` all pass in this
+  state. Before writing BUILT, grep for a caller of every new exported
+  function outside its own file.
+- **Tightening an auth path can strand the legitimate user completely —
+  check the single-device case explicitly.** Closing doc 31 §5b bug #2
+  (devices auto-promoting themselves to confirmed main) made every
+  non-first device register as `pending_confirmation`, needing approval
+  from an existing device. Correct for adding a companion; a permanent
+  lockout for a user whose only phone was lost or died, since the
+  approver named by the UI is the device they no longer have — and the
+  gate's only other action, Cancel, signs out into the same state. Every
+  chat, expense and group became unreachable. Fixed by finally building
+  §3.12's recovery flow (`functions/src/accountRecovery.ts`). Two rules
+  came out of it: when a fix narrows who may authorize something, walk
+  the case where the user owns exactly ONE device and it is gone; and
+  when a recovery escape hatch is refused for security, check the
+  security is real — here `firestore.rules` gates chats/expenses on the
+  authenticated uid rather than a live device session, so blocking
+  recovery would have stopped no attacker while stranding real users.
 - **A callable that mints a credential must not REQUIRE that credential.**
   `redeemPairingCode` demanded `request.auth.uid` while returning the custom
   token the device signs in WITH — so QR pairing failed with "Authentication

@@ -1,8 +1,12 @@
 # 31 — Multi-Device Support + iCloud Backup/Sync
 
-Status: **PHASES 0-7 BUILT (Phase 8 not started). Engines verified on real
-hardware; several user-facing paths still unexercised.** (2026-07-25, branch
-`ui-revamp`.)
+Status: **ALL PHASES 0-8 BUILT. Engines verified on real hardware; several
+user-facing paths still unexercised.** (2026-07-26, branch `ui-revamp`.)
+
+**§5f is the current state of things — read it before §5's per-phase entries,
+which describe what landed at the time and were written before the gap audit.**
+That audit found a ship-blocking account lockout and three functions that had
+been documented as built while having no caller at all.
 
 **Read §5c "Reality check" before trusting any phase label below.** This build
 repeatedly produced code that typechecked, deployed, and reported success while
@@ -1742,9 +1746,9 @@ written seconds earlier).
 - QR pairing end-to-end. The fix is deployed but has never had a successful
   scan. THIS IS THE TOP PRIORITY; a second real device depends on it.
 - The Phase 7 two-device retirement handshake (needs both devices paired).
-- The Phase 6 history handoff (needs a genuinely fresh pairing) — and it is
-  NOT wired into the pairing flow: nothing calls `sendHistoryHandoff` when a
-  device is confirmed.
+- The Phase 6 history handoff (needs a genuinely fresh pairing). *Wiring fixed
+  2026-07-26 (§5f) — `deviceSyncCoordinator.ts` now drives both sides; the
+  transfer itself is still unverified on hardware.*
 - Automatic scheduled backups actually firing. The task registers and the UI
   reports real registration state, but iOS deciding to run it has not been
   observed.
@@ -1760,15 +1764,108 @@ written seconds earlier).
   remaining downgrade path. It exists so not-yet-upgraded accounts keep
   receiving messages; remove it once every client publishes keys.
 
-**Requested but not built** (product owner, 2026-07-25):
-- **Selective backup content** — let the user choose messages / media /
-  settings / expenses / profile pics / wallpapers. Not a toggle: it changes the
-  manifest schema, the export loop, the restore path, AND §3.7's reconciliation,
-  which reads that schema. Needs a design pass.
-- **Reverse QR** — main device scans a code DISPLAYED by the companion. The
-  companion has no account yet, so the code must be self-describing and the
-  main device becomes the redeemer; a different flow from today's, plus a
-  second scanner surface.
+**Requested but not built** (product owner, 2026-07-25) — **both now BUILT
+2026-07-26, see §5f.** Selective backup content and reverse QR landed in
+commits `8a9cb83` and `2713a83`.
+
+## 5f. Gap audit + Phase 8 (2026-07-26)
+
+A full pass over every phase against what is actually on disk and deployed,
+prompted by the roadmap having drifted from the code. Method: grep for a caller
+of every exported function, diff `firebase functions:list` against
+`functions/src/index.ts`, and read the rules file rather than trusting the
+phase headings. Findings, worst first.
+
+### The account lockout (SHIP-BLOCKING, fixed — commit `027131c`)
+
+**Replacing a lost phone locked the user out of their account permanently.**
+
+§5b bug #2 closed the auto-promote bypass by making every device that isn't the
+account's first register as `pending_confirmation`, waiting behind
+`PendingPairingGate` for an existing device to approve it. Correct for adding a
+companion. A total lockout for the most common real case: the only phone was
+lost, stolen or died, and the approver the app names is the device the user no
+longer has. The gate's only action is "Cancel", which signs out into the same
+state. Every chat, expense and group became unreachable through the app.
+
+§3.12's recovery flow — confirmed by the product owner 2026-07-24, scheduled for
+Phase 8 — is exactly the missing escape, and had never been built. **The fix for
+one bug created a worse one, and nothing caught it because no test and no phase
+gate covers "what happens to a user who owns exactly one device and loses it".**
+
+Built as specified: Firebase Auth + iCloud account access + backup passphrase
+promotes a device to main with no existing device involved.
+
+- The manifest carries a random `recoverySecret`; its SHA-256 is published to
+  `users/{uid}/backupRecovery/current` after every backup; recovery must present
+  the preimage. Decrypting the manifest proves the passphrase LOCALLY, but a
+  malicious client could simply assert that — and if it could, stolen
+  credentials alone would yield a confirmed main device, which is what the gate
+  exists to prevent.
+- That document denies client **reads** as well as writes. A readable expected
+  value could be replayed, collapsing three factors into one.
+- Recovery revokes every other device. This also answers §3.7 point 6's
+  "report lost/stolen" gap, which had no flow at all because every other revoke
+  path needs a trusted device the user has lost.
+- **The no-backup path is allowed**, behind a typed phrase. Refusing buys
+  nothing: `firestore.rules` gates chats/expenses on the authenticated uid, not
+  on a live device session (Phase 1 narrowed `hasLiveDeviceSession()` to three
+  single-document collections because a broader rule breaks list queries), so
+  these credentials already reach that data through the API. Blocking would
+  only strand a legitimate user forever.
+
+### Three functions with no caller (fixed — commit `034c3f1`)
+
+Written, committed, documented as shipped, invoked by nothing:
+
+| Function | Consequence |
+|---|---|
+| `sendHistoryHandoff` / `receiveHistoryHandoff` | A newly paired companion got ZERO history — the entire point of Phase 6 |
+| `replenishPrekeysIfLow` | Once the initial 100 one-time prekeys were consumed, the device silently degraded to signed-prekey-only forever |
+
+The handoff cannot simply be called at confirmation time: a device may only
+publish Signal keys AFTER it is confirmed, so there is nothing to encrypt the
+bundle key to at that moment. `deviceSyncCoordinator.ts` polls both sides on
+registration and foreground instead, persists progress, and deliberately does
+NOT mark an `incomplete` import as done so the checkpoint resumes.
+
+**This is the same shape as §5c's ladder, one rung lower than anything it
+lists: not compiled-but-unreachable, but present-and-never-called.** Add "does
+anything call it?" to the checks before writing BUILT.
+
+### Requested features, now built
+
+- **Selective backup content** (commit `8a9cb83`) — messages / photos & videos /
+  call history / wallpapers / app settings. The list is deliberately short:
+  expenses, groups, balances and profile data live in Firestore and return on
+  sign-in, so backing them up would spend the user's iCloud quota duplicating
+  data that isn't at risk, and a restore could put a stale copy over the
+  authoritative one. The screen says so rather than leaving the omissions
+  looking like gaps. §3.7's gate reads `manifest.contents` — without that, a
+  backup with messages switched off reported "N chats haven't finished backing
+  up", blaming a transfer that never started, at the moment the user is deciding
+  whether to wipe the only device holding those messages.
+- **Reverse QR** (commit `2713a83`) — the main device scans a code displayed by
+  the new one. Two properties make it stronger than the forward flow, which is
+  why it skips the confirmation step: the code is bound to
+  `preauthorizedDeviceId` (photographing the screen is useless), and a trusted
+  device scanning deliberately IS §3.4 point 3's out-of-band confirmation.
+- **Phase 8 per-device settings** (commit `23e75a0`) — `ringOnThisDevice` and
+  `privacyGuardSyncState` were declared in `settingsSyncRegistry.ts` from Phase
+  0 and referenced by nothing. Ringing is now real: reported to CallKit first
+  and dismissed immediately after, never skipped, because iOS revokes the VoIP
+  privilege for a push that doesn't report. `ANSWERED_ELSEWHERE` over a decline
+  reason — a decline would tell the caller they were rejected, which is false
+  while the account rings elsewhere.
+
+### Still not verified on a device
+
+Unchanged from §5e and still the gating list: QR pairing end-to-end (both
+directions now), the Phase 7 two-device retirement handshake, the history
+handoff actually transferring, scheduled backups firing, and — new — the
+recovery flow itself. **Everything in this section is deployed and typechecked;
+none of it has been exercised by a person on a phone.** That is precisely the
+distinction §5c exists to make.
 
 ## 6. Open risks carried forward (not yet fully closed by the design above)
 
