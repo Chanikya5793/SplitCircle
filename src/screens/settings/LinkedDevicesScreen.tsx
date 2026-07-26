@@ -16,6 +16,7 @@ import {
   subscribeToPairedDevices,
   type PairedDevice,
 } from '@/services/pairingService';
+import { resetEncryptionIdentity } from '@/services/signalCryptoService';
 import { appAlert } from '@/utils/appAlert';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
@@ -38,6 +39,7 @@ export const LinkedDevicesScreen = () => {
   const [removingId, setRemovingId] = useState<string | null>(null);
   /** Which action is in flight, so only that button shows a spinner. */
   const [pendingAction, setPendingAction] = useState<'approve' | 'remove' | null>(null);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     void getCurrentDeviceId().then(setOwnDeviceId);
@@ -76,6 +78,45 @@ export const LinkedDevicesScreen = () => {
             } finally {
               setRemovingId(null);
               setPendingAction(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  /**
+   * Last-resort repair when messages won't decrypt.
+   *
+   * Deliberately says what it CANNOT do. Messages already waiting for this
+   * device were encrypted to the identity being discarded and will never open
+   * — promising a clean fix and then leaving unreadable bubbles behind would
+   * be worse than the bug.
+   */
+  const handleResetEncryption = () => {
+    if (!user) return;
+    appAlert(
+      'Reset encryption on this device?',
+      "Use this if messages won't decrypt. This device gets a fresh encryption identity and your other devices re-establish with it automatically.\n\nMessages already waiting for this device can't be recovered — they were encrypted to the old identity. New messages will work.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            setResetting(true);
+            try {
+              await resetEncryptionIdentity(user.userId);
+              lightHaptic();
+              appAlert(
+                'Encryption reset',
+                'Send a message from each device to finish re-establishing.',
+              );
+            } catch {
+              errorHaptic();
+              appAlert('Could not reset encryption', 'Please try again.');
+            } finally {
+              setResetting(false);
             }
           },
         },
@@ -227,6 +268,28 @@ export const LinkedDevicesScreen = () => {
               )}
             </>
           )}
+        </GlassCard>
+
+        {/* Separate card, below the device list: this is troubleshooting, not
+            device management, and putting it beside "Remove" would invite
+            mistaking one destructive-looking action for the other. */}
+        <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+          <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>
+            Messages not decrypting?
+          </Text>
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            If messages show as unreadable, resetting this device&apos;s encryption identity makes
+            your devices re-establish a secure session with each other.
+          </Text>
+          <Button
+            mode="outlined"
+            icon="lock-reset"
+            loading={resetting}
+            disabled={resetting}
+            onPress={handleResetEncryption}
+          >
+            Reset encryption on this device
+          </Button>
         </GlassCard>
       </ScrollView>
     </LiquidBackground>

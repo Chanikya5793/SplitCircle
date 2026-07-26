@@ -132,8 +132,6 @@ export const decryptMessageEnvelope = async (
   senderId: string,
   senderSignalDeviceId: number,
   envelope: StoredEnvelope,
-  /** The peer's string device id, needed to flag the session for rebuild. */
-  senderDeviceId?: string,
 ): Promise<EncryptedFields | null> => {
   if (!isCryptoAvailable()) return null;
 
@@ -152,7 +150,7 @@ export const decryptMessageEnvelope = async (
     // outbound message to this peer rebuild from a fresh bundle, which also
     // hands them a PreKey message so their side re-establishes.
     lastDecryptError = error instanceof Error ? error.message : String(error);
-    void markSessionForRebuild(senderId, senderDeviceId ?? '').catch(() => {});
+    void markSessionForRebuild(senderId, senderSignalDeviceId).catch(() => {});
     return null;
   }
 };

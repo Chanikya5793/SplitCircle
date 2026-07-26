@@ -484,7 +484,6 @@ const attachQueueListener = (
         payload.senderId,
         senderSignalDeviceId,
         { t: envelope.t, b: envelope.b },
-        typeof raw?.originDeviceId === 'string' ? raw.originDeviceId : undefined,
       );
       if (decrypted) {
         if (typeof decrypted.content === 'string') payload.content = decrypted.content;

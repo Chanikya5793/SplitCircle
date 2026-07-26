@@ -178,6 +178,44 @@ export const initializeSignalForDevice = async (
 export const getCachedSignalDeviceId = (): number | null => cachedSignalDeviceId;
 
 /**
+ * Manual "reset encryption" — the escape hatch when automatic repair hasn't.
+ *
+ * Throws away this device's Signal identity, every session, and all cached
+ * peer state, then republishes a fresh bundle. Peers notice the changed
+ * identity and rebuild on their next send.
+ *
+ * This exists because session breakage has repeatedly been UNRECOVERABLE from
+ * the user's side: the failure looks like ordinary message trouble, and every
+ * automatic repair so far has had a case it couldn't see. A button that
+ * definitely works is worth more than another inference that might.
+ *
+ * COST, stated plainly to the caller: messages already sitting undelivered for
+ * this device stay undecryptable — they are addressed to the identity being
+ * discarded. It fixes the future, never the past.
+ */
+export const resetEncryptionIdentity = async (userId: string): Promise<void> => {
+  await wipeSignalState();
+  cachedSignalDeviceId = null;
+
+  // Drop every cached peer identity and repair flag, so nothing carries a
+  // belief about a session that no longer exists.
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const stale = keys.filter(
+      (key) =>
+        key.startsWith('splitcircle.signal.peerIdentity.') ||
+        key.startsWith('splitcircle.signal.needsRebuild.'),
+    );
+    if (stale.length > 0) await AsyncStorage.multiRemove(stale);
+  } catch {
+    // Non-fatal: a stale cache entry now refers to an identity we no longer
+    // hold, which the identity comparison treats as changed anyway.
+  }
+
+  await initializeSignalForDevice(userId);
+};
+
+/**
  * Every device of `userId` that has published encryption keys.
  *
  * Reads `signalPrekeys` directly rather than `pairedDevices`: only the former
@@ -266,8 +304,18 @@ export const getIdentityKeyForDevice = async (
 const peerIdentityKey = (peerUserId: string, peerDeviceId: string) =>
   `splitcircle.signal.peerIdentity.${peerUserId}.${peerDeviceId}`;
 
-const repairFlagKey = (peerUserId: string, peerDeviceId: string) =>
-  `splitcircle.signal.needsRebuild.${peerUserId}.${peerDeviceId}`;
+/**
+ * Keyed by the libsignal SMALL-INT id, not the installation uuid.
+ *
+ * The decrypting side only ever learns `senderSignalDeviceId` — the string
+ * installation id is not in a delivered payload for an ordinary recipient
+ * message. Keying on the uuid meant the flag written on failure could never be
+ * found by the sender path that has to act on it, so the repair silently did
+ * nothing for exactly the messages it was built for. Both sides know the
+ * small-int id, so both sides agree on this key.
+ */
+const repairFlagKey = (peerUserId: string, peerSignalDeviceId: number) =>
+  `splitcircle.signal.needsRebuild.${peerUserId}.${peerSignalDeviceId}`;
 
 /**
  * Marks a peer's session as broken so the next send rebuilds it.
@@ -286,10 +334,10 @@ const repairFlagKey = (peerUserId: string, peerDeviceId: string) =>
  */
 export const markSessionForRebuild = async (
   peerUserId: string,
-  peerDeviceId: string,
+  peerSignalDeviceId: number,
 ): Promise<void> => {
   try {
-    await AsyncStorage.setItem(repairFlagKey(peerUserId, peerDeviceId), '1');
+    await AsyncStorage.setItem(repairFlagKey(peerUserId, peerSignalDeviceId), '1');
   } catch {
     // Best-effort; the identity comparison is still a second line of defence.
   }
@@ -305,7 +353,7 @@ export const ensureSessionWithDevice = async (
   if (!isCryptoAvailable()) return false;
 
   const cacheKey = peerIdentityKey(peerUserId, peerDeviceId);
-  const flagKey = repairFlagKey(peerUserId, peerDeviceId);
+  const flagKey = repairFlagKey(peerUserId, peerSignalDeviceId);
 
   // A decrypt against this peer has already failed, so the session is known
   // bad regardless of what the keys look like. Checked FIRST because it is
