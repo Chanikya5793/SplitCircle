@@ -20,10 +20,13 @@ import {
   establishSession,
   generatePublishableBundle,
   hasSession,
+  hasSignalIdentity,
   isCryptoAvailable,
+  wipeSignalState,
   type PeerBundle,
   type SignalEnvelope,
 } from '../../modules/splitcircle-crypto';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCurrentDeviceId } from '@/services/pairingService';
 
 /**
@@ -61,6 +64,46 @@ const claimCallable = httpsCallable<
 /** This device's libsignal small-integer id, cached after bootstrap. */
 let cachedSignalDeviceId: number | null = null;
 
+const INSTALL_MARKER_KEY = 'splitcircle.signal.installMarker';
+
+/**
+ * Throws away a Signal identity that outlived the sessions built on it.
+ *
+ * THE REINSTALL DEADLOCK THIS FIXES. On iOS, deleting an app clears its files
+ * and AsyncStorage but NOT its Keychain. Our identity keypair lives in the
+ * Keychain (SignalStorage.swift) while the session store is file-backed in
+ * Application Support — so a reinstall brings back the same identity with no
+ * sessions, and `getOrCreateInstallationId` (SecureStore) even restores the
+ * same deviceId.
+ *
+ * Nothing could recover from that state. The reinstalled device saw its
+ * published bundle's identityKey still matching its own, so it skipped
+ * republishing; peers saw a live session, so they never rebuilt one. Every
+ * message they sent was encrypted to a session that no longer existed on the
+ * receiving side, decrypted to nothing, and rendered as a BLANK bubble —
+ * permanently, with no path back. That is the "messages appear blank" and
+ * "completely unreliable" report.
+ *
+ * The marker is the discriminator: AsyncStorage is wiped by a reinstall, the
+ * Keychain is not. Identity present + marker absent means the identity is
+ * orphaned, so it is discarded and a fresh one published, which is what makes
+ * peers notice and rebuild. Cheap to be wrong: the worst case is one extra
+ * rekey.
+ */
+const discardIdentityOrphanedByReinstall = async (): Promise<void> => {
+  try {
+    if (await AsyncStorage.getItem(INSTALL_MARKER_KEY)) return;
+    if (await hasSignalIdentity()) {
+      console.warn('Signal identity outlived its sessions (reinstall) — regenerating');
+      await wipeSignalState();
+      cachedSignalDeviceId = null;
+    }
+    await AsyncStorage.setItem(INSTALL_MARKER_KEY, '1');
+  } catch (error) {
+    console.warn('Reinstall identity check failed', error);
+  }
+};
+
 /**
  * Creates this device's Signal identity (if absent), publishes a fresh prekey
  * bundle, and caches the small-integer device id the server allocated.
@@ -76,6 +119,8 @@ export const initializeSignalForDevice = async (
   if (!isCryptoAvailable()) return null;
 
   const deviceId = await getCurrentDeviceId();
+
+  await discardIdentityOrphanedByReinstall();
 
   // Publish FIRST with a provisional bootstrap, because the server is what
   // allocates the libsignal device id and the native side needs that id to
@@ -141,16 +186,50 @@ export const getCachedSignalDeviceId = (): number | null => cachedSignalDeviceId
  * won't hit the Firestore query-provability wall that forced group joining
  * server-side (see CLAUDE.md).
  */
+/**
+ * Short-lived cache of the per-user device list.
+ *
+ * This runs on EVERY message send, once per recipient, plus again for the
+ * sender's own-device mirror — so a group chat did a Firestore collection read
+ * per participant per message before a single byte was encrypted. That is a
+ * real, visible send latency, and the data barely changes: devices are added
+ * minutes apart at most.
+ *
+ * The TTL is deliberately short. A stale list means a brand-new device misses
+ * messages until it expires, which is a correctness cost, so this trades only
+ * a few seconds of staleness — not minutes — for the round trips.
+ */
+const DEVICE_LIST_TTL_MS = 20_000;
+const deviceListCache = new Map<
+  string,
+  { at: number; devices: { deviceId: string; signalDeviceId: number; identityKey: string | null }[] }
+>();
+
+/** Drops the cache for one user — call when a device is known to have changed. */
+export const invalidateSignalDeviceCache = (userId?: string): void => {
+  if (userId) deviceListCache.delete(userId);
+  else deviceListCache.clear();
+};
+
 export const listSignalDevices = async (
   userId: string,
-): Promise<{ deviceId: string; signalDeviceId: number }[]> => {
+): Promise<{ deviceId: string; signalDeviceId: number; identityKey: string | null }[]> => {
+  const cached = deviceListCache.get(userId);
+  if (cached && Date.now() - cached.at < DEVICE_LIST_TTL_MS) return cached.devices;
+
   const snap = await getDocs(collection(db, 'users', userId, 'signalPrekeys'));
-  return snap.docs
+  const devices = snap.docs
     .map((d) => ({
       deviceId: d.id,
       signalDeviceId: Number(d.data()?.signalDeviceId),
+      // Carried so senders can tell "same device" from "same device id, new
+      // keypair" without a second read per device on every message.
+      identityKey: typeof d.data()?.identityKey === 'string' ? (d.data()?.identityKey as string) : null,
     }))
     .filter((d) => Number.isFinite(d.signalDeviceId) && d.signalDeviceId > 0);
+
+  deviceListCache.set(userId, { at: Date.now(), devices });
+  return devices;
 };
 
 /**
@@ -175,20 +254,48 @@ export const getIdentityKeyForDevice = async (
  * a device that just paired may not have published, and that must not fail the
  * whole send to every other device.
  */
+/**
+ * Remembers which identity key each peer session was built against.
+ *
+ * Without this, `hasSession()` alone decides whether to reuse a session — and
+ * a session can be alive on OUR side while the peer's is gone, which is not a
+ * state the peer can signal to us. That is exactly what a reinstall produces,
+ * and it deadlocks: we keep encrypting to a session the peer cannot open, and
+ * because we never rebuild, it never recovers.
+ */
+const peerIdentityKey = (peerUserId: string, peerDeviceId: string) =>
+  `splitcircle.signal.peerIdentity.${peerUserId}.${peerDeviceId}`;
+
 export const ensureSessionWithDevice = async (
   peerUserId: string,
   peerSignalDeviceId: number,
   peerDeviceId: string,
+  /** The peer's CURRENTLY published identity key, when the caller has it. */
+  currentIdentityKey?: string | null,
 ): Promise<boolean> => {
   if (!isCryptoAvailable()) return false;
-  if (await hasSession(peerUserId, peerSignalDeviceId)) return true;
+
+  const cacheKey = peerIdentityKey(peerUserId, peerDeviceId);
+  let identityChanged = false;
+  if (currentIdentityKey) {
+    const known = await AsyncStorage.getItem(cacheKey);
+    identityChanged = known !== null && known !== currentIdentityKey;
+  }
+
+  // Reuse only when the peer is still the same peer. A changed identity means
+  // the device rebuilt itself (reinstall, restore, revoke-and-repair), so our
+  // session is addressed to a keypair that no longer exists.
+  if (!identityChanged && (await hasSession(peerUserId, peerSignalDeviceId))) return true;
 
   try {
     const { data } = await claimCallable({
       targetUserId: peerUserId,
       targetDeviceId: peerDeviceId,
     });
+    // processPreKeyBundle archives any existing session and starts a new one,
+    // so this is also the repair path, not just first contact.
     await establishSession(peerUserId, peerSignalDeviceId, data);
+    if (currentIdentityKey) await AsyncStorage.setItem(cacheKey, currentIdentityKey);
     return true;
   } catch {
     return false;
@@ -220,7 +327,12 @@ export const encryptForAllDevices = async (
   const results: { deviceId: string; signalDeviceId: number; envelope: SignalEnvelope }[] = [];
 
   for (const device of devices) {
-    const ready = await ensureSessionWithDevice(peerUserId, device.signalDeviceId, device.deviceId);
+    const ready = await ensureSessionWithDevice(
+      peerUserId,
+      device.signalDeviceId,
+      device.deviceId,
+      device.identityKey,
+    );
     if (!ready) continue;
     try {
       const envelope = await encryptForDevice(peerUserId, device.signalDeviceId, plaintextBase64);

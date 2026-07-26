@@ -104,25 +104,37 @@ const runSendSide = async (userId: string, ownDeviceId: string, devices: Awaited
 
   const sent = await readSentSet();
   const targets = devices.filter(
-    (device) =>
-      device.deviceId !== ownDeviceId &&
-      device.pairingStatus === 'confirmed' &&
-      !sent.has(device.deviceId),
+    (device) => device.deviceId !== ownDeviceId && device.pairingStatus === 'confirmed',
   );
   if (targets.length === 0) return;
 
   // Only devices that have actually published are addressable; the rest are
   // simply not ready yet and get picked up on a later pass.
-  const published = new Set((await listSignalDevices(userId)).map((device) => device.deviceId));
+  const published = new Map(
+    (await listSignalDevices(userId)).map((device) => [device.deviceId, device.identityKey]),
+  );
 
   for (const target of targets) {
     if (!published.has(target.deviceId)) continue;
+
+    // Keyed by deviceId AND identity, not deviceId alone.
+    //
+    // A reinstall keeps the deviceId (SecureStore survives app deletion) but
+    // rebuilds the Signal identity, so a plain deviceId key made us believe
+    // we had already served a device whose history was in fact wiped — the
+    // "doesn't import chat history when a companion is added" report, for a
+    // device that had been added before. Rekeying on identity means a device
+    // that genuinely rebuilt itself is served again, while a device that
+    // merely reconnected is not.
+    const key = `${target.deviceId}:${published.get(target.deviceId) ?? 'none'}`;
+    if (sent.has(key)) continue;
+
     try {
       const result = await sendHistoryHandoff(userId, target.deviceId);
       // null means "nothing to send" (no history in the window, or the target
       // vanished) — a normal outcome, and marking it done stops us retrying it
       // on every foreground forever.
-      await markSent(target.deviceId);
+      await markSent(key);
       if (result) {
         console.log(
           `History handoff sent to ${target.deviceId}: ${result.totalMessages} messages`,

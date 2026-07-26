@@ -486,6 +486,18 @@ const attachQueueListener = (
           payload.replyTo.content = decrypted.replyToContent;
         }
         if (decrypted.location) payload.location = decrypted.location;
+      } else if (!payload.content && payload.type === 'text') {
+        // THE "PLAINTEXT FALLBACK" ABOVE IS A FICTION FOR ENCRYPTED MESSAGES.
+        // The sender blanks `content` precisely because it encrypted it, so
+        // when decryption fails there is nothing left to fall back TO — the
+        // message saved with an empty string and rendered as an empty bubble.
+        // That is what "messages appear blank on the other device" was.
+        //
+        // Say so instead. A visible failure is recoverable (the user can ask
+        // for a resend, and the identity-change repair in
+        // ensureSessionWithDevice fixes the next one); a blank bubble looks
+        // like the sender sent nothing, and silently loses real content.
+        payload.content = '⚠️ Couldn’t decrypt this message';
       }
     }
 
