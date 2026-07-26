@@ -12,6 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isBackupHealthy } from '../../modules/splitcircle-backup';
 import { exportBackup, type BackupProgress } from '@/services/backupService';
 import { getStoredPassphrase } from '@/services/backupPassphraseService';
+import { checkNetworkAllowance } from '@/services/backupSettingsService';
 import { getCurrentDeviceId, subscribeToPairedDevices } from '@/services/pairingService';
 
 const LAST_BACKUP_KEY = 'splitcircle.backup.last';
@@ -26,7 +27,8 @@ export type BackupBlockedReason =
   | 'no_passphrase'
   | 'icloud_unavailable'
   | 'not_main_device'
-  | 'already_running';
+  | 'already_running'
+  | 'network_not_allowed';
 
 export class BackupBlockedError extends Error {
   readonly reason: BackupBlockedReason;
@@ -106,6 +108,17 @@ export const runBackupNow = async (
     throw new BackupBlockedError(
       'no_passphrase',
       'Set a backup passphrase before backing up.',
+    );
+  }
+
+  // Honour the cellular preference on manual runs too (§3.6). The scheduled
+  // task enforces this natively via NWPathMonitor; without the same check
+  // here, "Back Up Now" would quietly spend mobile data the user said not to.
+  const network = await checkNetworkAllowance(userId);
+  if (!network.allowed) {
+    throw new BackupBlockedError(
+      'network_not_allowed',
+      network.reason ?? 'This connection can’t be used for backups right now.',
     );
   }
 

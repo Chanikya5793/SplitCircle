@@ -44,6 +44,7 @@ import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
 import { OfflineSyncScreen } from '@/screens/settings/OfflineSyncScreen';
 import { LinkedDevicesScreen } from '@/screens/settings/LinkedDevicesScreen';
 import { LinkDeviceScreen } from '@/screens/settings/LinkDeviceScreen';
+import { BackupSettingsScreen } from '@/screens/settings/BackupSettingsScreen';
 import { BackupPassphraseScreen } from '@/screens/settings/BackupPassphraseScreen';
 import { DeviceRetirementScreen } from '@/screens/settings/DeviceRetirementScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
@@ -1204,6 +1205,11 @@ const AppStackNavigator = () => {
         name={ROUTES.APP.LINKED_DEVICES}
         component={LinkedDevicesScreen}
         options={{ title: SCREEN_TITLES.linkedDevices }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.BACKUP_SETTINGS}
+        component={BackupSettingsScreen}
+        options={{ title: 'iCloud backup' }}
       />
       <AppStack.Screen
         name={ROUTES.APP.BACKUP_PASSPHRASE}

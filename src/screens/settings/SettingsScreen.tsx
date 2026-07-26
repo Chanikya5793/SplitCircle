@@ -703,25 +703,16 @@ export const SettingsScreen = () => {
           />
           ))}
           {divider}
+          {/* One entry point for the whole backup feature — passphrase and
+              device retirement are reached from inside it, so Settings doesn't
+              fan out three sibling rows for one concern. */}
           <ListRow
-            title="Backup passphrase"
-            subtitle="Encrypt your iCloud chat backup"
-            icon="lock-outline"
+            title="iCloud backup"
+            subtitle="Back up, restore, and schedule your chat history"
+            icon="cloud-lock-outline"
             onPress={() => {
               lightHaptic();
-              (navigation as any).navigate(ROUTES.APP.BACKUP_PASSPHRASE, {
-                backTitle: ROOT_SCREEN_TITLES.settings,
-              });
-            }}
-          />
-          {divider}
-          <ListRow
-            title="Retire this device"
-            subtitle="Check it's safe before wiping or giving it away"
-            icon="cellphone-remove"
-            onPress={() => {
-              lightHaptic();
-              (navigation as any).navigate(ROUTES.APP.DEVICE_RETIREMENT, {
+              (navigation as any).navigate(ROUTES.APP.BACKUP_SETTINGS, {
                 backTitle: ROOT_SCREEN_TITLES.settings,
               });
             }}
