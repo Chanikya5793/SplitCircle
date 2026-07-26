@@ -7,6 +7,11 @@ import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { SETTING_IDS } from '@/constants/settingsRegistry';
 import type { ReactNode } from 'react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useAuth } from '@/context/AuthContext';
+import {
+  getRingOnThisDevice,
+  setRingOnThisDevice,
+} from '@/services/devicePreferencesService';
 import { Animated, ScrollView, StyleSheet, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Button, Divider, List, Switch, Text } from 'react-native-paper';
@@ -111,6 +116,15 @@ export const NotificationSettingsScreen = () => {
     sendLocalTestNotification,
     sendRemoteTestNotification,
   } = useNotificationContext();
+
+  const { user } = useAuth();
+  /** Per-device ringing (doc 31 #13). Local scope — no other device to hear
+   *  from, so a one-shot read on mount is the complete story. */
+  const [ringHere, setRingHere] = useState(true);
+  useEffect(() => {
+    if (!user?.userId) return;
+    void getRingOnThisDevice(user.userId).then(setRingHere);
+  }, [user?.userId]);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSendingRemoteTest, setIsSendingRemoteTest] = useState(false);
@@ -662,6 +676,23 @@ export const NotificationSettingsScreen = () => {
               onValueChange={(value) => updatePreference('messages', value)}
             />
           ))}
+          <Divider />
+          {/* Per-device, not per-account (doc 31 decision #13): the registry
+              scopes this 'local' because "should THIS phone ring?" has a
+              different right answer on a bedside iPad than on the phone in
+              your pocket. */}
+          <ToggleRow
+            title="Ring on this device"
+            description="Turn off to stop calls ringing here. Your other devices still ring."
+            value={ringHere}
+            icon="bell-ring-outline"
+            iconColor="#EF4444"
+            onValueChange={async (value) => {
+              if (!user?.userId) return;
+              setRingHere(value);
+              await setRingOnThisDevice(user.userId, value);
+            }}
+          />
           <Divider />
           {wrapAnchor(SETTING_IDS.notifExpenses, (
             <ToggleRow

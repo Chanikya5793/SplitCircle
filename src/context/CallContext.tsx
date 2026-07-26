@@ -6,6 +6,7 @@ import { nativeCallService } from '@/services/nativeCallService';
 import { voipPushService } from '@/services/voipPushService';
 import { startVoipPushRegistration } from '@/services/voipPushRegistration';
 import { getCurrentDeviceId } from '@/services/pairingService';
+import { getRingOnThisDevice } from '@/services/devicePreferencesService';
 import { resolveDisplayName } from '@/utils/identity';
 import { MISSED_CALL_CATEGORY_ID, scheduleLocalNotification } from '@/utils/notifications';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
@@ -501,12 +502,28 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     }
 
     displayedIncomingCallIdRef.current = incomingCall.callId;
-    void nativeCallService.displayIncomingCall(
-      incomingCall.callId,
-      incomingCall.initiatorId,
-      incomingCall.initiatorName,
-      incomingCall.type === 'video',
-    );
+    const callId = incomingCall.callId;
+    void nativeCallService
+      .displayIncomingCall(
+        callId,
+        incomingCall.initiatorId,
+        incomingCall.initiatorName,
+        incomingCall.type === 'video',
+      )
+      .then(async () => {
+        // Per-device ringing (doc 31 decision #13). Reported to CallKit FIRST
+        // and dismissed immediately after — never skipped — because iOS
+        // revokes the VoIP push privilege for a push that doesn't report an
+        // incoming call (CLAUDE.md). Other devices keep ringing; the caller
+        // is told nothing.
+        if (!user?.userId) return;
+        if (await getRingOnThisDevice(user.userId)) return;
+        await nativeCallService.silenceIncomingCallHere(callId);
+      })
+      .catch(() => {
+        // Never let the preference lookup take the call UI down — ringing is
+        // the safe failure direction.
+      });
 
     // Device-ack: this device is now ACTUALLY presenting the incoming call
     // (CallKit banner / in-app ringer), so tell the caller their peer is
@@ -514,7 +531,10 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
     // caller's UI from "Calling…" to "Ringing…" (WhatsApp behavior). The
     // write itself re-checks that the call is still in 'ringing' status.
     void ackCallRinging(incomingCall.callId);
-  }, [incomingCall]);
+    // userId is read inside the async continuation above; without it here the
+    // closure could hold a signed-out user's id. Re-running is harmless —
+    // displayedIncomingCallIdRef short-circuits a repeat display.
+  }, [incomingCall, user?.userId]);
 
   // Callee-side ring timeout: never let the CallKit ring spin forever when
   // cancel signals can't reach us (app woken from kill with no listener yet,

@@ -722,6 +722,25 @@ async function reportAnsweredElsewhere(appCallId: string): Promise<void> {
 }
 
 /**
+ * Dismisses the incoming-call UI on THIS device because the user turned
+ * ringing off here (doc 31 §3.8 / decision #13) — other devices keep ringing
+ * and the caller is told nothing.
+ *
+ * The call is still reported to CallKit first and dismissed immediately after,
+ * never skipped: iOS revokes the VoIP push privilege outright if a push does
+ * not report an incoming call (CLAUDE.md), so "don't ring here" has to mean
+ * "report then silence", not "ignore".
+ *
+ * ANSWERED_ELSEWHERE is deliberate over a decline reason. A decline would tell
+ * the caller this user rejected them, which is false — the account is still
+ * ringing on their other devices and may well answer. This reason is purely
+ * local to CallKit's own log and signals nothing to the caller.
+ */
+async function silenceIncomingCallHere(appCallId: string): Promise<void> {
+  await reportAnsweredElsewhere(appCallId);
+}
+
+/**
  * End a CallKit call identified by its NATIVE UUID (no app-call mapping).
  * Used to dismiss the placeholder call CallKit creates for a Recents redial
  * via CXStartCallAction before the app launches its own outgoing call flow.
@@ -901,6 +920,7 @@ export const nativeCallService = {
   markCallConnected,
   endCall,
   reportAnsweredElsewhere,
+  silenceIncomingCallHere,
   dismissNativeCall,
   clearCall,
   bringAppToForeground,
