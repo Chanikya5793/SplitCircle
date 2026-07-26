@@ -16,6 +16,7 @@ import {
   type PairedDevice,
 } from '@/services/pairingService';
 import { RecoverAccountPanel } from '@/components/ui/RecoverAccountPanel';
+import { resetHandoffState } from '@/services/deviceSyncCoordinator';
 import { errorHaptic } from '@/utils/haptics';
 import { wipeSignalState } from '../../../modules/splitcircle-crypto';
 import { useEffect, useState } from 'react';
@@ -81,6 +82,10 @@ export const PendingPairingGate = () => {
     // break every peer session until each re-handshakes — and during that
     // window their messages would fail to decrypt.
     void wipeSignalState()
+      // Handoff bookkeeping goes with the identity. Without this, a device
+      // that is revoked and later re-paired stays in the main device's
+      // "already handed off" set and silently receives no history at all.
+      .then(() => resetHandoffState())
       .catch(() => {
         // Best-effort: never block the sign-out that removes access.
       })

@@ -12,6 +12,7 @@ import {
   syncCurrentDeviceRegistration,
 } from '@/services/notificationService';
 import { initializeSignalForDevice } from '@/services/signalCryptoService';
+import { runDeviceSyncPass } from '@/services/deviceSyncCoordinator';
 import {
   clearBadgeCount,
   scheduleLocalNotification,
@@ -184,9 +185,20 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             // rolling out is not a reason for pushes to stop working.
             const currentUserId = user?.userId;
             if (currentUserId) {
-              void initializeSignalForDevice(currentUserId).catch((error) => {
-                console.warn('Signal prekey publish skipped', error);
-              });
+              void initializeSignalForDevice(currentUserId)
+                .then(() =>
+                  // Phase 6's history handoff and Phase 3's prekey
+                  // replenishment (doc 31 §5e) — both were dead code with no
+                  // caller until this. Sequenced AFTER the publish above
+                  // because every job needs this device's Signal identity to
+                  // exist first. Runs on foreground too, since refreshing
+                  // registration is what re-enters this loop: the two sides of
+                  // a handoff are rarely ready at the same moment.
+                  runDeviceSyncPass(currentUserId),
+                )
+                .catch((error) => {
+                  console.warn('Signal prekey publish skipped', error);
+                });
             }
           } catch (error) {
             console.warn('Failed to sync notification device registration', error);
