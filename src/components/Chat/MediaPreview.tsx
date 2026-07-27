@@ -30,7 +30,7 @@ import { ActivityIndicator, IconButton, Text, TextInput } from 'react-native-pap
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SelectedMedia } from './AttachmentMenu';
 import { MediaEditor } from './MediaEditor';
-import { materializeAsset } from '../../../modules/splitcircle-media';
+import { materializeAsset, nativeLog } from '../../../modules/splitcircle-media';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -174,8 +174,12 @@ const fitIndicator = (status: FitStatus): { color?: string; icon?: keyof typeof 
 const StripThumb = ({ item, quality, fitStatus, active, onPress, onRemove, showRemove, primaryColor }: StripThumbProps) => {
   const isVideo = item.type === 'video';
   const isImage = item.type === 'image' || item.type === 'camera';
-  const videoThumb = useVideoThumbnail(isVideo ? item.uri : undefined);
-  const displayUri = isVideo ? videoThumb : item.uri;
+  // A natively-picked video's `uri` is ALREADY a poster JPEG, so running
+  // video-thumbnail extraction over it fails and the strip falls back to a
+  // grey camera glyph. Only extract when we hold a real movie file.
+  const needsExtraction = isVideo && !item.assetId;
+  const videoThumb = useVideoThumbnail(needsExtraction ? item.uri : undefined);
+  const displayUri = needsExtraction ? videoThumb : item.uri;
   const indicator = fitIndicator(fitStatus);
   // When the active item is also flagged, prefer the active blue border so
   // the "you're editing this one" cue still wins. Inactive flagged items
@@ -281,6 +285,15 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
 
   const safeIndex = Math.min(activeIndex, Math.max(0, internalItems.length - 1));
   const media = internalItems[safeIndex];
+  useEffect(() => {
+    if (!visible) return;
+    nativeLog(
+      `preview render n=${internalItems.length} idx=${safeIndex} ` +
+        (media
+          ? `type=${media.type} uri=${media.uri ? 'ok' : 'EMPTY'} asset=${media.assetId ? 'y' : 'n'} dur=${media.duration ?? 'none'}`
+          : 'NO MEDIA'),
+    );
+  }, [visible, internalItems.length, safeIndex, media]);
   const activeQuality: QualityLevel = qualities[safeIndex] ?? 'HD';
   const isEditableImage = !!media && (media.type === 'image' || media.type === 'camera');
 
@@ -458,6 +471,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   }, [safeIndex, visible, internalItems.length]);
 
   const handleSend = () => {
+    nativeLog(`handleSend n=${internalItems.length} allFit=${allItemsFit} loading=${isPreviewLoading}`);
     if (internalItems.length === 0) return;
     if (!previewReady && media?.type === 'video' && !media.assetId && !videoError) return;
     // Preflight: refuse to send while any item is projected over the upload

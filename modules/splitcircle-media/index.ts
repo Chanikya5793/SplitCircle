@@ -32,6 +32,7 @@ export interface MaterializedAsset {
 }
 
 interface NativeMediaModule {
+  log(message: string): void;
   pickAssets(selectionLimit: number, mediaTypes: string): Promise<PickedAsset[]>;
   requestThumbnail(
     assetId: string,
@@ -52,6 +53,18 @@ const nativeModule =
 
 /** Whether the native path is usable. Callers fall back when false. */
 export const isNativeMediaAvailable = (): boolean => nativeModule !== null;
+
+/**
+ * Log a line to the DEVICE log (not the JS console).
+ *
+ * A Release build's `console.*` output never reaches `devicectl --console`,
+ * which is the only capture that works against a physical phone here. Anything
+ * we need to see while diagnosing a real-device media problem has to go
+ * through this instead. No-ops when the native module is absent.
+ */
+export const nativeLog = (message: string): void => {
+  nativeModule?.log(message);
+};
 
 /**
  * Present the system picker and get back identifiers only.

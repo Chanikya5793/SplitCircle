@@ -31,6 +31,7 @@ import { ROUTES } from '@/constants';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { resolveMoneyInChat } from '@/models/group';
 import { useAuth } from '@/context/AuthContext';
+import { nativeLog } from '../../../modules/splitcircle-media';
 import { useCallContext } from '@/context/CallContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
@@ -1294,6 +1295,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     }
 
     setAttachmentMenuVisible(false);
+    nativeLog(`handleMediaSelected n=${items.length} type=${first.type} asset=${first.assetId ? 'y' : 'n'}`);
     setSelectedMediaBatch(items);
     // Mount the preview right after the attachment menu finishes dismissing.
     // MediaPreview shows its own per-item loading state for videos, so we
@@ -1311,7 +1313,10 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     // The delay only needs to outlast the attachment sheet's own dismiss
     // animation (250-300ms) so the preview doesn't mount underneath it. A
     // fixed timer always fires, which is the property that matters here.
-    const previewTimer = setTimeout(() => setMediaPreviewVisible(true), 320);
+    const previewTimer = setTimeout(() => {
+      nativeLog('preview timer fired -> visible');
+      setMediaPreviewVisible(true);
+    }, 320);
     mediaPreviewTimerRef.current = previewTimer;
   };
 

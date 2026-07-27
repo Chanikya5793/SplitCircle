@@ -47,6 +47,16 @@ public class SplitCircleMediaModule: Module {
 
     Events("onMaterializeProgress")
 
+    /// Write a line to the device log from JS.
+    ///
+    /// A Release build's `console.*` never reaches the device log, so the only
+    /// way to see what the JS half of this pipeline is doing on a real phone
+    /// is to hand the string to NSLog. Kept deliberately trivial and cheap;
+    /// callers gate their own verbosity.
+    Function("log") { (message: String) in
+      NSLog("[SCMedia/JS] %@", message)
+    }
+
     /// Present the system picker and return identifiers + metadata only.
     ///
     /// `PHPickerConfiguration(photoLibrary:)` is required rather than the
