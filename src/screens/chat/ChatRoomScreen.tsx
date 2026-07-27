@@ -1300,14 +1300,32 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     // MediaPreview shows its own per-item loading state for videos, so we
     // don't bridge with a separate global overlay (the previous bridge
     // flickered visibly as it raced the preview's mount).
-    InteractionManager.runAfterInteractions(() => {
-      setMediaPreviewVisible(true);
-    });
+    // A PLAIN TIMER, not InteractionManager.
+    //
+    // `runAfterInteractions` fires only once every interaction handle has been
+    // released, and if any never is — a gesture or animation that ends without
+    // clearing its handle — the callback is dropped SILENTLY. That is what was
+    // happening: the camera dismissed, the preview was scheduled, and nothing
+    // ever mounted. No bubble, no error, no failed state, because the send is
+    // driven by the preview and the preview never appeared.
+    //
+    // The delay only needs to outlast the attachment sheet's own dismiss
+    // animation (250-300ms) so the preview doesn't mount underneath it. A
+    // fixed timer always fires, which is the property that matters here.
+    const previewTimer = setTimeout(() => setMediaPreviewVisible(true), 320);
+    mediaPreviewTimerRef.current = previewTimer;
   };
 
   // --- Web only: drag-and-drop and clipboard-paste media into the chat. ---
   // Files are wrapped in session-scoped object URLs and fed into the same
   // preview → process → upload pipeline the attachment menu uses.
+  // Cleared on unmount so leaving the chat mid-selection can't mount a preview
+  // onto a screen that is gone.
+  const mediaPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (mediaPreviewTimerRef.current) clearTimeout(mediaPreviewTimerRef.current);
+  }, []);
+
   const handleMediaSelectedRef = useRef(handleMediaSelected);
   handleMediaSelectedRef.current = handleMediaSelected;
   const [isDropTargetActive, setIsDropTargetActive] = useState(false);
