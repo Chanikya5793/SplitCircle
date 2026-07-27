@@ -477,3 +477,30 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
 ## Backlog ideas (user's own notes)
 
 - Chat "stalk mode": pin-guarded incognito view — no read receipts, sending disabled.
+- **`expo-image-picker` downloads every selected asset from iCloud INSIDE the
+  picker call** — the cause of "selecting a video freezes/crashes the app" on
+  any library using Optimize iPhone Storage. `launchImageLibraryAsync` does not
+  resolve until every asset is materialized, and its video fast path calls
+  `PHAssetResourceManager.writeData` with **no `progressHandler` and no
+  cancellation** (`MediaHandler.swift` ~line 416). For a large iCloud video
+  that is minutes of frozen UI, then a watchdog kill or OOM. `modules/
+  splitcircle-media` replaces it for the gallery path by splitting that one
+  call in three: `pickAssets` (identifiers + metadata, reads no file data),
+  `requestThumbnail` (small local render — Photos keeps these on-device even
+  under Optimize Storage), and `materializeAsset` (the real fetch, with
+  progress + cancel, deferred to send time where the pipeline already has a
+  ring and a Cancel). Uses `requestData`, NOT `writeData`: it streams chunks
+  (a 2GB video never sits in memory) and returns an id `cancelDataRequest`
+  accepts. **`PHPickerConfiguration(photoLibrary:)` is mandatory** — the bare
+  initialiser returns results with `assetIdentifier == nil` and the identifier
+  is the whole point. Consequence to respect everywhere: while `assetId` is
+  set, `uri` is only a ~1280px THUMBNAIL. Editing, trimming, or sending it
+  as-is is silent permanent quality loss, so each of those materializes first
+  and then clears `assetId` (leaving it set makes the pipeline re-download the
+  original and discard the edit/trim).
+- **Never `rm -rf ios/build`** — it is not scratch output. React Native's
+  codegen writes `ios/build/generated/ios/` there, and deleting it fails the
+  next archive with `RCTAppDependencyProvider.h couldn't be opened` from a
+  target you never touched. `pod install` regenerates it. (Note `xcodebuild
+  -project ios/Pods/Pods.xcodeproj` defaults `BUILD_DIR` to that same
+  `ios/build`, which is what makes deleting it look safe.)
