@@ -137,6 +137,9 @@ const ATTACHMENT_OPTIONS: Pick<AttachmentOption, 'id' | 'icon' | 'label'>[] = [
  */
 const HANDOFF_DEADLINE_MS = 4000;
 
+/** Longest we will wait for one preview thumbnail before giving up on it. */
+const THUMBNAIL_DEADLINE_MS = 2500;
+
 // Loading messages shown inside the menu after native picker returns
 const getProcessingMessage = (type: AttachmentType): string => {
   switch (type) {
@@ -405,10 +408,21 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           picked.map(async (asset) => {
             let previewUri = '';
             try {
-              previewUri = (await requestThumbnail(asset.assetId, 1280)).uri;
+              // Hard deadline. Nothing downstream needs the thumbnail — it is
+              // decoration for the preview strip — but this sits between the
+              // user's tap and the preview appearing, so a slow one must never
+              // be able to hold the whole batch. This is the belt to the
+              // native side's braces (which now refuses network entirely).
+              previewUri = (
+                await Promise.race([
+                  requestThumbnail(asset.assetId, 1280),
+                  new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('thumbnail timeout')), THUMBNAIL_DEADLINE_MS),
+                  ),
+                ])
+              ).uri;
             } catch (error) {
-              // A thumbnail failure is not fatal — the item can still be sent,
-              // it just shows a placeholder in the preview strip.
+              // Not fatal — the item still sends; it just shows a placeholder.
               console.warn('Thumbnail failed for', asset.assetId, error);
             }
             return {

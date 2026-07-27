@@ -634,6 +634,20 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
     switch (media.type) {
       case 'image':
       case 'camera':
+        // No local thumbnail (asset is iCloud-only and Photos had no cached
+        // rendition). Say so rather than showing an empty frame — the item is
+        // still perfectly sendable, it just cannot be previewed yet.
+        if (!media.uri) {
+          return (
+            <View style={styles.videoFallback}>
+              <Ionicons name="cloud-download-outline" size={72} color={theme.colors.primary} />
+              <Text style={{ color: '#fff', marginTop: 14 }}>Stored in iCloud</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 4 }}>
+                Downloads when you send
+              </Text>
+            </View>
+          );
+        }
         return (
           <Image
             source={{ uri: media.uri }}

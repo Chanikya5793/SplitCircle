@@ -55,12 +55,14 @@ public class SplitCircleMediaModule: Module {
     /// That does mean this path needs library authorization, which the app
     /// already requests before calling here.
     AsyncFunction("pickAssets") { (selectionLimit: Int, mediaTypes: String, promise: Promise) in
+      NSLog("[SCMedia] pickAssets limit=%d types=%@", selectionLimit, mediaTypes)
       DispatchQueue.main.async { [weak self] in
         guard let self else {
           promise.reject("E_MODULE_GONE", "Media module was deallocated.")
           return
         }
         guard let presenter = self.appContext?.utilities?.currentViewController() else {
+          NSLog("[SCMedia] pickAssets FAILED: no presenter")
           promise.reject("E_NO_PRESENTER", "No view controller available to present the picker.")
           return
         }
@@ -84,6 +86,7 @@ public class SplitCircleMediaModule: Module {
         }
         self.pickerDelegate = delegate
         picker.delegate = delegate
+        NSLog("[SCMedia] presenting PHPicker from %@", String(describing: type(of: presenter)))
         presenter.present(picker, animated: true)
       }
     }
@@ -96,9 +99,21 @@ public class SplitCircleMediaModule: Module {
       }
 
       let options = PHImageRequestOptions()
-      // Allowed, but a thumbnail this size is normally already on-device even
-      // under Optimize Storage, so it rarely costs a network round trip.
-      options.isNetworkAccessAllowed = true
+      // NETWORK ACCESS OFF — this is load-bearing, not an optimisation.
+      //
+      // With it on, asking for a `.highQualityFormat` poster frame of a video
+      // that lives in iCloud makes Photos download THE WHOLE VIDEO to render
+      // one frame. That call sits in a Promise.all before the picker hands
+      // anything back to the chat, so it reproduced the exact freeze this
+      // module was built to remove — just moved one layer down.
+      //
+      // Photos keeps small renditions on-device even under Optimize Storage
+      // (that is the point of the setting), so the local copy is almost always
+      // there. When it genuinely is not, we return a clear "in cloud" failure
+      // and the UI shows a placeholder — never a stall.
+      options.isNetworkAccessAllowed = false
+      // A single callback, unlike `.opportunistic`, which fires twice and
+      // would otherwise leave us resolving with the blurry degraded frame.
       options.deliveryMode = .highQualityFormat
       options.resizeMode = .fast
       options.isSynchronous = false
@@ -127,8 +142,17 @@ public class SplitCircleMediaModule: Module {
           promise.reject("E_THUMBNAIL", error.localizedDescription)
           return
         }
+        if image == nil, let inCloud = info?[PHImageResultIsInCloudKey] as? Bool, inCloud {
+          settled = true
+          // Deliberately NOT retried with network access on — see the options
+          // comment above. The caller shows a placeholder instead.
+          NSLog("[SCMedia] thumbnail unavailable locally (in iCloud) for %@", assetId)
+          promise.reject("E_IN_CLOUD", "No local preview for this item.")
+          return
+        }
         guard let image, let data = image.jpegData(compressionQuality: 0.85) else {
           settled = true
+          NSLog("[SCMedia] thumbnail render failed for %@", assetId)
           promise.reject("E_THUMBNAIL", "Could not render a preview for this item.")
           return
         }
@@ -151,12 +175,16 @@ public class SplitCircleMediaModule: Module {
     /// cancellation. This is the call that can take minutes on a large iCloud
     /// video, and the reason the whole module exists.
     AsyncFunction("materializeAsset") { (assetId: String, requestId: String, promise: Promise) in
+      NSLog("[SCMedia] materialize start id=%@ req=%@", assetId, requestId)
       guard let asset = Self.fetchAsset(assetId) else {
+        NSLog("[SCMedia] materialize FAILED: asset not found %@", assetId)
         promise.reject("E_ASSET_NOT_FOUND", "That item is no longer in the photo library.")
         return
       }
 
       let resources = PHAssetResource.assetResources(for: asset)
+      NSLog("[SCMedia] asset media=%ld resources=%d types=%@", asset.mediaType.rawValue, resources.count,
+            resources.map { String($0.type.rawValue) }.joined(separator: ","))
       // Prefer the edited/full-size rendition so a user's crop or filter from
       // the Photos app is what actually gets sent.
       let preferred: [PHAssetResourceType] = asset.mediaType == .video
@@ -169,6 +197,7 @@ public class SplitCircleMediaModule: Module {
         return
       }
 
+      NSLog("[SCMedia] chose resource type=%ld name=%@", resource.type.rawValue, resource.originalFilename)
       let ext = (resource.originalFilename as NSString).pathExtension
       let destination: URL
       do {
@@ -205,6 +234,7 @@ public class SplitCircleMediaModule: Module {
         self?.clearRequest(requestId)
         let attributes = try? FileManager.default.attributesOfItem(atPath: destination.path)
         let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+        NSLog("[SCMedia] materialize OK req=%@ bytes=%d", requestId, size)
         promise.resolve([
           "uri": destination.absoluteString,
           "width": asset.pixelWidth,
@@ -223,6 +253,7 @@ public class SplitCircleMediaModule: Module {
         // Drop the partial file — a truncated video left in the cache would
         // otherwise be indistinguishable from a complete one on a later read.
         try? FileManager.default.removeItem(at: destination)
+        NSLog("[SCMedia] materialize FAIL req=%@ code=%@ msg=%@", requestId, code, message)
         promise.reject(code, message)
       }
 
@@ -319,6 +350,7 @@ public class SplitCircleMediaModule: Module {
   /// Metadata only — deliberately reads nothing that would trigger a download.
   private static func metadata(for results: [PHPickerResult]) -> [[String: Any]] {
     let identifiers = results.compactMap(\.assetIdentifier)
+    NSLog("[SCMedia] picked %d results, %d with identifiers", results.count, identifiers.count)
     guard !identifiers.isEmpty else { return [] }
 
     let fetched = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
