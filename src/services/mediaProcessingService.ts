@@ -1,6 +1,7 @@
 import { getInfoAsync } from 'expo-file-system/legacy';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { Image, Platform } from 'react-native';
+import { nativeLog } from '../../modules/splitcircle-media';
 import {
   Video as VideoCompressor,
   getVideoMetaData,
@@ -84,6 +85,9 @@ const getUriByteSize = async (uri: string): Promise<number> => {
     return 0;
   }
 };
+
+/** No progress for this long during a transcode is worth recording. */
+const STALL_WARN_MS = 30_000;
 
 export type QualityLevel = 'HD' | 'SD' | 'ORIGINAL';
 // Image targets: HD = 1920px max edge, SD = 1280px, ORIGINAL = no resize.
@@ -363,11 +367,15 @@ export const processVideo = async (
   let srcWidth = 0;
   let srcHeight = 0;
   let srcSize = 0;
+  // Duration drives the "is this already efficient?" check below — without it
+  // there is no way to know what a transcode would even produce.
+  let srcDurationSec = 0;
   try {
     const meta = await getVideoMetaData(uri);
     srcWidth = meta.width ?? 0;
     srcHeight = meta.height ?? 0;
     srcSize = meta.size ?? 0;
+    srcDurationSec = meta.duration ?? 0;
   } catch {
     const fileInfo = await getInfoAsync(uri);
     srcSize = fileInfo.exists && 'size' in fileInfo ? fileInfo.size : 0;
@@ -394,11 +402,64 @@ export const processVideo = async (
     return { uri, width: srcWidth, height: srcHeight, size: srcSize, ...sourceMeta };
   }
 
+  // Don't re-encode a file that is already close to what we would produce.
+  //
+  // The old rule — skip only under a flat 25MB — meant a video that was
+  // ALREADY at target resolution and already near our target bitrate got a
+  // full transcode anyway, for a few percent off the file size and minutes of
+  // the user's time. It hit trimmed clips hardest: the trimmer has just
+  // written the file with `h264_videotoolbox`, and we then re-encoded that
+  // output a second time. Two full hardware passes over the same video, the
+  // second one buying almost nothing.
+  //
+  // The rule now compares against what compression would actually achieve. If
+  // the source is within ~40% of the projected output AND already at or below
+  // the resolution cap AND fits the upload limit, transcoding is not worth
+  // what it costs. Anything genuinely oversized still compresses as before.
   const longestEdge = Math.max(srcWidth, srcHeight);
-  const SKIP_COMPRESS_BYTES = 25 * 1024 * 1024;
-  if (longestEdge > 0 && longestEdge <= maxEdge && srcSize > 0 && srcSize <= SKIP_COMPRESS_BYTES) {
+  const durationSec = srcDurationSec > 0 ? srcDurationSec : 0;
+  // ORIGINAL already returned above (maxEdge === null), but TypeScript cannot
+  // narrow the union from that check, so name the remaining cases explicitly.
+  const targetBitrate = quality === 'SD' ? VIDEO_BITRATE_BPS.SD : VIDEO_BITRATE_BPS.HD;
+  const projectedBytes = durationSec > 0 ? (targetBitrate * durationSec) / 8 : 0;
+  const alreadyEfficient =
+    projectedBytes > 0 && srcSize > 0 && srcSize <= projectedBytes * 1.4;
+  const withinUploadCap = srcSize > 0 && srcSize <= UPLOAD_SIZE_LIMIT_BYTES;
+
+  if (longestEdge > 0 && longestEdge <= maxEdge && withinUploadCap && alreadyEfficient) {
+    nativeLog(
+      `compress SKIPPED: ${Math.round(srcSize / 1048576)}MB at ${longestEdge}px is already near target ${Math.round(projectedBytes / 1048576)}MB`,
+    );
     return { uri, width: srcWidth, height: srcHeight, size: srcSize, ...sourceMeta };
   }
+
+  // Keep a background assertion alive for the transcode. Without one, the app
+  // being backgrounded (a notification pulled down, the screen locking, a
+  // glance at another app) suspends the process and the encode simply stops —
+  // which presents as progress freezing at whatever percentage it had reached
+  // and never resuming. That is the "it stalls, seemingly at random" report:
+  // the trigger is incidental backgrounding, not the video.
+  let backgroundTaskActive = false;
+  try {
+    await VideoCompressor.activateBackgroundTask();
+    backgroundTaskActive = true;
+  } catch (error) {
+    // Not fatal — compression still works while the app stays foregrounded.
+    console.warn('Could not start background task for compression', error);
+  }
+
+  // Watchdog for a genuinely wedged encoder. It cannot fix a stall, but a
+  // silent freeze with no diagnosis is what made this expensive to chase.
+  let lastProgressAt = Date.now();
+  let lastFraction = 0;
+  const stallWatch = setInterval(() => {
+    const idleMs = Date.now() - lastProgressAt;
+    if (idleMs > STALL_WARN_MS) {
+      nativeLog(
+        `compress STALL: no progress for ${Math.round(idleMs / 1000)}s at ${Math.round(lastFraction * 100)}% (${uri.split('/').pop()})`,
+      );
+    }
+  }, STALL_WARN_MS);
 
   try {
     const compressedUri = await VideoCompressor.compress(
@@ -409,6 +470,12 @@ export const processVideo = async (
         // Skip compression entirely for already-tiny clips so we don't
         // bloat 100KB videos to 500KB by re-encoding them.
         minimumFileSizeForCompress: 1, // MB
+        // Report every ~2% instead of the default 0, which emits on EVERY
+        // frame. A 3-minute clip is thousands of bridge crossings, each
+        // driving a React state update, all competing with the encode itself
+        // for the JS thread — the UI then updates so erratically that a
+        // running transcode is indistinguishable from a dead one.
+        progressDivider: 2,
         // The native module hands back the id it will accept a cancel for.
         // It arrives before the transcode begins, so wiring it here is what
         // makes a long compress abortable at all.
@@ -422,7 +489,11 @@ export const processVideo = async (
           });
         },
       },
-      onProgress,
+      (progress) => {
+        lastProgressAt = Date.now();
+        lastFraction = progress;
+        onProgress?.(progress);
+      },
     );
 
     let outWidth = srcWidth;
@@ -453,7 +524,19 @@ export const processVideo = async (
     };
   } catch (err) {
     console.warn('Video compression failed, sending original:', err);
+    nativeLog(`compress failed at ${Math.round(lastFraction * 100)}%: ${String(err)}`);
     return { uri, width: srcWidth, height: srcHeight, size: srcSize, ...sourceMeta };
+  } finally {
+    clearInterval(stallWatch);
+    if (backgroundTaskActive) {
+      // Must always be released — an un-deactivated assertion keeps the app
+      // alive in the background until iOS kills it outright.
+      try {
+        await VideoCompressor.deactivateBackgroundTask();
+      } catch (error) {
+        console.warn('Could not end background task for compression', error);
+      }
+    }
   }
 };
 

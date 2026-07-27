@@ -244,7 +244,23 @@ export const useMediaSendPipeline = ({
         mediaToSend.uri,
         itemQuality,
         (p) => setSendFraction(requestId, Math.max(0, Math.min(1, p))),
-        (cancel) => setSendProgress(requestId, { stage: 'compressing', cancel }),
+        (cancelNative) =>
+          setSendProgress(requestId, {
+            stage: 'compressing',
+            // MUST set `job.cancelled` as well as stopping the transcode.
+            //
+            // Cancelling the native compressor makes its promise reject, and
+            // processVideo catches that and falls back to sending the
+            // ORIGINAL file — a deliberate resilience path for genuine
+            // encoder failures, but it swallows a deliberate cancel whole.
+            // The flag is what the post-transcode check reads to turn this
+            // into a real MediaSendCancelledError, so without it pressing X
+            // stopped the encode and then sent the video anyway.
+            cancel: () => {
+              job.cancelled = true;
+              cancelNative();
+            },
+          }),
       );
       processedUri = r.uri;
       if (r.width > 0) processedWidth = r.width;

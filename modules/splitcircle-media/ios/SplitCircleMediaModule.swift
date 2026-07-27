@@ -66,6 +66,14 @@ public class SplitCircleMediaModule: Module {
     /// already requests before calling here.
     AsyncFunction("pickAssets") { (selectionLimit: Int, mediaTypes: String, promise: Promise) in
       NSLog("[SCMedia] pickAssets limit=%d types=%@", selectionLimit, mediaTypes)
+      // Materialized originals are full-size copies — a few 3-minute videos is
+      // gigabytes. Nothing deleted them, so the cache grew without bound until
+      // the device ran out of room, and the first thing to fail on a full disk
+      // is the largest write: the transcode of a long video. That presents as
+      // a compression that stalls or dies for no visible reason, on big files
+      // only, and "randomly" — i.e. once enough sends have accumulated.
+      // Cheapest correct moment to sweep is here, before we add more.
+      Self.purgeStaleCache()
       DispatchQueue.main.async { [weak self] in
         guard let self else {
           promise.reject("E_MODULE_GONE", "Media module was deallocated.")
@@ -349,6 +357,36 @@ public class SplitCircleMediaModule: Module {
 
   private static func fetchAsset(_ localIdentifier: String) -> PHAsset? {
     PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject
+  }
+
+  /// Delete anything this module wrote more than an hour ago.
+  ///
+  /// An hour is comfortably longer than any single pick→preview→send, so this
+  /// can never remove a file still in use, while still bounding the directory
+  /// across sessions. Failures are ignored: a sweep that cannot run is not a
+  /// reason to block the user from picking.
+  private static func purgeStaleCache() {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("splitcircle-media", isDirectory: true)
+    guard let entries = try? FileManager.default.contentsOfDirectory(
+      at: dir,
+      includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]
+    ) else { return }
+
+    let cutoff = Date().addingTimeInterval(-3600)
+    var freed = 0
+    for url in entries {
+      guard
+        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+        let modified = values.contentModificationDate,
+        modified < cutoff
+      else { continue }
+      freed += values.fileSize ?? 0
+      try? FileManager.default.removeItem(at: url)
+    }
+    if freed > 0 {
+      NSLog("[SCMedia] purged %d MB of stale media cache", freed / 1_048_576)
+    }
   }
 
   private static func cacheURL(extension ext: String, prefix: String) throws -> URL {
