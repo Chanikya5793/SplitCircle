@@ -291,7 +291,8 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
       `preview render n=${internalItems.length} idx=${safeIndex} ` +
         (media
           ? `type=${media.type} uri=${media.uri ? 'ok' : 'EMPTY'} asset=${media.assetId ? 'y' : 'n'} dur=${media.duration ?? 'none'}`
-          : 'NO MEDIA'),
+          : 'NO MEDIA') +
+        ` | allFit=${allItemsFit} blocking=${blockingIndex} loading=${isPreviewLoading} q=${qualities[safeIndex] ?? '?'} est=${media ? estimateProcessedSize(media, qualities[safeIndex] ?? 'HD') : 'n/a'}`,
     );
   }, [visible, internalItems.length, safeIndex, media]);
   const activeQuality: QualityLevel = qualities[safeIndex] ?? 'HD';
