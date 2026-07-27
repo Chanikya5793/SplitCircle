@@ -30,7 +30,12 @@ import { ActivityIndicator, IconButton, Text, TextInput } from 'react-native-pap
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SelectedMedia } from './AttachmentMenu';
 import { MediaEditor } from './MediaEditor';
-import { materializeAsset, nativeLog } from '../../../modules/splitcircle-media';
+import {
+  addMaterializeProgressListener,
+  cancelMaterialize,
+  materializeAsset,
+  nativeLog,
+} from '../../../modules/splitcircle-media';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -258,6 +263,10 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [materializing, setMaterializing] = useState(false);
+  /** 0–1 while the active video's original is downloading, else null. */
+  const [materializeProgress, setMaterializeProgress] = useState<number | null>(null);
+  /** assetIds currently being fetched, so re-renders don't start a second one. */
+  const materializeInFlight = useRef<Set<string>>(new Set());
   const [videoError, setVideoError] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const readyNotifiedRef = useRef(false);
@@ -410,6 +419,65 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   // file we already hold. A natively-picked item still carries a JPEG
   // thumbnail in `uri`, and handing that to the player produces a decode
   // error rather than a preview; those render as a poster instead.
+  /**
+   * Fetch the ACTIVE video's real file as soon as it is on screen.
+   *
+   * A poster alone is not a preview: you cannot watch what you are about to
+   * send, and trim and edit both need the actual movie. So the download that
+   * used to be deferred all the way to Send now starts when the video becomes
+   * the active item — but inside the preview, where it has a progress readout
+   * and the user can carry on writing a caption meanwhile, rather than inside
+   * the picker where it froze the app with no feedback.
+   *
+   * Videos only, and only the ACTIVE one. Eagerly pulling every picked item
+   * would download ten originals for a batch the user is merely browsing;
+   * stills preview perfectly well from their thumbnail, and Edit/Send fetch
+   * those on demand.
+   *
+   * Keyed on assetId rather than index so a result still lands correctly if
+   * the user reorders or removes items while it is in flight.
+   */
+  useEffect(() => {
+    if (!visible || !media || media.type !== 'video' || !media.assetId) return;
+    const assetId = media.assetId;
+    if (materializeInFlight.current.has(assetId)) return;
+    materializeInFlight.current.add(assetId);
+
+    const requestId = `preview-${assetId}`;
+    setMaterializeProgress(0);
+    const subscription = addMaterializeProgressListener(({ requestId: id, fraction }) => {
+      if (id === requestId) setMaterializeProgress(fraction);
+    });
+
+    materializeAsset(assetId, requestId)
+      .then((real) => {
+        setInternalItems((prev) =>
+          prev.map((item) =>
+            item.assetId === assetId
+              ? {
+                  ...item,
+                  uri: real.uri,
+                  // No longer a thumbnail: this unlocks playback, trim and
+                  // edit, and stops the send pipeline downloading it again.
+                  assetId: undefined,
+                  fileSize: real.fileSize,
+                  duration: real.duration || item.duration,
+                }
+              : item,
+          ),
+        );
+      })
+      .catch((error) => {
+        // Non-fatal: the item still sends, the pipeline just fetches it then.
+        nativeLog(`preview materialize failed ${assetId}: ${String(error)}`);
+      })
+      .finally(() => {
+        materializeInFlight.current.delete(assetId);
+        subscription.remove();
+        setMaterializeProgress(null);
+      });
+  }, [visible, media]);
+
   const videoSource =
     media?.type === 'video' && !media.assetId ? media.uri : null;
   const player = useVideoPlayer(videoSource, (p) => {
@@ -501,6 +569,12 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
       // for a natively-picked item, and keep the materialized file so the
       // send pipeline doesn't download it a second time.
       let source = media;
+      if (source.assetId && materializeInFlight.current.has(source.assetId)) {
+        // The preview's own fetch is already running for this exact asset;
+        // starting a second would download the same file twice.
+        appAlert('Still preparing', 'This video is still loading. Try again in a moment.');
+        return;
+      }
       if (source.assetId) {
         setMaterializing(true);
         try {
@@ -575,6 +649,11 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   }, [media, safeIndex, qualities, triggerTrim]);
 
   const handleClose = () => {
+    // Abandon any download still running for this batch — the user has left,
+    // and letting it finish burns cellular data for media they did not send.
+    materializeInFlight.current.forEach((assetId) => cancelMaterialize(`preview-${assetId}`));
+    materializeInFlight.current.clear();
+    setMaterializeProgress(null);
     setCaptions([]);
     setVideoError(false);
     setPreviewReady(false);
@@ -694,12 +773,20 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                 </View>
               )}
               <View pointerEvents="none" style={styles.videoPosterBadge}>
-                <Ionicons name="play" size={26} color="#fff" />
+                {materializeProgress === null ? (
+                  <Ionicons name="play" size={26} color="#fff" />
+                ) : (
+                  <ActivityIndicator animating size="small" color="#fff" />
+                )}
               </View>
               <View pointerEvents="none" style={styles.videoPosterNote}>
                 <Text style={styles.videoPosterNoteText}>
                   {media.duration ? `${formatDuration(media.duration)} · ` : ''}
-                  Full video downloads when you send
+                  {materializeProgress === null
+                    ? 'Preparing…'
+                    : materializeProgress > 0
+                      ? `Getting video from iCloud ${Math.round(materializeProgress * 100)}%`
+                      : 'Preparing video…'}
                 </Text>
               </View>
             </View>
@@ -848,7 +935,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
               <TouchableOpacity
                 style={styles.editButton}
                 onPress={openEditor}
-                disabled={materializing}
+                disabled={materializing || materializeProgress !== null}
                 activeOpacity={0.7}
                 accessibilityRole="button"
                 accessibilityLabel="Edit this photo"
