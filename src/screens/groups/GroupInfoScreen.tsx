@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GroupAvatar, GroupPhotoUploader, GuardedScreen} from '@/components/ui';
 import { CurrencyConvertSheet, MoneyInChatSheet, WallpaperPickerSheet } from '@/components/ui';
@@ -58,6 +59,8 @@ const SwipeableMemberRow = ({
     return (
         <Swipeable
             ref={swipeableRef}
+            onSwipeableWillOpen={() => setOpenSwipeable(swipeableRef.current)}
+            onSwipeableClose={() => clearOpenSwipeable(swipeableRef.current)}
             renderRightActions={renderRightActions}
             friction={2}
             rightThreshold={40}

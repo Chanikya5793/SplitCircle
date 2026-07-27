@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { SyncBadge } from '@/components/ui/SyncBadge';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -83,6 +84,8 @@ export const SettlementCard = ({
         <View style={{ marginBottom: 1 }}>
             <Swipeable
                 ref={swipeableRef}
+                onSwipeableWillOpen={() => setOpenSwipeable(swipeableRef.current)}
+                onSwipeableClose={() => clearOpenSwipeable(swipeableRef.current)}
                 renderRightActions={onDelete ? renderRightActions : undefined}
                 friction={2}
                 rightThreshold={40}

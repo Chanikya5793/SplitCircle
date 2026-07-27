@@ -26,6 +26,7 @@ import { appAlert } from '@/utils/appAlert';
 import { isInChatMap } from '@/utils/chatOrganization';
 import { resolveDisplayName } from '@/utils/identity';
 import { heavyHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
+import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
@@ -145,7 +146,11 @@ const SwipeableChatRow = ({
       leftThreshold={40}
       rightThreshold={40}
       overshootFriction={8}
-      onSwipeableWillOpen={lightHaptic}
+      onSwipeableWillOpen={() => {
+        lightHaptic();
+        setOpenSwipeable(swipeableRef.current);
+      }}
+      onSwipeableClose={() => clearOpenSwipeable(swipeableRef.current)}
     >
       {children}
     </Swipeable>

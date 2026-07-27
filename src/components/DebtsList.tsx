@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { ROUTES } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group, GroupMember } from '@/models';
@@ -84,6 +85,8 @@ const SwipeableDebtRow = ({
     return (
         <Swipeable
             ref={swipeableRef}
+            onSwipeableWillOpen={() => setOpenSwipeable(swipeableRef.current)}
+            onSwipeableClose={() => clearOpenSwipeable(swipeableRef.current)}
             renderLeftActions={renderLeftActions}
             friction={2}
             leftThreshold={40}

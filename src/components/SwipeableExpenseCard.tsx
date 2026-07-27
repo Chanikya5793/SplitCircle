@@ -6,6 +6,7 @@ import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { usePressScale } from '@/hooks/usePressScale';
 import { getExpenseSplitLabel } from '@/utils/expenseSplit';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
+import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
@@ -107,7 +108,11 @@ export const SwipeableExpenseCard = ({
         friction={2}
         rightThreshold={40}
         overshootRight={false}
-        onSwipeableWillOpen={lightHaptic}
+        onSwipeableWillOpen={() => {
+        lightHaptic();
+        setOpenSwipeable(swipeableRef.current);
+      }}
+      onSwipeableClose={() => clearOpenSwipeable(swipeableRef.current)}
         containerStyle={{ borderRadius: 16, overflow: 'hidden' }}
       >
         <Animated.View style={pressScaleStyle}>

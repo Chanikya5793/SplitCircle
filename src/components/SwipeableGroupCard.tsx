@@ -6,6 +6,7 @@ import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { usePressScale } from '@/hooks/usePressScale';
 import { heavyHaptic, lightHaptic } from '@/utils/haptics';
+import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
@@ -83,7 +84,11 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
         friction={2}
         rightThreshold={40}
         overshootFriction={8}
-        onSwipeableWillOpen={lightHaptic}
+        onSwipeableWillOpen={() => {
+        lightHaptic();
+        setOpenSwipeable(swipeableRef.current);
+      }}
+      onSwipeableClose={() => clearOpenSwipeable(swipeableRef.current)}
       >
         <Animated.View style={pressScaleStyle}>
         <GlassView style={styles.container}>

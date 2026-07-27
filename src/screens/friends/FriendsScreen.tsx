@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { StickyHeaderPill } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
@@ -101,11 +102,12 @@ const SwipeableFriendRow = ({
   return (
     <Swipeable
       ref={swipeableRef}
+      onSwipeableClose={() => clearOpenSwipeable(swipeableRef.current)}
       renderRightActions={renderRightActions}
       friction={2}
       rightThreshold={40}
       overshootFriction={8}
-      onSwipeableWillOpen={lightHaptic}
+      onSwipeableWillOpen={() => { lightHaptic(); setOpenSwipeable(swipeableRef.current); }}
     >
       {children}
     </Swipeable>

@@ -1,4 +1,5 @@
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
+import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GuardedScreen } from '@/components/ui';
@@ -213,6 +214,8 @@ const SwipeableBillCard = ({
     return (
         <Swipeable
             ref={swipeableRef}
+            onSwipeableWillOpen={() => setOpenSwipeable(swipeableRef.current)}
+            onSwipeableClose={() => clearOpenSwipeable(swipeableRef.current)}
             renderRightActions={renderRightActions}
             friction={2}
             rightThreshold={40}
