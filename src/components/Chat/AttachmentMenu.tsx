@@ -374,8 +374,22 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
       // for a large video — with no feedback and no way out, and a watchdog
       // kill or memory crash if the file is big enough. Here nothing is
       // downloaded until the user actually sends.
+      // A throw here falls THROUGH to the legacy picker rather than failing the
+      // whole action. This is a new native module on its first ship: if it
+      // misbehaves the user should get the old (slow) picker, not a dead
+      // attachment button. A cancelled pick resolves to [] and is not an error.
+      let nativePicked: Awaited<ReturnType<typeof pickAssets>> | null = null;
       if (isNativeMediaAvailable()) {
-        const picked = await pickAssets(10, 'all');
+        try {
+          nativePicked = await pickAssets(10, 'all');
+        } catch (nativeError) {
+          console.warn('Native picker failed, falling back to expo-image-picker', nativeError);
+          nativePicked = null;
+        }
+      }
+
+      if (nativePicked) {
+        const picked = nativePicked;
         if (picked.length === 0) {
           setStatus(null);
           return;
