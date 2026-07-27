@@ -248,6 +248,30 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
     setFilterId('none');
   }, []);
 
+  /**
+   * Touch point → 0–1 against the displayed photo.
+   *
+   * The gesture is attached to a view that fills the whole stage, but the
+   * photo is letterboxed inside it at (offsetX, offsetY). Normalising the raw
+   * event coordinates without removing that offset — which is what this did
+   * originally — displaces every stroke by the size of the letterbox margin,
+   * which is why a stroke appeared nowhere near the finger and only showed up
+   * after wandering across the whole area. The strokes were always RENDERED
+   * inside the offset group; only capture was missing the correction.
+   *
+   * Clamped because the gesture surface extends past the photo into the
+   * letterbox: an un-clamped point outside 0–1 would be drawn onto the
+   * exported image's own edge as a stray mark.
+   */
+  const toNormalised = useCallback(
+    (rawX: number, rawY: number): [string, string] => {
+      const nx = Math.min(1, Math.max(0, (rawX - offsetX) / displayW));
+      const ny = Math.min(1, Math.max(0, (rawY - offsetY) / displayH));
+      return [nx.toFixed(5), ny.toFixed(5)];
+    },
+    [offsetX, offsetY, displayW, displayH],
+  );
+
   // Freehand markup. Points are normalised against the displayed crop rect, so
   // a stroke drawn here lands in the same place at full export resolution.
   const drawGesture = useMemo(
@@ -257,7 +281,8 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
         .minDistance(0)
         .onBegin((event) => {
           lastPointRef.current = { x: event.x, y: event.y };
-          liveStrokeRef.current = `M${(event.x / displayW).toFixed(5)} ${(event.y / displayH).toFixed(5)}`;
+          const [nx, ny] = toNormalised(event.x, event.y);
+          liveStrokeRef.current = `M${nx} ${ny}`;
           setLiveStroke(liveStrokeRef.current);
         })
         .onUpdate((event) => {
@@ -271,8 +296,7 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
             return;
           }
           lastPointRef.current = { x: event.x, y: event.y };
-          const nx = (event.x / displayW).toFixed(5);
-          const ny = (event.y / displayH).toFixed(5);
+          const [nx, ny] = toNormalised(event.x, event.y);
           liveStrokeRef.current = `${liveStrokeRef.current} L${nx} ${ny}`;
           setLiveStroke(liveStrokeRef.current);
         })
@@ -290,7 +314,7 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
           }));
         })
         .runOnJS(true),
-    [tool, displayW, displayH, penColor, penWidth],
+    [tool, toNormalised, penColor, penWidth],
   );
 
   const undoStroke = useCallback(() => {

@@ -21,7 +21,11 @@ type RegionChangeDetails = { isGesture?: boolean };
 interface LocationPickerProps {
   visible: boolean;
   onClose: () => void;
-  onSendLocation: (location: { latitude: number; longitude: number; address?: string }) => void;
+  onSendLocation: (
+    location: { latitude: number; longitude: number; address?: string },
+    /** Optional note sent as the message body, e.g. "meet me by the side door". */
+    caption?: string,
+  ) => void;
 }
 
 const { width, height } = Dimensions.get('window');
@@ -37,6 +41,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   const [address, setAddress] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [caption, setCaption] = useState('');
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -205,11 +210,14 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   const handleSend = () => {
     if (selectedLocation) {
       setSending(true);
-      onSendLocation({
-        latitude: selectedLocation.latitude,
-        longitude: selectedLocation.longitude,
-        address: address || undefined,
-      });
+      onSendLocation(
+        {
+          latitude: selectedLocation.latitude,
+          longitude: selectedLocation.longitude,
+          address: address || undefined,
+        },
+        caption.trim() || undefined,
+      );
       setSending(false);
       handleClose();
     }
@@ -222,6 +230,9 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     }
 
     mapRef.current = null;
+    // Clear the note too — a caption left over from a previous share would
+    // silently attach itself to the next, unrelated pin.
+    setCaption('');
     onClose();
   };
 
@@ -453,6 +464,18 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                 </View>
               </View>
 
+              <TextInput
+                placeholder="Add a note (optional)"
+                placeholderTextColor={theme.colors.onSurfaceVariant}
+                value={caption}
+                onChangeText={setCaption}
+                maxLength={500}
+                style={[
+                  styles.captionInput,
+                  { color: theme.colors.onSurface, backgroundColor: theme.colors.surfaceVariant },
+                ]}
+              />
+
               <Button
                 mode="contained"
                 onPress={handleSend}
@@ -581,5 +604,12 @@ const styles = StyleSheet.create({
   },
   sendButton: {
     borderRadius: 8,
+  },
+  captionInput: {
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+    fontSize: 15,
   },
 });

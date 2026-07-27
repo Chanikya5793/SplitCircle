@@ -1415,13 +1415,18 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     void sendMediaBatch(results, replySource, () => {});
   }, [replyingTo, sendMediaBatch]);
 
-  const handleSendLocation = async (location: { latitude: number; longitude: number; address?: string }) => {
+  const handleSendLocation = async (
+    location: { latitude: number; longitude: number; address?: string },
+    caption?: string,
+  ) => {
     try {
       await runSend(async (requestId) => {
         await sendMessage({
           chatId: thread.chatId,
           requestId,
-          content: '📍 Location',
+          // The emoji placeholder is what MessageBubble suppresses, so a real
+          // note renders as the bubble's text while a bare pin stays clean.
+          content: caption || '📍 Location',
           type: 'location',
           groupId: thread.groupId,
           location,

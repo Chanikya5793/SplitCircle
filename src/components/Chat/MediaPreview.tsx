@@ -656,7 +656,13 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
     }
   };
 
-  const showCaptionInput = media.type === 'image' || media.type === 'video' || media.type === 'camera';
+  // Every attachment type takes a caption. This was restricted to photos and
+  // videos, but nothing downstream needed that: the caption becomes the
+  // message's `content`, and MessageBubble already renders it for any type
+  // (it only suppresses the emoji placeholder we substitute when there is no
+  // caption). So a voice memo, document or pin could carry a caption all
+  // along — the input was simply never offered.
+  const showCaptionInput = true;
   const showQualityControl = media.type === 'image' || media.type === 'video' || media.type === 'camera';
   const isPreviewLoading = media.type === 'video' && !previewReady && !videoError;
   const showStrip = internalItems.length > 1;
