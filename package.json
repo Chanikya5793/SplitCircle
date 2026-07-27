@@ -37,6 +37,7 @@
     "@react-navigation/native": "^7.1.20",
     "@react-navigation/native-stack": "^7.6.3",
     "@react-navigation/stack": "^7.6.4",
+    "@shopify/react-native-skia": "^2.10.0",
     "eas": "^0.1.0",
     "expo": "~55.0.4",
     "expo-apple-authentication": "~55.0.15",

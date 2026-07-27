@@ -29,10 +29,20 @@ import {
 import { ActivityIndicator, IconButton, Text, TextInput } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SelectedMedia } from './AttachmentMenu';
+import { MediaEditor } from './MediaEditor';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-export type QualityLevel = 'HD' | 'SD';
+export type QualityLevel = 'HD' | 'SD' | 'ORIGINAL';
+
+/** The order the quality button cycles through on tap. */
+const QUALITY_CYCLE: QualityLevel[] = ['HD', 'SD', 'ORIGINAL'];
+
+const QUALITY_LABEL: Record<QualityLevel, string> = {
+  HD: 'HD',
+  SD: 'SD',
+  ORIGINAL: 'ORIG',
+};
 
 export interface MediaPreviewSendItem {
   media: SelectedMedia;
@@ -67,6 +77,12 @@ const targetResolution = (
   const isImage = item.type === 'image' || item.type === 'camera';
   if (!isVideo && !isImage) return null;
 
+  // ORIGINAL performs no resize at all, so the source dimensions ARE the
+  // target — reported as "no change" by the shared branch below.
+  if (quality === 'ORIGINAL') {
+    return { width: item.width, height: item.height, unchanged: true };
+  }
+
   const maxEdge = isVideo
     ? quality === 'HD' ? 1280 : 854
     : quality === 'HD' ? 1920 : 1280;
@@ -85,7 +101,10 @@ const targetResolution = (
 
 const formatResolution = (item: SelectedMedia, quality: QualityLevel): string => {
   const t = targetResolution(item, quality);
-  if (!t) return quality === 'HD' ? 'Original quality' : 'Smaller files';
+  if (!t) {
+    if (quality === 'ORIGINAL') return 'Untouched';
+    return quality === 'HD' ? 'Original quality' : 'Smaller files';
+  }
   return t.unchanged
     ? `${t.width} × ${t.height} (no change)`
     : `${t.width} × ${t.height}`;
@@ -232,6 +251,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   // the active item by default and exposes "Apply to all" for batch flips.
   const [qualities, setQualities] = useState<QualityLevel[]>([]);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const readyNotifiedRef = useRef(false);
@@ -260,6 +280,37 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   const safeIndex = Math.min(activeIndex, Math.max(0, internalItems.length - 1));
   const media = internalItems[safeIndex];
   const activeQuality: QualityLevel = qualities[safeIndex] ?? 'HD';
+  const isEditableImage = !!media && (media.type === 'image' || media.type === 'camera');
+
+  /**
+   * Swap an edited photo in for the original.
+   *
+   * The edit result replaces the item's uri and dimensions, and clears the
+   * stale `fileSize` — leaving the source's byte count behind would feed the
+   * preflight estimator a number describing a file that no longer exists, so
+   * a heavy crop would still be flagged as oversize.
+   */
+  const handleEditDone = useCallback(
+    (result: { uri: string; width: number; height: number }) => {
+      setEditorOpen(false);
+      setInternalItems((prev) =>
+        prev.map((item, i) =>
+          i === safeIndex
+            ? {
+                ...item,
+                uri: result.uri,
+                width: result.width,
+                height: result.height,
+                fileSize: undefined,
+                // The editor always writes JPEG, whatever the source was.
+                mimeType: 'image/jpeg',
+              }
+            : item,
+        ),
+      );
+    },
+    [safeIndex],
+  );
 
   // Preflight: classify each item as fits / sd_only / oversize / unknown so
   // we can flag oversize content *before* the user commits to compression+
@@ -384,7 +435,20 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
       // current quality, so they can't drag past a length we know will be
       // rejected anyway. Falls back to no cap if we can't estimate.
       const choice = qualities[idx] ?? 'HD';
-      const bitrate = choice === 'HD' ? 2_500_000 : 1_100_000; // matches mediaProcessingService
+      // ORIGINAL is never transcoded, so its rate is whatever the source file
+      // already is — using a target bitrate there would let the user trim to a
+      // length we'd then reject at upload. Falls back to the HD target when
+      // the source rate can't be derived.
+      const sourceBitrate =
+        media.fileSize && media.duration
+          ? (media.fileSize * 8) / (media.duration / 1000)
+          : 0;
+      const bitrate =
+        choice === 'ORIGINAL'
+          ? sourceBitrate || 2_500_000
+          : choice === 'HD'
+            ? 2_500_000
+            : 1_100_000; // matches mediaProcessingService
       const maxBytes = UPLOAD_SIZE_LIMIT_BYTES;
       const maxDurationMs = bitrate > 0 ? Math.floor((maxBytes * 8 / bitrate) * 1000) : -1;
 
@@ -627,12 +691,26 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
               )}
             </View>
 
+            {/* Edit is images-only: the Skia editor decodes a still, and a
+                video's equivalent (trim) already has its own control below. */}
+            {isEditableImage && (
+              <TouchableOpacity
+                style={styles.editButton}
+                onPress={() => setEditorOpen(true)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Edit this photo"
+              >
+                <Ionicons name="create-outline" size={20} color="#fff" />
+              </TouchableOpacity>
+            )}
+
             {showQualityControl && (
               <View style={styles.qualityContainer}>
                 <TouchableOpacity
                   style={[
                     styles.qualityButton,
-                    activeQuality === 'HD' && styles.qualityButtonActive,
+                    activeQuality !== 'SD' && styles.qualityButtonActive,
                     isPreviewLoading && styles.qualityButtonDisabled,
                   ]}
                   onPress={isPreviewLoading ? undefined : () => setQualityMenuOpen(true)}
@@ -640,7 +718,9 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                   accessibilityRole="button"
                   accessibilityLabel={`Quality: ${activeQuality}. Tap to change.`}
                 >
-                  <Text style={[styles.qualityText, activeQuality === 'HD' && styles.qualityTextActive]}>{activeQuality}</Text>
+                  <Text style={[styles.qualityText, activeQuality !== 'SD' && styles.qualityTextActive]}>
+                    {QUALITY_LABEL[activeQuality]}
+                  </Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -802,7 +882,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                   ? `Source: ${media.width} × ${media.height}${media.fileSize ? ` • ${formatFileSize(media.fileSize)}` : ''}`
                   : 'Choose a quality for this item'}
               </Text>
-              {(['HD', 'SD'] as QualityLevel[]).map((opt) => {
+              {QUALITY_CYCLE.map((opt) => {
                 const isActive = activeQuality === opt;
                 const resolutionLabel = formatResolution(media, opt);
                 const projected = estimateProcessedSize(media, opt);
@@ -833,11 +913,21 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                   >
                     <View style={styles.qualitySheetRowText}>
                       <Text style={[styles.qualitySheetRowLabel, { color: theme.colors.onSurface }]}>
-                        {opt === 'HD' ? 'HD quality' : 'Standard quality'}
+                        {opt === 'HD'
+                          ? 'HD quality'
+                          : opt === 'SD'
+                            ? 'Standard quality'
+                            : 'Original — no compression'}
                       </Text>
                       <Text style={[styles.qualitySheetRowDescription, { color: theme.colors.onSurfaceVariant }]}>
                         {resolutionLabel}
-                        {sizeHint ? ` • ${sizeHint}` : opt === 'HD' ? ' • larger file' : ' • smaller, faster upload'}
+                        {sizeHint
+                          ? ` • ${sizeHint}`
+                          : opt === 'HD'
+                            ? ' • larger file'
+                            : opt === 'SD'
+                              ? ' • smaller, faster upload'
+                              : ' • exactly what you picked'}
                       </Text>
                     </View>
                     {!willFit ? (
@@ -884,6 +974,17 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
               </GlassCard>
             </TouchableOpacity>
           </TouchableOpacity>
+        )}
+
+        {/* Mounted only while open so the Skia image is decoded on demand and
+            released with the modal, rather than held for the whole preview. */}
+        {editorOpen && media && isEditableImage && (
+          <MediaEditor
+            visible
+            uri={media.uri}
+            onCancel={() => setEditorOpen(false)}
+            onDone={handleEditDone}
+          />
         )}
       </View>
     </Modal>
@@ -1183,6 +1284,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   qualityContainer: {
+    marginRight: 8,
+  },
+  editButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.16)',
     marginRight: 8,
   },
   qualityButton: {
