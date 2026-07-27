@@ -161,6 +161,39 @@ export const saveMessageLocally = async (message: ChatMessage): Promise<void> =>
   }
 };
 
+/**
+ * Remove a message from local storage outright, leaving no tombstone.
+ *
+ * Distinct from `markMessageDeletedForUser`, which is the user-facing "delete
+ * for me" and deliberately leaves a "you deleted this message" placeholder.
+ * This is for a message that was never real: an optimistic media bubble whose
+ * send the user cancelled before it reached anyone. A tombstone there would be
+ * a record of an event that never happened, and the failed-items sheet would
+ * invite a retry of something the user just chose to stop.
+ *
+ * Safe to call for an id that isn't present — a cancel can race a send that
+ * already cleaned up after itself.
+ */
+export const deleteMessageLocally = async (
+  chatId: string,
+  messageId: string,
+): Promise<void> => {
+  try {
+    await withSerializedChatWrite(chatId, async () => {
+      const key = getChatStorageKey(chatId);
+      const messages = await readMessages(chatId);
+      const remaining = messages.filter(
+        (m) => m.id !== messageId && m.messageId !== messageId,
+      );
+      if (remaining.length === messages.length) return;
+      await AsyncStorage.setItem(key, JSON.stringify(remaining));
+      notifyMessageListeners(chatId);
+    });
+  } catch (error) {
+    console.error('❌ Error deleting message locally:', error);
+  }
+};
+
 // Get all messages for a chat
 export const getChatMessages = async (chatId: string): Promise<ChatMessage[]> => {
   try {

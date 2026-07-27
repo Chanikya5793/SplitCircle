@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { useTheme } from '@/context/ThemeContext';
+import { useActiveSendCount } from '@/hooks/useSendProgress';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { Text } from 'react-native-paper';
 
@@ -26,7 +27,18 @@ export const MediaPipelineBanner = ({
   bottomOffset,
 }: MediaPipelineBannerProps) => {
   const { theme } = useTheme();
-  if (!visible) return null;
+  // Media sends no longer drive `visible` — each bubble carries its own live
+  // progress now. This aggregate remains for the case the bubbles can't cover:
+  // the user has scrolled away from them, or left and re-entered the chat.
+  const activeSends = useActiveSendCount();
+
+  const resolved = visible
+    ? (message ?? 'Sending media…')
+    : activeSends > 0
+      ? `Sending ${activeSends} ${activeSends === 1 ? 'item' : 'items'}…`
+      : null;
+
+  if (!resolved) return null;
   return (
     <View
       pointerEvents="box-none"
@@ -38,7 +50,7 @@ export const MediaPipelineBanner = ({
           numberOfLines={1}
           style={[styles.text, { color: theme.colors.onSurface }]}
         >
-          {message ?? 'Sending media…'}
+          {resolved}
         </Text>
       </GlassView>
     </View>

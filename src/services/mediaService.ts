@@ -9,13 +9,13 @@
 
 import {
   copyAsync,
+  createUploadTask,
   deleteAsync,
   documentDirectory,
   downloadAsync,
   FileSystemUploadType,
   getInfoAsync,
   makeDirectoryAsync,
-  uploadAsync,
 } from 'expo-file-system/legacy';
 import { getDownloadURL, getStorage, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { Platform } from 'react-native';
@@ -31,6 +31,20 @@ export const MEDIA_DIRECTORY = `${documentDirectory}chat_media/`;
 // gigabyte over a phone connection. Raise carefully — also bump the matching
 // resolution/bitrate skip-conditions in `processVideo`.
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
+
+/**
+ * Thrown when the user aborts an in-flight upload.
+ *
+ * A distinct type because a cancel must NOT be treated as a failure: the
+ * failed-items sheet exists to offer a retry, and offering to retry something
+ * the user just deliberately stopped is the wrong response.
+ */
+export class MediaUploadCancelledError extends Error {
+  constructor(message = 'Upload cancelled.') {
+    super(message);
+    this.name = 'MediaUploadCancelledError';
+  }
+}
 const TRUSTED_MEDIA_HOSTS = ['firebasestorage.googleapis.com', 'storage.googleapis.com'];
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -266,7 +280,10 @@ export const uploadMedia = async (
   messageId: string,
   fileName: string,
   mimeType: string,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number, bytes?: { sent: number; total: number }) => void,
+  /** Receives an abort function once the transfer is live, so the caller can
+   *  let the user stop a long upload. Invoked before any bytes move. */
+  onCancellable?: (cancel: () => void) => void,
 ): Promise<MediaUploadResult> => {
   try {
     const safeMimeType = ensureAllowedMimeType(mimeType);
@@ -335,20 +352,52 @@ export const uploadMedia = async (
     }
     
     console.log('📤 Uploading to Firebase Storage...');
-    onProgress?.(10);
-    
-    // Upload using expo-file-system
-    const uploadResult = await uploadAsync(uploadUrl, fileUri, {
-      httpMethod: 'POST',
-      uploadType: FileSystemUploadType.BINARY_CONTENT,
-      headers: {
-        'Authorization': `Firebase ${token}`,
-        'Content-Type': safeMimeType,
+    onProgress?.(0);
+
+    // `createUploadTask` rather than `uploadAsync`: the latter has no progress
+    // callback at all, which is why this function used to fake it by jumping
+    // 10% → 90% around an opaque await. On a 100MB video over cellular that
+    // was a multi-minute stretch where the UI could not distinguish "uploading
+    // steadily" from "stalled", and there was no way to abort. The task form
+    // reports real bytes AND exposes `cancelAsync`.
+    const task = createUploadTask(
+      uploadUrl,
+      fileUri,
+      {
+        httpMethod: 'POST',
+        uploadType: FileSystemUploadType.BINARY_CONTENT,
+        headers: {
+          'Authorization': `Firebase ${token}`,
+          'Content-Type': safeMimeType,
+        },
       },
+      ({ totalBytesSent, totalBytesExpectedToSend }) => {
+        if (totalBytesExpectedToSend > 0) {
+          onProgress?.(
+            (totalBytesSent / totalBytesExpectedToSend) * 100,
+            { sent: totalBytesSent, total: totalBytesExpectedToSend },
+          );
+        }
+      },
+    );
+
+    let cancelled = false;
+    onCancellable?.(() => {
+      cancelled = true;
+      void task.cancelAsync().catch((error) => {
+        console.warn('Upload cancelAsync threw', error);
+      });
     });
-    
-    onProgress?.(90);
-    
+
+    const uploadResult = await task.uploadAsync();
+
+    // A cancelled task resolves with null/undefined rather than rejecting, so
+    // without this check a user-aborted upload would fall through to the
+    // status check below and surface as a confusing generic failure.
+    if (cancelled || !uploadResult) {
+      throw new MediaUploadCancelledError();
+    }
+
     if (uploadResult.status !== 200) {
       console.error('Upload response:', uploadResult.body);
       throw new Error(`Upload failed with status ${uploadResult.status}`);

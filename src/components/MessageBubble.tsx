@@ -2,7 +2,9 @@ import { ExpenseCardBubble } from '@/components/Chat/ExpenseCardBubble';
 import { LinkPreview } from '@/components/Chat/LinkPreview';
 import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
 import { ReactionsRow } from '@/components/Chat/ReactionsRow';
+import { SendProgressOverlay } from '@/components/Chat/SendProgressOverlay';
 import { useAuth } from '@/context/AuthContext';
+import { useSendProgress } from '@/hooks/useSendProgress';
 import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
 import type { ChatMessage, MessageStatus, MessageType, UrlPreview } from '@/models';
@@ -360,6 +362,10 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
   // (file evicted from cache, app reinstalled, etc.) and the on-disk check
   // hasn't yet caught up before render.
   const [mediaLoadFailed, setMediaLoadFailed] = useState(false);
+  // Live send progress for this message, or undefined when it isn't in the
+  // pipeline. Subscribes to an external store rather than context so a
+  // progress tick re-renders only this bubble, not the whole list.
+  const sendProgress = useSendProgress(message.messageId);
 
   // Image dimensions (must be before early returns — it's a hook)
   const imageDimensions = useMemo(() => {
@@ -728,9 +734,16 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
             resizeMode="cover"
             onError={handleMediaLoadError}
           />
-          <View style={styles.uploadingOverlay}>
-            <ActivityIndicator color="#fff" size="large" />
-          </View>
+          {/* Determinate ring + Cancel when the pipeline is tracking this
+              item; the plain spinner remains the fallback for a 'sending'
+              bubble with no live entry (e.g. one left over from a killed app). */}
+          {sendProgress ? (
+            <SendProgressOverlay messageId={message.messageId} />
+          ) : (
+            <View style={styles.uploadingOverlay}>
+              <ActivityIndicator color="#fff" size="large" />
+            </View>
+          )}
         </View>
       );
     }
@@ -804,12 +817,18 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
     // Show sending state
     if (message.status === 'sending' && mediaUri) {
       return (
-        <VideoPlayerComponent
-          uri={mediaUri}
-          style={[styles.mediaContainer, styles.mediaVideo, imageDimensions]}
-          showControls={false}
-          showOverlay={true}
-        />
+        <View style={[styles.mediaContainer, imageDimensions]}>
+          <VideoPlayerComponent
+            uri={mediaUri}
+            style={[styles.mediaContainer, styles.mediaVideo, imageDimensions]}
+            showControls={false}
+            showOverlay={true}
+          />
+          {/* Video is where determinate progress matters most — a transcode
+              plus upload is the longest thing this pipeline does, and it was
+              previously the least legible. */}
+          {sendProgress ? <SendProgressOverlay messageId={message.messageId} /> : null}
+        </View>
       );
     }
 

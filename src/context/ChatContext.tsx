@@ -18,6 +18,7 @@ import { Platform } from 'react-native';
 import { v4 as uuid } from 'uuid';
 import {
   applyRemoteMessageState,
+  deleteMessageLocally,
   getChatMessages,
   getChatMessagesPaginated,
   initMessageDB,
@@ -27,6 +28,11 @@ import {
   updateMessageStatus,
   waitForChatWrites,
 } from '@/services/localMessageStorage';
+import {
+  clearSendProgress,
+  setSendFraction,
+  setSendProgress,
+} from '@/services/mediaSendProgress';
 import { subscribeToMessageStates } from '@/services/messageStateService';
 import {
   copyToLocalStorage,
@@ -597,19 +603,28 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           onStageChange?.('preparing', { message: `Preparing ${typeLabel} upload…` });
           console.log('📤 Uploading media to Firebase Storage...');
 
+          setSendProgress(msgId, { stage: 'uploading', fraction: 0 });
+
           const uploadResult = await uploadMedia(
             localMediaPath || mediaUri,
             chatId,
             msgId,
             fileName,
             mimeType,
-            (progress) => {
-              console.log(`📤 Upload progress: ${progress.toFixed(1)}%`);
+            (progress, bytes) => {
               onStageChange?.('uploading', {
                 progress,
                 message: `Uploading ${typeLabel}… ${Math.round(progress)}%`,
               });
-            }
+              setSendFraction(
+                msgId,
+                progress / 100,
+                bytes ? { sent: bytes.sent, total: bytes.total } : undefined,
+              );
+            },
+            (cancel) => {
+              setSendProgress(msgId, { stage: 'uploading', cancel });
+            },
           );
 
           mediaUrl = uploadResult.downloadUrl;
@@ -623,6 +638,11 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         }
 
         onStageChange?.('sending', { message: `Sending ${typeLabel}…` });
+        // Past the point of no return: the bytes are on Storage and the fan-out
+        // below is what makes the message real. Dropping the cancel handle here
+        // is deliberate — offering "Cancel" during fan-out would imply an undo
+        // we cannot honour once a recipient has the message.
+        setSendProgress(msgId, { stage: 'sending', fraction: null, cancel: undefined });
         message.status = 'sent';
         await saveMessageLocally(message);
 
@@ -673,8 +693,24 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         });
 
         onStageChange?.('complete');
+        clearSendProgress(msgId);
       } catch (error) {
         console.error('Send failed', error);
+        const wasCancelled =
+          error instanceof Error &&
+          (error.name === 'MediaUploadCancelledError' || error.name === 'MediaSendCancelledError');
+
+        clearSendProgress(msgId);
+
+        if (wasCancelled) {
+          // A cancelled send leaves no trace: the bubble is removed rather
+          // than parked as "failed", because a failed bubble invites a retry
+          // and the user's whole intent was to stop this item.
+          await deleteMessageLocally(chatId, msgId);
+          onStageChange?.('failed', { message: 'Cancelled' });
+          throw error;
+        }
+
         message.status = 'failed';
         await saveMessageLocally(message);
         onStageChange?.('failed', {

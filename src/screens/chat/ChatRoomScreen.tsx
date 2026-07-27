@@ -543,7 +543,6 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     chatId: thread.chatId,
     groupId: thread.groupId,
     participants: thread.participants,
-    mediaPipelineLoading,
     runSend,
     sendMessage,
   });

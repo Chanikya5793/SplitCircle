@@ -85,11 +85,35 @@ const getUriByteSize = async (uri: string): Promise<number> => {
   }
 };
 
-export type QualityLevel = 'HD' | 'SD';
-// Image targets: HD = 1920px max edge, SD = 1280px.
-// Video targets: HD = 1280px max edge (720p), SD = 854px (~480p).
-// These mirror WhatsApp's "HD photos / videos" toggle behavior — `auto`
+export type QualityLevel = 'HD' | 'SD' | 'ORIGINAL';
+// Image targets: HD = 1920px max edge, SD = 1280px, ORIGINAL = no resize.
+// Video targets: HD = 1280px max edge (720p), SD = 854px (~480p), ORIGINAL = no transcode.
+// HD/SD mirror WhatsApp's "HD photos / videos" toggle behavior — `auto`
 // compression in the native module picks an appropriate bitrate per platform.
+//
+// ORIGINAL answers the case the two-way toggle had no answer for: a receipt,
+// a whiteboard, a screenshot of small text — anything where our resize is the
+// thing that destroys the content's whole purpose. It is still subject to
+// `UPLOAD_SIZE_LIMIT_BYTES`, so it is "don't degrade this", not "no limits".
+
+/** Max edge in pixels for a quality level, or null when the source is kept as-is. */
+const IMAGE_MAX_EDGE: Record<QualityLevel, number | null> = {
+  HD: 1920,
+  SD: 1280,
+  ORIGINAL: null,
+};
+
+const VIDEO_MAX_EDGE: Record<QualityLevel, number | null> = {
+  HD: 1280,
+  SD: 854,
+  ORIGINAL: null,
+};
+
+/** Formats every platform we target can decode without transcoding. Anything
+ *  else (HEIC/HEIF from an iPhone camera, TIFF) must be converted even at
+ *  ORIGINAL quality, or Android and web recipients get a file they cannot
+ *  render at all — "original" must still mean "viewable". */
+const UNIVERSALLY_DECODABLE = /\.(jpe?g|png|gif|webp)$/i;
 
 interface ProcessedMedia {
   uri: string;
@@ -225,15 +249,29 @@ export const processImage = async (
 ): Promise<ProcessedImage> => {
   await ensureMediaSourceAvailable(uri);
 
-  const maxDimension = quality === 'HD' ? 1920 : 1280;
-  const compressQuality = quality === 'HD' ? 0.8 : 0.6;
+  const maxDimension = IMAGE_MAX_EDGE[quality];
+  const compressQuality = quality === 'HD' ? 0.8 : quality === 'SD' ? 0.6 : 0.95;
 
   const { meta: source } = await readImageSourceMetadata(uri);
   const { sourceWidth, sourceHeight } = source;
 
+  // ORIGINAL on an already-portable format: hand back the untouched file.
+  // Re-encoding a JPEG at 0.95 would be a second lossy generation that makes
+  // the file BIGGER while making the image worse — the exact opposite of what
+  // the user asked for by picking Original.
+  if (maxDimension === null && UNIVERSALLY_DECODABLE.test(uri.split('?')[0])) {
+    return {
+      uri,
+      width: sourceWidth,
+      height: sourceHeight,
+      size: source.sourceFileSize,
+      ...source,
+    };
+  }
+
   const actions: ImageManipulator.Action[] = [];
   const longest = Math.max(sourceWidth, sourceHeight);
-  if (longest > 0 && longest > maxDimension) {
+  if (maxDimension !== null && longest > 0 && longest > maxDimension) {
     // Single-axis resize keeps aspect ratio. expo-image-manipulator's
     // built-in orientation fixer runs *before* this resize, so we operate
     // in display space — pick the axis that's currently longer.
@@ -282,6 +320,10 @@ export const processVideo = async (
   uri: string,
   quality: QualityLevel,
   onProgress?: (fraction: number) => void,
+  /** Receives an abort function once the native transcode has started. The
+   *  caller wires this to the bubble's Cancel control; calling it makes
+   *  `compress` reject, which we surface as `MediaSendCancelledError`. */
+  onCancellable?: (cancel: () => void) => void,
 ): Promise<ProcessedVideo> => {
   await ensureMediaSourceAvailable(uri);
 
@@ -313,7 +355,7 @@ export const processVideo = async (
     };
   }
 
-  const maxEdge = quality === 'HD' ? 1280 : 854;
+  const maxEdge = VIDEO_MAX_EDGE[quality];
 
   // Read the source dimensions / size up front so we can populate the result
   // even if compression bails. `getVideoMetaData` requires a real path, so
@@ -345,6 +387,13 @@ export const processVideo = async (
   // clip has `longestEdge <= maxEdge` but can be >100MB, and skipping here
   // would surface as the upload-cap error in `mediaService` after the user
   // already waited through the pipeline.
+  // ORIGINAL: the user explicitly asked us not to re-encode. Hand the source
+  // through — the upload cap is still enforced downstream.
+  if (maxEdge === null) {
+    onProgress?.(1);
+    return { uri, width: srcWidth, height: srcHeight, size: srcSize, ...sourceMeta };
+  }
+
   const longestEdge = Math.max(srcWidth, srcHeight);
   const SKIP_COMPRESS_BYTES = 25 * 1024 * 1024;
   if (longestEdge > 0 && longestEdge <= maxEdge && srcSize > 0 && srcSize <= SKIP_COMPRESS_BYTES) {
@@ -360,6 +409,18 @@ export const processVideo = async (
         // Skip compression entirely for already-tiny clips so we don't
         // bloat 100KB videos to 500KB by re-encoding them.
         minimumFileSizeForCompress: 1, // MB
+        // The native module hands back the id it will accept a cancel for.
+        // It arrives before the transcode begins, so wiring it here is what
+        // makes a long compress abortable at all.
+        getCancellationId: (cancellationId: string) => {
+          onCancellable?.(() => {
+            try {
+              VideoCompressor.cancelCompression(cancellationId);
+            } catch (error) {
+              console.warn('cancelCompression threw', error);
+            }
+          });
+        },
       },
       onProgress,
     );
@@ -411,7 +472,7 @@ export const processVideo = async (
 /** Target video bitrate (bits/sec) for our two quality levels.
  *  Numbers reflect what `react-native-compressor`'s `auto` mode tends to
  *  produce on iOS/Android for the given resolution caps, plus ~128 kbps audio. */
-const VIDEO_BITRATE_BPS: Record<QualityLevel, number> = {
+const VIDEO_BITRATE_BPS: Record<Exclude<QualityLevel, 'ORIGINAL'>, number> = {
   HD: 2_500_000, // 720p H.264 ≈ 2.4 Mbps + 128 kbps audio
   SD: 1_100_000, // 480p H.264 ≈ 1.0 Mbps + 128 kbps audio
 };
@@ -419,7 +480,7 @@ const VIDEO_BITRATE_BPS: Record<QualityLevel, number> = {
 /** Approximate the post-compression size in bytes for an image. We resize the
  *  longest edge to `maxEdge` and JPEG-encode at a quality factor; bytes per
  *  pixel for a typical JPEG-quality-0.6/0.8 photo is roughly 0.25–0.4. */
-const IMAGE_BYTES_PER_PIXEL: Record<QualityLevel, number> = {
+const IMAGE_BYTES_PER_PIXEL: Record<Exclude<QualityLevel, 'ORIGINAL'>, number> = {
   HD: 0.40,
   SD: 0.25,
 };
@@ -446,6 +507,13 @@ export const estimateProcessedSize = (
 ): number | null => {
   const isVideo = item.type === 'video';
   const isImage = item.type === 'image' || item.type === 'camera';
+
+  // ORIGINAL performs no re-encode, so what we upload is exactly the source.
+  // Without a known source size there is nothing to project — `null` means
+  // "can't tell", and the upload cap becomes the only enforcement.
+  if (quality === 'ORIGINAL') {
+    return item.fileSize ?? null;
+  }
 
   if (isVideo) {
     if (!item.duration || item.duration <= 0) return null;

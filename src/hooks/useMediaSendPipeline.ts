@@ -1,9 +1,17 @@
 import type { FailedSendItem } from '@/components/Chat';
 import type { SelectedMedia } from '@/components/Chat/AttachmentMenu';
 import type { MediaPreviewSendItem } from '@/components/Chat/MediaPreview';
+import { useAuth } from '@/context/AuthContext';
 import { appAlert } from '@/utils/appAlert';
 import type { ChatMessage, ChatParticipant, MessageType } from '@/models';
+import { saveMessageLocally, deleteMessageLocally } from '@/services/localMessageStorage';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
+import {
+  clearSendProgress,
+  MediaSendCancelledError,
+  setSendFraction,
+  setSendProgress,
+} from '@/services/mediaSendProgress';
 import { trimVideoInteractive } from '@/services/videoTrimService';
 import { warningHaptic } from '@/utils/haptics';
 import { resolveDisplayName } from '@/utils/identity';
@@ -11,22 +19,10 @@ import { getInfoAsync } from 'expo-file-system/legacy';
 import { useCallback, useState } from 'react';
 import { v4 as uuid } from 'uuid';
 
-type SendContext = {
-  indexLabel: { current: number; total: number };
-  albumId?: string;
-  replyTarget?: ChatMessage | null;
-  requestId: string;
-};
-
 interface UseMediaSendPipelineOptions {
   chatId: string;
   groupId?: string;
   participants: ChatParticipant[];
-  mediaPipelineLoading: {
-    start: (message?: string) => void;
-    stop: () => void;
-    setMessage: (message?: string) => void;
-  };
   runSend: (
     fn: (requestId: string) => Promise<void>,
     opts?: { key?: string },
@@ -44,22 +40,6 @@ interface UseMediaSendPipelineOptions {
   }) => Promise<void>;
 }
 
-const getProcessingLoadingMessage = (type: SelectedMedia['type']) => {
-  switch (type) {
-    case 'video':
-      return 'Preparing video for upload…';
-    case 'image':
-    case 'camera':
-      return 'Optimizing photo…';
-    case 'document':
-      return 'Preparing document…';
-    case 'audio':
-      return 'Preparing audio…';
-    default:
-      return 'Preparing attachment…';
-  }
-};
-
 const getMediaPlaceholder = (type: MessageType): string => {
   switch (type) {
     case 'image': return '📷 Photo';
@@ -71,21 +51,121 @@ const getMediaPlaceholder = (type: MessageType): string => {
   }
 };
 
+const toMessageType = (type: SelectedMedia['type']): MessageType => {
+  switch (type) {
+    case 'camera':
+    case 'image':
+      return 'image';
+    case 'video':
+      return 'video';
+    case 'audio':
+      return 'audio';
+    case 'document':
+      return 'file';
+    case 'location':
+      return 'location';
+    default:
+      return 'file';
+  }
+};
+
+/** One item's worth of in-flight state, threaded through both pipeline stages. */
+interface MediaJob {
+  item: MediaPreviewSendItem;
+  /** 1-based position for user-facing labels. */
+  position: number;
+  total: number;
+  requestId: string;
+  albumId?: string;
+  replyTarget?: ChatMessage | null;
+  /** Set by the bubble's Cancel control. Checked at every stage boundary so an
+   *  item cancelled while queued never starts work at all. */
+  cancelled: boolean;
+}
+
+/** What compression produced, handed to the upload stage. */
+interface PreparedMedia {
+  processedUri: string;
+  messageType: MessageType;
+  mediaMetadata: Record<string, unknown>;
+}
+
 export const useMediaSendPipeline = ({
   chatId,
   groupId,
   participants,
-  mediaPipelineLoading,
   runSend,
   sendMessage,
 }: UseMediaSendPipelineOptions) => {
   const [failedItems, setFailedItems] = useState<FailedSendItem[]>([]);
   const [failedSheetVisible, setFailedSheetVisible] = useState(false);
+  const { user } = useAuth();
 
-  const sendOneMedia = useCallback(async (item: MediaPreviewSendItem, ctx: SendContext) => {
-    const { media: mediaToSend, caption, quality: itemQuality } = item;
-    const { current, total } = ctx.indexLabel;
-    const positional = total > 1 ? `${current} of ${total}` : null;
+  /**
+   * Write the optimistic bubble BEFORE any compression starts.
+   *
+   * This is what fixes the "I tapped Send and nothing happened" report. The
+   * bubble used to be created inside `sendMessage`, which the pipeline only
+   * reached AFTER compression — so a 60-second video transcode showed an
+   * unchanged chat with a thin banner over it. Now the photo appears in the
+   * thread on tap, at its ORIGINAL uri, and the compressed file replaces it
+   * in place when `sendMessage` later saves the same message id.
+   */
+  const createPlaceholder = useCallback(async (job: MediaJob) => {
+    if (!user) return;
+    const { media, caption } = job.item;
+    const messageType = toMessageType(media.type);
+    // Offset by position so a batch saved within the same millisecond still
+    // sorts in the order the user picked — the list sorts by timestamp.
+    const now = Date.now() + job.position;
+
+    const metadata: Record<string, unknown> = {};
+    if (media.fileName) metadata.fileName = media.fileName;
+    if (media.fileSize) metadata.fileSize = media.fileSize;
+    if (media.mimeType) metadata.mimeType = media.mimeType;
+    if (media.width) metadata.width = media.width;
+    if (media.height) metadata.height = media.height;
+    if (media.duration) metadata.duration = media.duration;
+    if (media.width && media.height) metadata.aspectRatio = media.width / media.height;
+    if (job.albumId) {
+      metadata.albumId = job.albumId;
+      metadata.albumIndex = job.position - 1;
+      metadata.albumSize = job.total;
+    }
+
+    const placeholder: ChatMessage = {
+      id: job.requestId,
+      messageId: job.requestId,
+      requestId: job.requestId,
+      chatId,
+      senderId: user.userId,
+      type: messageType,
+      content: caption || getMediaPlaceholder(messageType),
+      localMediaPath: media.uri,
+      mediaDownloaded: true,
+      mediaMetadata: metadata as any,
+      status: 'sending',
+      createdAt: now,
+      timestamp: now,
+      isFromMe: true,
+      deliveredTo: [],
+      readBy: [],
+    };
+
+    setSendProgress(job.requestId, { stage: 'queued', fraction: null });
+    await saveMessageLocally(placeholder);
+  }, [chatId, user]);
+
+  /**
+   * Stage 1 — compress. CPU-bound, so callers run these strictly one at a
+   * time; two concurrent transcodes on a phone are slower than two sequential
+   * ones and starve the UI thread.
+   */
+  const compressOne = useCallback(async (job: MediaJob): Promise<PreparedMedia> => {
+    const { media: mediaToSend, quality: itemQuality } = job.item;
+    const { requestId } = job;
+
+    if (job.cancelled) throw new MediaSendCancelledError();
 
     let processedUri = mediaToSend.uri;
     let processedWidth = mediaToSend.width;
@@ -111,14 +191,13 @@ export const useMediaSendPipeline = ({
       cameraModel = r.cameraModel;
       takenAt = r.takenAt;
     } else if (mediaToSend.type === 'video') {
-      const r = await processVideo(mediaToSend.uri, itemQuality, (p) => {
-        const pct = Math.max(0, Math.min(100, Math.round(p * 100)));
-        mediaPipelineLoading.setMessage(
-          positional
-            ? `Compressing ${positional} — ${pct}%`
-            : `Compressing video — ${pct}%`,
-        );
-      });
+      setSendProgress(requestId, { stage: 'compressing', fraction: 0 });
+      const r = await processVideo(
+        mediaToSend.uri,
+        itemQuality,
+        (p) => setSendFraction(requestId, Math.max(0, Math.min(1, p))),
+        (cancel) => setSendProgress(requestId, { stage: 'compressing', cancel }),
+      );
       processedUri = r.uri;
       if (r.width > 0) processedWidth = r.width;
       if (r.height > 0) processedHeight = r.height;
@@ -128,40 +207,11 @@ export const useMediaSendPipeline = ({
       sourceFileSize = r.sourceFileSize || undefined;
     }
 
-    let messageType: MessageType;
-    switch (mediaToSend.type) {
-      case 'camera':
-      case 'image':
-        messageType = 'image';
-        break;
-      case 'video':
-        messageType = 'video';
-        break;
-      case 'audio':
-        messageType = 'audio';
-        break;
-      case 'document':
-        messageType = 'file';
-        break;
-      case 'location':
-        messageType = 'location';
-        break;
-      default:
-        messageType = 'file';
-    }
+    // A cancel that landed mid-transcode: the native module may still resolve
+    // normally, so re-check rather than assuming it threw.
+    if (job.cancelled) throw new MediaSendCancelledError();
 
-    let replyData: any = undefined;
-    if (ctx.replyTarget) {
-      const replySource = ctx.replyTarget;
-      const participant = participants.find((p) => p.userId === replySource.senderId);
-      replyData = {
-        messageId: replySource.messageId,
-        senderId: replySource.senderId,
-        senderName: resolveDisplayName(participant, 'Unknown'),
-        content: replySource.content,
-        type: replySource.type,
-      };
-    }
+    const messageType = toMessageType(mediaToSend.type);
 
     const mediaMetadata: Record<string, unknown> = {};
     if (mediaToSend.fileName) mediaMetadata.fileName = mediaToSend.fileName;
@@ -173,10 +223,10 @@ export const useMediaSendPipeline = ({
     if (processedWidth && processedHeight) {
       mediaMetadata.aspectRatio = processedWidth / processedHeight;
     }
-    if (ctx.albumId) {
-      mediaMetadata.albumId = ctx.albumId;
-      mediaMetadata.albumIndex = current - 1;
-      mediaMetadata.albumSize = total;
+    if (job.albumId) {
+      mediaMetadata.albumId = job.albumId;
+      mediaMetadata.albumIndex = job.position - 1;
+      mediaMetadata.albumSize = job.total;
     }
     if (sourceWidth) mediaMetadata.sourceWidth = sourceWidth;
     if (sourceHeight) mediaMetadata.sourceHeight = sourceHeight;
@@ -185,33 +235,47 @@ export const useMediaSendPipeline = ({
     if (cameraModel) mediaMetadata.cameraModel = cameraModel;
     if (takenAt) mediaMetadata.takenAt = takenAt;
 
-    mediaPipelineLoading.setMessage(
-      positional
-        ? `Uploading ${positional}…`
-        : `Uploading ${mediaToSend.type === 'video' ? 'video' : 'attachment'}…`,
-    );
+    return { processedUri, messageType, mediaMetadata };
+  }, []);
+
+  /**
+   * Stage 2 — upload and fan out. Network-bound, so this runs on its own
+   * chain and overlaps with the NEXT item's compression. That overlap is the
+   * whole point of the split: before it, a batch cost
+   * `sum(compress) + sum(upload)`; now it costs roughly
+   * `max(sum(compress), sum(upload))` plus one item's worth of latency.
+   */
+  const dispatchOne = useCallback(async (job: MediaJob, prepared: PreparedMedia) => {
+    if (job.cancelled) throw new MediaSendCancelledError();
+
+    let replyData: any = undefined;
+    if (job.replyTarget) {
+      const replySource = job.replyTarget;
+      const participant = participants.find((p) => p.userId === replySource.senderId);
+      replyData = {
+        messageId: replySource.messageId,
+        senderId: replySource.senderId,
+        senderName: resolveDisplayName(participant, 'Unknown'),
+        content: replySource.content,
+        type: replySource.type,
+      };
+    }
 
     await runSend(async () => {
       await sendMessage({
         chatId,
-        requestId: ctx.requestId,
-        content: caption || getMediaPlaceholder(messageType),
-        type: messageType,
-        mediaUri: processedUri,
+        requestId: job.requestId,
+        content: job.item.caption || getMediaPlaceholder(prepared.messageType),
+        type: prepared.messageType,
+        mediaUri: prepared.processedUri,
         groupId,
         replyTo: replyData,
-        mediaMetadata: Object.keys(mediaMetadata).length > 0 ? (mediaMetadata as any) : undefined,
-        onStageChange: (stage, details) => {
-          if (stage === 'complete') return;
-          if (details?.message) {
-            mediaPipelineLoading.setMessage(
-              positional ? `${positional} — ${details.message}` : details.message,
-            );
-          }
-        },
+        mediaMetadata: Object.keys(prepared.mediaMetadata).length > 0
+          ? (prepared.mediaMetadata as any)
+          : undefined,
       });
-    }, { key: `chat-media-${chatId}-${ctx.requestId}` });
-  }, [chatId, groupId, participants, mediaPipelineLoading, runSend, sendMessage]);
+    }, { key: `chat-media-${chatId}-${job.requestId}` });
+  }, [chatId, groupId, participants, runSend, sendMessage]);
 
   const buildFailedItem = useCallback((
     payload: MediaPreviewSendItem,
@@ -249,14 +313,39 @@ export const useMediaSendPipeline = ({
   }, []);
 
   const retrySingleFailedItem = useCallback(async (item: FailedSendItem) => {
-    mediaPipelineLoading.start(getProcessingLoadingMessage(item.payload.media.type));
+    // Reuses the original requestId, so the retry addresses the same message
+    // id and progress slot rather than leaving an orphaned bubble behind.
+    const job: MediaJob = {
+      item: item.payload,
+      position: 1,
+      total: 1,
+      requestId: item.requestId,
+      replyTarget: null,
+      cancelled: false,
+    };
     try {
-      await sendOneMedia(item.payload, {
-        indexLabel: { current: 1, total: 1 },
-        requestId: item.requestId,
+      await createPlaceholder(job);
+      setSendProgress(job.requestId, {
+        stage: 'queued',
+        fraction: null,
+        cancel: () => {
+          job.cancelled = true;
+        },
       });
+      const prepared = await compressOne(job);
+      await dispatchOne(job, prepared);
+      clearSendProgress(job.requestId);
       removeFailedItem(item.batchIndex, item.payload.media.uri);
     } catch (err) {
+      clearSendProgress(job.requestId);
+      const cancelled =
+        err instanceof Error &&
+        (err.name === 'MediaSendCancelledError' || err.name === 'MediaUploadCancelledError');
+      if (cancelled) {
+        await deleteMessageLocally(chatId, job.requestId);
+        removeFailedItem(item.batchIndex, item.payload.media.uri);
+        return;
+      }
       console.error('Retry failed:', err);
       setFailedItems((prev) =>
         prev.map((f) =>
@@ -265,10 +354,8 @@ export const useMediaSendPipeline = ({
             : f,
         ),
       );
-    } finally {
-      mediaPipelineLoading.stop();
     }
-  }, [sendOneMedia, mediaPipelineLoading, removeFailedItem, buildFailedItem]);
+  }, [chatId, createPlaceholder, compressOne, dispatchOne, removeFailedItem, buildFailedItem]);
 
   const handleRetryAllFailedItems = useCallback(async () => {
     const snapshot = [...failedItems];
@@ -334,12 +421,6 @@ export const useMediaSendPipeline = ({
 
     onDismissPreview();
 
-    mediaPipelineLoading.start(
-      results.length > 1
-        ? `Preparing 1 of ${results.length}…`
-        : getProcessingLoadingMessage(results[0].media.type),
-    );
-
     const isAlbum =
       results.length > 1 &&
       results.every(({ media }) =>
@@ -349,38 +430,85 @@ export const useMediaSendPipeline = ({
       );
     const albumId = isAlbum ? `album_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` : undefined;
 
-    const failures: FailedSendItem[] = [];
-    try {
-      for (let i = 0; i < results.length; i++) {
-        if (results.length > 1) {
-          mediaPipelineLoading.setMessage(`Preparing ${i + 1} of ${results.length}…`);
-        } else {
-          mediaPipelineLoading.setMessage(getProcessingLoadingMessage(results[i].media.type));
-        }
+    const jobs: MediaJob[] = results.map((item, i) => ({
+      item,
+      position: i + 1,
+      total: results.length,
+      requestId: uuid(),
+      albumId,
+      replyTarget: i === 0 ? replySource : null,
+      cancelled: false,
+    }));
 
-        const requestId = uuid();
-        try {
-          await sendOneMedia(results[i], {
-            indexLabel: { current: i + 1, total: results.length },
-            albumId,
-            replyTarget: i === 0 ? replySource : null,
-            requestId,
-          });
-        } catch (itemError) {
-          console.error(`Failed to send batch item ${i}:`, itemError);
-          failures.push(buildFailedItem(results[i], i, results.length, requestId, itemError));
-        }
-      }
-    } finally {
-      mediaPipelineLoading.stop();
+    // Every bubble appears at once, before a single byte is processed. The
+    // user sees exactly what they picked, in order, immediately.
+    for (const job of jobs) {
+      await createPlaceholder(job);
+      setSendProgress(job.requestId, {
+        stage: 'queued',
+        fraction: null,
+        cancel: () => {
+          job.cancelled = true;
+        },
+      });
     }
+
+    const failures: FailedSendItem[] = [];
+    const noteFailure = (job: MediaJob, error: unknown) => {
+      clearSendProgress(job.requestId);
+      // A cancel is not a failure — the bubble is already gone and the user
+      // does not want to be asked to retry what they just stopped.
+      if (error instanceof Error && error.name === 'MediaSendCancelledError') return;
+      if (error instanceof Error && error.name === 'MediaUploadCancelledError') return;
+      console.error(`Failed to send batch item ${job.position - 1}:`, error);
+      failures.push(
+        buildFailedItem(job.item, job.position - 1, job.total, job.requestId, error),
+      );
+    };
+
+    // Two-stage pipeline. Compression stays strictly sequential (CPU-bound —
+    // concurrent transcodes on a phone are slower than serial ones and starve
+    // the UI thread), while uploads run on their own chain so item N uploads
+    // WHILE item N+1 compresses. The chain also preserves order, which an
+    // album depends on.
+    let uploadChain: Promise<void> = Promise.resolve();
+
+    for (const job of jobs) {
+      let prepared: PreparedMedia;
+      try {
+        prepared = await compressOne(job);
+      } catch (error) {
+        // A cancelled placeholder has no send to clean it up, so remove it here.
+        if (error instanceof Error && error.name === 'MediaSendCancelledError') {
+          await deleteMessageLocally(chatId, job.requestId);
+        }
+        noteFailure(job, error);
+        continue;
+      }
+
+      const readyJob = job;
+      const readyMedia = prepared;
+      uploadChain = uploadChain.then(async () => {
+        try {
+          await dispatchOne(readyJob, readyMedia);
+          clearSendProgress(readyJob.requestId);
+        } catch (error) {
+          if (error instanceof Error && error.name === 'MediaSendCancelledError') {
+            await deleteMessageLocally(chatId, readyJob.requestId);
+          }
+          noteFailure(readyJob, error);
+        }
+      });
+    }
+
+    await uploadChain;
 
     if (failures.length > 0) {
       setFailedItems(failures);
       setFailedSheetVisible(true);
       warningHaptic();
     }
-  }, [sendOneMedia, buildFailedItem, mediaPipelineLoading]);
+  }, [chatId, createPlaceholder, compressOne, dispatchOne, buildFailedItem]);
 
   return {
     failedItems,
