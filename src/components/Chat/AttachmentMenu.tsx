@@ -2,6 +2,11 @@ import { GlassCard } from '@/components/ui';
 import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
+import {
+  isNativeMediaAvailable,
+  pickAssets,
+  requestThumbnail,
+} from '../../../modules/splitcircle-media';
 import { lightHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { createAudioPlayer, type AudioStatus } from 'expo-audio';
@@ -32,7 +37,23 @@ export type AttachmentType = 'image' | 'video' | 'camera' | 'document' | 'audio'
 
 export interface SelectedMedia {
   type: AttachmentType;
+  /**
+   * A file we can read right now.
+   *
+   * When `assetId` is set this is only a PREVIEW-quality thumbnail — the real
+   * bytes still live in the photo library (and possibly only in iCloud), and
+   * are fetched at send time. Anything that needs full quality must
+   * materialize first rather than using this.
+   */
   uri: string;
+  /**
+   * PHAsset local identifier, when this came from the native picker.
+   *
+   * Its presence is what says "the original has not been downloaded yet". It
+   * is cleared once an item is materialized or edited, because from then on
+   * `uri` IS the authoritative file.
+   */
+  assetId?: string;
   fileName?: string;
   fileSize?: number;
   mimeType?: string;
@@ -343,6 +364,59 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
     }
 
     try {
+      // Preferred path: pick identifiers only, then render local thumbnails.
+      //
+      // `launchImageLibraryAsync` materializes every selected asset before it
+      // resolves, and its video fast path calls
+      // `PHAssetResourceManager.writeData` with no progressHandler and no
+      // cancellation. On a library using "Optimize iPhone Storage" that means
+      // the app sits frozen for the length of a full iCloud download — minutes
+      // for a large video — with no feedback and no way out, and a watchdog
+      // kill or memory crash if the file is big enough. Here nothing is
+      // downloaded until the user actually sends.
+      if (isNativeMediaAvailable()) {
+        const picked = await pickAssets(10, 'all');
+        if (picked.length === 0) {
+          setStatus(null);
+          return;
+        }
+
+        setStatus({
+          type: picked.some((a) => a.type === 'video') ? 'video' : 'image',
+          message:
+            picked.length > 1 ? `Preparing ${picked.length} items…` : 'Preparing…',
+        });
+
+        const batch: SelectedMedia[] = await Promise.all(
+          picked.map(async (asset) => {
+            let previewUri = '';
+            try {
+              previewUri = (await requestThumbnail(asset.assetId, 1280)).uri;
+            } catch (error) {
+              // A thumbnail failure is not fatal — the item can still be sent,
+              // it just shows a placeholder in the preview strip.
+              console.warn('Thumbnail failed for', asset.assetId, error);
+            }
+            return {
+              type: asset.type === 'video' ? 'video' : 'image',
+              uri: previewUri,
+              assetId: asset.assetId,
+              fileName: asset.fileName,
+              mimeType: asset.type === 'video' ? 'video/quicktime' : 'image/jpeg',
+              width: asset.width,
+              height: asset.height,
+              duration: asset.duration > 0 ? asset.duration : undefined,
+            } satisfies SelectedMedia;
+          }),
+        );
+
+        await deliverSelection(batch.length === 1 ? batch[0] : batch);
+        return;
+      }
+
+      // Fallback (non-iOS, or a JS bundle running against a binary without the
+      // native module). Same behaviour as before, freeze and all.
+      //
       // Use `Passthrough` (no re-encode) + `shouldDownloadFromNetwork` so
       // iCloud-only assets get pulled down but we don't pay for a second
       // transcoding pass — our `processVideo` (react-native-compressor) is

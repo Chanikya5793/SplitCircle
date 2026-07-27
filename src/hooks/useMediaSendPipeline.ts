@@ -7,11 +7,18 @@ import type { ChatMessage, ChatParticipant, MessageType } from '@/models';
 import { saveMessageLocally, deleteMessageLocally } from '@/services/localMessageStorage';
 import { processImage, processVideo } from '@/services/mediaProcessingService';
 import {
+  bindNativeDownloadProgress,
   clearSendProgress,
   MediaSendCancelledError,
   setSendFraction,
   setSendProgress,
 } from '@/services/mediaSendProgress';
+import {
+  addMaterializeProgressListener,
+  cancelMaterialize,
+  isMaterializeCancellation,
+  materializeAsset,
+} from '../../modules/splitcircle-media';
 import { trimVideoInteractive } from '@/services/videoTrimService';
 import { warningHaptic } from '@/utils/haptics';
 import { resolveDisplayName } from '@/utils/identity';
@@ -82,6 +89,9 @@ interface MediaJob {
    *  item cancelled while queued never starts work at all. */
   cancelled: boolean;
 }
+
+// One listener for the whole app; see `bindNativeDownloadProgress`.
+bindNativeDownloadProgress(addMaterializeProgressListener);
 
 /** What compression produced, handed to the upload stage. */
 interface PreparedMedia {
@@ -162,8 +172,46 @@ export const useMediaSendPipeline = ({
    * ones and starve the UI thread.
    */
   const compressOne = useCallback(async (job: MediaJob): Promise<PreparedMedia> => {
-    const { media: mediaToSend, quality: itemQuality } = job.item;
+    // Reassigned when a natively-picked asset is materialized below.
+    let mediaToSend = job.item.media;
+    const itemQuality = job.item.quality;
     const { requestId } = job;
+
+    if (job.cancelled) throw new MediaSendCancelledError();
+
+    // An item picked natively carries only a thumbnail plus its PHAsset id;
+    // the real bytes may still be in iCloud. Fetch them HERE — at send time,
+    // where there is already a progress ring and a Cancel control — rather
+    // than inside the picker, which is what used to freeze the app.
+    if (mediaToSend.assetId) {
+      setSendProgress(requestId, {
+        stage: 'downloading',
+        fraction: 0,
+        cancel: () => {
+          job.cancelled = true;
+          cancelMaterialize(requestId);
+        },
+      });
+      try {
+        const real = await materializeAsset(mediaToSend.assetId, requestId);
+        mediaToSend = {
+          ...mediaToSend,
+          uri: real.uri,
+          // The original is now on disk, so this is no longer a thumbnail.
+          assetId: undefined,
+          fileSize: real.fileSize,
+          fileName: real.fileName || mediaToSend.fileName,
+          width: real.width || mediaToSend.width,
+          height: real.height || mediaToSend.height,
+          duration: real.duration || mediaToSend.duration,
+        };
+      } catch (error) {
+        if (job.cancelled || isMaterializeCancellation(error)) {
+          throw new MediaSendCancelledError();
+        }
+        throw error;
+      }
+    }
 
     if (job.cancelled) throw new MediaSendCancelledError();
 

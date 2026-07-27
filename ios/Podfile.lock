@@ -3608,6 +3608,8 @@ PODS:
   - SplitCircleCrypto (1.0.0):
     - ExpoModulesCore
     - LibSignalClient (= 0.99.1)
+  - SplitCircleMedia (1.0.0):
+    - ExpoModulesCore
   - SwiftUIIntrospect (1.3.0)
   - UMAppLoader (55.0.5)
   - VideoTrim (8.1.0):
@@ -3800,6 +3802,7 @@ DEPENDENCIES:
   - SplitCircleAI (from `../modules/splitcircle-ai/ios`)
   - SplitCircleBackup (from `../modules/splitcircle-backup/ios`)
   - SplitCircleCrypto (from `../modules/splitcircle-crypto/ios`)
+  - SplitCircleMedia (from `../modules/splitcircle-media/ios`)
   - UMAppLoader (from `../node_modules/unimodules-app-loader/ios`)
   - VideoTrim (from `../node_modules/react-native-video-trim`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
@@ -4118,6 +4121,8 @@ EXTERNAL SOURCES:
     :path: "../modules/splitcircle-backup/ios"
   SplitCircleCrypto:
     :path: "../modules/splitcircle-crypto/ios"
+  SplitCircleMedia:
+    :path: "../modules/splitcircle-media/ios"
   UMAppLoader:
     :path: "../node_modules/unimodules-app-loader/ios"
   VideoTrim:
@@ -4286,6 +4291,7 @@ SPEC CHECKSUMS:
   SplitCircleAI: 470f32b271eb52d947c8082a2599f909075e8066
   SplitCircleBackup: 2ab08d943d66dbb947e2a508c4f3ad561eb495f2
   SplitCircleCrypto: 579ebfd5855cd893dfd6aac045b3a5bc2709268d
+  SplitCircleMedia: 92c1b997de5a0caa63be687d14d905475ba3fd56
   SwiftUIIntrospect: fee9aa07293ee280373a591e1824e8ddc869ba5d
   UMAppLoader: 045699ef1cc6afda399a5c78bde728f23bcce213
   VideoTrim: b0599b22411e2d1cbb03ee82648cae545b380110

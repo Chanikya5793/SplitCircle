@@ -27,6 +27,8 @@
 
 export type SendStage =
   | 'queued'
+  /** Pulling the original off iCloud — can be the longest stage by far. */
+  | 'downloading'
   | 'compressing'
   | 'uploading'
   | 'sending'
@@ -172,3 +174,24 @@ export class MediaSendCancelledError extends Error {
     this.name = 'MediaSendCancelledError';
   }
 }
+
+/**
+ * Bridge the native iCloud-download progress into this store.
+ *
+ * Registered once at module load rather than per-send: the native module
+ * emits against a requestId, and `setSendFraction` no-ops for an id with no
+ * entry, so a stray event after a send finishes is harmless. Subscribing per
+ * item would instead risk leaking a listener on every cancelled send.
+ */
+let materializeSubscription: { remove: () => void } | null = null;
+
+export const bindNativeDownloadProgress = (
+  subscribe: (
+    listener: (payload: { requestId: string; fraction: number }) => void,
+  ) => { remove: () => void },
+): void => {
+  if (materializeSubscription) return;
+  materializeSubscription = subscribe(({ requestId, fraction }) => {
+    setSendFraction(requestId, Math.max(0, Math.min(1, fraction)));
+  });
+};

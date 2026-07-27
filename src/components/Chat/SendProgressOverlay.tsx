@@ -48,6 +48,13 @@ export const SendProgressOverlay = ({ messageId }: SendProgressOverlayProps) => 
     switch (stage) {
       case 'queued':
         return 'Waiting…';
+      case 'downloading':
+        // Named explicitly rather than folded into "Preparing": on a library
+        // using Optimize iPhone Storage this is a real network download of the
+        // full original, and it is the slowest thing that can happen here.
+        return fraction === null
+          ? 'Downloading from iCloud…'
+          : `From iCloud ${Math.round(fraction * 100)}%`;
       case 'compressing':
         return fraction === null
           ? 'Preparing…'

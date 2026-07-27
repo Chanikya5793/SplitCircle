@@ -30,6 +30,7 @@ import { ActivityIndicator, IconButton, Text, TextInput } from 'react-native-pap
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SelectedMedia } from './AttachmentMenu';
 import { MediaEditor } from './MediaEditor';
+import { materializeAsset } from '../../../modules/splitcircle-media';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -252,6 +253,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   const [qualities, setQualities] = useState<QualityLevel[]>([]);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [materializing, setMaterializing] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const readyNotifiedRef = useRef(false);
@@ -281,6 +283,51 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   const media = internalItems[safeIndex];
   const activeQuality: QualityLevel = qualities[safeIndex] ?? 'HD';
   const isEditableImage = !!media && (media.type === 'image' || media.type === 'camera');
+
+  /**
+   * Open the editor on the FULL-RESOLUTION file.
+   *
+   * A natively-picked item carries only a 1280px thumbnail until send time.
+   * Editing that would crop and filter the thumbnail and then send the result
+   * as if it were the original — a silent, permanent quality loss with no
+   * symptom until someone zoomed in. So the original is fetched first, and
+   * the item is upgraded in place: once materialized it is no longer a
+   * thumbnail, and the send pipeline skips its own download.
+   */
+  const openEditor = useCallback(async () => {
+    if (!media) return;
+    if (!media.assetId) {
+      setEditorOpen(true);
+      return;
+    }
+    setMaterializing(true);
+    try {
+      const real = await materializeAsset(media.assetId, `edit-${Date.now()}`);
+      setInternalItems((prev) =>
+        prev.map((item, i) =>
+          i === safeIndex
+            ? {
+                ...item,
+                uri: real.uri,
+                assetId: undefined,
+                fileSize: real.fileSize,
+                width: real.width || item.width,
+                height: real.height || item.height,
+              }
+            : item,
+        ),
+      );
+      setEditorOpen(true);
+    } catch (error) {
+      console.error('Could not load full-size image for editing:', error);
+      appAlert(
+        'Couldn’t open the editor',
+        'The full-size photo could not be loaded from iCloud. Check your connection and try again.',
+      );
+    } finally {
+      setMaterializing(false);
+    }
+  }, [media, safeIndex]);
 
   /**
    * Swap an edited photo in for the original.
@@ -345,8 +392,12 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   const audioStatus = useAudioPlayerStatus(audioPlayer);
   const progressFraction = audioStatus.duration > 0 ? audioStatus.currentTime / audioStatus.duration : 0;
 
-  // Video player — source only when the active item is a video.
-  const videoSource = media?.type === 'video' ? media.uri : null;
+  // Video player — source only when the active item is a video whose real
+  // file we already hold. A natively-picked item still carries a JPEG
+  // thumbnail in `uri`, and handing that to the player produces a decode
+  // error rather than a preview; those render as a poster instead.
+  const videoSource =
+    media?.type === 'video' && !media.assetId ? media.uri : null;
   const player = useVideoPlayer(videoSource, (p) => {
     p.loop = false;
   });
@@ -388,7 +439,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   }, [markPreviewReady, media?.type, player, visible]);
 
   useEffect(() => {
-    if (!visible || !media || media.type !== 'video' || previewReady || videoError) return;
+    if (!visible || !media || media.type !== 'video' || media.assetId || previewReady || videoError) return;
     const timeout = setTimeout(() => {
       setVideoError(true);
       markPreviewReady();
@@ -408,7 +459,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
 
   const handleSend = () => {
     if (internalItems.length === 0) return;
-    if (!previewReady && media?.type === 'video' && !videoError) return;
+    if (!previewReady && media?.type === 'video' && !media.assetId && !videoError) return;
     // Preflight: refuse to send while any item is projected over the upload
     // cap at its chosen quality. The user has already been pointed at it
     // through the strip badge + warning banner; this is the final guard so
@@ -431,6 +482,26 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
     if (!media || media.type !== 'video') return;
     const idx = safeIndex;
     try {
+      // Trimming needs the real movie, not the poster JPEG. Fetch it first
+      // for a natively-picked item, and keep the materialized file so the
+      // send pipeline doesn't download it a second time.
+      let source = media;
+      if (source.assetId) {
+        setMaterializing(true);
+        try {
+          const real = await materializeAsset(source.assetId, `trim-${Date.now()}`);
+          source = {
+            ...source,
+            uri: real.uri,
+            assetId: undefined,
+            fileSize: real.fileSize,
+            duration: real.duration || source.duration,
+          };
+          setInternalItems((prev) => prev.map((item, i) => (i === idx ? source : item)));
+        } finally {
+          setMaterializing(false);
+        }
+      }
       // Cap the trim at the longest duration that *would* fit at the user's
       // current quality, so they can't drag past a length we know will be
       // rejected anyway. Falls back to no cap if we can't estimate.
@@ -440,8 +511,8 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
       // length we'd then reject at upload. Falls back to the HD target when
       // the source rate can't be derived.
       const sourceBitrate =
-        media.fileSize && media.duration
-          ? (media.fileSize * 8) / (media.duration / 1000)
+        source.fileSize && source.duration
+          ? (source.fileSize * 8) / (source.duration / 1000)
           : 0;
       const bitrate =
         choice === 'ORIGINAL'
@@ -452,7 +523,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
       const maxBytes = UPLOAD_SIZE_LIMIT_BYTES;
       const maxDurationMs = bitrate > 0 ? Math.floor((maxBytes * 8 / bitrate) * 1000) : -1;
 
-      const result = await triggerTrim(media.uri, {
+      const result = await triggerTrim(source.uri, {
         maxDurationMs,
         headerText: 'Trim to fit',
       });
@@ -473,6 +544,10 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
         next[idx] = {
           ...original,
           uri: result.outputPath,
+          // The trimmed file is now the source of truth; leaving assetId set
+          // would make the send pipeline re-download the untrimmed original
+          // and silently discard the trim.
+          assetId: undefined,
           duration: result.durationMs,
           fileSize: newSize > 0 ? newSize : original.fileSize,
         };
@@ -570,6 +645,37 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
         );
 
       case 'video':
+        // Not yet downloaded: show the local poster with a play badge. The
+        // alternative — downloading the original just to preview it — is
+        // exactly the freeze this whole path exists to avoid, and the user
+        // may well not send this item at all.
+        if (media.assetId) {
+          return (
+            <View style={styles.videoPosterWrap}>
+              {media.uri ? (
+                <Image
+                  source={{ uri: media.uri }}
+                  style={styles.imagePreview}
+                  resizeMode="contain"
+                  fadeDuration={0}
+                />
+              ) : (
+                <View style={styles.videoFallback}>
+                  <Ionicons name="videocam" size={80} color={theme.colors.primary} />
+                </View>
+              )}
+              <View pointerEvents="none" style={styles.videoPosterBadge}>
+                <Ionicons name="play" size={26} color="#fff" />
+              </View>
+              <View pointerEvents="none" style={styles.videoPosterNote}>
+                <Text style={styles.videoPosterNoteText}>
+                  {media.duration ? `${formatDuration(media.duration)} · ` : ''}
+                  Full video downloads when you send
+                </Text>
+              </View>
+            </View>
+          );
+        }
         if (videoError) {
           return (
             <View style={styles.videoFallback}>
@@ -664,7 +770,11 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   // along — the input was simply never offered.
   const showCaptionInput = true;
   const showQualityControl = media.type === 'image' || media.type === 'video' || media.type === 'camera';
-  const isPreviewLoading = media.type === 'video' && !previewReady && !videoError;
+  // A poster-state video has no player to wait on — its preview is already a
+  // local still. Without this exclusion Send sits disabled for the full 5s
+  // fallback timeout on every natively-picked video, for nothing.
+  const isPreviewLoading =
+    media.type === 'video' && !media.assetId && !previewReady && !videoError;
   const showStrip = internalItems.length > 1;
   const sendCount = internalItems.length;
 
@@ -702,12 +812,17 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
             {isEditableImage && (
               <TouchableOpacity
                 style={styles.editButton}
-                onPress={() => setEditorOpen(true)}
+                onPress={openEditor}
+                disabled={materializing}
                 activeOpacity={0.7}
                 accessibilityRole="button"
                 accessibilityLabel="Edit this photo"
               >
-                <Ionicons name="create-outline" size={20} color="#fff" />
+                {materializing ? (
+                  <ActivityIndicator animating size="small" color="#fff" />
+                ) : (
+                  <Ionicons name="create-outline" size={20} color="#fff" />
+                )}
               </TouchableOpacity>
             )}
 
@@ -1292,6 +1407,32 @@ const styles = StyleSheet.create({
   qualityContainer: {
     marginRight: 8,
   },
+  videoPosterWrap: {
+    flex: 1,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoPosterBadge: {
+    position: 'absolute',
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.6)',
+  },
+  videoPosterNote: {
+    position: 'absolute',
+    bottom: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  videoPosterNoteText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   editButton: {
     width: 36,
     height: 36,
