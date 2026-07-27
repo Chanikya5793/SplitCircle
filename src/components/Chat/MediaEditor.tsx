@@ -67,6 +67,9 @@ const ASPECT_PRESETS: { id: string; label: string; value: number | null }[] = [
 
 const PEN_COLORS = ['#FF3B30', '#FFCC00', '#34C759', '#0A84FF', '#FFFFFF', '#000000'];
 
+/** Minimum finger travel (display px) before a stroke records another point. */
+const MIN_POINT_DISTANCE = 1.5;
+
 interface MediaEditorProps {
   visible: boolean;
   /** Source image URI. Must be a decodable still — callers gate on type. */
@@ -93,6 +96,7 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
   const [liveStroke, setLiveStroke] = useState<string | null>(null);
 
   const liveStrokeRef = useRef<string | null>(null);
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
 
   // Decode once per source. Skia images are native resources, so re-decoding
   // on every render would leak them and stall the UI thread on a 12MP photo.
@@ -252,13 +256,21 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
         .enabled(tool === 'draw')
         .minDistance(0)
         .onBegin((event) => {
-          const nx = (event.x / displayW).toFixed(5);
-          const ny = (event.y / displayH).toFixed(5);
-          liveStrokeRef.current = `M${nx} ${ny}`;
+          lastPointRef.current = { x: event.x, y: event.y };
+          liveStrokeRef.current = `M${(event.x / displayW).toFixed(5)} ${(event.y / displayH).toFixed(5)}`;
           setLiveStroke(liveStrokeRef.current);
         })
         .onUpdate((event) => {
           if (!liveStrokeRef.current) return;
+          // Drop sub-threshold moves. A finger emits events far faster than it
+          // travels, and each one here costs a React render plus a point in
+          // the exported path; without this the stroke both janks while being
+          // drawn and bloats the saved path with points nobody can see.
+          const last = lastPointRef.current;
+          if (last && Math.hypot(event.x - last.x, event.y - last.y) < MIN_POINT_DISTANCE) {
+            return;
+          }
+          lastPointRef.current = { x: event.x, y: event.y };
           const nx = (event.x / displayW).toFixed(5);
           const ny = (event.y / displayH).toFixed(5);
           liveStrokeRef.current = `${liveStrokeRef.current} L${nx} ${ny}`;
@@ -267,6 +279,7 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
         .onFinalize(() => {
           const d = liveStrokeRef.current;
           liveStrokeRef.current = null;
+          lastPointRef.current = null;
           setLiveStroke(null);
           // A tap with no drag produces a single moveto, which draws nothing —
           // storing it would make Undo appear broken.
@@ -314,7 +327,13 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
   }, [state.strokes, liveStroke, penColor, penWidth]);
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onCancel} statusBarTranslucent>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={onCancel}
+      statusBarTranslucent
+    >
       <GestureHandlerRootView style={styles.root}>
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable onPress={onCancel} hitSlop={12} style={styles.headerButton}>

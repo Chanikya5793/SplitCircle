@@ -394,6 +394,36 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   ("infinite scroll into the void") and scroll-back gets yanked forever. Gate the
   follow on a near-bottom ref (see the AI chat surfaces); explicit sends re-engage it.
 - **react-native-svg** pinned 15.12.1 (chart-kit compat).
+- **@shopify/react-native-skia (2.10.0) powers the chat photo editor** — added
+  2026-07-27, and the FIRST new native pod added since the LibSignalClient
+  disaster, so it was verified the way that gotcha demands: `Podfile.lock`
+  (5 refs), `Pods.xcodeproj` (49 refs) and `Target Support Files/` all checked
+  by hand, then `nm -u <binary> | grep -ci skia` = **0** on the archived
+  Release binary, then an actual on-device launch watched for a dyld failure.
+  It links STATICALLY (no entry in `.app/Frameworks/`, which is correct here —
+  unlike LibSignalClient it vendors no archive needing `OTHER_LDFLAGS`), so
+  don't "fix" a missing Frameworks entry. Peer deps are real and already
+  satisfied: reanimated ≥4 and `react-native-worklets` ≥0.7 — an upgrade that
+  drops either breaks Skia. **Anything Skia draws that must be SAVED has to be
+  re-rendered offscreen at full resolution** (`Skia.Surface.MakeOffscreen`),
+  never `makeImageSnapshot()` on the on-screen `<Canvas>`: that canvas is sized
+  to the screen, so snapshotting silently downscales a 12MP photo to ~1200px
+  and the quality loss looks like the compressor's fault. See
+  `src/services/mediaEditorRender.ts`. Gestures inside the editor need their
+  own `GestureHandlerRootView` because it renders in a `Modal` — gesture-handler
+  does not traverse RN's modal boundary.
+- **Chat media sends are a two-stage pipeline, not a loop** — compression is
+  sequential (CPU; concurrent transcodes on a phone are slower than serial and
+  starve the UI thread) while uploads run on a chained promise so item N uploads
+  WHILE N+1 compresses. The optimistic bubble is written by
+  `useMediaSendPipeline` BEFORE compression starts, not by `sendMessage`; that
+  ordering is the fix for "I tapped Send and nothing happened" and must survive
+  any refactor. Per-message progress lives in an external store
+  (`mediaSendProgress.ts` + `useSyncExternalStore`), deliberately NOT context —
+  upload ticks arrive tens of times a second and context would re-render every
+  mounted bubble in a virtualized list on each one. Upload progress must come
+  from `createUploadTask`, never `uploadAsync` (no progress callback and no
+  cancel — the old code faked 10%→90% around an opaque await).
 - **App Intents run headless** (Siri invokes them without launching JS) — their Swift `perform()`
   cannot call into React Native at all. They read the on-disk SQLite index
   (`modules/splitcircle-ai/ios/SplitCircleIndexReader.swift`) directly instead. That pod links
