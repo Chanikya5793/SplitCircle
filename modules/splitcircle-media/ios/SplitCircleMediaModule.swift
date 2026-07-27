@@ -399,7 +399,22 @@ private final class PickerDelegate: NSObject, PHPickerViewControllerDelegate {
   }
 
   func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-    picker.dismiss(animated: true)
-    onFinish(results)
+    // Resolve only ONCE THE DISMISSAL HAS FINISHED.
+    //
+    // Calling `onFinish` alongside `dismiss` resolves the JS promise while the
+    // dismissal animation is still in flight (~300ms). JS then immediately
+    // tears down the attachment sheet's own modal and presents the media
+    // preview on top of it — three overlapping modal transitions. UIKit
+    // silently refuses the last presentation, so the preview never appeared
+    // while React still believed `visible` was true: no error, no crash,
+    // nothing on screen.
+    //
+    // This did not bite the old expo-image-picker path because that call took
+    // seconds to return (it was busy downloading), by which point every
+    // transition had settled. Returning in ~25ms is what exposed it.
+    picker.dismiss(animated: true) { [onFinish] in
+      NSLog("[SCMedia] picker dismissed, resolving")
+      onFinish(results)
+    }
   }
 }

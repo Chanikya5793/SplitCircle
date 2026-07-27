@@ -813,6 +813,12 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
       animationType="slide"
       presentationStyle="fullScreen"
       statusBarTranslucent
+      // Fires when UIKit has actually put this on screen, which a render pass
+      // does NOT prove: a presentation refused because another modal
+      // transition is still in flight leaves React believing `visible` is
+      // true while nothing is shown. That is exactly how the preview went
+      // missing, and this is the only signal that distinguishes the two.
+      onShow={() => nativeLog('preview modal SHOWN')}
       onRequestClose={handleClose}
     >
       <View style={[styles.container, { backgroundColor: '#000' }]}>
