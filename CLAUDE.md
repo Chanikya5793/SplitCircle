@@ -498,6 +498,24 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   as-is is silent permanent quality loss, so each of those materializes first
   and then clears `assetId` (leaving it set makes the pipeline re-download the
   original and discard the edit/trim).
+- **A native picker/sheet that resolves its promise BEFORE its dismissal
+  animation finishes will silently kill whatever modal JS presents next.**
+  `PHPickerViewController` is presented FROM the attachment sheet's own RN
+  modal (`RCTFabricModalHostViewController`), so calling
+  `picker.dismiss(animated: true)` and resolving in the same breath leaves a
+  ~300ms transition in flight; JS then tears down the sheet and presents
+  MediaPreview on top of it, and UIKit **refuses that presentation with no
+  error**. React still believes `visible === true`, so every JS-side signal
+  looks healthy — the component renders, props are correct, effects fire — and
+  nothing is on screen. Resolve from `dismiss`'s completion block instead.
+  This cost three debugging rounds because it is invisible from JS: a render
+  pass does NOT prove presentation. **Use `Modal`'s `onShow` to tell "React
+  set visible" apart from "UIKit put it on screen"** — that one line is what
+  finally distinguished them. Note it did not affect `expo-image-picker`,
+  whose call took seconds to return (it was busy downloading), by which point
+  every transition had settled; returning fast is what exposed it. Camera kept
+  working throughout because it presents via a different path, and that
+  asymmetry (camera fine, gallery dead) is the fingerprint of this bug.
 - **Never `rm -rf ios/build`** — it is not scratch output. React Native's
   codegen writes `ios/build/generated/ios/` there, and deleting it fails the
   next archive with `RCTAppDependencyProvider.h couldn't be opened` from a
