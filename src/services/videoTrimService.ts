@@ -1,12 +1,85 @@
 // Wraps `react-native-video-trim`'s editor so callers can `await` a trim
 // operation and get back either the new local URI or `null` if the user
-// cancelled. The native module is event-driven (showEditor is fire-and-
-// forget; results arrive via DeviceEventEmitter), so this file owns the
-// listener bookkeeping and exposes a single Promise-based entry point.
+// cancelled. The native module is event-driven (showEditor is fire-and-forget;
+// results arrive asynchronously), so this file owns the listener bookkeeping
+// and exposes a single Promise-based entry point.
+//
+// The event CHANNEL differs by architecture — see `subscribeToTrimEvents`.
+// Getting that wrong does not fail loudly; it silently discards every edit the
+// user made. Do not "simplify" it back to a single DeviceEventEmitter call.
 
 import { useCallback, useEffect, useRef } from 'react';
-import { DeviceEventEmitter, type EmitterSubscription } from 'react-native';
-import { showEditor, closeEditor, deleteFile } from 'react-native-video-trim';
+import { DeviceEventEmitter } from 'react-native';
+import VideoTrimModule, { showEditor, closeEditor, deleteFile } from 'react-native-video-trim';
+
+/** Anything with a `remove()` — covers both event channels below. */
+interface Removable {
+  remove: () => void;
+}
+
+/**
+ * Subscribe to the trim editor's events on whichever channel this build
+ * actually uses.
+ *
+ * THIS WAS THE BUG. Under the New Architecture the library exposes its events
+ * as TurboModule codegen emitters ON THE MODULE (`onFinishTrimming(cb)`);
+ * `DeviceEventEmitter` is the OLD architecture's channel and receives nothing.
+ * This app runs New Arch, so the listener never fired — while `showEditor`
+ * itself is a plain method call and worked fine. The editor therefore opened,
+ * trimmed, rotated, flipped and exported correctly, and then:
+ *
+ *   - the promise never settled, so the caller awaited forever and never
+ *     swapped in the trimmed file — the ORIGINAL video got sent, with every
+ *     edit silently discarded; and
+ *   - `ongoing` was never cleared, so every later trim rejected with
+ *     "Another trim operation is already in progress".
+ *
+ * One missed channel, both symptoms. Falls back to `DeviceEventEmitter` so the
+ * old architecture (and any build where codegen emitters are absent) keeps
+ * working.
+ */
+const subscribeToTrimEvents = (handlers: {
+  onFinish: (event: any) => void;
+  onCancel: () => void;
+  onError: (message: string) => void;
+}): Removable[] => {
+  const emitterModule = VideoTrimModule as unknown as Record<string, unknown>;
+  const hasCodegenEvents = typeof emitterModule?.onFinishTrimming === 'function';
+
+  if (hasCodegenEvents) {
+    const bind = (name: string, fn: (payload: any) => void): Removable | null => {
+      const subscribe = emitterModule[name];
+      if (typeof subscribe !== 'function') return null;
+      return (subscribe as (cb: (payload: any) => void) => Removable)(fn);
+    };
+    return [
+      bind('onFinishTrimming', (event) => handlers.onFinish(event ?? {})),
+      bind('onCancelTrimming', () => handlers.onCancel()),
+      bind('onCancel', () => handlers.onCancel()),
+      bind('onError', (event) => handlers.onError(event?.message || 'Trim failed')),
+    ].filter((sub): sub is Removable => sub !== null);
+  }
+
+  return [
+    DeviceEventEmitter.addListener('VideoTrim', (event: any) => {
+      if (!event || typeof event !== 'object') return;
+      switch (event.name) {
+        case 'onFinishTrimming':
+          handlers.onFinish(event);
+          break;
+        case 'onCancel':
+        case 'onCancelTrimming':
+          handlers.onCancel();
+          break;
+        case 'onError':
+          handlers.onError(event.message || 'Trim failed');
+          break;
+        default:
+          break;
+      }
+    }),
+  ];
+};
 
 export interface TrimSuccess {
   outputPath: string;
@@ -27,7 +100,7 @@ export interface TrimAttemptOptions {
 interface OngoingTrim {
   resolve: (result: TrimSuccess | null) => void;
   reject: (error: Error) => void;
-  subs: EmitterSubscription[];
+  subs: Removable[];
 }
 
 let ongoing: OngoingTrim | null = null;
@@ -51,13 +124,29 @@ export const trimVideoInteractive = (
   options: TrimAttemptOptions = {},
 ): Promise<TrimSuccess | null> => {
   if (ongoing) {
-    return Promise.reject(new Error('Another trim operation is already in progress.'));
+    // Reclaim the slot rather than locking the user out of trimming forever.
+    //
+    // This guard used to hard-reject, which turned any single dropped
+    // completion event into a permanent "Another trim operation is already in
+    // progress" for the rest of the app's life — with no way back short of
+    // killing it. Only one editor can be on screen at a time, so if we are
+    // here the previous one is already gone; settle it as cancelled, tear its
+    // listeners down, and continue.
+    console.warn('Reclaiming a stale trim slot — previous editor never reported completion.');
+    try {
+      closeEditor();
+    } catch {
+      /* editor may already be gone */
+    }
+    const stale = ongoing;
+    ongoing = null;
+    stale.resolve(null);
   }
 
   return new Promise<TrimSuccess | null>((resolve, reject) => {
     // Subscribe before invoking `showEditor` — events can fire before the
     // promise constructor returns on fast paths.
-    const subs: EmitterSubscription[] = [];
+    const subs: Removable[] = [];
 
     const finish = (result: TrimSuccess | null) => {
       cleanup();
@@ -70,27 +159,16 @@ export const trimVideoInteractive = (
     };
 
     subs.push(
-      DeviceEventEmitter.addListener('VideoTrim', (event: any) => {
-        if (!event || typeof event !== 'object') return;
-        switch (event.name) {
-          case 'onFinishTrimming':
-            finish({
-              outputPath: event.outputPath,
-              startMs: event.startTime ?? 0,
-              endMs: event.endTime ?? 0,
-              durationMs: event.duration ?? 0,
-            });
-            break;
-          case 'onCancel':
-          case 'onCancelTrimming':
-            finish(null);
-            break;
-          case 'onError':
-            fail(new Error(event.message || 'Trim failed'));
-            break;
-          default:
-            break;
-        }
+      ...subscribeToTrimEvents({
+        onFinish: (event) =>
+          finish({
+            outputPath: event.outputPath,
+            startMs: event.startTime ?? 0,
+            endMs: event.endTime ?? 0,
+            durationMs: event.duration ?? 0,
+          }),
+        onCancel: () => finish(null),
+        onError: (message) => fail(new Error(message)),
       }),
     );
 

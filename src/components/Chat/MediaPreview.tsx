@@ -294,16 +294,6 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
 
   const safeIndex = Math.min(activeIndex, Math.max(0, internalItems.length - 1));
   const media = internalItems[safeIndex];
-  useEffect(() => {
-    if (!visible) return;
-    nativeLog(
-      `preview render n=${internalItems.length} idx=${safeIndex} ` +
-        (media
-          ? `type=${media.type} uri=${media.uri ? 'ok' : 'EMPTY'} asset=${media.assetId ? 'y' : 'n'} dur=${media.duration ?? 'none'}`
-          : 'NO MEDIA') +
-        ` | allFit=${allItemsFit} blocking=${blockingIndex} loading=${isPreviewLoading} q=${qualities[safeIndex] ?? '?'} est=${media ? estimateProcessedSize(media, qualities[safeIndex] ?? 'HD') : 'n/a'}`,
-    );
-  }, [visible, internalItems.length, safeIndex, media]);
   const activeQuality: QualityLevel = qualities[safeIndex] ?? 'HD';
   const isEditableImage = !!media && (media.type === 'image' || media.type === 'camera');
 
@@ -540,7 +530,6 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
   }, [safeIndex, visible, internalItems.length]);
 
   const handleSend = () => {
-    nativeLog(`handleSend n=${internalItems.length} allFit=${allItemsFit} loading=${isPreviewLoading}`);
     if (internalItems.length === 0) return;
     if (!previewReady && media?.type === 'video' && !media.assetId && !videoError) return;
     // Preflight: refuse to send while any item is projected over the upload
@@ -900,12 +889,6 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
       animationType="slide"
       presentationStyle="fullScreen"
       statusBarTranslucent
-      // Fires when UIKit has actually put this on screen, which a render pass
-      // does NOT prove: a presentation refused because another modal
-      // transition is still in flight leaves React believing `visible` is
-      // true while nothing is shown. That is exactly how the preview went
-      // missing, and this is the only signal that distinguishes the two.
-      onShow={() => nativeLog('preview modal SHOWN')}
       onRequestClose={handleClose}
     >
       <View style={[styles.container, { backgroundColor: '#000' }]}>

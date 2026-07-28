@@ -4,7 +4,6 @@ import { useTheme } from '@/context/ThemeContext';
 import { appAlert } from '@/utils/appAlert';
 import {
   isNativeMediaAvailable,
-  nativeLog,
   pickAssets,
   requestThumbnail,
 } from '../../../modules/splitcircle-media';
@@ -439,17 +438,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           }),
         );
 
-        nativeLog(
-          `batch built n=${batch.length} ` +
-            batch
-              .map(
-                (b, i) =>
-                  `[${i}]type=${b.type} uri=${b.uri ? 'ok' : 'EMPTY'} asset=${b.assetId ? 'y' : 'n'} ${b.width}x${b.height} dur=${b.duration ?? 'none'}`,
-              )
-              .join(' '),
-        );
         await deliverSelection(batch.length === 1 ? batch[0] : batch);
-        nativeLog('deliverSelection returned');
         return;
       }
 
