@@ -39,9 +39,13 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  addCompletionsListener,
   isPlaceSearchAvailable,
+  resolveCompletion,
   searchNearby,
   searchPlaces,
+  updateCompletionQuery,
+  type PlaceCompletion,
   type PlaceResult,
 } from '../../../modules/splitcircle-places';
 
@@ -90,6 +94,26 @@ const MAP_KINDS: { id: MapKind; icon: keyof typeof Ionicons.glyphMap; label: str
 
 const isExpoGo = Constants.appOwnership === 'expo';
 
+/**
+ * Join address parts, dropping any that a previous part already covers.
+ *
+ * Reverse geocoding hands back overlapping fields — `name` is typically the
+ * whole street line and `street` just the street, so a naive join repeats
+ * itself. Substring containment catches that without needing to know which
+ * field is which.
+ */
+const compactAddress = (parts: (string | null | undefined)[]): string => {
+  const out: string[] = [];
+  for (const raw of parts) {
+    const part = raw?.trim();
+    if (!part) continue;
+    const lower = part.toLowerCase();
+    if (out.some((existing) => existing.toLowerCase().includes(lower))) continue;
+    out.push(part);
+  }
+  return out.join(', ');
+};
+
 /** Rough metres between two coordinates — good enough to decide whether the map
  *  has been panned far enough to justify offering "Search this area". */
 const metresBetween = (
@@ -122,6 +146,9 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   const [isDragging, setIsDragging] = useState(false);
   const [mapKind, setMapKind] = useState<MapKind>('standard');
   const [showSearchArea, setShowSearchArea] = useState(false);
+  const [completions, setCompletions] = useState<PlaceCompletion[]>([]);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const mapRef = useRef<MapViewRef>(null);
   const isMountedRef = useRef(true);
@@ -177,6 +204,20 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       });
     });
 
+  /**
+   * Searching takes over the sheet.
+   *
+   * Previously "Selected location / note / Send" stayed pinned above the
+   * results, which pushed the suggestions below the fold AND showed a stale
+   * address contradicting the fresh list. While you are typing, the only thing
+   * that matters is the suggestions.
+   */
+  const inSearchMode = searchFocused || searchQuery.trim().length > 0;
+
+  useEffect(() => {
+    if (inSearchMode) expandSheet();
+  }, [inSearchMode, expandSheet]);
+
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: sheetY.value }],
   }));
@@ -197,6 +238,37 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     });
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
+  // Suggestions arrive continuously from the native completer, and it can emit
+  // more than once per keystroke as better matches resolve.
+  useEffect(() => {
+    const sub = addCompletionsListener((items) => {
+      if (!isMountedRef.current) return;
+      setCompletions(items);
+      setIsSearching(false);
+    });
+    return () => sub.remove();
+  }, []);
+
+  /**
+   * Track the keyboard so the sheet can sit ON TOP of it.
+   *
+   * Without this the results list rendered underneath the keyboard: live
+   * search was producing suggestions the user could not see, which made
+   * as-you-type look broken even when it was working.
+   */
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
+    });
+    const onHide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
+
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -280,9 +352,17 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
       if (reverseGeocode.length > 0) {
         const addr = reverseGeocode[0];
-        const line = [addr.name, addr.street, addr.city, addr.region, addr.country]
-          .filter(Boolean)
-          .join(', ');
+        // `name` is usually the full street line and `street` the street alone,
+        // so joining both blindly produced "912 N Walnut St, N Walnut St,
+        // Maryville". Country is dropped whenever a region is known — nobody
+        // sharing a pin down the road needs "United States" on the end.
+        const line = compactAddress([
+          addr.name,
+          addr.street,
+          addr.city,
+          addr.region,
+          addr.region ? undefined : addr.country,
+        ]);
         if (isMountedRef.current && isVisibleRef.current) setAddress(line);
       }
     } catch {
@@ -404,13 +484,35 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     setSearchQuery(next);
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     if (!next.trim()) {
+      setCompletions([]);
       setResults([]);
       setIsSearching(false);
       return;
     }
     setIsSearching(true);
-    searchDebounceRef.current = setTimeout(() => void runSearch(next), 300);
+    // Short debounce only — the completer is local and incremental, so this is
+    // about not re-rendering mid-keystroke rather than about cost.
+    searchDebounceRef.current = setTimeout(() => {
+      void updateCompletionQuery(next, regionRef.current
+        ? { latitude: regionRef.current.latitude, longitude: regionRef.current.longitude }
+        : undefined);
+    }, 120);
   };
+
+  /** Resolve a tapped suggestion into a real coordinate, then fly there. */
+  const chooseCompletion = useCallback(
+    async (item: PlaceCompletion) => {
+      setIsSearching(true);
+      const place = await resolveCompletion(item.id);
+      setIsSearching(false);
+      if (!place) {
+        appAlert('Could not open that place', 'Try selecting it again.');
+        return;
+      }
+      goToPlace(place);
+    },
+    [goToPlace],
+  );
 
   // ── Send ─────────────────────────────────────────────────────────────────
   const handleSend = () => {
@@ -620,7 +722,25 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
           {/* ── Floating glass search ─────────────────────────────────── */}
           <View style={[styles.searchWrap, { top: insets.top + 10 }]} pointerEvents="box-none">
             <GlassCard radius="lg" style={styles.searchCard} contentStyle={styles.searchCardContent}>
-              <TouchableOpacity onPress={handleClose} hitSlop={10} style={styles.searchIcon}>
+              <TouchableOpacity
+                onPress={() => {
+                  // Back out of searching first, close the picker second — a
+                  // single chevron that always dismissed made escaping a typo
+                  // mean losing the whole screen.
+                  if (inSearchMode) {
+                    Keyboard.dismiss();
+                    setSearchFocused(false);
+                    setSearchQuery('');
+                    setCompletions([]);
+                    collapseSheet();
+                    return;
+                  }
+                  handleClose();
+                }}
+                hitSlop={10}
+                style={styles.searchIcon}
+                accessibilityLabel={inSearchMode ? 'Cancel search' : 'Close'}
+              >
                 <Ionicons name="chevron-back" size={22} color={theme.colors.onSurface} />
               </TouchableOpacity>
               <TextInput
@@ -629,7 +749,11 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                 placeholderTextColor={theme.colors.onSurfaceVariant}
                 value={searchQuery}
                 onChangeText={onQueryChange}
-                onFocus={expandSheet}
+                onFocus={() => {
+                  setSearchFocused(true);
+                  expandSheet();
+                }}
+                onBlur={() => setSearchFocused(false)}
                 onSubmitEditing={() => void runSearch(searchQuery)}
                 returnKeyType="search"
                 autoCorrect={false}
@@ -655,31 +779,50 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
             </GlassCard>
           </View>
 
-          {/* ── Right-hand glass controls ─────────────────────────────── */}
-          {permissionGranted && !loading && (
-            <View style={[styles.sideControls, { top: insets.top + 74 }]} pointerEvents="box-none">
-              {MAP_KINDS.map((kind) => (
-                <TouchableOpacity
-                  key={kind.id}
-                  onPress={() => {
-                    selectionHaptic();
-                    setMapKind(kind.id);
-                  }}
-                  accessibilityLabel={`${kind.label} map`}
-                  accessibilityState={{ selected: mapKind === kind.id }}
-                >
-                  <GlassCard radius={22} style={styles.sideButton} contentStyle={styles.sideButtonContent}>
-                    <Ionicons
-                      name={kind.icon}
-                      size={19}
-                      color={mapKind === kind.id ? theme.colors.primary : theme.colors.onSurfaceVariant}
-                    />
-                  </GlassCard>
-                </TouchableOpacity>
-              ))}
+          {/* Map type + locate.
+              Four stacked bubbles collided with the map's own street labels and
+              the three type icons were near-indistinguishable at that size. One
+              labelled segmented pill reads at a glance and occupies a single
+              band; locate keeps its own target near the thumb. */}
+          {permissionGranted && !loading && !inSearchMode && (
+            <View style={[styles.mapKindWrap, { top: insets.top + 72 }]} pointerEvents="box-none">
+              <GlassCard radius="pill" style={styles.mapKindCard} contentStyle={styles.mapKindContent}>
+                {MAP_KINDS.map((kind) => {
+                  const active = mapKind === kind.id;
+                  return (
+                    <TouchableOpacity
+                      key={kind.id}
+                      onPress={() => {
+                        selectionHaptic();
+                        setMapKind(kind.id);
+                      }}
+                      style={[
+                        styles.mapKindItem,
+                        active && { backgroundColor: theme.colors.primary },
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                    >
+                      <Text
+                        style={[
+                          styles.mapKindLabel,
+                          { color: active ? theme.colors.onPrimary : theme.colors.onSurfaceVariant },
+                        ]}
+                      >
+                        {kind.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </GlassCard>
+            </View>
+          )}
+
+          {permissionGranted && !loading && !inSearchMode && (
+            <View style={[styles.locateWrap, { bottom: SHEET_COLLAPSED_H + 18 }]} pointerEvents="box-none">
               <TouchableOpacity onPress={goToCurrentLocation} accessibilityLabel="Go to my location">
-                <GlassCard radius={22} style={styles.sideButton} contentStyle={styles.sideButtonContent}>
-                  <Ionicons name="locate" size={19} color={theme.colors.primary} />
+                <GlassCard radius={24} style={styles.locateButton} contentStyle={styles.locateContent}>
+                  <Ionicons name="locate" size={20} color={theme.colors.primary} />
                 </GlassCard>
               </TouchableOpacity>
             </View>
@@ -687,7 +830,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
 
           {/* ── Search this area ──────────────────────────────────────── */}
           {showSearchArea && !searchQuery.trim() && (
-            <View style={[styles.searchAreaWrap, { bottom: SHEET_COLLAPSED_H + 18 }]} pointerEvents="box-none">
+            <View style={[styles.searchAreaWrap, { bottom: SHEET_COLLAPSED_H + 80 }]} pointerEvents="box-none">
               <TouchableOpacity
                 onPress={() => {
                   const region = regionRef.current;
@@ -708,7 +851,19 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
 
           {/* ── Bottom sheet ──────────────────────────────────────────── */}
           {permissionGranted && !loading && (
-            <Animated.View style={[styles.sheet, { height: SHEET_EXPANDED_H }, sheetStyle]}>
+            <Animated.View
+              style={[
+                styles.sheet,
+                {
+                  // Sit ON the keyboard rather than behind it.
+                  bottom: keyboardHeight,
+                  height: inSearchMode
+                    ? Math.max(220, SCREEN_H - keyboardHeight - insets.top - 78)
+                    : SHEET_EXPANDED_H,
+                },
+                sheetStyle,
+              ]}
+            >
               <GlassCard radius="xl" style={styles.sheetCard} contentStyle={styles.sheetContent}>
                 <GestureDetector gesture={sheetGesture}>
                   <View style={styles.grabZone}>
@@ -716,6 +871,8 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                   </View>
                 </GestureDetector>
 
+                {!inSearchMode && (
+                <>
                 <View style={styles.selectedRow}>
                   <View style={styles.selectedText}>
                     <Text numberOfLines={1} style={[styles.selectedTitle, { color: theme.colors.onSurface }]}>
@@ -766,61 +923,96 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                     <Ionicons name="navigate-circle-outline" size={22} color={theme.colors.primary} />
                   </TouchableOpacity>
                 </View>
+                </>
+                )}
 
                 <ScrollView
                   style={styles.list}
                   keyboardShouldPersistTaps="handled"
                   showsVerticalScrollIndicator={false}
                 >
-                  {sections.length === 0 && !isSearching && (
-                    <Text style={[styles.emptyHint, { color: theme.colors.onSurfaceVariant }]}>
-                      {searchQuery.trim()
-                        ? `Nothing found for “${searchQuery.trim()}”.`
-                        : 'Drag the map to place the pin, or search above.'}
-                    </Text>
-                  )}
-                  {sections.map((section) => (
-                    <View key={section.key}>
-                      <Text style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
-                        {section.title}
-                      </Text>
-                      {section.items.map((item, index) => (
+                  {inSearchMode ? (
+                    <>
+                      {completions.length === 0 && !isSearching && searchQuery.trim().length > 1 && (
+                        <Text style={[styles.emptyHint, { color: theme.colors.onSurfaceVariant }]}>
+                          {`No matches for \u201C${searchQuery.trim()}\u201D yet.`}
+                        </Text>
+                      )}
+                      {completions.map((item) => (
                         <TouchableOpacity
-                          key={`${section.key}-${item.latitude},${item.longitude}-${index}`}
+                          key={`c-${item.id}-${item.title}`}
                           style={styles.row}
-                          onPress={() =>
-                            goToPlace({
-                              latitude: item.latitude,
-                              longitude: item.longitude,
-                              name: item.name,
-                              address: item.address,
-                            })
-                          }
+                          onPress={() => void chooseCompletion(item)}
                         >
-                          <Ionicons
-                            name={section.key === 'recent' ? 'time-outline' : 'location-outline'}
-                            size={18}
-                            color={theme.colors.primary}
-                          />
+                          <Ionicons name="location-outline" size={18} color={theme.colors.primary} />
                           <View style={styles.rowText}>
                             <Text numberOfLines={1} style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
-                              {item.name}
+                              {item.title}
                             </Text>
-                            {!!item.address && (
+                            {!!item.subtitle && (
                               <Text
                                 numberOfLines={1}
                                 variant="bodySmall"
                                 style={{ color: theme.colors.onSurfaceVariant }}
                               >
-                                {item.address}
+                                {item.subtitle}
                               </Text>
                             )}
                           </View>
                         </TouchableOpacity>
                       ))}
-                    </View>
-                  ))}
-                  <View style={{ height: insets.bottom + 16 }} />
+                    </>
+                  ) : (
+                    <>
+                      {sections.length === 0 && (
+                        <Text style={[styles.emptyHint, { color: theme.colors.onSurfaceVariant }]}>
+                          Drag the map to place the pin, or search above.
+                        </Text>
+                      )}
+                      {sections.map((section) => (
+                        <View key={section.key}>
+                          <Text style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
+                            {section.title}
+                          </Text>
+                          {section.items.map((item, index) => (
+                            <TouchableOpacity
+                              key={`${section.key}-${item.latitude},${item.longitude}-${index}`}
+                              style={styles.row}
+                              onPress={() =>
+                                goToPlace({
+                                  latitude: item.latitude,
+                                  longitude: item.longitude,
+                                  name: item.name,
+                                  address: item.address,
+                                })
+                              }
+                            >
+                              <Ionicons
+                                name={section.key === 'recent' ? 'time-outline' : 'location-outline'}
+                                size={18}
+                                color={theme.colors.primary}
+                              />
+                              <View style={styles.rowText}>
+                                <Text numberOfLines={1} style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                                  {item.name}
+                                </Text>
+                                {!!item.address && (
+                                  <Text
+                                    numberOfLines={1}
+                                    variant="bodySmall"
+                                    style={{ color: theme.colors.onSurfaceVariant }}
+                                  >
+                                    {item.address}
+                                  </Text>
+                                )}
+                              </View>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      ))}
+                    </>
+                  )}
+                  <View style={{ height: (keyboardHeight > 0 ? 12 : insets.bottom) + 16 }} />
                 </ScrollView>
               </GlassCard>
             </Animated.View>
@@ -860,9 +1052,14 @@ const styles = StyleSheet.create({
   searchIcon: { paddingHorizontal: 8, paddingVertical: 8 },
   searchInput: { flex: 1, fontSize: 16, paddingVertical: 10 },
 
-  sideControls: { position: 'absolute', right: 12, gap: 8, alignItems: 'flex-end' },
-  sideButton: { width: 44, height: 44 },
-  sideButtonContent: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  mapKindWrap: { position: 'absolute', right: 12 },
+  mapKindCard: {},
+  mapKindContent: { flexDirection: 'row', padding: 3, gap: 2 },
+  mapKindItem: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999 },
+  mapKindLabel: { fontSize: 12, fontWeight: '700' },
+  locateWrap: { position: 'absolute', right: 12 },
+  locateButton: { width: 48, height: 48 },
+  locateContent: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   searchAreaWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   searchAreaCard: {},

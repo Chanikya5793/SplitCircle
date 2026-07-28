@@ -18,7 +18,20 @@ export interface PlaceResult {
   longitude: number;
 }
 
+/** One as-you-type suggestion. `id` is only valid until the next keystroke. */
+export interface PlaceCompletion {
+  id: number;
+  title: string;
+  subtitle: string;
+}
+
 interface NativePlacesModule {
+  updateCompletionQuery(query: string, latitude: number, longitude: number): Promise<void>;
+  resolveCompletion(id: number): Promise<PlaceResult>;
+  addListener(
+    event: 'onCompletions',
+    listener: (payload: { items: PlaceCompletion[] }) => void,
+  ): { remove: () => void };
   searchPlaces(query: string, latitude: number, longitude: number): Promise<PlaceResult[]>;
   searchNearby(latitude: number, longitude: number, radius: number): Promise<PlaceResult[]>;
   cancelSearch(): void;
@@ -62,6 +75,47 @@ export const searchNearby = async (
   } catch {
     return [];
   }
+};
+
+/**
+ * Push the current query into the incremental completer.
+ *
+ * Suggestions arrive through `addCompletionsListener`, not as a return value —
+ * `MKLocalSearchCompleter` is a continuously-updating delegate, and it may emit
+ * several times for a single keystroke as better matches resolve.
+ */
+export const updateCompletionQuery = async (
+  query: string,
+  near?: { latitude: number; longitude: number },
+): Promise<void> => {
+  if (!nativeModule) return;
+  try {
+    await nativeModule.updateCompletionQuery(query, near?.latitude ?? 0, near?.longitude ?? 0);
+  } catch {
+    // Throttling while typing is routine and not worth surfacing.
+  }
+};
+
+/**
+ * Turn a chosen suggestion into a coordinate.
+ *
+ * The `id` indexes the completer's CURRENT results, so resolve on tap and
+ * never hold one across a keystroke — the list underneath will have moved.
+ */
+export const resolveCompletion = async (id: number): Promise<PlaceResult | null> => {
+  if (!nativeModule) return null;
+  try {
+    return await nativeModule.resolveCompletion(id);
+  } catch {
+    return null;
+  }
+};
+
+export const addCompletionsListener = (
+  listener: (items: PlaceCompletion[]) => void,
+): { remove: () => void } => {
+  if (!nativeModule) return { remove: () => {} };
+  return nativeModule.addListener('onCompletions', ({ items }) => listener(items ?? []));
 };
 
 export const cancelPlaceSearch = (): void => {
