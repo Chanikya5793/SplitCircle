@@ -1,0 +1,8 @@
+{
+  "name": "splitcircle-places",
+  "version": "1.0.0",
+  "description": "MapKit place search for the location picker",
+  "main": "index.ts",
+  "license": "MIT",
+  "peerDependencies": { "expo": "*" }
+}

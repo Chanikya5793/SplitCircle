@@ -1,22 +1,56 @@
 import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
+import { GlassCard } from '@/components/ui/GlassCard';
 import { useTheme } from '@/context/ThemeContext';
+import {
+  getRecentPlaces,
+  rememberPlace,
+  type RecentPlace,
+} from '@/services/recentPlacesService';
 import { appAlert } from '@/utils/appAlert';
+import { lightHaptic, selectionHaptic } from '@/utils/haptics';
 import { hasGoogleMapsApiKey } from '@/utils/hasGoogleMapsApiKey';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Constants from 'expo-constants';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Location from 'expo-location';
-import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Dimensions, Linking, Modal, Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Dimensions,
+  Keyboard,
+  Linking,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import type { Region } from 'react-native-maps';
 import { Button, Text } from 'react-native-paper';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  isPlaceSearchAvailable,
+  searchNearby,
+  searchPlaces,
+  type PlaceResult,
+} from '../../../modules/splitcircle-places';
 
 // Lazy load MapView to prevent crashes on Android production builds
-const MapView = React.lazy(() => import('react-native-maps').then(mod => ({ default: mod.default })));
+const MapView = React.lazy(() => import('react-native-maps').then((mod) => ({ default: mod.default })));
 
-// Type for MapView ref
 type MapViewRef = InstanceType<typeof import('react-native-maps').default>;
 type RegionChangeDetails = { isGesture?: boolean };
+type MapKind = 'standard' | 'satellite' | 'hybrid';
 
 interface LocationPickerProps {
   visible: boolean;
@@ -28,69 +62,178 @@ interface LocationPickerProps {
   ) => void;
 }
 
-const { width, height } = Dimensions.get('window');
-const ASPECT_RATIO = width / height;
-const LATITUDE_DELTA = 0.005; // Closer zoom for pinning
-const LONGITUDE_DELTA = LATITUDE_DELTA * ASPECT_RATIO;
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+const ASPECT_RATIO = SCREEN_W / SCREEN_H;
+
+/**
+ * Opening span. The old 0.005 framed a couple of streets with no landmarks in
+ * sight — precise, but you had to zoom OUT before you could tell where you
+ * were. This orients first; picking a result tightens it back down.
+ */
+const DEFAULT_DELTA = 0.02;
+/** Span used when jumping to a specific chosen place, where precision matters. */
+const FOCUS_DELTA = 0.006;
 const LIVE_LOCATION_DURATION_MINUTES = 15;
+
+const SHEET_EXPANDED_H = Math.min(SCREEN_H * 0.62, 520);
+const SHEET_COLLAPSED_H = 236;
+/** How far the sheet sits below its expanded position when collapsed. */
+const COLLAPSE_OFFSET = SHEET_EXPANDED_H - SHEET_COLLAPSED_H;
+/** Extra downward travel past collapsed that dismisses the whole picker. */
+const DISMISS_TRAVEL = 110;
+
+const MAP_KINDS: { id: MapKind; icon: keyof typeof Ionicons.glyphMap; label: string }[] = [
+  { id: 'standard', icon: 'map-outline', label: 'Standard' },
+  { id: 'satellite', icon: 'earth-outline', label: 'Satellite' },
+  { id: 'hybrid', icon: 'globe-outline', label: 'Hybrid' },
+];
+
+const isExpoGo = Constants.appOwnership === 'expo';
+
+/** Rough metres between two coordinates — good enough to decide whether the map
+ *  has been panned far enough to justify offering "Search this area". */
+const metresBetween = (
+  a: { latitude: number; longitude: number },
+  b: { latitude: number; longitude: number },
+): number => {
+  const dLat = (a.latitude - b.latitude) * 111_320;
+  const dLon =
+    (a.longitude - b.longitude) * 111_320 * Math.cos((a.latitude * Math.PI) / 180);
+  return Math.sqrt(dLat * dLat + dLon * dLon);
+};
 
 export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPickerProps) => {
   const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+
   const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
   const [selectedLocation, setSelectedLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [address, setAddress] = useState<string | null>(null);
+  const [placeName, setPlaceName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [caption, setCaption] = useState('');
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [results, setResults] = useState<PlaceResult[]>([]);
+  const [nearby, setNearby] = useState<PlaceResult[]>([]);
+  const [recents, setRecents] = useState<RecentPlace[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [mapKind, setMapKind] = useState<MapKind>('standard');
+  const [showSearchArea, setShowSearchArea] = useState(false);
+
   const mapRef = useRef<MapViewRef>(null);
   const isMountedRef = useRef(true);
   const isVisibleRef = useRef(visible);
   const reverseGeocodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Where the nearby list was last computed, to decide on "Search this area". */
+  const nearbyAnchorRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  const regionRef = useRef<Region | null>(null);
+
   const mapsApiKeyAvailable = hasGoogleMapsApiKey();
 
+  // ── Sheet ────────────────────────────────────────────────────────────────
+  // Starts collapsed. Dragging past collapsed by DISMISS_TRAVEL closes the
+  // picker outright, per DESIGN.md's rule that a full-screen overlay is never
+  // something you can only ✕ out of.
+  const sheetY = useSharedValue(COLLAPSE_OFFSET);
+  const sheetStart = useSharedValue(COLLAPSE_OFFSET);
+
+  const expandSheet = useCallback(() => {
+    sheetY.value = withSpring(0, { damping: 20, stiffness: 180 });
+  }, [sheetY]);
+
+  const collapseSheet = useCallback(() => {
+    sheetY.value = withSpring(COLLAPSE_OFFSET, { damping: 20, stiffness: 180 });
+  }, [sheetY]);
+
+  const requestClose = useCallback(() => {
+    Keyboard.dismiss();
+    onClose();
+  }, [onClose]);
+
+  const sheetGesture = Gesture.Pan()
+    .onStart(() => {
+      sheetStart.value = sheetY.value;
+    })
+    .onUpdate((event) => {
+      const next = sheetStart.value + event.translationY;
+      // Rubber-band above the expanded stop so it feels bounded, not broken.
+      sheetY.value = next < 0 ? next / 3 : next;
+    })
+    .onEnd((event) => {
+      const projected = sheetY.value + event.velocityY * 0.12;
+      if (projected > COLLAPSE_OFFSET + DISMISS_TRAVEL) {
+        sheetY.value = withTiming(SHEET_EXPANDED_H, { duration: 180 });
+        runOnJS(requestClose)();
+        return;
+      }
+      const midpoint = COLLAPSE_OFFSET / 2;
+      sheetY.value = withSpring(projected > midpoint ? COLLAPSE_OFFSET : 0, {
+        damping: 20,
+        stiffness: 180,
+      });
+    });
+
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: sheetY.value }],
+  }));
+
+  /**
+   * Left-edge swipe-back, per DESIGN.md: a full-screen overlay behaves like a
+   * pushed screen rather than a trap, so iOS's back gesture has to work here
+   * even though this is a modal. `activeOffsetX` keeps it from stealing
+   * horizontal drags that belong to the map.
+   */
+  const edgeBack = Gesture.Pan()
+    .activeOffsetX(20)
+    .failOffsetY([-14, 14])
+    .onEnd((event) => {
+      if (event.translationX > 70 || event.velocityX > 700) {
+        runOnJS(requestClose)();
+      }
+    });
+
+  // ── Lifecycle ────────────────────────────────────────────────────────────
   useEffect(() => {
     isMountedRef.current = true;
-
     return () => {
       isMountedRef.current = false;
-      if (reverseGeocodeTimerRef.current) {
-        clearTimeout(reverseGeocodeTimerRef.current);
-      }
+      if (reverseGeocodeTimerRef.current) clearTimeout(reverseGeocodeTimerRef.current);
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     };
   }, []);
 
   useEffect(() => {
     isVisibleRef.current = visible;
-
     if (!visible) {
       if (reverseGeocodeTimerRef.current) {
         clearTimeout(reverseGeocodeTimerRef.current);
         reverseGeocodeTimerRef.current = null;
       }
       setIsDragging(false);
+      return;
     }
-  }, [visible]);
-
-  useEffect(() => {
-    if (visible) {
-      void checkPermissionsAndGetLocation();
-    }
+    sheetY.value = COLLAPSE_OFFSET;
+    setSearchQuery('');
+    setResults([]);
+    setShowSearchArea(false);
+    void checkPermissionsAndGetLocation();
+    void getRecentPlaces().then((list) => {
+      if (isMountedRef.current) setRecents(list);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   const checkPermissionsAndGetLocation = async () => {
     setLoading(true);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (!isMountedRef.current || !isVisibleRef.current) {
-        return;
-      }
+      if (!isMountedRef.current || !isVisibleRef.current) return;
 
       if (status !== 'granted') {
-        appAlert('Permission Denied', 'Permission to access location was denied');
         setPermissionGranted(false);
         setLoading(false);
         return;
@@ -100,127 +243,196 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
-      if (!isMountedRef.current || !isVisibleRef.current) {
-        return;
-      }
+      if (!isMountedRef.current || !isVisibleRef.current) return;
 
       setCurrentLocation(location);
-      setSelectedLocation({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-      });
-
-      await fetchAddress(location.coords.latitude, location.coords.longitude);
-
+      const { latitude, longitude } = location.coords;
+      setSelectedLocation({ latitude, longitude });
+      regionRef.current = {
+        latitude,
+        longitude,
+        latitudeDelta: DEFAULT_DELTA,
+        longitudeDelta: DEFAULT_DELTA * ASPECT_RATIO,
+      };
+      await fetchAddress(latitude, longitude);
+      void loadNearby(latitude, longitude);
     } catch (error) {
       console.error('Error getting location:', error);
       if (isMountedRef.current && isVisibleRef.current) {
         appAlert('Error', 'Could not fetch location');
       }
     } finally {
-      if (isMountedRef.current && isVisibleRef.current) {
-        setLoading(false);
-      }
+      if (isMountedRef.current && isVisibleRef.current) setLoading(false);
     }
   };
 
+  const loadNearby = useCallback(async (latitude: number, longitude: number) => {
+    nearbyAnchorRef.current = { latitude, longitude };
+    const found = await searchNearby(latitude, longitude, 1500);
+    if (isMountedRef.current && isVisibleRef.current) {
+      setNearby(found);
+      setShowSearchArea(false);
+    }
+  }, []);
+
   const fetchAddress = async (latitude: number, longitude: number) => {
     try {
-      const reverseGeocode = await Location.reverseGeocodeAsync({
-        latitude,
-        longitude,
-      });
-
+      const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
       if (reverseGeocode.length > 0) {
         const addr = reverseGeocode[0];
-        const addressString = [
-          addr.name,
-          addr.street,
-          addr.city,
-          addr.region,
-          addr.country
-        ].filter(Boolean).join(', ');
-        if (isMountedRef.current && isVisibleRef.current) {
-          setAddress(addressString);
-        }
+        const line = [addr.name, addr.street, addr.city, addr.region, addr.country]
+          .filter(Boolean)
+          .join(', ');
+        if (isMountedRef.current && isVisibleRef.current) setAddress(line);
       }
-    } catch (e) {
-      console.log('Error reverse geocoding:', e);
+    } catch {
       if (isMountedRef.current && isVisibleRef.current) {
         setAddress(`${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
       }
     }
   };
 
-  const handleRegionChangeStart = () => {
-    setIsDragging(true);
-  };
+  // ── Map ──────────────────────────────────────────────────────────────────
+  const handleRegionChangeStart = () => setIsDragging(true);
 
   const handleRegionChangeComplete = (region: Region, details?: RegionChangeDetails) => {
     if (Platform.OS === 'android' && details && details.isGesture === false) {
       setIsDragging(false);
       return;
     }
-
     setIsDragging(false);
-    setSelectedLocation({
-      latitude: region.latitude,
-      longitude: region.longitude,
-    });
+    regionRef.current = region;
+    setSelectedLocation({ latitude: region.latitude, longitude: region.longitude });
+    // Moving the map means the pin is no longer "the place you picked" — drop
+    // the name so the sheet can't caption a new coordinate with an old venue.
+    setPlaceName(null);
 
-    if (reverseGeocodeTimerRef.current) {
-      clearTimeout(reverseGeocodeTimerRef.current);
+    const anchor = nearbyAnchorRef.current;
+    if (anchor && metresBetween(anchor, region) > 800) {
+      setShowSearchArea(true);
     }
 
+    if (reverseGeocodeTimerRef.current) clearTimeout(reverseGeocodeTimerRef.current);
     reverseGeocodeTimerRef.current = setTimeout(() => {
       void fetchAddress(region.latitude, region.longitude);
     }, Platform.OS === 'android' ? 300 : 120);
   };
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+  const goToPlace = useCallback(
+    (place: { latitude: number; longitude: number; name?: string; address?: string }) => {
+      selectionHaptic();
+      Keyboard.dismiss();
+      mapRef.current?.animateToRegion(
+        {
+          latitude: place.latitude,
+          longitude: place.longitude,
+          latitudeDelta: FOCUS_DELTA,
+          longitudeDelta: FOCUS_DELTA * ASPECT_RATIO,
+        },
+        600,
+      );
+      setSelectedLocation({ latitude: place.latitude, longitude: place.longitude });
+      setResults([]);
+      setSearchQuery('');
+      if (place.name) setPlaceName(place.name);
+      if (place.address) setAddress(place.address);
+      void fetchAddress(place.latitude, place.longitude);
+      collapseSheet();
+    },
+    [collapseSheet],
+  );
 
-    setIsSearching(true);
-    try {
-      const geocoded = await Location.geocodeAsync(searchQuery);
-
-      if (geocoded.length > 0) {
-        const { latitude, longitude } = geocoded[0];
-        const newRegion = {
-          latitude,
-          longitude,
-          latitudeDelta: LATITUDE_DELTA,
-          longitudeDelta: LONGITUDE_DELTA,
-        };
-
-        mapRef.current?.animateToRegion(newRegion, 1000);
-        setSelectedLocation({ latitude, longitude });
-        void fetchAddress(latitude, longitude);
-      } else {
-        appAlert('Not Found', 'Could not find location');
-      }
-    } catch (error) {
-      console.error('Search error:', error);
-      appAlert('Error', 'Failed to search location');
-    } finally {
-      setIsSearching(false);
-    }
+  const goToCurrentLocation = () => {
+    if (!currentLocation) return;
+    lightHaptic();
+    const { latitude, longitude } = currentLocation.coords;
+    mapRef.current?.animateToRegion(
+      {
+        latitude,
+        longitude,
+        latitudeDelta: FOCUS_DELTA,
+        longitudeDelta: FOCUS_DELTA * ASPECT_RATIO,
+      },
+      600,
+    );
   };
 
-  const handleSend = () => {
-    if (selectedLocation) {
-      setSending(true);
-      onSendLocation(
-        {
-          latitude: selectedLocation.latitude,
-          longitude: selectedLocation.longitude,
-          address: address || undefined,
-        },
-        caption.trim() || undefined,
-      );
-      setSending(false);
-      handleClose();
+  // ── Search ───────────────────────────────────────────────────────────────
+  const runSearch = useCallback(
+    async (query: string) => {
+      const trimmed = query.trim();
+      if (!trimmed) {
+        setResults([]);
+        setIsSearching(false);
+        return;
+      }
+      setIsSearching(true);
+      try {
+        if (isPlaceSearchAvailable()) {
+          const near = regionRef.current
+            ? { latitude: regionRef.current.latitude, longitude: regionRef.current.longitude }
+            : undefined;
+          const found = await searchPlaces(trimmed, near);
+          if (isMountedRef.current) setResults(found);
+          return;
+        }
+        // Fallback where the native module is absent: address-only geocoding.
+        const geocoded = await Location.geocodeAsync(trimmed);
+        if (isMountedRef.current) {
+          setResults(
+            geocoded.slice(0, 10).map((g) => ({
+              name: trimmed,
+              address: '',
+              latitude: g.latitude,
+              longitude: g.longitude,
+            })),
+          );
+        }
+      } catch (error) {
+        console.warn('Place search failed', error);
+        if (isMountedRef.current) setResults([]);
+      } finally {
+        if (isMountedRef.current) setIsSearching(false);
+      }
+    },
+    [],
+  );
+
+  // Live search. MKLocalSearch is free and tolerant of repeated calls, so the
+  // debounce is purely about not thrashing the list while a word is half typed.
+  const onQueryChange = (next: string) => {
+    setSearchQuery(next);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (!next.trim()) {
+      setResults([]);
+      setIsSearching(false);
+      return;
     }
+    setIsSearching(true);
+    searchDebounceRef.current = setTimeout(() => void runSearch(next), 300);
+  };
+
+  // ── Send ─────────────────────────────────────────────────────────────────
+  const handleSend = () => {
+    if (!selectedLocation) return;
+    setSending(true);
+    const label = placeName ?? address ?? undefined;
+    void rememberPlace({
+      name: placeName ?? address ?? 'Dropped pin',
+      address: address ?? '',
+      latitude: selectedLocation.latitude,
+      longitude: selectedLocation.longitude,
+    });
+    onSendLocation(
+      {
+        latitude: selectedLocation.latitude,
+        longitude: selectedLocation.longitude,
+        address: label,
+      },
+      caption.trim() || undefined,
+    );
+    setSending(false);
+    handleClose();
   };
 
   const handleClose = () => {
@@ -228,388 +440,479 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       clearTimeout(reverseGeocodeTimerRef.current);
       reverseGeocodeTimerRef.current = null;
     }
-
     mapRef.current = null;
-    // Clear the note too — a caption left over from a previous share would
-    // silently attach itself to the next, unrelated pin.
     setCaption('');
-    onClose();
+    setResults([]);
+    setPlaceName(null);
+    requestClose();
   };
-
-  const goToCurrentLocation = () => {
-    if (currentLocation && mapRef.current) {
-      const latitude = currentLocation.coords.latitude;
-      const longitude = currentLocation.coords.longitude;
-      const newRegion = {
-        latitude,
-        longitude,
-        latitudeDelta: LATITUDE_DELTA,
-        longitudeDelta: LONGITUDE_DELTA,
-      };
-      mapRef.current.animateToRegion(newRegion, 1000);
-      setSelectedLocation({ latitude, longitude });
-      void fetchAddress(latitude, longitude);
-    }
-  };
-
-  // Check if running in Expo Go (which doesn't support background location)
-  const isExpoGo = Constants.appOwnership === 'expo';
 
   const handleLiveLocation = async () => {
-    // Background location is not supported in Expo Go
     if (isExpoGo) {
       appAlert(
         'Development Build Required',
-        'Live location sharing requires a development or production build. This feature is not available in Expo Go.',
-        [{ text: 'OK' }]
+        'Live location sharing requires a development or production build.',
       );
       return;
     }
-
     try {
-      // First ensure foreground permissions are granted
-      const { status: foregroundStatus } = await Location.getForegroundPermissionsAsync();
-
-      if (foregroundStatus !== 'granted') {
-        // Need to request foreground permissions first
+      const { status: fg } = await Location.getForegroundPermissionsAsync();
+      if (fg !== 'granted') {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
-          appAlert('Permission Denied', 'Foreground location permission is required before enabling background location.');
+          appAlert('Permission Denied', 'Foreground location permission is required first.');
           return;
         }
       }
-
-      // Check background permissions
-      const { status: backgroundStatus } = await Location.getBackgroundPermissionsAsync();
-
-      if (backgroundStatus === 'granted') {
-        // Permission already granted, proceed with live location logic
-        appAlert('Coming Soon', 'Live location sharing will be available in the next update.');
-        return;
+      const { status: bg } = await Location.getBackgroundPermissionsAsync();
+      if (bg !== 'granted') {
+        await Location.requestBackgroundPermissionsAsync();
       }
-
-      // Request background permissions programmatically
-      // On Android, this will show the "Allow all the time" option
-      const { status: newBackgroundStatus } = await Location.requestBackgroundPermissionsAsync();
-
-      if (newBackgroundStatus === 'granted') {
-        // Permission granted, proceed with live location logic
-        appAlert('Coming Soon', 'Live location sharing will be available in the next update.');
-        return;
-      }
-
-      // If still not granted after request, guide user to settings
-      // This handles cases where the user denied or the system requires manual settings change
-      appAlert(
-        'Background Location Required',
-        'To share your live location, please select "Allow all the time" in location settings.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Open Settings',
-            onPress: async () => {
-              if (Platform.OS === 'ios') {
-                await Linking.openSettings();
-              } else {
-                const packageName = Constants.expoConfig?.android?.package || 'com.splitcircle.app';
-                await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.APPLICATION_DETAILS_SETTINGS, {
-                  data: 'package:' + packageName
-                });
-              }
-            }
-          }
-        ]
-      );
+      appAlert('Coming Soon', 'Live location sharing will be available in the next update.');
     } catch (error) {
-      console.error('Error requesting background permissions:', error);
-      appAlert('Error', 'Could not request location permissions. If you are using Expo Go, please use a development build instead.');
+      console.error('Live location error:', error);
+      appAlert('Error', 'Could not enable live location.');
     }
   };
+
+  const openSettings = async () => {
+    if (Platform.OS === 'ios') {
+      await Linking.openSettings();
+    } else {
+      await IntentLauncher.startActivityAsync(
+        IntentLauncher.ActivityAction.APPLICATION_DETAILS_SETTINGS,
+        { data: `package:${Constants.expoConfig?.android?.package ?? ''}` },
+      );
+    }
+  };
+
+  // ── Sheet content ────────────────────────────────────────────────────────
+  const sections = useMemo(() => {
+    if (searchQuery.trim()) {
+      return [{ key: 'results', title: 'Results', items: results }];
+    }
+    const out: { key: string; title: string; items: (PlaceResult | RecentPlace)[] }[] = [];
+    if (recents.length > 0) out.push({ key: 'recent', title: 'Recent', items: recents });
+    if (nearby.length > 0) out.push({ key: 'nearby', title: 'Nearby', items: nearby });
+    return out;
+  }, [searchQuery, results, recents, nearby]);
+
+  const subtitle = isDragging
+    ? 'Locating…'
+    : address ?? (selectedLocation
+        ? `${selectedLocation.latitude.toFixed(5)}, ${selectedLocation.longitude.toFixed(5)}`
+        : 'Move the map to choose a spot');
 
   return (
     <Modal
       visible={visible}
       animationType="slide"
+      presentationStyle="fullScreen"
+      statusBarTranslucent
       onRequestClose={handleClose}
-      presentationStyle="pageSheet"
     >
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
-            <Ionicons name="close" size={24} color={theme.colors.onSurface} />
-          </TouchableOpacity>
-          <Text variant="titleMedium" style={{ color: theme.colors.onSurface }}>Share Location</Text>
-          <View style={{ width: 24 }} />
-        </View>
-
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={theme.colors.primary} />
-            <Text style={{ marginTop: 10, color: theme.colors.onSurface }}>Fetching location...</Text>
-          </View>
-        ) : !permissionGranted ? (
-          <View style={styles.loadingContainer}>
-            <Ionicons name="location-outline" size={48} color={theme.colors.error} />
-            <Text style={{ marginTop: 10, color: theme.colors.onSurface }}>Location permission needed</Text>
-            <Button mode="contained" onPress={checkPermissionsAndGetLocation} style={{ marginTop: 20 }}>
-              Grant Permission
-            </Button>
-          </View>
-        ) : (
-          <>
-            <View style={styles.searchContainer}>
-              <View style={[styles.searchBar, { backgroundColor: theme.colors.surfaceVariant }]}>
-                <Ionicons name="search" size={20} color={theme.colors.onSurfaceVariant} style={{ marginLeft: 10 }} />
-                <TextInput
-                  style={[styles.searchInput, { color: theme.colors.onSurface }]}
-                  placeholder="Search for a place..."
-                  placeholderTextColor={theme.colors.onSurfaceVariant}
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  onSubmitEditing={handleSearch}
-                  returnKeyType="search"
-                />
-                {isSearching && <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginRight: 10 }} />}
-                {searchQuery.length > 0 && !isSearching && (
-                  <TouchableOpacity onPress={() => setSearchQuery('')}>
-                    <Ionicons name="close-circle" size={20} color={theme.colors.onSurfaceVariant} style={{ marginRight: 10 }} />
-                  </TouchableOpacity>
-                )}
-              </View>
+      <GestureHandlerRootView style={styles.root}>
+        <View style={[styles.root, { backgroundColor: theme.colors.background }]}>
+          {/* ── Map, edge to edge ─────────────────────────────────────── */}
+          {loading ? (
+            <View style={styles.centered}>
+              <ActivityIndicator size="large" color={theme.colors.primary} />
+              <Text style={{ marginTop: 12, color: theme.colors.onSurface }}>Finding you…</Text>
             </View>
-
-            <View style={styles.mapContainer}>
-              {currentLocation && (
-                mapsApiKeyAvailable ? (
-                  <MapErrorBoundary fallback={
-                    <View style={[styles.map, styles.mapLoading, { backgroundColor: isDark ? 'rgba(30,30,40,0.95)' : 'rgba(245,245,250,0.95)' }]}>
-                      <Ionicons name="location" size={50} color={theme.colors.primary} />
-                      <Text style={{ marginTop: 12, color: theme.colors.onSurface }}>Map unavailable right now</Text>
-                    </View>
-                  }>
-                    <React.Suspense fallback={
-                      <View style={[styles.map, styles.mapLoading]}>
-                        <ActivityIndicator size="large" color={theme.colors.primary} />
-                        <Text style={{ marginTop: 10, color: theme.colors.onSurface }}>Loading map...</Text>
-                      </View>
-                    }>
-                      <MapView
-                        ref={(instance) => {
-                          mapRef.current = instance as MapViewRef | null;
-                        }}
-                        style={styles.map}
-                        initialRegion={{
-                          latitude: currentLocation.coords.latitude,
-                          longitude: currentLocation.coords.longitude,
-                          latitudeDelta: LATITUDE_DELTA,
-                          longitudeDelta: LONGITUDE_DELTA,
-                        }}
-                        showsUserLocation
-                        showsMyLocationButton={false}
-                        showsPointsOfInterests={false}
-                        toolbarEnabled={false}
-                        moveOnMarkerPress={false}
-                        onRegionChange={handleRegionChangeStart}
-                        onRegionChangeComplete={handleRegionChangeComplete}
-                      />
-                    </React.Suspense>
-                  </MapErrorBoundary>
-                ) : (
-                  // Fallback UI when Maps API key is not configured
-                  <View style={[styles.map, styles.mapLoading, { backgroundColor: isDark ? 'rgba(30,30,40,0.95)' : 'rgba(245,245,250,0.95)' }]}>
-                    <Ionicons name="location" size={60} color={theme.colors.primary} />
-                    <Text style={{ marginTop: 16, color: theme.colors.onSurface, fontSize: 16, fontWeight: '600' }}>GPS Location</Text>
-                    <Text style={{ marginTop: 8, color: theme.colors.onSurfaceVariant, fontSize: 13, textAlign: 'center', paddingHorizontal: 32 }}>
-                      Map preview unavailable, but you can still share your current location
-                    </Text>
-                    <TouchableOpacity
-                      style={{ marginTop: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.primaryContainer, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 }}
-                      onPress={goToCurrentLocation}
-                    >
-                      <Ionicons name="locate" size={18} color={theme.colors.primary} />
-                      <Text style={{ marginLeft: 8, color: theme.colors.primary, fontWeight: '500' }}>Refresh Location</Text>
-                    </TouchableOpacity>
+          ) : !permissionGranted ? (
+            <View style={styles.centered}>
+              <Ionicons name="location-outline" size={48} color={theme.colors.error} />
+              <Text style={{ marginTop: 12, color: theme.colors.onSurface }}>
+                Location permission needed
+              </Text>
+              <Button mode="contained" onPress={checkPermissionsAndGetLocation} style={{ marginTop: 20 }}>
+                Grant permission
+              </Button>
+              <Button mode="text" onPress={openSettings} style={{ marginTop: 6 }}>
+                Open settings
+              </Button>
+            </View>
+          ) : currentLocation && mapsApiKeyAvailable ? (
+            <MapErrorBoundary
+              fallback={
+                <View style={styles.centered}>
+                  <Ionicons name="map-outline" size={50} color={theme.colors.primary} />
+                  <Text style={{ marginTop: 12, color: theme.colors.onSurface }}>
+                    Map unavailable right now
+                  </Text>
+                </View>
+              }
+            >
+              <React.Suspense
+                fallback={
+                  <View style={styles.centered}>
+                    <ActivityIndicator size="large" color={theme.colors.primary} />
                   </View>
-                )
-              )}
-
-              {/* Center Pin - only show when map is available */}
-              {mapsApiKeyAvailable && (
-                <View style={styles.centerPinContainer} pointerEvents="none">
-                  <Ionicons name="location" size={40} color={theme.colors.primary} style={styles.centerPinIcon} />
-                </View>
-              )}
-
-              {/* My Location Button - only show when map is available */}
-              {mapsApiKeyAvailable && (
-                <TouchableOpacity
-                  style={[styles.myLocationButton, { backgroundColor: theme.colors.surface }]}
-                  onPress={goToCurrentLocation}
-                >
-                  <Ionicons name="locate" size={24} color={theme.colors.primary} />
-                </TouchableOpacity>
-              )}
+                }
+              >
+                <MapView
+                  ref={(instance) => {
+                    mapRef.current = instance as MapViewRef | null;
+                  }}
+                  style={StyleSheet.absoluteFill}
+                  initialRegion={{
+                    latitude: currentLocation.coords.latitude,
+                    longitude: currentLocation.coords.longitude,
+                    latitudeDelta: DEFAULT_DELTA,
+                    longitudeDelta: DEFAULT_DELTA * ASPECT_RATIO,
+                  }}
+                  mapType={mapKind}
+                  // Follows the APP's theme, not the system's. The app lets you
+                  // force Light or Dark independently, and without this a dark
+                  // app rendered a bright white map inside itself.
+                  userInterfaceStyle={isDark ? 'dark' : 'light'}
+                  showsUserLocation
+                  showsMyLocationButton={false}
+                  showsPointsOfInterests
+                  showsCompass={false}
+                  showsBuildings
+                  toolbarEnabled={false}
+                  moveOnMarkerPress={false}
+                  onRegionChange={handleRegionChangeStart}
+                  onRegionChangeComplete={handleRegionChangeComplete}
+                />
+              </React.Suspense>
+            </MapErrorBoundary>
+          ) : (
+            <View style={styles.centered}>
+              <Ionicons name="location" size={60} color={theme.colors.primary} />
+              <Text style={{ marginTop: 16, color: theme.colors.onSurface, fontWeight: '600' }}>
+                GPS location
+              </Text>
+              <Text
+                style={{
+                  marginTop: 8,
+                  color: theme.colors.onSurfaceVariant,
+                  textAlign: 'center',
+                  paddingHorizontal: 32,
+                }}
+              >
+                Map preview unavailable, but you can still share where you are.
+              </Text>
             </View>
+          )}
 
-            <View style={[styles.footer, { backgroundColor: theme.colors.surface }]}>
-              <View style={styles.locationInfo}>
-                <Ionicons name="location" size={24} color={theme.colors.primary} />
-                <View style={{ marginLeft: 10, flex: 1 }}>
-                  <Text variant="labelLarge" style={{ color: theme.colors.onSurface }}>
-                    {isDragging ? 'Locating...' : 'Selected Location'}
-                  </Text>
-                  <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
-                    {isDragging ? '...' : (address || `${selectedLocation?.latitude.toFixed(6)}, ${selectedLocation?.longitude.toFixed(6)}`)}
-                  </Text>
-                </View>
-              </View>
+          {/* Left-edge back strip. Narrow and above the map so it can win the
+              gesture there, but below the sheet so list scrolling is unaffected. */}
+          <GestureDetector gesture={edgeBack}>
+            <View style={[styles.edgeBackZone, { top: insets.top }]} />
+          </GestureDetector>
 
-              <TextInput
-                placeholder="Add a note (optional)"
-                placeholderTextColor={theme.colors.onSurfaceVariant}
-                value={caption}
-                onChangeText={setCaption}
-                maxLength={500}
-                style={[
-                  styles.captionInput,
-                  { color: theme.colors.onSurface, backgroundColor: theme.colors.surfaceVariant },
-                ]}
+          {/* Centre pin — the map moves under a fixed crosshair, so the pin is
+              never a marker that can drift out of sync with the region. */}
+          {permissionGranted && !loading && (
+            <View style={styles.pinWrap} pointerEvents="none">
+              <Ionicons
+                name="location"
+                size={38}
+                color={theme.colors.primary}
+                style={isDragging ? styles.pinLifted : undefined}
               />
-
-              <Button
-                mode="contained"
-                onPress={handleSend}
-                loading={sending}
-                disabled={isDragging || !selectedLocation}
-                style={styles.sendButton}
-                buttonColor={theme.colors.primary}
-              >
-                Share This Location
-              </Button>
-
-              <Button
-                mode="outlined"
-                onPress={handleLiveLocation}
-                style={[styles.sendButton, { marginTop: 10, borderColor: theme.colors.primary }]}
-                textColor={theme.colors.primary}
-                icon="clock-outline"
-              >
-                Share Live Location ({LIVE_LOCATION_DURATION_MINUTES} min)
-              </Button>
+              <View style={[styles.pinDot, { borderColor: theme.colors.primary }]} />
             </View>
-          </>
-        )}
-      </View>
+          )}
+
+          {/* ── Floating glass search ─────────────────────────────────── */}
+          <View style={[styles.searchWrap, { top: insets.top + 10 }]} pointerEvents="box-none">
+            <GlassCard radius="lg" style={styles.searchCard} contentStyle={styles.searchCardContent}>
+              <TouchableOpacity onPress={handleClose} hitSlop={10} style={styles.searchIcon}>
+                <Ionicons name="chevron-back" size={22} color={theme.colors.onSurface} />
+              </TouchableOpacity>
+              <TextInput
+                style={[styles.searchInput, { color: theme.colors.onSurface }]}
+                placeholder="Search places or addresses"
+                placeholderTextColor={theme.colors.onSurfaceVariant}
+                value={searchQuery}
+                onChangeText={onQueryChange}
+                onFocus={expandSheet}
+                onSubmitEditing={() => void runSearch(searchQuery)}
+                returnKeyType="search"
+                autoCorrect={false}
+              />
+              {isSearching ? (
+                <ActivityIndicator size="small" color={theme.colors.primary} style={styles.searchIcon} />
+              ) : searchQuery.length > 0 ? (
+                <TouchableOpacity
+                  onPress={() => {
+                    setSearchQuery('');
+                    setResults([]);
+                  }}
+                  hitSlop={10}
+                  style={styles.searchIcon}
+                >
+                  <Ionicons name="close-circle" size={20} color={theme.colors.onSurfaceVariant} />
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.searchIcon}>
+                  <Ionicons name="search" size={19} color={theme.colors.onSurfaceVariant} />
+                </View>
+              )}
+            </GlassCard>
+          </View>
+
+          {/* ── Right-hand glass controls ─────────────────────────────── */}
+          {permissionGranted && !loading && (
+            <View style={[styles.sideControls, { top: insets.top + 74 }]} pointerEvents="box-none">
+              {MAP_KINDS.map((kind) => (
+                <TouchableOpacity
+                  key={kind.id}
+                  onPress={() => {
+                    selectionHaptic();
+                    setMapKind(kind.id);
+                  }}
+                  accessibilityLabel={`${kind.label} map`}
+                  accessibilityState={{ selected: mapKind === kind.id }}
+                >
+                  <GlassCard radius={22} style={styles.sideButton} contentStyle={styles.sideButtonContent}>
+                    <Ionicons
+                      name={kind.icon}
+                      size={19}
+                      color={mapKind === kind.id ? theme.colors.primary : theme.colors.onSurfaceVariant}
+                    />
+                  </GlassCard>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity onPress={goToCurrentLocation} accessibilityLabel="Go to my location">
+                <GlassCard radius={22} style={styles.sideButton} contentStyle={styles.sideButtonContent}>
+                  <Ionicons name="locate" size={19} color={theme.colors.primary} />
+                </GlassCard>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ── Search this area ──────────────────────────────────────── */}
+          {showSearchArea && !searchQuery.trim() && (
+            <View style={[styles.searchAreaWrap, { bottom: SHEET_COLLAPSED_H + 18 }]} pointerEvents="box-none">
+              <TouchableOpacity
+                onPress={() => {
+                  const region = regionRef.current;
+                  if (!region) return;
+                  lightHaptic();
+                  void loadNearby(region.latitude, region.longitude);
+                }}
+              >
+                <GlassCard radius="lg" style={styles.searchAreaCard} contentStyle={styles.searchAreaContent}>
+                  <Ionicons name="refresh" size={15} color={theme.colors.primary} />
+                  <Text style={{ color: theme.colors.onSurface, fontWeight: '600', fontSize: 13 }}>
+                    Search this area
+                  </Text>
+                </GlassCard>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ── Bottom sheet ──────────────────────────────────────────── */}
+          {permissionGranted && !loading && (
+            <Animated.View style={[styles.sheet, { height: SHEET_EXPANDED_H }, sheetStyle]}>
+              <GlassCard radius="xl" style={styles.sheetCard} contentStyle={styles.sheetContent}>
+                <GestureDetector gesture={sheetGesture}>
+                  <View style={styles.grabZone}>
+                    <View style={[styles.grabber, { backgroundColor: theme.colors.onSurfaceVariant }]} />
+                  </View>
+                </GestureDetector>
+
+                <View style={styles.selectedRow}>
+                  <View style={styles.selectedText}>
+                    <Text numberOfLines={1} style={[styles.selectedTitle, { color: theme.colors.onSurface }]}>
+                      {placeName ?? 'Selected location'}
+                    </Text>
+                    <Text
+                      numberOfLines={1}
+                      variant="bodySmall"
+                      style={{ color: theme.colors.onSurfaceVariant }}
+                    >
+                      {subtitle}
+                    </Text>
+                  </View>
+                </View>
+
+                <TextInput
+                  placeholder="Add a note (optional)"
+                  placeholderTextColor={theme.colors.onSurfaceVariant}
+                  value={caption}
+                  onChangeText={setCaption}
+                  maxLength={500}
+                  onFocus={expandSheet}
+                  style={[
+                    styles.captionInput,
+                    {
+                      color: theme.colors.onSurface,
+                      borderColor: theme.colors.outlineVariant,
+                    },
+                  ]}
+                />
+
+                <View style={styles.actionRow}>
+                  <Button
+                    mode="contained"
+                    onPress={handleSend}
+                    loading={sending}
+                    disabled={isDragging || !selectedLocation}
+                    style={styles.sendButton}
+                    buttonColor={theme.colors.primary}
+                  >
+                    Send this location
+                  </Button>
+                  <TouchableOpacity
+                    onPress={handleLiveLocation}
+                    style={styles.liveButton}
+                    accessibilityLabel={`Share live location for ${LIVE_LOCATION_DURATION_MINUTES} minutes`}
+                  >
+                    <Ionicons name="navigate-circle-outline" size={22} color={theme.colors.primary} />
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView
+                  style={styles.list}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                >
+                  {sections.length === 0 && !isSearching && (
+                    <Text style={[styles.emptyHint, { color: theme.colors.onSurfaceVariant }]}>
+                      {searchQuery.trim()
+                        ? `Nothing found for “${searchQuery.trim()}”.`
+                        : 'Drag the map to place the pin, or search above.'}
+                    </Text>
+                  )}
+                  {sections.map((section) => (
+                    <View key={section.key}>
+                      <Text style={[styles.sectionTitle, { color: theme.colors.onSurfaceVariant }]}>
+                        {section.title}
+                      </Text>
+                      {section.items.map((item, index) => (
+                        <TouchableOpacity
+                          key={`${section.key}-${item.latitude},${item.longitude}-${index}`}
+                          style={styles.row}
+                          onPress={() =>
+                            goToPlace({
+                              latitude: item.latitude,
+                              longitude: item.longitude,
+                              name: item.name,
+                              address: item.address,
+                            })
+                          }
+                        >
+                          <Ionicons
+                            name={section.key === 'recent' ? 'time-outline' : 'location-outline'}
+                            size={18}
+                            color={theme.colors.primary}
+                          />
+                          <View style={styles.rowText}>
+                            <Text numberOfLines={1} style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
+                              {item.name}
+                            </Text>
+                            {!!item.address && (
+                              <Text
+                                numberOfLines={1}
+                                variant="bodySmall"
+                                style={{ color: theme.colors.onSurfaceVariant }}
+                              >
+                                {item.address}
+                              </Text>
+                            )}
+                          </View>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  ))}
+                  <View style={{ height: insets.bottom + 16 }} />
+                </ScrollView>
+              </GlassCard>
+            </Animated.View>
+          )}
+        </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.1)',
-  },
-  closeButton: {
-    padding: 4,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  searchContainer: {
+  root: { flex: 1 },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+
+  pinWrap: {
     position: 'absolute',
-    top: 70,
-    left: 16,
-    right: 16,
-    zIndex: 10,
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: SHEET_COLLAPSED_H,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  searchBar: {
+  pinLifted: { transform: [{ translateY: -6 }] },
+  pinDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 2,
+    marginTop: -2,
+  },
+
+  edgeBackZone: { position: 'absolute', left: 0, width: 28, bottom: SHEET_COLLAPSED_H },
+  searchWrap: { position: 'absolute', left: 12, right: 12 },
+  searchCard: { width: '100%' },
+  searchCardContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 4 },
+  searchIcon: { paddingHorizontal: 8, paddingVertical: 8 },
+  searchInput: { flex: 1, fontSize: 16, paddingVertical: 10 },
+
+  sideControls: { position: 'absolute', right: 12, gap: 8, alignItems: 'flex-end' },
+  sideButton: { width: 44, height: 44 },
+  sideButtonContent: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+  searchAreaWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
+  searchAreaCard: {},
+  searchAreaContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 25,
-    height: 50,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
   },
-  searchInput: {
-    flex: 1,
-    height: 50,
-    paddingHorizontal: 10,
-    fontSize: 16,
-  },
-  mapContainer: {
-    flex: 1,
-    position: 'relative',
-  },
-  map: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  mapLoading: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.05)',
-  },
-  centerPinContainer: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 5,
-  },
-  centerPinIcon: {
-    transform: [{ translateY: -20 }],
-  },
-  myLocationButton: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-  },
-  footer: {
-    padding: 16,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: -2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  locationInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  sendButton: {
-    borderRadius: 8,
-  },
+
+  sheet: { position: 'absolute', left: 8, right: 8, bottom: 0 },
+  sheetCard: { flex: 1 },
+  sheetContent: { flex: 1, paddingHorizontal: 16 },
+  grabZone: { alignItems: 'center', paddingTop: 8, paddingBottom: 10, marginHorizontal: -16 },
+  grabber: { width: 40, height: 4, borderRadius: 2, opacity: 0.5 },
+
+  selectedRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  selectedText: { flex: 1 },
+  selectedTitle: { fontSize: 17, fontWeight: '700' },
+
   captionInput: {
-    borderRadius: 10,
+    marginTop: 12,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    marginBottom: 10,
     fontSize: 15,
   },
+
+  actionRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
+  sendButton: { flex: 1, borderRadius: 12 },
+  liveButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  list: { marginTop: 14, flex: 1 },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 11 },
+  rowText: { flex: 1 },
+  emptyHint: { fontSize: 13, paddingVertical: 12, textAlign: 'center' },
 });
