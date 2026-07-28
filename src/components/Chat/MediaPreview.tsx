@@ -558,12 +558,6 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
       // for a natively-picked item, and keep the materialized file so the
       // send pipeline doesn't download it a second time.
       let source = media;
-      if (source.assetId && materializeInFlight.current.has(source.assetId)) {
-        // The preview's own fetch is already running for this exact asset;
-        // starting a second would download the same file twice.
-        appAlert('Still preparing', 'This video is still loading. Try again in a moment.');
-        return;
-      }
       if (source.assetId) {
         setMaterializing(true);
         try {
@@ -771,11 +765,12 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
               <View pointerEvents="none" style={styles.videoPosterNote}>
                 <Text style={styles.videoPosterNoteText}>
                   {media.duration ? `${formatDuration(media.duration)} · ` : ''}
-                  {materializeProgress === null
-                    ? 'Preparing…'
-                    : materializeProgress > 0
-                      ? `Getting video from iCloud ${Math.round(materializeProgress * 100)}%`
-                      : 'Preparing video…'}
+                  {/* Progress only ticks for a real iCloud download, so a
+                      value above zero is what licenses naming iCloud at all;
+                      a local copy finishes without ever reporting. */}
+                  {materializeProgress !== null && materializeProgress > 0
+                    ? `Downloading from iCloud ${Math.round(materializeProgress * 100)}%`
+                    : 'Preparing…'}
                 </Text>
               </View>
             </View>
@@ -1168,20 +1163,36 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
               {/* Trim CTA — shown when the item is a video and even SD won't
                   fit, OR when the user just wants to shorten a clip that
                   fits. Hidden for non-video types (we have no trim path). */}
-              {media.type === 'video' && (
-                <TouchableOpacity
-                  style={[styles.qualitySheetApplyAll, { backgroundColor: 'rgba(228,83,83,0.12)' }]}
-                  onPress={() => {
-                    setQualityMenuOpen(false);
-                    void handleTrimActiveVideo();
-                  }}
-                >
-                  <Ionicons name="cut-outline" size={16} color="#E45353" />
-                  <Text style={[styles.qualitySheetApplyAllText, { color: '#E45353' }]}>
-                    Trim this video
-                  </Text>
-                </TouchableOpacity>
-              )}
+              {media.type === 'video' && (() => {
+                // Trimming needs the real movie. Rather than let the user tap
+                // and then interrupt them with an alert, the control states
+                // plainly that it is not ready yet — the wait is the same, but
+                // it is visible in advance instead of being a rejection.
+                const notReady = !!media.assetId;
+                return (
+                  <TouchableOpacity
+                    disabled={notReady}
+                    style={[
+                      styles.qualitySheetApplyAll,
+                      { backgroundColor: 'rgba(228,83,83,0.12)' },
+                      notReady && { opacity: 0.5 },
+                    ]}
+                    onPress={() => {
+                      setQualityMenuOpen(false);
+                      void handleTrimActiveVideo();
+                    }}
+                  >
+                    <Ionicons
+                      name={notReady ? 'hourglass-outline' : 'cut-outline'}
+                      size={16}
+                      color="#E45353"
+                    />
+                    <Text style={[styles.qualitySheetApplyAllText, { color: '#E45353' }]}>
+                      {notReady ? 'Preparing video…' : 'Trim this video'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })()}
 
               {internalItems.length > 1 && (
                 <TouchableOpacity

@@ -356,7 +356,14 @@ export const useMediaSendPipeline = ({
       reason = 'File too large after compression — trim or switch to SD.';
     } else if (name === 'MediaSourceUnavailableError' || name === 'MediaCopyFailedError') {
       reason = raw;
-    } else if (/iCloud|PHPhotosErrorDomain|3164|asset not available|network access/i.test(raw)) {
+    } else if (/no longer in the photo library|E_ASSET_NOT_FOUND/i.test(raw)) {
+      // The asset was deleted from Photos between picking and sending.
+      reason = 'This item was removed from your photo library. Pick it again.';
+    } else if (/no downloadable file|E_NO_RESOURCE/i.test(raw)) {
+      reason = 'This item has no file we can send. It may still be syncing.';
+    } else if (/E_IN_CLOUD|no local preview/i.test(raw)) {
+      reason = 'Still in iCloud and couldn’t be downloaded. Check your connection and retry.';
+    } else if (/iCloud|PHPhotosErrorDomain|3164|asset not available|network access|E_MATERIALIZE/i.test(raw)) {
       reason = 'Couldn’t download this item from iCloud. Open it once in Photos, then retry.';
     } else if (/ENOENT|no such file/i.test(raw)) {
       reason = 'Source file is no longer available. Pick it again.';

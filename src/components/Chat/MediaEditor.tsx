@@ -14,6 +14,7 @@ import {
   rotatedBounds,
   totalRotationDegrees,
 } from '@/utils/mediaEditorGeometry';
+import { lightHaptic, selectionHaptic, successHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Slider from '@react-native-community/slider';
 import {
@@ -160,6 +161,10 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
   const offsetY = (stageHeight - displayH) / 2;
 
   const matrix = useMemo(() => effectiveColorMatrix(state), [state]);
+  /** True when nothing has been changed — Reset and Compare are both moot. */
+  const isNeutral = useMemo(() => isEditorStateNeutral(state), [state]);
+  /** Held down: show the photo as it was, so the edit can be judged. */
+  const [comparing, setComparing] = useState(false);
 
   // Same chain as the exporter, read bottom-up, with the display scale in
   // front and the crop offset applied only when we are showing the result.
@@ -323,6 +328,7 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
 
   const handleDone = useCallback(async () => {
     if (!image) return;
+    successHaptic();
     // Nothing changed: hand back the original so the user doesn't pay a
     // re-encode generation for opening the editor and looking around.
     if (isEditorStateNeutral(state)) {
@@ -360,26 +366,36 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
     >
       <GestureHandlerRootView style={styles.root}>
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-          <Pressable onPress={onCancel} hitSlop={12} style={styles.headerButton}>
-            <Text style={styles.headerButtonText}>Cancel</Text>
-          </Pressable>
-          <Pressable onPress={resetAll} hitSlop={12} style={styles.headerButton}>
-            <Text style={styles.headerResetText}>Reset</Text>
-          </Pressable>
-          <Pressable
-            onPress={handleDone}
-            hitSlop={12}
-            disabled={!image || exporting}
-            style={styles.headerButton}
-          >
-            {exporting ? (
-              <ActivityIndicator size="small" color={theme.colors.primary} />
-            ) : (
-              <Text style={[styles.headerButtonText, styles.headerDone, { color: theme.colors.primary }]}>
-                Done
-              </Text>
-            )}
-          </Pressable>
+          <GlassCard radius="lg" style={styles.headerPill} contentStyle={styles.headerPillContent}>
+            <Pressable onPress={onCancel} hitSlop={12} style={styles.headerButton}>
+              <Text style={styles.headerButtonText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                lightHaptic();
+                resetAll();
+              }}
+              hitSlop={12}
+              disabled={isNeutral}
+              style={[styles.headerButton, isNeutral && styles.disabled]}
+            >
+              <Text style={styles.headerResetText}>Reset</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleDone}
+              hitSlop={12}
+              disabled={!image || exporting}
+              style={styles.headerButton}
+            >
+              {exporting ? (
+                <ActivityIndicator size="small" color={theme.colors.primary} />
+              ) : (
+                <Text style={[styles.headerButtonText, styles.headerDone, { color: theme.colors.primary }]}>
+                  Done
+                </Text>
+              )}
+            </Pressable>
+          </GlassCard>
         </View>
 
         <View style={[styles.stage, { height: stageHeight }]}>
@@ -409,12 +425,12 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
                         height={sourceHeight}
                         fit="fill"
                       >
-                        <ColorMatrix matrix={matrix} />
+                        <ColorMatrix matrix={comparing ? IDENTITY_MATRIX : matrix} />
                       </SkiaImage>
                     </Group>
                     {/* Markup sits outside the photo transform — annotations
                         must not rotate or take on the photo's colour grade. */}
-                    {tool !== 'crop' &&
+                    {tool !== 'crop' && !comparing &&
                       strokePaths.map((stroke, index) => (
                         <SkiaPath
                           key={index}
@@ -431,6 +447,28 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
                       ))}
                   </Group>
                 </Canvas>
+
+                {/* Hold to see the original. A press-and-hold button rather
+                    than a gesture on the canvas: crop and draw already own
+                    the canvas's gestures, and a competing recogniser there
+                    would make both feel unreliable. */}
+                {!isNeutral && tool !== 'crop' ? (
+                  <Pressable
+                    onPressIn={() => {
+                      lightHaptic();
+                      setComparing(true);
+                    }}
+                    onPressOut={() => setComparing(false)}
+                    style={[styles.compareButton, { top: offsetY + 12, right: offsetX + 12 }]}
+                    accessibilityLabel="Hold to compare with the original"
+                  >
+                    <Ionicons
+                      name={comparing ? 'eye-off-outline' : 'eye-outline'}
+                      size={18}
+                      color="#fff"
+                    />
+                  </Pressable>
+                ) : null}
 
                 {tool === 'crop' ? (
                   <CropOverlay
@@ -493,7 +531,10 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
             ] as const).map(([id, icon, label]) => (
               <Pressable
                 key={id}
-                onPress={() => setTool(id)}
+                onPress={() => {
+                  selectionHaptic();
+                  setTool(id);
+                }}
                 style={styles.toolButton}
                 accessibilityRole="button"
                 accessibilityState={{ selected: tool === id }}
@@ -713,6 +754,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 8,
   },
+  headerPill: { flex: 1 },
+  headerPillContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+  },
   headerButton: { minWidth: 64, alignItems: 'center' },
   headerButtonText: { color: '#fff', fontSize: 16 },
   headerResetText: { color: 'rgba(255,255,255,0.65)', fontSize: 15 },
@@ -755,6 +804,17 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.35)',
   },
   swatchSelected: { borderColor: '#fff', borderWidth: 3 },
+  compareButton: {
+    position: 'absolute',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
   toolbar: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 4 },
   toolButton: { alignItems: 'center', gap: 3, paddingHorizontal: 12, paddingVertical: 6 },
   toolLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 11 },
