@@ -117,6 +117,35 @@ const compactAddress = (parts: (string | null | undefined)[]): string => {
   return out.join(', ');
 };
 
+/**
+ * The pin sits this far ABOVE the map's centre.
+ *
+ * The map is `absoluteFill` and so reports the centre of the whole screen,
+ * but the sheet covers the bottom of it — a pin drawn at the true centre sits
+ * awkwardly low and close to the sheet. So the pin is centred in the VISIBLE
+ * strip instead, and the two helpers below convert between the two frames.
+ *
+ * They are defined as a pair on purpose: the read path and the write path must
+ * apply the same offset in opposite directions, and a mismatch between them is
+ * exactly the "pin points somewhere other than what you send" bug.
+ */
+const PIN_OFFSET_Y = SHEET_COLLAPSED_H / 2;
+
+/** The coordinate actually under the pin, given the map's current region. */
+const coordinateUnderPin = (region: Region): { latitude: number; longitude: number } => ({
+  // Screen y decreases upward while latitude increases, hence the addition.
+  latitude: region.latitude + (PIN_OFFSET_Y / SCREEN_H) * region.latitudeDelta,
+  longitude: region.longitude,
+});
+
+/** The region to move to so that `latitude`/`longitude` ends up under the pin. */
+const regionForPin = (latitude: number, longitude: number, delta: number): Region => ({
+  latitude: latitude - (PIN_OFFSET_Y / SCREEN_H) * delta,
+  longitude,
+  latitudeDelta: delta,
+  longitudeDelta: delta * ASPECT_RATIO,
+});
+
 /** Rough metres between two coordinates — good enough to decide whether the map
  *  has been panned far enough to justify offering "Search this area". */
 const metresBetween = (
@@ -444,12 +473,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       setCurrentLocation(location);
       const { latitude, longitude } = location.coords;
       setSelectedLocation({ latitude, longitude });
-      regionRef.current = {
-        latitude,
-        longitude,
-        latitudeDelta: DEFAULT_DELTA,
-        longitudeDelta: DEFAULT_DELTA * ASPECT_RATIO,
-      };
+      regionRef.current = regionForPin(latitude, longitude, DEFAULT_DELTA);
       await fetchAddress(latitude, longitude);
       void loadNearby(latitude, longitude);
     } catch (error) {
@@ -506,19 +530,20 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     }
     setIsDragging(false);
     regionRef.current = region;
-    setSelectedLocation({ latitude: region.latitude, longitude: region.longitude });
+    const under = coordinateUnderPin(region);
+    setSelectedLocation(under);
     // Moving the map means the pin is no longer "the place you picked" — drop
     // the name so the sheet can't caption a new coordinate with an old venue.
     setPlaceName(null);
 
     const anchor = nearbyAnchorRef.current;
-    if (anchor && metresBetween(anchor, region) > 800) {
+    if (anchor && metresBetween(anchor, under) > 800) {
       setShowSearchArea(true);
     }
 
     if (reverseGeocodeTimerRef.current) clearTimeout(reverseGeocodeTimerRef.current);
     reverseGeocodeTimerRef.current = setTimeout(() => {
-      void fetchAddress(region.latitude, region.longitude);
+      void fetchAddress(under.latitude, under.longitude);
     }, Platform.OS === 'android' ? 300 : 120);
   };
 
@@ -527,12 +552,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       selectionHaptic();
       Keyboard.dismiss();
       mapRef.current?.animateToRegion(
-        {
-          latitude: place.latitude,
-          longitude: place.longitude,
-          latitudeDelta: FOCUS_DELTA,
-          longitudeDelta: FOCUS_DELTA * ASPECT_RATIO,
-        },
+        regionForPin(place.latitude, place.longitude, FOCUS_DELTA),
         600,
       );
       setSelectedLocation({ latitude: place.latitude, longitude: place.longitude });
@@ -550,15 +570,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     if (!currentLocation) return;
     lightHaptic();
     const { latitude, longitude } = currentLocation.coords;
-    mapRef.current?.animateToRegion(
-      {
-        latitude,
-        longitude,
-        latitudeDelta: FOCUS_DELTA,
-        longitudeDelta: FOCUS_DELTA * ASPECT_RATIO,
-      },
-      600,
-    );
+    mapRef.current?.animateToRegion(regionForPin(latitude, longitude, FOCUS_DELTA), 600);
   };
 
   // ── Search ───────────────────────────────────────────────────────────────
@@ -574,7 +586,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       try {
         if (isPlaceSearchAvailable()) {
           const near = regionRef.current
-            ? { latitude: regionRef.current.latitude, longitude: regionRef.current.longitude }
+            ? coordinateUnderPin(regionRef.current)
             : undefined;
           const found = await searchPlaces(trimmed, near);
           if (isMountedRef.current) setResults(found);
@@ -618,7 +630,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     // about not re-rendering mid-keystroke rather than about cost.
     searchDebounceRef.current = setTimeout(() => {
       void updateCompletionQuery(next, regionRef.current
-        ? { latitude: regionRef.current.latitude, longitude: regionRef.current.longitude }
+        ? coordinateUnderPin(regionRef.current)
         : undefined);
     }, 120);
   };
@@ -781,12 +793,13 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                     mapRef.current = instance as MapViewRef | null;
                   }}
                   style={StyleSheet.absoluteFill}
-                  initialRegion={{
-                    latitude: currentLocation.coords.latitude,
-                    longitude: currentLocation.coords.longitude,
-                    latitudeDelta: DEFAULT_DELTA,
-                    longitudeDelta: DEFAULT_DELTA * ASPECT_RATIO,
-                  }}
+                  // Offset so the user's actual position starts UNDER the pin
+                  // rather than under the sheet.
+                  initialRegion={regionForPin(
+                    currentLocation.coords.latitude,
+                    currentLocation.coords.longitude,
+                    DEFAULT_DELTA,
+                  )}
                   mapType={mapKind}
                   // Follows the APP's theme, not the system's. The app lets you
                   // force Light or Dark independently, and without this a dark
@@ -833,10 +846,21 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
               never a marker that can drift out of sync with the region. */}
           {permissionGranted && !loading && (
             <View style={styles.pinWrap} pointerEvents="none">
-              <Animated.View style={pinStyle}>
-                <Ionicons name="location" size={38} color={theme.colors.primary} />
-              </Animated.View>
-              <View style={[styles.pinDot, { borderColor: theme.colors.primary }]} />
+              {/* Zero-size anchor sitting on the map's TRUE centre. The dot
+                  marks the exact coordinate we will send; the teardrop floats
+                  above it. Anchoring this way means the thing the user aims
+                  with and the thing we transmit are the same point. */}
+              <View style={styles.pinAnchor}>
+                <Animated.View style={[styles.pinIcon, pinStyle]}>
+                  <Ionicons name="location" size={38} color={theme.colors.primary} />
+                </Animated.View>
+                <View
+                  style={[
+                    styles.pinDot,
+                    { borderColor: theme.colors.primary, backgroundColor: theme.colors.background },
+                  ]}
+                />
+              </View>
             </View>
           )}
 
@@ -963,7 +987,8 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                   const region = regionRef.current;
                   if (!region) return;
                   lightHaptic();
-                  void loadNearby(region.latitude, region.longitude);
+                  const under = coordinateUnderPin(region);
+                  void loadNearby(under.latitude, under.longitude);
                 }}
               >
                 <GlassCard radius="lg" style={styles.searchAreaCard} contentStyle={styles.searchAreaContent}>
@@ -1166,6 +1191,13 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
 
+  /**
+   * Spans the WHOLE map, because the map is `absoluteFill` and therefore
+   * reports the centre of the full screen. This used to stop short at
+   * `bottom: SHEET_COLLAPSED_H`, so the pin was centred in the area above the
+   * sheet while the coordinate came from the screen's centre — roughly 118pt
+   * of disagreement between where the pin pointed and what got sent.
+   */
   pinWrap: {
     position: 'absolute',
     left: 0,
@@ -1175,12 +1207,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  /** Zero-size, so its own centre IS the map centre. */
+  pinAnchor: { width: 0, height: 0, alignItems: 'center', justifyContent: 'center' },
+  /**
+   * `bottom: 0` against a zero-height anchor puts the glyph's baseline on the
+   * centre point, so the teardrop's tip rests on the dot rather than the
+   * icon's midpoint sitting there — the second, smaller half of the same bug.
+   */
+  pinIcon: { position: 'absolute', bottom: 0 },
   pinDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    position: 'absolute',
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     borderWidth: 2,
-    marginTop: -2,
   },
 
   edgeBackZone: { position: 'absolute', left: 0, width: 28, bottom: SHEET_COLLAPSED_H },
