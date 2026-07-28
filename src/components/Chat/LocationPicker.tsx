@@ -31,6 +31,7 @@ import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-g
 import type { Region } from 'react-native-maps';
 import { Button, Text } from 'react-native-paper';
 import Animated, {
+  Easing,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
@@ -79,12 +80,13 @@ const DEFAULT_DELTA = 0.02;
 const FOCUS_DELTA = 0.006;
 const LIVE_LOCATION_DURATION_MINUTES = 15;
 
-const SHEET_EXPANDED_H = Math.min(SCREEN_H * 0.62, 520);
+/** Visible height of the sheet when resting. Its FULL height is derived per
+ *  device from the safe area, so the collapse offset is a runtime value. */
 const SHEET_COLLAPSED_H = 236;
-/** How far the sheet sits below its expanded position when collapsed. */
-const COLLAPSE_OFFSET = SHEET_EXPANDED_H - SHEET_COLLAPSED_H;
 /** Extra downward travel past collapsed that dismisses the whole picker. */
 const DISMISS_TRAVEL = 110;
+/** Shared so every sheet movement settles with the same weight. */
+const SHEET_SPRING = { damping: 22, stiffness: 190, mass: 0.9 } as const;
 
 const MAP_KINDS: { id: MapKind; icon: keyof typeof Ionicons.glyphMap; label: string }[] = [
   { id: 'standard', icon: 'map-outline', label: 'Standard' },
@@ -158,6 +160,10 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   /** Where the nearby list was last computed, to decide on "Search this area". */
   const nearbyAnchorRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const regionRef = useRef<Region | null>(null);
+  /** Read by the keyboard handlers, which are created once and must not close
+   *  over a stale render's values. */
+  const searchFocusedRef = useRef(false);
+  const collapseOffsetRef = useRef(0);
 
   const mapsApiKeyAvailable = hasGoogleMapsApiKey();
 
@@ -165,16 +171,30 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   // Starts collapsed. Dragging past collapsed by DISMISS_TRAVEL closes the
   // picker outright, per DESIGN.md's rule that a full-screen overlay is never
   // something you can only ✕ out of.
-  const sheetY = useSharedValue(COLLAPSE_OFFSET);
-  const sheetStart = useSharedValue(COLLAPSE_OFFSET);
+  /**
+   * ONE fixed height, position driven purely by `translateY`.
+   *
+   * This previously animated `height` and `bottom` from React state, which are
+   * LAYOUT properties: they do not animate at all, they snap, and they snap on
+   * the JS thread. Every keystroke that flipped search mode and every keyboard
+   * appearance forced a synchronous re-layout of the whole sheet — that was the
+   * choppiness. A constant height moved by a transform runs entirely on the UI
+   * thread, and the keyboard is absorbed by scroll padding rather than by
+   * resizing anything.
+   */
+  const sheetH = Math.max(320, SCREEN_H - insets.top - 78);
+  const collapseOffset = Math.max(0, sheetH - SHEET_COLLAPSED_H);
+
+  const sheetY = useSharedValue(collapseOffset);
+  const sheetStart = useSharedValue(collapseOffset);
 
   const expandSheet = useCallback(() => {
-    sheetY.value = withSpring(0, { damping: 20, stiffness: 180 });
+    sheetY.value = withSpring(0, SHEET_SPRING);
   }, [sheetY]);
 
   const collapseSheet = useCallback(() => {
-    sheetY.value = withSpring(COLLAPSE_OFFSET, { damping: 20, stiffness: 180 });
-  }, [sheetY]);
+    sheetY.value = withSpring(collapseOffset, SHEET_SPRING);
+  }, [sheetY, collapseOffset]);
 
   const requestClose = useCallback(() => {
     Keyboard.dismiss();
@@ -192,16 +212,13 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     })
     .onEnd((event) => {
       const projected = sheetY.value + event.velocityY * 0.12;
-      if (projected > COLLAPSE_OFFSET + DISMISS_TRAVEL) {
-        sheetY.value = withTiming(SHEET_EXPANDED_H, { duration: 180 });
+      if (projected > collapseOffset + DISMISS_TRAVEL) {
+        sheetY.value = withTiming(sheetH, { duration: 200 });
         runOnJS(requestClose)();
         return;
       }
-      const midpoint = COLLAPSE_OFFSET / 2;
-      sheetY.value = withSpring(projected > midpoint ? COLLAPSE_OFFSET : 0, {
-        damping: 20,
-        stiffness: 180,
-      });
+      const midpoint = collapseOffset / 2;
+      sheetY.value = withSpring(projected > midpoint ? collapseOffset : 0, SHEET_SPRING);
     });
 
   /**
@@ -218,8 +235,43 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     if (inSearchMode) expandSheet();
   }, [inSearchMode, expandSheet]);
 
+  useEffect(() => {
+    collapseOffsetRef.current = collapseOffset;
+  }, [collapseOffset]);
+
+  useEffect(() => {
+    searchFocusedRef.current = searchFocused;
+  }, [searchFocused]);
+
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: sheetY.value }],
+  }));
+
+  // ── Chrome that slides away while searching ───────────────────────────
+  // TRANSFORM ONLY. DESIGN.md's native-material kill list: a Reanimated
+  // opacity animation anywhere above the iOS 26 glass makes it render as
+  // nothing, so these slide out rather than fade.
+  const chromeShift = useSharedValue(0);
+  useEffect(() => {
+    chromeShift.value = withTiming(inSearchMode ? 1 : 0, {
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inSearchMode]);
+
+  const chromeStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: chromeShift.value * 120 }],
+  }));
+
+  // Pin rises while the map is moving, settles when it stops.
+  const pinLift = useSharedValue(0);
+  useEffect(() => {
+    pinLift.value = withSpring(isDragging ? -8 : 0, { damping: 14, stiffness: 260 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDragging]);
+  const pinStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: pinLift.value }],
   }));
 
   /**
@@ -261,12 +313,28 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const onShow = Keyboard.addListener(showEvent, (e) => {
       setKeyboardHeight(e.endCoordinates?.height ?? 0);
+      // Ride the keyboard's OWN curve. iOS reports the duration it is about to
+      // use; matching it makes the sheet and the keys arrive together instead
+      // of as two separate movements, which is most of what reads as "choppy".
+      sheetY.value = withTiming(0, {
+        duration: Math.max(160, (e.duration ?? 250)),
+        easing: Easing.bezier(0.17, 0.59, 0.4, 1),
+      });
     });
-    const onHide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    const onHide = Keyboard.addListener(hideEvent, (e) => {
+      setKeyboardHeight(0);
+      if (!searchFocusedRef.current) {
+        sheetY.value = withTiming(collapseOffsetRef.current, {
+          duration: Math.max(160, (e?.duration ?? 250)),
+          easing: Easing.bezier(0.17, 0.59, 0.4, 1),
+        });
+      }
+    });
     return () => {
       onShow.remove();
       onHide.remove();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -288,7 +356,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
       setIsDragging(false);
       return;
     }
-    sheetY.value = COLLAPSE_OFFSET;
+    sheetY.value = collapseOffset;
     setSearchQuery('');
     setResults([]);
     setShowSearchArea(false);
@@ -709,12 +777,9 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
               never a marker that can drift out of sync with the region. */}
           {permissionGranted && !loading && (
             <View style={styles.pinWrap} pointerEvents="none">
-              <Ionicons
-                name="location"
-                size={38}
-                color={theme.colors.primary}
-                style={isDragging ? styles.pinLifted : undefined}
-              />
+              <Animated.View style={pinStyle}>
+                <Ionicons name="location" size={38} color={theme.colors.primary} />
+              </Animated.View>
               <View style={[styles.pinDot, { borderColor: theme.colors.primary }]} />
             </View>
           )}
@@ -784,8 +849,11 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
               the three type icons were near-indistinguishable at that size. One
               labelled segmented pill reads at a glance and occupies a single
               band; locate keeps its own target near the thumb. */}
-          {permissionGranted && !loading && !inSearchMode && (
-            <View style={[styles.mapKindWrap, { top: insets.top + 72 }]} pointerEvents="box-none">
+          {permissionGranted && !loading && (
+            <Animated.View
+              style={[styles.mapKindWrap, { top: insets.top + 72 }, chromeStyle]}
+              pointerEvents={inSearchMode ? 'none' : 'box-none'}
+            >
               <GlassCard radius="pill" style={styles.mapKindCard} contentStyle={styles.mapKindContent}>
                 {MAP_KINDS.map((kind) => {
                   const active = mapKind === kind.id;
@@ -815,17 +883,20 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                   );
                 })}
               </GlassCard>
-            </View>
+            </Animated.View>
           )}
 
-          {permissionGranted && !loading && !inSearchMode && (
-            <View style={[styles.locateWrap, { bottom: SHEET_COLLAPSED_H + 18 }]} pointerEvents="box-none">
+          {permissionGranted && !loading && (
+            <Animated.View
+              style={[styles.locateWrap, { bottom: SHEET_COLLAPSED_H + 18 }, chromeStyle]}
+              pointerEvents={inSearchMode ? 'none' : 'box-none'}
+            >
               <TouchableOpacity onPress={goToCurrentLocation} accessibilityLabel="Go to my location">
                 <GlassCard radius={24} style={styles.locateButton} contentStyle={styles.locateContent}>
                   <Ionicons name="locate" size={20} color={theme.colors.primary} />
                 </GlassCard>
               </TouchableOpacity>
-            </View>
+            </Animated.View>
           )}
 
           {/* ── Search this area ──────────────────────────────────────── */}
@@ -852,17 +923,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
           {/* ── Bottom sheet ──────────────────────────────────────────── */}
           {permissionGranted && !loading && (
             <Animated.View
-              style={[
-                styles.sheet,
-                {
-                  // Sit ON the keyboard rather than behind it.
-                  bottom: keyboardHeight,
-                  height: inSearchMode
-                    ? Math.max(220, SCREEN_H - keyboardHeight - insets.top - 78)
-                    : SHEET_EXPANDED_H,
-                },
-                sheetStyle,
-              ]}
+              style={[styles.sheet, { height: sheetH }, sheetStyle]}
             >
               <GlassCard radius="xl" style={styles.sheetCard} contentStyle={styles.sheetContent}>
                 <GestureDetector gesture={sheetGesture}>
@@ -1012,7 +1073,10 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                       ))}
                     </>
                   )}
-                  <View style={{ height: (keyboardHeight > 0 ? 12 : insets.bottom) + 16 }} />
+                  {/* The keyboard is absorbed HERE rather than by resizing the
+                      sheet — padding is cheap and does not re-lay-out the
+                      surface every time the keyboard moves. */}
+                  <View style={{ height: keyboardHeight + insets.bottom + 24 }} />
                 </ScrollView>
               </GlassCard>
             </Animated.View>
@@ -1036,7 +1100,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pinLifted: { transform: [{ translateY: -6 }] },
   pinDot: {
     width: 8,
     height: 8,
