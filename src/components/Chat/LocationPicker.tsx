@@ -21,7 +21,6 @@ import {
   Linking,
   Modal,
   Platform,
-  ScrollView,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -33,6 +32,8 @@ import { Button, Text } from 'react-native-paper';
 import Animated, {
   Easing,
   runOnJS,
+  useAnimatedReaction,
+  useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -160,6 +161,9 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   /** Where the nearby list was last computed, to decide on "Search this area". */
   const nearbyAnchorRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const regionRef = useRef<Region | null>(null);
+  /** Plain ref, not `useAnimatedRef`: this exists only to declare gesture
+   *  simultaneity, and the scroll offset already arrives via the handler. */
+  const listRef = useRef<any>(null);
   /** Read by the keyboard handlers, which are created once and must not close
    *  over a stale render's values. */
   const searchFocusedRef = useRef(false);
@@ -201,16 +205,54 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
     onClose();
   }, [onClose]);
 
+  /**
+   * Drag anywhere on the sheet, and hand off cleanly to the list inside it.
+   *
+   * The pan used to be bound to the grabber alone, so the sheet could only be
+   * moved by a 40pt target most people never aimed at — everywhere else it
+   * simply ignored the finger. It now covers the whole surface and negotiates
+   * with the scroll view:
+   *
+   *   - not fully expanded  → the drag always moves the SHEET, and the list is
+   *     scroll-disabled so it cannot swallow the gesture;
+   *   - expanded, list at top, pulling DOWN → the sheet takes over, which is
+   *     how you collapse without hunting for the handle;
+   *   - expanded, list scrolled → the list keeps its gesture untouched.
+   *
+   * `activeOffsetY` means a tap on a result still registers as a tap: the pan
+   * only claims the gesture once the finger has actually travelled.
+   */
+  const scrollOffset = useSharedValue(0);
+  const claimedByList = useSharedValue(false);
+
+  const onListScroll = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      scrollOffset.value = event.contentOffset.y;
+    },
+  });
+
   const sheetGesture = Gesture.Pan()
+    .activeOffsetY([-10, 10])
+    // Both recognisers stay alive; the guards in onUpdate decide which one
+    // actually moves. Without this they compete and the loser's frames are
+    // dropped, which feels exactly like the stutter being reported.
+    .simultaneousWithExternalGesture(listRef)
     .onStart(() => {
       sheetStart.value = sheetY.value;
+      // Expanded AND already scrolled means this drag belongs to the list.
+      claimedByList.value = sheetY.value <= 1 && scrollOffset.value > 1;
     })
     .onUpdate((event) => {
+      if (claimedByList.value) return;
+      // Expanded and at the top: only a downward pull moves the sheet, so an
+      // upward flick still scrolls the list rather than fighting it.
+      if (sheetY.value <= 1 && event.translationY < 0) return;
       const next = sheetStart.value + event.translationY;
       // Rubber-band above the expanded stop so it feels bounded, not broken.
       sheetY.value = next < 0 ? next / 3 : next;
     })
     .onEnd((event) => {
+      if (claimedByList.value) return;
       const projected = sheetY.value + event.velocityY * 0.12;
       if (projected > collapseOffset + DISMISS_TRAVEL) {
         sheetY.value = withTiming(sheetH, { duration: 200 });
@@ -246,6 +288,20 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: sheetY.value }],
   }));
+
+  /**
+   * The list only scrolls once the sheet is up. Collapsed, a drag inside it
+   * should raise the sheet — otherwise the list quietly absorbs the gesture
+   * and the sheet feels stuck.
+   */
+  const [listScrollEnabled, setListScrollEnabled] = useState(false);
+  useAnimatedReaction(
+    () => sheetY.value <= 1,
+    (expanded, previous) => {
+      if (expanded !== previous) runOnJS(setListScrollEnabled)(expanded);
+    },
+    [],
+  );
 
   // ── Chrome that slides away while searching ───────────────────────────
   // TRANSFORM ONLY. DESIGN.md's native-material kill list: a Reanimated
@@ -925,12 +981,23 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
             <Animated.View
               style={[styles.sheet, { height: sheetH }, sheetStyle]}
             >
+              <GestureDetector gesture={sheetGesture}>
               <GlassCard radius="xl" style={styles.sheetCard} contentStyle={styles.sheetContent}>
-                <GestureDetector gesture={sheetGesture}>
-                  <View style={styles.grabZone}>
-                    <View style={[styles.grabber, { backgroundColor: theme.colors.onSurfaceVariant }]} />
-                  </View>
-                </GestureDetector>
+                {/* Tapping the collapsed sheet opens it — the grabber is a hint,
+                    not the only way in. */}
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={() => {
+                    if (!inSearchMode) {
+                      lightHaptic();
+                      expandSheet();
+                    }
+                  }}
+                  style={styles.grabZone}
+                  accessibilityLabel="Expand place list"
+                >
+                  <View style={[styles.grabber, { backgroundColor: theme.colors.onSurfaceVariant }]} />
+                </TouchableOpacity>
 
                 {!inSearchMode && (
                 <>
@@ -987,9 +1054,16 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                 </>
                 )}
 
-                <ScrollView
+                <Animated.ScrollView
+                  ref={listRef}
                   style={styles.list}
+                  onScroll={onListScroll}
+                  scrollEventThrottle={16}
+                  // Off while collapsed so a drag there moves the SHEET rather
+                  // than being eaten by a list that has nowhere to go.
+                  scrollEnabled={listScrollEnabled}
                   keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode="on-drag"
                   showsVerticalScrollIndicator={false}
                 >
                   {inSearchMode ? (
@@ -1077,8 +1151,9 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                       sheet — padding is cheap and does not re-lay-out the
                       surface every time the keyboard moves. */}
                   <View style={{ height: keyboardHeight + insets.bottom + 24 }} />
-                </ScrollView>
+                </Animated.ScrollView>
               </GlassCard>
+              </GestureDetector>
             </Animated.View>
           )}
         </View>
