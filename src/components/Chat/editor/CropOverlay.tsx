@@ -40,6 +40,8 @@ interface CropOverlayProps {
 
 const HANDLE = 28;
 const MIN_SIZE = 56;
+/** Length of an edge handle's touch target along the edge it sits on. */
+const EDGE_TOUCH = 44;
 
 export const CropOverlay = ({ frame, value, aspect, onChange }: CropOverlayProps) => {
   const x = useSharedValue(value.x);
@@ -148,6 +150,71 @@ export const CropOverlay = ({ frame, value, aspect, onChange }: CropOverlayProps
         runOnJS(commit)();
       });
 
+  /**
+   * Drag one edge. Corners move two edges at once; these move a single one,
+   * which is what you want for "make this a bit less wide" without also
+   * chasing the vertical framing.
+   *
+   * With an aspect lock the perpendicular dimension has to follow, and it
+   * grows from the CENTRE of the opposite axis — pinning it to one side
+   * instead would make the rect creep across the image as you resize.
+   */
+  const edgeGesture = (edge: 'left' | 'right' | 'top' | 'bottom') =>
+    Gesture.Pan()
+      .onStart(() => {
+        startX.value = x.value;
+        startY.value = y.value;
+        startW.value = w.value;
+        startH.value = h.value;
+      })
+      .onUpdate((event) => {
+        const horizontal = edge === 'left' || edge === 'right';
+        let nextW = startW.value;
+        let nextH = startH.value;
+        let nextX = startX.value;
+        let nextY = startY.value;
+
+        if (edge === 'left') {
+          nextW = Math.max(MIN_SIZE, startW.value - event.translationX);
+        } else if (edge === 'right') {
+          nextW = Math.max(MIN_SIZE, startW.value + event.translationX);
+        } else if (edge === 'top') {
+          nextH = Math.max(MIN_SIZE, startH.value - event.translationY);
+        } else {
+          nextH = Math.max(MIN_SIZE, startH.value + event.translationY);
+        }
+
+        // Re-derive the pinned edge AFTER clamping, so hitting the minimum
+        // size stops the rect rather than letting the origin keep sliding.
+        if (edge === 'left') nextX = startX.value + startW.value - nextW;
+        if (edge === 'top') nextY = startY.value + startH.value - nextH;
+
+        if (aspect !== null) {
+          if (horizontal) {
+            nextH = nextW / aspect;
+            nextY = startY.value + (startH.value - nextH) / 2;
+          } else {
+            nextW = nextH * aspect;
+            nextX = startX.value + (startW.value - nextW) / 2;
+          }
+        }
+
+        // Keep everything inside the photo. Size first, then position — the
+        // other order can strand a negative origin once the size shrinks.
+        nextW = Math.min(nextW, frame.width);
+        nextH = Math.min(nextH, frame.height);
+        nextX = Math.min(Math.max(0, nextX), frame.width - nextW);
+        nextY = Math.min(Math.max(0, nextY), frame.height - nextH);
+
+        x.value = nextX;
+        y.value = nextY;
+        w.value = nextW;
+        h.value = nextH;
+      })
+      .onEnd(() => {
+        runOnJS(commit)();
+      });
+
   const rectStyle = useAnimatedStyle(() => ({
     left: x.value,
     top: y.value,
@@ -188,6 +255,10 @@ export const CropOverlay = ({ frame, value, aspect, onChange }: CropOverlayProps
         </Animated.View>
       </GestureDetector>
 
+      {(['left', 'right', 'top', 'bottom'] as const).map((edge) => (
+        <EdgeHandle key={edge} gesture={edgeGesture(edge)} edge={edge} x={x} y={y} w={w} h={h} />
+      ))}
+
       {([
         [-1, -1, styles.handleTopLeft],
         [1, -1, styles.handleTopRight],
@@ -207,6 +278,50 @@ export const CropOverlay = ({ frame, value, aspect, onChange }: CropOverlayProps
         />
       ))}
     </View>
+  );
+};
+
+interface EdgeHandleProps {
+  gesture: ReturnType<typeof Gesture.Pan>;
+  edge: 'left' | 'right' | 'top' | 'bottom';
+  x: ReturnType<typeof useSharedValue<number>>;
+  y: ReturnType<typeof useSharedValue<number>>;
+  w: ReturnType<typeof useSharedValue<number>>;
+  h: ReturnType<typeof useSharedValue<number>>;
+}
+
+/**
+ * A short bar centred on one edge. Rendered UNDER the corner handles so that
+ * near a corner the corner still wins — that is the more specific gesture, and
+ * the two targets necessarily overlap at the ends.
+ */
+const EdgeHandle = ({ gesture, edge, x, y, w, h }: EdgeHandleProps) => {
+  const horizontal = edge === 'left' || edge === 'right';
+  const style = useAnimatedStyle(() => {
+    if (horizontal) {
+      const left = edge === 'left' ? x.value : x.value + w.value;
+      return {
+        left: left - HANDLE / 2,
+        top: y.value + h.value / 2 - EDGE_TOUCH / 2,
+        width: HANDLE,
+        height: EDGE_TOUCH,
+      };
+    }
+    const top = edge === 'top' ? y.value : y.value + h.value;
+    return {
+      left: x.value + w.value / 2 - EDGE_TOUCH / 2,
+      top: top - HANDLE / 2,
+      width: EDGE_TOUCH,
+      height: HANDLE,
+    };
+  });
+
+  return (
+    <GestureDetector gesture={gesture}>
+      <Animated.View style={[styles.edgeHandle, style]} hitSlop={10}>
+        <View style={horizontal ? styles.edgeBarVertical : styles.edgeBarHorizontal} />
+      </Animated.View>
+    </GestureDetector>
   );
 };
 
@@ -249,6 +364,23 @@ const styles = StyleSheet.create({
   gridLine: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.35)' },
   gridV: { top: 0, bottom: 0, width: StyleSheet.hairlineWidth },
   gridH: { left: 0, right: 0, height: StyleSheet.hairlineWidth },
+  edgeHandle: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  edgeBarVertical: {
+    width: 3,
+    height: 26,
+    borderRadius: 2,
+    backgroundColor: '#fff',
+  },
+  edgeBarHorizontal: {
+    width: 26,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: '#fff',
+  },
   handle: {
     position: 'absolute',
     width: HANDLE,

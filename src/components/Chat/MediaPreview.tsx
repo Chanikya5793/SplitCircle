@@ -909,6 +909,29 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
 
             {/* Edit is images-only: the Skia editor decodes a still, and a
                 video's equivalent (trim) already has its own control below. */}
+            {/* Videos get their action in the header too. Trim used to live
+                only inside the HD/SD sheet, which meant the single most
+                obvious thing you might want to do to a video was hidden
+                behind a control about file size. */}
+            {media.type === 'video' && (
+              <TouchableOpacity
+                style={[styles.editButton, !!media.assetId && styles.editButtonBusy]}
+                onPress={() => void handleTrimActiveVideo()}
+                disabled={!!media.assetId}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  media.assetId ? 'Preparing video, trim not ready yet' : 'Trim this video'
+                }
+              >
+                <Ionicons
+                  name={media.assetId ? 'hourglass-outline' : 'cut-outline'}
+                  size={19}
+                  color="#fff"
+                />
+              </TouchableOpacity>
+            )}
+
             {isEditableImage && (
               <TouchableOpacity
                 style={styles.editButton}
@@ -1159,40 +1182,6 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
                   </TouchableOpacity>
                 );
               })}
-
-              {/* Trim CTA — shown when the item is a video and even SD won't
-                  fit, OR when the user just wants to shorten a clip that
-                  fits. Hidden for non-video types (we have no trim path). */}
-              {media.type === 'video' && (() => {
-                // Trimming needs the real movie. Rather than let the user tap
-                // and then interrupt them with an alert, the control states
-                // plainly that it is not ready yet — the wait is the same, but
-                // it is visible in advance instead of being a rejection.
-                const notReady = !!media.assetId;
-                return (
-                  <TouchableOpacity
-                    disabled={notReady}
-                    style={[
-                      styles.qualitySheetApplyAll,
-                      { backgroundColor: 'rgba(228,83,83,0.12)' },
-                      notReady && { opacity: 0.5 },
-                    ]}
-                    onPress={() => {
-                      setQualityMenuOpen(false);
-                      void handleTrimActiveVideo();
-                    }}
-                  >
-                    <Ionicons
-                      name={notReady ? 'hourglass-outline' : 'cut-outline'}
-                      size={16}
-                      color="#E45353"
-                    />
-                    <Text style={[styles.qualitySheetApplyAllText, { color: '#E45353' }]}>
-                      {notReady ? 'Preparing video…' : 'Trim this video'}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })()}
 
               {internalItems.length > 1 && (
                 <TouchableOpacity
@@ -1549,6 +1538,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
   videoPosterNoteText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  editButtonBusy: { opacity: 0.45 },
   editButton: {
     width: 36,
     height: 36,
