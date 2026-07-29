@@ -15,6 +15,7 @@ import {
   getCachedSignalDeviceId,
   listSignalDevices,
   markSessionForRebuild,
+  type SignalNetworkPolicy,
 } from '@/services/signalCryptoService';
 import { isCryptoAvailable, type SignalEnvelope } from '../../modules/splitcircle-crypto';
 
@@ -37,6 +38,8 @@ export interface EncryptedMessageParts {
   envelopes: Record<string, StoredEnvelope>;
   senderSignalDeviceId: number;
 }
+
+export type RecipientCoveragePolicy = 'all-devices' | 'available-devices';
 
 // base64 without pulling in a polyfill: RN provides global btoa/atob via
 // react-native-get-random-values' environment, but encoding UTF-8 through it
@@ -79,6 +82,8 @@ export const encryptMessageForRecipient = async (
   recipientId: string,
   fields: EncryptedFields,
   excludeDeviceId?: string,
+  networkPolicy: SignalNetworkPolicy = 'network-preferred',
+  coveragePolicy: RecipientCoveragePolicy = 'all-devices',
 ): Promise<EncryptedMessageParts | null> => {
   if (!isCryptoAvailable()) return null;
 
@@ -87,7 +92,7 @@ export const encryptMessageForRecipient = async (
   // decrypt against, so there is nothing safe to send.
   if (!senderSignalDeviceId) return null;
 
-  const devices = (await listSignalDevices(recipientId)).filter(
+  const devices = (await listSignalDevices(recipientId, networkPolicy)).filter(
     (device) => device.deviceId !== excludeDeviceId,
   );
   // Zero devices is legitimate for a SELF fan-out (this is the account's only
@@ -96,14 +101,20 @@ export const encryptMessageForRecipient = async (
   if (devices.length === 0) return null;
 
   const plaintext = toBase64(JSON.stringify(fields));
-  const results = await encryptForAllDevices(recipientId, plaintext, excludeDeviceId);
+  const results = await encryptForAllDevices(
+    recipientId,
+    plaintext,
+    excludeDeviceId,
+    networkPolicy,
+  );
 
   // Strict equality, not >= 1: partial coverage means at least one device
   // would receive nothing it can open. The recipient HAS keys here, so this is
   // a genuine failure, not a reason to downgrade — see the doc comment.
-  if (results.length !== devices.length) {
+  if (coveragePolicy === 'all-devices' && results.length !== devices.length) {
     throw new EncryptionRequiredError(recipientId, results.length, devices.length);
   }
+  if (results.length === 0) return null;
 
   const envelopes: Record<string, StoredEnvelope> = {};
   for (const result of results) {
@@ -121,6 +132,19 @@ export const encryptMessageForRecipient = async (
 /** Reason the most recent decrypt failed, surfaced in the placeholder so a
  *  broken session is diagnosable from the phone instead of by guesswork. */
 let lastDecryptError: string | null = null;
+
+export const isDuplicateSignalMessageError = (error: unknown): boolean => {
+  if (typeof error !== 'object' || error === null) return false;
+  const coded = error as { code?: unknown; name?: unknown; message?: unknown };
+  return coded.code === 'DuplicateSignalMessage'
+    || coded.name === 'DuplicateSignalMessage'
+    // Defensive compatibility for Expo bridge versions that prefix native
+    // exception names in the rendered JS message instead of preserving code.
+    || (
+      typeof coded.message === 'string'
+      && coded.message.includes('DuplicateSignalMessage')
+    );
+};
 
 export const consumeLastDecryptError = (): string | null => {
   const value = lastDecryptError;
@@ -144,13 +168,14 @@ export const decryptMessageEnvelope = async (
     // has a new identity, so old sessions are dead) and must never take the
     // listener down — the message is surfaced with whatever plaintext exists.
     console.warn('Failed to decrypt message envelope', error);
-    // GROUND TRUTH, recorded. Comparing published identity keys can miss a
-    // dead session (a session predating the identity cache looks unchanged);
-    // a decrypt that just failed cannot be argued with. This makes the next
-    // outbound message to this peer rebuild from a fresh bundle, which also
-    // hands them a PreKey message so their side re-establishes.
+    // Most failures are ground truth that the session needs repair. A
+    // duplicated ciphertext is the exception: gossip/retry can legitimately
+    // replay a packet after it was consumed, and libsignal explicitly reports
+    // that condition without implying the live session is damaged.
     lastDecryptError = error instanceof Error ? error.message : String(error);
-    void markSessionForRebuild(senderId, senderSignalDeviceId).catch(() => {});
+    if (!isDuplicateSignalMessageError(error)) {
+      void markSessionForRebuild(senderId, senderSignalDeviceId).catch(() => {});
+    }
     return null;
   }
 };

@@ -10,27 +10,40 @@
 
 import { useTheme } from '@/context/ThemeContext';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
+import { useNearbyMessaging } from '@/hooks/useNearbyMessaging';
 import { StyleSheet, View } from 'react-native';
 import { Icon, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export const OfflineBanner = () => {
   const { isOnline } = useOfflineSync();
-  const { isDark } = useTheme();
+  const { theme } = useTheme();
+  const { snapshot } = useNearbyMessaging();
   const insets = useSafeAreaInsets();
 
   if (isOnline) {
     return null;
   }
 
-  const bg = isDark ? 'rgba(60,40,10,0.92)' : 'rgba(255,244,224,0.96)';
-  const fg = isDark ? '#FFE0A3' : '#7A4F00';
+  const connected = snapshot.status === 'connected';
+  const needsAttention = snapshot.status === 'error' || snapshot.status === 'unavailable';
+  const label = connected
+    ? `Offline · Nearby connected to ${snapshot.connectedPeerCount} ${snapshot.connectedPeerCount === 1 ? 'phone' : 'phones'}`
+    : needsAttention
+      ? 'Offline · Nearby needs attention. Open a chat for help.'
+      : 'Offline · Nearby is searching. Open a chat for connection help.';
+  const backgroundColor = connected
+    ? theme.colors.successContainer
+    : theme.colors.warningContainer;
+  const foregroundColor = connected
+    ? theme.colors.onSuccessContainer
+    : theme.colors.onWarningContainer;
 
   return (
-    <View style={[styles.strip, { paddingTop: insets.top + 6, backgroundColor: bg }]}>
-      <Icon source="wifi-off" size={15} color={fg} />
-      <Text variant="labelMedium" style={[styles.label, { color: fg }]}>
-        Offline — showing saved data. Edits will sync when you reconnect.
+    <View style={[styles.strip, { paddingTop: insets.top + 6, backgroundColor }]}>
+      <Icon source={connected ? 'access-point-network' : 'wifi-off'} size={15} color={foregroundColor} />
+      <Text variant="labelMedium" style={[styles.label, { color: foregroundColor }]}>
+        {label}
       </Text>
     </View>
   );

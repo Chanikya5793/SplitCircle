@@ -74,8 +74,16 @@ public class SplitCircleCryptoModule: Module {
       guard let body = Data(base64Encoded: bodyBase64) else {
         throw Exception(name: "InvalidArgument", description: "body must be base64")
       }
-      let plaintext: Data = try self.onQueue {
-        try self.engine().decrypt(userId: userId, deviceId: UInt32(deviceId), type: type, body: body)
+      let plaintext: Data
+      do {
+        plaintext = try self.onQueue {
+          try self.engine().decrypt(userId: userId, deviceId: UInt32(deviceId), type: type, body: body)
+        }
+      } catch SignalError.duplicatedMessage(let detail) {
+        // A replay is an expected transport condition, not evidence that the
+        // Double Ratchet session is corrupt. Give JS a stable code so its
+        // repair policy never tears down a healthy session for this case.
+        throw Exception(name: "DuplicateSignalMessage", description: detail)
       }
       return plaintext.base64EncodedString()
     }

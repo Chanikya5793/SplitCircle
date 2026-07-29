@@ -60,13 +60,14 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_expo._tcp</string>
+		<string>_manasplit-mesh._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Allow ManaSplit to access your camera</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Unlock SplitCircle and its hidden privacy settings with Face ID.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Expo Dev Launcher uses the local network to discover and connect to development servers running on your computer.</string>
+	<string>ManaSplit uses your local network to exchange messages with nearby group members when the internet is unavailable.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Allow ManaSplit to use your location to share it with your friends.</string>
 	<key>NSLocationAlwaysUsageDescription</key>

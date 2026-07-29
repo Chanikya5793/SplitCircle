@@ -28,6 +28,11 @@ import {
 } from '../../modules/splitcircle-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCurrentDeviceId } from '@/services/pairingService';
+import {
+  normalizeSignalDeviceDirectory,
+  resolveSignalDeviceDirectory,
+  type SignalDeviceDirectoryEntry,
+} from '@/services/signalDeviceDirectory';
 
 /**
  * How many one-time prekeys to publish per rotation. Each is consumed by one
@@ -63,6 +68,7 @@ const claimCallable = httpsCallable<
 
 /** This device's libsignal small-integer id, cached after bootstrap. */
 let cachedSignalDeviceId: number | null = null;
+const SIGNAL_DEVICE_ID_KEY = 'splitcircle.signal.deviceId';
 
 const INSTALL_MARKER_KEY = 'splitcircle.signal.installMarker';
 
@@ -97,6 +103,7 @@ const discardIdentityOrphanedByReinstall = async (): Promise<void> => {
       console.warn('Signal identity outlived its sessions (reinstall) — regenerating');
       await wipeSignalState();
       cachedSignalDeviceId = null;
+      await AsyncStorage.removeItem(SIGNAL_DEVICE_ID_KEY);
     }
     await AsyncStorage.setItem(INSTALL_MARKER_KEY, '1');
   } catch (error) {
@@ -157,6 +164,7 @@ export const initializeSignalForDevice = async (
       ) {
         await bootstrapSignalIdentity(userId, publishedSignalDeviceId);
         cachedSignalDeviceId = publishedSignalDeviceId;
+        await AsyncStorage.setItem(SIGNAL_DEVICE_ID_KEY, String(publishedSignalDeviceId));
         return publishedSignalDeviceId;
       }
     }
@@ -172,10 +180,27 @@ export const initializeSignalForDevice = async (
   // local address peers will address us by.
   await bootstrapSignalIdentity(userId, data.signalDeviceId);
   cachedSignalDeviceId = data.signalDeviceId;
+  await AsyncStorage.setItem(SIGNAL_DEVICE_ID_KEY, String(data.signalDeviceId));
   return data.signalDeviceId;
 };
 
 export const getCachedSignalDeviceId = (): number | null => cachedSignalDeviceId;
+
+/** Restores the authoritative small Signal device id on a cold offline boot. */
+export const getPersistedSignalDeviceId = async (): Promise<number | null> => {
+  if (cachedSignalDeviceId) return cachedSignalDeviceId;
+  try {
+    const raw = await AsyncStorage.getItem(SIGNAL_DEVICE_ID_KEY);
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= 127) {
+      cachedSignalDeviceId = parsed;
+      return parsed;
+    }
+  } catch {
+    // Missing/corrupt local state means secure mesh cannot start yet.
+  }
+  return null;
+};
 
 /**
  * Manual "reset encryption" — the escape hatch when automatic repair hasn't.
@@ -196,6 +221,7 @@ export const getCachedSignalDeviceId = (): number | null => cachedSignalDeviceId
 export const resetEncryptionIdentity = async (userId: string): Promise<void> => {
   await wipeSignalState();
   cachedSignalDeviceId = null;
+  await AsyncStorage.removeItem(SIGNAL_DEVICE_ID_KEY);
 
   // Drop every cached peer identity and repair flag, so nothing carries a
   // belief about a session that no longer exists.
@@ -240,8 +266,23 @@ export const resetEncryptionIdentity = async (userId: string): Promise<void> => 
 const DEVICE_LIST_TTL_MS = 20_000;
 const deviceListCache = new Map<
   string,
-  { at: number; devices: { deviceId: string; signalDeviceId: number; identityKey: string | null }[] }
+  { at: number; devices: SignalDeviceDirectoryEntry[] }
 >();
+const durableDeviceListKey = (userId: string): string =>
+  `splitcircle.signal.deviceList.${userId}`;
+
+const loadDurableSignalDevices = async (
+  userId: string,
+): Promise<SignalDeviceDirectoryEntry[]> => {
+  try {
+    const raw = await AsyncStorage.getItem(durableDeviceListKey(userId));
+    return normalizeSignalDeviceDirectory(raw ? JSON.parse(raw) : null);
+  } catch {
+    return [];
+  }
+};
+
+export type SignalNetworkPolicy = 'network-preferred' | 'cache-only';
 
 /** Drops the cache for one user — call when a device is known to have changed. */
 export const invalidateSignalDeviceCache = (userId?: string): void => {
@@ -249,25 +290,90 @@ export const invalidateSignalDeviceCache = (userId?: string): void => {
   else deviceListCache.clear();
 };
 
+/** Forces a server refresh when Internet is known to be reachable. */
+export const refreshSignalDeviceDirectory = async (
+  userId: string,
+): Promise<SignalDeviceDirectoryEntry[]> => {
+  deviceListCache.delete(userId);
+  return listSignalDevices(userId);
+};
+
 export const listSignalDevices = async (
   userId: string,
-): Promise<{ deviceId: string; signalDeviceId: number; identityKey: string | null }[]> => {
+  networkPolicy: SignalNetworkPolicy = 'network-preferred',
+): Promise<SignalDeviceDirectoryEntry[]> => {
   const cached = deviceListCache.get(userId);
+  const durable = await loadDurableSignalDevices(userId);
+
+  if (networkPolicy === 'cache-only') {
+    // Nearby sends run precisely when Firebase may be unreachable. Never await
+    // a Firestore read here: React Native's memory-only Firestore client can
+    // leave getDocs pending until connectivity returns instead of rejecting.
+    // Merge memory with the durable snapshot because an earlier empty/partial
+    // cache result must not hide devices that were successfully saved online.
+    const devices = resolveSignalDeviceDirectory({
+      remote: cached?.devices ?? [],
+      durable,
+      remoteFromCache: true,
+    });
+    deviceListCache.set(userId, { at: Date.now(), devices });
+    return devices;
+  }
+
   if (cached && Date.now() - cached.at < DEVICE_LIST_TTL_MS) return cached.devices;
 
-  const snap = await getDocs(collection(db, 'users', userId, 'signalPrekeys'));
-  const devices = snap.docs
-    .map((d) => ({
-      deviceId: d.id,
-      signalDeviceId: Number(d.data()?.signalDeviceId),
-      // Carried so senders can tell "same device" from "same device id, new
-      // keypair" without a second read per device on every message.
-      identityKey: typeof d.data()?.identityKey === 'string' ? (d.data()?.identityKey as string) : null,
-    }))
-    .filter((d) => Number.isFinite(d.signalDeviceId) && d.signalDeviceId > 0);
+  try {
+    const snap = await getDocs(collection(db, 'users', userId, 'signalPrekeys'));
+    const remote = normalizeSignalDeviceDirectory(snap.docs
+      .map((d) => ({
+        deviceId: d.id,
+        signalDeviceId: Number(d.data()?.signalDeviceId),
+        // Carried so senders can tell "same device" from "same device id, new
+        // keypair" without a second read per device on every message.
+        identityKey: typeof d.data()?.identityKey === 'string' ? (d.data()?.identityKey as string) : null,
+      })));
+    const devices = resolveSignalDeviceDirectory({
+      remote,
+      durable,
+      remoteFromCache: snap.metadata.fromCache,
+    });
 
-  deviceListCache.set(userId, { at: Date.now(), devices });
-  return devices;
+    deviceListCache.set(userId, { at: Date.now(), devices });
+    if (!snap.metadata.fromCache) {
+      // Only a server-backed result is authoritative enough to replace the
+      // durable directory. This contains public keys only, never private data.
+      void AsyncStorage.setItem(durableDeviceListKey(userId), JSON.stringify(devices));
+    }
+    return devices;
+  } catch (error) {
+    if (durable.length > 0) {
+      deviceListCache.set(userId, { at: Date.now(), devices: durable });
+      return durable;
+    }
+    throw error;
+  }
+};
+
+/** Public identity key cached during an earlier online sync, for mesh checks. */
+export const getCachedPeerIdentityKey = async (
+  userId: string,
+  deviceId: string,
+): Promise<string | null> => {
+  const inMemory = deviceListCache.get(userId)?.devices
+    .find((device) => device.deviceId === deviceId)?.identityKey;
+  if (inMemory) return inMemory;
+
+  try {
+    const raw = await AsyncStorage.getItem(durableDeviceListKey(userId));
+    const devices = raw ? JSON.parse(raw) : null;
+    if (!Array.isArray(devices)) return null;
+    const match = devices.find(
+      (device) => device?.deviceId === deviceId && typeof device?.identityKey === 'string',
+    );
+    return match?.identityKey ?? null;
+  } catch {
+    return null;
+  }
 };
 
 /**
@@ -349,6 +455,7 @@ export const ensureSessionWithDevice = async (
   peerDeviceId: string,
   /** The peer's CURRENTLY published identity key, when the caller has it. */
   currentIdentityKey?: string | null,
+  networkPolicy: SignalNetworkPolicy = 'network-preferred',
 ): Promise<boolean> => {
   if (!isCryptoAvailable()) return false;
 
@@ -375,6 +482,11 @@ export const ensureSessionWithDevice = async (
   if (!needsRebuild && !identityChanged && (await hasSession(peerUserId, peerSignalDeviceId))) {
     return true;
   }
+
+  // Establishing or repairing a session claims a server-held prekey bundle.
+  // Nearby delivery must finish (or fail visibly) without waiting for that
+  // network operation, so it may reuse prepared sessions but never create one.
+  if (networkPolicy === 'cache-only') return false;
 
   try {
     const { data } = await claimCallable({
@@ -404,6 +516,7 @@ export const encryptForAllDevices = async (
   peerUserId: string,
   plaintextBase64: string,
   excludeDeviceId?: string,
+  networkPolicy: SignalNetworkPolicy = 'network-preferred',
 ): Promise<{ deviceId: string; signalDeviceId: number; envelope: SignalEnvelope }[]> => {
   if (!isCryptoAvailable()) return [];
 
@@ -411,7 +524,7 @@ export const encryptForAllDevices = async (
   // try to build a Signal session with ITSELF. Both sides would be the same
   // identity in the same store, which is meaningless and would corrupt the
   // store's view of that address.
-  const devices = (await listSignalDevices(peerUserId)).filter(
+  const devices = (await listSignalDevices(peerUserId, networkPolicy)).filter(
     (device) => device.deviceId !== excludeDeviceId,
   );
   const results: { deviceId: string; signalDeviceId: number; envelope: SignalEnvelope }[] = [];
@@ -422,6 +535,7 @@ export const encryptForAllDevices = async (
       device.signalDeviceId,
       device.deviceId,
       device.identityKey,
+      networkPolicy,
     );
     if (!ready) continue;
     try {
@@ -433,6 +547,32 @@ export const encryptForAllDevices = async (
   }
 
   return results;
+};
+
+/**
+ * Builds every currently published Signal session while Internet is available.
+ * Nearby messages can then encrypt exclusively from durable device metadata
+ * and native session state, with no Firebase dependency at send time.
+ */
+export const prepareSignalSessionsForUser = async (
+  peerUserId: string,
+): Promise<{ ready: number; total: number }> => {
+  if (!peerUserId || !isCryptoAvailable()) return { ready: 0, total: 0 };
+
+  const devices = await listSignalDevices(peerUserId, 'network-preferred');
+  let ready = 0;
+  for (const device of devices) {
+    if (await ensureSessionWithDevice(
+      peerUserId,
+      device.signalDeviceId,
+      device.deviceId,
+      device.identityKey,
+      'network-preferred',
+    )) {
+      ready += 1;
+    }
+  }
+  return { ready, total: devices.length };
 };
 
 /** Decrypts an envelope addressed to this device. Returns base64 plaintext. */

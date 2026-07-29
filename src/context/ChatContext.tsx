@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import { v4 as uuid } from 'uuid';
 import {
   applyRemoteMessageState,
@@ -53,6 +54,30 @@ import { useAuth } from '@/context/AuthContext';
 import { dismissNotificationsForEntity } from '@/utils/notifications';
 import { resolveDisplayName } from '@/utils/identity';
 import { diffRemovedChatIds } from '@/utils/notificationEntityMatch';
+import { loadCachedChatThreads, persistChatThreads } from '@/services/chatThreadCache';
+import {
+  buildMeshMessageBody,
+  decryptMeshBodyForDevice,
+  parseSignedMeshEnvelope,
+  signMeshMessageBody,
+  verifyMeshEnvelopeForThread,
+} from '@/services/meshMessageProtocol';
+import {
+  claimMeshMessageProcessing,
+  enqueueMeshMessage,
+  releaseMeshMessageProcessing,
+  type MeshMessageOperation,
+} from '@/services/meshMessageQueue';
+import {
+  broadcastQueuedNearbyMessages,
+  reportNearbyMessageEvent,
+  startNearbyMessaging,
+} from '@/services/nearbyMessageService';
+import { flushMeshCloudRelay } from '@/services/meshCloudRelay';
+import {
+  prepareSignalSessionsForUser,
+  refreshSignalDeviceDirectory,
+} from '@/services/signalCryptoService';
 
 interface SendMessagePayload {
   chatId: string;
@@ -169,9 +194,181 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     threadsRef.current = threads;
   }, [threads]);
 
+  // Prime every participant's public Signal device directory while online.
+  // Nearby verification must not discover for the first time, after the
+  // network is gone, that this installation never cached a peer identity.
+  useEffect(() => {
+    if (!user || threads.length === 0) return () => undefined;
+    let disposed = false;
+    let seeded = false;
+    const seedWhenOnline = (
+      state: { isConnected: boolean | null; isInternetReachable: boolean | null },
+    ) => {
+      if (
+        disposed
+        || seeded
+        || !state.isConnected
+        || state.isInternetReachable !== true
+      ) {
+        return;
+      }
+      seeded = true;
+      const participantIds = [...new Set(
+        threads.flatMap((thread) => thread.participantIds)
+          .filter((participantId) => participantId !== user.userId),
+      )];
+      void Promise.allSettled(
+        participantIds.map(async (participantId) => {
+          await refreshSignalDeviceDirectory(participantId);
+          await prepareSignalSessionsForUser(participantId);
+        }),
+      );
+    };
+
+    void NetInfo.fetch().then(seedWhenOnline);
+    const unsubscribe = NetInfo.addEventListener(seedWhenOnline);
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [threads, user?.userId]);
+
   useEffect(() => {
     userRef.current = user;
   }, [user]);
+
+  // Nearby receiver + bounded gossip. The native transport can discover peers
+  // with no Internet; every payload is still identity-signed and authorized
+  // against the locally cached thread membership before it touches storage.
+  useEffect(() => {
+    if (!user) return () => undefined;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+
+    const onEnvelope = (raw: string) => {
+      void (async () => {
+        const parsed = parseSignedMeshEnvelope(raw);
+        if (!parsed) {
+          reportNearbyMessageEvent({
+            type: 'rejected',
+            detail: 'A nearby message was rejected because its envelope was invalid.',
+          });
+          return;
+        }
+        const thread = threadsRef.current.find(
+          (candidate) => candidate.chatId === parsed.body.message.chatId,
+        );
+        if (!thread) {
+          reportNearbyMessageEvent({
+            type: 'rejected',
+            detail: 'A nearby message belongs to a conversation not cached on this phone.',
+            chatId: parsed.body.message.chatId,
+          });
+          return;
+        }
+
+        const body = await verifyMeshEnvelopeForThread(raw, thread, user.userId);
+        if (!body || disposed) {
+          if (!disposed) {
+            reportNearbyMessageEvent({
+              type: 'rejected',
+              detail: 'A nearby sender or chat membership could not be verified.',
+              chatId: parsed.body.message.chatId,
+            });
+          }
+          return;
+        }
+
+        const operationId = `${body.originUserId}:${body.message.id}`;
+        const claimed = await claimMeshMessageProcessing(operationId);
+        if (!claimed) return;
+
+        try {
+          const currentDeviceId = await getCurrentDeviceId();
+          const decryptedMessage = await decryptMeshBodyForDevice(body, currentDeviceId);
+          if (!decryptedMessage) {
+            reportNearbyMessageEvent({
+              type: 'rejected',
+              detail: 'A verified nearby message could not be decrypted on this phone.',
+              chatId: parsed.body.message.chatId,
+            });
+            return;
+          }
+
+          const isNew = await enqueueMeshMessage({
+            id: operationId,
+            message: decryptedMessage,
+            chatType: body.chatType,
+            ...(body.groupId ? { groupId: body.groupId } : {}),
+            participantIds: body.audienceUserIds,
+            originUserId: body.originUserId,
+            originOwned: false,
+            // Only the origin's signed-outbox copy uploads to Firebase. A relay
+            // cannot safely impersonate the origin in today's Signal/RTDB wire
+            // format; its copy exists solely for nearby gossip.
+            cloudRelay: false,
+            wireEnvelope: raw,
+            createdAt: body.createdAt,
+          });
+          if (!isNew) return;
+
+          await saveMessageLocally({
+            ...decryptedMessage,
+            isFromMe: body.originUserId === user.userId,
+            status: 'delivered',
+            deliveredTo: [
+              ...new Set([...(decryptedMessage.deliveredTo ?? []), user.userId]),
+            ],
+          });
+          reportNearbyMessageEvent({
+            type: 'received',
+            detail: 'Nearby message verified, decrypted, and saved in this chat.',
+            chatId: parsed.body.message.chatId,
+          });
+          // Re-broadcasting a newly seen signed envelope lets B bridge A and C
+          // even when A and C cannot directly discover one another. The inbox
+          // claim above rejects repeats BEFORE they touch the Signal ratchet.
+          void broadcastQueuedNearbyMessages();
+        } finally {
+          releaseMeshMessageProcessing(operationId);
+        }
+      })().catch((error) => {
+        console.warn('Nearby message processing failed', error);
+        reportNearbyMessageEvent({
+          type: 'rejected',
+          detail: 'A nearby message could not be processed on this phone.',
+        });
+      });
+    };
+
+    void startNearbyMessaging(user.userId, onEnvelope).then((cleanup) => {
+      if (disposed) cleanup();
+      else stop = cleanup;
+    }).catch((error) => {
+      console.warn('Nearby messaging unavailable', error);
+    });
+
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, [user?.userId]);
+
+  // Group messages created over the mesh are also regular cloud messages once
+  // Internet returns. Direct nearby messages intentionally stay device-local.
+  useEffect(() => {
+    if (!user) return () => undefined;
+    const flushIfOnline = (
+      state: { isConnected: boolean | null; isInternetReachable: boolean | null },
+    ) => {
+      if (state.isConnected && state.isInternetReachable === true) {
+        void flushMeshCloudRelay(user.userId);
+      }
+    };
+    void NetInfo.fetch().then(flushIfOnline);
+    const unsubscribe = NetInfo.addEventListener(flushIfOnline);
+    return () => unsubscribe();
+  }, [user?.userId]);
 
   const getThreadByChatId = useCallback((chatId: string): ChatThread | undefined => {
     return threadsRef.current.find((thread) => thread.chatId === chatId);
@@ -279,10 +476,30 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       return () => undefined;
     }
 
+    let active = true;
+    const uid = user.userId;
+
+    // The Firestore JS SDK is memory-only on native. Restore the thread list
+    // from disk before attaching the live listener so local messages remain
+    // navigable after a killed-app, network-free launch.
+    void loadCachedChatThreads(uid).then((cached) => {
+      if (!active) return;
+      if (cached) {
+        setThreads((previous) => (previous.length ? previous : cached));
+      }
+      setLoading(false);
+    });
+
     const chatsRef = collection(db, 'chats');
-    const q = query(chatsRef, where('participantIds', 'array-contains', user.userId));
+    const q = query(chatsRef, where('participantIds', 'array-contains', uid));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (snapshot.empty && snapshot.metadata.fromCache) {
+        // Do not let Firestore's empty in-memory native cache erase the
+        // durable thread list restored above during a network-free boot.
+        setLoading(false);
+        return;
+      }
       const payload = snapshot.docs.map((docSnap) => {
         const data = docSnap.data() as ChatThread & { lastMessage?: ChatMessage };
         return {
@@ -308,6 +525,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
       setThreads(payload);
       setLoading(false);
+      void persistChatThreads(uid, payload);
     }, (error) => {
       // Without this handler a rules rejection (e.g. permission-denied)
       // becomes an uncaught snapshot error and a full-screen dev crash.
@@ -315,7 +533,10 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [user?.userId]);
 
   // Register the current user as a receipt participant for all known chats.
@@ -592,6 +813,70 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       await saveMessageLocally(message);
 
       try {
+        const network = await NetInfo.fetch();
+        const internetAvailable = Boolean(
+          network.isConnected && network.isInternetReachable === true,
+        );
+        const latestThread = getThreadByChatId(chatId);
+
+        if (!internetAvailable && !mediaUri) {
+          if (!latestThread) {
+            throw new Error('This conversation is not available in the offline cache yet.');
+          }
+
+          const originDeviceId = await getCurrentDeviceId();
+          const body = await buildMeshMessageBody({
+            message,
+            thread: latestThread,
+            originUserId: user.userId,
+            originDeviceId,
+          });
+
+          let wireEnvelope: string | undefined;
+          try {
+            if (!body) {
+              reportNearbyMessageEvent({
+                type: 'blocked',
+                detail: 'Secure nearby delivery is not ready for this chat; the message remains local.',
+                chatId,
+              });
+              throw new Error('No nearby participant has an established secure session.');
+            }
+            wireEnvelope = await signMeshMessageBody(body);
+          } catch (error) {
+            // Group messages still have a durable cloud path on reconnect.
+            // Direct messages are intentionally local-mesh-only, so silently
+            // accepting an unsigned/unsharable direct message would lie.
+            if (latestThread.type === 'direct') throw error;
+          }
+
+          const operation: MeshMessageOperation = {
+            id: `${user.userId}:${message.id}`,
+            message,
+            chatType: latestThread.type,
+            ...(latestThread.groupId ? { groupId: latestThread.groupId } : {}),
+            participantIds: latestThread.participantIds,
+            originUserId: user.userId,
+            originOwned: true,
+            cloudRelay: latestThread.type === 'group',
+            ...(wireEnvelope ? { wireEnvelope } : {}),
+            createdAt: now,
+          };
+          await enqueueMeshMessage(operation);
+          if (wireEnvelope) {
+            await broadcastQueuedNearbyMessages();
+          }
+          onStageChange?.('complete', {
+            message: wireEnvelope
+              ? latestThread.type === 'group'
+                ? 'Saved nearby and queued for cloud sync.'
+                : 'Saved for nearby delivery.'
+              : 'Saved locally and queued for cloud sync.',
+          });
+          clearSendProgress(msgId);
+          return;
+        }
+
         let mediaUrl: string | undefined;
         let permanentLocalPath: string | undefined;
         const typeLabel = getMessageTypeLabel(type);
@@ -646,7 +931,6 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         message.status = 'sent';
         await saveMessageLocally(message);
 
-        const latestThread = getThreadByChatId(chatId);
         const participants = latestThread?.participants || [];
         const isGroupChat = latestThread?.type === 'group';
         const recipientIds = participants

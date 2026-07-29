@@ -10,6 +10,7 @@ import {
   MediaPreview,
   MentionAutocomplete,
   MessageActionSheet,
+  NearbyMessagingSheet,
   PinnedMessagesBar,
   SelectionToolbar,
 } from '@/components/Chat';
@@ -22,13 +23,15 @@ import type { SelectionAction } from '@/components/Chat/SelectionToolbar';
 import { AlbumBubble } from '@/components/AlbumBubble';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GlassToast, GroupAvatar, UserAvatar } from '@/components/ui';
+import { GlassCard, GlassToast, GroupAvatar, UserAvatar } from '@/components/ui';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { WallpaperPickerSheet } from '@/components/ui';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
+import { useNearbyMessaging } from '@/hooks/useNearbyMessaging';
+import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { resolveMoneyInChat } from '@/models/group';
 import { useAuth } from '@/context/AuthContext';
 import { useCallContext } from '@/context/CallContext';
@@ -196,6 +199,8 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const { isOnline } = useOfflineSync();
+  const { snapshot: nearbySnapshot, presentation: nearbyPresentation } = useNearbyMessaging();
 
   // ── Locked-chat biometric gate (defense in depth) ──────────────────────
   // The Locked folder in ChatListScreen is the normal entrance, but this room
@@ -426,6 +431,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   const [actionTarget, setActionTarget] = useState<ChatMessage | null>(null);
   // Header overflow menu (search, gallery, starred)
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [nearbySheetOpen, setNearbySheetOpen] = useState(false);
   const [wallpaperSheetOpen, setWallpaperSheetOpen] = useState(false);
   // Forward picker state — separate from the action sheet so it can stay open while the picker animates in.
   const [forwardSource, setForwardSource] = useState<ChatMessage[] | null>(null);
@@ -1512,6 +1518,25 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
 
   const totalRecipients = thread.participants.length - 1;
   const isGroupChat = thread.type === 'group';
+  const showNearbyStatusPill =
+    !chatShielded &&
+    (!isOnline || nearbySnapshot.status === 'connected' || nearbySnapshot.status === 'error');
+  const nearbyStatusColor =
+    nearbyPresentation.tone === 'success'
+      ? theme.colors.success
+      : nearbyPresentation.tone === 'warning'
+        ? theme.colors.warning
+        : nearbyPresentation.tone === 'accent'
+          ? theme.colors.primary
+          : theme.colors.onSurfaceVariant;
+  const nearbyPillIcon =
+    nearbySnapshot.status === 'connected'
+      ? 'check-circle'
+      : nearbySnapshot.status === 'error' || nearbySnapshot.status === 'unavailable'
+        ? 'alert-circle-outline'
+        : nearbySnapshot.status === 'connecting'
+          ? 'wifi-sync'
+          : 'access-point';
 
   const dimmedMessageId = useMemo(() => {
     if (!actionTarget) return null;
@@ -1833,6 +1858,30 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               </GlassView>
             </TouchableOpacity>
           )}
+          {showNearbyStatusPill && (
+            <TouchableOpacity
+              onPress={() => {
+                lightHaptic();
+                setNearbySheetOpen(true);
+              }}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={`${nearbyPresentation.label}. Open nearby messaging help.`}
+              style={styles.nearbyPillTouchable}
+            >
+              <GlassCard radius="pill" contentStyle={styles.nearbyPillContent}>
+                <Icon source={nearbyPillIcon} size={14} color={nearbyStatusColor} />
+                <Text
+                  variant="labelSmall"
+                  numberOfLines={1}
+                  style={[styles.nearbyPillLabel, { color: nearbyStatusColor }]}
+                >
+                  {nearbyPresentation.label}
+                </Text>
+                <Icon source="chevron-up" size={13} color={theme.colors.onSurfaceVariant} />
+              </GlassCard>
+            </TouchableOpacity>
+          )}
         </View>
         )}
 
@@ -1855,7 +1904,13 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
           style={styles.list}
           contentContainerStyle={[
             styles.listContent,
-            { paddingBottom: insets.top + 70 },
+            {
+              paddingBottom:
+                insets.top
+                + 70
+                + (linkedGroup && Math.abs(myGroupBalance) >= 0.005 && !chatShielded ? 32 : 0)
+                + (showNearbyStatusPill ? 34 : 0),
+            },
             rows.length === 0 && { flex: 1, justifyContent: 'center' },
             selectionMode && rows.length > 0 && { flexGrow: 1 },
           ]}
@@ -2131,6 +2186,16 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
             },
           },
           {
+            key: 'nearby',
+            label: nearbySnapshot.status === 'connected'
+              ? `Nearby messaging · ${nearbySnapshot.connectedPeerCount} connected`
+              : 'Nearby messaging',
+            icon: nearbySnapshot.status === 'connected'
+              ? 'checkmark-circle-outline'
+              : 'radio-outline',
+            onPress: () => setNearbySheetOpen(true),
+          },
+          {
             key: 'media',
             label: 'Media, links & docs',
             icon: 'images-outline',
@@ -2220,6 +2285,13 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               ]
             : []),
         ] satisfies HeaderMenuItem[]}
+      />
+
+      <NearbyMessagingSheet
+        visible={nearbySheetOpen}
+        chatId={thread.chatId}
+        chatType={thread.type}
+        onClose={() => setNearbySheetOpen(false)}
       />
 
       <WallpaperPickerSheet
@@ -2660,6 +2732,22 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingHorizontal: 12,
     paddingVertical: 5,
+  },
+  nearbyPillTouchable: {
+    alignSelf: 'center',
+    marginTop: 6,
+    maxWidth: '88%',
+  },
+  nearbyPillContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  nearbyPillLabel: {
+    fontWeight: '700',
+    flexShrink: 1,
   },
   chatLockOverlay: {
     ...StyleSheet.absoluteFillObject,

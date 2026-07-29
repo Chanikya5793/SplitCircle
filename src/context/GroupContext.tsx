@@ -319,10 +319,14 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     // Hydrate from the on-device cache first so the app shows data instantly and
     // works offline (Firestore JS SDK can't persist on RN). Live data wins below.
     void loadCachedGroups(uid).then((cached) => {
-      if (active && cached) {
+      if (!active) return;
+      if (cached) {
         setGroups((prev) => (prev.length ? prev : cached));
-        setLoading(false);
       }
+      // An empty local account is still a valid offline state. Waiting for a
+      // Firestore callback here makes a brand-new/empty account hang forever
+      // on a network-free cold boot.
+      setLoading(false);
     });
 
     // Replay any durable writes left over from a previous (offline) session, and
@@ -343,6 +347,13 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
+        if (snapshot.empty && snapshot.metadata.fromCache) {
+          // A memory-only native Firestore cache reports an empty local query
+          // before it can reach the server. It must not overwrite the durable
+          // application cache with [], especially on a cold offline boot.
+          setLoading(false);
+          return;
+        }
         const raw = snapshot.docs.map((docSnapshot) => docSnapshot.data() as Group);
         // Keep optimistic (not-yet-acked) writes visible until the server confirms them.
         const payload = mergeOutboxIntoGroups(raw, pendingOpsRef.current).map(adaptGroup);

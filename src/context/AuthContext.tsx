@@ -189,12 +189,25 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   useEffect(() => {
     let unsubscribeSnapshot: (() => void) | undefined;
     let resolvedFromAuth = false;
+    let active = true;
 
     // Hydrate the last-known profile so a cold offline start paints instantly
     // (before onAuthStateChanged resolves). onAuthStateChanged wins below.
     void loadCachedProfile().then((cached) => {
-      if (cached && !resolvedFromAuth) {
+      if (active && cached && !resolvedFromAuth) {
         setUser((prev) => prev ?? cached);
+        // Firebase Auth normally restores its AsyncStorage session quickly,
+        // but it is still an asynchronous SDK callback and has hung here on a
+        // network-free cold process start. The profile cache is written only
+        // for an authenticated account and cleared on sign-out, so it is a
+        // sufficient local boot credential: release the navigation gate now.
+        //
+        // onAuthStateChanged remains authoritative and will replace/clear this
+        // state whenever it eventually resolves.
+        setLoading(false);
+        if (Platform.OS === 'ios') {
+          Settings.set({ SplitCircleCurrentUserId: cached.userId });
+        }
       }
     });
 
@@ -243,6 +256,13 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           setUser(payload);
           setLoading(false);
           void persistProfile(payload);
+        } else if (docSnap.metadata.fromCache) {
+          // Native Firestore uses a memory-only cache in this app. Its first
+          // offline event is therefore a synthetic "missing from cache", not
+          // proof that the server profile is missing. Do not start a profile
+          // creation transaction (which cannot finish offline) or disturb the
+          // locally restored identity.
+          setLoading(false);
         } else if (hasSeenProfileDoc) {
           // The doc existed earlier this session and is now gone — the account
           // was deleted (by this device or another signed-in one; deleteAccount's
@@ -305,6 +325,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     });
 
     return () => {
+      active = false;
       unsubscribeAuth();
       if (unsubscribeSnapshot) unsubscribeSnapshot();
     };

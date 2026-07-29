@@ -1,0 +1,8 @@
+{
+  "name": "splitcircle-mesh",
+  "version": "1.0.0",
+  "description": "Encrypted nearby transport for ManaSplit offline messaging",
+  "main": "index.ts",
+  "license": "MIT",
+  "peerDependencies": { "expo": "*" }
+}

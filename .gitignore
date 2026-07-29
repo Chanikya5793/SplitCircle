@@ -46,8 +46,10 @@ GoogleService-Info.plist
 
 .tmp-build-logs
  
-# Ignore the root-level docs folder (anchored so nested docs/ like ai_layer/docs/ are tracked)
-/docs/
+# Ignore generated root-level docs, except the maintained offline-first plan.
+# (Nested docs/ like ai_layer/docs/ remain tracked.)
+/docs/*
+!/docs/OFFLINE_FIRST_RESEARCH.md
 
 
 google-service-account.json
