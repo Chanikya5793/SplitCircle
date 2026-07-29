@@ -14,6 +14,14 @@ export interface MeshMessageOperation {
   originOwned: boolean;
   cloudRelay: boolean;
   wireEnvelope?: string;
+  nearbyAttachment?: {
+    transferId: string;
+    chunkCount: number;
+    /** Permanent local plaintext path, used by the group cloud relay. */
+    localPath?: string;
+    fileName: string;
+    mimeType: string;
+  };
   createdAt: number;
   meshBroadcastAt?: number;
 }

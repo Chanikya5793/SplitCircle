@@ -19,10 +19,26 @@ import {
   signWithIdentity,
   verifyWithIdentity,
 } from '../../modules/splitcircle-crypto';
+import {
+  isAllowedMediaMimeType,
+  MEDIA_MAX_FILE_SIZE_BYTES,
+} from '@/services/mediaPolicy';
 
 export const MESH_PROTOCOL_VERSION = 1 as const;
 export const MAX_MESH_ENVELOPE_BYTES = 256 * 1024;
 export const MAX_MESH_MESSAGE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+export interface MeshAttachmentManifest {
+  v: 1;
+  transferId: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  chunkSize: number;
+  chunkCount: number;
+  chunkHashes: string[];
+  encryptedChunkSizes: number[];
+}
 
 export interface MeshMessageBody {
   v: typeof MESH_PROTOCOL_VERSION;
@@ -36,6 +52,7 @@ export interface MeshMessageBody {
   createdAt: number;
   senderSignalDeviceId: number;
   encryptedForDevices: Record<string, StoredEnvelope>;
+  attachment?: MeshAttachmentManifest;
 }
 
 export interface SignedMeshEnvelope {
@@ -83,22 +100,63 @@ export const utf8ByteLength = (value: string): number => {
 const normalizedAudience = (ids: readonly string[]): string[] =>
   [...new Set(ids.filter(Boolean))].sort();
 
+/**
+ * Firestore chat snapshots created by older clients did not always keep
+ * `participantIds` and the richer `participants` array in lockstep. That is
+ * harmless online (the server fan-out has its own recipient list), but it made
+ * nearby DMs asymmetric: one phone encrypted to the two ids in
+ * `participants`, while the other authorized against a stale one-id
+ * `participantIds` array.
+ *
+ * Treat both cached representations as one logical membership set. Group
+ * membership remains exact. Direct chats must resolve to exactly two people,
+ * which prevents a corrupt/stale record from broadening the audience.
+ */
+export const resolveMeshThreadAudience = (
+  thread: Pick<ChatThread, 'type' | 'participantIds' | 'participants'>,
+): string[] | null => {
+  const audience = normalizedAudience([
+    ...(Array.isArray(thread.participantIds) ? thread.participantIds : []),
+    ...(Array.isArray(thread.participants)
+      ? thread.participants.map((participant) => participant?.userId)
+      : []),
+  ]);
+  if (thread.type === 'direct' && audience.length !== 2) return null;
+  return audience;
+};
+
 export const buildMeshMessageBody = async ({
   message,
   thread,
   originUserId,
   originDeviceId,
+  attachment,
+  attachmentSecret,
 }: {
   message: ChatMessage;
   thread: ChatThread;
   originUserId: string;
   originDeviceId: string;
+  attachment?: MeshAttachmentManifest;
+  attachmentSecret?: {
+    transferId: string;
+    keyBase64: string;
+    nonceSeedBase64: string;
+  };
 }): Promise<MeshMessageBody | null> => {
+  const audienceUserIds = resolveMeshThreadAudience(thread);
+  if (!audienceUserIds || !audienceUserIds.includes(originUserId)) return null;
+
   // Local paths are meaningful only on the originating sandbox and must never
   // be mistaken for an attachment the receiver can open.
   const transmittedMessage = { ...message };
   delete transmittedMessage.localMediaPath;
+  delete transmittedMessage.mediaDownloaded;
   delete transmittedMessage.isFromMe;
+  if (transmittedMessage.mediaMetadata?.thumbnailUri) {
+    transmittedMessage.mediaMetadata = { ...transmittedMessage.mediaMetadata };
+    delete transmittedMessage.mediaMetadata.thumbnailUri;
+  }
   transmittedMessage.content = '';
   if (transmittedMessage.replyTo) {
     transmittedMessage.replyTo = { ...transmittedMessage.replyTo, content: '' };
@@ -112,9 +170,10 @@ export const buildMeshMessageBody = async ({
     content: message.content,
     replyToContent: message.replyTo?.content,
     location: message.location,
+    ...(attachmentSecret ? { nearbyAttachment: attachmentSecret } : {}),
   };
   const encryptedForDevices: Record<string, StoredEnvelope> = {};
-  for (const recipientId of normalizedAudience(thread.participantIds)) {
+  for (const recipientId of audienceUserIds) {
     if (recipientId === originUserId) continue;
     try {
       // Nearby delivery must never wait for Firestore or a Cloud Function.
@@ -151,12 +210,13 @@ export const buildMeshMessageBody = async ({
     message: transmittedMessage,
     chatType: thread.type,
     ...(thread.groupId ? { groupId: thread.groupId } : {}),
-    audienceUserIds: normalizedAudience(thread.participantIds),
+    audienceUserIds,
     originUserId,
     originDeviceId,
     createdAt: Date.now(),
     senderSignalDeviceId,
     encryptedForDevices,
+    ...(attachment ? { attachment } : {}),
   };
 };
 
@@ -198,12 +258,69 @@ export const parseSignedMeshEnvelope = (
       || typeof body.originUserId !== 'string'
       || typeof body.originDeviceId !== 'string'
       || !Array.isArray(body.audienceUserIds)
+      || body.audienceUserIds.length === 0
+      || !body.audienceUserIds.every(
+        (userId) => typeof userId === 'string' && userId.length > 0,
+      )
       || typeof body.createdAt !== 'number'
+      || !Number.isFinite(body.createdAt)
+      || typeof body.senderSignalDeviceId !== 'number'
       || !Number.isFinite(body.senderSignalDeviceId)
+      || !Number.isInteger(body.senderSignalDeviceId)
+      || body.senderSignalDeviceId <= 0
       || !body.encryptedForDevices
       || typeof body.encryptedForDevices !== 'object'
+      || Array.isArray(body.encryptedForDevices)
     ) {
       return null;
+    }
+    if (body.attachment) {
+      const attachment = body.attachment as Partial<MeshAttachmentManifest>;
+      if (
+        attachment.v !== 1
+        || typeof attachment.transferId !== 'string'
+        || !/^[A-Za-z0-9_-]{1,80}$/.test(attachment.transferId)
+        || typeof attachment.fileName !== 'string'
+        || attachment.fileName.length < 1
+        || attachment.fileName.length > 255
+        || typeof attachment.mimeType !== 'string'
+        || attachment.mimeType.length < 1
+        || attachment.mimeType.length > 128
+        || !isAllowedMediaMimeType(attachment.mimeType)
+        || typeof attachment.fileSize !== 'number'
+        || attachment.fileSize < 0
+        || attachment.fileSize > MEDIA_MAX_FILE_SIZE_BYTES
+        || typeof attachment.chunkSize !== 'number'
+        || attachment.chunkSize < 64 * 1024
+        || attachment.chunkSize > 4 * 1024 * 1024
+        || !Number.isInteger(attachment.chunkCount)
+        || (attachment.chunkCount ?? 0) <= 0
+        || (attachment.chunkCount ?? 0) > 1_600
+        || !Array.isArray(attachment.chunkHashes)
+        || attachment.chunkHashes.length !== attachment.chunkCount
+        || !attachment.chunkHashes.every(
+          (hash) => typeof hash === 'string' && /^[a-f0-9]{64}$/i.test(hash),
+        )
+        || !Array.isArray(attachment.encryptedChunkSizes)
+        || attachment.encryptedChunkSizes.length !== attachment.chunkCount
+        || attachment.chunkCount !== Math.max(
+          1,
+          Math.ceil(attachment.fileSize / attachment.chunkSize),
+        )
+        || !attachment.encryptedChunkSizes.every((size, index) => {
+          if (!Number.isInteger(size)) return false;
+          const plaintextSize = index < (attachment.chunkCount ?? 0) - 1
+            ? attachment.chunkSize ?? 0
+            : Math.max(
+                0,
+                (attachment.fileSize ?? 0)
+                  - ((attachment.chunkCount ?? 1) - 1) * (attachment.chunkSize ?? 0),
+              );
+          return size === plaintextSize + 16;
+        })
+      ) {
+        return null;
+      }
     }
     return {
       envelope: envelope as SignedMeshEnvelope,
@@ -224,14 +341,16 @@ export const isMeshBodyAuthorizedForThread = (
   if (body.chatType !== thread.type) return false;
   if (body.groupId !== thread.groupId) return false;
   if (body.message.senderId !== body.originUserId) return false;
-  if (!thread.participantIds.includes(body.originUserId)) return false;
-  if (!thread.participantIds.includes(currentUserId)) return false;
+  const expectedAudience = resolveMeshThreadAudience(thread);
+  if (!expectedAudience) return false;
+  if (!expectedAudience.includes(body.originUserId)) return false;
+  if (!expectedAudience.includes(currentUserId)) return false;
   if (!body.audienceUserIds.includes(currentUserId)) return false;
   if (now - body.createdAt > MAX_MESH_MESSAGE_AGE_MS || body.createdAt > now + 60_000) return false;
 
-  const expectedAudience = normalizedAudience(thread.participantIds);
-  return expectedAudience.length === body.audienceUserIds.length
-    && expectedAudience.every((id, index) => id === normalizedAudience(body.audienceUserIds)[index]);
+  const receivedAudience = normalizedAudience(body.audienceUserIds);
+  return expectedAudience.length === receivedAudience.length
+    && expectedAudience.every((id, index) => id === receivedAudience[index]);
 };
 
 export const verifyMeshEnvelopeForThread = async (
@@ -257,30 +376,76 @@ export const verifyMeshEnvelopeForThread = async (
   return verified ? parsed.body : null;
 };
 
-export const decryptMeshBodyForDevice = async (
+const decryptMeshFieldsForDevice = async (
   body: MeshMessageBody,
   currentDeviceId: string,
-): Promise<ChatMessage | null> => {
+): Promise<EncryptedFields | null> => {
   const envelope = body.encryptedForDevices[currentDeviceId];
   if (!envelope) return null;
-  const decrypted = await decryptMessageEnvelope(
+  return decryptMessageEnvelope(
     body.originUserId,
     body.senderSignalDeviceId,
     envelope,
   );
-  if (!decrypted) return null;
+};
 
+const messageWithDecryptedFields = (
+  body: MeshMessageBody,
+  decrypted: EncryptedFields,
+): ChatMessage => ({
+  ...body.message,
+  content: decrypted.content ?? '',
+  ...(body.message.replyTo
+    ? {
+        replyTo: {
+          ...body.message.replyTo,
+          content: decrypted.replyToContent ?? '',
+        },
+      }
+    : {}),
+  ...(decrypted.location ? { location: decrypted.location } : {}),
+});
+
+export const decryptMeshBodyForDevice = async (
+  body: MeshMessageBody,
+  currentDeviceId: string,
+): Promise<ChatMessage | null> => {
+  const decrypted = await decryptMeshFieldsForDevice(body, currentDeviceId);
+  if (!decrypted) return null;
+  return messageWithDecryptedFields(body, decrypted);
+};
+
+export interface DecryptedMeshPayload {
+  message: ChatMessage;
+  attachment?: {
+    manifest: MeshAttachmentManifest;
+    secret: {
+      transferId: string;
+      keyBase64: string;
+      nonceSeedBase64: string;
+    };
+  };
+}
+
+export const decryptMeshPayloadForDevice = async (
+  body: MeshMessageBody,
+  currentDeviceId: string,
+): Promise<DecryptedMeshPayload | null> => {
+  const decrypted = await decryptMeshFieldsForDevice(body, currentDeviceId);
+  if (!decrypted) return null;
+  const message = messageWithDecryptedFields(body, decrypted);
+  if (!body.attachment) return { message };
+  if (
+    !decrypted.nearbyAttachment
+    || decrypted.nearbyAttachment.transferId !== body.attachment.transferId
+  ) {
+    return null;
+  }
   return {
-    ...body.message,
-    content: decrypted.content ?? '',
-    ...(body.message.replyTo
-      ? {
-          replyTo: {
-            ...body.message.replyTo,
-            content: decrypted.replyToContent ?? '',
-          },
-        }
-      : {}),
-    ...(decrypted.location ? { location: decrypted.location } : {}),
+    message,
+    attachment: {
+      manifest: body.attachment,
+      secret: decrypted.nearbyAttachment,
+    },
   };
 };

@@ -6,6 +6,7 @@ import {
   isNearbyMeshAvailable,
   probeNearbyPeer as probeNativeNearbyPeer,
   restartNearbyDiscovery as restartNativeNearbyDiscovery,
+  sendPreparedNearbyAttachment,
   startNearbyMesh,
   stopNearbyMesh,
 } from '../../modules/splitcircle-mesh';
@@ -21,6 +22,7 @@ import {
   type NearbyMessagingSnapshot,
   type NearbyMessageEvent,
 } from '@/services/nearbyMessagingState';
+import { announceIncomingNearbyAttachmentProgress } from '@/services/nearbyAttachmentService';
 
 let broadcastRunning = false;
 let nearbySnapshot = createNearbyMessagingSnapshot(isNearbyMeshAvailable());
@@ -89,7 +91,12 @@ export const broadcastQueuedNearbyMessages = async (): Promise<number> => {
             chatId: operation.message.chatId,
           });
           await updateMeshMessage({ ...operation, meshBroadcastAt: Date.now() });
-          if (operation.originOwned) {
+          if (operation.nearbyAttachment) {
+            await sendPreparedNearbyAttachment(
+              operation.nearbyAttachment.transferId,
+              operation.nearbyAttachment.chunkCount,
+            );
+          } else if (operation.originOwned) {
             await updateMessageStatus(
               operation.message.chatId,
               operation.message.id,
@@ -121,7 +128,10 @@ export const startNearbyMessaging = async (
   const deviceId = await getCurrentDeviceId();
   const envelopeSubscription = addNearbyEnvelopeListener(onEnvelope);
   const peerSubscription = addNearbyPeersChangedListener((count) => {
-    if (count > 0) void broadcastQueuedNearbyMessages();
+    if (count > 0) {
+      void announceIncomingNearbyAttachmentProgress();
+      void broadcastQueuedNearbyMessages();
+    }
   });
   const stateSubscription = addNearbyStateChangedListener((event) => {
     publishNearbySnapshot(applyNearbyMeshState(nearbySnapshot, event));

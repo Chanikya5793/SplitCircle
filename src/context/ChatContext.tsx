@@ -40,6 +40,11 @@ import {
   initMediaDirectory,
   uploadMedia,
 } from '@/services/mediaService';
+import {
+  discardNearbyAttachment,
+  prepareNearbyAttachment,
+} from '../../modules/splitcircle-mesh';
+import { normalizeAllowedMediaMimeType } from '@/services/mediaPolicy';
 import { getCurrentDeviceId } from '@/services/pairingService';
 import {
   listenForMessages,
@@ -57,8 +62,9 @@ import { diffRemovedChatIds } from '@/utils/notificationEntityMatch';
 import { loadCachedChatThreads, persistChatThreads } from '@/services/chatThreadCache';
 import {
   buildMeshMessageBody,
-  decryptMeshBodyForDevice,
+  decryptMeshPayloadForDevice,
   parseSignedMeshEnvelope,
+  resolveMeshThreadAudience,
   signMeshMessageBody,
   verifyMeshEnvelopeForThread,
 } from '@/services/meshMessageProtocol';
@@ -73,6 +79,10 @@ import {
   reportNearbyMessageEvent,
   startNearbyMessaging,
 } from '@/services/nearbyMessageService';
+import {
+  registerIncomingNearbyAttachment,
+  startNearbyAttachmentHandling,
+} from '@/services/nearbyAttachmentService';
 import { flushMeshCloudRelay } from '@/services/meshCloudRelay';
 import {
   prepareSignalSessionsForUser,
@@ -214,7 +224,9 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       }
       seeded = true;
       const participantIds = [...new Set(
-        threads.flatMap((thread) => thread.participantIds)
+        threads.flatMap((thread) =>
+          resolveMeshThreadAudience(thread) ?? thread.participantIds,
+        )
           .filter((participantId) => participantId !== user.userId),
       )];
       void Promise.allSettled(
@@ -244,6 +256,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     if (!user) return () => undefined;
     let disposed = false;
     let stop: (() => void) | undefined;
+    let stopAttachments: (() => void) | undefined;
 
     const onEnvelope = (raw: string) => {
       void (async () => {
@@ -285,8 +298,8 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
         try {
           const currentDeviceId = await getCurrentDeviceId();
-          const decryptedMessage = await decryptMeshBodyForDevice(body, currentDeviceId);
-          if (!decryptedMessage) {
+          const decryptedPayload = await decryptMeshPayloadForDevice(body, currentDeviceId);
+          if (!decryptedPayload) {
             reportNearbyMessageEvent({
               type: 'rejected',
               detail: 'A verified nearby message could not be decrypted on this phone.',
@@ -294,6 +307,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
             });
             return;
           }
+          const { message: decryptedMessage, attachment } = decryptedPayload;
 
           const isNew = await enqueueMeshMessage({
             id: operationId,
@@ -308,6 +322,16 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
             // format; its copy exists solely for nearby gossip.
             cloudRelay: false,
             wireEnvelope: raw,
+            ...(attachment
+              ? {
+                  nearbyAttachment: {
+                    transferId: attachment.manifest.transferId,
+                    chunkCount: attachment.manifest.chunkCount,
+                    fileName: attachment.manifest.fileName,
+                    mimeType: attachment.manifest.mimeType,
+                  },
+                }
+              : {}),
             createdAt: body.createdAt,
           });
           if (!isNew) return;
@@ -315,11 +339,24 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           await saveMessageLocally({
             ...decryptedMessage,
             isFromMe: body.originUserId === user.userId,
-            status: 'delivered',
+            status: attachment ? 'sending' : 'delivered',
             deliveredTo: [
               ...new Set([...(decryptedMessage.deliveredTo ?? []), user.userId]),
             ],
           });
+          if (attachment) {
+            await registerIncomingNearbyAttachment({
+              message: {
+                ...decryptedMessage,
+                isFromMe: body.originUserId === user.userId,
+                status: 'sending',
+              },
+              manifest: attachment.manifest,
+              secret: attachment.secret,
+              originDeviceId: body.originDeviceId,
+              ownerUserId: user.userId,
+            });
+          }
           reportNearbyMessageEvent({
             type: 'received',
             detail: 'Nearby message verified, decrypted, and saved in this chat.',
@@ -341,6 +378,13 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       });
     };
 
+    void startNearbyAttachmentHandling(user.userId, () => {
+      void broadcastQueuedNearbyMessages();
+    }).then((cleanup) => {
+      if (disposed) cleanup();
+      else stopAttachments = cleanup;
+    });
+
     void startNearbyMessaging(user.userId, onEnvelope).then((cleanup) => {
       if (disposed) cleanup();
       else stop = cleanup;
@@ -351,6 +395,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     return () => {
       disposed = true;
       stop?.();
+      stopAttachments?.();
     };
   }, [user?.userId]);
 
@@ -778,12 +823,14 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       const now = Date.now();
 
       let localMediaPath = mediaUri;
+      let mediaCopyError: unknown;
 
       if (mediaUri && type !== 'text') {
         try {
           const fileName = mediaMetadata?.fileName || `${type}_${msgId}`;
           localMediaPath = await copyToLocalStorage(mediaUri, chatId, msgId, fileName);
         } catch (error) {
+          mediaCopyError = error;
           console.warn('Failed to copy media locally, using original URI', error);
         }
       }
@@ -812,6 +859,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
       await saveMessageLocally(message);
 
+      let preparedNearbyTransferId: string | undefined;
       try {
         const network = await NetInfo.fetch();
         const internetAvailable = Boolean(
@@ -819,17 +867,89 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         );
         const latestThread = getThreadByChatId(chatId);
 
-        if (!internetAvailable && !mediaUri) {
+        if (!internetAvailable) {
           if (!latestThread) {
             throw new Error('This conversation is not available in the offline cache yet.');
           }
 
           const originDeviceId = await getCurrentDeviceId();
+          let attachment:
+            | {
+                manifest: {
+                  v: 1;
+                  transferId: string;
+                  fileName: string;
+                  mimeType: string;
+                  fileSize: number;
+                  chunkSize: number;
+                  chunkCount: number;
+                  chunkHashes: string[];
+                  encryptedChunkSizes: number[];
+                };
+                secret: {
+                  transferId: string;
+                  keyBase64: string;
+                  nonceSeedBase64: string;
+                };
+              }
+            | undefined;
+          let nearbyAttachment: MeshMessageOperation['nearbyAttachment'];
+
+          if (type === 'location') {
+            throw new Error('Live location cannot be shared without internet.');
+          }
+          if (mediaUri && type !== 'text') {
+            if (mediaCopyError) throw mediaCopyError;
+            const fileName = (
+              mediaMetadata?.fileName || `${type}_${msgId}`
+            ).slice(0, 255);
+            const mimeType = normalizeAllowedMediaMimeType((
+              mediaMetadata?.mimeType || 'application/octet-stream'
+            ).slice(0, 128));
+            onStageChange?.('preparing', { message: `Encrypting ${getMessageTypeLabel(type)}…` });
+            setSendProgress(msgId, {
+              stage: 'uploading',
+              fraction: 0,
+            });
+            const prepared = await prepareNearbyAttachment(
+              localMediaPath || mediaUri,
+              msgId,
+            );
+            preparedNearbyTransferId = prepared.transferId;
+            attachment = {
+              manifest: {
+                v: 1,
+                transferId: prepared.transferId,
+                fileName,
+                mimeType,
+                fileSize: prepared.fileSize,
+                chunkSize: prepared.chunkSize,
+                chunkCount: prepared.chunkCount,
+                chunkHashes: prepared.chunkHashes,
+                encryptedChunkSizes: prepared.encryptedChunkSizes,
+              },
+              secret: {
+                transferId: prepared.transferId,
+                keyBase64: prepared.keyBase64,
+                nonceSeedBase64: prepared.nonceSeedBase64,
+              },
+            };
+            nearbyAttachment = {
+              transferId: prepared.transferId,
+              chunkCount: prepared.chunkCount,
+              localPath: localMediaPath || mediaUri,
+              fileName,
+              mimeType,
+            };
+          }
+
           const body = await buildMeshMessageBody({
             message,
             thread: latestThread,
             originUserId: user.userId,
             originDeviceId,
+            attachment: attachment?.manifest,
+            attachmentSecret: attachment?.secret,
           });
 
           let wireEnvelope: string | undefined;
@@ -855,25 +975,40 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
             message,
             chatType: latestThread.type,
             ...(latestThread.groupId ? { groupId: latestThread.groupId } : {}),
-            participantIds: latestThread.participantIds,
+            participantIds:
+              body?.audienceUserIds
+              ?? resolveMeshThreadAudience(latestThread)
+              ?? latestThread.participantIds,
             originUserId: user.userId,
             originOwned: true,
             cloudRelay: latestThread.type === 'group',
             ...(wireEnvelope ? { wireEnvelope } : {}),
+            ...(nearbyAttachment ? { nearbyAttachment } : {}),
             createdAt: now,
           };
           await enqueueMeshMessage(operation);
+          if (!wireEnvelope && preparedNearbyTransferId) {
+            // There is no nearby route for this group operation. The stable
+            // plaintext is still retained for cloud convergence; encrypted
+            // staging has no consumer and should not occupy disk for seven
+            // days.
+            discardNearbyAttachment(preparedNearbyTransferId);
+          }
           if (wireEnvelope) {
             await broadcastQueuedNearbyMessages();
           }
-          onStageChange?.('complete', {
+          onStageChange?.(nearbyAttachment ? 'uploading' : 'complete', {
             message: wireEnvelope
               ? latestThread.type === 'group'
-                ? 'Saved nearby and queued for cloud sync.'
-                : 'Saved for nearby delivery.'
+                ? nearbyAttachment
+                  ? 'Sending nearby; queued for cloud sync.'
+                  : 'Saved nearby and queued for cloud sync.'
+                : nearbyAttachment
+                  ? 'Sending securely to the nearby phone.'
+                  : 'Saved for nearby delivery.'
               : 'Saved locally and queued for cloud sync.',
           });
-          clearSendProgress(msgId);
+          if (!nearbyAttachment) clearSendProgress(msgId);
           return;
         }
 
@@ -978,6 +1113,9 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
         onStageChange?.('complete');
         clearSendProgress(msgId);
+        if (preparedNearbyTransferId) {
+          discardNearbyAttachment(preparedNearbyTransferId);
+        }
       } catch (error) {
         console.error('Send failed', error);
         const wasCancelled =

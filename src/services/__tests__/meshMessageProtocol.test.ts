@@ -25,6 +25,7 @@ import {
   buildMeshMessageBody,
   isMeshBodyAuthorizedForThread,
   parseSignedMeshEnvelope,
+  resolveMeshThreadAudience,
   utf8ByteLength,
 } from '../meshMessageProtocol';
 
@@ -110,6 +111,48 @@ describe('nearby message protocol', () => {
     expect(isMeshBodyAuthorizedForThread(body, thread, 'not-a-member', now)).toBe(false);
   });
 
+  it('repairs a direct-chat cache whose participant arrays are temporarily asymmetric', async () => {
+    const directThread: ChatThread = {
+      chatId: 'chat-1',
+      type: 'direct',
+      participantIds: ['u1'],
+      participants: [
+        { userId: 'u1', displayName: 'One', status: 'offline' },
+        { userId: 'u2', displayName: 'Two', status: 'offline' },
+      ],
+      unreadCount: 0,
+    };
+
+    expect(resolveMeshThreadAudience(directThread)).toEqual(['u1', 'u2']);
+    const body = await buildMeshMessageBody({
+      message,
+      thread: directThread,
+      originUserId: 'u1',
+      originDeviceId: 'device-1',
+    });
+    expect(body?.audienceUserIds).toEqual(['u1', 'u2']);
+    expect(body && isMeshBodyAuthorizedForThread(
+      body,
+      { ...directThread, participantIds: ['u2'] },
+      'u2',
+      body.createdAt,
+    )).toBe(true);
+  });
+
+  it('refuses a malformed direct-chat cache instead of broadening its audience', () => {
+    expect(resolveMeshThreadAudience({
+      ...thread,
+      type: 'direct',
+      participantIds: ['u1', 'u2', 'u3'],
+    })).toBeNull();
+    expect(resolveMeshThreadAudience({
+      ...thread,
+      type: 'direct',
+      participantIds: ['u1'],
+      participants: [],
+    })).toBeNull();
+  });
+
   it('parses only the versioned signed outer envelope', async () => {
     const body = await buildMeshMessageBody({
       message,
@@ -131,6 +174,106 @@ describe('nearby message protocol', () => {
       bodyBase64,
       signatureBase64: 'signature',
     }))).toBeNull();
+  });
+
+  it('signs attachment metadata but keeps its decryption key inside Signal fields', async () => {
+    const manifest = {
+      v: 1 as const,
+      transferId: 'transfer-1',
+      fileName: 'photo.jpg',
+      mimeType: 'image/jpeg',
+      fileSize: 42,
+      chunkSize: 1024 * 1024,
+      chunkCount: 1,
+      chunkHashes: ['a'.repeat(64)],
+      encryptedChunkSizes: [58],
+    };
+    const body = await buildMeshMessageBody({
+      message: { ...message, type: 'image' },
+      thread,
+      originUserId: 'u1',
+      originDeviceId: 'device-1',
+      attachment: manifest,
+      attachmentSecret: {
+        transferId: 'transfer-1',
+        keyBase64: 'private-key',
+        nonceSeedBase64: 'private-nonce',
+      },
+    });
+
+    expect(body?.attachment).toEqual(manifest);
+    expect(JSON.stringify(body)).not.toContain('private-key');
+    expect(vi.mocked(encryptMessageForRecipient)).toHaveBeenCalledWith(
+      'u2',
+      expect.objectContaining({
+        nearbyAttachment: expect.objectContaining({ keyBase64: 'private-key' }),
+      }),
+      'device-1',
+      'cache-only',
+      'available-devices',
+    );
+  });
+
+  it('rejects malformed or oversized attachment manifests before authorization', async () => {
+    const body = await buildMeshMessageBody({
+      message,
+      thread,
+      originUserId: 'u1',
+      originDeviceId: 'device-1',
+    });
+    expect(body).not.toBeNull();
+    if (!body) return;
+    const malformed = {
+      ...body,
+      attachment: {
+        v: 1,
+        transferId: 'transfer-1',
+        fileName: 'bad.bin',
+        mimeType: 'application/octet-stream',
+        fileSize: 101 * 1024 * 1024,
+        chunkSize: 1024 * 1024,
+        chunkCount: 1,
+        chunkHashes: ['not-a-hash'],
+        encryptedChunkSizes: [16],
+      },
+    };
+    const raw = JSON.stringify({
+      v: 1,
+      bodyBase64: globalThis.btoa(unescape(encodeURIComponent(JSON.stringify(malformed)))),
+      signatureBase64: 'signature',
+    });
+    expect(parseSignedMeshEnvelope(raw)).toBeNull();
+  });
+
+  it('rejects attachment MIME types outside the shared cloud/nearby policy', async () => {
+    const body = await buildMeshMessageBody({
+      message,
+      thread,
+      originUserId: 'u1',
+      originDeviceId: 'device-1',
+    });
+    expect(body).not.toBeNull();
+    if (!body) return;
+    const unsupported = {
+      ...body,
+      attachment: {
+        v: 1,
+        transferId: 'transfer-1',
+        fileName: 'page.html',
+        mimeType: 'text/html',
+        fileSize: 42,
+        chunkSize: 1024 * 1024,
+        chunkCount: 1,
+        chunkHashes: ['a'.repeat(64)],
+        encryptedChunkSizes: [58],
+      },
+    };
+    const raw = JSON.stringify({
+      v: 1,
+      bodyBase64: globalThis.btoa(unescape(encodeURIComponent(JSON.stringify(unsupported)))),
+      signatureBase64: 'signature',
+    });
+    expect(parseSignedMeshEnvelope(raw)).toBeNull();
   });
 
   it('parses on Hermes without TextEncoder and counts UTF-8 correctly', async () => {

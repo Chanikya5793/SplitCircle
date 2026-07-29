@@ -24,6 +24,13 @@ export interface EncryptedFields {
   content?: string;
   replyToContent?: string;
   location?: { latitude: number; longitude: number; address?: string } | null;
+  /** Per-transfer key material. It is never placed in the signed plaintext
+   * manifest; each recipient device receives it inside its Signal envelope. */
+  nearbyAttachment?: {
+    transferId: string;
+    keyBase64: string;
+    nonceSeedBase64: string;
+  };
 }
 
 /** One recipient device's ciphertext, plus what the receiver needs to address the session. */

@@ -1,9 +1,138 @@
 # Offline nearby media sharing: research and implementation plan
 
-Status: researched and validated against the ManaSplit checkout on 2026-07-29.
-Implementation has not started. This document refines the media section in
-`2026-07-29_NEARBY_PROTOCOL_V2_RESEARCH_AND_PLAN.md` into a buildable near-term
-plan.
+Status: first working implementation completed in the checkout on 2026-07-29.
+Automated, native-target and full signed-device builds passed. The standalone
+Apple Development build was installed on the iPhone 17 Pro and iPhone 13 mini;
+both processes were confirmed running after launch. Two-phone radio/media
+acceptance remains the release gate. This document refines the media
+section in `2026-07-29_NEARBY_PROTOCOL_V2_RESEARCH_AND_PLAN.md` and records the
+implemented design, deliberate deviations and remaining hardening work.
+
+## 2026-07-29 implementation record
+
+### Defects fixed
+
+1. Offline media was excluded by the literal branch
+   `if (!internetAvailable && !mediaUri)`. Photos, video, audio and documents
+   therefore entered the Firebase upload path with no Internet and remained at
+   0%. The offline branch now handles both text and media; only live location
+   is refused.
+2. Direct-chat caches can temporarily have one participant in
+   `participantIds` while the complete pair is present in `participants`.
+   Nearby envelope creation/authorization and online Signal session priming
+   used only the first array. Group messages could work while DMs had no
+   offline-ready encryption session. Both paths now use the canonical union,
+   and a direct audience is accepted only when it resolves to exactly two
+   users.
+3. Group cloud relay previously had no attachment upload stage. It now persists
+   `sent`, uploads the stable local file, persists the resulting `mediaUrl`,
+   then fans out the same message id and finally clears encrypted staging.
+   Direct operations are explicitly excluded.
+
+### Implemented data plane
+
+- `SplitCircleMeshModule.swift` now prepares 1 MiB plaintext chunks natively,
+  seals each independently with AES-256-GCM, hashes the ciphertext with
+  SHA-256, applies iOS Data Protection and stores the chunks on disk.
+- The attachment key and random 64-bit nonce seed are present only inside the
+  existing per-device Signal fields. The signed public manifest contains safe
+  metadata, sizes and ciphertext hashes, never a sender sandbox path or key.
+- `MCSession.sendResource` sends one disk-backed chunk at a time per peer. The
+  native `Progress` is observed for determinate UI and is cancellable.
+- Receive callbacks move Apple's temporary URL before returning. Chunks remain
+  encrypted until all expected indexes exist; every hash and AEAD tag is then
+  verified, plaintext is written to a new protected temporary file, and an
+  atomic move publishes it into `chat_media`.
+- Incoming manifest state survives in AsyncStorage and the small secret
+  survives in `expo-secure-store`. Both ledgers are scoped to the signed-in
+  account. Encrypted chunks survive process death in Application Support.
+- On reconnect, the receiver announces the chunk indexes already on disk to
+  the signed origin device. The sender skips those indexes. A false bitmap can
+  deprive only the claiming peer; manifest hashes and AEAD still gate commit.
+- The unchanged signed envelope and encrypted chunks can be gossiped by a
+  present member. Only devices holding a Signal-wrapped attachment key can
+  decrypt.
+- Incomplete staging is pruned after seven days on mesh startup. A successful
+  group cloud convergence or user cancellation explicitly removes origin
+  staging. Cleanup waits for any open `MCSession` resource stream rather than
+  deleting its source underneath the transfer.
+- Receiver bubbles render a nearby-transfer placeholder for image, video,
+  audio and documents until atomic commit, then switch to the permanent local
+  path.
+- Cloud and nearby sends use one MIME/100 MiB policy. Unsupported types are
+  rejected before creating a signed offer, and an iCloud-only/File Provider
+  item reports its materialization error instead of becoming a 0% spinner.
+
+### Validation completed
+
+- `npx tsc --noEmit`: passed.
+- `npm run test:unit`: 36 files / 419 tests passed.
+- `npm run test:services`: 21 files / 179 tests passed. The nearby-specific
+  coverage includes direct cache repair, exact group authorization, private key
+  placement, malformed/oversize manifest rejection, durable pre-decrypt
+  dedupe, encrypted receive commit, group upload ordering and the direct
+  no-cloud invariant.
+- `npm run test:dom`: 5 files / 15 tests passed.
+- The `SplitCircleMesh` CocoaPods target compiled against the iOS 27 simulator
+  SDK, including the final resume, cleanup and resource-size guards.
+- A signed arm64 Release app was built with an embedded Hermes
+  `main.jsbundle` and Apple Development team `YDF2TB9967`. It installed on
+  both physical phones, and both application processes were confirmed running.
+
+## Agent handoff: implementation map
+
+| Responsibility | Primary path |
+|---|---|
+| DM audience repair, signed manifest, Signal-wrapped secret | `src/services/meshMessageProtocol.ts` |
+| Shared MIME and 100 MiB policy | `src/services/mediaPolicy.ts` |
+| Offline send/receive and group/direct routing | `src/context/ChatContext.tsx` |
+| Durable incoming coordinator and progress | `src/services/nearbyAttachmentService.ts` |
+| Durable gossip/outbox record | `src/services/meshMessageQueue.ts` |
+| Topology replay and native send start | `src/services/nearbyMessageService.ts` |
+| Group-only cloud upload and convergence | `src/services/meshCloudRelay.ts` |
+| Native AES-GCM chunk engine and Multipeer carrier | `modules/splitcircle-mesh/ios/SplitCircleMeshModule.swift` |
+| Native TypeScript bridge | `modules/splitcircle-mesh/index.ts` |
+| Receiving placeholders | `src/components/MessageBubble.tsx` |
+| Regression tests | `src/services/__tests__/meshMessageProtocol.test.ts`, `meshCloudRelay.test.ts`, `nearbyAttachmentService.test.ts`, `meshMessageQueue.test.ts` |
+
+The exact standalone device artifact from this validation run is temporary:
+
+```text
+/tmp/manasplit-device-derived/Build/Products/Release-iphoneos/SplitCircle.app
+```
+
+Regenerate it with:
+
+```bash
+xcodebuild -workspace ios/SplitCircle.xcworkspace -scheme SplitCircle \
+  -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+  -derivedDataPath /tmp/manasplit-device-derived \
+  -allowProvisioningUpdates -quiet build
+```
+
+### Deliberate v1 deviations and critique
+
+1. The durable transfer ledger uses the existing AsyncStorage queue plus
+   SecureStore rather than the proposed SQLite tables. File bytes and chunk
+   progress are native/disk-backed, so restart correctness is present, but
+   SQLite remains preferable for large multi-peer scheduling and richer
+   diagnostics.
+2. Resource callbacks must accept and stage an encrypted chunk before JS has
+   processed its signed offer. Allocation is bounded to 4 MiB per chunk,
+   1,600 chunks, and the content stays opaque; final file publication still
+   requires signed-chat authorization, exact hashes and the Signal-wrapped
+   key. A future native authorization cache should reject unknown transfer ids
+   before staging.
+3. `sendResource` completion proves the carrier delivered its temporary
+   resource, not that the receiving app completed AEAD verification and atomic
+   commit. A signed `BLOB_COMMITTED` receipt remains necessary before the UI
+   can claim cryptographic application-level delivery.
+4. The first carrier supports foreground resume and real cancellation, but iOS
+   still disconnects Multipeer when either app backgrounds. UI must remain
+   honest about keeping both apps open.
+5. Physical acceptance on the iPhone 17 Pro and iPhone 13 mini is still the
+   release gate. Native compilation proves API correctness, not radio
+   throughput, interruption timing or cross-device render/playback.
 
 ## Decision
 
@@ -15,10 +144,11 @@ cellular connection, or Internet:
 - audio files and voice notes;
 - supported documents, including PDF, Office documents, text and archives.
 
-The existing iPhone-to-iPhone transport is already capable of moving file
-resources. The missing work is the application protocol around the bytes:
-authorization, end-to-end encryption, manifests, storage, progress, pause,
-resume, receipts, group relay and later cloud convergence.
+The existing iPhone-to-iPhone transport was capable of moving file resources;
+the implementation above now supplies the application protocol around those
+bytes: authorization, end-to-end encryption, manifests, protected storage,
+progress, cancellation, resume, group relay and later cloud convergence.
+Signed application-level commit receipts remain follow-up hardening.
 
 Location is not a media-transfer blocker. An iPhone can determine coordinates
 from Core Location without Internet when satellite/radio positioning is

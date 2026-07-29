@@ -722,6 +722,15 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
 
   // Image content with loading state
   const renderImageContent = () => {
+    if (!mediaUri && message.status === 'sending') {
+      return (
+        <View style={[styles.mediaContainer, imageDimensions, styles.downloadingContainer]}>
+          <Ionicons name="phone-portrait-outline" size={32} color={theme.colors.primary} />
+          <Text style={styles.downloadingText}>Receiving nearby…</Text>
+          {sendProgress ? <SendProgressOverlay messageId={message.messageId} /> : null}
+        </View>
+      );
+    }
     if (!mediaUri && !isDownloading) return null;
 
     // Show sending state
@@ -812,6 +821,15 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
 
   // Video content with player
   const renderVideoContent = () => {
+    if (!mediaUri && message.status === 'sending') {
+      return (
+        <View style={[styles.mediaContainer, imageDimensions, styles.downloadingContainer]}>
+          <Ionicons name="videocam-outline" size={34} color={theme.colors.primary} />
+          <Text style={styles.downloadingText}>Receiving video nearby…</Text>
+          {sendProgress ? <SendProgressOverlay messageId={message.messageId} /> : null}
+        </View>
+      );
+    }
     if (!mediaUri && !isDownloading) return null;
 
     // Show sending state
@@ -925,6 +943,18 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
 
   // Audio message
   const renderAudioContent = () => {
+    if (!mediaUri && message.status === 'sending') {
+      return (
+        <View style={[styles.audioContainer, {
+          backgroundColor: isMine ? 'rgba(0,0,0,0.15)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'),
+        }]}>
+          <ActivityIndicator color={theme.colors.primary} size="small" />
+          <Text style={[styles.audioDuration, { color: isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant }]}>
+            Receiving nearby…
+          </Text>
+        </View>
+      );
+    }
     if (!mediaUri) return null;
     const metadata = message.mediaMetadata;
 
