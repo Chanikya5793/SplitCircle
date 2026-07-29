@@ -50,6 +50,7 @@ GoogleService-Info.plist
 # (Nested docs/ like ai_layer/docs/ remain tracked.)
 /docs/*
 !/docs/OFFLINE_FIRST_RESEARCH.md
+!/docs/2026-07-29_OFFLINE_MEDIA_SHARING_RESEARCH_AND_PLAN.md
 
 
 google-service-account.json
