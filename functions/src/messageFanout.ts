@@ -20,11 +20,27 @@ const USER_COLLECTION = "users";
 const PAIRED_DEVICES_SUBCOLLECTION = "pairedDevices";
 const MAX_DEVICES = 4; // mirrors pairing.ts's MAX_ACTIVE_DEVICES (doc 31 decision #21)
 
-const toSafeError = (error: unknown): { name?: string; message?: string } => {
+/**
+ * Keys are `errorName`/`errorMessage`, NOT `name`/`message`.
+ *
+ * firebase-functions' logger puts its OWN `message` at the top level of the
+ * entry, so spreading a `{ message }` payload into a `logger.error` call
+ * silently OVERWRITES the cause with the log line's text — the exact defect
+ * that made the pairing failure in doc 31 §5f #2 undiagnosable, fixed across
+ * index.ts's 45 call sites but missed here, in the one function most directly
+ * responsible for delivering messages to a user's linked devices.
+ */
+const toSafeError = (
+    error: unknown,
+): { errorName?: string; errorMessage?: string; errorStack?: string } => {
     if (error instanceof Error) {
-        return { name: error.name, message: error.message };
+        return {
+            errorName: error.name,
+            errorMessage: error.message,
+            errorStack: error.stack?.split("\n").slice(0, 4).join(" | "),
+        };
     }
-    return { message: "Unknown error" };
+    return { errorMessage: String(error) };
 };
 
 export const fanOutQueuedMessage = onValueCreated(

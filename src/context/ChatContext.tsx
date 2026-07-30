@@ -55,6 +55,12 @@ import {
   registerReceiptParticipant,
   sendBulkReadReceipts,
 } from '@/services/messageQueueService';
+import {
+  answerGapRequest,
+  checkForGapsAndRequestFill,
+  claimGapRequest,
+  subscribeToGapRequests,
+} from '@/services/syncGapService';
 import { useAuth } from '@/context/AuthContext';
 import { dismissNotificationsForEntity } from '@/utils/notifications';
 import { resolveDisplayName } from '@/utils/identity';
@@ -653,6 +659,31 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     void registerAll();
   }, [threads, user?.userId]);
 
+  // Cross-device history reconciliation, detection half (doc 31 §8.1).
+  //
+  // Runs on every threads update rather than once per device lifetime — that
+  // one-shot-ness is exactly what left the Phase 6 handoff unable to repair a
+  // device that fell behind AFTER pairing. The threads snapshot is the right
+  // trigger because it is also what fires on reconnect, so a device coming back
+  // online re-checks itself without any additional network listener.
+  useEffect(() => {
+    if (!user || threads.length === 0) {
+      return () => undefined;
+    }
+
+    let cancelled = false;
+    void getCurrentDeviceId().then((deviceId) => {
+      if (cancelled) return;
+      void checkForGapsAndRequestFill(user.userId, deviceId, threads).catch((error) => {
+        console.warn('Gap detection pass failed', error);
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [threads, user?.userId]);
+
   // Singleton queue listener (always active while authenticated). Doc 31
   // §3.1/§5 Phase 2: dual-listens on BOTH the legacy per-user path and this
   // device's fanned-out per-device path during the migration window — a
@@ -679,16 +710,43 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     const unsubscribeLegacy = listenForMessages(user.userId, onMessage);
 
     let unsubscribeDevice: (() => void) | undefined;
+    let unsubscribeGapRequests: (() => void) | undefined;
     let cancelled = false;
     void getCurrentDeviceId().then((deviceId) => {
       if (cancelled) return;
       unsubscribeDevice = listenForMessagesOnDevice(user.userId, deviceId, onMessage);
+
+      // Cross-device history reconciliation, responder half (doc 31 §8.1).
+      // Lives here rather than in its own effect so it shares this effect's
+      // "always active while authenticated" lifetime and its resolved deviceId
+      // — a gap request is most often written while THIS device was closed, so
+      // the subscription has to be up whenever the app is, not only while some
+      // particular screen is mounted.
+      unsubscribeGapRequests = subscribeToGapRequests(user.userId, deviceId, (request) => {
+        void (async () => {
+          try {
+            if (!(await claimGapRequest(user.userId, request.requestId, deviceId))) {
+              return; // Another device is serving it.
+            }
+            // threadsRef, not `threads`: reading the state directly would make
+            // this effect depend on it and tear the listener down on every
+            // snapshot.
+            const thread = threadsRef.current.find(
+              (candidate) => candidate.chatId === request.chatId,
+            );
+            await answerGapRequest(user.userId, request, thread?.type === 'group');
+          } catch (error) {
+            console.warn('Gap-fill response failed', error);
+          }
+        })();
+      });
     });
 
     return () => {
       cancelled = true;
       unsubscribeLegacy();
       unsubscribeDevice?.();
+      unsubscribeGapRequests?.();
     };
   }, [markChatAsRead, user?.userId]);
 

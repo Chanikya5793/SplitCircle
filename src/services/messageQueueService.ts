@@ -382,6 +382,133 @@ export const queueMessageToOwnDevices = async (
 };
 
 /**
+ * RTDB rejects `undefined` outright. Local messages can legitimately carry
+ * undefined optional fields (a locally-composed `mediaMetadata` is built with
+ * spread-conditionals, and older stored messages predate fields added since),
+ * so a gap-fill replay of arbitrary local history has to sanitize where the
+ * normal send path could rely on building its payload field-by-field.
+ *
+ * Plain data only — unlike GroupContext's `stripUndefinedDeep` (see CLAUDE.md)
+ * this never sees a Firestore FieldValue sentinel, because nothing here writes
+ * to Firestore.
+ */
+const stripUndefinedDeep = <T>(value: T): T => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripUndefinedDeep(entry)) as unknown as T;
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (entry === undefined) continue;
+      out[key] = stripUndefinedDeep(entry);
+    }
+    return out as unknown as T;
+  }
+  return value;
+};
+
+/**
+ * Replays ONE already-stored message to this account's other devices, to fill a
+ * gap another device reported (doc 31 §8.1 / `syncGapService.ts`).
+ *
+ * Deliberately a sibling of `queueMessageToOwnDevices` rather than an option on
+ * it: that function is on the hot send path and mirrors only messages THIS
+ * device just authored, where `message.senderId === ownerUserId` always holds.
+ * Gap-fill replays history in both directions, so it must carry a message whose
+ * author is a PEER — which changes two things that would silently corrupt the
+ * self-mirror path if folded into it:
+ *
+ * 1. `envelopeSenderId`. The receiver names its Signal session by the sender's
+ *    USER id, but a replayed peer message is encrypted by one of the owner's
+ *    OWN devices. Without this field the receiver would look up a session keyed
+ *    to the original peer and fail to decrypt every replayed message. It is the
+ *    identity that signed the ciphertext; `senderId` stays the message's true
+ *    author, which is what the UI attributes it to.
+ * 2. `gapFill`. Suppresses the delivery receipt on the receive side — a replay
+ *    is not a fresh delivery, and re-acknowledging an old message would rewrite
+ *    its receipt with a misleading new `deliveredAt`.
+ *
+ * Coverage is deliberately `available-devices`, NOT the send path's strict
+ * `all-devices`: a stale sibling device that never published keys must not be
+ * able to block repairing a different, healthy device (that strictness exists
+ * to stop an attacker forcing plaintext on a real SEND — there is no such
+ * downgrade here, since a device we cannot encrypt for is simply skipped and
+ * stays behind until it publishes).
+ *
+ * Returns whether anything was actually queued.
+ */
+export const queueGapFillMessage = async (
+  ownerUserId: string,
+  message: ChatMessage,
+  isGroupChat: boolean = false,
+): Promise<boolean> => {
+  const originDeviceId = await getOrCreateInstallationId();
+
+  const encrypted = await encryptMessageForRecipient(
+    ownerUserId,
+    {
+      content: message.content,
+      replyToContent: message.replyTo?.content,
+      location: message.location,
+    },
+    originDeviceId,
+    'network-preferred',
+    'available-devices',
+  );
+
+  // No other device of ours can be encrypted for. Skipping matches
+  // queueMessageToOwnDevices' rule: putting our own history in transit buys
+  // nothing when no device is able to read it.
+  if (!encrypted || Object.keys(encrypted.envelopes).length === 0) {
+    return false;
+  }
+
+  const messageData: Record<string, unknown> = {
+    // The true author, preserved — this is what the receiving device attributes
+    // the message to, and it is NOT necessarily this account.
+    senderId: message.senderId,
+    envelopeSenderId: ownerUserId,
+    gapFill: true,
+    chatId: message.chatId,
+    requestId: message.requestId ?? message.id,
+    content: '',
+    type: message.type,
+    timestamp: message.createdAt ?? message.timestamp,
+    mediaUrl: message.mediaUrl || null,
+    thumbnailUrl: message.thumbnailUrl || null,
+    isGroupChat,
+    originDeviceId,
+    status: message.status ?? 'sent',
+    envelopes: encrypted.envelopes,
+    senderSignalDeviceId: encrypted.senderSignalDeviceId,
+    encrypted: true,
+  };
+
+  if (message.mediaMetadata) messageData.mediaMetadata = message.mediaMetadata;
+  if (message.replyTo?.messageId) {
+    messageData.replyTo = { ...message.replyTo, content: '' };
+  }
+  if (message.forwardedFrom) messageData.forwardedFrom = message.forwardedFrom;
+  if (message.expenseRef) messageData.expenseRef = message.expenseRef;
+
+  // The relay node's KEY must stay the message id — fanOutQueuedMessage
+  // forwards it as the per-device key and the receiver reads `snapshot.key` as
+  // the message id, so any other key would land as a NEW message instead of
+  // deduping against the copy the requester may already hold.
+  //
+  // Hence the delete first. `fanOutQueuedMessage` is an onValueCreated trigger,
+  // so a plain `set` over a node that still exists is an UPDATE and fires
+  // nothing — and a node does linger whenever a previous fan-out threw (its
+  // error path deliberately leaves the node in place). Without this, replaying
+  // exactly the message most likely to have failed delivery would silently do
+  // nothing, forever. Removing first guarantees the create the trigger needs.
+  const relayRef = ref(rtdb, `messageQueue/${ownerUserId}/${message.id}`);
+  await remove(relayRef);
+  await set(relayRef, stripUndefinedDeep(messageData));
+  return true;
+};
+
+/**
  * Register the current user as a permitted receipt reader for a chat.
  * This is used by RTDB rules to scope receipt reads.
  */
@@ -479,9 +606,21 @@ const attachQueueListener = (
     // identity) look like permanent message loss.
     const envelope = raw?.envelope as { t?: number; b?: string } | undefined;
     const senderSignalDeviceId = Number(raw?.senderSignalDeviceId);
+    // WHO ENCRYPTED THIS is not always WHO WROTE IT. For an ordinary message
+    // they're the same person, but a gap-fill replay (queueGapFillMessage) is
+    // a peer's message re-encrypted by one of OUR OWN devices — the Signal
+    // session is keyed to that device's user id, not to the original author.
+    // Falling back to payload.senderId keeps every pre-existing payload shape
+    // decrypting exactly as before.
+    const envelopeSenderId = typeof raw?.envelopeSenderId === 'string' && raw.envelopeSenderId
+      ? raw.envelopeSenderId
+      : payload.senderId;
+    // A replay is not a fresh delivery: no receipt, and it carries the
+    // originating device's own view of the message's status.
+    const isGapFill = raw?.gapFill === true;
     if (envelope?.b != null && envelope?.t != null && Number.isFinite(senderSignalDeviceId)) {
       const decrypted = await decryptMessageEnvelope(
-        payload.senderId,
+        envelopeSenderId,
         senderSignalDeviceId,
         { t: envelope.t, b: envelope.b },
       );
@@ -560,8 +699,10 @@ const attachQueueListener = (
         // (doc 31 §3.3), is NOT "delivered to us" — that would claim the real
         // recipient received it. Carry the sending device's own status
         // instead, defaulting to 'sent'.
-        status: isSelfAuthored
-          ? ((typeof raw?.status === 'string' ? raw.status : 'sent') as ChatMessage['status'])
+        status: (isSelfAuthored || isGapFill)
+          ? ((typeof raw?.status === 'string'
+              ? raw.status
+              : (isSelfAuthored ? 'sent' : 'delivered')) as ChatMessage['status'])
           : 'delivered',
         // Left false even for our own mirrored messages, deliberately: this
         // flag drives MEDIA resolution (useResolvedMediaUri / AlbumBubble),
@@ -578,7 +719,7 @@ const attachQueueListener = (
       // acknowledging user, so self-sync would write the sender's own id into
       // deliveredTo — making a message look delivered to a recipient purely
       // because the sender has a second device.
-      if (!isSelfAuthored) {
+      if (!isSelfAuthored && !isGapFill) {
         await sendDeliveryReceipt(payload.chatId, messageId, userId, payload.isGroupChat ?? false);
       }
       await remove(ref(rtdb, deletePath(messageId)));

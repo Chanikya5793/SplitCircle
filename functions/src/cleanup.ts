@@ -170,6 +170,45 @@ export const cleanupOldRtdbData = onSchedule("every 24 hours", async (event) => 
             }
         }
 
+        // 2d. Cross-device history-reconciliation requests (doc 31 §8.1).
+        // Path: syncGapRequests/{ownerUserId}/{requestId}
+        //
+        // Short-lived by design: a requester overwrites its own node each
+        // detection pass and deletes it once caught up. But a device that is
+        // uninstalled, revoked, or simply never catches up would otherwise
+        // leave a permanent node, and a node whose requester has restarted is
+        // one no device will ever clear (the in-memory bookkeeping that clears
+        // it does not survive a relaunch). One hour, not the seven days used
+        // for message queues: detection is repeatable, so a still-behind device
+        // re-raises its request on the next threads update — expiring early
+        // costs nothing and expiring late leaves other devices redundantly
+        // serving gaps that already closed.
+        const gapRequestCutoff = now - ONE_HOUR_MS;
+        const gapRequestsRef = db.ref("syncGapRequests");
+        const gapRequestsSnapshot = await gapRequestsRef.get();
+
+        if (gapRequestsSnapshot.exists()) {
+            const gapUpdates: Record<string, null> = {};
+            let deletedGapRequests = 0;
+
+            gapRequestsSnapshot.forEach((userSnapshot) => {
+                const ownerUserId = userSnapshot.key;
+                userSnapshot.forEach((requestSnapshot) => {
+                    const requestId = requestSnapshot.key;
+                    const data = requestSnapshot.val();
+                    if (data && typeof data.createdAt === "number" && data.createdAt < gapRequestCutoff) {
+                        gapUpdates[`syncGapRequests/${ownerUserId}/${requestId}`] = null;
+                        deletedGapRequests++;
+                    }
+                });
+            });
+
+            if (Object.keys(gapUpdates).length > 0) {
+                await applyInChunks(db, gapUpdates);
+                logger.info(`Deleted ${deletedGapRequests} stale sync-gap requests.`);
+            }
+        }
+
         // 3. Cleanup stale call entries — any call older than 1 hour is dead.
         //    Calls stuck in "ringing" because the client crashed / lost network
         //    will linger forever without this, and the client may surface them

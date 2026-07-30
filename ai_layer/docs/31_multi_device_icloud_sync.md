@@ -1963,3 +1963,557 @@ HAVE. That is now four times in this build. A comment is not evidence.
   upsell) is undecided.
 - **§3.12's recovery-bootstrap tradeoff needs explicit product-owner
   confirmation before Phase 8 builds it.**
+
+## 7. Offline/reconnect sync audit (2026-07-30) — "chat history isn't syncing to a linked device"
+
+Triggered by a report that chat history does not reliably sync between a main
+device and linked devices when one goes offline and comes back. This is a
+**research-only pass, code-verified, no implementation** — the goal was to
+find and document every anomaly bearing on that symptom, not to fix any of
+them. No physical two-device test was available in this session (this doc's
+own §5c "reality check" already establishes that engine-level checks — tsc,
+deploy, code review — do not prove a user-facing path works, so nothing below
+should be read as "verified on hardware" unless explicitly said). Everything
+here is a direct code trace, cited by file and line, cross-checked against
+this doc's own prior findings where they overlap.
+
+### 7.1 The intended offline-tolerance model, as built
+
+Live per-device sync (§3.1/§5 Phase 2) is a relay, not a durable store:
+client → `messageQueue/{recipientId}/{messageId}` (RTDB) →
+`fanOutQueuedMessage` trigger (`functions/src/messageFanout.ts`) → per-device
+copies at `messageQueueDevices/{recipientId}/{deviceId}/{messageId}` → each
+device's persistent listener (`listenForMessagesOnDevice`,
+`src/services/messageQueueService.ts:630`, attached in the ChatContext
+singleton queue-listener effect,
+[ChatContext.tsx:656-693](../../src/context/ChatContext.tsx:656)) consumes and
+deletes its own copy. Firebase RTDB is designed to replay the full backlog to
+a freshly-attached (or freshly-reconnected) listener, so in principle a device
+that was merely offline and comes back should self-heal for free, with no
+extra code — **provided nothing deleted the backlog first and the device was
+actually eligible to receive it in the first place.** §7.2 covers both ways
+that assumption breaks.
+
+The only mechanism that backfills a device's *history* (as opposed to live
+forward traffic) is the Phase 6 handoff
+([deviceSyncCoordinator.ts](../../src/services/deviceSyncCoordinator.ts)),
+and it is **one-shot per device lifetime** by design — gated by AsyncStorage
+flags (`HANDOFF_SENT_KEY`/`HANDOFF_RECEIVED_KEY`) that, once set, never fire
+again. It exists to bootstrap a brand-new pairing (bounded 90-day window,
+main → new companion, once). There is no mechanism anywhere in this codebase
+that re-checks "is this already-paired device still fully caught up" on an
+ongoing basis. **This is the single biggest structural gap**: the live-sync
+design is sound for short gaps and silently has no recovery for anything it
+misses beyond that.
+
+### 7.2 Confirmed root-cause candidates, ranked by how directly they explain the reported symptom
+
+1. **Reaped backlog, no recovery (RTDB-tier).**
+   `functions/src/cleanup.ts`'s `cleanupOldRtdbData` sweeps
+   `messageQueueDevices` entries older than `SEVEN_DAYS_MS` (7 days)
+   unconditionally — by the *message's* original timestamp, not by whether
+   the target device has ever come back online. A linked device offline
+   longer than 7 days has every message queued for it permanently deleted
+   before it can ever consume them. Because the only backfill mechanism
+   (above) is one-shot-per-device-lifetime, there is **no path back** for
+   that device to recover the gap — it just silently stays behind forever,
+   with no error, no retry, no user-visible signal that anything is wrong.
+   This is the most literal match for "went offline, came back, history
+   didn't sync."
+
+2. **Unconfirmed/never-published-keys device is excluded from delivery,
+   sometimes invisibly.** `fanOutQueuedMessage`
+   ([messageFanout.ts:42-48](../../functions/src/messageFanout.ts:42)) only
+   fans out to `pairedDevices` rows with `pairingStatus == "confirmed"`. A
+   device stuck `pending_confirmation` is correctly and visibly blocked by
+   `PendingPairingGate` (verified by reading
+   [PendingPairingGate.tsx](../../src/components/ui/PendingPairingGate.tsx) —
+   it full-screen blocks with `pointerEvents="auto"` and a clear
+   waiting/setup UI; this part is **not** an anomaly, noted so it isn't
+   re-litigated). But §5f #1 in this same doc found QR pairing itself was
+   broken at the IAM level (`createCustomToken` needs
+   `iam.serviceAccounts.signBlob`, which the Gen2 runtime service account
+   lacked) — the fix committed makes the failure *legible* and releases the
+   code for retry, but **nothing in this doc records the actual IAM grant
+   (`roles/iam.serviceAccountTokenCreator`) having been applied**. If it
+   hasn't been, QR pairing still fails today, and any companion that only
+   ever tried pairing via QR is stuck `pending_confirmation` indefinitely —
+   which *looks* like a sync bug ("my other device never gets anything") but
+   is actually a pairing bug wearing a sync costume. **Action needed: confirm
+   the IAM grant was actually applied in GCP, not just that the client-side
+   error message improved.**
+
+3. **A confirmed device that hasn't published Signal prekeys yet blocks
+   sends to the whole recipient, not just itself.**
+   `encryptMessageForRecipient`
+   ([messageEnvelope.ts:82-131](../../src/services/messageEnvelope.ts:82))
+   defaults to `coveragePolicy: 'all-devices'`, and throws
+   `EncryptionRequiredError` if even one of a recipient's confirmed devices
+   can't be encrypted for. `queueMessage`
+   ([messageQueueService.ts:162](../../src/services/messageQueueService.ts:162))
+   doesn't catch this, and `ChatContext.sendMessage`'s per-recipient loop
+   collects the failure and re-throws after the loop
+   ([ChatContext.tsx:1140-1149](../../src/context/ChatContext.tsx:1140)) — so
+   the **entire send is reported as failed** to the sender. A device that
+   was approved/confirmed but hasn't yet completed
+   `initializeSignalForDevice`/`publishSignalPrekeys` (e.g. approved while
+   the companion app wasn't open, or it crashed before publishing) is a
+   "confirmed" device with no key material — every message to that recipient
+   errors until the stuck device opens the app and publishes. This reads to
+   a user as "sending is broken," not "one linked device is behind," and
+   would also block delivery to that recipient's OTHER, perfectly healthy
+   devices as a side effect, since the whole send throws before any
+   recipient-specific partial success is surfaced.
+
+4. **A reinstalled device deadlocks messaging until one message is sacrificed
+   — §5f #3 in this doc, already found and partially fixed, but worth
+   restating in this context because it produces the identical user-visible
+   symptom.** iOS Keychain (and therefore the Signal identity + `deviceId`
+   via SecureStore) survives an app delete/reinstall; AsyncStorage and Signal
+   session files do not. The reinstalled device keeps its old identity, so
+   peers see no identity change and keep encrypting to sessions that no
+   longer exist locally — and because the sender blanks `content` once it
+   encrypts, there is no plaintext to fall back to, so those messages render
+   as **permanently undecryptable** on the reinstalled device (fixed to show
+   "⚠️ Couldn't decrypt this message" instead of a blank bubble, per
+   [messageQueueService.ts:494-513](../../src/services/messageQueueService.ts:494),
+   but the actual content is gone, not recovered). The self-healing part
+   (`markSessionForRebuild`, triggered from
+   [messageEnvelope.ts:171-182](../../src/services/messageEnvelope.ts:171))
+   only fixes sessions **going forward** — messages caught in the window
+   before the peer rebuilds are permanently lost, not delayed. From a user's
+   perspective this is indistinguishable from "my chat history didn't sync
+   after I was offline," even though the actual cause is a dead crypto
+   session, not a missed delivery. Reinstalling the app is a very plausible
+   thing a real user does after "being offline" for other reasons (low
+   storage, OS prompting a reinstall, etc.), so these two failure modes are
+   likely to get conflated in bug reports.
+
+5. **Fan-out failures are undiagnosable via server logs — a live, unfixed
+   instance of a bug this same doc already found and fixed elsewhere.** §5f
+   #2 of this doc documents that `toSafeError`'s `{ name, message }` shape
+   gets silently clobbered by the Cloud Functions logger's own top-level
+   `message` key, and says the fix ("all 45 error sites in index.ts") is
+   done. **It is not done in `functions/src/messageFanout.ts`.** That file
+   still defines and uses its own, unfixed `toSafeError`
+   ([messageFanout.ts:23-28,131](../../functions/src/messageFanout.ts:23))
+   returning the same `{ name, message }` shape `index.ts` was fixed away
+   from. Concretely: **any time `fanOutQueuedMessage` fails for a linked
+   device, the Cloud Function log for that failure shows no real cause** —
+   the exact failure mode that made bug §5f #1 (the IAM/QR bug) hard to find
+   in the first place, now confirmed to still apply to the one function most
+   directly responsible for delivering messages to linked devices. This
+   should be fixed the same way `index.ts` was (`errorName`/`errorMessage`/
+   `errorStack` instead of the colliding `name`/`message` keys) before
+   spending more time trying to diagnose delivery failures from these logs.
+
+### 7.3 Compounding/adjacent anomalies (don't independently explain the report, but degrade multi-device reliability and are easy to mistake for it)
+
+- **No cross-device unread/read-state sync outside an open chat screen.**
+  `markChatAsRead` ([ChatContext.tsx:499-529](../../src/context/ChatContext.tsx:499))
+  writes locally (`markMessagesRead`,
+  [localMessageStorage.ts:380](../../src/services/localMessageStorage.ts:380))
+  and fans a receipt out via `sendBulkReadReceipts` to the shared RTDB
+  `receipts/{chatId}/{messageId}/{recipientId}` path (keyed by the reading
+  user's uid, not device id — genuinely shared across that user's devices).
+  But the only listener that consumes `receipts/{chatId}` and applies it
+  locally, `listenForReceipts`, is attached inside `subscribeToMessages`
+  ([ChatContext.tsx:695-860](../../src/context/ChatContext.tsx:695)), which
+  only runs while that specific chat's screen is open — **not** in the
+  always-on singleton listener. Reading a chat on the main device does not
+  clear its unread state on a companion until that companion independently
+  opens the same chat (at which point RTDB replays the backlog and it
+  self-corrects). Until then, a companion's chat list can show a chat as
+  unread that was already read elsewhere — a visible, easy-to-notice "my
+  devices don't agree" symptom that isn't about message loss at all.
+
+- **A self-mirrored message arrives with no delivery/read state.** Confirmed
+  directly in code, matching what this doc's own Phase 3 section already
+  flagged as unresolved ("Message STATUS for a self-synced message is also
+  unresolved"): `queueMessageToOwnDevices`
+  ([messageQueueService.ts:321-382](../../src/services/messageQueueService.ts:321))
+  never sets `deliveredTo`/`readBy` on the payload it writes, and
+  `attachQueueListener`'s receive path
+  ([messageQueueService.ts:542-574](../../src/services/messageQueueService.ts:542))
+  unconditionally constructs the received `ChatMessage` with
+  `deliveredTo: [], readBy: []`, self-authored or not. A companion that
+  receives its own already-partially-delivered/-read sent message via the
+  mirror sees it reset to those ticks locally until (per the point above) it
+  opens that chat and the receipts listener backfills the real state.
+
+- **Group chats use pairwise fan-out, not the Sender Keys design this doc
+  documents (§2.5/§3.3), and the doc's own claim that group encryption
+  "deliberately throws rather than being half-built" (§5 Phase 3) does not
+  match the code.** Direct grep across `messageEnvelope.ts`,
+  `signalCryptoService.ts`, and `pairingService.ts` finds zero references to
+  `isGroupChat` — no throw guard exists anywhere in the encryption path.
+  `ChatContext.sendMessage`'s group path calls `queueMessage` once per
+  participant ([ChatContext.tsx:1140](../../src/context/ChatContext.tsx:1140)),
+  and `queueMessage` calls `encryptMessageForRecipient` per recipient exactly
+  as it does for a 1:1 chat — meaning group messages **are** being encrypted
+  today, just via O(participants × their device count) independent pairwise
+  Double Ratchet sessions per message, not one shared group session. This
+  mechanically works, but (a) it's a fifth instance of this doc's own
+  recurring pattern — prose asserting a property the code does not have —
+  and (b) it means finding #3 above (one confirmed-but-unpublished device
+  blocks the whole send) scales with group size: a 6-person group with 2
+  devices each is 12 independent encryption targets, any single stuck one of
+  which blocks the message for everyone, not just the stuck device's owner.
+  Group rekey-on-membership-change, separately, still has "no
+  implementation-level protocol detail" per this doc's own §6 — consistent
+  with there being no real Sender Key machinery to rekey in the first place.
+
+- **`getChatMessages`/local stats have no cross-device staleness signal
+  except what a device notices on its own.** Firestore's `chats/{chatId}`
+  doc already carries a live `lastMessage.createdAt` every device receives
+  via its threads listener regardless of RTDB/E2E state — this is a
+  legitimate, already-flowing "something happened in this chat" signal that
+  nothing currently reads for reconciliation purposes. Noted here (not as a
+  bug, since nothing claims to use it) because any future fix for finding #1
+  would likely start from this exact signal — it's the cheapest available
+  "am I behind" check with zero new infrastructure.
+
+- **`chats/{chatId}.lastMessage.content` is written in plaintext to Firestore
+  even for E2E-encrypted messages** — a genuine, separate, previously
+  undocumented issue found while checking whether thread metadata could
+  double as a sync signal. `ChatContext.sendMessage`
+  ([ChatContext.tsx:1159-1169](../../src/context/ChatContext.tsx:1159)) writes
+  `content: type !== 'text' ? getMessageTypeLabel(type) : content` where
+  `content` is the original plaintext `sendMessage` parameter — not the
+  encrypted payload `queueMessage` produces internally. This contradicts
+  §3.3's explicit invariant ("Not even the SplitCircle backend/Firebase
+  should be able to read message content") for every chat's most recent
+  message, all the time, regardless of whether the RTDB delivery path
+  correctly encrypted it. This is orthogonal to the offline-sync report — it
+  doesn't cause missed messages — but it's a real confidentiality gap in the
+  same feature, so it's recorded here rather than lost. Fixing it is a
+  product decision (the chat-list preview UX needs a redesign for E2E chats
+  — e.g. a generic "🔒 New message" placeholder), not a mechanical patch, so
+  it's deliberately not attempted as part of this audit.
+
+### 7.4 Checked and found correct (recorded so they aren't re-investigated)
+
+- `PendingPairingGate` does fully block app UI while `pairingStatus ===
+  'pending_confirmation'`, with a clear waiting/setup screen — not a silent
+  degradation.
+- `getOrCreateInstallationId` (`src/services/notificationService.ts:200-237`)
+  really is SecureStore/Keychain-backed with an AsyncStorage
+  fallback/backfill, consistent with this doc's claim elsewhere that
+  `deviceId` survives reinstall — verified directly, not assumed.
+- `messageQueueDevices` and `pairingConfirm` RTDB reaping (§5f #5) is present
+  and correctly implemented in `functions/src/cleanup.ts` as described
+  elsewhere in this doc — re-confirmed directly against current code, not
+  just the doc's own claim.
+- `fanOutQueuedMessage`'s atomicity (one multi-path `update()` covering every
+  device write plus the legacy-node delete) means a partial fan-out can't
+  leave some devices updated and others silently behind from that single
+  call — a failure is all-or-nothing at the RTDB level, falling back
+  correctly to the still-active legacy dual-listen path (assuming finding #5
+  above is fixed so failures are at least diagnosable).
+
+### 7.5 Recommended next steps (not performed in this pass — documentation only, per instruction)
+
+1. Confirm in the actual GCP IAM console whether
+   `roles/iam.serviceAccountTokenCreator` was granted to the Gen2 functions
+   service account (finding #2) — this single fact determines whether QR
+   pairing works at all today, which upstream-gates everything else in this
+   list for any device paired that way.
+2. Fix `functions/src/messageFanout.ts`'s `toSafeError` to match
+   `functions/src/index.ts`'s `errorName`/`errorMessage`/`errorStack`
+   pattern (finding #5) — this is a small, mechanical, low-risk fix and
+   should land before spending further effort diagnosing delivery issues
+   from these logs, since right now that diagnosis is flying blind.
+3. Design (not yet started) a repeatable reconciliation mechanism for
+   finding #1 — the structural gap is real regardless of which specific
+   trigger (7-day offline, reinstall, stuck pairing) a given user hits. Any
+   design should reuse `queueMessageToOwnDevices`'s existing
+   encrypt-and-fan-out path rather than inventing new delivery/crypto
+   surface, per this doc's own repeated lesson about reusing proven
+   mechanisms.
+4. Get real two-device (ideally three, to exercise the "additional device
+   converges" case) hardware time — per §5c of this doc, nothing above is
+   confirmed as the *actual* cause of any specific real-world report until
+   it reproduces on real devices; this pass identifies plausible, code-true
+   mechanisms, not a confirmed incident post-mortem.
+
+## 8. Resolution — designed 2026-07-30, then BUILT the same day (see §8.5 for real status)
+
+**Read §8.5 before trusting anything in §8.1-§8.4.** The code is written,
+typechecks, and has its own test suite, but **the server half is NOT DEPLOYED
+and nothing has run on a device** — which, per §5c's own ladder, is two full
+rungs below working.
+
+Per-finding designs for §7.2/§7.3, written to close the gap between "diagnosed"
+and "buildable" without writing code. **Nothing in this section has been
+implemented.** Each item is scoped to be a small, reviewable change reusing
+existing primitives, per this doc's own repeated lesson (§4, §5b, §5c) that
+inventing new delivery/crypto surface is where past regressions came from.
+
+### 8.1 The core fix — repeatable gap-fill reconciliation (closes finding #1)
+
+Generalizes the existing one-shot history handoff into an ongoing mechanism,
+reusing 100% of the already-built, already-tested delivery path rather than
+inventing a new one.
+
+**New signals (already flowing, zero new listeners to produce them):**
+- Every device already Firestore-subscribes to `chats/{chatId}` and receives
+  live `lastMessage.createdAt` updates
+  ([ChatContext.tsx:560-639](../../src/context/ChatContext.tsx:560)) — a
+  plaintext, already-synced "something happened in this chat" signal (§3.3
+  already scopes `timestamp` as plaintext-allowed; this is that field).
+- `getLocalMessageStats(chatId?)`
+  ([localMessageStorage.ts:272](../../src/services/localMessageStorage.ts:272))
+  already gives per-chat `{count, latestTimestamp}` from local AsyncStorage.
+
+**New RTDB path** `syncGapRequests/{ownerUserId}/{requestId}`, deterministic
+key `${chatId}_${requesterDeviceId}` (a "current known gap" record, not an
+event log — repeated detection passes overwrite it rather than
+accumulating). Payload: `{chatId, sinceTimestamp, requesterDeviceId,
+createdAt, claimedBy}`. Per-account (not per-device) coordination: rule is
+`auth.uid == $ownerUserId` for read/write, no `deviceId`-claim restriction —
+this isn't a security boundary between devices, it's a device's own account
+coordinating with its own other devices. No message content in this payload,
+ever — only `chatId` (already plaintext-scoped), a number, and device ids.
+
+**Flow:**
+1. *Detection (requester side, repeatable — not gated behind a one-shot
+   flag):* whenever a device's `threads` list updates, for each thread where
+   local `count > 0` (the scope guard below) and `lastMessage.createdAt >
+   localStats.latestTimestamp + 30s` slack, write a gap request. Clear it once
+   caught up.
+2. *Claim (any other online device of the same account):* `runTransaction`
+   on `claimedBy`, set to the responder's own device id only if currently
+   null — same "exactly one winner" pattern already used for
+   `answeredBy` on calls
+   ([callService.ts](../../src/services/callService.ts), §5 Phase 2).
+3. *Answer:* the claiming device reads its OWN local messages for that chat
+   after `sinceTimestamp` (`getChatMessages(chatId)`, already exists) and, for
+   each, calls the EXISTING `queueMessageToOwnDevices(ownerUserId, message,
+   isGroupChat)`
+   ([messageQueueService.ts:321](../../src/services/messageQueueService.ts:321))
+   — already handles per-device E2E encryption, already excludes the
+   responding device via its own installation id, already rides the existing
+   `fanOutQueuedMessage` trigger. Already-caught-up sibling devices just
+   dedupe-noop on the known message id (existing behavior, already relied on
+   elsewhere in this codebase for the migration-window dual-listen). If the
+   responder finds zero matching local messages, it releases its claim
+   (`claimedBy` back to null) rather than sitting stuck-claimed-but-unserved,
+   so a better-informed device can pick it up later.
+4. *Convergence:* the responder does NOT delete the request node — it can't
+   know if it had the *complete* gap or just part of it. The requester clears
+   it on its own next detection pass once local stats show it caught up. This
+   is what makes it correct with N devices and no central authority: any
+   device with more history than the requester can serve part or all of a gap,
+   repeatedly, until the requester's own state says it's done.
+
+**Scope guard (important, prevents fighting Phase 6):** only request a
+gap-fill when local `count > 0` for that chat — i.e. this repairs "I already
+had this chat and missed recent activity," not "bootstrap a chat I've never
+opened," which stays Phase 6/pagination's job. Without this guard, a
+brand-new companion with dozens of unopened chats would flood itself with
+full-history gap-fill requests outside the volume this mechanism (or the
+reaper tuned for it) is designed for.
+
+**What this does and doesn't fix:** closes finding #1 for gaps caused by
+being offline past the reaper window, or any other reason a message didn't
+land locally, PROVIDED at least one other device that has the missing
+messages comes online at some point (true by construction once ≥2 devices
+are ever simultaneously online again — matches the goal's stated bar). It
+does NOT fix findings #2-#4, which are not sync-model problems:
+
+- **#2 (QR/IAM)** is an infrastructure fact to verify, not a design — §7.5
+  item 1.
+- **#3 (all-devices encryption coverage blocks the whole send)**: proposed
+  policy change — make `queueMessage`'s default `coveragePolicy`
+  `'available-devices'` (the option already exists in
+  [messageEnvelope.ts](../../src/services/messageEnvelope.ts) but isn't used
+  by any call site) instead of `'all-devices'`, so one device with
+  unpublished keys degrades to "that device is behind" (which 8.1's gap-fill
+  now has a real recovery path for) instead of "nobody gets the message."
+  This is a real security/reliability tradeoff — §3.3's rollout note already
+  flags `EncryptionRequiredError` as intentionally strict to stop an attacker
+  from suppressing key publication to force plaintext — so this specific
+  change needs explicit product sign-off, not just an engineering call; flagged
+  here rather than decided.
+- **#4 (reinstall deadlock)**: 8.1's gap-fill helps the SECOND-order symptom
+  (once the session rebuilds, the reinstalled device is "behind" like any
+  other gap and gets backfilled) but not the first-order one (the specific
+  message(s) that failed to decrypt during the dead-session window are gone
+  ciphertext, not recoverable by definition — E2E means the sender's original
+  plaintext is the only source, and it was already discarded). No design
+  closes this without weakening the "blank content once encrypted" property
+  itself, which nothing here proposes.
+
+### 8.2 Small mechanical fixes (finding #5, and #3's minimum-viable half)
+
+- `functions/src/messageFanout.ts`'s `toSafeError` → replace with the same
+  `errorName`/`errorMessage`/`errorStack` shape `functions/src/index.ts:149`
+  already uses. No design decision here, purely restores diagnosability.
+- Read-state (§7.3): move the `receipts/{chatId}` subscription (or a
+  per-account rollup of it) into the always-on singleton listener area
+  instead of only the open-chat-screen subscription, OR accept the current
+  behavior as intentional (a companion's chat list "unread" state is a UX
+  question, not a data-loss one) — needs a product call on whether this is
+  worth the extra always-on listener cost, not purely an engineering one.
+
+### 8.3 Instrumentation plan (closes step 3 of the objective, design only)
+
+Not implemented — this is what would be added, and where, to make a future
+real-hardware test (8.4) actually diagnosable instead of a black box:
+
+- `fanOutQueuedMessage`: log device count fanned-to, skipped-and-why
+  (already partially present — extend with the #5 fix so failures carry a
+  real cause), and the `messageQueueDevices` write's own timestamp so gap
+  duration is computable after the fact.
+- `listenForMessagesOnDevice`/`attachQueueListener`: log listener
+  attach/detach with a wall-clock delta from the previous detach on the same
+  device (this IS the "connection/disconnection" signal the objective's step
+  3 asks for — RTDB doesn't expose true presence, but "how long was my own
+  listener not running" is the client-side proxy that actually matters for
+  this bug).
+- New `syncGapRequests` flow (8.1, once built): log request-written,
+  claimed-by, served-count, cleared events — this doubles as the trace the
+  objective's step 3 asks for ("pinpoint where messages are lost if device is
+  offline"), since a request that's written and never claimed/served is
+  exactly that pinpoint.
+- `cleanupOldRtdbData`'s per-path deleted-counts (already logged) should be
+  cross-referenced against the above — a spike in `messageQueueDevices`
+  deletions for a given device right before it reconnects is the direct
+  signature of finding #1.
+
+### 8.4 Manual two/three-device test protocol (closes step 2 of the objective, design only)
+
+Cannot be executed in this environment (no physical multi-device rig
+available to this session — consistent with every other phase in this doc
+that required real hardware, per §5c). Written so it's ready to run when
+hardware is available, and so "verified" has a concrete bar to meet rather
+than being asserted:
+
+1. Pair a main device (A) with two companions (B, C) through to `confirmed`
+   status (this alone exercises finding #2 — if B or C get stuck at
+   `pending_confirmation`, the QR/IAM issue is confirmed live, not just
+   plausible).
+2. Put B in airplane mode. Send messages A↔C for longer than the reaper
+   window's ability to matter for a quick test — for a *fast* test, manually
+   lower `SEVEN_DAYS_MS` in a scratch deploy rather than waiting a week, or
+   directly delete B's `messageQueueDevices` entries via the console to
+   simulate the reaper having already run. Bring B back online. Expected
+   today: B never gets those messages (confirms finding #1). Expected after
+   8.1: B's next detection pass requests and receives them from A or C.
+3. Repeat with A (the main device) offline instead, B/C exchanging — confirms
+   the model isn't secretly main-device-dependent in either direction, which
+   is the goal's explicit bar ("bi-directional," "any number of linked
+   devices," not "main relays everything").
+4. Bring a 4th device D online only after the above has converged — confirms
+   "additional devices sync and cross-verify as they come online" (the
+   goal's convergence requirement) rather than only pairwise catch-up.
+5. Force-quit and reinstall B mid-test to exercise finding #4 independently
+   of finding #1, so the two don't get conflated in the result.
+
+"Verified" for this feature means this protocol passing on real devices, not
+`tsc --noEmit` or a dry-run rules compile — restated here because this exact
+substitution is this doc's single most repeated failure mode (§5c).
+
+### 8.5 What actually got built (2026-07-30) — and exactly where it stops
+
+Implemented after the product owner lifted the research-only restriction. Files
+changed:
+
+| File | Change |
+|---|---|
+| `src/services/syncGapService.ts` | **New.** Detection, request/claim/release, responder. |
+| `src/services/messageQueueService.ts` | New `queueGapFillMessage`; receive path learns `envelopeSenderId` + `gapFill`. |
+| `src/context/ChatContext.tsx` | Detection effect on threads change; responder subscription in the singleton listener. |
+| `database.rules.json` | New `syncGapRequests` block; additive branch on `messageQueue` write + `senderId` validator. |
+| `functions/src/cleanup.ts` | Reaper block 2d for `syncGapRequests` (1 hour). |
+| `functions/src/messageFanout.ts` | `toSafeError` → `errorName`/`errorMessage`/`errorStack` (§7.2 finding #5). |
+| `src/services/__tests__/syncGapService.test.ts` | **New.** 15 behavioural tests. |
+
+**Three real problems found while building, that the design in §8.1 had wrong
+or unstated.** Recording them because each would have shipped as a silent
+failure, and each was found by reading the surrounding code rather than by any
+check that passed or failed:
+
+1. **The RTDB rule would have rejected every replay of a peer's message.**
+   `messageQueue/{recipientId}/{messageId}` required
+   `newData.child('senderId').val() == auth.uid`, both in the `.write` rule and
+   in the `senderId` `.validate`. That holds for every existing caller, because
+   `queueMessageToOwnDevices` only ever mirrors messages the user just AUTHORED.
+   Gap-fill replays history in both directions, so roughly half of what it
+   sends carries a peer's `senderId` and would have been denied. Fixed with an
+   ADDITIVE `auth.uid == $recipientId` branch (write into your own queue only) —
+   additive, so no existing write path changes behaviour. The residual: a user
+   can now inject a message into their own queue attributed to anyone. That is
+   a self-spoof with no cross-user reach, and the Signal envelope still proves
+   which of their own devices actually sent it.
+2. **Decryption would have failed on every replayed peer message.** The receive
+   path names its Signal session by `payload.senderId`, but a replay is
+   encrypted by one of the OWNER's devices, not by the original author — so it
+   would have looked up a session that does not exist and rendered the
+   "⚠️ Couldn't decrypt" placeholder for the entire backfill. Fixed with an
+   explicit `envelopeSenderId` field (who encrypted it) kept separate from
+   `senderId` (who wrote it), defaulting to the old behaviour when absent.
+3. **`fanOutQueuedMessage` is an `onValueCreated` trigger, so a `set` over a
+   lingering node fires nothing.** Its own error path deliberately leaves the
+   relay node in place on failure — meaning the message most likely to need
+   replaying is exactly the one whose node still exists, and replaying it would
+   have silently done nothing forever. `queueGapFillMessage` now deletes before
+   writing. (The node key must stay the message id: the receiver reads
+   `snapshot.key` as the id, so any other key would land as a new message
+   instead of deduping.)
+
+**Verified — and only this:**
+- `npx tsc --noEmit` clean, app AND `functions/` (exit 0 both).
+- `firebase deploy --only database --dry-run` → "rules syntax ... is valid"
+  against the real project.
+- Full suites green: 419 unit, 209 services (was 194 — the 15 new ones), 15 DOM.
+- The 15 new tests cover the scope guard, the 30s slack window, request
+  de-duplication, watermark advance/re-ask, clear-on-caught-up, never answering
+  your own request, never poaching another device's claim, malformed-request
+  tolerance, claim contention, replay ordering/filtering, and all three
+  claim-release paths.
+
+**DEPLOYED 2026-07-30, and verified as deployed rather than assumed:**
+- `firebase deploy --only database` → released. Then the live rules were
+  **fetched back from the RTDB REST endpoint** (`/.settings/rules.json`) and
+  checked to actually contain the `syncGapRequests` block, the `messageQueue`
+  self-queue write branch, and the relaxed `senderId` validator. The CLI
+  reporting success is not the evidence; the server echoing the rules is.
+- `firebase deploy --only functions:cleanupOldRtdbData,functions:fanOutQueuedMessage`
+  → both "Successful update operation", then confirmed present in
+  `firebase functions:list` (v2, nodejs22, correct triggers). Export names were
+  read out of `functions/src/index.ts` first, per the CLAUDE.md gotcha that a
+  filter on an impl name fails outright.
+- Deploying the rules ahead of any client that uses them is safe by
+  construction: every rules change here is ADDITIVE permission, so no existing
+  client's behaviour changes, and the reaper's new block sweeps a path that is
+  currently empty.
+
+**NOT verified — and the first of these means users do not have it yet:**
+- **The CLIENT half has not shipped.** `syncGapService.ts`, the
+  `messageQueueService` changes and the `ChatContext` wiring are JS and exist
+  only in this working tree — no `npm run ship:ios`, no TestFlight build. The
+  server is ready and waiting; no device is running the code that talks to it.
+- Nothing has run on a device. No gap has been detected, requested, claimed,
+  served or converged on real hardware. §8.4's protocol remains the bar.
+- The interaction with a real `fanOutQueuedMessage` (envelope splitting on a
+  payload carrying `envelopeSenderId`/`gapFill`) is reasoned-about, not
+  observed. The trigger forwards unknown fields by spread and `messageQueue`
+  has no `$other` deny, so both should pass through — "should" is doing real
+  work in that sentence.
+- Media replay is inherited from the normal receive path (the replay carries
+  `mediaUrl` and the receiver re-downloads). Untested, and a replay of a
+  message whose media has since been deleted server-side will land as a bubble
+  with no media rather than failing loudly.
+
+**A sixth instance of the prose-vs-code pattern, found in passing.** §3.4 point
+2(e) says `redeemPairingCode` writes an RTDB `pairingConfirm/{uid}/{code}`
+event "the main device is already subscribed to." `functions/src/pairing.ts`
+does write it and `cleanup.ts` now reaps it — but a repo-wide grep finds **zero
+readers in `src/`**. Nothing has ever subscribed. The main device learns about
+a pending pairing through the push notification and the `pairedDevices`
+snapshot instead, so nothing is broken by its absence; the write is simply
+dead, and the doc has described a subscription that does not exist since Phase
+1. Not fixed here (deleting it touches the pairing path, which §5e still lists
+as unverified on hardware) — recorded so the next person does not go looking
+for the listener.
