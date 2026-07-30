@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../modules/splitcircle-crypto', () => ({
   isCryptoAvailable: () => false,
+  openWithIdentity: vi.fn(),
+  sealToIdentity: vi.fn(async () => 'identity-ciphertext'),
   signWithIdentity: vi.fn(),
   verifyWithIdentity: vi.fn(),
 }));
@@ -9,20 +11,33 @@ vi.mock('../../../modules/splitcircle-crypto', () => ({
 vi.mock('../signalCryptoService', () => ({
   getCachedPeerIdentityKey: vi.fn(),
   getPersistedSignalDeviceId: async () => 7,
+  listSignalDevices: vi.fn(async (userId: string) => [{
+    deviceId: `device-${userId.slice(1)}`,
+    signalDeviceId: Number(userId.slice(1)),
+    identityKey: `identity-${userId}`,
+  }]),
 }));
 
 vi.mock('../messageEnvelope', () => ({
-  encryptMessageForRecipient: vi.fn(async () => ({
+  encryptMessageForRecipient: vi.fn(async (recipientId: string) => ({
     senderSignalDeviceId: 7,
-    envelopes: { 'device-2': { t: 3, b: 'ciphertext' } },
+    envelopes: {
+      [`device-${recipientId.slice(1)}`]: { t: 3, b: 'ciphertext' },
+    },
   })),
   decryptMessageEnvelope: vi.fn(),
 }));
 
 import type { ChatMessage, ChatThread } from '@/models';
 import { encryptMessageForRecipient } from '../messageEnvelope';
+import { listSignalDevices } from '../signalCryptoService';
+import {
+  openWithIdentity,
+  sealToIdentity,
+} from '../../../modules/splitcircle-crypto';
 import {
   buildMeshMessageBody,
+  decryptMeshBodyForDevice,
   isMeshBodyAuthorizedForThread,
   parseSignedMeshEnvelope,
   resolveMeshThreadAudience,
@@ -84,6 +99,51 @@ describe('nearby message protocol', () => {
     );
   });
 
+  it('identity-seals a known device when its Signal ratchet cannot be used offline', async () => {
+    vi.mocked(encryptMessageForRecipient).mockImplementationOnce(async () => null);
+    vi.mocked(listSignalDevices).mockImplementationOnce(async () => [{
+      deviceId: 'mini-present',
+      signalDeviceId: 1,
+      identityKey: 'mini-verified-identity',
+    }]);
+
+    const body = await buildMeshMessageBody({
+      message,
+      thread: {
+        ...thread,
+        participantIds: ['u1', 'u2'],
+      },
+      originUserId: 'u1',
+      originDeviceId: 'device-1',
+    });
+
+    expect(body?.encryptedForDevices['mini-present']).toEqual({
+      m: 'identity-hpke',
+      b: 'identity-ciphertext',
+    });
+    expect(sealToIdentity).toHaveBeenCalledWith(
+      expect.any(String),
+      'mini-verified-identity',
+      'ManaSplit nearby identity recovery v1',
+      expect.any(String),
+    );
+
+    const associatedData = vi.mocked(sealToIdentity).mock.calls.at(-1)?.[3];
+    vi.mocked(openWithIdentity).mockResolvedValueOnce(
+      globalThis.btoa(unescape(encodeURIComponent(JSON.stringify({
+        content: 'offline hello',
+      })))),
+    );
+    expect(body && await decryptMeshBodyForDevice(body, 'mini-present')).toEqual(
+      expect.objectContaining({ content: 'offline hello' }),
+    );
+    expect(openWithIdentity).toHaveBeenCalledWith(
+      'identity-ciphertext',
+      'ManaSplit nearby identity recovery v1',
+      associatedData,
+    );
+  });
+
   it('rejects a truncated audience, non-member sender, or wrong recipient', async () => {
     const body = await buildMeshMessageBody({
       message,
@@ -139,6 +199,40 @@ describe('nearby message protocol', () => {
     )).toBe(true);
   });
 
+  it('treats Firestore null and omitted groupId as the same direct-chat value', async () => {
+    const directThread = {
+      chatId: 'chat-1',
+      type: 'direct',
+      groupId: null,
+      participantIds: ['u1', 'u2'],
+      participants: [
+        { userId: 'u1', displayName: 'One', status: 'offline' },
+        { userId: 'u2', displayName: 'Two', status: 'offline' },
+      ],
+      unreadCount: 0,
+    } as unknown as ChatThread;
+    const body = await buildMeshMessageBody({
+      message,
+      thread: directThread,
+      originUserId: 'u1',
+      originDeviceId: 'device-1',
+    });
+
+    expect(body?.groupId).toBeUndefined();
+    expect(body && isMeshBodyAuthorizedForThread(
+      body,
+      directThread,
+      'u2',
+      body.createdAt,
+    )).toBe(true);
+    expect(body && isMeshBodyAuthorizedForThread(
+      { ...body, groupId: 'unexpected-group' },
+      directThread,
+      'u2',
+      body.createdAt,
+    )).toBe(false);
+  });
+
   it('refuses a malformed direct-chat cache instead of broadening its audience', () => {
     expect(resolveMeshThreadAudience({
       ...thread,
@@ -172,6 +266,20 @@ describe('nearby message protocol', () => {
     expect(parseSignedMeshEnvelope(JSON.stringify({
       v: 2,
       bodyBase64,
+      signatureBase64: 'signature',
+    }))).toBeNull();
+
+    const malformedRecovery = {
+      ...body,
+      encryptedForDevices: {
+        'device-2': { m: 'identity-hpke', b: '' },
+      },
+    };
+    expect(parseSignedMeshEnvelope(JSON.stringify({
+      v: 1,
+      bodyBase64: globalThis.btoa(
+        unescape(encodeURIComponent(JSON.stringify(malformedRecovery))),
+      ),
       signatureBase64: 'signature',
     }))).toBeNull();
   });

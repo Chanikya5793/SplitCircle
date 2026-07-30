@@ -20,7 +20,11 @@
 // Cross-cell de-dup: `downloadMedia` already short-circuits when the local
 // path exists, so 10 cells in one album hitting it in parallel is cheap.
 
-import { downloadMedia, mediaExistsLocally } from '@/services/mediaService';
+import {
+  downloadMedia,
+  getLocalMediaPath,
+  mediaExistsLocally,
+} from '@/services/mediaService';
 import {
   buildStamp,
   getCachedRender,
@@ -39,6 +43,8 @@ export interface ResolvedMediaState {
   /** Wire into <Image onError={...}>. Will retry by switching to mediaUrl
    *  once if we haven't already. */
   handleLoadError: () => void;
+  /** Clears a transient decoder error after a later render succeeds. */
+  handleLoadSuccess: () => void;
 }
 
 interface ResolveInput {
@@ -66,6 +72,13 @@ const NON_MEDIA = new Set(['text', 'system', 'call', 'location']);
 
 export const useResolvedMediaUri = (input: ResolveInput): ResolvedMediaState => {
   const stamp = buildStamp(input);
+  // Nearby finalization writes to this deterministic path before the local
+  // message merge necessarily reaches every mounted album cell. Recovering
+  // it from identity + filename closes that short race and also repairs
+  // legacy records whose file survived but `localMediaPath` did not.
+  const canonicalLocalPath = input.fileName
+    ? getLocalMediaPath(input.chatId, input.messageId, input.fileName)
+    : undefined;
   // Seed optimistically from the message so the first render flashes
   // *something*. The effect verifies the file and corrects if needed.
   // We no longer trust the render cache for initial state because cached
@@ -100,15 +113,21 @@ export const useResolvedMediaUri = (input: ResolveInput): ResolvedMediaState => 
         // Stale — fall through to full resolution below.
       }
 
-      // 1. Prefer local if we can confirm the file exists.
-      if (input.localMediaPath) {
-        const exists = await mediaExistsLocally(input.localMediaPath);
+      // 1. Prefer a confirmed local file. Check both the stored path and the
+      // canonical current-container path: iOS can change a data-container UUID
+      // across reinstalls while preserving/restoring the relative media file.
+      const localCandidates = [...new Set([
+        input.localMediaPath,
+        canonicalLocalPath,
+      ].filter((candidate): candidate is string => Boolean(candidate)))];
+      for (const candidate of localCandidates) {
+        const exists = await mediaExistsLocally(candidate);
         if (cancelled) return;
         if (exists) {
-          setUri(input.localMediaPath);
+          setUri(candidate);
           setErrored(false);
           updateCachedRender(input.chatId, input.messageId, stamp, {
-            mediaUri: input.localMediaPath,
+            mediaUri: candidate,
           });
           return;
         }
@@ -156,6 +175,7 @@ export const useResolvedMediaUri = (input: ResolveInput): ResolvedMediaState => 
   }, [
     input.type,
     input.localMediaPath,
+    canonicalLocalPath,
     input.mediaUrl,
     input.isFromMe,
     input.chatId,
@@ -171,6 +191,7 @@ export const useResolvedMediaUri = (input: ResolveInput): ResolvedMediaState => 
     // cell can show a broken-image indicator.
     if (retriedFromError) {
       setErrored(true);
+      setUri(undefined);
       return;
     }
     setRetriedFromError(true);
@@ -178,8 +199,19 @@ export const useResolvedMediaUri = (input: ResolveInput): ResolvedMediaState => 
       setUri(input.mediaUrl);
     } else {
       setErrored(true);
+      setUri(undefined);
     }
   }, [retriedFromError, input.mediaUrl, uri]);
 
-  return { uri, isDownloading, errored, handleLoadError };
+  const handleLoadSuccess = useCallback(() => {
+    setErrored(false);
+  }, []);
+
+  return {
+    uri,
+    isDownloading,
+    errored,
+    handleLoadError,
+    handleLoadSuccess,
+  };
 };

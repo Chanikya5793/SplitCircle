@@ -270,6 +270,7 @@ const deviceListCache = new Map<
 >();
 const durableDeviceListKey = (userId: string): string =>
   `splitcircle.signal.deviceList.${userId}`;
+const DURABLE_DEVICE_LIST_PREFIX = 'splitcircle.signal.deviceList.';
 
 const loadDurableSignalDevices = async (
   userId: string,
@@ -352,6 +353,63 @@ export const listSignalDevices = async (
     }
     throw error;
   }
+};
+
+/**
+ * Commits the public identity learned through an explicit nearby pairing.
+ *
+ * The same installation UUID can remain in a former account's durable
+ * directory after sign-out. A successful human code ceremony is a stronger,
+ * newer binding than that stale cache, so this transaction removes the UUID
+ * from every other cached owner before adding the verified peer. Private key
+ * material never enters AsyncStorage.
+ */
+export const persistPairedSignalDevice = async ({
+  userId,
+  deviceId,
+  signalDeviceId,
+  identityKey,
+}: {
+  userId: string;
+  deviceId: string;
+  signalDeviceId: number;
+  identityKey: string;
+}): Promise<void> => {
+  if (
+    !userId
+    || !deviceId
+    || !Number.isFinite(signalDeviceId)
+    || signalDeviceId <= 0
+    || !identityKey
+  ) {
+    throw new Error('Invalid paired Signal device identity.');
+  }
+
+  const keys = (await AsyncStorage.getAllKeys())
+    .filter((key) => key.startsWith(DURABLE_DEVICE_LIST_PREFIX));
+  const targetKey = durableDeviceListKey(userId);
+  if (!keys.includes(targetKey)) keys.push(targetKey);
+  const rows = await AsyncStorage.multiGet(keys);
+  const writes: [string, string][] = [];
+
+  for (const [key, raw] of rows) {
+    let parsed: unknown = null;
+    try {
+      parsed = raw ? JSON.parse(raw) : null;
+    } catch {
+      // A corrupt public cache must not prevent an explicit re-pair. Rebuild
+      // only that cache row from the verified device below.
+    }
+    const devices = normalizeSignalDeviceDirectory(parsed)
+      .filter((device) => device.deviceId !== deviceId);
+    if (key === targetKey) {
+      devices.push({ deviceId, signalDeviceId, identityKey });
+    }
+    writes.push([key, JSON.stringify(devices)]);
+  }
+
+  await AsyncStorage.multiSet(writes);
+  deviceListCache.clear();
 };
 
 /** Public identity key cached during an earlier online sync, for mesh checks. */

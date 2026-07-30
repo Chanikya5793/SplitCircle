@@ -141,6 +141,18 @@ export const saveMessageLocally = async (message: ChatMessage): Promise<void> =>
         messages[existingIndex] = {
           ...existingMessage,
           ...message,
+          // A cloud convergence replay may omit device-local fields, and an
+          // older relay can explicitly materialize optional remote fields as
+          // `undefined`. Neither is authority to erase a working nearby file
+          // or URL that this phone already has.
+          localMediaPath:
+            message.localMediaPath ?? existingMessage.localMediaPath,
+          mediaDownloaded:
+            message.mediaDownloaded ?? existingMessage.mediaDownloaded,
+          mediaUrl:
+            message.mediaUrl ?? existingMessage.mediaUrl,
+          thumbnailUrl:
+            message.thumbnailUrl ?? existingMessage.thumbnailUrl,
           replyTo: message.replyTo || existingMessage.replyTo,
           deliveredTo: mergeUniqueIds(existingMessage.deliveredTo, message.deliveredTo),
           readBy: mergeUniqueIds(existingMessage.readBy, message.readBy),

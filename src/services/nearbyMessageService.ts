@@ -9,6 +9,7 @@ import {
   sendPreparedNearbyAttachment,
   startNearbyMesh,
   stopNearbyMesh,
+  updateNearbyTrustedPeers,
 } from '../../modules/splitcircle-mesh';
 import { getCurrentDeviceId } from '@/services/pairingService';
 import {
@@ -23,6 +24,15 @@ import {
   type NearbyMessageEvent,
 } from '@/services/nearbyMessagingState';
 import { announceIncomingNearbyAttachmentProgress } from '@/services/nearbyAttachmentService';
+import { parseSignedMeshEnvelope } from '@/services/meshMessageProtocol';
+import type { NearbyTrustedPeer } from '@/services/nearbyTrustService';
+import type { PairedNearbyPeer } from '@/services/nearbyPairingTrustService';
+import {
+  cancelNearbyPairing,
+  configureNearbyPairing,
+  handleNearbyPairingEnvelope,
+  handleNearbyPairingMeshState,
+} from '@/services/nearbyPairingService';
 
 let broadcastRunning = false;
 let nearbySnapshot = createNearbyMessagingSnapshot(isNearbyMeshAvailable());
@@ -38,6 +48,39 @@ export const getNearbyMessagingSnapshot = (): NearbyMessagingSnapshot => nearbyS
 export const subscribeToNearbyMessaging = (listener: () => void): (() => void) => {
   nearbyStateListeners.add(listener);
   return () => nearbyStateListeners.delete(listener);
+};
+
+export const setNearbyTrustedPeers = (
+  peers: readonly NearbyTrustedPeer[],
+): void => {
+  const trustedPeers = Object.fromEntries(
+    peers.map((peer) => [peer.deviceId, peer]),
+  );
+  publishNearbySnapshot({
+    ...nearbySnapshot,
+    trustedPeers,
+    lastChangedAt: Date.now(),
+  });
+  updateNearbyTrustedPeers(Object.keys(trustedPeers));
+};
+
+const addPairedNearbyPeer = (peer: PairedNearbyPeer): void => {
+  const trustedPeers = {
+    ...nearbySnapshot.trustedPeers,
+    [peer.deviceId]: {
+      deviceId: peer.deviceId,
+      userId: peer.userId,
+      label: peer.label,
+      relationship: 'paired' as const,
+      sharedChatCount: 0,
+    },
+  };
+  publishNearbySnapshot({
+    ...nearbySnapshot,
+    trustedPeers,
+    lastChangedAt: Date.now(),
+  });
+  updateNearbyTrustedPeers(Object.keys(trustedPeers));
 };
 
 export const restartNearbyMessagingDiscovery = (): void => {
@@ -81,7 +124,14 @@ export const broadcastQueuedNearbyMessages = async (): Promise<number> => {
     for (const operation of operations) {
       if (!operation.wireEnvelope) continue;
       try {
-        const sent = await broadcastNearbyEnvelope(operation.wireEnvelope);
+        const parsed = parseSignedMeshEnvelope(operation.wireEnvelope);
+        const recipientDeviceIds = operation.recipientDeviceIds
+          ?? (parsed ? Object.keys(parsed.body.encryptedForDevices) : []);
+        if (recipientDeviceIds.length === 0) continue;
+        const sent = await broadcastNearbyEnvelope(
+          operation.wireEnvelope,
+          recipientDeviceIds,
+        );
         totalRecipients += sent;
         if (sent > 0) {
           reportNearbyMessageEvent({
@@ -95,6 +145,7 @@ export const broadcastQueuedNearbyMessages = async (): Promise<number> => {
             await sendPreparedNearbyAttachment(
               operation.nearbyAttachment.transferId,
               operation.nearbyAttachment.chunkCount,
+              recipientDeviceIds,
             );
           } else if (operation.originOwned) {
             await updateMessageStatus(
@@ -118,7 +169,8 @@ export const broadcastQueuedNearbyMessages = async (): Promise<number> => {
 
 export const startNearbyMessaging = async (
   userId: string,
-  onEnvelope: (envelope: string) => void,
+  displayName: string,
+  onEnvelope: (envelope: string, peerDeviceId: string) => void,
 ): Promise<() => void> => {
   if (!isNearbyMeshAvailable()) {
     publishNearbySnapshot(createNearbyMessagingSnapshot(false));
@@ -126,7 +178,17 @@ export const startNearbyMessaging = async (
   }
 
   const deviceId = await getCurrentDeviceId();
-  const envelopeSubscription = addNearbyEnvelopeListener(onEnvelope);
+  configureNearbyPairing({
+    userId,
+    deviceId,
+    displayName,
+    handlePaired: addPairedNearbyPeer,
+  });
+  const envelopeSubscription = addNearbyEnvelopeListener((envelope, peerDeviceId) => {
+    if (!handleNearbyPairingEnvelope(envelope, peerDeviceId)) {
+      onEnvelope(envelope, peerDeviceId);
+    }
+  });
   const peerSubscription = addNearbyPeersChangedListener((count) => {
     if (count > 0) {
       void announceIncomingNearbyAttachmentProgress();
@@ -134,20 +196,30 @@ export const startNearbyMessaging = async (
     }
   });
   const stateSubscription = addNearbyStateChangedListener((event) => {
+    handleNearbyPairingMeshState(event);
     publishNearbySnapshot(applyNearbyMeshState(nearbySnapshot, event));
   });
 
+  // Reset volatile carrier state without dropping the offline identity
+  // allowlist that was deliberately prepared before this start call.
+  const trustedPeers = nearbySnapshot.trustedPeers;
   publishNearbySnapshot({
     ...createNearbyMessagingSnapshot(true),
     status: 'searching',
+    trustedPeers,
   });
-  const started = await startNearbyMesh(userId, deviceId);
+  const started = await startNearbyMesh(
+    userId,
+    deviceId,
+    Object.keys(trustedPeers),
+  );
   if (!started) {
     publishNearbySnapshot(createNearbyMessagingSnapshot(false));
   }
   void broadcastQueuedNearbyMessages();
 
   return () => {
+    cancelNearbyPairing();
     envelopeSubscription.remove();
     peerSubscription.remove();
     stateSubscription.remove();

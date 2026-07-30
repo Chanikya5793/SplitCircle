@@ -67,7 +67,7 @@
 	<key>NSFaceIDUsageDescription</key>
 	<string>Unlock SplitCircle and its hidden privacy settings with Face ID.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>ManaSplit uses your local network to exchange messages with nearby group members when the internet is unavailable.</string>
+	<string>ManaSplit uses your local network to pair with trusted nearby contacts and exchange messages when the internet is unavailable.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Allow ManaSplit to use your location to share it with your friends.</string>
 	<key>NSLocationAlwaysUsageDescription</key>

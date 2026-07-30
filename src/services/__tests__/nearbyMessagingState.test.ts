@@ -29,6 +29,7 @@ describe('nearby messaging state', () => {
           'device-b': -1,
           'not-connected': 42,
         },
+        ignoredPeerCount: 3,
       },
       20,
     );
@@ -43,6 +44,7 @@ describe('nearby messaging state', () => {
       connectedDeviceIds: ['device-b', 'device-a'],
       probingDeviceIds: ['device-a'],
       peerLatencyMs: { 'device-a': 17 },
+      ignoredPeerCount: 3,
       lastChangedAt: 20,
     });
   });
@@ -59,6 +61,22 @@ describe('nearby messaging state', () => {
       connectedDeviceIds: ['private-device-a'],
       probingDeviceIds: ['private-device-a'],
       peerLatencyMs: { 'private-device-a': 24 },
+      trustedPeers: {
+        'private-device-a': {
+          deviceId: 'private-device-a',
+          userId: 'u1',
+          label: 'Asha',
+          relationship: 'direct' as const,
+          sharedChatCount: 1,
+        },
+        'private-device-b': {
+          deviceId: 'private-device-b',
+          userId: 'u2',
+          label: 'Ben',
+          relationship: 'shared-group' as const,
+          sharedChatCount: 2,
+        },
+      },
     };
 
     const peers = getNearbyPeerPresentations(snapshot);
@@ -66,20 +84,45 @@ describe('nearby messaging state', () => {
     expect(peers).toEqual([
       expect.objectContaining({
         deviceId: 'private-device-a',
-        label: 'Nearby iPhone 1',
+        label: 'Asha',
         status: 'connected',
-        detail: 'Secure direct link · 24 ms',
+        detail: 'Direct-chat contact · 24 ms',
         isProbing: true,
       }),
       expect.objectContaining({
         deviceId: 'private-device-b',
-        label: 'Nearby iPhone 2',
+        label: 'Ben',
         status: 'connecting',
         isProbing: false,
       }),
     ]);
     expect(JSON.stringify(peers.map(({ label, detail }) => ({ label, detail }))))
       .not.toContain('private-device');
+  });
+
+  it('never turns an opaque installation id into a visible phone identity', () => {
+    const peers = getNearbyPeerPresentations({
+      ...createNearbyMessagingSnapshot(true, 1),
+      status: 'connected',
+      discoveredPeerCount: 1,
+      connectedPeerCount: 1,
+      discoveredDeviceIds: ['715f845e-private-install-tail'],
+      connectedDeviceIds: ['715f845e-private-install-tail'],
+    });
+
+    expect(peers).toEqual([
+      expect.objectContaining({
+        label: 'Recognized ManaSplit contact',
+        detail: 'Cached conversation member · private link',
+      }),
+    ]);
+    const visibleCopy = peers.map(({ label, detail, statusLabel }) => ({
+      label,
+      detail,
+      statusLabel,
+    }));
+    expect(JSON.stringify(visibleCopy)).not.toContain('715f845e');
+    expect(JSON.stringify(visibleCopy)).not.toContain('iPhone');
   });
 
   it('uses truthful copy for searching, connecting, connected, and error states', () => {
@@ -106,8 +149,8 @@ describe('nearby messaging state', () => {
       errorMessage: 'NSNetServicesErrorDomain -72008',
     });
 
-    expect(searching.label).toBe('Nearby · Searching for phones');
-    expect(searching.detail).toContain('No hotspot or internet is needed');
+    expect(searching.label).toBe('Nearby · Looking for known contacts');
+    expect(searching.detail).toContain('Unknown nearby ManaSplit installations are ignored');
     expect(connecting.detail).toContain('1 phone found');
     expect(connected.label).toBe('Nearby · 1 phone connected');
     expect(failed.label).toBe('Nearby needs attention');

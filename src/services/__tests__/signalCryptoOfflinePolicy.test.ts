@@ -32,7 +32,10 @@ vi.mock('../../../modules/splitcircle-crypto', () => ({
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { __clearAsyncStorageStore } from './mocks/async-storage';
-import { listSignalDevices } from '../signalCryptoService';
+import {
+  listSignalDevices,
+  persistPairedSignalDevice,
+} from '../signalCryptoService';
 
 describe('Signal cache-only nearby policy', () => {
   beforeEach(() => {
@@ -55,5 +58,30 @@ describe('Signal cache-only nearby policy', () => {
 
     expect(devices).toEqual(durable);
     expect(firestore.getDocs).not.toHaveBeenCalled();
+  });
+
+  it('moves an explicitly paired installation away from a stale cached owner', async () => {
+    await AsyncStorage.setItem(
+      'splitcircle.signal.deviceList.old-account',
+      JSON.stringify([{
+        deviceId: 'reused-phone',
+        signalDeviceId: 2,
+        identityKey: 'old-key',
+      }]),
+    );
+
+    await persistPairedSignalDevice({
+      userId: 'current-friend',
+      deviceId: 'reused-phone',
+      signalDeviceId: 7,
+      identityKey: 'verified-key',
+    });
+
+    await expect(listSignalDevices('old-account', 'cache-only')).resolves.toEqual([]);
+    await expect(listSignalDevices('current-friend', 'cache-only')).resolves.toEqual([{
+      deviceId: 'reused-phone',
+      signalDeviceId: 7,
+      identityKey: 'verified-key',
+    }]);
   });
 });

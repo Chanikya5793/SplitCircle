@@ -10,6 +10,10 @@ export interface MeshMessageOperation {
   chatType: ChatThread['type'];
   groupId?: string;
   participantIds: string[];
+  /** Installation ids that actually have a Signal-wrapped copy in the signed
+   * envelope. Native transport targets only these peers, so unrelated trusted
+   * contacts never receive another conversation's public envelope metadata. */
+  recipientDeviceIds?: string[];
   originUserId: string;
   originOwned: boolean;
   cloudRelay: boolean;

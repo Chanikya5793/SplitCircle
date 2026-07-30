@@ -2,7 +2,15 @@ import { GlassCard } from '@/components/ui';
 import { APP_NAME } from '@/constants/appInfo';
 import { useTheme } from '@/context/ThemeContext';
 import { useNearbyMessaging } from '@/hooks/useNearbyMessaging';
+import { useNearbyPairing } from '@/hooks/useNearbyPairing';
 import { restartNearbyMessagingDiscovery } from '@/services/nearbyMessageService';
+import {
+  cancelNearbyPairing,
+  formatNearbyPairingCode,
+  normalizeNearbyPairingCode,
+  startNearbyPairingHost,
+  startNearbyPairingJoin,
+} from '@/services/nearbyPairingService';
 import { lightHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { NearbyDiscoveryArena } from './NearbyDiscoveryArena';
@@ -17,6 +25,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -66,9 +75,15 @@ export const NearbyMessagingSheet = ({
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const { snapshot } = useNearbyMessaging();
+  const pairing = useNearbyPairing();
   const [sheetHeight, setSheetHeight] = useState(680);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>();
   const [showSetup, setShowSetup] = useState(false);
+  const [showPairing, setShowPairing] = useState(false);
+  const [pairingEntry, setPairingEntry] = useState(false);
+  const [pairingCode, setPairingCode] = useState('');
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const [pairingUiError, setPairingUiError] = useState<string>();
   const translateY = useRef(new Animated.Value(760)).current;
   const closingRef = useRef(false);
 
@@ -136,6 +151,21 @@ export const NearbyMessagingSheet = ({
     || snapshot.lastMessageEvent.chatId === chatId
     ? snapshot.lastMessageEvent
     : undefined;
+  const pairingActive = pairing.phase !== 'idle';
+
+  const runPairingAction = async (action: () => Promise<void>) => {
+    setPairingBusy(true);
+    setPairingUiError(undefined);
+    try {
+      await action();
+    } catch (error) {
+      setPairingUiError(
+        error instanceof Error ? error.message : 'Pairing could not start.',
+      );
+    } finally {
+      setPairingBusy(false);
+    }
+  };
 
   return (
     <Modal
@@ -180,7 +210,7 @@ export const NearbyMessagingSheet = ({
                   Nearby messaging
                 </Text>
                 <Text style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
-                  Connect iPhones directly. No hotspot, router, or internet is required.
+                  Connect privately to known conversation members. No hotspot, router, or internet is required.
                 </Text>
               </View>
               <Pressable
@@ -208,14 +238,221 @@ export const NearbyMessagingSheet = ({
                 onScanAgain={restartNearbyMessagingDiscovery}
               />
 
+              <GlassCard radius="md" contentStyle={styles.pairingCard}>
+                <View style={styles.pairingHeader}>
+                  <View
+                    style={[
+                      styles.pairingIcon,
+                      { backgroundColor: theme.colors.primaryContainer },
+                    ]}
+                  >
+                    <Ionicons
+                      name={pairing.phase === 'paired' ? 'checkmark' : 'link-outline'}
+                      size={19}
+                      color={theme.colors.primary}
+                    />
+                  </View>
+                  <View style={styles.pairingHeaderCopy}>
+                    <Text style={[styles.pairingTitle, { color: theme.colors.onSurface }]}>
+                      {pairing.phase === 'paired'
+                        ? `${pairing.pairedPeer?.label ?? 'Phone'} paired`
+                        : 'Pair a phone privately'}
+                    </Text>
+                    <Text style={[styles.pairingDetail, { color: theme.colors.onSurfaceVariant }]}>
+                      {pairing.phase === 'paired'
+                        ? 'Both phones now remember the signed device identity for 30 days.'
+                        : 'Use a one-time code when a friend is shown as unknown. Names stay hidden until the code and signed identities match.'}
+                    </Text>
+                  </View>
+                </View>
+
+                {!showPairing && !pairingActive && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      lightHaptic();
+                      setShowPairing(true);
+                      setPairingEntry(false);
+                      setPairingUiError(undefined);
+                    }}
+                    activeOpacity={0.75}
+                    accessibilityRole="button"
+                    style={[styles.pairingPrimaryButton, { backgroundColor: theme.colors.primary }]}
+                  >
+                    <Ionicons name="people-outline" size={17} color={theme.colors.onPrimary} />
+                    <Text style={[styles.pairingPrimaryLabel, { color: theme.colors.onPrimary }]}>
+                      Pair a nearby phone
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {showPairing && !pairingActive && !pairingEntry && (
+                  <View style={styles.pairingChoices}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        lightHaptic();
+                        void runPairingAction(startNearbyPairingHost);
+                      }}
+                      disabled={pairingBusy}
+                      activeOpacity={0.75}
+                      accessibilityRole="button"
+                      style={[styles.pairingChoice, { borderColor: theme.colors.outline }]}
+                    >
+                      <Ionicons name="key-outline" size={19} color={theme.colors.primary} />
+                      <Text style={[styles.pairingChoiceTitle, { color: theme.colors.onSurface }]}>
+                        Show a code
+                      </Text>
+                      <Text style={[styles.pairingChoiceDetail, { color: theme.colors.onSurfaceVariant }]}>
+                        The other person enters it.
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        lightHaptic();
+                        setPairingEntry(true);
+                      }}
+                      disabled={pairingBusy}
+                      activeOpacity={0.75}
+                      accessibilityRole="button"
+                      style={[styles.pairingChoice, { borderColor: theme.colors.outline }]}
+                    >
+                      <Ionicons name="keypad-outline" size={19} color={theme.colors.primary} />
+                      <Text style={[styles.pairingChoiceTitle, { color: theme.colors.onSurface }]}>
+                        Enter their code
+                      </Text>
+                      <Text style={[styles.pairingChoiceDetail, { color: theme.colors.onSurfaceVariant }]}>
+                        Pair with the code they show.
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {showPairing && !pairingActive && pairingEntry && (
+                  <View style={styles.pairingEntry}>
+                    <TextInput
+                      value={formatNearbyPairingCode(pairingCode)}
+                      onChangeText={(value) => {
+                        setPairingCode(normalizeNearbyPairingCode(value));
+                        setPairingUiError(undefined);
+                      }}
+                      placeholder="ABCD EFGH"
+                      placeholderTextColor={theme.colors.onSurfaceVariant}
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      maxLength={9}
+                      returnKeyType="done"
+                      accessibilityLabel="Nearby pairing code"
+                      style={[
+                        styles.pairingCodeInput,
+                        {
+                          color: theme.colors.onSurface,
+                          borderColor: theme.colors.outline,
+                          backgroundColor: theme.colors.surfaceVariant,
+                        },
+                      ]}
+                    />
+                    <TouchableOpacity
+                      onPress={() => {
+                        lightHaptic();
+                        void runPairingAction(() => startNearbyPairingJoin(pairingCode));
+                      }}
+                      disabled={pairingBusy || pairingCode.length !== 8}
+                      activeOpacity={0.75}
+                      accessibilityRole="button"
+                      style={[
+                        styles.pairingPrimaryButton,
+                        {
+                          backgroundColor: theme.colors.primary,
+                          opacity: pairingBusy || pairingCode.length !== 8 ? 0.5 : 1,
+                        },
+                      ]}
+                    >
+                      <Ionicons name="shield-checkmark-outline" size={17} color={theme.colors.onPrimary} />
+                      <Text style={[styles.pairingPrimaryLabel, { color: theme.colors.onPrimary }]}>
+                        Find and verify phone
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {pairing.role === 'host' && pairing.code && pairing.phase !== 'paired' && (
+                  <View
+                    style={[
+                      styles.pairingCodePanel,
+                      { backgroundColor: theme.colors.primaryContainer },
+                    ]}
+                  >
+                    <Text style={[styles.pairingCodeEyebrow, { color: theme.colors.onPrimaryContainer }]}>
+                      ONE-TIME PAIRING CODE
+                    </Text>
+                    <Text style={[styles.pairingCode, { color: theme.colors.onPrimaryContainer }]}>
+                      {formatNearbyPairingCode(pairing.code)}
+                    </Text>
+                    <Text style={[styles.pairingCodeHint, { color: theme.colors.onPrimaryContainer }]}>
+                      Open Pair a phone on the other iPhone and enter this code. It expires in five minutes.
+                    </Text>
+                  </View>
+                )}
+
+                {pairingActive && pairing.phase !== 'paired' && (
+                  <View style={styles.pairingStatus}>
+                    <Ionicons
+                      name={pairing.phase === 'error' ? 'alert-circle-outline' : 'radio-outline'}
+                      size={18}
+                      color={pairing.phase === 'error' ? theme.colors.error : theme.colors.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.pairingStatusText,
+                        {
+                          color: pairing.phase === 'error'
+                            ? theme.colors.error
+                            : theme.colors.onSurfaceVariant,
+                        },
+                      ]}
+                    >
+                      {pairing.errorMessage
+                        ?? (pairing.phase === 'verifying'
+                          ? 'Phone found. Verifying the code and both signed identities…'
+                          : 'Looking for the other phone. Keep this screen open on both devices.')}
+                    </Text>
+                  </View>
+                )}
+
+                {(showPairing || pairingActive) && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      lightHaptic();
+                      cancelNearbyPairing();
+                      setShowPairing(false);
+                      setPairingEntry(false);
+                      setPairingCode('');
+                      setPairingUiError(undefined);
+                    }}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    style={styles.pairingCancel}
+                  >
+                    <Text style={[styles.pairingCancelLabel, { color: theme.colors.primary }]}>
+                      {pairing.phase === 'paired' ? 'Done' : 'Cancel pairing'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {(pairingUiError || pairing.errorMessage) && pairing.phase === 'idle' && (
+                  <Text style={[styles.pairingError, { color: theme.colors.error }]}>
+                    {pairingUiError ?? pairing.errorMessage}
+                  </Text>
+                )}
+              </GlassCard>
+
               <View style={[styles.directCallout, { backgroundColor: theme.colors.successContainer }]}>
-                <Ionicons name="flash-outline" size={20} color={theme.colors.success} />
+                <Ionicons name="shield-checkmark-outline" size={20} color={theme.colors.success} />
                 <View style={styles.directCalloutCopy}>
                   <Text style={[styles.directCalloutTitle, { color: theme.colors.onSuccessContainer }]}>
-                    No Personal Hotspot needed
+                    Names stay private
                   </Text>
                   <Text style={[styles.directCalloutDetail, { color: theme.colors.onSuccessContainer }]}>
-                    {APP_NAME} uses Apple peer-to-peer Wi-Fi to create a direct local link between nearby iPhones.
+                    {APP_NAME} never broadcasts your profile name while scanning. A name appears only after a cached conversation match or a pairing code succeeds. Unknown installations stay blocked outside the five-minute pairing window.
                   </Text>
                 </View>
               </View>
@@ -298,8 +535,8 @@ export const NearbyMessagingSheet = ({
                   />
                   <Step
                     number={3}
-                    title="Keep the phones nearby"
-                    detail="Open the same cached conversation. Discovery and encryption are automatic."
+                    title="Connect automatically or pair once"
+                    detail="Cached conversation identities connect automatically. If one phone lacks the cache, open Pair a phone on both and verify the one-time code."
                   />
                 </GlassCard>
               )}
@@ -308,10 +545,10 @@ export const NearbyMessagingSheet = ({
                 <Ionicons name="lock-closed-outline" size={20} color={theme.colors.primary} />
                 <View style={styles.infoCopy}>
                   <Text style={[styles.infoTitle, { color: theme.colors.onSurface }]}>
-                    Local Network access is required
+                    Private local-network access
                   </Text>
                   <Text style={[styles.infoDetail, { color: theme.colors.onSurfaceVariant }]}>
-                    iOS asks the first time {APP_NAME} searches nearby. If it was denied, enable Local Network in {APP_NAME}’s iPhone settings.
+                    iOS asks the first time {APP_NAME} searches nearby. Discovery exposes no profile name; only cached conversation devices are invited.
                   </Text>
                   {Platform.OS === 'ios' && (
                     <TouchableOpacity
@@ -472,6 +709,136 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     borderRadius: 18,
     padding: 14,
+  },
+  pairingCard: {
+    padding: 14,
+  },
+  pairingHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  pairingIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pairingHeaderCopy: {
+    flex: 1,
+    marginLeft: 11,
+  },
+  pairingTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  pairingDetail: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 2,
+  },
+  pairingPrimaryButton: {
+    minHeight: 44,
+    borderRadius: 22,
+    marginTop: 13,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  pairingPrimaryLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  pairingChoices: {
+    flexDirection: 'row',
+    gap: 9,
+    marginTop: 13,
+  },
+  pairingChoice: {
+    flex: 1,
+    minHeight: 104,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 16,
+    padding: 12,
+  },
+  pairingChoiceTitle: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    marginTop: 8,
+  },
+  pairingChoiceDetail: {
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 2,
+  },
+  pairingEntry: {
+    marginTop: 13,
+  },
+  pairingCodeInput: {
+    height: 54,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    textAlign: 'center',
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 2.5,
+  },
+  pairingCodePanel: {
+    borderRadius: 18,
+    padding: 16,
+    marginTop: 13,
+    alignItems: 'center',
+  },
+  pairingCodeEyebrow: {
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  pairingCode: {
+    fontSize: 28,
+    lineHeight: 38,
+    fontWeight: '800',
+    letterSpacing: 3,
+    marginTop: 3,
+  },
+  pairingCodeHint: {
+    fontSize: 11,
+    lineHeight: 16,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  pairingStatus: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 12,
+  },
+  pairingStatusText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  pairingCancel: {
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    paddingTop: 13,
+    paddingBottom: 2,
+  },
+  pairingCancelLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  pairingError: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 9,
+    textAlign: 'center',
   },
   directCalloutCopy: {
     flex: 1,

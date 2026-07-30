@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 
 interface MeshEnvelopeEvent {
   envelope: string;
+  peerDeviceId: string;
 }
 
 interface MeshPeerEvent {
@@ -46,22 +47,32 @@ export interface MeshStateEvent {
   discoveredDeviceIds?: string[];
   connectingDeviceIds?: string[];
   connectedDeviceIds: string[];
+  pairingDeviceIds?: string[];
+  pairingEnabled?: boolean;
   probingDeviceIds?: string[];
   peerLatencyMs?: Record<string, number>;
+  ignoredPeerCount?: number;
   errorCode?: number;
   errorMessage?: string;
 }
 
 interface NativeMeshModule {
-  start(userId: string, deviceId: string): Promise<boolean>;
+  start(userId: string, deviceId: string, trustedDeviceIds: string[]): Promise<boolean>;
+  updateTrustedPeers(trustedDeviceIds: string[]): void;
+  setPairingMode(enabled: boolean): void;
   stop(): void;
-  send(envelope: string): Promise<number>;
+  send(envelope: string, recipientDeviceIds: string[]): Promise<number>;
+  sendPairing(envelope: string, recipientDeviceIds: string[]): Promise<number>;
   prepareAttachment(
     sourceUri: string,
     transferId: string,
     chunkSize: number,
   ): Promise<PreparedNearbyAttachment>;
-  sendPreparedAttachment(transferId: string, chunkCount: number): Promise<number>;
+  sendPreparedAttachment(
+    transferId: string,
+    chunkCount: number,
+    recipientDeviceIds: string[],
+  ): Promise<number>;
   cancelAttachment(transferId: string): void;
   discardAttachment(transferId: string): void;
   receivedChunkIndexes(transferId: string): Promise<number[]>;
@@ -106,14 +117,39 @@ const nativeModule =
 
 export const isNearbyMeshAvailable = (): boolean => nativeModule !== null;
 
-export const startNearbyMesh = async (userId: string, deviceId: string): Promise<boolean> =>
-  nativeModule?.start(userId, deviceId) ?? false;
+export const startNearbyMesh = async (
+  userId: string,
+  deviceId: string,
+  trustedDeviceIds: string[],
+): Promise<boolean> =>
+  nativeModule?.start(userId, deviceId, trustedDeviceIds) ?? false;
+
+export const updateNearbyTrustedPeers = (trustedDeviceIds: string[]): void =>
+  nativeModule?.updateTrustedPeers(trustedDeviceIds);
+
+/**
+ * Opens or closes the deliberately user-initiated admission window for
+ * previously unknown installations. Pairing payloads use a separate bounded
+ * native lane; chat envelopes and attachments remain blocked until JS has
+ * completed the signed code ceremony and promoted the device to trusted.
+ */
+export const setNearbyPairingMode = (enabled: boolean): void =>
+  nativeModule?.setPairingMode(enabled);
 
 export const stopNearbyMesh = (): void => nativeModule?.stop();
 
 /** Returns the number of currently connected nearby peers that received it. */
-export const broadcastNearbyEnvelope = async (envelope: string): Promise<number> =>
-  nativeModule?.send(envelope) ?? 0;
+export const broadcastNearbyEnvelope = async (
+  envelope: string,
+  recipientDeviceIds: string[],
+): Promise<number> =>
+  nativeModule?.send(envelope, recipientDeviceIds) ?? 0;
+
+export const sendNearbyPairingEnvelope = async (
+  envelope: string,
+  recipientDeviceIds: string[],
+): Promise<number> =>
+  nativeModule?.sendPairing(envelope, recipientDeviceIds) ?? 0;
 
 export const prepareNearbyAttachment = async (
   sourceUri: string,
@@ -129,8 +165,13 @@ export const prepareNearbyAttachment = async (
 export const sendPreparedNearbyAttachment = async (
   transferId: string,
   chunkCount: number,
+  recipientDeviceIds: string[],
 ): Promise<number> =>
-  nativeModule?.sendPreparedAttachment(transferId, chunkCount) ?? 0;
+  nativeModule?.sendPreparedAttachment(
+    transferId,
+    chunkCount,
+    recipientDeviceIds,
+  ) ?? 0;
 
 export const cancelNearbyAttachment = (transferId: string): void =>
   nativeModule?.cancelAttachment(transferId);
@@ -191,9 +232,12 @@ export const probeNearbyPeer = (deviceId: string): boolean =>
   nativeModule?.probePeer(deviceId) ?? false;
 
 export const addNearbyEnvelopeListener = (
-  listener: (envelope: string) => void,
+  listener: (envelope: string, peerDeviceId: string) => void,
 ): { remove: () => void } =>
-  nativeModule?.addListener('onEnvelope', ({ envelope }) => listener(envelope))
+  nativeModule?.addListener(
+    'onEnvelope',
+    ({ envelope, peerDeviceId }) => listener(envelope, peerDeviceId),
+  )
   ?? { remove: () => {} };
 
 export const addNearbyPeersChangedListener = (

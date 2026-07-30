@@ -258,6 +258,43 @@ final class SignalSessionEngine {
     return try identityKey.publicKey.verifySignature(message: payload, signature: signature)
   }
 
+  /// RFC 9180 HPKE recovery envelope for nearby/offline delivery.
+  ///
+  /// Signal's Double Ratchet remains the preferred message mode. This path is
+  /// intentionally stateless so two phones that already know one another's
+  /// published identity keys can recover while offline when a ratchet has
+  /// been marked for rebuild. Associated data binds the ciphertext to the
+  /// signed chat/message/device metadata supplied by JS.
+  func sealToIdentity(
+    _ plaintext: Data,
+    identityKeyBase64: String,
+    info: String,
+    associatedData: Data
+  ) throws -> Data {
+    guard let keyData = Data(base64Encoded: identityKeyBase64) else {
+      throw SignalEngineError.malformedBundle("identityKey")
+    }
+    let identityKey = try IdentityKey(bytes: keyData)
+    return identityKey.publicKey.seal(
+      plaintext,
+      info: info,
+      associatedData: associatedData
+    )
+  }
+
+  func openWithIdentity(
+    _ ciphertext: Data,
+    info: String,
+    associatedData: Data
+  ) throws -> Data {
+    let (identity, _) = try store.ensureIdentity()
+    return try identity.privateKey.open(
+      ciphertext,
+      info: info,
+      associatedData: associatedData
+    )
+  }
+
   func hasSession(userId: String, deviceId: UInt32) throws -> Bool {
     let address = try ProtocolAddress(name: userId, deviceId: deviceId)
     return try store.loadSession(for: address, context: context) != nil

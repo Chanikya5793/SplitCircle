@@ -147,6 +147,7 @@ const AlbumCell = ({
           fadeDuration={0}
           progressiveRenderingEnabled
           onError={resolved.handleLoadError}
+          onLoad={resolved.handleLoadSuccess}
         />
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.cellPlaceholder]}>

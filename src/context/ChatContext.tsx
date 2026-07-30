@@ -77,6 +77,7 @@ import {
 import {
   broadcastQueuedNearbyMessages,
   reportNearbyMessageEvent,
+  setNearbyTrustedPeers,
   startNearbyMessaging,
 } from '@/services/nearbyMessageService';
 import {
@@ -88,6 +89,7 @@ import {
   prepareSignalSessionsForUser,
   refreshSignalDeviceDirectory,
 } from '@/services/signalCryptoService';
+import { buildNearbyTrustedPeers } from '@/services/nearbyTrustService';
 
 interface SendMessagePayload {
   chatId: string;
@@ -249,16 +251,39 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     userRef.current = user;
   }, [user]);
 
+  // Keep the native admission allowlist synchronized with the durable
+  // conversation + Signal caches. Unknown ManaSplit installations remain
+  // radio-visible to iOS but are never invited into our MCSession.
+  useEffect(() => {
+    if (!user || loading) return;
+    let disposed = false;
+    void (async () => {
+      const currentDeviceId = await getCurrentDeviceId();
+      const trustedPeers = await buildNearbyTrustedPeers(
+        threads,
+        user.userId,
+        currentDeviceId,
+      );
+      if (!disposed) setNearbyTrustedPeers(trustedPeers);
+    })().catch((error) => {
+      console.warn('Nearby trust directory refresh failed', error);
+      if (!disposed) setNearbyTrustedPeers([]);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [loading, threads, user?.userId]);
+
   // Nearby receiver + bounded gossip. The native transport can discover peers
   // with no Internet; every payload is still identity-signed and authorized
   // against the locally cached thread membership before it touches storage.
   useEffect(() => {
-    if (!user) return () => undefined;
+    if (!user || loading) return () => undefined;
     let disposed = false;
     let stop: (() => void) | undefined;
     let stopAttachments: (() => void) | undefined;
 
-    const onEnvelope = (raw: string) => {
+    const onEnvelope = (raw: string, sourcePeerDeviceId: string) => {
       void (async () => {
         const parsed = parseSignedMeshEnvelope(raw);
         if (!parsed) {
@@ -275,6 +300,21 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           reportNearbyMessageEvent({
             type: 'rejected',
             detail: 'A nearby message belongs to a conversation not cached on this phone.',
+            chatId: parsed.body.message.chatId,
+          });
+          return;
+        }
+        // Direct messages are never relayed. Bind the signed origin
+        // installation to the actual trusted carrier peer so a device that
+        // merely spoofs another installation id cannot inject or observe a
+        // one-to-one conversation. Groups retain signed bounded gossip.
+        if (
+          thread.type === 'direct'
+          && parsed.body.originDeviceId !== sourcePeerDeviceId
+        ) {
+          reportNearbyMessageEvent({
+            type: 'rejected',
+            detail: 'A direct message arrived through the wrong nearby device.',
             chatId: parsed.body.message.chatId,
           });
           return;
@@ -315,6 +355,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
             chatType: body.chatType,
             ...(body.groupId ? { groupId: body.groupId } : {}),
             participantIds: body.audienceUserIds,
+            recipientDeviceIds: Object.keys(body.encryptedForDevices),
             originUserId: body.originUserId,
             originOwned: false,
             // Only the origin's signed-outbox copy uploads to Firebase. A relay
@@ -385,10 +426,23 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       else stopAttachments = cleanup;
     });
 
-    void startNearbyMessaging(user.userId, onEnvelope).then((cleanup) => {
+    void (async () => {
+      const currentDeviceId = await getCurrentDeviceId();
+      const trustedPeers = await buildNearbyTrustedPeers(
+        threadsRef.current,
+        user.userId,
+        currentDeviceId,
+      );
+      if (disposed) return;
+      setNearbyTrustedPeers(trustedPeers);
+      const cleanup = await startNearbyMessaging(
+        user.userId,
+        resolveDisplayName(user, 'ManaSplit user'),
+        onEnvelope,
+      );
       if (disposed) cleanup();
       else stop = cleanup;
-    }).catch((error) => {
+    })().catch((error) => {
       console.warn('Nearby messaging unavailable', error);
     });
 
@@ -397,7 +451,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       stop?.();
       stopAttachments?.();
     };
-  }, [user?.userId]);
+  }, [loading, user?.userId]);
 
   // Group messages created over the mesh are also regular cloud messages once
   // Internet returns. Direct nearby messages intentionally stay device-local.
@@ -979,6 +1033,9 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
               body?.audienceUserIds
               ?? resolveMeshThreadAudience(latestThread)
               ?? latestThread.participantIds,
+            ...(body
+              ? { recipientDeviceIds: Object.keys(body.encryptedForDevices) }
+              : {}),
             originUserId: user.userId,
             originOwned: true,
             cloudRelay: latestThread.type === 'group',

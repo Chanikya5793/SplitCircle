@@ -6,16 +6,21 @@
  * recipient learned from Firebase while previously online.
  */
 import type { ChatMessage, ChatThread } from '@/models';
-import { getCachedPeerIdentityKey } from '@/services/signalCryptoService';
+import {
+  getCachedPeerIdentityKey,
+  getPersistedSignalDeviceId,
+  listSignalDevices,
+} from '@/services/signalCryptoService';
 import {
   decryptMessageEnvelope,
   encryptMessageForRecipient,
   type EncryptedFields,
   type StoredEnvelope,
 } from '@/services/messageEnvelope';
-import { getPersistedSignalDeviceId } from '@/services/signalCryptoService';
 import {
   isCryptoAvailable,
+  openWithIdentity,
+  sealToIdentity,
   signWithIdentity,
   verifyWithIdentity,
 } from '../../modules/splitcircle-crypto';
@@ -51,9 +56,21 @@ export interface MeshMessageBody {
   originDeviceId: string;
   createdAt: number;
   senderSignalDeviceId: number;
-  encryptedForDevices: Record<string, StoredEnvelope>;
+  encryptedForDevices: Record<string, MeshDeviceEnvelope>;
   attachment?: MeshAttachmentManifest;
 }
+
+export interface IdentitySealedMeshEnvelope {
+  m: 'identity-hpke';
+  b: string;
+}
+
+export type MeshDeviceEnvelope = StoredEnvelope | IdentitySealedMeshEnvelope;
+
+const isIdentitySealedMeshEnvelope = (
+  envelope: MeshDeviceEnvelope,
+): envelope is IdentitySealedMeshEnvelope =>
+  'm' in envelope && envelope.m === 'identity-hpke';
 
 export interface SignedMeshEnvelope {
   v: typeof MESH_PROTOCOL_VERSION;
@@ -66,6 +83,29 @@ const encodeUtf8Base64 = (value: string): string =>
 
 const decodeUtf8Base64 = (value: string): string =>
   decodeURIComponent(escape(globalThis.atob(value)));
+
+const MESH_IDENTITY_HPKE_INFO = 'ManaSplit nearby identity recovery v1';
+
+/**
+ * HPKE associated data is signed as part of the outer body and also bound into
+ * the ciphertext. Moving a sealed device copy to another chat, message,
+ * origin, recipient installation, or timestamp makes it undecryptable.
+ */
+const identityEnvelopeAssociatedData = (
+  body: Pick<
+    MeshMessageBody,
+    'message' | 'originUserId' | 'originDeviceId' | 'createdAt'
+  >,
+  recipientDeviceId: string,
+): string => encodeUtf8Base64(JSON.stringify({
+  v: MESH_PROTOCOL_VERSION,
+  chatId: body.message.chatId,
+  messageId: body.message.id,
+  originUserId: body.originUserId,
+  originDeviceId: body.originDeviceId,
+  recipientDeviceId,
+  createdAt: body.createdAt,
+}));
 
 /**
  * Hermes does not guarantee the Web TextEncoder global. Keep envelope-size
@@ -172,9 +212,11 @@ export const buildMeshMessageBody = async ({
     location: message.location,
     ...(attachmentSecret ? { nearbyAttachment: attachmentSecret } : {}),
   };
-  const encryptedForDevices: Record<string, StoredEnvelope> = {};
+  const createdAt = Date.now();
+  const encryptedForDevices: Record<string, MeshDeviceEnvelope> = {};
   for (const recipientId of audienceUserIds) {
     if (recipientId === originUserId) continue;
+    let devices = await listSignalDevices(recipientId, 'cache-only').catch(() => []);
     try {
       // Nearby delivery must never wait for Firestore or a Cloud Function.
       // Public device metadata and Signal sessions are prepared while online;
@@ -198,8 +240,44 @@ export const buildMeshMessageBody = async ({
       );
       if (encrypted) Object.assign(encryptedForDevices, encrypted.envelopes);
     } catch {
-      // Other eligible group members still receive the message. The durable
-      // group cloud relay retries the normal all-device delivery once online.
+      // Continue into the stateless identity-sealed recovery below. A broken
+      // ratchet must not make an already-known nearby member disappear.
+    }
+
+    // A Signal session marked for rebuild cannot claim a fresh prekey while
+    // offline. For only those device copies that Signal could not produce,
+    // use libsignal's RFC 9180 HPKE against the cached, previously verified
+    // identity public key. The signed outer envelope supplies authenticity;
+    // HPKE supplies recipient-only confidentiality and metadata binding.
+    for (const device of devices) {
+      if (
+        device.deviceId === originDeviceId
+        || encryptedForDevices[device.deviceId]
+        || typeof device.identityKey !== 'string'
+        || device.identityKey.length === 0
+      ) {
+        continue;
+      }
+      try {
+        const associatedData = identityEnvelopeAssociatedData({
+          message,
+          originUserId,
+          originDeviceId,
+          createdAt,
+        }, device.deviceId);
+        encryptedForDevices[device.deviceId] = {
+          m: 'identity-hpke',
+          b: await sealToIdentity(
+            encodeUtf8Base64(JSON.stringify(fields)),
+            device.identityKey,
+            MESH_IDENTITY_HPKE_INFO,
+            associatedData,
+          ),
+        };
+      } catch {
+        // Fail closed for this device. Other recipient copies and the group's
+        // durable cloud relay remain independent.
+      }
     }
   }
   if (Object.keys(encryptedForDevices).length === 0) return null;
@@ -213,7 +291,7 @@ export const buildMeshMessageBody = async ({
     audienceUserIds,
     originUserId,
     originDeviceId,
-    createdAt: Date.now(),
+    createdAt,
     senderSignalDeviceId,
     encryptedForDevices,
     ...(attachment ? { attachment } : {}),
@@ -271,6 +349,31 @@ export const parseSignedMeshEnvelope = (
       || !body.encryptedForDevices
       || typeof body.encryptedForDevices !== 'object'
       || Array.isArray(body.encryptedForDevices)
+    ) {
+      return null;
+    }
+    if (
+      Object.keys(body.encryptedForDevices).length === 0
+      || !Object.entries(body.encryptedForDevices).every(([deviceId, candidate]) => {
+        if (
+          typeof deviceId !== 'string'
+          || deviceId.length === 0
+          || !candidate
+          || typeof candidate !== 'object'
+        ) {
+          return false;
+        }
+        const envelope = candidate as unknown as Record<string, unknown>;
+        if ('m' in envelope) {
+          return envelope.m === 'identity-hpke'
+            && typeof envelope.b === 'string'
+            && envelope.b.length > 0;
+        }
+        return typeof envelope.t === 'number'
+          && Number.isInteger(envelope.t)
+          && typeof envelope.b === 'string'
+          && envelope.b.length > 0;
+      })
     ) {
       return null;
     }
@@ -339,7 +442,22 @@ export const isMeshBodyAuthorizedForThread = (
 ): boolean => {
   if (body.message.chatId !== thread.chatId) return false;
   if (body.chatType !== thread.type) return false;
-  if (body.groupId !== thread.groupId) return false;
+  // Firestore materializes an absent optional field as `null` in a number of
+  // legacy direct-thread snapshots, while the signed JSON envelope omits it
+  // and therefore parses as `undefined`. Comparing those values literally
+  // rejected every otherwise-valid nearby DM. Group identity is strict;
+  // direct chats require only that neither side claims a group.
+  if (thread.type === 'group') {
+    if (
+      typeof thread.groupId !== 'string'
+      || thread.groupId.length === 0
+      || body.groupId !== thread.groupId
+    ) {
+      return false;
+    }
+  } else if (body.groupId != null || thread.groupId != null) {
+    return false;
+  }
   if (body.message.senderId !== body.originUserId) return false;
   const expectedAudience = resolveMeshThreadAudience(thread);
   if (!expectedAudience) return false;
@@ -382,6 +500,18 @@ const decryptMeshFieldsForDevice = async (
 ): Promise<EncryptedFields | null> => {
   const envelope = body.encryptedForDevices[currentDeviceId];
   if (!envelope) return null;
+  if (isIdentitySealedMeshEnvelope(envelope)) {
+    try {
+      const plaintextBase64 = await openWithIdentity(
+        envelope.b,
+        MESH_IDENTITY_HPKE_INFO,
+        identityEnvelopeAssociatedData(body, currentDeviceId),
+      );
+      return JSON.parse(decodeUtf8Base64(plaintextBase64)) as EncryptedFields;
+    } catch {
+      return null;
+    }
+  }
   return decryptMessageEnvelope(
     body.originUserId,
     body.senderSignalDeviceId,

@@ -31,7 +31,7 @@ export const OfflineBanner = () => {
   const connected = snapshot.status === 'connected';
   const needsAttention = snapshot.status === 'error' || snapshot.status === 'unavailable';
   const label = connected
-    ? `Offline · Nearby connected to ${snapshot.connectedPeerCount} ${snapshot.connectedPeerCount === 1 ? 'phone' : 'phones'}`
+    ? `Offline · ${snapshot.connectedPeerCount} known ${snapshot.connectedPeerCount === 1 ? 'contact' : 'contacts'} verified nearby`
     : needsAttention
       ? 'Offline · Nearby needs attention. Open a chat for help.'
       : 'Offline · Nearby is searching. Open a chat for connection help.';

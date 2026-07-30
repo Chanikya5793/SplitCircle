@@ -108,6 +108,56 @@ public class SplitCircleCryptoModule: Module {
       }
     }
 
+    AsyncFunction("sealToIdentity") {
+      (
+        plaintextBase64: String,
+        identityKey: String,
+        info: String,
+        associatedDataBase64: String
+      ) -> String in
+      guard
+        let plaintext = Data(base64Encoded: plaintextBase64),
+        let associatedData = Data(base64Encoded: associatedDataBase64)
+      else {
+        throw Exception(
+          name: "InvalidArgument",
+          description: "plaintext and associated data must be base64"
+        )
+      }
+      return try self.onQueue {
+        try self.engine().sealToIdentity(
+          plaintext,
+          identityKeyBase64: identityKey,
+          info: info,
+          associatedData: associatedData
+        ).base64EncodedString()
+      }
+    }
+
+    AsyncFunction("openWithIdentity") {
+      (
+        ciphertextBase64: String,
+        info: String,
+        associatedDataBase64: String
+      ) -> String in
+      guard
+        let ciphertext = Data(base64Encoded: ciphertextBase64),
+        let associatedData = Data(base64Encoded: associatedDataBase64)
+      else {
+        throw Exception(
+          name: "InvalidArgument",
+          description: "ciphertext and associated data must be base64"
+        )
+      }
+      return try self.onQueue {
+        try self.engine().openWithIdentity(
+          ciphertext,
+          info: info,
+          associatedData: associatedData
+        ).base64EncodedString()
+      }
+    }
+
     /// Destroys all Signal state on this device. Called on revocation (§3.7)
     /// and account deletion (doc 28) — stale sessions would otherwise keep
     /// decrypting a revoked peer's ciphertext.

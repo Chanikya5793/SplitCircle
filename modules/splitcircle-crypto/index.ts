@@ -99,6 +99,37 @@ export function verifyWithIdentity(
 }
 
 /**
+ * Recovery encryption for offline nearby delivery when the peer's prepared
+ * Signal ratchet is unavailable. Libsignal's RFC 9180 HPKE implementation
+ * encrypts directly to the already-published device identity public key.
+ */
+export function sealToIdentity(
+  plaintextBase64: string,
+  identityKey: string,
+  info: string,
+  associatedDataBase64: string,
+): Promise<string> {
+  return requireModule().sealToIdentity(
+    plaintextBase64,
+    identityKey,
+    info,
+    associatedDataBase64,
+  );
+}
+
+export function openWithIdentity(
+  ciphertextBase64: string,
+  info: string,
+  associatedDataBase64: string,
+): Promise<string> {
+  return requireModule().openWithIdentity(
+    ciphertextBase64,
+    info,
+    associatedDataBase64,
+  );
+}
+
+/**
  * Destroys all Signal state on this device (revocation §3.7, account deletion
  * doc 28). Stale sessions would otherwise keep decrypting a revoked peer's
  * ciphertext.

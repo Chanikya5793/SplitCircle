@@ -98,3 +98,36 @@ describe('reaction removal survives a stale remote replay', () => {
     expect(stored.reactions).toEqual({ '👍': ['user-1'] });
   });
 });
+
+describe('local media merge preservation', () => {
+  beforeEach(() => {
+    __clearAsyncStorageStore();
+  });
+
+  it('does not erase a valid nearby file when cloud convergence omits local fields', async () => {
+    await saveMessageLocally({
+      ...baseMessage(),
+      type: 'image',
+      localMediaPath: 'file:///chat_media/chat-1/msg-1_photo.jpg',
+      mediaDownloaded: true,
+      mediaUrl: 'https://firebasestorage.googleapis.com/photo',
+    });
+
+    await saveMessageLocally({
+      ...baseMessage(),
+      type: 'image',
+      status: 'delivered',
+      localMediaPath: undefined,
+      mediaDownloaded: undefined,
+      mediaUrl: undefined,
+    });
+
+    const [stored] = await getChatMessages(CHAT_ID);
+    expect(stored).toMatchObject({
+      status: 'delivered',
+      localMediaPath: 'file:///chat_media/chat-1/msg-1_photo.jpg',
+      mediaDownloaded: true,
+      mediaUrl: 'https://firebasestorage.googleapis.com/photo',
+    });
+  });
+});

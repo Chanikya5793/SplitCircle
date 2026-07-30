@@ -2,6 +2,7 @@ import type {
   MeshStateEvent,
   NativeNearbyMeshStatus,
 } from '../../modules/splitcircle-mesh';
+import type { NearbyTrustedPeer } from '@/services/nearbyTrustService';
 
 export type NearbyMessagingStatus = 'unavailable' | NativeNearbyMeshStatus;
 
@@ -13,8 +14,12 @@ export interface NearbyMessagingSnapshot {
   discoveredDeviceIds: string[];
   connectingDeviceIds: string[];
   connectedDeviceIds: string[];
+  pairingDeviceIds: string[];
+  pairingEnabled: boolean;
   probingDeviceIds: string[];
   peerLatencyMs: Record<string, number>;
+  trustedPeers: Record<string, NearbyTrustedPeer>;
+  ignoredPeerCount: number;
   lastMessageEvent?: NearbyMessageEvent;
   errorCode?: number;
   errorMessage?: string;
@@ -64,8 +69,12 @@ export const createNearbyMessagingSnapshot = (
   discoveredDeviceIds: [],
   connectingDeviceIds: [],
   connectedDeviceIds: [],
+  pairingDeviceIds: [],
+  pairingEnabled: false,
   probingDeviceIds: [],
   peerLatencyMs: {},
+  trustedPeers: {},
+  ignoredPeerCount: 0,
   lastChangedAt: now,
 });
 
@@ -90,6 +99,8 @@ export const applyNearbyMeshState = (
   ])];
   const probingDeviceIds = ids(event.probingDeviceIds)
     .filter((id) => connectedDeviceIds.includes(id));
+  const pairingDeviceIds = ids(event.pairingDeviceIds)
+    .filter((id) => connectedDeviceIds.includes(id));
   const peerLatencyMs = Object.fromEntries(
     Object.entries(event.peerLatencyMs ?? {})
       .filter(([id, latency]) =>
@@ -112,8 +123,12 @@ export const applyNearbyMeshState = (
     discoveredDeviceIds: knownDeviceIds,
     connectingDeviceIds,
     connectedDeviceIds,
+    pairingDeviceIds,
+    pairingEnabled: event.pairingEnabled === true,
     probingDeviceIds,
     peerLatencyMs,
+    trustedPeers: current.trustedPeers,
+    ignoredPeerCount: count(event.ignoredPeerCount ?? 0),
     ...(current.lastMessageEvent ? { lastMessageEvent: current.lastMessageEvent } : {}),
     ...(typeof event.errorCode === 'number' ? { errorCode: event.errorCode } : {}),
     ...(typeof event.errorMessage === 'string' && event.errorMessage.length > 0
@@ -135,23 +150,34 @@ export const getNearbyPeerPresentations = (
     ...snapshot.connectedDeviceIds,
   ])].sort();
 
-  return deviceIds.map((deviceId, index) => {
+  return deviceIds.map((deviceId) => {
+    const trusted = snapshot.trustedPeers[deviceId];
     const status: NearbyPeerStatus = connected.has(deviceId)
       ? 'connected'
       : connecting.has(deviceId)
         ? 'connecting'
         : 'found';
-    const suffix = deviceIds.length > 1 ? ` ${index + 1}` : '';
+    // Never expose an installation UUID/tail as a human identity. Native
+    // discovery carries only the opaque installation id; the visible profile
+    // name is resolved locally after that id matches the cached trust map.
+    const label = trusted?.label ?? 'Recognized ManaSplit contact';
+    const relationship = trusted?.relationship === 'direct'
+      ? 'Direct-chat contact'
+      : trusted?.relationship === 'shared-group'
+        ? 'Shared-group member'
+        : trusted?.relationship === 'paired'
+          ? 'Explicitly paired phone'
+          : 'Cached conversation member';
     const latencyMs = snapshot.peerLatencyMs[deviceId];
     if (status === 'connected') {
       return {
         deviceId,
-        label: `Nearby iPhone${suffix}`,
+        label,
         status,
         statusLabel: 'Connected',
         detail: latencyMs === undefined
-          ? 'Secure direct link'
-          : `Secure direct link · ${latencyMs} ms`,
+          ? `${relationship} · private link`
+          : `${relationship} · ${latencyMs} ms`,
         ...(latencyMs === undefined ? {} : { latencyMs }),
         isProbing: probing.has(deviceId),
       };
@@ -159,19 +185,19 @@ export const getNearbyPeerPresentations = (
     if (status === 'connecting') {
       return {
         deviceId,
-        label: `Nearby iPhone${suffix}`,
+        label,
         status,
         statusLabel: 'Securing…',
-        detail: 'Creating an encrypted link',
+        detail: `Verifying ${relationship.toLowerCase()}`,
         isProbing: false,
       };
     }
     return {
       deviceId,
-      label: `Nearby iPhone${suffix}`,
+      label,
       status,
       statusLabel: 'Found',
-      detail: 'Waiting for the direct link',
+      detail: `${relationship} · waiting for private link`,
       isProbing: false,
     };
   });
@@ -187,7 +213,7 @@ export const getNearbyStatusPresentation = (
     case 'connected':
       return {
         label: `Nearby · ${peerLabel(snapshot.connectedPeerCount)} connected`,
-        detail: 'Messages can travel directly between these phones without internet.',
+        detail: 'Only known conversation devices can use this private offline link.',
         icon: 'checkmark-circle',
         tone: 'success',
       };
@@ -201,9 +227,9 @@ export const getNearbyStatusPresentation = (
     case 'searching':
       return {
         label: snapshot.discoveredPeerCount > 0
-          ? `Nearby · ${peerLabel(snapshot.discoveredPeerCount)} found`
-          : 'Nearby · Searching for phones',
-        detail: 'Keep Wi-Fi and Bluetooth on. No hotspot or internet is needed.',
+          ? `Nearby · ${peerLabel(snapshot.discoveredPeerCount)} known`
+          : 'Nearby · Looking for known contacts',
+        detail: 'Unknown nearby ManaSplit installations are ignored automatically.',
         icon: 'radio-outline',
         tone: 'accent',
       };

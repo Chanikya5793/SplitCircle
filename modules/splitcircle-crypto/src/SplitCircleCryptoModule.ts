@@ -55,6 +55,23 @@ export interface SplitCircleCryptoNativeModule {
     signatureBase64: string,
     identityKey: string,
   ): Promise<boolean>;
+  /**
+   * HPKE-seals base64 plaintext to a published Signal identity public key.
+   * Used only as the nearby/offline recovery path when a prepared Double
+   * Ratchet session is unavailable and cannot be rebuilt without Internet.
+   */
+  sealToIdentity(
+    plaintextBase64: string,
+    identityKey: string,
+    info: string,
+    associatedDataBase64: string,
+  ): Promise<string>;
+  /** Opens an HPKE identity-sealed ciphertext with this device's private key. */
+  openWithIdentity(
+    ciphertextBase64: string,
+    info: string,
+    associatedDataBase64: string,
+  ): Promise<string>;
   wipe(): Promise<void>;
 }
 

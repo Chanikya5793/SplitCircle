@@ -41,8 +41,8 @@ const headlineFor = (
   }
   if (snapshot.connectedPeerCount > 0) {
     return {
-      title: 'Direct link active',
-      detail: `${snapshot.connectedPeerCount} ${snapshot.connectedPeerCount === 1 ? 'phone is' : 'phones are'} ready nearby.`,
+      title: 'Known contact connected',
+      detail: `${snapshot.connectedPeerCount} recognized ${snapshot.connectedPeerCount === 1 ? 'phone is' : 'phones are'} ready. Every message is verified separately.`,
     };
   }
   if (snapshot.connectingPeerCount > 0) {
@@ -53,13 +53,15 @@ const headlineFor = (
   }
   if (peerCount > 0) {
     return {
-      title: 'Nearby phone found',
-      detail: 'Creating a direct encrypted link automatically.',
+      title: 'Known phone found',
+      detail: 'Checking the cached conversation trust before connecting.',
     };
   }
   return {
-    title: 'Looking for nearby phones…',
-    detail: 'No hotspot or internet needed.',
+    title: 'Looking for known contacts…',
+    detail: snapshot.ignoredPeerCount > 0
+      ? `${snapshot.ignoredPeerCount} unknown ${snapshot.ignoredPeerCount === 1 ? 'phone was' : 'phones were'} ignored.`
+      : 'Unknown ManaSplit installations cannot connect.',
   };
 };
 
@@ -277,7 +279,7 @@ export const NearbyDiscoveryArena = ({
                 {selectedPeer.label}
               </Text>
               <Text style={[styles.detailsSubtitle, { color: theme.colors.onSurfaceVariant }]}>
-                Installation name stays private
+                Profile name resolved privately on this phone
               </Text>
             </View>
             <View
@@ -320,7 +322,16 @@ export const NearbyDiscoveryArena = ({
               Trust
             </Text>
             <Text style={[styles.factValue, { color: theme.colors.onSurface }]}>
-              Signature checked on receipt
+              Cached identity · each message signed
+            </Text>
+          </View>
+          <View style={styles.factRow}>
+            <Ionicons name="lock-closed-outline" size={17} color={theme.colors.onSurfaceVariant} />
+            <Text style={[styles.factLabel, { color: theme.colors.onSurfaceVariant }]}>
+              Encryption
+            </Text>
+            <Text style={[styles.factValue, { color: theme.colors.onSurface }]}>
+              End-to-end · one copy per device
             </Text>
           </View>
           <View style={styles.factRow}>

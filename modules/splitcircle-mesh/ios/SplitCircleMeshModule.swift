@@ -4,6 +4,7 @@ import CryptoKit
 
 private let serviceType = "manasplit-mesh"
 private let controlPrefix = "manasplit-control-v1"
+private let pairingPrefix = "manasplit-pair-v1|"
 private let attachmentResourcePrefix = "msb1"
 private let attachmentProtocolLabel = "manasplit-attachment-v1"
 
@@ -59,6 +60,10 @@ private final class MeshController: NSObject,
   private var advertiser: MCNearbyServiceAdvertiser?
   private var browser: MCNearbyServiceBrowser?
   private var running = false
+  private var trustedDeviceIds = Set<String>()
+  private var pairingEnabled = false
+  private var pairingPeerNames = Set<String>()
+  private var ignoredPeerNames = Set<String>()
   private var discoveredPeerNames = Set<String>()
   private var connectingPeerNames = Set<String>()
   private var knownPeers: [String: MCPeerID] = [:]
@@ -73,15 +78,54 @@ private final class MeshController: NSObject,
   private var cancelledTransfers = Set<String>()
   private var peerReceivedAttachmentChunks: [String: Set<Int>] = [:]
 
-  var onEnvelope: ((String) -> Void)?
+  var onEnvelope: ((String, String) -> Void)?
   var onPeersChanged: ((Int) -> Void)?
   var onStateChanged: (([String: Any]) -> Void)?
   var onAttachmentEvent: (([String: Any]) -> Void)?
 
-  func start(userId: String, deviceId: String) {
+  private func normalizedTrustedDeviceIds(_ values: [String]) -> Set<String> {
+    Set(values.lazy.filter {
+      !$0.isEmpty && $0.utf8.count <= 63
+    }.prefix(256))
+  }
+
+  /// MCSession resource/data callbacks arrive on a framework-owned queue while
+  /// trust updates are serialized on `queue`. Never read the mutable Set (or
+  /// current session pointer) concurrently.
+  private func isCurrentTrustedSession(
+    _ candidate: MCSession,
+    peerID: MCPeerID
+  ) -> Bool {
+    queue.sync {
+      session === candidate && trustedDeviceIds.contains(peerID.displayName)
+    }
+  }
+
+  private func isCurrentAdmittedSession(
+    _ candidate: MCSession,
+    peerID: MCPeerID
+  ) -> Bool {
+    queue.sync {
+      session === candidate
+        && (
+          trustedDeviceIds.contains(peerID.displayName)
+            || (pairingEnabled && pairingPeerNames.contains(peerID.displayName))
+        )
+    }
+  }
+
+  private func discoveryInfo() -> [String: String] {
+    [
+      "v": "2",
+      "access": pairingEnabled ? "pairing" : "known-devices",
+    ]
+  }
+
+  func start(userId: String, deviceId: String, trustedDeviceIds: [String]) {
     queue.sync {
       stopLocked()
       pruneAttachmentStorageLocked()
+      self.trustedDeviceIds = normalizedTrustedDeviceIds(trustedDeviceIds)
 
       // MCPeerID display names are limited to 63 UTF-8 bytes. Installation ids
       // are UUID-shaped and stable, giving every device a deterministic,
@@ -97,7 +141,7 @@ private final class MeshController: NSObject,
 
       let createdAdvertiser = MCNearbyServiceAdvertiser(
         peer: peer,
-        discoveryInfo: ["v": "1"],
+        discoveryInfo: discoveryInfo(),
         serviceType: serviceType
       )
       createdAdvertiser.delegate = self
@@ -110,6 +154,9 @@ private final class MeshController: NSObject,
       advertiser = createdAdvertiser
       browser = createdBrowser
       running = true
+      ignoredPeerNames.removeAll()
+      pairingEnabled = false
+      pairingPeerNames.removeAll()
       discoveredPeerNames.removeAll()
       connectingPeerNames.removeAll()
       knownPeers.removeAll()
@@ -141,6 +188,10 @@ private final class MeshController: NSObject,
     session = nil
     localPeer = nil
     running = false
+    trustedDeviceIds.removeAll()
+    pairingEnabled = false
+    pairingPeerNames.removeAll()
+    ignoredPeerNames.removeAll()
     discoveredPeerNames.removeAll()
     connectingPeerNames.removeAll()
     knownPeers.removeAll()
@@ -158,6 +209,65 @@ private final class MeshController: NSObject,
     lastError = nil
     emitPeerCount(0)
     emitState()
+  }
+
+  func updateTrustedPeers(_ deviceIds: [String]) {
+    queue.sync {
+      guard running else {
+        trustedDeviceIds = normalizedTrustedDeviceIds(deviceIds)
+        return
+      }
+      let next = normalizedTrustedDeviceIds(deviceIds)
+      let addedTrust = !next.subtracting(trustedDeviceIds).isEmpty
+      let promotedConnectedPair = session?.connectedPeers.contains(where: {
+        next.contains($0.displayName) && pairingPeerNames.contains($0.displayName)
+      }) == true
+      let connectedUntrusted = session?.connectedPeers.contains(where: {
+        !next.contains($0.displayName)
+      }) == true
+      trustedDeviceIds = next
+      pairingPeerNames.subtract(next)
+      ignoredPeerNames.subtract(next)
+      discoveredPeerNames = discoveredPeerNames.intersection(next)
+      connectingPeerNames = connectingPeerNames.intersection(next)
+      knownPeers = knownPeers.filter { next.contains($0.key) }
+      invitationTokens = invitationTokens.filter { next.contains($0.key) }
+      invitationRetryCounts = invitationRetryCounts.filter { next.contains($0.key) }
+      peerLatencyMs = peerLatencyMs.filter { next.contains($0.key) }
+      pendingProbes = pendingProbes.filter { next.contains($0.value.peerName) }
+
+      // MCSession cannot selectively evict an already-connected peer. A trust
+      // revocation therefore replaces the carrier session immediately.
+      //
+      // Also restart discovery when trust expands. Multipeer may not emit a
+      // second foundPeer callback for a radio that was ignored before its
+      // cached identity became available.
+      if connectedUntrusted || (addedTrust && !promotedConnectedPair) {
+        rebuildTransportLocked()
+      } else {
+        for peer in knownPeers.values {
+          beginInvitation(to: peer)
+        }
+      }
+      emitState()
+    }
+  }
+
+  func setPairingMode(_ enabled: Bool) {
+    queue.sync {
+      guard pairingEnabled != enabled else { return }
+      pairingEnabled = enabled
+      if !enabled {
+        pairingPeerNames.removeAll()
+      }
+      // Discovery metadata is immutable for an advertiser. Rebuilding also
+      // guarantees that a quarantined pairing session cannot survive after
+      // the short user-authorized window closes.
+      if running {
+        rebuildTransportLocked()
+      }
+      emitState()
+    }
   }
 
   func connectedPeerCount() -> Int {
@@ -205,7 +315,7 @@ private final class MeshController: NSObject,
 
     let replacementAdvertiser = MCNearbyServiceAdvertiser(
       peer: localPeer,
-      discoveryInfo: ["v": "1"],
+      discoveryInfo: discoveryInfo(),
       serviceType: serviceType
     )
     replacementAdvertiser.delegate = self
@@ -218,6 +328,7 @@ private final class MeshController: NSObject,
     advertiser = replacementAdvertiser
     browser = replacementBrowser
     discoveredPeerNames.removeAll()
+    pairingPeerNames.removeAll()
     knownPeers.removeAll()
     invitationRetryCounts.removeAll()
     lastError = nil
@@ -233,16 +344,47 @@ private final class MeshController: NSObject,
     }
   }
 
-  func send(_ envelope: String) throws -> Int {
+  func send(_ envelope: String, recipientDeviceIds: [String]) throws -> Int {
     try queue.sync {
       guard let session else { return 0 }
-      let peers = session.connectedPeers
+      let recipients = Set(recipientDeviceIds)
+      guard !recipients.isEmpty else { return 0 }
+      let peers = session.connectedPeers.filter {
+        trustedDeviceIds.contains($0.displayName)
+          && recipients.contains($0.displayName)
+      }
       guard !peers.isEmpty else { return 0 }
       guard let data = envelope.data(using: .utf8) else {
         throw NSError(
           domain: "SplitCircleMesh",
           code: 1,
           userInfo: [NSLocalizedDescriptionKey: "Envelope is not valid UTF-8"]
+        )
+      }
+      try session.send(data, toPeers: peers, with: .reliable)
+      return peers.count
+    }
+  }
+
+  func sendPairing(_ envelope: String, recipientDeviceIds: [String]) throws -> Int {
+    try queue.sync {
+      guard pairingEnabled, let session else { return 0 }
+      let recipients = Set(recipientDeviceIds)
+      guard !recipients.isEmpty else { return 0 }
+      let peers = session.connectedPeers.filter {
+        pairingPeerNames.contains($0.displayName)
+          && recipients.contains($0.displayName)
+      }
+      guard !peers.isEmpty else { return 0 }
+      guard
+        envelope.hasPrefix(pairingPrefix),
+        let data = envelope.data(using: .utf8),
+        data.count <= 32 * 1024
+      else {
+        throw NSError(
+          domain: "SplitCircleMesh",
+          code: 30,
+          userInfo: [NSLocalizedDescriptionKey: "Invalid nearby pairing envelope"]
         )
       }
       try session.send(data, toPeers: peers, with: .reliable)
@@ -598,12 +740,25 @@ private final class MeshController: NSObject,
 
   /// Starts one sequential resource stream per currently connected peer.
   /// A per-peer guard prevents topology replay from starting duplicate sends.
-  func sendPreparedAttachment(transferId: String, chunkCount: Int) -> Int {
+  func sendPreparedAttachment(
+    transferId: String,
+    chunkCount: Int,
+    recipientDeviceIds: [String]
+  ) -> Int {
     queue.sync {
+      let recipients = Set(recipientDeviceIds)
       guard
         safeTransferId(transferId),
         chunkCount > 0,
-        let peers = session?.connectedPeers,
+        !recipients.isEmpty,
+        let connectedPeers = session?.connectedPeers,
+        !connectedPeers.isEmpty
+      else { return 0 }
+      let peers = connectedPeers.filter {
+        trustedDeviceIds.contains($0.displayName)
+          && recipients.contains($0.displayName)
+      }
+      guard
         !peers.isEmpty
       else { return 0 }
 
@@ -825,20 +980,27 @@ private final class MeshController: NSObject,
   }
 
   private func emitPeerCount(_ count: Int? = nil) {
-    let resolved = count ?? session?.connectedPeers.count ?? 0
+    let resolved = count ?? session?.connectedPeers.filter {
+      trustedDeviceIds.contains($0.displayName)
+    }.count ?? 0
     DispatchQueue.main.async { [weak self] in self?.onPeersChanged?(resolved) }
   }
 
   private func emitState() {
-    let connectedNames = Set(session?.connectedPeers.map(\.displayName) ?? [])
+    let allConnectedNames = Set(session?.connectedPeers.map(\.displayName) ?? [])
+    let connectedNames = allConnectedNames.intersection(trustedDeviceIds)
+    let connectedPairingNames = allConnectedNames
+      .intersection(pairingPeerNames)
+      .subtracting(trustedDeviceIds)
     connectingPeerNames.subtract(connectedNames)
+    let trustedConnectingNames = connectingPeerNames.intersection(trustedDeviceIds)
 
     let status: String
     if lastError != nil {
       status = "error"
     } else if !connectedNames.isEmpty {
       status = "connected"
-    } else if !connectingPeerNames.isEmpty {
+    } else if !connectingPeerNames.isEmpty || !connectedPairingNames.isEmpty {
       status = "connecting"
     } else if running {
       status = "searching"
@@ -850,12 +1012,15 @@ private final class MeshController: NSObject,
       "status": status,
       "connectedPeerCount": connectedNames.count,
       "discoveredPeerCount": discoveredPeerNames.count,
-      "connectingPeerCount": connectingPeerNames.count,
+      "connectingPeerCount": trustedConnectingNames.count,
       "discoveredDeviceIds": Array(discoveredPeerNames).sorted(),
-      "connectingDeviceIds": Array(connectingPeerNames).sorted(),
+      "connectingDeviceIds": Array(trustedConnectingNames).sorted(),
       "connectedDeviceIds": Array(connectedNames).sorted(),
+      "pairingDeviceIds": Array(connectedPairingNames).sorted(),
+      "pairingEnabled": pairingEnabled,
       "probingDeviceIds": Array(Set(pendingProbes.values.map(\.peerName))).sorted(),
       "peerLatencyMs": peerLatencyMs,
+      "ignoredPeerCount": ignoredPeerNames.count,
     ]
     if let lastError {
       payload["errorCode"] = lastError.code
@@ -884,7 +1049,15 @@ private final class MeshController: NSObject,
     connectingPeerNames.insert(peerName)
     let token = UUID()
     invitationTokens[peerName] = token
-    browser.invitePeer(peerID, to: session, withContext: nil, timeout: 12)
+    let invitationContext = pairingPeerNames.contains(peerName)
+      ? Data("manasplit-pairing-v1".utf8)
+      : nil
+    browser.invitePeer(
+      peerID,
+      to: session,
+      withContext: invitationContext,
+      timeout: 12
+    )
     emitState()
 
     queue.asyncAfter(deadline: .now() + 15) { [weak self] in
@@ -930,9 +1103,25 @@ private final class MeshController: NSObject,
     foundPeer peerID: MCPeerID,
     withDiscoveryInfo info: [String : String]?
   ) {
-    guard info?["v"] == "1" else { return }
     queue.async {
-      self.discoveredPeerNames.insert(peerID.displayName)
+      guard info?["v"] == "2" else {
+        self.ignoredPeerNames.insert(peerID.displayName)
+        self.emitState()
+        return
+      }
+      let trusted = self.trustedDeviceIds.contains(peerID.displayName)
+      let pairable = self.pairingEnabled && info?["access"] == "pairing"
+      guard trusted || pairable else {
+        self.ignoredPeerNames.insert(peerID.displayName)
+        self.emitState()
+        return
+      }
+      self.ignoredPeerNames.remove(peerID.displayName)
+      if trusted {
+        self.discoveredPeerNames.insert(peerID.displayName)
+      } else {
+        self.pairingPeerNames.insert(peerID.displayName)
+      }
       self.knownPeers[peerID.displayName] = peerID
       self.beginInvitation(to: peerID)
       self.emitState()
@@ -941,7 +1130,9 @@ private final class MeshController: NSObject,
 
   func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
     queue.async {
+      self.ignoredPeerNames.remove(peerID.displayName)
       self.discoveredPeerNames.remove(peerID.displayName)
+      self.pairingPeerNames.remove(peerID.displayName)
       self.connectingPeerNames.remove(peerID.displayName)
       self.knownPeers.removeValue(forKey: peerID.displayName)
       self.invitationTokens.removeValue(forKey: peerID.displayName)
@@ -959,7 +1150,17 @@ private final class MeshController: NSObject,
     invitationHandler: @escaping (Bool, MCSession?) -> Void
   ) {
     queue.async {
-      guard self.running else {
+      let pairingInvitation = context == Data("manasplit-pairing-v1".utf8)
+      if self.pairingEnabled && pairingInvitation {
+        self.pairingPeerNames.insert(peerID.displayName)
+        self.knownPeers[peerID.displayName] = peerID
+        self.ignoredPeerNames.remove(peerID.displayName)
+      }
+      let admitted = self.trustedDeviceIds.contains(peerID.displayName)
+        || (self.pairingEnabled && self.pairingPeerNames.contains(peerID.displayName))
+      guard self.running, admitted else {
+        self.ignoredPeerNames.insert(peerID.displayName)
+        self.emitState()
         invitationHandler(false, nil)
         return
       }
@@ -987,11 +1188,24 @@ private final class MeshController: NSObject,
   ) {
     queue.async {
       guard self.session === session else { return }
+      let admitted = self.trustedDeviceIds.contains(peerID.displayName)
+        || (self.pairingEnabled && self.pairingPeerNames.contains(peerID.displayName))
+      guard admitted else {
+        self.ignoredPeerNames.insert(peerID.displayName)
+        if state != .notConnected {
+          session.cancelConnectPeer(peerID)
+        }
+        self.emitPeerCount()
+        self.emitState()
+        return
+      }
       switch state {
       case .connecting:
         self.connectingPeerNames.insert(peerID.displayName)
       case .connected:
-        self.discoveredPeerNames.insert(peerID.displayName)
+        if self.trustedDeviceIds.contains(peerID.displayName) {
+          self.discoveredPeerNames.insert(peerID.displayName)
+        }
         self.connectingPeerNames.remove(peerID.displayName)
         self.invitationTokens.removeValue(forKey: peerID.displayName)
         self.invitationRetryCounts.removeValue(forKey: peerID.displayName)
@@ -1013,8 +1227,24 @@ private final class MeshController: NSObject,
     didReceive data: Data,
     fromPeer peerID: MCPeerID
   ) {
-    guard self.session === session else { return }
+    guard isCurrentAdmittedSession(session, peerID: peerID) else { return }
     guard let envelope = String(data: data, encoding: .utf8) else { return }
+
+    let trusted = isCurrentTrustedSession(session, peerID: peerID)
+    if !trusted {
+      // Quarantined peers get one tiny control lane and nothing else. They
+      // cannot inject chat envelopes, request attachment chunks, or probe the
+      // normal carrier until the signed code ceremony promotes their exact
+      // device identity into the durable trust set.
+      guard
+        envelope.hasPrefix(pairingPrefix),
+        data.count <= 32 * 1024
+      else { return }
+      DispatchQueue.main.async { [weak self] in
+        self?.onEnvelope?(envelope, peerID.displayName)
+      }
+      return
+    }
 
     let components = envelope.split(separator: "|", omittingEmptySubsequences: false)
     if components.count == 4,
@@ -1059,7 +1289,9 @@ private final class MeshController: NSObject,
       }
     }
 
-    DispatchQueue.main.async { [weak self] in self?.onEnvelope?(envelope) }
+    DispatchQueue.main.async { [weak self] in
+      self?.onEnvelope?(envelope, peerID.displayName)
+    }
   }
 
   func session(
@@ -1067,7 +1299,11 @@ private final class MeshController: NSObject,
     didReceive stream: InputStream,
     withName streamName: String,
     fromPeer peerID: MCPeerID
-  ) {}
+  ) {
+    // Streams are not part of the ManaSplit protocol. Close immediately so a
+    // connected peer cannot hold resources open through an unused API.
+    stream.close()
+  }
 
   func session(
     _ session: MCSession,
@@ -1075,6 +1311,12 @@ private final class MeshController: NSObject,
     fromPeer peerID: MCPeerID,
     with progress: Progress
   ) {
+    guard
+      isCurrentTrustedSession(session, peerID: peerID)
+    else {
+      progress.cancel()
+      return
+    }
     let components = resourceName.split(separator: ".", omittingEmptySubsequences: false)
     guard
       components.count == 4,
@@ -1116,6 +1358,9 @@ private final class MeshController: NSObject,
     at localURL: URL?,
     withError error: Error?
   ) {
+    guard
+      isCurrentTrustedSession(session, peerID: peerID)
+    else { return }
     let components = resourceName.split(separator: ".", omittingEmptySubsequences: false)
     guard
       components.count == 4,
@@ -1212,8 +1457,11 @@ public final class SplitCircleMeshModule: Module {
     Events("onEnvelope", "onPeersChanged", "onStateChanged", "onAttachmentEvent")
 
     OnCreate {
-      self.controller.onEnvelope = { [weak self] envelope in
-        self?.sendEvent("onEnvelope", ["envelope": envelope])
+      self.controller.onEnvelope = { [weak self] envelope, peerDeviceId in
+        self?.sendEvent("onEnvelope", [
+          "envelope": envelope,
+          "peerDeviceId": peerDeviceId,
+        ])
       }
       self.controller.onPeersChanged = { [weak self] count in
         self?.sendEvent("onPeersChanged", ["connectedPeerCount": count])
@@ -1230,17 +1478,42 @@ public final class SplitCircleMeshModule: Module {
       self.controller.stop()
     }
 
-    AsyncFunction("start") { (userId: String, deviceId: String) -> Bool in
-      self.controller.start(userId: userId, deviceId: deviceId)
+    AsyncFunction("start") {
+      (userId: String, deviceId: String, trustedDeviceIds: [String]) -> Bool in
+      self.controller.start(
+        userId: userId,
+        deviceId: deviceId,
+        trustedDeviceIds: trustedDeviceIds
+      )
       return true
+    }
+
+    Function("updateTrustedPeers") { (trustedDeviceIds: [String]) in
+      self.controller.updateTrustedPeers(trustedDeviceIds)
+    }
+
+    Function("setPairingMode") { (enabled: Bool) in
+      self.controller.setPairingMode(enabled)
     }
 
     Function("stop") {
       self.controller.stop()
     }
 
-    AsyncFunction("send") { (envelope: String) -> Int in
-      try self.controller.send(envelope)
+    AsyncFunction("send") {
+      (envelope: String, recipientDeviceIds: [String]) -> Int in
+      try self.controller.send(
+        envelope,
+        recipientDeviceIds: recipientDeviceIds
+      )
+    }
+
+    AsyncFunction("sendPairing") {
+      (envelope: String, recipientDeviceIds: [String]) -> Int in
+      try self.controller.sendPairing(
+        envelope,
+        recipientDeviceIds: recipientDeviceIds
+      )
     }
 
     AsyncFunction("prepareAttachment") {
@@ -1257,10 +1530,15 @@ public final class SplitCircleMeshModule: Module {
     }
 
     AsyncFunction("sendPreparedAttachment") {
-      (transferId: String, chunkCount: Int) -> Int in
+      (
+        transferId: String,
+        chunkCount: Int,
+        recipientDeviceIds: [String]
+      ) -> Int in
       self.controller.sendPreparedAttachment(
         transferId: transferId,
-        chunkCount: chunkCount
+        chunkCount: chunkCount,
+        recipientDeviceIds: recipientDeviceIds
       )
     }
 

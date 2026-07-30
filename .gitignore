@@ -51,6 +51,7 @@ GoogleService-Info.plist
 /docs/*
 !/docs/OFFLINE_FIRST_RESEARCH.md
 !/docs/2026-07-29_OFFLINE_MEDIA_SHARING_RESEARCH_AND_PLAN.md
+!/docs/2026-07-29_NEARBY*.md
 
 
 google-service-account.json
