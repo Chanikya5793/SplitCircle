@@ -64,6 +64,7 @@ import {
 } from '@/services/syncGapService';
 import { useAuth } from '@/context/AuthContext';
 import { dismissNotificationsForEntity } from '@/utils/notifications';
+import { markSessionForRebuild } from '@/services/signalCryptoService';
 import { resolveDisplayName } from '@/utils/identity';
 import { diffRemovedChatIds } from '@/utils/notificationEntityMatch';
 import { loadCachedChatThreads, persistChatThreads } from '@/services/chatThreadCache';
@@ -888,11 +889,24 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
         unsubscribeReceipts = listenForReceipts(
           chatId,
-          async (messageId, status, recipientId, allDelivered, allRead) => {
+          async (messageId, status, recipientId, allDelivered, allRead, undecryptableDeviceId) => {
             const latestThread = getThreadByChatId(chatId);
             const recipientCount = getRecipientCount(latestThread, currentUser.userId);
 
             if (status === 'undecryptable') {
+              // SELF-HEAL. The recipient proved this message authentic but
+              // could not open it, which means OUR ratchet with that device is
+              // dead — typically because they reinstalled, restored, or were
+              // wiped, so their private keys no longer match the session we
+              // hold. Nothing else tells a SENDER that: the receiver already
+              // repairs its own side on a failed decrypt, which is exactly why
+              // the reverse direction keeps working while this one stays
+              // broken forever. Marking it here makes the next send to that
+              // device rebuild the session from a fresh prekey bundle instead
+              // of encrypting to a ratchet nobody can advance.
+              if (recipientId && typeof undecryptableDeviceId === 'number') {
+                await markSessionForRebuild(recipientId, undecryptableDeviceId).catch(() => {});
+              }
               // The recipient proved this message authentic but could not open
               // it (doc 32 §5c). It is NOT delivered in any useful sense, and
               // this message had already been flipped to 'sent' by a transport

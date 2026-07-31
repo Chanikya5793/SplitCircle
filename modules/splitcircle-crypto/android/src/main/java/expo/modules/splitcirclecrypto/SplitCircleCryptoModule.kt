@@ -86,6 +86,31 @@ class SplitCircleCryptoModule : Module() {
     return localAddress ?: throw CodedException("NotBootstrapped", "No local address", null)
   }
 
+
+  /**
+   * Converts a raw libsignal exception into a CodedException carrying the
+   * exception's SIMPLE NAME as the code and its message as the description.
+   *
+   * Without this, a failure reaches JS as Expo's generic "Call to function
+   * 'SplitCircleCrypto.decrypt' has been rejected. Caused by: org…" — and the
+   * receive path truncates the reason to 80 characters, so the only thing a
+   * user or a log ever saw was the literal string "org". A decrypt failure has
+   * to name itself: NoSessionException and InvalidKeyIdException mean opposite
+   * things (stale peer session vs missing prekey) and demand different repairs.
+   */
+  private inline fun <T> signalCall(operation: String, block: () -> T): T =
+    try {
+      block()
+    } catch (e: CodedException) {
+      throw e
+    } catch (e: Throwable) {
+      throw CodedException(
+        e::class.java.simpleName.ifEmpty { "SignalError" },
+        "$operation failed: ${e.message ?: e::class.java.name}",
+        e,
+      )
+    }
+
   override fun definition() = ModuleDefinition {
     Name("SplitCircleCrypto")
 
@@ -220,7 +245,9 @@ class SplitCircleCryptoModule : Module() {
         // NOTE the argument order — SessionBuilder takes (store, REMOTE, LOCAL)
         // while SessionCipher below takes (store, LOCAL, REMOTE). Identical
         // types, so swapping them compiles and fails at runtime. Doc 33 §3.1.
-        SessionBuilder(store, remote, requireLocalAddress()).process(preKeyBundle)
+        signalCall("establishSession(with=$userId.$deviceId)") {
+          SessionBuilder(store, remote, requireLocalAddress()).process(preKeyBundle)
+        }
       }
     }
 
@@ -234,8 +261,9 @@ class SplitCircleCryptoModule : Module() {
       synchronized(lock) {
         val store = requireStore()
         val remote = SignalProtocolAddress(userId, deviceId)
-        val message: CiphertextMessage =
+        val message: CiphertextMessage = signalCall("encrypt(to=$userId.$deviceId)") {
           SessionCipher(store, requireLocalAddress(), remote).encrypt(unb64(plaintextBase64))
+        }
         mapOf(
           // The receiver dispatches on this to choose the decrypt path; it is
           // protocol data, not a hint, so it travels with every envelope.
@@ -251,10 +279,12 @@ class SplitCircleCryptoModule : Module() {
         val remote = SignalProtocolAddress(userId, deviceId)
         val cipher = SessionCipher(store, requireLocalAddress(), remote)
         val body = unb64(bodyBase64)
-        val plaintext = when (type) {
-          CiphertextMessage.PREKEY_TYPE -> cipher.decrypt(PreKeySignalMessage(body))
-          CiphertextMessage.WHISPER_TYPE -> cipher.decrypt(SignalMessage(body))
-          else -> throw CodedException("UnsupportedMessageType", "Unsupported type $type", null)
+        val plaintext = signalCall("decrypt(type=$type, from=$userId.$deviceId)") {
+          when (type) {
+            CiphertextMessage.PREKEY_TYPE -> cipher.decrypt(PreKeySignalMessage(body))
+            CiphertextMessage.WHISPER_TYPE -> cipher.decrypt(SignalMessage(body))
+            else -> throw CodedException("UnsupportedMessageType", "Unsupported type $type", null)
+          }
         }
         b64(plaintext)
       }

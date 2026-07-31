@@ -23,6 +23,7 @@ import {
   encryptMessageForRecipient,
 } from '@/services/messageEnvelope';
 import { getOrCreateInstallationId } from '@/services/notificationService';
+import { getCachedSignalDeviceId } from '@/services/signalCryptoService';
 
 // Get Realtime Database instance
 const rtdb = getDatabase();
@@ -44,6 +45,13 @@ export interface ReceiptData {
    */
   undecryptable?: boolean;
   undecryptableAt?: number;
+  /**
+   * libsignal device id of the device that could not decrypt. The sender needs
+   * it to repair the EXACT session: a user can have several devices, and
+   * rebuilding all of them on one device's failure would needlessly reset
+   * healthy ratchets.
+   */
+  undecryptableDeviceId?: number;
   recipientId: string;
 }
 
@@ -54,6 +62,7 @@ interface PersistedReceiptData {
   readAt?: number;
   undecryptable?: boolean;
   undecryptableAt?: number;
+  undecryptableDeviceId?: number;
   recipientId: string;
 }
 
@@ -765,7 +774,12 @@ const attachQueueListener = (
           // Report the failure INSTEAD of a delivery receipt, not alongside
           // it: "delivered" outranks "undecryptable" on the sender's side by
           // design, so sending both would hide the very thing being reported.
-          await sendUndecryptableReceipt(payload.chatId, messageId, userId);
+          await sendUndecryptableReceipt(
+            payload.chatId,
+            messageId,
+            userId,
+            getCachedSignalDeviceId() ?? undefined,
+          );
         } else {
           await sendDeliveryReceipt(payload.chatId, messageId, userId, payload.isGroupChat ?? false);
         }
@@ -871,11 +885,15 @@ export const sendUndecryptableReceipt = async (
   chatId: string,
   messageId: string,
   recipientId: string,
+  reportingSignalDeviceId?: number,
 ): Promise<void> => {
   try {
     await update(ref(rtdb, `receipts/${chatId}/${messageId}/${recipientId}`), {
       undecryptable: true,
       undecryptableAt: Date.now(),
+      ...(typeof reportingSignalDeviceId === 'number'
+        ? { undecryptableDeviceId: reportingSignalDeviceId }
+        : {}),
       recipientId,
     });
   } catch (error) {
@@ -971,7 +989,9 @@ export const listenForReceipts = (
     status: 'delivered' | 'read' | 'undecryptable',
     recipientId?: string,
     allDelivered?: string[],
-    allRead?: string[]
+    allRead?: string[],
+    /** Set only for 'undecryptable': which device of theirs failed. */
+    undecryptableDeviceId?: number,
   ) => void,
   isGroupChat: boolean = false,
   onError?: (error: Error) => void,
@@ -1025,7 +1045,16 @@ export const listenForReceipts = (
     fingerprints.set(messageId, fingerprint);
 
     if (isGroupChat) {
-      onReceiptReceived(messageId, status, undefined, allDelivered, allRead);
+      onReceiptReceived(
+        messageId,
+        status,
+        status === 'undecryptable' ? allUndecryptable[0] : undefined,
+        allDelivered,
+        allRead,
+        status === 'undecryptable'
+          ? receiptMap[allUndecryptable[0]]?.undecryptableDeviceId
+          : undefined,
+      );
       return;
     }
 
@@ -1035,7 +1064,16 @@ export const listenForReceipts = (
         ? allDelivered[0]
         : allUndecryptable[0];
     if (recipientId) {
-      onReceiptReceived(messageId, status, recipientId);
+      onReceiptReceived(
+        messageId,
+        status,
+        recipientId,
+        undefined,
+        undefined,
+        status === 'undecryptable'
+          ? receiptMap[recipientId]?.undecryptableDeviceId
+          : undefined,
+      );
     }
   };
 
