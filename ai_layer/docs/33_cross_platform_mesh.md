@@ -276,6 +276,23 @@ their two addresses in OPPOSITE orders —
 The parameter types are identical, so swapping them **compiles cleanly and
 fails at runtime**. Read the v0.99.1 sources, do not infer it.
 
+### 3.1b The spike is NOT the module — Phase 2 is gated on this
+
+Easy to lose, so stated plainly: the JS layer resolves
+`requireOptionalNativeModule('SplitCircleCrypto')`, while Android currently
+registers `SplitCircleCryptoSpike`. So `isCryptoAvailable()` is still **false**
+on Android, `encryptMessageForRecipient` still returns null, and messages would
+still go out in plaintext.
+
+**Phase 2 (Android history sync) therefore cannot start yet**, even though it
+is "already internet-based": with no Signal sessions there is nothing to
+decrypt. What remains in Phase 1 is the real module — all 13 exported
+functions under the name `SplitCircleCrypto`, with PERSISTENT identity,
+session, prekey, signed-prekey and kyber-prekey stores (libsignal's `InMemory*`
+stores are spike-only; a device that forgets its sessions on restart is worse
+than one with none). Its serialization must match what iOS publishes, since
+the two ends share `signalPrekeys` documents.
+
 ### 3.2 Gate 1 (partially closed)
 
 The version question is resolved (§3.1) and Android-side execution is proven
