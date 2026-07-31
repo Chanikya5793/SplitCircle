@@ -64,3 +64,8 @@ ios/build-s0/
 build-output/
 credentials/
 SplitCircle*.ipa
+
+# Gradle build output from RN/Expo native modules (they compile in place
+# inside node_modules and modules/*). Never source; also what polluted a
+# patch-package regeneration with 87KB of .bin artifacts.
+modules/*/android/build/
