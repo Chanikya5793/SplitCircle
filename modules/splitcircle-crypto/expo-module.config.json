@@ -4,6 +4,6 @@
     "modules": ["SplitCircleCryptoModule"]
   },
   "android": {
-    "modules": ["expo.modules.splitcirclecrypto.SplitCircleCryptoSpike"]
+    "modules": ["expo.modules.splitcirclecrypto.SplitCircleCryptoModule"]
   }
 }
