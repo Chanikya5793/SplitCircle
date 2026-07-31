@@ -140,6 +140,19 @@ android {
             //   unzip -l <apk> | grep signal.*\.so
             excludes += ['**/libsignal_jni_testing.so']
         }
+        resources {
+            // libsignal-client's jar bundles HOST natives as ordinary Java
+            // RESOURCES, so one artifact works on a desktop JVM too. On Android
+            // they are dead weight that can never load — 58MB of macOS dylibs
+            // (libsignal_jni_aarch64.dylib plus its testing twin) rode along in
+            // every build.
+            //
+            // A jniLibs exclude does NOT catch these. They are resources, not
+            // JNI libraries, which is exactly why the rule above missed them
+            // and why grepping only for `.so` showed a clean APK. Verify with:
+            //   unzip -l <apk> | grep -iE '\.dylib|\.dll'
+            excludes += ['**/*.dylib', '**/*.dll']
+        }
     }
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
