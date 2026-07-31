@@ -126,6 +126,66 @@ describe('self-sync device coverage', () => {
     expect(rtdbMock.set).not.toHaveBeenCalled();
   });
 
+  it('sanitizes a message replayed from the mesh queue, where optional fields round-trip as undefined', async () => {
+    // flushMeshCloudRelay (doc 32 §5a) feeds this function an
+    // `operation.message` rebuilt from the on-disk mesh queue, NOT one the
+    // send path just built field-by-field. Those two inputs differ in exactly
+    // one way that matters: stored history can carry an explicit `undefined`
+    // where a fresh message simply omits the key, and RTDB rejects `undefined`
+    // outright. Unsanitized, `set` threw into the catch — which swallows it —
+    // so nothing sent while OFFLINE ever reached the user's own other
+    // devices, while the online path (whose messages never carry undefined)
+    // kept working and hid the failure completely.
+    envelope.encryptMessageForRecipient.mockResolvedValue({
+      envelopes: { 'sibling-a': { t: 3, b: 'ct' } },
+      senderSignalDeviceId: 2,
+    });
+
+    const replayedFromMeshQueue = {
+      ...message,
+      // Raw-spread by the payload builder, so an undefined leaks straight in.
+      replyTo: { messageId: 'r1', senderId: 'them', senderName: undefined, content: 'x' },
+      mediaMetadata: { fileName: 'a.jpg', fileSize: undefined },
+    } as unknown as ChatMessage;
+
+    await queueMessageToOwnDevices('me', replayedFromMeshQueue, false);
+
+    expect(rtdbMock.set).toHaveBeenCalledTimes(1);
+    const [, payload] = rtdbMock.set.mock.calls[0] as unknown as [unknown, Record<string, unknown>];
+    const containsUndefined = (value: unknown): boolean =>
+      value !== null && typeof value === 'object'
+        ? Object.values(value as Record<string, unknown>)
+          .some((entry) => entry === undefined || containsUndefined(entry))
+        : false;
+    expect(containsUndefined(payload)).toBe(false);
+    // Sanitizing must not silently drop real data alongside the undefineds.
+    expect((payload.replyTo as Record<string, unknown>).messageId).toBe('r1');
+    expect((payload.mediaMetadata as Record<string, unknown>).fileName).toBe('a.jpg');
+  });
+
+  it('stays quiet for a single-device account but shouts when every sibling is unreachable', async () => {
+    // These two are one `if` apart and mean opposite things. Conflating them
+    // either spams an error at every single-device user on every message, or
+    // hides a total self-sync outage — the failure mode this whole path exists
+    // to make visible.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      envelope.encryptMessageForRecipient.mockResolvedValue(null);
+      await queueMessageToOwnDevices('me', message, false);
+      expect(errorSpy).not.toHaveBeenCalled();
+
+      envelope.encryptMessageForRecipient.mockResolvedValue({
+        envelopes: {},
+        senderSignalDeviceId: 2,
+      });
+      await queueMessageToOwnDevices('me', message, false);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
+    expect(rtdbMock.set).not.toHaveBeenCalled();
+  });
+
   it('never lets a self-sync failure escape into the send path', async () => {
     // The send already succeeded to its real recipients; a mirror failure must
     // not turn that into a failed message.

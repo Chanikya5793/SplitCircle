@@ -380,7 +380,36 @@ export const queueMessageToOwnDevices = async (
     // the others haven't synced yet) — nothing to mirror, and falling back to
     // plaintext here would put our own message content in transit for no
     // benefit, since there is no device waiting to read it.
-    if (!encrypted || Object.keys(encrypted.envelopes).length === 0) {
+    //
+    // LOUD, not silent. 'available-devices' (above) turns "no sibling could be
+    // encrypted for" into an empty map rather than a throw, so on a
+    // multi-device account this branch is indistinguishable from a successful
+    // send at every layer: the message reaches its real recipients, the UI
+    // shows 'sent', and nothing is ever written to RTDB — so there is no
+    // fanOutQueuedMessage log either. That is precisely how self-sync can be
+    // dead for days while every observable signal looks healthy.
+    if (!encrypted) {
+      return;
+    }
+    // Distinct from the null case above, and the only one worth shouting about:
+    // null means there was nobody to mirror to (a genuinely single-device
+    // account — normal, and logging it would cry wolf on every message those
+    // users send). An empty map means siblings DO exist and not one of them
+    // could be encrypted for.
+    //
+    // LOUD, because 'available-devices' (above) turns that into an empty map
+    // rather than a throw, making it indistinguishable from success at every
+    // layer: the message reaches its real recipients, the UI shows 'sent', and
+    // nothing is written to RTDB — so there is no fanOutQueuedMessage log
+    // either. That is how self-sync can be dead for days while every
+    // observable signal looks healthy.
+    if (Object.keys(encrypted.envelopes).length === 0) {
+      console.error(
+        '⚠️ Self-sync produced no envelopes — could not encrypt to ANY sibling '
+        + 'device. Their sessions are likely stale (reinstall/restore); they will '
+        + 'not receive this message.',
+        { messageId: message.id, chatId: message.chatId },
+      );
       return;
     }
 
@@ -410,7 +439,22 @@ export const queueMessageToOwnDevices = async (
     if (message.forwardedFrom) messageData.forwardedFrom = message.forwardedFrom;
     if (message.expenseRef) messageData.expenseRef = message.expenseRef;
 
-    await set(ref(rtdb, `messageQueue/${senderId}/${message.id}`), messageData);
+    // SANITIZED, exactly like queueGapFillMessage below and for the same
+    // reason. This function was written for the online send path, where the
+    // message is built field-by-field moments earlier and every optional field
+    // is either set or absent. flushMeshCloudRelay (doc 32 §5a) also calls it,
+    // with an `operation.message` reconstructed from the on-disk mesh queue —
+    // "arbitrary local history", where an optional field can round-trip as an
+    // explicit `undefined`. RTDB rejects `undefined` outright, so one such
+    // field made `set` throw into the catch below, which swallows it: the
+    // message reached its real recipients over the mesh, the sender showed
+    // 'sent', and the user's own other devices silently never received it.
+    // Note the raw spreads above (mediaMetadata/replyTo/forwardedFrom/
+    // expenseRef) copy stored objects wholesale, so this is not hypothetical.
+    await set(
+      ref(rtdb, `messageQueue/${senderId}/${message.id}`),
+      stripUndefinedDeep(messageData),
+    );
   } catch (error) {
     // Never fail the send because self-sync failed: the message already
     // reached its actual recipients, and the user's other devices catching up
@@ -420,7 +464,14 @@ export const queueMessageToOwnDevices = async (
     // the device log (CLAUDE.md), which is exactly why this swallow hid a
     // total self-sync outage — every send looked fine and no phone could show
     // otherwise. Keep this the loudest thing a non-fatal path can do.
-    console.error('⚠️ Failed to mirror message to own devices:', error);
+    // Carries the ids: "failed to mirror" with no message id cannot be matched
+    // against the one message a user reports missing on their other phone,
+    // which is the only way this path is ever observed from the outside.
+    console.error(
+      '⚠️ Failed to mirror message to own devices:',
+      error,
+      { messageId: message.id, chatId: message.chatId, type: message.type },
+    );
   }
 };
 

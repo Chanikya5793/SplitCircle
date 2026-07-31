@@ -851,3 +851,64 @@ three paired devices, confirm all three connect simultaneously and stay
 connected across a thread-list change (previously any invitation timeout or
 trust refresh dropped everyone).
 
+
+### 10.3 Own messages sent OFFLINE never reached own devices — FIXED 2026-07-31
+
+§10.1 fixed self-sync for the **online** send path. Hardware testing on
+2026-07-31 (iPhone 17 Pro + Pixel 7 on one account, an iPhone Mini on a second)
+showed it was still totally broken for the **offline** one, and the two are
+easy to confuse because the online case works perfectly:
+
+- All three devices offline. 17 Pro ↔ Mini exchange DMs and group messages
+  over the mesh; both receive everything.
+- All three come back online. The Mini's messages appear on **both** the 17 Pro
+  and the Pixel. The 17 Pro's own messages appear on the Pixel **never** — not
+  as a failed bubble, not as a `⚠️ Couldn't decrypt` placeholder. Nothing.
+
+**Root cause.** `queueMessageToOwnDevices` was written for, and only ever
+exercised by, the online send path — where `ChatContext` builds the message
+field-by-field moments earlier, so an absent optional field is *omitted*.
+`flushMeshCloudRelay` (§5a) calls the same function with an
+`operation.message` **rebuilt from the on-disk mesh queue**, where an optional
+field can round-trip as an explicit `undefined`. RTDB rejects `undefined`
+outright, so `set` threw — into the function's own catch, which swallows it by
+design so a mirror failure can never fail the real send.
+
+Every observable signal therefore stayed green. The message reached its real
+recipients over the mesh, the sender's UI showed `sent`, nothing was written
+to RTDB, and because nothing was written there is no `fanOutQueuedMessage` log
+entry either — the exact diagnostic §10.1 was found with shows *nothing at
+all* for these messages, which reads identically to "no message was sent".
+
+Note the sibling `queueGapFillMessage` immediately below it already carried a
+comment stating this precise hazard — *"a gap-fill replay of arbitrary local
+history has to sanitize where the normal send path could rely on building its
+payload field-by-field"* — and already called `stripUndefinedDeep`. The rule
+was written down and simply not applied to the other function that had since
+acquired the same class of caller. `queueMessage` survives the identical input
+only because it rebuilds every nested object field-by-field with truthiness
+guards; `queueMessageToOwnDevices` raw-spreads `mediaMetadata`, `replyTo`,
+`forwardedFrom` and `expenseRef` straight from storage.
+
+**Fixed** by sanitizing the payload with the existing `stripUndefinedDeep`, and
+by making the two silent exits diagnosable:
+
+- `!encrypted` (nobody to mirror to — a genuinely single-device account) stays
+  quiet. Logging it would fire on every message those users send.
+- `envelopes === {}` (siblings exist, **not one** could be encrypted for) is now
+  a loud `console.error`. `'available-devices'` coverage, correct in itself,
+  turns that case into an empty map rather than a throw — indistinguishable
+  from success at every layer without this.
+- The catch now carries `messageId`/`chatId`/`type`, so "failed to mirror" can
+  be matched against the one message a user reports missing on another phone.
+
+**Rule this generalizes to:** any function on the online send path that a
+store-and-forward/replay path is later pointed at must sanitize its payload.
+The two callers differ in exactly one way that matters, it is invisible to
+`tsc` and to every test that feeds it a freshly-built message, and the failure
+surfaces only as absence.
+
+**Status:** 275 services + 419 unit tests pass, including two new regression
+tests (a mesh-queue-shaped message with `undefined` optionals; the
+single-device-vs-all-siblings-unreachable distinction). **NOT yet verified on
+hardware** — the repro is the offline exchange above.
