@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.splitcircleble'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.splitcircleble"
+  defaultConfig {
+    // BLE peripheral (advertiser + GATT server) needs 21; the runtime
+    // permission split this module branches on needs 31. 24 matches the app.
+    minSdkVersion 24
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+}

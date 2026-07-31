@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["SplitCircleBleModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.splitcircleble.SplitCircleBleModule"]
+  }
+}

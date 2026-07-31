@@ -1,6 +1,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
   <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
   <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+  <!--
+    Nearby mesh over BLE (ai_layer/docs/33 Phase 3). The API 31 split is not
+    cosmetic: below it a BLE scan is gated on LOCATION (a scan can infer
+    position), above it on the dedicated Bluetooth permissions. Declaring only
+    one set leaves the other platform version unable to scan, with no error
+    beyond a permanently empty result list.
+    `neverForLocation` lets API 31+ scan WITHOUT holding location permission —
+    honest here, since nothing in the mesh derives position from scan results.
+  -->
+  <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
+  <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
+  <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"/>
+  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+  <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" tools:targetApi="s"/>
   <uses-permission android:name="android.permission.CAMERA"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA"/>

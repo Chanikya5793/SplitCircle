@@ -1,0 +1,8 @@
+{
+  "name": "splitcircle-ble",
+  "version": "1.0.0",
+  "description": "Cross-platform BLE transport for ManaSplit offline messaging (doc 33 Phase 3)",
+  "main": "index.ts",
+  "license": "MIT",
+  "peerDependencies": { "expo": "*" }
+}
