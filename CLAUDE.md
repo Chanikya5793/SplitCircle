@@ -62,7 +62,27 @@ universal `resolveDisplayName()`/`resolveInitials()` in `src/utils/identity.ts`
 is now the ONLY sanctioned way to handle a possibly-empty name, never hand-roll
 another `|| 'X'`/`?? 'X'` at a new call site; the one-time production backfill
 Cloud Function exists but hasn't been invoked yet, gated on a custom admin claim
-— see doc 30's status note before assuming existing broken accounts are fixed).
+— see doc 30's status note before assuming existing broken accounts are fixed) ·
+[ai_layer/docs/32](ai_layer/docs/32_nearby_messaging_offline_sync.md) (nearby
+mesh + multi-device delivery — RESEARCHED 2026-07-30, fix plan LOCKED. **Read
+§10 FIRST if messaging is broken**: §1-§9 are the OFFLINE mesh queue, §10 is
+two ONLINE bugs that are what users actually hit. ALL of §5 + §10 are BUILT;
+§5d's `repairChatAudience` Cloud Function is deployed and has a live caller.
+The remaining gap is that nothing native is device-verified. Root
+causes worth knowing before touching this area: (1) `queueMessageToOwnDevices`
+defaulted to the strict `'all-devices'` encryption coverage policy, so ONE
+unreachable sibling device silently stopped your own messages reaching ALL your
+linked devices — self-sync must use `'available-devices'`, see the gotcha
+below; (2) two native paths replaced the whole shared `MCSession` to fix one
+peer, so any invitation timeout or routine trust refresh disconnected every
+device and 3+ devices could never mesh; (3) direct chats were excluded from
+`flushMeshCloudRelay` on the belief that DMs are mesh-only, which they never
+were — a DM sent online already uses the identical RTDB `queueMessage` path, so
+the exclusion just meant an offline DM died at the 7-day TTL; `originOwned`,
+not chat type, is what stops a relay impersonating a sender; (4) a FIFO
+break-on-error in `flushMeshCloudRelay` blocked the ENTIRE queue on one stuck
+operation — ordering is a per-conversation guarantee, so it is now bucketed
+per chat with bounded retry).
 
 ## Architecture DNA (do not break)
 
@@ -473,6 +493,68 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   not by chasing relative-import conventions file-by-file — before adding a NEW real import to
   any file covered by `vitest.unit.config.ts`'s `include` globs, run `npm run test:unit` to
   confirm collection still succeeds, don't trust `tsc --noEmit` alone to catch this class of bug.
+- **An all-or-nothing encryption coverage rule is correct for a real recipient
+  and catastrophic for self-sync — and a `console.warn` swallow makes it
+  invisible.** `encryptMessageForRecipient`'s default `coveragePolicy:
+  'all-devices'` THROWS `EncryptionRequiredError` unless every one of the
+  target's devices could be encrypted for. That is right for a peer: it exists
+  so nobody can force a downgrade to plaintext by making one device's keys
+  unavailable. But `queueMessageToOwnDevices` (self-sync, doc 31 §3.3) took
+  that default while `ensureSessionWithDevice` returns `false` *silently* on
+  any prekey-claim failure — so ONE sibling device with a broken session threw,
+  its own catch swallowed the throw into a `console.warn`, and the user's own
+  messages reached NONE of their linked devices, healthy ones included, with no
+  signal anywhere. Self-sync has no plaintext fallback, so there is no
+  downgrade to defend against; it must use `'available-devices'`. Diagnosed
+  only from `firebase functions:log --only fanOutQueuedMessage`, where the
+  self-mirror's signature (`skippedOrigin: true`, set only by
+  `queueMessageToOwnDevices`) appeared ONCE across a whole session while peer
+  fan-outs to the same 3-device account succeeded continuously — the client
+  logs proved nothing because **a Release bundle's `console.warn` never reaches
+  the device log** (use `console.error` for anything a non-fatal path must
+  still be diagnosable by). Before adding any new fan-out that encrypts to
+  multiple devices, decide explicitly which coverage policy it needs, and never
+  let a catch swallow the strict policy's throw. See
+  [ai_layer/docs/32](ai_layer/docs/32_nearby_messaging_offline_sync.md) §10.1.
+- **Never tear down the shared `MCSession` to fix ONE peer.** MultipeerConnectivity's
+  session is multi-peer (up to 8), so `replaceSessionLocked()` disconnects
+  *everyone*. Two paths in `SplitCircleMeshModule.swift` did it for
+  single-peer reasons — `beginInvitation`'s 15s timeout handler (to clear a
+  possibly-wedged session) and `updateTrustedPeers` on trust EXPANSION (to
+  re-find previously-ignored radios). With two devices both self-heal and look
+  fine; with three or more, invitation timeouts and routine trust refreshes
+  (the latter fires on EVERY `threads` change) collapsed the mesh constantly
+  and it could never converge — "more than 2 devices won't mesh up". Replacing
+  the session is only justified for a trust REVOCATION (MCSession cannot
+  selectively evict a peer) or when `connectedPeers.isEmpty` (nothing to lose).
+  For anything else restart discovery only — `rebuildTransportLocked(replacingSession: false)`.
+  See [ai_layer/docs/32](ai_layer/docs/32_nearby_messaging_offline_sync.md) §10.2.
+- **A native state mutation that doesn't go through the one callback that emits
+  both events will silently starve whatever only listens to the other one.**
+  `SplitCircleMeshModule.swift`'s `MeshController` has two independent,
+  unsynchronized emission paths — `emitPeerCount()` → `onPeersChanged` and
+  `emitState()` → `onStateChanged` — and only `session(_:peer:didChange:)`
+  calls both. `updateTrustedPeers(_:)` (promotes a peer from pairing/untrusted
+  to `trustedDeviceIds`) calls `emitState()` only; when the promoted peer is
+  *already* connected (the `promotedConnectedPair` branch — true right after a
+  pairing ceremony completes, or after a `threads`-array change re-derives
+  trust for an already-connected peer), no `didChange` callback follows
+  either, so `onPeersChanged` never fires for that transition at all.
+  `nearbyMessageService.ts`'s `peerSubscription` is the ONLY consumer of
+  `onPeersChanged` in the app and the only thing that calls
+  `broadcastQueuedNearbyMessages()` off a peer-count change — so a freshly
+  trusted, already-connected peer's queued nearby messages sit unbroadcast
+  until some unrelated topology event happens to fire one later (see
+  [ai_layer/docs/32](ai_layer/docs/32_nearby_messaging_offline_sync.md) §5f).
+  This is the exact same failure shape as this file's own
+  `isGroupJoinUpdate`/`isGroupDepartureUpdate` Firestore-rules gotcha above —
+  a state-mutation path added later than the "canonical" one and never given
+  its matching signal — except here nothing (compiler, lint, test) can catch a
+  missing `emitPeerCount()` call, so it is easy to reintroduce in any NEW
+  native function that changes trust/connection state without routing through
+  `session(_:peer:didChange:)`. Before adding one, call both `emitPeerCount()`
+  and `emitState()`, or route through the existing callback instead of a new
+  one-off.
 
 ## Backlog ideas (user's own notes)
 

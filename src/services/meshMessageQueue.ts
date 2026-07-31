@@ -28,6 +28,10 @@ export interface MeshMessageOperation {
   };
   createdAt: number;
   meshBroadcastAt?: number;
+  /** Failed cloud-relay attempts so far (doc 32 §5b). Absent means none. */
+  cloudRelayAttempts?: number;
+  /** Epoch ms before which the next cloud-relay attempt must not be made. */
+  cloudRelayNextAttemptAt?: number;
 }
 
 let writeChain: Promise<void> = Promise.resolve();

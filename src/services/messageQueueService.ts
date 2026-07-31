@@ -33,6 +33,17 @@ export interface ReceiptData {
   deliveredAt?: number;
   read?: boolean;
   readAt?: number;
+  /**
+   * The recipient received these bytes and proved they were authentic, but
+   * could not open them (doc 32 §5c) — a dead Signal session, or an HPKE
+   * fallback whose identity key was never seeded. Distinct from `delivered`
+   * on purpose: the message physically arrived, and the sender's transport
+   * ack already said so, but the content is unreadable and re-sending is the
+   * only repair. Without this the sender was told "sent" for a message that
+   * was silently discarded on the other phone.
+   */
+  undecryptable?: boolean;
+  undecryptableAt?: number;
   recipientId: string;
 }
 
@@ -41,6 +52,8 @@ interface PersistedReceiptData {
   deliveredAt: number;
   read?: boolean;
   readAt?: number;
+  undecryptable?: boolean;
+  undecryptableAt?: number;
   recipientId: string;
 }
 
@@ -146,7 +159,7 @@ const parseQueuePayload = (value: unknown): QueueMessagePayload | null => {
 };
 
 const getReceiptFingerprint = (
-  status: 'delivered' | 'read',
+  status: 'delivered' | 'read' | 'undecryptable',
   allDelivered: string[],
   allRead: string[]
 ): string => {
@@ -336,6 +349,22 @@ export const queueMessageToOwnDevices = async (
       // Never encrypt to ourselves — a device cannot hold a Signal session
       // with its own identity.
       originDeviceId,
+      'network-preferred',
+      // BEST-EFFORT PER DEVICE, NOT ALL-OR-NOTHING. The default 'all-devices'
+      // policy THROWS EncryptionRequiredError when even one device can't be
+      // encrypted for, and the catch below swallows it — so a single sibling
+      // with an unestablishable session (ensureSessionWithDevice returns false
+      // silently on any claim failure) stopped the message reaching EVERY
+      // other device of ours, healthy ones included. That is the wrong trade
+      // here: strict coverage exists to stop a downgrade-to-plaintext attack
+      // on a REAL recipient, but self-sync never falls back to plaintext and
+      // is explicitly "a convenience, not a delivery guarantee" (see below),
+      // so delivering to the reachable devices strictly beats delivering to
+      // none. Confirmed against production logs: fanOutQueuedMessage recorded
+      // skippedOrigin:true (the self-mirror) exactly once across a whole
+      // session of sending, while peer fan-outs to the same 3-device account
+      // succeeded continuously. See ai_layer/docs/32 §10.
+      'available-devices',
     );
 
     // No other device of ours has published keys (single-device account, or
@@ -377,7 +406,12 @@ export const queueMessageToOwnDevices = async (
     // Never fail the send because self-sync failed: the message already
     // reached its actual recipients, and the user's other devices catching up
     // is a convenience, not a delivery guarantee.
-    console.warn('⚠️ Failed to mirror message to own devices:', error);
+    //
+    // console.ERROR, not warn: a Release bundle's console.warn never reaches
+    // the device log (CLAUDE.md), which is exactly why this swallow hid a
+    // total self-sync outage — every send looked fine and no phone could show
+    // otherwise. Keep this the loudest thing a non-fatal path can do.
+    console.error('⚠️ Failed to mirror message to own devices:', error);
   }
 };
 
@@ -606,6 +640,8 @@ const attachQueueListener = (
     // identity) look like permanent message loss.
     const envelope = raw?.envelope as { t?: number; b?: string } | undefined;
     const senderSignalDeviceId = Number(raw?.senderSignalDeviceId);
+    /** Set when this device proved the message authentic but could not open it. */
+    let undecryptableHere = false;
     // WHO ENCRYPTED THIS is not always WHO WROTE IT. For an ordinary message
     // they're the same person, but a gap-fill replay (queueGapFillMessage) is
     // a peer's message re-encrypted by one of OUR OWN devices — the Signal
@@ -649,6 +685,11 @@ const attachQueueListener = (
         payload.content = reason
           ? `⚠️ Couldn’t decrypt this message (${reason.slice(0, 80)})`
           : '⚠️ Couldn’t decrypt this message';
+        // Tell the SENDER too (doc 32 §5c). Until this, the failure was
+        // visible only on the receiving phone: the sender saw a successful
+        // send for a message the other side could not read, and had no reason
+        // to resend it.
+        undecryptableHere = true;
       }
     }
 
@@ -720,7 +761,14 @@ const attachQueueListener = (
       // deliveredTo — making a message look delivered to a recipient purely
       // because the sender has a second device.
       if (!isSelfAuthored && !isGapFill) {
-        await sendDeliveryReceipt(payload.chatId, messageId, userId, payload.isGroupChat ?? false);
+        if (undecryptableHere) {
+          // Report the failure INSTEAD of a delivery receipt, not alongside
+          // it: "delivered" outranks "undecryptable" on the sender's side by
+          // design, so sending both would hide the very thing being reported.
+          await sendUndecryptableReceipt(payload.chatId, messageId, userId);
+        } else {
+          await sendDeliveryReceipt(payload.chatId, messageId, userId, payload.isGroupChat ?? false);
+        }
       }
       await remove(ref(rtdb, deletePath(messageId)));
       console.log('✅ Message delivered and removed from queue:', messageId);
@@ -801,6 +849,39 @@ export const sendDeliveryReceipt = async (
     console.log('✅ Delivery receipt sent for:', messageId);
   } catch (error) {
     console.error('❌ Error sending delivery receipt:', error);
+  }
+};
+
+/**
+ * Reports that an authentic message could not be decrypted on this device
+ * (doc 32 §5c, Scenario C).
+ *
+ * Deliberately travels the SAME `receipts/` channel as delivered/read rather
+ * than a new mesh NACK protocol: the sender is already listening there, and
+ * an RTDB write made while offline lands as soon as connectivity returns — so
+ * this works for the offline-mesh case that motivated it without inventing a
+ * second signed wire format.
+ *
+ * Only ever sent for an envelope that already PASSED authorization/signature
+ * verification. An unauthorized or unverifiable envelope is still dropped
+ * silently, because acknowledging it would confirm receipt to an unverified
+ * sender.
+ */
+export const sendUndecryptableReceipt = async (
+  chatId: string,
+  messageId: string,
+  recipientId: string,
+): Promise<void> => {
+  try {
+    await update(ref(rtdb, `receipts/${chatId}/${messageId}/${recipientId}`), {
+      undecryptable: true,
+      undecryptableAt: Date.now(),
+      recipientId,
+    });
+  } catch (error) {
+    // Best-effort. The receiver already shows its own placeholder bubble, so
+    // failing here degrades the sender's view, not the receiver's.
+    console.error('❌ Error sending undecryptable receipt:', error);
   }
 };
 
@@ -887,7 +968,7 @@ export const listenForReceipts = (
   chatId: string,
   onReceiptReceived: (
     messageId: string,
-    status: 'delivered' | 'read',
+    status: 'delivered' | 'read' | 'undecryptable',
     recipientId?: string,
     allDelivered?: string[],
     allRead?: string[]
@@ -914,18 +995,29 @@ export const listenForReceipts = (
       .map(([recipientId]) => recipientId)
       .sort();
 
-    const status: 'delivered' | 'read' | null = allRead.length > 0
+    const allUndecryptable = Object.entries(receiptMap)
+      .filter(([, receipt]) => receipt.undecryptable)
+      .map(([recipientId]) => recipientId)
+      .sort();
+
+    // Strictly the weakest signal: a real read or delivery from ANY recipient
+    // outranks it, so a group message that one stale device could not open is
+    // not reported as failed to the sender while everyone else read it.
+    const status: 'delivered' | 'read' | 'undecryptable' | null = allRead.length > 0
       ? 'read'
       : allDelivered.length > 0
         ? 'delivered'
-        : null;
+        : allUndecryptable.length > 0
+          ? 'undecryptable'
+          : null;
 
     if (!status) {
       fingerprints.delete(messageId);
       return;
     }
 
-    const fingerprint = getReceiptFingerprint(status, allDelivered, allRead);
+    const fingerprint = getReceiptFingerprint(status, allDelivered, allRead)
+      + (status === 'undecryptable' ? `|u:${allUndecryptable.join(',')}` : '');
     if (fingerprints.get(messageId) === fingerprint) {
       return;
     }
@@ -937,7 +1029,11 @@ export const listenForReceipts = (
       return;
     }
 
-    const recipientId = status === 'read' ? allRead[0] : allDelivered[0];
+    const recipientId = status === 'read'
+      ? allRead[0]
+      : status === 'delivered'
+        ? allDelivered[0]
+        : allUndecryptable[0];
     if (recipientId) {
       onReceiptReceived(messageId, status, recipientId);
     }

@@ -54,6 +54,7 @@ import {
   queueMessageToOwnDevices,
   registerReceiptParticipant,
   sendBulkReadReceipts,
+  sendUndecryptableReceipt,
 } from '@/services/messageQueueService';
 import {
   answerGapRequest,
@@ -66,6 +67,10 @@ import { dismissNotificationsForEntity } from '@/utils/notifications';
 import { resolveDisplayName } from '@/utils/identity';
 import { diffRemovedChatIds } from '@/utils/notificationEntityMatch';
 import { loadCachedChatThreads, persistChatThreads } from '@/services/chatThreadCache';
+import {
+  reconcileChatAudience,
+  requestChatAudienceRepair,
+} from '@/services/chatAudienceRepairService';
 import {
   buildMeshMessageBody,
   decryptMeshPayloadForDevice,
@@ -351,6 +356,32 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
               detail: 'A verified nearby message could not be decrypted on this phone.',
               chatId: parsed.body.message.chatId,
             });
+            // Doc 32 §5c / Scenario C. This envelope already PASSED signature
+            // and audience verification above — it is authentic and we are a
+            // legitimate recipient; we simply cannot open it (dead ratchet, or
+            // an HPKE fallback whose identity key was never seeded). Dropping
+            // it silently was the worst outcome available: the receiver saw
+            // nothing at all, and the sender had already flipped the message to
+            // 'sent' off the transport ack, so NOBODY could tell it was lost.
+            //
+            // Leave the same visible placeholder the online path has always
+            // left, and tell the sender so it can show a real failure. An
+            // envelope that fails verification is still discarded in silence
+            // further up — acknowledging that one would confirm receipt to an
+            // unverified sender.
+            await saveMessageLocally({
+              ...body.message,
+              content: '⚠️ Couldn’t decrypt this nearby message',
+              isFromMe: false,
+              status: 'delivered',
+              deliveredTo: [],
+              readBy: [],
+            });
+            void sendUndecryptableReceipt(
+              parsed.body.message.chatId,
+              body.message.id,
+              user.userId,
+            );
             return;
           }
           const { message: decryptedMessage, attachment } = decryptedPayload;
@@ -605,11 +636,29 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         setLoading(false);
         return;
       }
+      const divergedChatIds: string[] = [];
       const payload = snapshot.docs.map((docSnap) => {
         const data = docSnap.data() as ChatThread & { lastMessage?: ChatMessage };
+        // Doc 32 §5d. This used to be `data.participantIds ?? data.participants
+        // .map(...)`, which only covered participantIds being ENTIRELY absent.
+        // When both arrays exist but disagree — old clients did not keep them
+        // in lockstep — the stale one won, and for a direct chat that made
+        // resolveMeshThreadAudience return null (it demands exactly 2), so
+        // every nearby message for that thread was rejected on both send and
+        // receive with no UI feedback at all.
+        //
+        // Union them instead. Every device applies the identical union to the
+        // same doc, so they agree without needing a write. The write-back
+        // below still matters for the case a union cannot reach: a user
+        // missing from `participantIds` never matches the `array-contains`
+        // query above, so that device never receives the doc to repair.
+        const { participantIds, diverged } = reconcileChatAudience(data);
+        if (diverged) {
+          divergedChatIds.push(data.chatId);
+        }
         return {
           ...data,
-          participantIds: data.participantIds ?? data.participants.map((participant) => participant.userId),
+          participantIds,
           lastMessage: data.lastMessage
             ? { ...data.lastMessage, createdAt: normalizeTimestamp(data.lastMessage.createdAt) }
             : undefined,
@@ -631,6 +680,13 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       setThreads(payload);
       setLoading(false);
       void persistChatThreads(uid, payload);
+      // Ask the server to make the union above the stored truth (doc 32 §5d).
+      // Throttled per chat inside the service, and deliberately not awaited:
+      // this device is already correct thanks to the local union, so nothing
+      // here depends on the repair landing.
+      if (divergedChatIds.length > 0) {
+        void requestChatAudienceRepair(divergedChatIds);
+      }
     }, (error) => {
       // Without this handler a rules rejection (e.g. permission-denied)
       // becomes an uncaught snapshot error and a full-screen dev crash.
@@ -835,6 +891,16 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           async (messageId, status, recipientId, allDelivered, allRead) => {
             const latestThread = getThreadByChatId(chatId);
             const recipientCount = getRecipientCount(latestThread, currentUser.userId);
+
+            if (status === 'undecryptable') {
+              // The recipient proved this message authentic but could not open
+              // it (doc 32 §5c). It is NOT delivered in any useful sense, and
+              // this message had already been flipped to 'sent' by a transport
+              // ack — so show a real failure the user can act on by resending,
+              // rather than leaving a confident tick on unreadable content.
+              await updateMessageStatus(chatId, messageId, 'failed');
+              return;
+            }
 
             const deliveredUsers = allDelivered ?? (recipientId ? [recipientId] : []);
             const readUsers = allRead ?? (status === 'read' && recipientId ? [recipientId] : []);
@@ -1076,10 +1142,18 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
             }
             wireEnvelope = await signMeshMessageBody(body);
           } catch (error) {
-            // Group messages still have a durable cloud path on reconnect.
-            // Direct messages are intentionally local-mesh-only, so silently
-            // accepting an unsigned/unsharable direct message would lie.
-            if (latestThread.type === 'direct') throw error;
+            // BOTH chat types now have a durable cloud path on reconnect
+            // (doc 32 §5a), so a missing nearby envelope is no longer fatal
+            // for a DM — flushMeshCloudRelay delivers it once Internet
+            // returns, over the same RTDB path a DM already uses whenever it
+            // is sent online.
+            //
+            // The one genuinely unrecoverable case is a thread whose
+            // membership cannot be resolved at all: with no audience there is
+            // nobody to address the message TO on EITHER path, so failing
+            // visibly is correct rather than accepting a message that can
+            // never be delivered (doc 32 §3 Scenario E; the repair is §5d).
+            if (!resolveMeshThreadAudience(latestThread)) throw error;
           }
 
           const operation: MeshMessageOperation = {
@@ -1096,14 +1170,23 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
               : {}),
             originUserId: user.userId,
             originOwned: true,
-            cloudRelay: latestThread.type === 'group',
+            // Doc 32 §5a. This was `latestThread.type === 'group'`, which meant
+            // an offline DM had exactly ONE delivery route — physical mesh
+            // proximity — and was silently discarded at the 7-day TTL if the
+            // two phones never met again, even though both had been online for
+            // days. That was never a privacy property: a DM sent while online
+            // already goes through this same RTDB path (see the online branch
+            // below, which calls the identical queueMessage). `originOwned`
+            // above is the guard that actually prevents a relay device from
+            // impersonating someone else's message — chat type never was.
+            cloudRelay: true,
             ...(wireEnvelope ? { wireEnvelope } : {}),
             ...(nearbyAttachment ? { nearbyAttachment } : {}),
             createdAt: now,
           };
           await enqueueMeshMessage(operation);
           if (!wireEnvelope && preparedNearbyTransferId) {
-            // There is no nearby route for this group operation. The stable
+            // There is no nearby route for this operation. The stable
             // plaintext is still retained for cloud convergence; encrypted
             // staging has no consumer and should not occupy disk for seven
             // days.
@@ -1112,15 +1195,15 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           if (wireEnvelope) {
             await broadcastQueuedNearbyMessages();
           }
+          // Every offline operation is now queued for cloud sync regardless of
+          // chat type (doc 32 §5a), so the copy no longer promises a DM only a
+          // nearby route — that was the wording for a message that could be
+          // lost outright if the phones never met again.
           onStageChange?.(nearbyAttachment ? 'uploading' : 'complete', {
             message: wireEnvelope
-              ? latestThread.type === 'group'
-                ? nearbyAttachment
-                  ? 'Sending nearby; queued for cloud sync.'
-                  : 'Saved nearby and queued for cloud sync.'
-                : nearbyAttachment
-                  ? 'Sending securely to the nearby phone.'
-                  : 'Saved for nearby delivery.'
+              ? nearbyAttachment
+                ? 'Sending nearby; queued for cloud sync.'
+                : 'Saved nearby and queued for cloud sync.'
               : 'Saved locally and queued for cloud sync.',
           });
           if (!nearbyAttachment) clearSendProgress(msgId);

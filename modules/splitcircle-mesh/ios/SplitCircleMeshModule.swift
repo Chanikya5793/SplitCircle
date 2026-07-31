@@ -242,13 +242,34 @@ private final class MeshController: NSObject,
       // Also restart discovery when trust expands. Multipeer may not emit a
       // second foundPeer callback for a radio that was ignored before its
       // cached identity became available.
-      if connectedUntrusted || (addedTrust && !promotedConnectedPair) {
+      //
+      // Those two cases need very different force, though. Revocation must
+      // drop the session (it is the only way to evict the untrusted peer).
+      // Expansion only needs discovery restarted — and replacing the session
+      // for it disconnected every healthy peer, which matters because this
+      // function runs on EVERY `threads` change (ChatContext's trust-refresh
+      // effect), so with three or more devices the mesh was being torn down
+      // routinely and could never settle. Keep the eviction, drop the
+      // collateral damage.
+      if connectedUntrusted {
         rebuildTransportLocked()
+      } else if addedTrust && !promotedConnectedPair {
+        rebuildTransportLocked(replacingSession: false)
       } else {
         for peer in knownPeers.values {
           beginInvitation(to: peer)
         }
       }
+      // A peer promoted to trusted while ALREADY connected (the
+      // `promotedConnectedPair` branch — a just-completed pairing ceremony, or
+      // a threads-array change re-deriving trust) takes the else branch above,
+      // and `beginInvitation` no-ops for an already-connected peer, so no
+      // `session(_:peer:didChange:)` callback follows to emit this. Trust just
+      // became the thing that made the peer deliverable, and `onPeersChanged`
+      // is the only signal that triggers `broadcastQueuedNearbyMessages()` —
+      // without this, that peer's queued messages sit unbroadcast until some
+      // unrelated topology event happens to fire one. See ai_layer/docs/32 §5f.
+      emitPeerCount()
       emitState()
     }
   }
@@ -303,7 +324,14 @@ private final class MeshController: NSObject,
   /// A user-initiated scan is a full transport reset, not only a Bonjour
   /// browse restart. Reusing a session that already stalled in `.connecting`
   /// was the reason repeated scans could loop for several minutes.
-  private func rebuildTransportLocked() {
+  ///
+  /// `replacingSession: false` restarts only discovery (advertiser + browser)
+  /// and leaves the carrier MCSession — and therefore every currently
+  /// connected peer — untouched. Use it whenever the reason for restarting is
+  /// "re-find radios we previously ignored", which does not require dropping
+  /// anyone. Replacing the session is for a trust REVOCATION (MCSession
+  /// cannot selectively evict a peer) or an actually-wedged session.
+  private func rebuildTransportLocked(replacingSession: Bool = true) {
     guard let localPeer else { return }
 
     advertiser?.stopAdvertisingPeer()
@@ -311,7 +339,9 @@ private final class MeshController: NSObject,
     advertiser?.delegate = nil
     browser?.delegate = nil
 
-    _ = replaceSessionLocked()
+    if replacingSession {
+      _ = replaceSessionLocked()
+    }
 
     let replacementAdvertiser = MCNearbyServiceAdvertiser(
       peer: localPeer,
@@ -1076,7 +1106,18 @@ private final class MeshController: NSObject,
       // A timed-out MCSession can remain internally wedged even after
       // cancelConnectPeer. Retry the discovered peer on a new encrypted
       // session rather than carrying that hidden state into every backoff.
-      _ = self.replaceSessionLocked()
+      //
+      // ONLY when nothing is currently connected, though. MCSession is
+      // multi-peer (up to 8), so replacing it to unwedge ONE peer also
+      // disconnects every healthy peer already on it. With two devices that
+      // self-heals and is invisible; with three or more, invitation timeouts
+      // are frequent enough that each one tore down the whole mesh and it
+      // could never converge — the "more than 2 devices won't mesh" report.
+      // A wedged session with no connected peers costs nothing to replace,
+      // which is the case this remedy was actually written for.
+      if self.session?.connectedPeers.isEmpty != false {
+        _ = self.replaceSessionLocked()
+      }
       self.connectingPeerNames.remove(peerName)
       let retryCount = (self.invitationRetryCounts[peerName] ?? 0) + 1
       self.invitationRetryCounts[peerName] = retryCount

@@ -1,0 +1,113 @@
+/**
+ * Decrypt-failure signalling (ai_layer/docs/32 §5c, Scenario C).
+ *
+ * A message can arrive, prove authentic, and still be unopenable — a dead
+ * Signal ratchet, or an HPKE fallback whose identity key was never seeded.
+ * Before this the receiver dropped it (mesh) or rendered a placeholder
+ * (online), and in BOTH cases the sender was told nothing: its status had
+ * already flipped to 'sent' off a transport acknowledgement, which only ever
+ * meant "bytes reached the other radio", never "the other phone could read
+ * this". These tests pin the negative receipt that closes that gap.
+ */
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const rtdbMock = vi.hoisted(() => ({
+  update: vi.fn(async () => undefined),
+  ref: vi.fn((_db: unknown, path: string) => ({ path })),
+  onChildAdded: vi.fn(),
+  onChildChanged: vi.fn(),
+}));
+
+vi.mock('firebase/database', () => ({
+  getDatabase: () => ({}),
+  ref: rtdbMock.ref,
+  update: rtdbMock.update,
+  set: vi.fn(),
+  get: vi.fn(),
+  remove: vi.fn(),
+  onChildAdded: rtdbMock.onChildAdded,
+  onChildChanged: rtdbMock.onChildChanged,
+  onValue: vi.fn(),
+}));
+vi.mock('@/services/messageEnvelope', () => ({
+  encryptMessageForRecipient: vi.fn(),
+  decryptMessageEnvelope: vi.fn(),
+  consumeLastDecryptError: vi.fn(() => null),
+}));
+vi.mock('@/services/notificationService', () => ({
+  getOrCreateInstallationId: vi.fn(async () => 'this-device'),
+}));
+vi.mock('@/services/mediaService', () => ({ downloadMedia: vi.fn() }));
+
+import { listenForReceipts, sendUndecryptableReceipt } from '../messageQueueService';
+
+/** Drives the receipt listener with a raw RTDB node for one message. */
+const emitReceiptNode = (
+  messageId: string,
+  value: Record<string, unknown>,
+  isGroupChat = false,
+) => {
+  const seen: { messageId: string; status: string; recipientId?: string }[] = [];
+  listenForReceipts(
+    'chat-1',
+    (id, status, recipientId) => { seen.push({ messageId: id, status, recipientId }); },
+    isGroupChat,
+  );
+  const handler = rtdbMock.onChildAdded.mock.calls.at(-1)?.[1] as (s: unknown) => void;
+  handler({ key: messageId, val: () => value });
+  return seen;
+};
+
+describe('undecryptable receipts', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('writes a negative receipt keyed by the reporting recipient', async () => {
+    await sendUndecryptableReceipt('chat-1', 'm1', 'u2');
+
+    expect(rtdbMock.ref).toHaveBeenCalledWith({}, 'receipts/chat-1/m1/u2');
+    expect(rtdbMock.update).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ undecryptable: true, recipientId: 'u2' }),
+    );
+  });
+
+  it('never rejects, so a reporting failure cannot break message processing', async () => {
+    rtdbMock.update.mockRejectedValueOnce(new Error('offline'));
+    await expect(sendUndecryptableReceipt('chat-1', 'm1', 'u2')).resolves.toBeUndefined();
+  });
+
+  it('surfaces an undecryptable-only receipt to the sender', () => {
+    const seen = emitReceiptNode('m1', {
+      u2: { recipientId: 'u2', undecryptable: true, undecryptableAt: 1 },
+    });
+
+    expect(seen).toEqual([{ messageId: 'm1', status: 'undecryptable', recipientId: 'u2' }]);
+  });
+
+  it('lets a real delivery outrank it, so one stale device cannot fail a group message', () => {
+    // The weakest signal by design: if anyone actually received the message,
+    // the sender must not be told it failed.
+    const seen = emitReceiptNode('m1', {
+      u2: { recipientId: 'u2', undecryptable: true, undecryptableAt: 1 },
+      u3: { recipientId: 'u3', delivered: true, deliveredAt: 2 },
+    }, true);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].status).toBe('delivered');
+  });
+
+  it('lets a read outrank it too', () => {
+    const seen = emitReceiptNode('m1', {
+      u2: { recipientId: 'u2', undecryptable: true, undecryptableAt: 1 },
+      u3: { recipientId: 'u3', delivered: true, deliveredAt: 2, read: true, readAt: 3 },
+    }, true);
+
+    expect(seen[0].status).toBe('read');
+  });
+
+  it('reports nothing for an empty receipt node', () => {
+    expect(emitReceiptNode('m1', {})).toEqual([]);
+  });
+});

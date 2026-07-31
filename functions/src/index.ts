@@ -32,6 +32,7 @@ import {
 import { verifyGroupEntityExists } from "./entityGuards";
 import { deleteAccountCascade, findDeletionBlockers } from "./accountDeletion";
 import { joinGroupByInviteCode as joinGroupByInviteCodeImpl } from "./groupJoin";
+import { repairChatAudience as repairChatAudienceImpl } from "./chatAudienceRepair";
 import {
     createPairingCode as createPairingCodeImpl,
     redeemPairingCode as redeemPairingCodeImpl,
@@ -1481,6 +1482,37 @@ export const joinGroupByInviteCode = onCall(async (request) => {
         }
         logger.error("joinGroupByInviteCode failed", { uid, inviteCode, ...toSafeError(error) });
         throw new HttpsError("internal", "Failed to join group. Please try again.");
+    }
+});
+
+/**
+ * Reconciles a chat whose `participantIds`/`participants` arrays have drifted
+ * (ai_layer/docs/32 §5d). Cloud-Function-only because firestore.rules forbids
+ * clients from writing either field — see chatAudienceRepair.ts for why
+ * loosening that rule would be a read-access escalation.
+ */
+export const repairChatAudience = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const chatId = getStringValue(request.data?.chatId);
+    if (!chatId) {
+        throw new HttpsError("invalid-argument", "Missing required field: chatId");
+    }
+
+    try {
+        return await repairChatAudienceImpl(uid, chatId);
+    } catch (error) {
+        if (error instanceof Error && error.message === "Chat not found") {
+            throw new HttpsError("not-found", "Chat not found.");
+        }
+        if (error instanceof Error && error.message === "Not a participant of this chat") {
+            throw new HttpsError("permission-denied", "Not a participant of this chat.");
+        }
+        logger.error("repairChatAudience failed", { uid, chatId, ...toSafeError(error) });
+        throw new HttpsError("internal", "Failed to repair chat membership.");
     }
 });
 
