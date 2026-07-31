@@ -497,3 +497,85 @@ failure to ever meet.
    ordering, and reassembly across two independent implementations).
 4. An untrusted device is refused by BOTH roles.
 5. Revoking trust on a live peer drops that link and leaves other links up.
+
+## 10. Phase 4 (Router) — build log
+
+**Status 2026-07-31: BUILT and unit-tested (22 tests), NOT wired into the live
+path.** See §10.3 — wiring it is a breaking wire change, not a flag flip.
+
+`src/services/mesh/routerFrame.ts` (header codec) and `router.ts` (flood, dedup,
+TTL, store-and-forward, backpressure). Flood rather than a routing table
+because a phone mesh's topology changes faster than any table converges —
+people walk out of range mid-message. Flooding is stateless per hop and
+self-healing, and its cost, duplicate frames, is precisely what dedup absorbs.
+
+The phase gate — *"3-device relay where A and C cannot see each other"* — is
+simulated end to end in `meshRouter.test.ts` with three independent router
+instances wired into a line topology, for both unicast and broadcast.
+
+### 10.1 Corrections to §2.3's frame table
+
+Three, all found by building against what Phase 3 actually produced:
+
+1. **ASCII, not packed binary.** Every transport here carries strings —
+   `bleFraming` fragments strings, MPC envelopes are strings. Packing to binary
+   would force a base64 round trip costing ~33% MORE than a compact ASCII
+   header. §2.3's table is honoured as a field list, not a memory layout.
+
+2. **No `fragIdx`/`fragCnt`.** Fragmentation is a TRANSPORT concern and lives in
+   `bleFraming`, because MTU varies per transport AND per peer. A router-level
+   fragment count would have to assume one MTU for the whole path, which is
+   wrong the moment a frame crosses BLE to MPC — the exact situation this mesh
+   exists to create. Each hop refragments for its own link.
+
+3. **`payloadClass` ADDED to the header.** §2.4 requires backpressure to drop
+   the lowest class first, but a RELAY has no other way to know what it is
+   holding. Without it every relayed frame is treated identically and a
+   backed-up photo can evict the text message a user is waiting on — the exact
+   thing that rule exists to prevent. One character on the wire.
+
+### 10.2 Decisions worth keeping
+
+- **Split horizon.** Never forward back to the sender, or to the origin. Both
+  demonstrably have it. Dedup would catch the loop anyway, but only after
+  paying for it on the link where bandwidth is scarcest.
+- **Own id marked seen at origination.** Otherwise the first echo of our own
+  broadcast passes dedup and gets re-flooded: the mesh amplifies its own traffic.
+- **Broadcast is delivered AND relayed; unicast-to-self is terminal.** That dual
+  role is what makes group messaging work across a partial mesh.
+- **`relay` carries no payload.** A relay never hands ciphertext it cannot read
+  to the local delivery path, and the return type makes that unrepresentable.
+- **Re-holding preserves the original `queuedAt`.** Refreshing it on every flush
+  would make a frame immortal and quietly defeat the 7-day cap.
+- **A broadcast with no neighbours is NOT held** — there is nobody to relay to,
+  and the origin's own queue is what replays a group message.
+- **TTL above the maximum is rejected, not clamped.** A frame claiming
+  `ttl=9999` is a bug or an attempt to circulate forever; clamping hides both.
+- **Per-hop ack is the transport's `SendOutcome.deliveredCount`**, not a new
+  mechanism. It is deliberately never surfaced as a UI delivery claim —
+  conflating transport ack with delivery is doc 32 §10.1's bug.
+
+### 10.3 Why it is not wired in yet
+
+Every frame gains a routing header, so **a device running the router cannot be
+understood by one that is not**. Unlike BLE — additive, flag-gated, and
+invisible to peers — this changes bytes on the wire between devices that
+already talk to each other today.
+
+Turning it on therefore needs a migration story, not a flag:
+
+- accept BOTH bare envelopes and router frames during a transition window
+  (`decodeRouterFrame` already returns null for a bare envelope, so the
+  fallback is a clean `?? treatAsBare`), and
+- only originate router frames once the receiving side is known to handle them.
+
+That is deliberately a separate change from building the router, because it is
+the part that can break working devices. The unit tests prove the routing
+logic; only a staged rollout proves the migration.
+
+### 10.4 Not yet built
+
+- **Seen-set persistence.** `SeenSet` exposes `snapshot()`/`restore()` and the
+  router stays synchronous and pure, but nothing calls them on boot yet. The
+  consequence is bounded: a device re-floods frames it already relayed after a
+  restart, wasteful rather than harmful, and TTL still terminates it.
