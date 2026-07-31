@@ -17,10 +17,12 @@
  *
  *   v1|<msgId>|<idx>|<cnt>|<payload>
  *
- * `msgId` is 8 hex chars — enough to keep concurrent transfers apart within a
- * session, and it is NOT a security boundary (the payload is already sealed
- * end to end; a relay cannot read it and a forged reassembly still fails
- * signature verification upstream).
+ * `msgId` is 4 hex chars. Deliberately short: at the 23-byte ATT default an
+ * 8-char id made the header consume the ENTIRE MTU, so no multi-chunk frame
+ * could be sent at all until MTU negotiation happened to succeed. 16 bits is
+ * ample to keep concurrent transfers apart within one peer's 30s window, a
+ * collision is handled (a differing count restarts reassembly), and this is
+ * NOT a security boundary — the payload is already sealed end to end.
  */
 
 export const BLE_FRAME_VERSION = 'v1';
@@ -33,7 +35,7 @@ export const BLE_FRAME_VERSION = 'v1';
  * ATT default, which a real radio rejects or truncates.
  */
 export const bleHeaderBytes = (count: number): number =>
-  3 + 8 + 1 + String(Math.max(0, count - 1)).length + 1 + String(count).length + 1;
+  3 + 4 + 1 + String(Math.max(0, count - 1)).length + 1 + String(count).length + 1;
 
 /** Smallest MTU that can carry at least one payload byte at any chunk count. */
 export const BLE_MIN_USABLE_MTU = bleHeaderBytes(1) + 1;
@@ -53,7 +55,7 @@ const HEX = '0123456789abcdef';
  */
 export const randomMsgId = (rand: () => number = Math.random): string => {
   let out = '';
-  for (let i = 0; i < 8; i += 1) out += HEX[Math.floor(rand() * 16)];
+  for (let i = 0; i < 4; i += 1) out += HEX[Math.floor(rand() * 16)];
   return out;
 };
 
@@ -78,7 +80,7 @@ export const decodeChunk = (raw: string): BleChunk | null => {
   }
   const [version, msgId, idxRaw, cntRaw] = parts;
   if (version !== BLE_FRAME_VERSION) return null;
-  if (!/^[0-9a-f]{8}$/.test(msgId)) return null;
+  if (!/^[0-9a-f]{4}$/.test(msgId)) return null;
   const index = Number(idxRaw);
   const count = Number(cntRaw);
   if (!Number.isInteger(index) || !Number.isInteger(count)) return null;
