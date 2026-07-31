@@ -29,9 +29,15 @@ import {
   MEDIA_MAX_FILE_SIZE_BYTES,
 } from '@/services/mediaPolicy';
 
+import { MAX_MESH_MESSAGE_AGE_MS } from '@/services/mesh/constants';
+
 export const MESH_PROTOCOL_VERSION = 1 as const;
 export const MAX_MESH_ENVELOPE_BYTES = 256 * 1024;
-export const MAX_MESH_MESSAGE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+// Imported AND re-exported: a bare `export ... from` creates no local binding,
+// and this module uses the value itself. Lives in a native-free leaf module so
+// pure consumers (originReseal) can share it without dragging crypto into their
+// test collection.
+export { MAX_MESH_MESSAGE_AGE_MS };
 
 export interface MeshAttachmentManifest {
   v: 1;

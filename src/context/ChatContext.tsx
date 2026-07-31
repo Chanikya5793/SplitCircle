@@ -45,6 +45,8 @@ import {
   prepareNearbyAttachment,
 } from '../../modules/splitcircle-mesh';
 import { normalizeAllowedMediaMimeType } from '@/services/mediaPolicy';
+import { resealOwnedMeshOperations } from '@/services/originResealService';
+import { listSignalDevices } from '@/services/signalCryptoService';
 import { getCurrentDeviceId } from '@/services/pairingService';
 import {
   listenForMessages,
@@ -276,7 +278,29 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         user.userId,
         currentDeviceId,
       );
-      if (!disposed) setNearbyTrustedPeers(trustedPeers);
+      if (disposed) return;
+      setNearbyTrustedPeers(trustedPeers);
+
+      // Origin re-seal (doc 33 §2.5, Phase 8). This effect fires on `threads`
+      // change, which is precisely the moment a device newly added to a
+      // conversation can become known — so it is the natural trigger, and it
+      // costs nothing while the audience is stable.
+      //
+      // Only OUR OWN queued messages are touched; evaluateReseal refuses
+      // anything not originOwned before any other check, because a relay
+      // minting ciphertext attributed to another sender is forgery.
+      await resealOwnedMeshOperations(
+        threads,
+        user.userId,
+        currentDeviceId,
+        async (thread) => {
+          const audience = resolveMeshThreadAudience(thread) ?? thread.participantIds;
+          const perUser = await Promise.all(
+            audience.map((participantId) => listSignalDevices(participantId).catch(() => [])),
+          );
+          return perUser.flat().map((device) => device.deviceId);
+        },
+      );
     })().catch((error) => {
       console.warn('Nearby trust directory refresh failed', error);
       if (!disposed) setNearbyTrustedPeers([]);

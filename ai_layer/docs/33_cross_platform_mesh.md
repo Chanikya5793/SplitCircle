@@ -646,3 +646,59 @@ on-disk mesh queue, the router's own pending count. No placeholder stats.
   → delivered → failed. The router already knows hop counts, but plumbing them
   into per-message UI touches the chat rendering path, which is worth doing
   once the router is proven on hardware rather than before.
+
+## 12. Phase 8 (Origin re-seal) — build log
+
+**Status 2026-07-31: BUILT and WIRED. 11 tests.**
+
+Doc 32 §5e documented that a device added to a thread AFTER an envelope was
+sealed can never receive that message — relays forward frozen ciphertext and no
+copy is addressed to it. A router makes it worse (more hops, more chances to be
+the excluded node), so §2.5 adopted the re-seal path §5e had deferred.
+
+Split in two on purpose:
+
+- `mesh/originReseal.ts` — the DECISION. Pure, no crypto, no I/O, so the rule
+  can be tested exhaustively without a device.
+- `originResealService.ts` — the REBUILD. Owns keys and threads.
+
+### 12.1 The rule that cannot bend
+
+**Only the ORIGIN re-seals.** `evaluateReseal` checks `originOwned` FIRST and
+unconditionally, before every other condition, and there is a test asserting
+that a relayed operation which is *also* expired, *also* envelope-less and
+*also* missing devices still fails on ownership. That ordering is the forgery
+guard, not a style choice: a relay minting ciphertext attributed to another
+sender is forgery, and `originOwned` (doc 32 §5a) is what stops it.
+
+### 12.2 Decisions worth keeping
+
+- **Bounded by the same 7-day queue window.** Without it, one device joining a
+  group re-seals every message ever queued — a flood, and an unwelcome surprise
+  for someone who joined expecting to start from now.
+- **An absent `recipientDeviceIds` means "covers nobody", not "covers
+  everyone".** The opposite reading would silently skip re-seal for every
+  operation predating that field.
+- **`meshBroadcastAt` is cleared on re-seal.** Otherwise the fresh envelope sits
+  in the queue behind a flag saying it was already sent, and the new device
+  never sees it — which would have made this whole path a no-op.
+- **Departed devices are reported but never acted on.** Removing a device from
+  an existing envelope rewrites history, and its ciphertext may already have
+  been delivered. Departure belongs to the thread audience, not to rewriting
+  messages.
+- **Triggered by the `threads` effect**, which is exactly when a new device can
+  become known, rather than on a timer — so it costs nothing while the audience
+  is stable. Cheap guards run before the per-thread device lookup.
+
+### 12.3 A constant that had to move
+
+`originReseal.ts` needs the queue's max-age. Importing it from
+`meshMessageProtocol` dragged native crypto into a module whose entire value is
+being testable without a device, and the suite failed at collection with
+"Cannot read properties of undefined (reading 'EventEmitter')" — the hazard
+CLAUDE.md documents. Duplicating the value would drift silently.
+
+Fixed properly by extracting `mesh/constants.ts`, a native-free leaf both
+import. Note `meshMessageProtocol` must `import` AND re-export it: a bare
+`export ... from` creates no local binding, and that module uses the value
+itself.
