@@ -233,12 +233,22 @@ Three findings that change the plan:
    therefore installed to `~/.m2` and consumed as normal coordinates, not via
    `files('libs/*.aar')`.
 
-   **Still open for productionising this:** only `arm64-v8a` was built (a real
-   release needs all four ABIs, ~4× the time); the 63MB of artifacts live in
-   `~/.m2` and are NOT in the repo, so the build is not reproducible from a
-   clean checkout without a CI job, Git LFS, or a private Maven; and the
-   `mavenLocal()` line plus the desugaring flag live in generated `android/`,
-   so both need a config plugin to survive `expo prebuild`.
+   **Distribution — solved by reproduction, not by shipping binaries.**
+   `scripts/build-libsignal-android.sh` rebuilds both artifacts from the pinned
+   upstream tag and installs them to `~/.m2`. It checks all seven prerequisites
+   up front with the actual remedy for each (every one was a separate
+   10-minute build failure the first time), records SHA-256s of the known-good
+   build, and has a `--check` mode. `modules/splitcircle-crypto/android/build.gradle`
+   fails at configuration with a message naming the script rather than a bare
+   "Could not find org.signal:…". Publishing prebuilt binaries to GitHub
+   Releases or LFS was NOT done: libsignal is AGPL-3.0 and redistributing built
+   binaries from a public repo is a licensing decision for the project owner,
+   not a build convenience.
+
+   **Still open:** only `arm64-v8a` is built (a release needs all four,
+   ~4× the time), and the `mavenLocal()` line plus the core-library-desugaring
+   flag live in generated `android/`, so both need a config plugin to survive
+   `expo prebuild`.
 
 2. **PQXDH is mandatory.** `PreKeyBundle`'s only public constructor takes a
    Kyber key plus signature; the pre-quantum 8-arg form is gone. This matches

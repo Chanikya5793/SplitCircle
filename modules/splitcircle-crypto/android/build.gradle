@@ -18,6 +18,24 @@ android {
   }
 }
 
+// Fail with the remedy rather than a bare "Could not find org.signal:...".
+// These artifacts are ~63MB, built from source, and deliberately not committed;
+// scripts/build-libsignal-android.sh is the distribution mechanism.
+def libsignalAar = new File(System.getProperty('user.home'),
+    '.m2/repository/org/signal/libsignal-android/0.99.1/libsignal-android-0.99.1.aar')
+if (!libsignalAar.exists()) {
+    throw new GradleException("""
+  libsignal 0.99.1 is not installed in ~/.m2, so the Android crypto module
+  cannot build.
+
+  Run:  bash scripts/build-libsignal-android.sh
+
+  Why it is not just a Maven coordinate: iOS pins LibSignalClient 0.99.1, and
+  Maven Central's Android artifact stops at 0.86.5 with an incompatible API.
+  See ai_layer/docs/33 §3.1.
+""")
+}
+
 dependencies {
   // Built from signalapp/libsignal at tag v0.99.1 — the EXACT version
   // ios/Podfile.lock pins for LibSignalClient. Maven Central cannot supply it
