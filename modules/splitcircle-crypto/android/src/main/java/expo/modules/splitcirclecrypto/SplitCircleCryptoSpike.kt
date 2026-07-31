@@ -77,6 +77,7 @@ class SplitCircleCryptoSpike : Module() {
         )
         val bobStore = InMemorySignalProtocolStore(bobIdentity, bobRegistrationId)
         val bobAddress = SignalProtocolAddress("bob-device", 1)
+        val aliceAddress = SignalProtocolAddress("alice-device", 1)
 
         stages.add("assemblePreKeyBundle")
         val bobBundle = PreKeyBundle(
@@ -104,18 +105,22 @@ class SplitCircleCryptoSpike : Module() {
           KyberPreKeyRecord(77, System.currentTimeMillis(), bobKyber, bobKyberSignature),
         )
 
+        // ⚠️ THESE TWO CLASSES TAKE ADDRESSES IN OPPOSITE ORDERS at 0.99.1:
+        //   SessionBuilder(store, REMOTE, LOCAL)
+        //   SessionCipher (store, LOCAL,  REMOTE)
+        // Both compile either way (same types), so getting it wrong fails at
+        // runtime, not build time. Verified against the v0.99.1 sources.
         stages.add("pqxdhHandshake")
-        SessionBuilder(aliceStore, bobAddress).process(bobBundle)
+        SessionBuilder(aliceStore, bobAddress, aliceAddress).process(bobBundle)
 
         stages.add("encrypt")
         val plaintext = "manasplit-android-linkage-spike"
-        val ciphertext = SessionCipher(aliceStore, bobAddress)
+        val ciphertext = SessionCipher(aliceStore, aliceAddress, bobAddress)
           .encrypt(plaintext.toByteArray(Charsets.UTF_8))
         val ciphertextType = ciphertext.type
 
         stages.add("decrypt")
-        val aliceAddress = SignalProtocolAddress("alice-device", 1)
-        val decrypted = SessionCipher(bobStore, aliceAddress)
+        val decrypted = SessionCipher(bobStore, bobAddress, aliceAddress)
           .decrypt(PreKeySignalMessage(ciphertext.serialize()))
         val recovered = String(decrypted, Charsets.UTF_8)
 
@@ -124,7 +129,7 @@ class SplitCircleCryptoSpike : Module() {
           "ok" to (recovered == plaintext),
           "recovered" to recovered,
           "ciphertextType" to ciphertextType,
-          "libsignalVersion" to "0.86.5",
+          "libsignalVersion" to "0.99.1-from-source",
           "stagesCompleted" to stages,
         )
       } catch (t: Throwable) {

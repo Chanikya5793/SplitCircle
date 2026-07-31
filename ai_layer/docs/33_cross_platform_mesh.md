@@ -1,9 +1,11 @@
 # 33 — Cross-platform mesh: transport, routing, crypto parity, and the nearby UI
 
-Status: **DESIGN — decisions LOCKED 2026-07-31. Phase 1's libsignal linkage
-spike is RUN and PASSED on a Pixel 7 (§3.1); nothing else built.** The spike
-surfaced a version gap between the platforms that is now the top open
-question — read §3.1 before planning around Phase 1. Supersedes the
+Status: **DESIGN — decisions LOCKED 2026-07-31. Phase 0 BUILT (transport
+abstraction + switch, unit-tested). Phase 1's linkage spike PASSED on a Pixel 7
+at libsignal 0.99.1 built from source, closing the version question (§3.1).**
+Cross-platform interop remains unproven — see §3.2. Read §3.1 before planning
+around Phase 1: the from-source build has a measured seven-prerequisite cost
+that recurs on every libsignal bump. Supersedes the
 transport assumptions in [doc 32](32_nearby_messaging_offline_sync.md), whose
 fixes remain correct but apply only to the iOS-only stack described there.
 
@@ -195,20 +197,49 @@ the real module lands).
 
 Three findings that change the plan:
 
-1. **VERSION GAP — the material risk.** iOS pins **LibSignalClient 0.99.1**,
-   built from `signalapp/libsignal`'s own repo at tag `v0.99.1`, so it is not
-   bound by Maven. The Android artifact `org.signal:libsignal-android`
-   publishes only up to **0.86.5** (authoritative `maven-metadata.xml`; 0.99.1
-   is a hard 404). **The two platforms cannot be pinned to the same version off
-   the shelf**, and cross-version wire compatibility is UNVERIFIED. Options:
-   - **(a) Downgrade iOS to 0.86.5.** Versions match exactly. Cost: touches a
-     working, hard-won iOS linkage.
-   - **(b) Build libsignal-android from source at v0.99.1.** Needs a Rust
-     toolchain + NDK cross-compile, and becomes a per-bump maintenance burden.
-   - **(c) Run mixed versions** if 0.86.5 ↔ 0.99.1 interop proves out.
-     Cheapest if true, but must be *proven*, never assumed.
+1. **VERSION GAP — RESOLVED 2026-07-31 by building from source.** iOS pins
+   **LibSignalClient 0.99.1**, built from `signalapp/libsignal` at tag
+   `v0.99.1`, so it is not bound by Maven. The Android artifact
+   `org.signal:libsignal-android` publishes only to **0.86.5** (last updated
+   2025-11-17; 0.99.1 is a hard 404, and no AAR ships in the GitHub release).
+   The two platforms cannot be pinned to the same version off the shelf.
 
-   **This is now Gate 1's real question**, ahead of any mesh work.
+   **Chosen: build the Android AAR from source at v0.99.1** — the only option
+   that neither touches a shipped iOS crypto stack (downgrading risks failing
+   to deserialize live users' existing sessions) nor rests on unproven
+   cross-version compatibility. **Verified end-to-end: 0.99.1 built from
+   source passes the full spike on a Pixel 7** (same 11 stages).
+
+   Mixed versions (0.86.5 ↔ 0.99.1) were NOT pursued, and the spike produced
+   evidence against them: the API changed materially in between —
+   `SessionBuilder` and `SessionCipher` each gained an address parameter, and
+   `Curve` was removed in favour of `ECKeyPair`. A library that reshapes how
+   sessions are addressed across that range is not a safe bet for wire
+   compatibility.
+
+   **Cost, measured rather than estimated.** Reproducing the AAR needs SEVEN
+   prerequisites: Rust **nightly-2026-07-15** (repo-pinned — stable fails),
+   the four Android Rust targets, NDK **28.0.13004108** exactly, cmake from
+   the SDK on PATH, a `CXX_*` for the target (`build_jni.sh` exports only
+   `CC_*`), `protoc`, and **JDK 21**. Plus ~15GB disk and ~10 min compute.
+   Every libsignal bump repeats all of it, on every machine and any CI.
+
+   **Two packaging traps.** (a) The AAR's own `classes.jar` is a 14KB Android
+   shim — the Java API lives in the separate `libsignal-client` jar, so BOTH
+   artifacts are required; wiring only the AAR compiles and then fails at
+   runtime on missing classes. (b) AGP **rejects a direct local `.aar`
+   dependency inside a library module**, which every Expo module is, because
+   the produced AAR would silently omit those classes. Both artifacts are
+   therefore installed to `~/.m2` and consumed as normal coordinates, not via
+   `files('libs/*.aar')`.
+
+   **Still open for productionising this:** only `arm64-v8a` was built (a real
+   release needs all four ABIs, ~4× the time); the 63MB of artifacts live in
+   `~/.m2` and are NOT in the repo, so the build is not reproducible from a
+   clean checkout without a CI job, Git LFS, or a private Maven; and the
+   `mavenLocal()` line plus the desugaring flag live in generated `android/`,
+   so both need a config plugin to survive `expo prebuild`.
+
 2. **PQXDH is mandatory.** `PreKeyBundle`'s only public constructor takes a
    Kyber key plus signature; the pre-quantum 8-arg form is gone. This matches
    the app's existing `PublishableBundle`, which already carries
@@ -224,15 +255,23 @@ Also confirmed: the AAR ships native libs for all four ABIs
 (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`), so emulators and devices are
 both covered.
 
-API note for whoever writes the real module: `Curve` no longer exists at
-0.86.5. Key generation is `ECKeyPair.generate()` / `IdentityKeyPair.generate()`,
-and signing is an instance method, `ECPrivateKey.calculateSignature(bytes)`.
+API notes for whoever writes the real module (verified against v0.99.1):
+`Curve` no longer exists — key generation is `ECKeyPair.generate()` /
+`IdentityKeyPair.generate()`, and signing is the instance method
+`ECPrivateKey.calculateSignature(bytes)`.
 
-### 3.2 Gate 1 (still open)
+**And the trap that will bite:** `SessionBuilder` and `SessionCipher` take
+their two addresses in OPPOSITE orders —
+`SessionBuilder(store, REMOTE, LOCAL)` but `SessionCipher(store, LOCAL, REMOTE)`.
+The parameter types are identical, so swapping them **compiles cleanly and
+fails at runtime**. Read the v0.99.1 sources, do not infer it.
 
-Generate a bundle, establish a session, and round-trip a ciphertext
-**iOS↔Android on real hardware**, resolving the §3.1 version question first.
-Android-side execution is proven; cross-platform interop is not.
+### 3.2 Gate 1 (partially closed)
+
+The version question is resolved (§3.1) and Android-side execution is proven
+at the matching version. **Cross-platform interop is still unproven**: nothing
+has yet round-tripped a ciphertext iOS↔Android. That remains Gate 1's
+remaining half and needs both sides wired.
 
 ## 4. UI revamp
 
