@@ -746,6 +746,20 @@ export const SettingsScreen = () => {
           />
           ))}
           {divider}
+          {wrapAnchor(SETTING_IDS.nearbyMesh, (
+          <ListRow
+            title="Nearby mesh"
+            subtitle="Offline messaging and nearby devices"
+            icon="access-point"
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate(ROUTES.APP.NEARBY_MESH, {
+                backTitle: ROOT_SCREEN_TITLES.settings,
+              });
+            }}
+          />
+          ))}
+          {divider}
           {wrapAnchor(SETTING_IDS.offlineSync, (
           <ListRow
             title="Offline sync"

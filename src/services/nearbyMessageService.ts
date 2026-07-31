@@ -9,6 +9,11 @@ import { getCurrentDeviceId } from '@/services/pairingService';
 import { nativeBle } from '../../modules/splitcircle-ble';
 import { createBleTransport } from '@/services/mesh/bleTransport';
 import { createMeshRouter } from '@/services/mesh/router';
+import {
+  MeshEventLog,
+  aggregateNeighbours,
+  type MeshDiagnostics,
+} from '@/services/mesh/diagnostics';
 import { BROADCAST_DEST, decodeRouterFrame } from '@/services/mesh/routerFrame';
 import { createMpcTransport } from '@/services/mesh/mpcTransport';
 import type { MeshTransport, PayloadClass } from '@/services/mesh/transport';
@@ -36,6 +41,9 @@ import {
 } from '@/services/nearbyPairingService';
 
 let broadcastRunning = false;
+
+/** Bounded, newest-first. Replaces the single overwritable event slot. */
+const meshEvents = new MeshEventLog();
 
 /**
  * The transport layer (doc 33 Phase 0). MultipeerConnectivity always, plus BLE
@@ -228,13 +236,47 @@ export const testNearbyPeerConnection = (deviceId: string): boolean =>
 export const reportNearbyMessageEvent = (
   event: Omit<NearbyMessageEvent, 'at'> & { at?: number },
 ): void => {
+  const at = event.at ?? Date.now();
+  // Also into the bounded log (doc 33 §4.1). `lastMessageEvent` is a single
+  // slot overwritten by the next event, so it can only ever be seen by someone
+  // already staring at the sheet at that instant — useless for diagnosing a
+  // mesh, which is why every hard bug here was diagnosed from server logs
+  // instead of from the app.
+  meshEvents.push({
+    at,
+    kind: event.type === 'sent' ? 'sent' : event.type === 'received' ? 'received' : 'info',
+    detail: event.detail,
+    chatId: event.chatId,
+    peerCount: event.peerCount,
+  });
   publishNearbySnapshot({
     ...nearbySnapshot,
-    lastMessageEvent: {
-      ...event,
-      at: event.at ?? Date.now(),
-    },
+    lastMessageEvent: { ...event, at },
   });
+};
+
+/**
+ * Everything the diagnostics/topology screen needs, assembled on demand.
+ *
+ * Read live rather than pushed into the snapshot: neighbour state changes far
+ * more often than the UI needs to redraw, and threading it through the snapshot
+ * would re-render every subscriber on each radio event.
+ */
+export const getMeshDiagnostics = async (): Promise<MeshDiagnostics> => {
+  const queue = await loadMeshMessageQueue().catch(() => []);
+  return {
+    transports: activeTransports.map((transport) => ({
+      id: transport.id,
+      available: transport.isAvailable(),
+      neighbourCount: transport.neighbours().filter((n) => n.connected).length,
+    })),
+    neighbours: aggregateNeighbours(transports.neighbours(), nearbySnapshot.trustedPeers),
+    queuedMessages: queue.filter((operation) => Boolean(operation.wireEnvelope)).length,
+    routerPending: router.pendingCount(),
+    bleEnabled: BLE_MESH_ENABLED,
+    routerEnabled: MESH_ROUTER_ENABLED,
+    events: meshEvents.list(),
+  };
 };
 
 /**

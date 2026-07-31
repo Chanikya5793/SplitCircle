@@ -46,6 +46,7 @@ export const SETTING_IDS = {
   linkedDevices: 'linked-devices',
   notifications: 'notifications',
   offlineSync: 'offline-sync',
+  nearbyMesh: 'nearbyMesh',
   notifMaster: 'notif-master',
   notifMessages: 'notif-messages',
   notifExpenses: 'notif-expenses',
@@ -162,6 +163,15 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     icon: 'bell-outline',
     section: 'General',
     route: ROUTES.APP.NOTIFICATION_SETTINGS,
+  },
+  {
+    id: SETTING_IDS.nearbyMesh,
+    title: 'Nearby mesh',
+    subtitle: 'Offline messaging, transports and nearby devices',
+    keywords: ['nearby', 'mesh', 'bluetooth', 'ble', 'offline', 'peer', 'topology', 'relay', 'diagnostics'],
+    icon: 'access-point',
+    section: 'General',
+    route: ROUTES.APP.NEARBY_MESH,
   },
   {
     id: SETTING_IDS.offlineSync,

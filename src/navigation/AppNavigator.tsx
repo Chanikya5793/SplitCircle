@@ -41,6 +41,7 @@ import { NotificationSettingsScreen } from '@/screens/settings/NotificationSetti
 import { AiEvalsScreen } from '@/screens/settings/AiEvalsScreen';
 import { AiMemoryScreen } from '@/screens/settings/AiMemoryScreen';
 import { AiIndexScreen } from '@/screens/settings/AiIndexScreen';
+import { NearbyMeshScreen } from '@/screens/settings/NearbyMeshScreen';
 import { OfflineSyncScreen } from '@/screens/settings/OfflineSyncScreen';
 import { LinkedDevicesScreen } from '@/screens/settings/LinkedDevicesScreen';
 import { LinkDeviceScreen } from '@/screens/settings/LinkDeviceScreen';
@@ -1200,6 +1201,11 @@ const AppStackNavigator = () => {
         name={ROUTES.APP.OFFLINE_SYNC}
         component={OfflineSyncScreen}
         options={{ title: 'Offline sync' }}
+      />
+      <AppStack.Screen
+        name={ROUTES.APP.NEARBY_MESH}
+        component={NearbyMeshScreen}
+        options={{ title: 'Nearby mesh' }}
       />
       <AppStack.Screen
         name={ROUTES.APP.LINKED_DEVICES}

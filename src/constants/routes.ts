@@ -38,6 +38,7 @@ export const ROUTES = {
     SETTINGS: 'Settings',
     NOTIFICATION_SETTINGS: 'NotificationSettings',
     OFFLINE_SYNC: 'OfflineSync',
+    NEARBY_MESH: 'NearbyMesh',
     LINKED_DEVICES: 'LinkedDevices',
     LINK_DEVICE: 'LinkDevice',
     BACKUP_SETTINGS: 'BackupSettings',

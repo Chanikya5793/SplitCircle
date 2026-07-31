@@ -595,3 +595,54 @@ nothing regressed, then enable origination.
   router stays synchronous and pure, but nothing calls them on boot yet. The
   consequence is bounded: a device re-floods frames it already relayed after a
   restart, wasteful rather than harmful, and TTL still terminates it.
+
+## 11. Phase 7 (UI) — build log
+
+**Status 2026-07-31: diagnostics + topology BUILT (`NearbyMeshScreen`, Settings
+→ Nearby mesh). Per-transport toggles (§4.1) and per-message delivery states
+(§4.3) NOT built.**
+
+Built first, and deliberately, because it is the piece that makes the hardware
+session diagnosable. Every hard mesh bug in this project — doc 32 §5f's queue
+that never flushed, §10.1's dead self-sync, §10.2's collapsing session — was
+invisible from inside the app while it was happening and reconstructed
+afterwards from Cloud Function logs. The only in-app signal was a single
+`lastMessageEvent` slot that the next event overwrote, visible only to someone
+already staring at the sheet. Testing three phones in a room without this is
+guesswork.
+
+### 11.1 What it shows
+
+- **Transports** — each one's availability and connected count, plus an
+  explicit note when the BLE flag is off, since that is the only transport that
+  can reach Android.
+- **Nearby devices** — ONE row per node, not per link. A phone reachable over
+  both MPC and BLE is one neighbour with two transport badges; rendering it
+  twice would make a two-device test look like a three-device mesh.
+- **Untrusted-but-reachable peers are shown, not hidden.** "The other phone is
+  right there and nothing happens" and "the other phone was never discovered"
+  are completely different problems, and filtering would make them identical.
+- **Queue depth** — envelopes waiting, and separately what the router is holding
+  for an unreachable destination.
+- **Recent activity** — a bounded newest-first log, replacing the single slot.
+- **What relaying exposes** — §2.3's metadata note in plain language.
+
+### 11.2 Honest by construction
+
+The header states outright that this is what the phone can see *now*, not a map
+of the mesh, and that a message can still reach a device not listed (doc 33
+§1a). Presenting flood routing behind a topology picture would be a confident
+lie of exactly the kind doc 32 §10.1 warns about.
+
+Every number is read live from `getMeshDiagnostics()` — the transports, the
+on-disk mesh queue, the router's own pending count. No placeholder stats.
+
+### 11.3 Not built
+
+- **Per-transport toggles and discoverability mode** (§4.1). The diagnostics
+  half is what the hardware test needs; toggles are a preference surface and
+  can follow.
+- **Per-message delivery states** (§4.3): queued → in flight → relayed (n hops)
+  → delivered → failed. The router already knows hop counts, but plumbing them
+  into per-message UI touches the chat rendering path, which is worth doing
+  once the router is proven on hardware rather than before.
