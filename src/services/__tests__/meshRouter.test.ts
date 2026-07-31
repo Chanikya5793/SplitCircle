@@ -25,7 +25,7 @@ const makeRouter = (opts: {
   const sent: { encoded: string; to: string[]; payloadClass: string }[] = [];
   let neighbours = opts.neighbours ?? [];
   const router = createMeshRouter({
-    localNodeId: opts.localNodeId,
+    localNodeId: () => opts.localNodeId,
     neighbours: () => neighbours,
     send: async (encoded, to, payloadClass) => {
       sent.push({ encoded, to, payloadClass });
@@ -68,6 +68,25 @@ describe('router frame', () => {
     for (const bad of ['', 'nonsense', 'r2|m|4|t|A|B|p', 'r1|m|4|z|A|B|p', 'r1||4|t|A|B|p']) {
       expect(decodeRouterFrame(bad)).toBeNull();
     }
+  });
+
+  it('decodes a REAL bare mesh envelope to null — the migration guarantee', () => {
+    // doc 33 §10.3: a device running the router must still understand one that
+    // is not. That rests entirely on a bare envelope being unmistakable, so
+    // pin it against the actual wire shape rather than a hand-waved string.
+    //
+    // `buildSignedMeshEnvelope` emits JSON.stringify({v, bodyBase64,
+    // signatureBase64}). Base64's alphabet is A-Za-z0-9+/= and JSON adds only
+    // {}":, — none of them '|'. So the very first separator scan fails and the
+    // frame is correctly treated as bare. If either format ever gains a '|',
+    // this test fails and the migration assumption has to be revisited.
+    const realEnvelope = JSON.stringify({
+      v: 1,
+      bodyBase64: 'eyJjaGF0SWQiOiJjMSIsIm1lc3NhZ2VJZCI6Im0xIn0=',
+      signatureBase64: 'MEUCIQDx+abc/def123==',
+    });
+    expect(realEnvelope).not.toContain('|');
+    expect(decodeRouterFrame(realEnvelope)).toBeNull();
   });
 
   it('rejects a TTL above the maximum instead of clamping it', () => {

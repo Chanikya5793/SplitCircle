@@ -91,7 +91,13 @@ interface PendingFrame {
 }
 
 export interface RouterDeps {
-  localNodeId: NodeId;
+  /**
+   * A GETTER, not a value: the router is a module-level singleton constructed
+   * at import time, while this device's id only resolves once
+   * `getCurrentDeviceId()` completes during startup. Capturing a value here
+   * would freeze the empty string and every frame would claim origin `''`.
+   */
+  localNodeId: () => NodeId;
   /** Encoded frame out to specific neighbours; resolves with how many took it. */
   send(encoded: string, to: NodeId[], payloadClass: PayloadClass): Promise<number>;
   /** Every currently reachable neighbour, across all transports. */
@@ -176,7 +182,7 @@ export const createMeshRouter = (deps: RouterDeps): MeshRouter => {
    */
   const forwardTargets = (frame: RouterFrame, from?: NodeId): NodeId[] =>
     deps.neighbours().filter(
-      (node) => node !== from && node !== frame.origin && node !== deps.localNodeId,
+      (node) => node !== from && node !== frame.origin && node !== deps.localNodeId(),
     );
 
   const forward = async (frame: RouterFrame, from?: NodeId): Promise<number> => {
@@ -191,7 +197,7 @@ export const createMeshRouter = (deps: RouterDeps): MeshRouter => {
       // Unicast to someone we cannot currently see: hold it for a neighbour
       // change. Broadcast is NOT held — a group frame with no neighbours has
       // no one to relay to, and the origin's own queue is what replays it.
-      if (!isBroadcast(next) && next.dest !== deps.localNodeId) hold(next, payloadClass);
+      if (!isBroadcast(next) && next.dest !== deps.localNodeId()) hold(next, payloadClass);
       return 0;
     }
     return deps.send(encodeRouterFrame(next), targets, payloadClass);
@@ -203,7 +209,7 @@ export const createMeshRouter = (deps: RouterDeps): MeshRouter => {
         msgId,
         ttl: DEFAULT_TTL,
         payloadClass,
-        origin: deps.localNodeId,
+        origin: deps.localNodeId(),
         dest,
         payload,
       };
@@ -231,11 +237,11 @@ export const createMeshRouter = (deps: RouterDeps): MeshRouter => {
       // Our own frame come back around. Dedup would catch it, but naming the
       // case keeps the diagnostic honest — this is normal on a flood mesh, not
       // a fault.
-      if (frame.origin === deps.localNodeId) return { action: 'drop', reason: 'self-origin' };
+      if (frame.origin === deps.localNodeId()) return { action: 'drop', reason: 'self-origin' };
 
       if (!seen.add(frame.msgId)) return { action: 'drop', reason: 'duplicate' };
 
-      const forMe = frame.dest === deps.localNodeId;
+      const forMe = frame.dest === deps.localNodeId();
       const broadcast = isBroadcast(frame);
 
       if (forMe) {

@@ -8,8 +8,10 @@ import {
 import { getCurrentDeviceId } from '@/services/pairingService';
 import { nativeBle } from '../../modules/splitcircle-ble';
 import { createBleTransport } from '@/services/mesh/bleTransport';
+import { createMeshRouter } from '@/services/mesh/router';
+import { BROADCAST_DEST, decodeRouterFrame } from '@/services/mesh/routerFrame';
 import { createMpcTransport } from '@/services/mesh/mpcTransport';
-import type { MeshTransport } from '@/services/mesh/transport';
+import type { MeshTransport, PayloadClass } from '@/services/mesh/transport';
 import { createTransportSwitch } from '@/services/mesh/transportSwitch';
 import {
   loadMeshMessageQueue,
@@ -79,6 +81,56 @@ const activeTransports: MeshTransport[] = bleTransport
 const transports = createTransportSwitch(activeTransports);
 
 /**
+ * Puts opaque bytes on every transport that can carry them, and reports how
+ * many peers took them.
+ *
+ * The lowest rung: it knows nothing about envelopes or routing, which is what
+ * lets both the direct path and the router share it. Every capable transport
+ * is ATTEMPTED with the full recipient list rather than a JS-side reachability
+ * guess — filtering here against a cached neighbour list skipped sends
+ * outright before the first state event populated it.
+ */
+const sendRawToTransports = async (
+  raw: string,
+  to: string[],
+  payloadClass: PayloadClass,
+): Promise<number> => {
+  let reached = 0;
+  for (const transport of transports.capableOf(payloadClass, raw.length)) {
+    const outcome = await transport.send({ data: raw, payloadClass }, to);
+    if (outcome.ok) reached += outcome.deliveredCount;
+  }
+  return reached;
+};
+
+/**
+ * Multi-hop routing (doc 33 Phase 4), OFF by default.
+ *
+ * Separate from the BLE flag because the risk is different in kind. BLE is
+ * additive and invisible to peers; the router puts a header on every frame, so
+ * a device that originates them cannot be understood by a device that does not
+ * know about them. RECEIVING is always on and always safe — a bare envelope
+ * fails `decodeRouterFrame` and takes the pre-existing path — so this flag
+ * gates ORIGINATION only, which is the half that can break a working device.
+ *
+ * Turn on only when every device in the test set is running this build.
+ */
+const MESH_ROUTER_ENABLED = ['1', 'true'].includes(
+  (process.env.EXPO_PUBLIC_ENABLE_MESH_ROUTER ?? '').trim().toLowerCase(),
+);
+
+/** Resolved during startNearbyMessaging; the router reads it lazily. */
+let localNodeId = '';
+
+const router = createMeshRouter({
+  localNodeId: () => localNodeId,
+  // Deduped across transports: the same phone reachable over both MPC and BLE
+  // is one node, and forwarding to it twice is pure waste.
+  neighbours: () => [...new Set(transports.neighbours().map((n) => n.nodeId))],
+  send: (encoded, to, payloadClass) => sendRawToTransports(encoded, to, payloadClass),
+});
+
+/**
  * Sends one envelope to whichever transports can currently reach the targets.
  *
  * Returns how many peers accepted the bytes, matching the count the native
@@ -94,16 +146,21 @@ const transports = createTransportSwitch(activeTransports);
 const sendEnvelopeViaTransports = async (
   envelope: string,
   recipientDeviceIds: string[],
+  msgId: string,
 ): Promise<number> => {
-  let reached = 0;
-  for (const transport of transports.capableOf('text', envelope.length)) {
-    const outcome = await transport.send(
-      { data: envelope, payloadClass: 'text' },
-      recipientDeviceIds,
-    );
-    if (outcome.ok) reached += outcome.deliveredCount;
+  if (!MESH_ROUTER_ENABLED) {
+    return sendRawToTransports(envelope, recipientDeviceIds, 'text');
   }
-  return reached;
+  // One recipient is a unicast the mesh can relay hop by hop; several is a
+  // group, which floods. Both keep the payload sealed per device — a relay
+  // carries bytes it cannot read.
+  const result = await router.originate({
+    msgId,
+    payload: envelope,
+    dest: recipientDeviceIds.length === 1 ? recipientDeviceIds[0] : BROADCAST_DEST,
+    payloadClass: 'text',
+  });
+  return result.delivered;
 };
 let nearbySnapshot = createNearbyMessagingSnapshot(isNearbyMeshAvailable());
 const nearbyStateListeners = new Set<() => void>();
@@ -201,6 +258,10 @@ export const broadcastQueuedNearbyMessages = async (): Promise<number> => {
         const sent = await sendEnvelopeViaTransports(
           operation.wireEnvelope,
           recipientDeviceIds,
+          // The mesh operation id is already the cross-hop dedup key
+          // (claimMeshMessageProcessing), so reuse it rather than minting a
+          // second identity for the same message.
+          operation.id,
         );
         totalRecipients += sent;
         if (sent > 0) {
@@ -248,6 +309,8 @@ export const startNearbyMessaging = async (
   }
 
   const deviceId = await getCurrentDeviceId();
+  // The router is a module-level singleton but its identity only exists now.
+  localNodeId = deviceId;
   configureNearbyPairing({
     userId,
     deviceId,
@@ -257,11 +320,27 @@ export const startNearbyMessaging = async (
   // Per transport, not per native module: an envelope means the same thing
   // whichever radio carried it, and a frame arriving over BLE has to reach the
   // same handler or it is received and silently discarded.
+  const deliverEnvelope = (envelope: string, peerDeviceId: string): void => {
+    if (!handleNearbyPairingEnvelope(envelope, peerDeviceId)) {
+      onEnvelope(envelope, peerDeviceId);
+    }
+  };
+
   const envelopeSubscriptions = activeTransports.map((transport) =>
-    transport.onFrame((envelope, peerDeviceId) => {
-      if (!handleNearbyPairingEnvelope(envelope, peerDeviceId)) {
-        onEnvelope(envelope, peerDeviceId);
+    transport.onFrame((raw, peerDeviceId) => {
+      // RECEIVING both formats is always on, regardless of the router flag —
+      // that is what makes the rollout survivable (doc 33 §10.3). A bare
+      // envelope fails `decodeRouterFrame` and takes the pre-existing path
+      // unchanged, so a device running this build understands one that is not.
+      if (!decodeRouterFrame(raw)) {
+        deliverEnvelope(raw, peerDeviceId);
+        return;
       }
+      void router.accept(raw, peerDeviceId).then((outcome) => {
+        // 'relay' deliberately carries no payload: this node forwarded bytes it
+        // cannot read and has nothing to hand the local delivery path.
+        if (outcome.action === 'deliver') deliverEnvelope(outcome.payload, peerDeviceId);
+      });
     }),
   );
   // Reachability now comes from the transport, not the native module directly.
@@ -274,6 +353,10 @@ export const startNearbyMessaging = async (
       if (neighbours.length > 0) {
         void announceIncomingNearbyAttachmentProgress();
         void broadcastQueuedNearbyMessages();
+        // Store-and-forward's only trigger: a frame held for an unreachable
+        // destination is retried when the topology changes, which is exactly
+        // when a route to it can appear.
+        void router.flush();
       }
     }),
   );

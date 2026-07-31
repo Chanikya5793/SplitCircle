@@ -500,8 +500,9 @@ failure to ever meet.
 
 ## 10. Phase 4 (Router) — build log
 
-**Status 2026-07-31: BUILT and unit-tested (22 tests), NOT wired into the live
-path.** See §10.3 — wiring it is a breaking wire change, not a flag flip.
+**Status 2026-07-31: BUILT, unit-tested (23 tests), and WIRED behind
+`EXPO_PUBLIC_ENABLE_MESH_ROUTER` (default off).** The migration in §10.3 is
+implemented: receiving both formats is always on, origination is flag-gated.
 
 `src/services/mesh/routerFrame.ts` (header codec) and `router.ts` (flood, dedup,
 TTL, store-and-forward, backpressure). Flood rather than a routing table
@@ -555,7 +556,7 @@ Three, all found by building against what Phase 3 actually produced:
   mechanism. It is deliberately never surfaced as a UI delivery claim —
   conflating transport ack with delivery is doc 32 §10.1's bug.
 
-### 10.3 Why it is not wired in yet
+### 10.3 The migration (implemented)
 
 Every frame gains a routing header, so **a device running the router cannot be
 understood by one that is not**. Unlike BLE — additive, flag-gated, and
@@ -569,9 +570,24 @@ Turning it on therefore needs a migration story, not a flag:
   fallback is a clean `?? treatAsBare`), and
 - only originate router frames once the receiving side is known to handle them.
 
-That is deliberately a separate change from building the router, because it is
-the part that can break working devices. The unit tests prove the routing
-logic; only a staged rollout proves the migration.
+Both halves are now in `nearbyMessageService.ts`:
+
+- **Receiving is always on and unconditional.** `decodeRouterFrame` returns null
+  for a bare envelope, so it takes the pre-existing path unchanged. This is
+  safe regardless of the flag, which is what makes the rollout survivable.
+- **Origination is flag-gated.** With the flag off the wire is byte-identical to
+  today, which is why the pre-existing suites pass untouched.
+
+The separation rests on bare envelopes being unmistakable, and that is now
+pinned by a test against the REAL wire shape rather than assumed:
+`buildSignedMeshEnvelope` emits `JSON.stringify({v, bodyBase64,
+signatureBase64})`, and neither base64's alphabet nor JSON's structural
+characters include `|` — so the first separator scan fails immediately. A
+router frame always starts `r1|`. If either format ever gains a `|`, that test
+fails and this assumption must be revisited.
+
+Rollout order: ship to every device in the test set with the flag OFF, confirm
+nothing regressed, then enable origination.
 
 ### 10.4 Not yet built
 
