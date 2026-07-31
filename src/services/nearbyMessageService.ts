@@ -6,7 +6,10 @@ import {
   sendPreparedNearbyAttachment,
 } from '../../modules/splitcircle-mesh';
 import { getCurrentDeviceId } from '@/services/pairingService';
+import { nativeBle } from '../../modules/splitcircle-ble';
+import { createBleTransport } from '@/services/mesh/bleTransport';
 import { createMpcTransport } from '@/services/mesh/mpcTransport';
+import type { MeshTransport } from '@/services/mesh/transport';
 import { createTransportSwitch } from '@/services/mesh/transportSwitch';
 import {
   loadMeshMessageQueue,
@@ -33,10 +36,11 @@ import {
 let broadcastRunning = false;
 
 /**
- * The transport layer (doc 33 Phase 0). One entry today — MultipeerConnectivity
- * — but every send and every reachability signal now goes through the switch
- * rather than straight at the native module, so adding BLE (Phase 3) or LAN
- * (Phase 5) is a registration rather than a rewrite of this file.
+ * The transport layer (doc 33 Phase 0). MultipeerConnectivity always, plus BLE
+ * (Phase 3) when the flag below is on. Every send and every reachability signal
+ * goes through the switch rather than straight at the native module, which is
+ * what made adding BLE a registration rather than a rewrite of this file — and
+ * what will make LAN (Phase 5) the same.
  *
  * Deliberately NOT covered by the switch yet, because the contract does not
  * model them: attachment resource transfer and the pairing handshake are both
@@ -44,8 +48,35 @@ let broadcastRunning = false;
  * transport-agnostic shapes. Mixing them in now would mean inventing an
  * interface for a transport that does not exist.
  */
+/**
+ * BLE is OFF unless explicitly enabled (doc 33 Phase 3). Both native halves
+ * compile but neither has touched a radio, and this file is the live nearby
+ * send path on a mesh that already carries several changes proven only by
+ * unit tests. The flag is what makes it testable on two phones without
+ * betting the working transport on it.
+ *
+ * `EXPO_PUBLIC_` so it inlines at bundle time and can be flipped by a rebuild
+ * without a code change. Remove the flag once §9.6's device verification
+ * passes — a permanent flag is a permanently untested branch.
+ */
+const BLE_MESH_ENABLED = ['1', 'true'].includes(
+  (process.env.EXPO_PUBLIC_ENABLE_BLE_MESH ?? '').trim().toLowerCase(),
+);
+
 const mpcTransport = createMpcTransport();
-const transports = createTransportSwitch([mpcTransport]);
+const bleTransport = BLE_MESH_ENABLED ? createBleTransport(nativeBle) : null;
+
+/**
+ * Lifecycle, trust and reachability fan out across all of these; sends go
+ * through the switch below. MPC stays FIRST and stays authoritative for the
+ * user-visible nearby status — see `startNearbyMessaging`, where BLE is
+ * best-effort and a BLE failure cannot degrade a working MPC mesh.
+ */
+const activeTransports: MeshTransport[] = bleTransport
+  ? [mpcTransport, bleTransport]
+  : [mpcTransport];
+
+const transports = createTransportSwitch(activeTransports);
 
 /**
  * Sends one envelope to whichever transports can currently reach the targets.
@@ -100,7 +131,7 @@ export const setNearbyTrustedPeers = (
     trustedPeers,
     lastChangedAt: Date.now(),
   });
-  mpcTransport.updateTrust(Object.keys(trustedPeers));
+  activeTransports.forEach((transport) => transport.updateTrust(Object.keys(trustedPeers)));
 };
 
 const addPairedNearbyPeer = (peer: PairedNearbyPeer): void => {
@@ -119,7 +150,7 @@ const addPairedNearbyPeer = (peer: PairedNearbyPeer): void => {
     trustedPeers,
     lastChangedAt: Date.now(),
   });
-  mpcTransport.updateTrust(Object.keys(trustedPeers));
+  activeTransports.forEach((transport) => transport.updateTrust(Object.keys(trustedPeers)));
 };
 
 export const restartNearbyMessagingDiscovery = (): void => {
@@ -223,22 +254,29 @@ export const startNearbyMessaging = async (
     displayName,
     handlePaired: addPairedNearbyPeer,
   });
-  const envelopeSubscription = mpcTransport.onFrame((envelope, peerDeviceId) => {
-    if (!handleNearbyPairingEnvelope(envelope, peerDeviceId)) {
-      onEnvelope(envelope, peerDeviceId);
-    }
-  });
+  // Per transport, not per native module: an envelope means the same thing
+  // whichever radio carried it, and a frame arriving over BLE has to reach the
+  // same handler or it is received and silently discarded.
+  const envelopeSubscriptions = activeTransports.map((transport) =>
+    transport.onFrame((envelope, peerDeviceId) => {
+      if (!handleNearbyPairingEnvelope(envelope, peerDeviceId)) {
+        onEnvelope(envelope, peerDeviceId);
+      }
+    }),
+  );
   // Reachability now comes from the transport, not the native module directly.
   // The MPC adapter subscribes to BOTH native events behind this, because
   // onStateChanged carries peer identities while onPeersChanged is the one that
   // fires on a pure trust promotion — listening to only one is the doc 32 §5f
   // defect where a newly reachable peer's queued messages sat unsent.
-  const peerSubscription = mpcTransport.onNeighbourChange((neighbours) => {
-    if (neighbours.length > 0) {
-      void announceIncomingNearbyAttachmentProgress();
-      void broadcastQueuedNearbyMessages();
-    }
-  });
+  const peerSubscriptions = activeTransports.map((transport) =>
+    transport.onNeighbourChange((neighbours) => {
+      if (neighbours.length > 0) {
+        void announceIncomingNearbyAttachmentProgress();
+        void broadcastQueuedNearbyMessages();
+      }
+    }),
+  );
   const stateSubscription = addNearbyStateChangedListener((event) => {
     handleNearbyPairingMeshState(event);
     publishNearbySnapshot(applyNearbyMeshState(nearbySnapshot, event));
@@ -260,14 +298,31 @@ export const startNearbyMessaging = async (
   if (!started) {
     publishNearbySnapshot(createNearbyMessagingSnapshot(false));
   }
+  // STRICTLY ADDITIVE. BLE starts after MPC, its result is deliberately not
+  // folded into `started`, and a failure here leaves the nearby status exactly
+  // as MPC reported it. Bluetooth being off, or its permission denied, is an
+  // ordinary state on a phone — it must not present as "nearby is unavailable"
+  // when a working MPC mesh is already up. console.error because a Release
+  // bundle drops console.warn entirely (CLAUDE.md), and a transport that
+  // silently never starts is exactly what this flag exists to observe.
+  if (bleTransport) {
+    const bleStarted = await bleTransport.start({
+      userId,
+      deviceId,
+      trustedDeviceIds: Object.keys(trustedPeers),
+    });
+    if (!bleStarted) {
+      console.error('⚠️ BLE transport did not start (radio off, or permission denied)');
+    }
+  }
   void broadcastQueuedNearbyMessages();
 
   return () => {
     cancelNearbyPairing();
-    envelopeSubscription();
-    peerSubscription();
+    envelopeSubscriptions.forEach((unsubscribe) => unsubscribe());
+    peerSubscriptions.forEach((unsubscribe) => unsubscribe());
     stateSubscription.remove();
-    mpcTransport.stop();
+    activeTransports.forEach((transport) => transport.stop());
     publishNearbySnapshot(createNearbyMessagingSnapshot(true));
   };
 };

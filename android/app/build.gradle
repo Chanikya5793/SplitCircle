@@ -144,6 +144,42 @@ android {
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
+
+    // Per-ABI APKs instead of one fat binary. libsignal's native library is
+    // ~8MB PER ABI, so a universal APK carrying all four wastes ~24MB on every
+    // install for architectures that device can never run.
+    //
+    // AAB builds are UNAFFECTED — Play splits by ABI natively — so this only
+    // changes the APK path used for local installs and sideloading.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'
+            // No fat fallback: it is the thing being avoided, and a stray
+            // universal APK is easy to sideload by accident.
+            universalApk false
+        }
+    }
+}
+
+// Distinct versionCode per ABI, required if these APKs ever reach Play: Play
+// picks by version code, and four APKs sharing one code is rejected outright.
+// Ordered so a 64-bit build always outranks the 32-bit build of the same
+// release — otherwise a device able to run either can be offered the worse one.
+// Harmless for local installs; the cost of omitting it is a confusing Play
+// rejection much later.
+import com.android.build.api.variant.FilterConfiguration.FilterType
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.outputs.each { output ->
+            def abi = output.filters.find { it.filterType == FilterType.ABI }?.identifier
+            def offset = ['armeabi-v7a': 1, 'x86': 2, 'arm64-v8a': 3, 'x86_64': 4][abi] ?: 0
+            if (offset > 0) {
+                output.versionCode.set(output.versionCode.get() * 10 + offset)
+            }
+        }
+    }
 }
 
 // Apply static values from `gradle.properties` to the `android.packagingOptions`
