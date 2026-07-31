@@ -334,10 +334,16 @@ class SplitCircleBleModule : Module() {
   private val scanCallback = object : ScanCallback() {
     @SuppressLint("MissingPermission")
     override fun onScanResult(callbackType: Int, result: ScanResult) {
-      val remotePrefix = result.scanRecord
-        ?.getServiceData(ParcelUuid(SERVICE_UUID))
-        ?.toString(Charsets.UTF_8)
-        ?: return
+      // BOTH advertisement formats. Android puts the prefix in service DATA,
+      // but CBPeripheralManager CANNOT advertise service data at all — iOS can
+      // only advertise a local name. Reading just our own format means Android
+      // discovers only other Androids, which defeats the entire point of this
+      // transport. The iOS half reads both fields for the same reason.
+      val record = result.scanRecord ?: return
+      val remotePrefix = (
+        record.getServiceData(ParcelUuid(SERVICE_UUID))?.toString(Charsets.UTF_8)
+          ?: record.deviceName
+        )?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return
 
       synchronized(lock) {
         if (!running) return

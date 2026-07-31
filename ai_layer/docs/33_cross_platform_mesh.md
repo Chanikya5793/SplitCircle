@@ -390,3 +390,110 @@ a shared LAN). Before designing anything that says "nearby" and "Android" in the
 same sentence, check which framework the code actually imports — the entire
 nearby stack rests on one Apple-proprietary import, and this is not visible from
 the JS layer, which looks platform-neutral.
+
+## 9. Phase 3 (BLE) — build log
+
+**Status 2026-07-31: both native halves written, neither device-verified. BLE
+is deliberately NOT registered with the transport switch — nothing routes over
+it yet.** Registering it before hardware proof would put an unproven transport
+into the live send path, on top of a mesh that already carries several
+unverified changes.
+
+| Piece | State |
+|---|---|
+| `bleFraming.ts` — fragment/reassemble | BUILT, 17 unit tests |
+| `bleTransport.ts` — adapter onto `MeshTransport` | BUILT, 8 unit tests |
+| `modules/splitcircle-ble/index.ts` — JS bridge | BUILT, typechecks |
+| Android `SplitCircleBleModule.kt` | BUILT, compiles clean |
+| iOS `SplitCircleBleModule.swift` | BUILT, `swiftc -parse` clean |
+| Android permissions (manifest) | BUILT |
+| iOS `NSBluetoothAlwaysUsageDescription` | BUILT |
+| Registration with `transportSwitch` | **deliberately not done** |
+
+### 9.1 Why fragmentation lives in TypeScript
+
+The alternative is implementing it twice, in Swift and Kotlin, where the copies
+can disagree about header layout or chunk boundaries. That failure appears only
+between an iPhone and a Pixel, on real radios, and presents as corruption
+rather than a protocol mismatch. One tested implementation, unit-testable
+without a device, and native halves that only move opaque strings.
+
+### 9.2 Both GATT roles at once, and the bug that fell out of it
+
+A mesh has no clients or servers, so every device advertises AND scans. GATT is
+asymmetric — only a central can initiate — so a peripheral has no way to ask
+"who are you?".
+
+The first version had the central read the peripheral's identity and stopped
+there. Nothing told the **peripheral** who had connected, so its
+`identityByAddress` stayed empty, and the lookup in its write handler dropped
+every inbound chunk. The link would have looked established from both ends
+while carrying traffic in one direction only — and on BLE that reads as flaky
+radio, not as a protocol bug.
+
+Fixed with a writable identity characteristic and a chained handshake:
+
+```
+central: connect → MTU → discover → read identity → (trust check)
+       → enable notifications → write own identity → link live
+```
+
+Chained because **each platform runs exactly one outstanding GATT operation per
+connection**; issuing the CCCD write and the identity write together drops one
+silently. A peer is reported to JS as reachable only when that last write
+lands, so the router never advertises a route the peer cannot yet honour.
+
+Trust is enforced on BOTH roles — the central checks the peripheral by reading
+its identity, the peripheral checks the central by validating the announcement.
+BLE itself authenticates nothing, so a one-sided check means any device that
+can see the advertisement can write into the other's GATT server.
+
+### 9.3 Advertisement asymmetry — the cross-platform trap
+
+`CBPeripheralManager` **cannot advertise service data**; it supports only a
+local name and service UUIDs. The Android half naturally uses service data.
+Left alone, each platform would discover only its own kind — the precise
+failure this whole transport exists to prevent, and one that looks like "BLE is
+unreliable" rather than a format mismatch.
+
+Both halves therefore **write their own format and read both**. The prefix is a
+discovery hint and connect-direction tiebreak ONLY, never an identity claim: an
+advertisement has ~31 bytes and cannot carry a 36-char UUID.
+
+### 9.4 One link per pair, without negotiation
+
+Both devices seeing each other would open two redundant links, where chunks can
+arrive twice and the two directions negotiate different MTUs. The rule is that
+the **lower device id dials**; both sides compute it from data they already
+have, so no handshake is needed to agree.
+
+On an exact prefix tie both dial, and the duplicate is dropped after the
+identity read using the full ids. That asymmetry is deliberate: a redundant
+link is recoverable, whereas both sides declining to dial is a permanent
+failure to ever meet.
+
+### 9.5 Known limitations, not bugs
+
+- **iOS backgrounding.** Once backgrounded, iOS moves the advertised service
+  UUID into the "overflow" area, discoverable only by another iOS device
+  explicitly scanning for that UUID. An Android scanner cannot see it. There is
+  no API to opt out, so cross-platform discovery needs the iOS side
+  foregrounded.
+- **No BLE background modes declared.** `bluetooth-central`/`bluetooth-peripheral`
+  are deliberately absent from `UIBackgroundModes`: given the overflow
+  behaviour above they buy little for cross-platform work, and they invite App
+  Review scrutiny that should be spent when the feature is proven. Adding them
+  later is a one-line change.
+- **Notifications are unacknowledged.** The peripheral→central direction uses
+  notifications, which have no delivery callback, so `sendChunk` resolves on
+  local enqueue. The reassembler's TTL is what actually covers a lost chunk.
+
+### 9.6 What device verification must show
+
+1. An iPhone and a Pixel discover each other with Wi-Fi and cellular OFF.
+2. The identity handshake completes in both directions — each side reports the
+   other as a peer, which only happens after the final identity write lands.
+3. A message longer than one MTU round-trips intact (exercises fragmentation,
+   ordering, and reassembly across two independent implementations).
+4. An untrusted device is refused by BOTH roles.
+5. Revoking trust on a live peer drops that link and leaves other links up.

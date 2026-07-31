@@ -62,6 +62,8 @@
 		<string>_expo._tcp</string>
 		<string>_manasplit-mesh._tcp</string>
 	</array>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>ManaSplit uses Bluetooth to exchange messages with trusted nearby devices when the internet is unavailable, including Android phones.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Allow ManaSplit to access your camera</string>
 	<key>NSFaceIDUsageDescription</key>
