@@ -33,7 +33,7 @@ const fake = (
     stop: () => undefined,
     updateTrust: () => undefined,
     neighbours: () => peers,
-    send: async () => ({ ok: true, deliveredTo: [] }),
+    send: async () => ({ ok: true, deliveredCount: 0 }),
     onFrame: () => () => undefined,
     onNeighbourChange: () => () => undefined,
   };
@@ -103,6 +103,22 @@ describe('transport switch', () => {
     expect(routes).toHaveLength(2);
     expect(routes.find((r) => r.transport.id === 'mpc')?.reachable).toEqual(['ios-friend']);
     expect(routes.find((r) => r.transport.id === 'ble')?.reachable).toEqual(['android-friend']);
+  });
+
+  it('offers a capable transport even when no neighbours are cached yet', () => {
+    // THE REGRESSION THIS EXISTS FOR: gating the send path on cached neighbour
+    // state skipped sends outright before the first state event populated that
+    // cache. capableOf answers "may this travel here at all"; whether anyone is
+    // reachable right now is the transport's call, not this layer's.
+    const sw = createTransportSwitch([fake('mpc', { peers: [] })]);
+    expect(sw.routesFor('text', ['bob'], 10)).toEqual([]);
+    expect(sw.capableOf('text', 10).map((t) => t.id)).toEqual(['mpc']);
+  });
+
+  it('never offers a slow transport for bulk via capableOf either', () => {
+    const sw = createTransportSwitch([fake('ble', { throughputClass: 'slow', mtu: 185 })]);
+    expect(sw.capableOf('bulk', 5_000_000)).toEqual([]);
+    expect(sw.capableOf('text', 40).map((t) => t.id)).toEqual(['ble']);
   });
 
   it('reports nodes no transport can reach, for store-and-forward', () => {

@@ -51,6 +51,12 @@ vi.mock('@/services/notificationService', () => ({
   getOrCreateInstallationId: vi.fn(async () => 'this-device'),
 }));
 
+vi.mock('@/services/signalCryptoService', () => ({
+  // messageQueueService now reads this to stamp WHICH device failed to decrypt
+  // (doc 32 §5c self-heal). Mocked because the real module pulls in native
+  // crypto, which these suites neither have nor need.
+  getCachedSignalDeviceId: () => 7,
+}));
 vi.mock('@/services/mediaService', () => ({ downloadMedia: vi.fn() }));
 
 import { queueMessageToOwnDevices } from '../messageQueueService';

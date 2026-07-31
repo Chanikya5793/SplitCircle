@@ -87,18 +87,16 @@ export const createMpcTransport = (): MeshTransport => {
       if (!isNearbyMeshAvailable()) return { ok: false, reason: 'unavailable' };
       if (to.length === 0) return { ok: false, reason: 'no-route' };
       try {
+        // The full recipient list is handed to native, which filters against
+        // its own live connection state. Pre-filtering here against the cached
+        // neighbour list would silently skip sends before the first state event
+        // has populated that cache — the native side is the source of truth for
+        // who is actually connected right now.
         const sent = await broadcastNearbyEnvelope(frame.data, to);
-        // The native call reports how many peers it handed bytes to. That is a
-        // TRANSPORT acknowledgement and nothing more: it does not mean the peer
-        // decrypted, or even kept, the message. Conflating the two is exactly
-        // the false-'sent' bug in doc 32 §10.1, so the outcome here stays
-        // deliberately narrow and the router decides what to claim.
-        if (typeof sent === 'number') {
-          return sent > 0
-            ? { ok: true, deliveredTo: to }
-            : { ok: false, reason: 'no-route' };
-        }
-        return { ok: true, deliveredTo: to };
+        const deliveredCount = typeof sent === 'number' ? sent : to.length;
+        return deliveredCount > 0
+          ? { ok: true, deliveredCount }
+          : { ok: false, reason: 'no-route' };
       } catch (error) {
         return { ok: false, reason: 'error', detail: String(error) };
       }

@@ -1,17 +1,13 @@
 import {
-  addNearbyEnvelopeListener,
-  addNearbyPeersChangedListener,
   addNearbyStateChangedListener,
-  broadcastNearbyEnvelope,
   isNearbyMeshAvailable,
   probeNearbyPeer as probeNativeNearbyPeer,
   restartNearbyDiscovery as restartNativeNearbyDiscovery,
   sendPreparedNearbyAttachment,
-  startNearbyMesh,
-  stopNearbyMesh,
-  updateNearbyTrustedPeers,
 } from '../../modules/splitcircle-mesh';
 import { getCurrentDeviceId } from '@/services/pairingService';
+import { createMpcTransport } from '@/services/mesh/mpcTransport';
+import { createTransportSwitch } from '@/services/mesh/transportSwitch';
 import {
   loadMeshMessageQueue,
   updateMeshMessage,
@@ -35,6 +31,49 @@ import {
 } from '@/services/nearbyPairingService';
 
 let broadcastRunning = false;
+
+/**
+ * The transport layer (doc 33 Phase 0). One entry today — MultipeerConnectivity
+ * — but every send and every reachability signal now goes through the switch
+ * rather than straight at the native module, so adding BLE (Phase 3) or LAN
+ * (Phase 5) is a registration rather than a rewrite of this file.
+ *
+ * Deliberately NOT covered by the switch yet, because the contract does not
+ * model them: attachment resource transfer and the pairing handshake are both
+ * MPC-specific APIs and stay on direct native calls until Phase 5/6 give them
+ * transport-agnostic shapes. Mixing them in now would mean inventing an
+ * interface for a transport that does not exist.
+ */
+const mpcTransport = createMpcTransport();
+const transports = createTransportSwitch([mpcTransport]);
+
+/**
+ * Sends one envelope to whichever transports can currently reach the targets.
+ *
+ * Returns how many peers accepted the bytes, matching the count the native
+ * call used to return — callers gate status updates and attachment sends on
+ * `sent > 0`, so the semantics must not drift.
+ *
+ * Every capable transport is ATTEMPTED with the full recipient list rather
+ * than a JS-side reachability guess. Filtering here against a cached neighbour
+ * list skipped sends outright before the first state event populated it; the
+ * transport knows who it can currently reach and this layer must not
+ * second-guess that.
+ */
+const sendEnvelopeViaTransports = async (
+  envelope: string,
+  recipientDeviceIds: string[],
+): Promise<number> => {
+  let reached = 0;
+  for (const transport of transports.capableOf('text', envelope.length)) {
+    const outcome = await transport.send(
+      { data: envelope, payloadClass: 'text' },
+      recipientDeviceIds,
+    );
+    if (outcome.ok) reached += outcome.deliveredCount;
+  }
+  return reached;
+};
 let nearbySnapshot = createNearbyMessagingSnapshot(isNearbyMeshAvailable());
 const nearbyStateListeners = new Set<() => void>();
 
@@ -61,7 +100,7 @@ export const setNearbyTrustedPeers = (
     trustedPeers,
     lastChangedAt: Date.now(),
   });
-  updateNearbyTrustedPeers(Object.keys(trustedPeers));
+  mpcTransport.updateTrust(Object.keys(trustedPeers));
 };
 
 const addPairedNearbyPeer = (peer: PairedNearbyPeer): void => {
@@ -80,7 +119,7 @@ const addPairedNearbyPeer = (peer: PairedNearbyPeer): void => {
     trustedPeers,
     lastChangedAt: Date.now(),
   });
-  updateNearbyTrustedPeers(Object.keys(trustedPeers));
+  mpcTransport.updateTrust(Object.keys(trustedPeers));
 };
 
 export const restartNearbyMessagingDiscovery = (): void => {
@@ -128,7 +167,7 @@ export const broadcastQueuedNearbyMessages = async (): Promise<number> => {
         const recipientDeviceIds = operation.recipientDeviceIds
           ?? (parsed ? Object.keys(parsed.body.encryptedForDevices) : []);
         if (recipientDeviceIds.length === 0) continue;
-        const sent = await broadcastNearbyEnvelope(
+        const sent = await sendEnvelopeViaTransports(
           operation.wireEnvelope,
           recipientDeviceIds,
         );
@@ -184,13 +223,18 @@ export const startNearbyMessaging = async (
     displayName,
     handlePaired: addPairedNearbyPeer,
   });
-  const envelopeSubscription = addNearbyEnvelopeListener((envelope, peerDeviceId) => {
+  const envelopeSubscription = mpcTransport.onFrame((envelope, peerDeviceId) => {
     if (!handleNearbyPairingEnvelope(envelope, peerDeviceId)) {
       onEnvelope(envelope, peerDeviceId);
     }
   });
-  const peerSubscription = addNearbyPeersChangedListener((count) => {
-    if (count > 0) {
+  // Reachability now comes from the transport, not the native module directly.
+  // The MPC adapter subscribes to BOTH native events behind this, because
+  // onStateChanged carries peer identities while onPeersChanged is the one that
+  // fires on a pure trust promotion — listening to only one is the doc 32 §5f
+  // defect where a newly reachable peer's queued messages sat unsent.
+  const peerSubscription = mpcTransport.onNeighbourChange((neighbours) => {
+    if (neighbours.length > 0) {
       void announceIncomingNearbyAttachmentProgress();
       void broadcastQueuedNearbyMessages();
     }
@@ -208,11 +252,11 @@ export const startNearbyMessaging = async (
     status: 'searching',
     trustedPeers,
   });
-  const started = await startNearbyMesh(
+  const started = await mpcTransport.start({
     userId,
     deviceId,
-    Object.keys(trustedPeers),
-  );
+    trustedDeviceIds: Object.keys(trustedPeers),
+  });
   if (!started) {
     publishNearbySnapshot(createNearbyMessagingSnapshot(false));
   }
@@ -220,10 +264,10 @@ export const startNearbyMessaging = async (
 
   return () => {
     cancelNearbyPairing();
-    envelopeSubscription.remove();
-    peerSubscription.remove();
+    envelopeSubscription();
+    peerSubscription();
     stateSubscription.remove();
-    stopNearbyMesh();
+    mpcTransport.stop();
     publishNearbySnapshot(createNearbyMessagingSnapshot(true));
   };
 };

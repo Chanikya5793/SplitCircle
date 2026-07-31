@@ -44,7 +44,13 @@ export interface TransportFrame {
 }
 
 export type SendOutcome =
-  | { ok: true; deliveredTo: NodeId[] }
+  /**
+   * `deliveredCount` is how many peers the transport handed bytes to — a
+   * TRANSPORT acknowledgement, never proof anyone decrypted (doc 32 §10.1).
+   * A count rather than ids because that is genuinely all MultipeerConnectivity
+   * reports; inventing ids we cannot know would be a lie the router then acts on.
+   */
+  | { ok: true; deliveredCount: number }
   | { ok: false; reason: 'unavailable' | 'no-route' | 'too-large' | 'error'; detail?: string };
 
 export type Unsubscribe = () => void;

@@ -64,13 +64,25 @@ export const createTransportSwitch = (transports: MeshTransport[]) => {
     return choices;
   };
 
+  /**
+   * Available transports that may carry this payload class and size, best
+   * first. Unlike `routesFor` this does NOT consult cached neighbour state —
+   * it answers "may this travel here at all", leaving "can it reach anyone
+   * right now" to the transport, which is the only layer that knows.
+   */
+  const capableOf = (payloadClass: PayloadClass, size: number): MeshTransport[] =>
+    available().filter((t) => {
+      const cap = maxPayloadFor(t, payloadClass);
+      return cap !== null && size <= cap;
+    });
+
   /** Nodes no available transport can reach — the router must store-and-forward these. */
   const unreachable = (to: NodeId[]): NodeId[] => {
     const seen = new Set(neighbours().map((n) => n.nodeId));
     return to.filter((id) => !seen.has(id));
   };
 
-  return { available, neighbours, routesFor, unreachable };
+  return { available, neighbours, capableOf, routesFor, unreachable };
 };
 
 export type TransportSwitch = ReturnType<typeof createTransportSwitch>;
