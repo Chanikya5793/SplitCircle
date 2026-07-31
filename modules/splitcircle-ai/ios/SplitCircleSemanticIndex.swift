@@ -74,7 +74,7 @@ public enum SplitCircleSemanticIndex {
     let items = groups.map { g -> CSSearchableItem in
       let attributes = CSSearchableItemAttributeSet(contentType: .content)
       attributes.title = g.name
-      attributes.contentDescription = g.memberCount > 0 ? "\(g.memberCount) people · SplitCircle group" : "SplitCircle group"
+      attributes.contentDescription = g.memberCount > 0 ? "\(g.memberCount) people · ManaSplit group" : "ManaSplit group"
       let item = CSSearchableItem(uniqueIdentifier: "group:\(g.id)", domainIdentifier: domainIdentifier, attributeSet: attributes)
       item.expirationDate = .distantFuture
       return item

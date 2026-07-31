@@ -1,5 +1,7 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { MugguMark } from '@/components/brand';
+import { APP_NAME } from '@/constants/appInfo';
 import { useNotificationContext } from '@/context/NotificationContext';
 import { useTheme } from '@/context/ThemeContext';
 import { clearCallDebugLedger, formatCallDebugEntries, getCallDebugEntries } from '@/services/callDebugLedger';
@@ -533,9 +535,28 @@ export const NotificationSettingsScreen = () => {
           contentStyle={styles.heroContent}
           intensity={38}
         >
-          <Text variant="labelLarge" style={[styles.eyebrow, { color: statusCard.accent }]}>
-            This {currentDevice?.platform === 'android' ? 'Android device' : 'iPhone'}
-          </Text>
+          <View style={styles.heroBrandRow}>
+            <View
+              style={[
+                styles.heroMarkShell,
+                { backgroundColor: isDark ? 'rgba(42, 11, 64, 0.72)' : 'rgba(251, 247, 240, 0.74)' },
+              ]}
+            >
+              <MugguMark
+                size={40}
+                variant={isDark ? 'reversed' : 'primary'}
+                accessibilityLabel={`${APP_NAME} notification logo`}
+              />
+            </View>
+            <View style={styles.heroBrandCopy}>
+              <Text variant="labelLarge" style={[styles.eyebrow, { color: statusCard.accent }]}>
+                {APP_NAME} notifications
+              </Text>
+              <Text variant="bodySmall" style={{ color: tertiaryTextColor }}>
+                This {currentDevice?.platform === 'android' ? 'Android device' : 'iPhone'}
+              </Text>
+            </View>
+          </View>
           <Text variant="headlineSmall" style={[styles.heroTitle, { color: primaryTextColor }]}>
             {statusCard.title}
           </Text>
@@ -961,6 +982,22 @@ const styles = StyleSheet.create({
   heroContent: {
     padding: 20,
     gap: 14,
+  },
+  heroBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  heroMarkShell: {
+    width: 52,
+    height: 52,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroBrandCopy: {
+    flex: 1,
+    gap: 2,
   },
   eyebrow: {
     letterSpacing: 0.6,

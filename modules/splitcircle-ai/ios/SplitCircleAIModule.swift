@@ -336,7 +336,7 @@ public class SplitCircleAIModule: Module {
 
         let activity = NSUserActivity(activityType: "com.splitcircle.ask-ai")
         activity.persistentIdentifier = "com.splitcircle.ask-ai.current"
-        activity.title = "Ask SplitCircle about my spending"
+        activity.title = "Ask ManaSplit about my spending"
         activity.isEligibleForSearch = true
         activity.isEligibleForPrediction = true
         activity.suggestedInvocationPhrase = "Ask ManaSplit"

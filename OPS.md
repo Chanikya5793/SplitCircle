@@ -17,6 +17,62 @@ One-time credentials (already done; redo only if rotated):
 - `eas.json` `submit.production.ios.ascAppId: "6760814898"` (required for
   `--non-interactive`).
 
+### iOS notification icon cache diagnosis
+
+iOS notification banners use the app's compiled primary icon. The
+`expo-notifications` `icon` setting and `assets/notification-icon.png` are Android
+status-bar resources; changing them cannot fix an iOS banner icon. This app has no
+notification content extension and its push payloads do not supply alternate
+artwork.
+
+When one phone appears to show an old icon:
+
+1. Send a fresh notification. Existing rows in Notification Center can retain the
+   artwork captured when they arrived.
+2. Compare the installed build on every reachable phone:
+
+   ```bash
+   xcrun devicectl device info apps \
+     --device <device-id> --bundle-id com.splitcircle.app --columns '*'
+   ```
+
+3. Inspect the exact shipped IPA rather than trusting source assets:
+
+   ```bash
+   tmp_dir=$(mktemp -d)
+   unzip -q build-output/<build>.ipa -d "$tmp_dir"
+   app_dir=$(find "$tmp_dir/Payload" -maxdepth 1 -name '*.app' -type d | head -1)
+   plutil -p "$app_dir/Info.plist"
+   ```
+
+   Confirm `CFBundleDisplayName`, `CFBundleVersion`,
+   `CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconName`, and the compiled
+   `*AppIcon60x60@2x.png`. Compiled iOS PNGs may use Apple's CgBI encoding; convert
+   a copy with `sips -s format png` before visually inspecting it.
+4. If the same build and fresh push render correctly on other phones, treat the
+   outlier as an IconServices/device cache. Clear historical notifications and
+   restart the phone before considering reinstall/offload. Do not change APNs,
+   notification payloads, Expo tokens, or the bundle identifier for a one-device
+   cache.
+5. For an intentional icon migration, use a new primary asset-catalog identity
+   (currently `ManaSplitAppIcon`, not the legacy `AppIcon`) and update
+   `ASSETCATALOG_COMPILER_APPICON_NAME`, the generator, and validator together.
+   Verify the identity before shipping:
+
+   ```bash
+   out=$(mktemp -d)
+   xcrun actool ios/SplitCircle/Images.xcassets \
+     --compile "$out" --platform iphoneos --minimum-deployment-target 17.0 \
+     --target-device iphone --target-device ipad \
+     --app-icon ManaSplitAppIcon \
+     --output-partial-info-plist "$out/asset-info.plist"
+   plutil -p "$out/asset-info.plist"
+   ```
+
+2026-07-30 finding: build `0.0.186` contained the correct Muggu icon and multiple
+phones displayed it correctly; one phone alone retained the old notification icon.
+That is device cache evidence, not a second notification asset path.
+
 ## Client env (`.env`, loaded by app.config.ts — fails fast if missing)
 
 `EXPO_PUBLIC_FIREBASE_*` (7 values), `EXPO_PUBLIC_GOOGLE_{WEB,ANDROID,IOS}_CLIENT_ID`,

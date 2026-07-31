@@ -101,6 +101,7 @@ const config = {
       CFBundleName: 'ManaSplit',
       ITSAppUsesNonExemptEncryption: false,
       NSLocationWhenInUseUsageDescription: 'This app uses your location to share it with your friends in chat.',
+      NSFaceIDUsageDescription: 'Unlock ManaSplit and its hidden privacy settings with Face ID.',
       NSLocalNetworkUsageDescription: 'ManaSplit uses your local network to pair with trusted nearby contacts and exchange messages when the internet is unavailable.',
       NSBonjourServices: ['_manasplit-mesh._tcp'],
       // Donated by the splitcircle-ai native module after an AI ask, so iOS can

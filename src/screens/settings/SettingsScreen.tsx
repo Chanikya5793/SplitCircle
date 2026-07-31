@@ -5,6 +5,7 @@
 
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
+import { MugguMark } from '@/components/brand';
 import { GlassCard, GuardCodePad, ListRow, PrivacyGuardSheet, SectionLabel, StickyHeaderPill, WallpaperPickerSheet } from '@/components/ui';
 import { attemptUnlock, getGuardSync, hashCode, updateGuard } from '@/services/privacyGuardService';
 import { useAppLock } from '@/context/AppLockContext';
@@ -781,14 +782,21 @@ export const SettingsScreen = () => {
           />
         </GlassCard>
 
-        <Text
-          variant="labelSmall"
+        <TouchableOpacity
           onPress={handleVersionTap}
-          suppressHighlighting
-          style={[styles.versionText, { color: theme.colors.onSurfaceVariant }]}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={`${APP_NAME} ${APP_VERSION ? `version ${APP_VERSION}` : 'version'}`}
+          style={styles.brandFooter}
         >
-          {APP_NAME} {APP_VERSION ? `v${APP_VERSION}` : ''}
-        </Text>
+          <MugguMark size={30} variant={isDark ? 'reversed' : 'primary'} />
+          <Text
+            variant="labelSmall"
+            style={{ color: theme.colors.onSurfaceVariant }}
+          >
+            {APP_NAME} {APP_VERSION ? `v${APP_VERSION}` : ''}
+          </Text>
+        </TouchableOpacity>
       </Animated.ScrollView>
 
       <PrivacyGuardSheet visible={guardSheetOpen} onClose={() => setGuardSheetOpen(false)} />
@@ -922,8 +930,11 @@ const styles = StyleSheet.create({
   signOutCard: {
     marginTop: 16,
   },
-  versionText: {
-    textAlign: 'center',
+  brandFooter: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
     marginTop: 14,
+    paddingVertical: 8,
   },
 });

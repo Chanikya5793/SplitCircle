@@ -65,7 +65,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Allow ManaSplit to access your camera</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Unlock SplitCircle and its hidden privacy settings with Face ID.</string>
+	<string>Unlock ManaSplit and its hidden privacy settings with Face ID.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>ManaSplit uses your local network to pair with trusted nearby contacts and exchange messages when the internet is unavailable.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

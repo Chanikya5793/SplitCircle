@@ -89,7 +89,7 @@ export const AppLockProvider = ({ children }: { children: React.ReactNode }) => 
         setLocked(false);
         return true;
       }
-      const ok = await authenticate('Unlock SplitCircle', true);
+      const ok = await authenticate('Unlock ManaSplit', true);
       if (ok) setLocked(false);
       return ok;
     } finally {

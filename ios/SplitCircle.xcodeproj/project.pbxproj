@@ -442,7 +442,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8507C3A47FC725288ECB3BAD /* Pods-SplitCircle.debug.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = ManaSplitAppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = SplitCircle/SplitCircle.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -480,7 +480,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 1DB11AC021A732412D57542F /* Pods-SplitCircle.release.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = ManaSplitAppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = SplitCircle/SplitCircle.entitlements;
 				CODE_SIGN_STYLE = Automatic;

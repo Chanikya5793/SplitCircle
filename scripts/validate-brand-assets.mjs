@@ -56,7 +56,7 @@ const pngDimensions = new Map([
   ['assets/notification-icon.png', 96],
 ]);
 
-const iosIconRoot = 'ios/SplitCircle/Images.xcassets/AppIcon.appiconset';
+const iosIconRoot = 'ios/SplitCircle/Images.xcassets/ManaSplitAppIcon.appiconset';
 for (const filename of [
   'App-Icon-1024x1024@1x.png',
   'App-Icon-dark-1024x1024@1x.png',
@@ -182,6 +182,46 @@ if (mainIcon) {
   }
   if (!closeTo(center, hexToRgb('#F5C15C'))) {
     fail(`assets/icon.png center is not Reversed Gold: ${center.join(',')}`);
+  }
+}
+
+const notificationIcon = decodedPngs.get('assets/notification-icon.png');
+if (notificationIcon) {
+  const cornerAlpha = notificationIcon.data[3];
+  const centerOffset =
+    ((Math.floor(notificationIcon.height / 2) * notificationIcon.width) +
+      Math.floor(notificationIcon.width / 2)) *
+    4;
+  const centerRgb = [...notificationIcon.data.subarray(centerOffset, centerOffset + 3)];
+  const centerAlpha = notificationIcon.data[centerOffset + 3];
+  let visiblePixels = 0;
+  let coloredVisiblePixels = 0;
+
+  for (let index = 0; index < notificationIcon.data.length; index += 4) {
+    if (notificationIcon.data[index + 3] === 0) continue;
+    visiblePixels += 1;
+    const [red, green, blue] = notificationIcon.data.subarray(index, index + 3);
+    if (Math.max(red, green, blue) - Math.min(red, green, blue) > 2) {
+      coloredVisiblePixels += 1;
+    }
+  }
+
+  const coverage = visiblePixels / (notificationIcon.width * notificationIcon.height);
+  if (cornerAlpha !== 0) {
+    fail('assets/notification-icon.png must have a transparent background');
+  }
+  if (centerAlpha < 250 || !closeTo(centerRgb, [255, 255, 255], 2)) {
+    fail(
+      `assets/notification-icon.png center must be opaque white: ${centerRgb.join(',')} alpha ${centerAlpha}`,
+    );
+  }
+  if (coverage < 0.12 || coverage > 0.5) {
+    fail(
+      `assets/notification-icon.png visible coverage ${coverage.toFixed(3)} is unsafe for a small status-bar glyph`,
+    );
+  }
+  if (coloredVisiblePixels > 0) {
+    fail('assets/notification-icon.png must be a monochrome white alpha mask');
   }
 }
 

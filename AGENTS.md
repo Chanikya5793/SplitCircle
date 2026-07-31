@@ -60,6 +60,10 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   `require()`ing a package whose native half may be missing — else SIGSEGV, not a catch.
 - **iOS 26 native search tab**: `tabBarSystemItem: 'search'` — setting title/tabBarLabel
   on iOS demotes it to a regular tab.
+- **iOS notification icons**: banners use the compiled primary app icon; Expo's
+  `notification.icon` is Android-only. If one same-build phone is stale while others
+  are correct, inspect the shipped IPA, then treat it as IconServices cache. See
+  `OPS.md`; the cache-busting primary catalog identity is `ManaSplitAppIcon`.
 - **Reanimated new-arch**: inserting a sibling ABOVE entering-animated ScrollView content
   doesn't shift that content (overlap) — mount late-loading rows outside the ScrollView.
   `flex: 1` inside height-constrained containers collapses to zero height.

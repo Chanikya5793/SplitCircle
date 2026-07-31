@@ -119,7 +119,7 @@ export const BackupSizeCard = ({ manifest }: { manifest: BackupManifest | null }
           API, so we cannot show the user's overall iCloud quota — Apple's own
           screen can, and pointing at it beats inventing a figure. */}
       <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-        This is what SplitCircle stores. To see your whole iCloud account, open Apple&apos;s
+        This is what ManaSplit stores. To see your whole iCloud account, open Apple&apos;s
         storage screen.
       </Text>
       <Button

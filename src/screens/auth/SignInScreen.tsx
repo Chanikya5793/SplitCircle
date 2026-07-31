@@ -1,6 +1,7 @@
 import { GlassCard } from '@/components/ui';
 import { AppTextInput } from '@/components/ui/AppTextInput';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { MugguMark } from '@/components/brand';
 import { APP_NAME } from '@/constants/appInfo';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -98,6 +99,13 @@ export const SignInScreen = ({ onSwitchToRegister, onForgotPassword, onLinkDevic
           showsVerticalScrollIndicator={false}
         >
           <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+            <View style={styles.brandMark}>
+              <MugguMark
+                size={68}
+                variant={isDark ? 'reversed' : 'primary'}
+                accessibilityLabel={`${APP_NAME} logo`}
+              />
+            </View>
             <Text variant="headlineMedium" style={styles.title}>
               Welcome back
             </Text>
@@ -218,6 +226,10 @@ const styles = StyleSheet.create({
   cardContent: {
     padding: 24,
     gap: 12,
+  },
+  brandMark: {
+    alignItems: 'center',
+    marginBottom: 2,
   },
   title: {
     textAlign: 'center',

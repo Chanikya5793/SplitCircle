@@ -10,7 +10,7 @@ import AppIntents
 
 @available(iOS 18.0, *)
 struct OpenSplitCircleControlIntent: AppIntent {
-  static var title: LocalizedStringResource = "Open SplitCircle"
+  static var title: LocalizedStringResource = "Open ManaSplit"
   static var openAppWhenRun = true
   init() {}
   func perform() async throws -> some IntentResult { .result() }
@@ -21,10 +21,14 @@ struct SplitCircleBalanceControl: ControlWidget {
   var body: some ControlWidgetConfiguration {
     StaticControlConfiguration(kind: "com.splitcircle.app.control.balance") {
       ControlWidgetButton(action: OpenSplitCircleControlIntent()) {
-        Label("SplitCircle", systemImage: "creditcard")
+        Label {
+          Text("ManaSplit")
+        } icon: {
+          ManaSplitWidgetMark()
+        }
       }
     }
-    .displayName("Open SplitCircle")
-    .description("Jump to your SplitCircle balances.")
+    .displayName("Open ManaSplit")
+    .description("Jump to your ManaSplit balances.")
   }
 }

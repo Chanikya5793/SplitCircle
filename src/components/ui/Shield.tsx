@@ -11,6 +11,7 @@
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { useTheme } from '@/context/ThemeContext';
 import { APP_NAME } from '@/constants/appInfo';
+import { MugguMark } from '@/components/brand';
 import { updateGuard, type GuardTargets } from '@/services/privacyGuardService';
 import { authenticate, isBiometricAvailable } from '@/services/biometrics';
 import { successHaptic } from '@/utils/haptics';
@@ -212,9 +213,10 @@ export const LockedOverlay = () => {
   return (
     <Animated.View style={[styles.lockOverlay, { opacity: fade }]} pointerEvents="auto">
       <TouchableOpacity activeOpacity={1} onPress={handleWordmarkTap} hitSlop={40}>
-        <Animated.Text style={[styles.lockWordmark, { transform: [{ translateY: wordmarkRise }] }]}>
-          {APP_NAME}
-        </Animated.Text>
+        <Animated.View style={[styles.lockBrand, { transform: [{ translateY: wordmarkRise }] }]}>
+          <MugguMark size={62} variant="reversed" />
+          <Animated.Text style={styles.lockWordmark}>{APP_NAME}</Animated.Text>
+        </Animated.View>
       </TouchableOpacity>
       <GuardCodePad
         visible={padVisible}
@@ -266,5 +268,9 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     letterSpacing: 1,
+  },
+  lockBrand: {
+    alignItems: 'center',
+    gap: 10,
   },
 });

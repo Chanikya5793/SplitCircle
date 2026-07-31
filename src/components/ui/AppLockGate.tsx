@@ -6,6 +6,7 @@
 import { useAppLock } from '@/context/AppLockContext';
 import { APP_NAME } from '@/constants/appInfo';
 import { biometricLabel } from '@/services/biometrics';
+import { MugguMark } from '@/components/brand';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, TouchableOpacity, View } from 'react-native';
@@ -45,7 +46,16 @@ export const AppLockGate = () => {
 
   return (
     <View style={styles.overlay} pointerEvents="auto">
-      <Ionicons name="lock-closed" size={44} color="rgba(255,255,255,0.55)" />
+      <View style={styles.markShell}>
+        <MugguMark
+          size={72}
+          variant="reversed"
+          accessibilityLabel={`${APP_NAME} logo`}
+        />
+        <View style={styles.lockBadge}>
+          <Ionicons name="lock-closed" size={14} color="#fff" />
+        </View>
+      </View>
       <Text style={styles.title}>{APP_NAME} is locked</Text>
       <TouchableOpacity
         onPress={attempt}
@@ -77,6 +87,23 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.9)',
     fontSize: 20,
     fontWeight: '700',
+  },
+  markShell: {
+    position: 'relative',
+    marginBottom: 2,
+  },
+  lockBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.3)',
   },
   button: {
     flexDirection: 'row',

@@ -176,7 +176,10 @@ const outputs = [
   ['reversed.svg', 'assets/brand/generated/splash-dark.png', 1024],
 ];
 
-const iosAppIconRoot = 'ios/SplitCircle/Images.xcassets/AppIcon.appiconset';
+// Keep the catalog name brand-specific. iOS icon services caches notification
+// artwork aggressively by bundle + primary-icon identity; retaining the old
+// generic "AppIcon" name can leave upgraded installs showing stale artwork.
+const iosAppIconRoot = 'ios/SplitCircle/Images.xcassets/ManaSplitAppIcon.appiconset';
 outputs.push(
   ['app-icon.svg', `${iosAppIconRoot}/App-Icon-1024x1024@1x.png`, 1024],
   ['app-icon-dark.svg', `${iosAppIconRoot}/App-Icon-dark-1024x1024@1x.png`, 1024],

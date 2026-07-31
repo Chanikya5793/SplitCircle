@@ -87,7 +87,7 @@ export const LinkDeviceScreen = () => {
       // Remembered too: an unrecognisable QR in frame would otherwise re-set
       // this error 30 times a second.
       promptedRef.current.add(result.data);
-      setLinkError("That doesn't look like a SplitCircle device code.");
+      setLinkError("That doesn't look like a ManaSplit device code.");
       return;
     }
     promptedRef.current.add(result.data);
@@ -255,7 +255,7 @@ export const LinkDeviceScreen = () => {
           {state.kind === 'ready' ? (
             <>
               <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant, textAlign: 'center' }}>
-                On your other device, open SplitCircle and scan this code — or enter it manually.
+                On your other device, open ManaSplit and scan this code — or enter it manually.
               </Text>
               <View style={styles.qrWrap}>
                 <QRCode value={state.code} size={220} />

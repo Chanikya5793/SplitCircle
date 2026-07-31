@@ -200,7 +200,7 @@ export const DeviceRetirementScreen = () => {
             Moving to a new phone?
           </Text>
           <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-            You don&apos;t need this screen. Install SplitCircle on the new phone, sign in, and
+            You don&apos;t need this screen. Install ManaSplit on the new phone, sign in, and
             choose &ldquo;This is my new phone&rdquo; — it restores from this backup and asks what
             to do with this one.
           </Text>

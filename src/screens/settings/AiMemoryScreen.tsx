@@ -164,7 +164,7 @@ export const AiMemoryScreen = () => {
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, lineHeight: 18 }}>
               Everything the AI remembers, verbatim. It lives only on this phone, steers answers on
               every surface, and each line can be deleted. Nothing here is ever uploaded to
-              SplitCircle's servers.
+              ManaSplit&apos;s servers.
             </Text>
           </GlassView>
           {(['preference', 'entityFix', 'fact', 'pattern'] as MemoryKind[]).map(section)}

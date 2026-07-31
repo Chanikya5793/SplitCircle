@@ -38,6 +38,26 @@ Still required before release sign-off:
 - Android launcher mask/themed-icon checks on representative devices.
 - Reduce Motion and VoiceOver/TalkBack checks on real hardware.
 
+### Notification identity follow-up — 2026-07-30
+
+- Confirmed that iOS notification banners consume the compiled primary app icon;
+  Expo's notification icon file is Android-only.
+- Extracted signed build `0.0.186` and verified its compiled 120 px icon was the
+  ManaSplit Muggu. Two reachable iPhones ran that build and other phones displayed
+  the new icon; one phone retained old notification artwork, isolating the symptom
+  to that device's icon/Notification Center cache.
+- Renamed the primary iOS catalog identity from the legacy `AppIcon` to
+  `ManaSplitAppIcon` so future icon migrations do not reuse the same IconServices
+  cache identity. The bundle identifier remains unchanged.
+- Added small-glyph validation for transparent background, opaque-white mask,
+  monochrome pixels, and safe visible coverage.
+- Branded authentication, notification diagnostics, both privacy-lock surfaces,
+  the settings footer, native widget/control source, and remaining user-visible
+  legacy product-name copy.
+- Added the reusable investigation and cache decision tree to `OPS.md`. Future
+  agents should prove the installed build and shipped IPA first; they must not
+  modify APNs payloads or token registration for a one-device icon-cache symptom.
+
 ## Outcome
 
 Replace the current legacy photographic icon/splash treatment with the ManaSplit
