@@ -23,11 +23,16 @@ set -euo pipefail
 LIBSIGNAL_TAG="v0.99.1"
 LIBSIGNAL_VERSION="0.99.1"
 REQUIRED_NDK="28.0.13004108"
-# Recorded from the 2026-07-31 build. A mismatch is not necessarily wrong —
-# upstream builds are not guaranteed bit-reproducible — but an UNEXPECTED
-# change is worth investigating before shipping crypto.
-EXPECTED_AAR_SHA="52232e710cb4e06e3d5cf86d57a43f3d0e775a67d607daccd2165bf5110b7503"
-EXPECTED_JAR_SHA="51a96350fa97cf065893573162fd39d605ee3d1fdf556a3873f94f03e8e26e6b"
+# Recorded from the 2026-07-31 --all-abis build. ADVISORY, not an integrity
+# check — the real anchor is the pinned upstream tag above.
+#
+# Two reasons a mismatch is expected rather than alarming, learned by hitting
+# both: an arm64-only build (no --all-abis) legitimately produces a different
+# AAR, since the ABI set IS the content; and libsignal's build is not
+# bit-reproducible, so even the pure-Java jar changed between two builds of the
+# same tag. Treat a mismatch as "confirm you know why", never as "compromised".
+EXPECTED_AAR_SHA="3f57f9430c982921988c7cb64ca98c3a0572b52b39a01100a522c0ccfa3f03e8"
+EXPECTED_JAR_SHA="969e918d53a360f85432f53ba1da4adef21b45b6d5e40cc5022c858bb9ca5af2"
 
 ARCHS="arm64"
 CHECK_ONLY=false
@@ -54,8 +59,11 @@ verify_install() {
   jar_sha=$(shasum -a 256 "$JAR_DEST" | awk '{print $1}')
   echo "  aar $aar_sha"
   echo "  jar $jar_sha"
-  [[ "$aar_sha" == "$EXPECTED_AAR_SHA" ]] || echo "  ⚠ aar differs from the recorded build"
-  [[ "$jar_sha" == "$EXPECTED_JAR_SHA" ]] || echo "  ⚠ jar differs from the recorded build"
+  if [[ "$aar_sha" != "$EXPECTED_AAR_SHA" || "$jar_sha" != "$EXPECTED_JAR_SHA" ]]; then
+    echo "  ⚠ differs from the recorded --all-abis build."
+    echo "    Expected if you built without --all-abis (the ABI set is the content),"
+    echo "    or simply because libsignal does not build bit-reproducibly."
+  fi
   return 0
 }
 

@@ -131,6 +131,14 @@ android {
         jniLibs {
             def enableLegacyPackaging = findProperty('expo.useLegacyPackaging') ?: 'false'
             useLegacyPackaging enableLegacyPackaging.toBoolean()
+            // libsignal's AAR ships a TEST-ONLY native library next to the real
+            // one, and nothing excludes it by default — 9.5MB of test code was
+            // shipping to users in every arm64 build, and once the AAR carried
+            // all four ABIs that would have become roughly four times as much.
+            // Nothing in the app can reference it: it exists for libsignal's own
+            // test suite. Verify with:
+            //   unzip -l <apk> | grep signal.*\.so
+            excludes += ['**/libsignal_jni_testing.so']
         }
     }
     androidResources {
