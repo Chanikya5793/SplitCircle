@@ -42,7 +42,19 @@ GoogleService-Info.plist
 # generated native folders
 /ios/Build
 /ios/Pods
-/android
+# android/ is TRACKED (doc 33) — same treatment as ios/, which this repo has
+# always committed. Generated build output stays ignored; the project itself is
+# reviewable so a native change shows up in a diff instead of existing only on
+# whichever Mac last ran prebuild.
+# Consequence: `expo prebuild -p android` OVERWRITES this. Treat android/ as
+# hand-maintained, exactly like ios/.
+/android/build/
+/android/.gradle/
+/android/.kotlin/
+/android/app/build/
+/android/app/.cxx/
+/android/local.properties
+/android/.idea/
 
 .tmp-build-logs
  

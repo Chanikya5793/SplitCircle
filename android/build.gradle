@@ -1,0 +1,30 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath('com.android.tools.build:gradle')
+    classpath('com.facebook.react:react-native-gradle-plugin')
+    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
+  }
+}
+
+allprojects {
+  repositories {
+    // SPIKE (ai_layer/docs/33 §3.1): libsignal 0.99.1 is built from source and
+    // installed to ~/.m2, because Maven Central's Android artifact stops at
+    // 0.86.5 while iOS pins 0.99.1. Listed FIRST so the local build wins.
+    // NOTE: android/ is generated, so this does not survive expo prebuild —
+    // the real implementation needs a config plugin.
+    mavenLocal()
+    google()
+    mavenCentral()
+    maven { url 'https://www.jitpack.io' }
+  }
+}
+
+apply plugin: "expo-root-project"
+apply plugin: "com.facebook.react.rootproject"

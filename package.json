@@ -19,7 +19,9 @@
     "eas-build-pre-install": "bash scripts/eas-local-preflight.sh",
     "ship:ios": "bash scripts/ship-ios.sh",
     "ship:ios:full": "bash scripts/ship-ios.sh --full",
-    "build:ios:local": "bash scripts/ship-ios.sh --build-only"
+    "build:ios:local": "bash scripts/ship-ios.sh --build-only",
+    "ship:android": "bash scripts/ship-android.sh",
+    "build:android:local": "bash scripts/ship-android.sh --install"
   },
   "dependencies": {
     "@expo/metro-runtime": "~55.0.6",
