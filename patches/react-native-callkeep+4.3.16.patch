@@ -1,3 +1,45 @@
+diff --git a/node_modules/react-native-callkeep/.DS_Store b/node_modules/react-native-callkeep/.DS_Store
+new file mode 100644
+index 0000000..9c83d9c
+Binary files /dev/null and b/node_modules/react-native-callkeep/.DS_Store differ
+diff --git a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java
+index 025480a..6cffa93 100644
+--- a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java
++++ b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java
+@@ -434,7 +434,19 @@ public class RNCallKeepModule extends ReactContextBaseJavaModule implements Life
+         this.hasListeners = false;
+     }
+ 
+-    @ReactMethod
++    // PATCHED (SplitCircle): @ReactMethod removed from this 3-arg overload.
++    // The New Architecture's TurboModule interop parses @ReactMethod
++    // annotations into a JS method table keyed by NAME, and rejects a module
++    // that exports two methods with the same one:
++    //   TurboModuleInteropUtils$ParsingException: Module exports two methods
++    //   to JavaScript with the same name: "displayIncomingCall"
++    // That throws while the module is being REGISTERED, before any JS runs, so
++    // it is not catchable and aborts the process (SIGABRT on mqt_v_js) on
++    // every launch — merely linking callkeep killed the Android app.
++    // Java overloading is invisible to JS, so only one may be exported. Keep
++    // the 4-arg one: callkeep's own index.js calls exactly that on Android
++    // (`RNCallKeepModule.displayIncomingCall(uuid, handle, localizedCallerName,
++    // hasVideo)`), and it still delegates to the unannotated 5-arg impl below.
+     public void displayIncomingCall(String uuid, String number, String callerName) {
+         this.displayIncomingCall(uuid, number, callerName, false, null);
+     }
+@@ -483,7 +495,11 @@ public class RNCallKeepModule extends ReactContextBaseJavaModule implements Life
+         conn.onAnswer();
+     }
+ 
+-    @ReactMethod
++    // PATCHED (SplitCircle): same duplicate-export fix as displayIncomingCall
++    // above — see that comment for why this aborts the process at module
++    // registration. index.js calls the 4-arg form on Android
++    // (`RNCallKeepModule.startCall(uuid, handle, contactIdentifier, hasVideo)`),
++    // so that is the one that stays exported.
+     public void startCall(String uuid, String number, String callerName) {
+         this.startCall(uuid, number, callerName, false, null);
+     }
 diff --git a/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.m b/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.m
 index 786045f..f0ccd27 100644
 --- a/node_modules/react-native-callkeep/ios/RNCallKeep/RNCallKeep.m
