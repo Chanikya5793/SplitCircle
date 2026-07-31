@@ -1,0 +1,30 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.splitcirclecrypto'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.splitcirclecrypto"
+  defaultConfig {
+    minSdkVersion 24
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  // SPIKE FINDING (doc 33 §3): iOS pins LibSignalClient 0.99.1, built from
+  // signalapp/libsignal's own repo at tag v0.99.1 — so it is NOT bound by what
+  // Maven Central carries. The Android artifact only publishes up to 0.86.5,
+  // so the two platforms CANNOT be pinned to the same version off the shelf.
+  // Using the newest published Android build here; whether 0.86.5 interops
+  // with iOS 0.99.1 on the wire is an open question that Gate 1 must answer
+  // empirically. See doc 33 §3 for the three options.
+  implementation 'org.signal:libsignal-android:0.86.5'
+}

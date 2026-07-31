@@ -1,6 +1,9 @@
 # 33 — Cross-platform mesh: transport, routing, crypto parity, and the nearby UI
 
-Status: **DESIGN — decisions LOCKED 2026-07-31, nothing built.** Supersedes the
+Status: **DESIGN — decisions LOCKED 2026-07-31. Phase 1's libsignal linkage
+spike is RUN and PASSED on a Pixel 7 (§3.1); nothing else built.** The spike
+surfaced a version gap between the platforms that is now the top open
+question — read §3.1 before planning around Phase 1. Supersedes the
 transport assumptions in [doc 32](32_nearby_messaging_offline_sync.md), whose
 fixes remain correct but apply only to the iOS-only stack described there.
 
@@ -164,15 +167,72 @@ exports, all 13 functions, with byte-identical wire behaviour: `bootstrapSignalI
 `isCryptoAvailable`.
 
 Signal publishes Android bindings for the same libsignal used on iOS, so the
-protocol is shared rather than reimplemented. **This needs a linkage spike
-before anything is scheduled around it** — doc 31 Phase 3 burned real time on
-exactly this for iOS, and CLAUDE.md's LibSignalClient gotcha (a pod whose
-`OTHER_LDFLAGS` were silently discarded, shipping a build that crashed before
-JS) is the standing warning that "it compiles" proves nothing about linkage.
+protocol is shared rather than reimplemented.
 
-Gate 1 for Android is the same shape: generate a bundle, establish a session,
-round-trip a ciphertext **iOS↔Android on real hardware**, before any mesh work
-depends on it.
+### 3.1 Linkage spike — RUN 2026-07-31, PASSED on a Pixel 7
+
+Run before scheduling anything around it, per CLAUDE.md's LibSignalClient
+gotcha (a pod whose `OTHER_LDFLAGS` were silently discarded, shipping a build
+that crashed at dyld before any JS). The spike therefore performs a **full
+PQXDH handshake plus a Double Ratchet round-trip**, not a version print — "it
+compiles" proves nothing.
+
+Result, from `logcat` on a physical Pixel 7 (`panther`), release build:
+
+```json
+{"ok":true,"recovered":"manasplit-android-linkage-spike","ciphertextType":3,
+ "libsignalVersion":"0.86.5",
+ "stagesCompleted":["loadNativeLibrary","generateBobIdentity","generateBobPreKeys",
+  "generateKyberPreKey","buildStores","assemblePreKeyBundle","bobPersistsPreKeys",
+  "pqxdhHandshake","encrypt","decrypt","verify"]}
+```
+
+All 11 stages passed: the native `.so` loads, PQXDH completes, and ciphertext
+round-trips. `ciphertextType: 3` is `PREKEY_TYPE`, i.e. a real
+`PreKeySignalMessage`. **libsignal on Android is viable.** Code:
+`modules/splitcircle-crypto/android/` (`SplitCircleCryptoSpike.kt`, delete when
+the real module lands).
+
+Three findings that change the plan:
+
+1. **VERSION GAP — the material risk.** iOS pins **LibSignalClient 0.99.1**,
+   built from `signalapp/libsignal`'s own repo at tag `v0.99.1`, so it is not
+   bound by Maven. The Android artifact `org.signal:libsignal-android`
+   publishes only up to **0.86.5** (authoritative `maven-metadata.xml`; 0.99.1
+   is a hard 404). **The two platforms cannot be pinned to the same version off
+   the shelf**, and cross-version wire compatibility is UNVERIFIED. Options:
+   - **(a) Downgrade iOS to 0.86.5.** Versions match exactly. Cost: touches a
+     working, hard-won iOS linkage.
+   - **(b) Build libsignal-android from source at v0.99.1.** Needs a Rust
+     toolchain + NDK cross-compile, and becomes a per-bump maintenance burden.
+   - **(c) Run mixed versions** if 0.86.5 ↔ 0.99.1 interop proves out.
+     Cheapest if true, but must be *proven*, never assumed.
+
+   **This is now Gate 1's real question**, ahead of any mesh work.
+2. **PQXDH is mandatory.** `PreKeyBundle`'s only public constructor takes a
+   Kyber key plus signature; the pre-quantum 8-arg form is gone. This matches
+   the app's existing `PublishableBundle`, which already carries
+   `kyberPreKeyId`/`kyberPreKeyPublic`/`kyberPreKeySignature` — so no schema
+   change is needed, but Android must generate Kyber keys from day one.
+3. **Core library desugaring is required.** `libsignal-android` declares it, and
+   without it the build fails at `:app:checkReleaseAarMetadata`. The app module
+   needs `coreLibraryDesugaringEnabled true` plus a `desugar_jdk_libs`
+   dependency. Since `android/` is generated, **this must be applied by a config
+   plugin** for the real implementation, or it vanishes on the next prebuild.
+
+Also confirmed: the AAR ships native libs for all four ABIs
+(`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`), so emulators and devices are
+both covered.
+
+API note for whoever writes the real module: `Curve` no longer exists at
+0.86.5. Key generation is `ECKeyPair.generate()` / `IdentityKeyPair.generate()`,
+and signing is an instance method, `ECPrivateKey.calculateSignature(bytes)`.
+
+### 3.2 Gate 1 (still open)
+
+Generate a bundle, establish a session, and round-trip a ciphertext
+**iOS↔Android on real hardware**, resolving the §3.1 version question first.
+Android-side execution is proven; cross-platform interop is not.
 
 ## 4. UI revamp
 
@@ -212,7 +272,7 @@ and doc 32's native fixes are both cautionary here.
 | # | Phase | Gate |
 |---|---|---|
 | 0 | Transport abstraction; port MPC behind it. No behaviour change. | iOS↔iOS parity with today, on hardware |
-| 1 | Android `splitcircle-crypto` (libsignal AAR) + linkage spike | iOS↔Android ciphertext round-trip on real devices |
+| 1 | Android `splitcircle-crypto` (libsignal AAR). **Linkage spike DONE (§3.1)**; resolve the version gap first | iOS↔Android ciphertext round-trip on real devices |
 | 2 | Android history sync (internet only — no mesh) | A Pixel and an iPhone on one account converge |
 | 3 | BLE transporter, both platforms | iOS↔Android text with Wi-Fi and cellular off |
 | 4 | Router: flood + dedup + TTL + store-and-forward | 3-device relay where A and C cannot see each other |
