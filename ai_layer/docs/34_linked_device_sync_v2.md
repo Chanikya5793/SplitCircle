@@ -2,7 +2,9 @@
 
 **Status: Two live failures diagnosed from production data 2026-07-31.
 Decisions LOCKED. Steps 1 and 2 BUILT the same day (§7) — NOT device-verified.
-Steps 3-6 (measurement, batching, transport) not started.**
+Step 4 (batching) BUILT the same day, flag-gated, NOT device-verified. Step 3
+(measurement) needs the Firebase console and is the user's to take. Steps 5-6
+(transport spike) not started.**
 
 Supersedes nothing. Doc 31 §8.1 (`syncGapService`) and doc 31 Phase 6
 (`historyHandoffService`) stay as-is until this replaces their payload path.
@@ -238,7 +240,7 @@ actually reported is fixed first.
 | 1 | Close the coverage hole (§3.6): bounded backfill request when local count is 0 | **BUILT 2026-07-31.** Device-verify: the Pixel raises a request after a reinstall |
 | 2 | Surface sync state (§3.5) | **BUILT 2026-07-31.** Device-verify: a stuck sync is visible instead of silent |
 | 3 | Measure Firebase usage (§1), record it here | A real number, post-`42b90d2` |
-| 4 | Batch the response (§3.1, §3.2) over the existing RTDB path | One write replaces M×D; gap closes end to end |
+| 4 | Batch the response (§3.1, §3.2) over the existing RTDB path | **BUILT 2026-07-31**, flag-gated. Device-verify: one write replaces M×D |
 | 5 | Spike the WebRTC data channel (§3.4.1) | Two devices move a blob with no Firebase payload |
 | 6 | Switch transport if the spike passes; keep 4 as fallback | Cost drop measured against step 3 |
 
@@ -305,3 +307,53 @@ progress — this exists so a stuck sync stops being indistinguishable from a
 healthy one, and inventing a percentage would recreate exactly that problem.
 
 **324 service + 419 unit tests pass.**
+
+## 8. Step 4 — build log (2026-07-31)
+
+**BUILT behind `EXPO_PUBLIC_ENABLE_SYNC_BATCH`, default OFF. Not device-verified.**
+
+Split the same way doc 33 §2.5 was: `syncBatchFormat.ts` decides WHAT a batch
+contains and whether one is honest (pure, no crypto, no I/O, 18 tests);
+`syncBatchService.ts` seals, signs, moves and verifies it.
+
+### 8.1 Why both seal AND sign
+
+HPKE gives confidentiality but **not** sender authenticity — anyone holding the
+requester's published identity key can seal to it, and gap requests are readable
+in RTDB. Without a signature a third party could answer a request with
+fabricated history that decrypts perfectly. **The seal decides who can read it;
+the signature decides whose history it is.** Verification runs BEFORE opening,
+so a forged payload never reaches the decrypt path.
+
+### 8.2 Invariants the format carries
+
+- **`until` + `complete`.** A batch states the range it claims to cover and
+  whether it was truncated, so the requester can tell "that is everything" from
+  "there is more". Without it a byte cap silently becomes data loss.
+- **Bounded by BYTES, not message count** (§6): 200 text messages and 200 with
+  media metadata differ by orders of magnitude.
+- **Oldest first**, matching `MAX_REPLAY_PER_REQUEST`'s existing reasoning — a
+  truncated batch is self-resuming, where newest-first would leave a permanent
+  hole nothing asks for again.
+- **A responder may serve from EARLIER than asked, never later.** Serving late
+  silently skips everything between the request and the response, and the gap
+  looks closed. This is the omission attack, and it is a test.
+- **Discarded whole** on any failure. There is no partially-trusted batch.
+- **One oversized message is still sent**, or the gap stalls permanently on it.
+
+### 8.3 Rollout
+
+Flag-gated because it changes what a responder writes and what a requester must
+understand — the same staged rule as doc 33 §10.3. A responder with the flag off
+keeps replaying per message, which every existing device understands, and the
+batched path **falls back** rather than failing when a batch cannot be built.
+
+### 8.4 A bug that would have shipped
+
+The first version used `Buffer.from(...).toString('base64')`. React Native has
+no `Buffer` without a polyfill and this repo ships none — it typechecks, passes
+every unit test under Node, and throws on device. Now uses `globalThis.btoa`,
+matching `meshMessageProtocol` exactly, since both encode the same bytes for the
+same crypto.
+
+**342 service + 419 unit tests pass.**

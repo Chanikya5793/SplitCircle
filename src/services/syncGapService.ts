@@ -50,10 +50,23 @@ import {
 } from 'firebase/database';
 import { getChatMessages, getLocalMessageStats } from '@/services/localMessageStorage';
 import { queueGapFillMessage } from '@/services/messageQueueService';
+import { sendSyncBatch } from '@/services/syncBatchService';
 
 const rtdb = getDatabase();
 
 const GAP_ROOT = 'syncGapRequests';
+
+/**
+ * Batched gap responses (doc 34 §3.1), OFF by default.
+ *
+ * Changes what a responder writes and what a requester must understand, so both
+ * sides need the code before either uses it — the same staged-rollout rule as
+ * doc 33 §10.3. A responder with this off keeps replaying per message, which
+ * every existing device already understands.
+ */
+const SYNC_BATCH_ENABLED = ['1', 'true'].includes(
+  (process.env.EXPO_PUBLIC_ENABLE_SYNC_BATCH ?? '').trim().toLowerCase(),
+);
 
 /**
  * Tolerance before calling a chat "behind". A message in flight — sent but not
@@ -293,6 +306,7 @@ export const answerGapRequest = async (
   ownerUserId: string,
   request: GapRequest,
   isGroupChat: boolean,
+  responderDeviceId?: string,
 ): Promise<number> => {
   const local = await getChatMessages(request.chatId);
   const missing = local
@@ -303,6 +317,29 @@ export const answerGapRequest = async (
   if (missing.length === 0) {
     await releaseGapRequestClaim(ownerUserId, request.requestId);
     return 0;
+  }
+
+  // BATCHED PATH (doc 34 §3.1), preferred. One sealed payload replaces M×D
+  // encryptions, writes and function invocations. Falls back rather than fails:
+  // a responder whose batch cannot be built (no crypto, requester has published
+  // no identity key yet) must still be able to serve the gap the old way, or
+  // enabling batching would make sync worse for exactly the devices that are
+  // already struggling.
+  if (SYNC_BATCH_ENABLED && responderDeviceId) {
+    try {
+      const sent = await sendSyncBatch(
+        ownerUserId,
+        responderDeviceId,
+        { ...request, requesterDeviceId: request.requesterDeviceId },
+        missing,
+      );
+      if (sent > 0) {
+        console.log(`Gap-fill: sent ${sent} messages as one batch for ${request.chatId}`);
+        return sent;
+      }
+    } catch (error) {
+      console.warn('Gap-fill batch failed, falling back to per-message replay', error);
+    }
   }
 
   let queued = 0;

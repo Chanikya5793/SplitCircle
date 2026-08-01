@@ -49,6 +49,17 @@ vi.mock('firebase/database', () => ({
   onChildChanged: (path: string, handler: ChildHandler) => rtdb.onChildChanged(path, handler),
 }));
 
+// syncGapService now delegates to the batch path, which imports the native
+// crypto module. Mocked here rather than pulled in: this suite is about gap
+// detection and claim handling, and a real import fails collection with
+// "Cannot read properties of undefined (reading 'EventEmitter')" — the hazard
+// CLAUDE.md documents.
+const sendSyncBatch = vi.fn<() => Promise<number>>(async () => 0);
+vi.mock('@/services/syncBatchService', () => ({
+  sendSyncBatch: (...args: unknown[]) => sendSyncBatch(...(args as [])),
+  subscribeToSyncBatches: vi.fn(() => () => undefined),
+}));
+
 const storage = {
   getChatMessages: vi.fn<(chatId: string) => Promise<unknown[]>>(async () => []),
   getLocalMessageStats: vi.fn<(chatId?: string) => Promise<unknown[]>>(async () => []),

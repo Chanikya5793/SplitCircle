@@ -46,6 +46,7 @@ import {
 } from '../../modules/splitcircle-mesh';
 import { normalizeAllowedMediaMimeType } from '@/services/mediaPolicy';
 import { resealOwnedMeshOperations } from '@/services/originResealService';
+import { subscribeToSyncBatches } from '@/services/syncBatchService';
 import { listSignalDevices } from '@/services/signalCryptoService';
 import { getCurrentDeviceId } from '@/services/pairingService';
 import {
@@ -61,6 +62,7 @@ import {
 import {
   answerGapRequest,
   checkForGapsAndRequestFill,
+  getOutstandingSyncGaps,
   claimGapRequest,
   subscribeToGapRequests,
 } from '@/services/syncGapService';
@@ -836,6 +838,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
     let unsubscribeDevice: (() => void) | undefined;
     let unsubscribeGapRequests: (() => void) | undefined;
+    let unsubscribeSyncBatches: (() => void) | undefined;
     let cancelled = false;
     void getCurrentDeviceId().then((deviceId) => {
       if (cancelled) return;
@@ -847,6 +850,27 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       // — a gap request is most often written while THIS device was closed, so
       // the subscription has to be up whenever the app is, not only while some
       // particular screen is mounted.
+      // Batched gap responses (doc 34 §3.1). Runs alongside the per-message
+      // path, never instead of it: a responder that has not enabled batching
+      // still replays message by message, and both must keep working during
+      // the rollout window.
+      unsubscribeSyncBatches = subscribeToSyncBatches(
+        user.userId,
+        deviceId,
+        (chatId) => {
+          const since = getOutstandingSyncGaps().find((gap) => gap.chatId === chatId);
+          return since ? { chatId, sinceTimestamp: since.sinceTimestamp } : null;
+        },
+        async (body) => {
+          // saveMessageLocally dedupes by id, so a batch overlapping messages
+          // already delivered live is a harmless re-save.
+          for (const message of body.messages) {
+            await saveMessageLocally({ ...message, isFromMe: message.senderId === user.userId });
+          }
+          console.log(`Sync batch applied: ${body.messages.length} messages for ${body.chatId}`);
+        },
+      );
+
       unsubscribeGapRequests = subscribeToGapRequests(user.userId, deviceId, (request) => {
         void (async () => {
           try {
@@ -859,7 +883,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
             const thread = threadsRef.current.find(
               (candidate) => candidate.chatId === request.chatId,
             );
-            await answerGapRequest(user.userId, request, thread?.type === 'group');
+            await answerGapRequest(user.userId, request, thread?.type === 'group', deviceId);
           } catch (error) {
             console.warn('Gap-fill response failed', error);
           }
@@ -872,6 +896,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       unsubscribeLegacy();
       unsubscribeDevice?.();
       unsubscribeGapRequests?.();
+      unsubscribeSyncBatches?.();
     };
   }, [markChatAsRead, user?.userId]);
 
