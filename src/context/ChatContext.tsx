@@ -1145,6 +1145,13 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       await saveMessageLocally(message);
 
       let preparedNearbyTransferId: string | undefined;
+      /**
+       * True when a nearby attachment transfer outlives this function, so the
+       * `finally` below must NOT clear its progress — the transfer clears its
+       * own when it completes. Declared out here because the offline branch's
+       * own `nearbyAttachment` is block-scoped and invisible to `finally`.
+       */
+      let progressOutlivesSend = false;
       try {
         const network = await NetInfo.fetch();
         const internetAvailable = Boolean(
@@ -1327,7 +1334,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
                 : 'Saved nearby and queued for cloud sync.'
               : 'Saved locally and queued for cloud sync.',
           });
-          if (!nearbyAttachment) clearSendProgress(msgId);
+          progressOutlivesSend = Boolean(nearbyAttachment);
           return;
         }
 
@@ -1418,7 +1425,17 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
         console.log(`✅ ${type} message sent and queued`);
 
-        await updateDoc(doc(db, 'chats', chatId), {
+        // NOT awaited. This is thread METADATA, not delivery — the message is
+        // already saved locally and already queued for every recipient. But
+        // Firestore's write promise only resolves once the write reaches the
+        // SERVER: with no connectivity it stays pending indefinitely rather
+        // than rejecting. Awaiting it meant a send could hang here forever,
+        // reaching neither `clearSendProgress` below nor the catch — which is
+        // exactly why the "Sending N items…" banner counted up and never
+        // cleared while every bubble showed as delivered. The SDK still applies
+        // it to the local cache immediately and syncs when connectivity
+        // returns, so nothing is lost by letting it settle on its own.
+        void updateDoc(doc(db, 'chats', chatId), {
           groupId: groupId ?? null,
           updatedAt: Date.now(),
           lastMessage: {
@@ -1428,10 +1445,11 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
             content: type !== 'text' ? getMessageTypeLabel(type) : content,
             createdAt: message.createdAt,
           },
+        }).catch((error) => {
+          console.error('Chat metadata update failed', error);
         });
 
         onStageChange?.('complete');
-        clearSendProgress(msgId);
         if (preparedNearbyTransferId) {
           discardNearbyAttachment(preparedNearbyTransferId);
         }
@@ -1440,8 +1458,6 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         const wasCancelled =
           error instanceof Error &&
           (error.name === 'MediaUploadCancelledError' || error.name === 'MediaSendCancelledError');
-
-        clearSendProgress(msgId);
 
         if (wasCancelled) {
           // A cancelled send leaves no trace: the bubble is removed rather
@@ -1458,6 +1474,17 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           message: error instanceof Error ? error.message : 'Failed to send message',
         });
         throw error;
+      } finally {
+        // FINALLY, not the success path plus the catch. Those two covered every
+        // route that existed when they were written, and a later `await` added
+        // between them (Firestore metadata) introduced a third: hang forever,
+        // reaching neither. The banner then counted a send that had visibly
+        // already been delivered.
+        //
+        // A media send that is still transferring clears its own progress when
+        // the transfer finishes — hence the nearbyAttachment guard, which is
+        // the one case where "send returned" does not mean "done".
+        if (!progressOutlivesSend) clearSendProgress(msgId);
       }
     },
     [getThreadByChatId, user],

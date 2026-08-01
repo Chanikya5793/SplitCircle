@@ -32,6 +32,7 @@ import { ROUTES } from '@/constants';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { useNearbyMessaging } from '@/hooks/useNearbyMessaging';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
+import { OFFLINE_BANNER_ROW_HEIGHT } from '@/components/OfflineBanner';
 import { resolveMoneyInChat } from '@/models/group';
 import { useAuth } from '@/context/AuthContext';
 import { useCallContext } from '@/context/CallContext';
@@ -1518,6 +1519,19 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
 
   const totalRecipients = thread.participants.length - 1;
   const isGroupChat = thread.type === 'group';
+  /**
+   * `OfflineBanner` renders `position: absolute` at the very top with height
+   * `insets.top + OFFLINE_BANNER_ROW_HEIGHT`, and it is NOT part of this
+   * screen's layout flow. The chat header starts at `insets.top + 6`, so while
+   * the banner is up the header sat ~28px UNDERNEATH it and the message list's
+   * top inset ignored it entirely — which is why bubbles rendered behind the
+   * header and their timestamps bled through next to the call buttons.
+   *
+   * Shared constant rather than a duplicated 34: the banner owns its own
+   * height, and a second copy here would drift the moment that changes.
+   */
+  const offlineBannerOffset = isOnline ? 0 : OFFLINE_BANNER_ROW_HEIGHT;
+
   const showNearbyStatusPill =
     !chatShielded &&
     (!isOnline || nearbySnapshot.status === 'connected' || nearbySnapshot.status === 'error');
@@ -1734,7 +1748,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
       //keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
       >
         {!searchOpen && (
-        <View style={[styles.headerContainer, { paddingTop: insets.top + 6 }]}>
+        <View style={[styles.headerContainer, { paddingTop: insets.top + 6 + offlineBannerOffset }]}>
           <View style={styles.headerRow}>
             <TouchableOpacity
               onPress={() => navigation.goBack()}
@@ -1905,8 +1919,10 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
           contentContainerStyle={[
             styles.listContent,
             {
+              // Inverted list: paddingBottom is visually the TOP inset.
               paddingBottom:
                 insets.top
+                + offlineBannerOffset
                 + 70
                 + (linkedGroup && Math.abs(myGroupBalance) >= 0.005 && !chatShielded ? 32 : 0)
                 + (showNearbyStatusPill ? 34 : 0),
