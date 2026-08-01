@@ -63,6 +63,14 @@ is now the ONLY sanctioned way to handle a possibly-empty name, never hand-roll
 another `|| 'X'`/`?? 'X'` at a new call site; the one-time production backfill
 Cloud Function exists but hasn't been invoked yet, gated on a custom admin claim
 — see doc 30's status note before assuming existing broken accounts are fixed) ·
+[ai_layer/docs/34](ai_layer/docs/34_linked_device_sync_v2.md) (linked-device
+sync v2 — RESEARCHED 2026-07-31, decisions LOCKED, nothing built. Diagnoses why
+a reinstalled device never syncs: `syncGapService`'s SCOPE GUARD skips any chat
+with ZERO local messages, and the history handoff it defers to is one-shot per
+device lifetime — so "should have history, has none" is covered by NEITHER
+mechanism, permanently and silently. Also locks the move from per-message
+gap-fill replay (M messages x D devices of encryptions, RTDB writes and function
+invocations) to ONE encrypted, signed JSON batch per chat range) ·
 [ai_layer/docs/32](ai_layer/docs/32_nearby_messaging_offline_sync.md) (nearby
 mesh + multi-device delivery — RESEARCHED 2026-07-30, fix plan LOCKED. **Read
 §10 FIRST if messaging is broken**: §1-§9 are the OFFLINE mesh queue, §10 is
