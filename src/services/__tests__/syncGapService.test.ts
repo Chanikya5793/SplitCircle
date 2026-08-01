@@ -116,9 +116,30 @@ describe('gap detection', () => {
     );
   });
 
-  it('does NOT request history for a chat this device has never loaded', async () => {
-    // The scope guard. Without it a freshly paired companion would ask for full
-    // history for every chat at once.
+  it('DOES request a bounded backfill for a chat with no local messages', async () => {
+    // doc 34 §0.1/§3.6. This case used to be skipped outright, which left a
+    // reinstalled or restored device unable to raise a single request for any
+    // chat — permanently, and with nothing shown to the user. It now asks, but
+    // only for a bounded window rather than all history.
+    storage.getLocalMessageStats.mockResolvedValue(stats(0, null));
+
+    await checkForGapsAndRequestFill(UID, OWN_DEVICE, [
+      { chatId: CHAT, lastMessage: { createdAt: Date.now() - 60_000 } },
+    ]);
+
+    expect(rtdb.set).toHaveBeenCalledTimes(1);
+    const body = rtdb.set.mock.calls[0][1] as Record<string, unknown>;
+    const since = body.sinceTimestamp as number;
+    // Bounded, not zero. Asking from 0 is the unbounded request the original
+    // guard existed to prevent.
+    expect(since).toBeGreaterThan(0);
+    const windowDays = (Date.now() - since) / (24 * 60 * 60 * 1000);
+    expect(windowDays).toBeGreaterThan(29);
+    expect(windowDays).toBeLessThan(32);
+  });
+
+  it('still ignores a chat whose newest message predates the backfill window', async () => {
+    // Nothing recent enough to be worth asking for; the guard's intent survives.
     storage.getLocalMessageStats.mockResolvedValue(stats(0, null));
 
     await checkForGapsAndRequestFill(UID, OWN_DEVICE, [
@@ -126,6 +147,55 @@ describe('gap detection', () => {
     ]);
 
     expect(rtdb.set).not.toHaveBeenCalled();
+  });
+
+  it('caps how many zero-history chats it asks about in one pass', async () => {
+    // A device restored with fifty conversations must not ask for all fifty at
+    // once — that is the bulk volume this path exists to avoid.
+    storage.getLocalMessageStats.mockResolvedValue(stats(0, null));
+    const recent = Date.now() - 60_000;
+
+    await checkForGapsAndRequestFill(
+      UID,
+      OWN_DEVICE,
+      Array.from({ length: 10 }, (_, i) => ({
+        chatId: `chat-${i}`,
+        lastMessage: { createdAt: recent - i },
+      })),
+    );
+
+    expect(rtdb.set).toHaveBeenCalledTimes(3);
+  });
+
+  it('asks about the newest conversations first', async () => {
+    // The per-pass budget should be spent where the user is most likely to look.
+    storage.getLocalMessageStats.mockResolvedValue(stats(0, null));
+    const now = Date.now();
+
+    await checkForGapsAndRequestFill(UID, OWN_DEVICE, [
+      { chatId: 'oldest', lastMessage: { createdAt: now - 500_000 } },
+      { chatId: 'newest', lastMessage: { createdAt: now - 1_000 } },
+      { chatId: 'middle', lastMessage: { createdAt: now - 100_000 } },
+    ]);
+
+    const requested = rtdb.set.mock.calls.map(
+      ([, payload]) => (payload as Record<string, unknown>).chatId,
+    );
+    expect(requested[0]).toBe('newest');
+  });
+
+  it('does not re-raise the same zero-history request on the next pass', async () => {
+    // The window is derived from `Date.now()`, so without bucketing it would
+    // differ on every call, never match its own watermark, and rewrite the
+    // request on every detection pass — the exact RTDB write storm this path
+    // must avoid.
+    storage.getLocalMessageStats.mockResolvedValue(stats(0, null));
+    const threads = [{ chatId: CHAT, lastMessage: { createdAt: Date.now() - 60_000 } }];
+
+    await checkForGapsAndRequestFill(UID, OWN_DEVICE, threads);
+    await checkForGapsAndRequestFill(UID, OWN_DEVICE, threads);
+
+    expect(rtdb.set).toHaveBeenCalledTimes(1);
   });
 
   it('tolerates a message still in flight rather than calling it a gap', async () => {

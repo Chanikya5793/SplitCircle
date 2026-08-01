@@ -73,6 +73,35 @@ const GAP_SLACK_MS = 30_000;
  */
 const MAX_REPLAY_PER_REQUEST = 200;
 
+/**
+ * How far back a chat with NO local messages asks for (doc 34 §3.6).
+ *
+ * The SCOPE GUARD below used to skip these chats outright, which was right
+ * about the danger and wrong about the remedy: it left "should have history,
+ * has none" — a reinstall, an iCloud restore, a handoff that failed — covered
+ * by NOTHING, because the history handoff it defers to is one-shot per device
+ * lifetime. Diagnosed from production on 2026-07-31: a reinstalled Pixel could
+ * not raise a single gap request for any chat, permanently and silently.
+ *
+ * A BOUND is what makes asking safe. Recent history is what a returning device
+ * actually needs to be usable; the rest is pagination's job.
+ */
+const ZERO_HISTORY_BACKFILL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * How many zero-history chats may be requested in ONE detection pass.
+ *
+ * The other half of the guard's original concern. A device restored with fifty
+ * conversations must not ask for all fifty at once — that is the bulk volume
+ * this path exists to avoid. Requests resume on the next pass, so coverage is
+ * gradual instead of a thundering herd, and the newest chats come first because
+ * that is what the user opens.
+ */
+const MAX_ZERO_HISTORY_REQUESTS_PER_PASS = 3;
+
+/** Bucket the backfill window to this, so repeat passes compute the same value. */
+const BACKFILL_BUCKET_MS = 60 * 60 * 1000;
+
 export interface GapRequest {
   requestId: string;
   chatId: string;
@@ -107,6 +136,12 @@ const buildRequestId = (chatId: string, deviceId: string): string => `${chatId}_
  * serve a request already being served.
  */
 const requestedWatermarks = new Map<string, number>();
+/**
+ * When this device first raised the CURRENT request for a chat. Drives the
+ * "stuck" signal in diagnostics — an unanswered request is only interesting
+ * once it has been outstanding a while.
+ */
+const requestFirstSeenAt = new Map<string, number>();
 let seededForUserId: string | null = null;
 let checking = false;
 
@@ -311,7 +346,14 @@ export const checkForGapsAndRequestFill = async (
   try {
     await seedOutstanding(userId, ownDeviceId);
 
-    for (const thread of threads) {
+    // Newest conversations first, so a restored device's limited per-pass
+    // budget is spent on the chats its owner is most likely to open.
+    const ordered = [...threads].sort(
+      (a, b) => (b.lastMessage?.createdAt ?? 0) - (a.lastMessage?.createdAt ?? 0),
+    );
+    let zeroHistoryRequests = 0;
+
+    for (const thread of ordered) {
       const chatId = thread.chatId;
       if (!chatId || !isRtdbKeySafe(chatId)) continue;
 
@@ -320,7 +362,39 @@ export const checkForGapsAndRequestFill = async (
 
       const [stats] = await getLocalMessageStats(chatId);
       const localCount = stats?.count ?? 0;
-      if (localCount === 0) continue; // See SCOPE GUARD above.
+
+      // ZERO LOCAL MESSAGES — see SCOPE GUARD above. Previously skipped
+      // outright, which permanently stranded any device that should have
+      // history and has none (doc 34 §0.1). Now asks, but BOUNDED in two
+      // directions: a fixed window back, and a few chats per pass.
+      if (localCount === 0) {
+        if (zeroHistoryRequests >= MAX_ZERO_HISTORY_REQUESTS_PER_PASS) continue;
+        // QUANTIZED to the hour. A raw `Date.now() - window` differs on every
+        // call, so the watermark check below could never match its own previous
+        // value and this would re-request on every single detection pass —
+        // precisely the RTDB write storm the SCOPE GUARD exists to prevent.
+        // Bucketing makes the request identical within the hour, and lets it
+        // legitimately retry after one, which is the behaviour we want for a
+        // request nobody has answered yet.
+        const since = Math.floor(
+          (Date.now() - ZERO_HISTORY_BACKFILL_MS) / BACKFILL_BUCKET_MS,
+        ) * BACKFILL_BUCKET_MS;
+        // Nothing recent enough to be worth asking for.
+        if (remoteLatest <= since) continue;
+        // Keyed by the window, not by 0: two passes days apart compute
+        // different windows, and without this the second would look like a
+        // duplicate of the first and never be sent.
+        if (requestedWatermarks.get(chatId) === since) continue;
+        try {
+          await requestGapFill(userId, chatId, since, ownDeviceId);
+          requestedWatermarks.set(chatId, since);
+          if (!requestFirstSeenAt.has(chatId)) requestFirstSeenAt.set(chatId, Date.now());
+          zeroHistoryRequests += 1;
+        } catch (error) {
+          console.warn('Zero-history backfill request failed', chatId, error);
+        }
+        continue;
+      }
 
       const localLatest = stats?.latestTimestamp ?? 0;
 
@@ -329,6 +403,7 @@ export const checkForGapsAndRequestFill = async (
         try {
           await requestGapFill(userId, chatId, localLatest, ownDeviceId);
           requestedWatermarks.set(chatId, localLatest);
+          if (!requestFirstSeenAt.has(chatId)) requestFirstSeenAt.set(chatId, Date.now());
         } catch (error) {
           console.warn('Gap-fill request failed', chatId, error);
         }
@@ -336,6 +411,7 @@ export const checkForGapsAndRequestFill = async (
         try {
           await clearGapRequest(userId, chatId, ownDeviceId);
           requestedWatermarks.delete(chatId);
+          requestFirstSeenAt.delete(chatId);
         } catch (error) {
           console.warn('Gap-fill clear failed', chatId, error);
         }
@@ -346,8 +422,34 @@ export const checkForGapsAndRequestFill = async (
   }
 };
 
+export interface SyncGapStatus {
+  chatId: string;
+  /** What this device has asked to be filled in from. */
+  sinceTimestamp: number;
+  /** When this device first asked, or undefined if raised before this launch. */
+  requestedAt?: number;
+}
+
+/**
+ * Outstanding gap requests THIS device has raised (doc 34 §3.5).
+ *
+ * Exists because a request nobody can answer currently expires into silence at
+ * the seven-day reaper, and looks identical to being fully synced. That is the
+ * fourth silent-failure path this project has shipped (doc 32 §10.1, §10.3,
+ * doc 34 §0.2), and the only reliable fix is to make the state observable.
+ *
+ * Read-only and synchronous: this must be safe to call from a render.
+ */
+export const getOutstandingSyncGaps = (): SyncGapStatus[] =>
+  [...requestedWatermarks.entries()].map(([chatId, sinceTimestamp]) => ({
+    chatId,
+    sinceTimestamp,
+    requestedAt: requestFirstSeenAt.get(chatId),
+  }));
+
 /** Drops in-memory state so a signed-out/revoked device starts clean. */
 export const resetGapState = (): void => {
+  requestFirstSeenAt.clear();
   requestedWatermarks.clear();
   seededForUserId = null;
 };

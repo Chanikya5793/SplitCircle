@@ -25,6 +25,7 @@ import {
   subscribeToNearbyMessaging,
 } from '@/services/nearbyMessageService';
 import { summariseMesh, type MeshDiagnostics } from '@/services/mesh/diagnostics';
+import { getOutstandingSyncGaps, type SyncGapStatus } from '@/services/syncGapService';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
@@ -37,6 +38,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
  * phone in feels live, slow enough not to fight the mesh for the JS thread.
  */
 const REFRESH_MS = 2000;
+
+/**
+ * How long an unanswered gap request may sit before it is called out. Long
+ * enough that a normal reconnect resolves quietly, short enough that a genuinely
+ * stuck sync is visible the same day rather than expiring silently at the
+ * seven-day reaper.
+ */
+const STUCK_AFTER_MS = 10 * 60 * 1000;
 
 const TRANSPORT_LABEL: Record<string, string> = {
   mpc: 'Apple direct',
@@ -61,6 +70,7 @@ export const NearbyMeshScreen = () => {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const [diagnostics, setDiagnostics] = useState<MeshDiagnostics | null>(null);
+  const [gaps, setGaps] = useState<SyncGapStatus[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -69,6 +79,8 @@ export const NearbyMeshScreen = () => {
         void getMeshDiagnostics().then((next) => {
           if (!cancelled) setDiagnostics(next);
         });
+        // Synchronous and read-only, so it is safe to poll alongside.
+        if (!cancelled) setGaps(getOutstandingSyncGaps());
       };
       read();
       const timer = setInterval(read, REFRESH_MS);
@@ -248,6 +260,55 @@ export const NearbyMeshScreen = () => {
                 </Text>
               </View>
             ))
+          )}
+        </GlassView>
+
+        {/* History sync (doc 34 §3.5) ---------------------------------------- */}
+        <GlassView style={styles.card}>
+          <View style={[styles.row, { justifyContent: 'space-between' }]}>
+            <Text variant="titleSmall" style={{ fontWeight: '700', color: theme.colors.onSurface }}>
+              History sync
+            </Text>
+            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+              {gaps.length === 0 ? 'Up to date' : `${gaps.length} waiting`}
+            </Text>
+          </View>
+          {gaps.length === 0 ? (
+            <Text variant="bodySmall" style={[styles.note, { color: theme.colors.onSurfaceVariant }]}>
+              This device isn’t missing any messages it knows about.
+            </Text>
+          ) : (
+            <>
+              {gaps.map((gap) => {
+                // "Stuck" is the whole point of this card. A request nobody can
+                // answer used to expire into silence at the seven-day reaper and
+                // look identical to being fully synced (doc 34 §0.2).
+                const stuck = gap.requestedAt !== undefined
+                  && Date.now() - gap.requestedAt > STUCK_AFTER_MS;
+                return (
+                  <View key={gap.chatId} style={styles.listRow}>
+                    <Icon
+                      source={stuck ? 'alert-circle-outline' : 'history'}
+                      size={18}
+                      color={stuck ? theme.colors.warning : theme.colors.onSurfaceVariant}
+                    />
+                    <View style={styles.rowCopy}>
+                      <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }} numberOfLines={1}>
+                        {gap.chatId.slice(0, 8)}…
+                      </Text>
+                      <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
+                        Asked for messages since {new Date(gap.sinceTimestamp).toLocaleDateString()}
+                        {gap.requestedAt ? ` · ${relativeTime(gap.requestedAt)}` : ''}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })}
+              <Text variant="bodySmall" style={[styles.note, { color: theme.colors.onSurfaceVariant }]}>
+                Another device signed into this account has to be online and hold
+                these messages before they can arrive.
+              </Text>
+            </>
           )}
         </GlassView>
 

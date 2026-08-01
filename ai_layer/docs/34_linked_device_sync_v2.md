@@ -234,8 +234,8 @@ actually reported is fixed first.
 
 | # | Step | Verified by |
 |---|---|---|
-| 1 | Close the coverage hole (§3.6): bounded backfill request when local count is 0 | The Pixel raises a request after a reinstall |
-| 2 | Surface sync state (§3.5) | A stuck sync is visible instead of silent |
+| 1 | Close the coverage hole (§3.6): bounded backfill request when local count is 0 | **BUILT 2026-07-31.** Device-verify: the Pixel raises a request after a reinstall |
+| 2 | Surface sync state (§3.5) | **BUILT 2026-07-31.** Device-verify: a stuck sync is visible instead of silent |
 | 3 | Measure Firebase usage (§1), record it here | A real number, post-`42b90d2` |
 | 4 | Batch the response (§3.1, §3.2) over the existing RTDB path | One write replaces M×D; gap closes end to end |
 | 5 | Spike the WebRTC data channel (§3.4.1) | Two devices move a blob with no Firebase payload |
@@ -260,3 +260,47 @@ the fix.
   expensive, so measure before adding coordination.
 - **Any peer transport still needs the durable fallback.** §2.2.1. A design that
   quietly assumes a peer is online reintroduces §0.2 in a new place.
+
+---
+
+## 7. Steps 1 and 2 — build log (2026-07-31)
+
+**BUILT. Not device-verified.**
+
+### 7.1 Coverage hole closed
+
+`checkForGapsAndRequestFill` no longer skips a chat with zero local messages. It
+requests a **bounded** backfill instead, bounded in two directions because the
+original guard was right about the danger:
+
+- `ZERO_HISTORY_BACKFILL_MS` — 30 days back, not all history.
+- `MAX_ZERO_HISTORY_REQUESTS_PER_PASS` — 3 chats per pass, newest first, so a
+  device restored with fifty conversations does not ask for all fifty at once.
+- A chat whose newest message predates the window is still ignored.
+
+**A bug caught while writing it:** the window is derived from `Date.now()`, so a
+raw `Date.now() - WINDOW` differs on every call, would never match its own
+previous watermark, and would rewrite the request on *every* detection pass —
+precisely the RTDB write storm the guard exists to prevent. The window is
+therefore quantized to the hour (`BACKFILL_BUCKET_MS`), which also gives a
+natural hourly retry for a request nobody has answered.
+
+**A test that silently changed meaning:** the existing "does NOT request history
+for a chat this device has never loaded" case used `createdAt: 5_000_000` — an
+epoch of Jan 1970 — so after this change it passed for the wrong reason: the
+thread was outside the backfill window rather than being skipped by the guard.
+It has been split into two honest cases plus four new ones (bounded window, the
+per-pass cap, newest-first ordering, and no re-raise on the next pass).
+
+### 7.2 Sync state surfaced
+
+`getOutstandingSyncGaps()` exposes this device's outstanding requests
+synchronously, and a **History sync** card in the Nearby-mesh screen renders
+them. A request outstanding more than ten minutes is flagged, with plain-language
+copy explaining that another device has to be online and hold the messages.
+
+Deliberately reports what the device asked for and when, not a guess at
+progress — this exists so a stuck sync stops being indistinguishable from a
+healthy one, and inventing a percentage would recreate exactly that problem.
+
+**324 service + 419 unit tests pass.**
