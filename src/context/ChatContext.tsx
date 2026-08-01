@@ -1300,7 +1300,21 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
             discardNearbyAttachment(preparedNearbyTransferId);
           }
           if (wireEnvelope) {
-            await broadcastQueuedNearbyMessages();
+            // NOT awaited. `broadcastQueuedNearbyMessages` re-broadcasts the
+            // WHOLE mesh queue — for every queued operation it does a native
+            // radio send, an `updateMeshMessage` (AsyncStorage read+write under
+            // the global queue lock) and a status write. Awaiting it here made
+            // the send button cost O(queue length): the 1st offline message
+            // broadcast 1 operation, the 5th broadcast 5, so five messages did
+            // fifteen broadcasts and fifteen storage round-trips before the UI
+            // was released. That is the offline sluggishness, and it compounds
+            // the longer the phone stays offline.
+            //
+            // Nothing is lost by not waiting: the optimistic bubble is already
+            // saved, the operation is already durably queued, and delivery is
+            // asynchronous by nature. The `broadcastRunning` guard inside means
+            // overlapping calls collapse rather than pile up.
+            void broadcastQueuedNearbyMessages();
           }
           // Every offline operation is now queued for cloud sync regardless of
           // chat type (doc 32 §5a), so the copy no longer promises a DM only a
