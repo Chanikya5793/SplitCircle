@@ -642,10 +642,24 @@ on-disk mesh queue, the router's own pending count. No placeholder stats.
 - **Discoverability mode** (§4.1). The toggles landed 2026-08-01 (§11.4);
   discoverability is a separate decision about how visible this device is to
   strangers, and belongs with Phase 6's pairing work.
-- **Per-message delivery states** (§4.3): queued → in flight → relayed (n hops)
-  → delivered → failed. The router already knows hop counts, but plumbing them
-  into per-message UI touches the chat rendering path, which is worth doing
-  once the router is proven on hardware rather than before.
+- **Per-message delivery states** (§4.3). Attempted 2026-08-01 and REVERTED,
+  because the premise was wrong and the finding is worth keeping:
+
+  §4.3 assumed `undecryptable` rendered as a confident tick. It does not.
+  `MessageStatus` has no such value — `undecryptable` is a RECEIPT status, and
+  `ChatContext`'s receipt listener already maps it to `'failed'` (doc 32 §5c),
+  precisely so an unreadable message shows a real failure. The confident-tick
+  bug §4.3 was written to prevent had already been fixed.
+
+  What genuinely remains is milder: `'failed'` conflates "never sent" with
+  "arrived but could not be opened". Distinguishing them means ADDING
+  `'undecryptable'` to `MessageStatus`, which ripples through every consumer of
+  that union — a deliberate typed change, not a rendering tweak. Worth doing;
+  not worth half-doing.
+
+  Lesson for whoever picks this up: read what actually REACHES the renderer, not
+  just the renderer. The status branch looked wrong in isolation and was correct
+  in context.
 
 ## 12. Phase 8 (Origin re-seal) — build log
 
