@@ -174,7 +174,17 @@ export const decryptMessageEnvelope = async (
     // A failed decrypt is expected in real deployments (a peer that reinstalled
     // has a new identity, so old sessions are dead) and must never take the
     // listener down — the message is surfaced with whatever plaintext exists.
-    console.warn('Failed to decrypt message envelope', error);
+    // console.ERROR, not warn. A Release bundle drops console.warn entirely
+    // (CLAUDE.md), so this — the single most diagnostic line in the whole
+    // messaging stack — has been invisible on every real device. Combined with
+    // the caller truncating the reason to 80 characters for the bubble, the
+    // actual failure was unreadable from BOTH the UI and the logs at once.
+    console.error('❌ Decrypt failed', {
+      senderId,
+      senderSignalDeviceId,
+      name: error instanceof Error ? error.name : undefined,
+      message: error instanceof Error ? error.message : String(error),
+    });
     // Most failures are ground truth that the session needs repair. A
     // duplicated ciphertext is the exception: gossip/retry can legitimately
     // replay a packet after it was consumed, and libsignal explicitly reports

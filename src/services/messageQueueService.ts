@@ -820,20 +820,42 @@ const attachQueueListener = (
       // acknowledging user, so self-sync would write the sender's own id into
       // deliveredTo — making a message look delivered to a recipient purely
       // because the sender has a second device.
-      if (!isSelfAuthored && !isGapFill) {
-        if (undecryptableHere) {
-          // Report the failure INSTEAD of a delivery receipt, not alongside
-          // it: "delivered" outranks "undecryptable" on the sender's side by
-          // design, so sending both would hide the very thing being reported.
-          await sendUndecryptableReceipt(
-            payload.chatId,
-            messageId,
-            userId,
-            getCachedSignalDeviceId() ?? undefined,
-          );
-        } else {
-          await sendDeliveryReceipt(payload.chatId, messageId, userId, payload.isGroupChat ?? false);
-        }
+      // SELF-SYNC MUST REPORT A DECRYPT FAILURE TOO.
+      //
+      // This used to skip both receipts for a self-authored message, and the
+      // reasoning only ever applied to the DELIVERY receipt (which is keyed by
+      // the acknowledging user, so self-sync would make a message look
+      // delivered to a recipient purely because the sender owns two phones).
+      //
+      // Applying the same skip to the UNDECRYPTABLE receipt created a
+      // permanent one-way break: our own other device proves the message
+      // authentic, cannot open it, and has no way to say so — so the sending
+      // device never learns its session is dead and never rebuilds it. Every
+      // subsequent self-sync message fails identically, forever. Observed on a
+      // Pixel as a wall of "Couldn't decrypt this message" from the user's own
+      // account that never recovered.
+      //
+      // The report is safe here because the SENDER distinguishes a self-report
+      // from a peer's (see ChatContext): it rebuilds the session either way,
+      // but only marks the message failed when a real recipient could not read
+      // it.
+      if (undecryptableHere && !isGapFill) {
+        await sendUndecryptableReceipt(
+          payload.chatId,
+          messageId,
+          userId,
+          getCachedSignalDeviceId() ?? undefined,
+        );
+      }
+
+      // The DELIVERY receipt stays peer-only: it is keyed by the acknowledging
+      // user, so a self-sync ack would make a message look delivered to a
+      // recipient purely because the sender owns two phones. And it is sent
+      // INSTEAD of the undecryptable report above, never alongside —
+      // "delivered" outranks "undecryptable" on the sender's side by design,
+      // so sending both would hide the very thing being reported.
+      if (!isSelfAuthored && !isGapFill && !undecryptableHere) {
+        await sendDeliveryReceipt(payload.chatId, messageId, userId, payload.isGroupChat ?? false);
       }
       await remove(ref(rtdb, deletePath(messageId)));
       console.log('✅ Message delivered and removed from queue:', messageId);

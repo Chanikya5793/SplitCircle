@@ -117,3 +117,25 @@ describe('undecryptable receipts', () => {
     expect(emitReceiptNode('m1', {})).toEqual([]);
   });
 });
+
+describe('self-sync must report a decrypt failure too', () => {
+  it('writes an undecryptable receipt keyed by our own id', async () => {
+    // The permanent one-way break: our own other device proves a message
+    // authentic, cannot open it, and previously had no way to say so — so the
+    // sending device never learned its session was dead and never rebuilt it.
+    // Every later self-sync message failed identically, forever.
+    await sendUndecryptableReceipt('chat-1', 'm1', 'me', 4);
+
+    expect(rtdbMock.ref).toHaveBeenCalledWith({}, 'receipts/chat-1/m1/me');
+    expect(rtdbMock.update).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        undecryptable: true,
+        recipientId: 'me',
+        // The sender needs the exact device, or it would reset healthy
+        // ratchets on its other phones too.
+        undecryptableDeviceId: 4,
+      }),
+    );
+  });
+});

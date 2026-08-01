@@ -1005,6 +1005,18 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
               // this message had already been flipped to 'sent' by a transport
               // ack — so show a real failure the user can act on by resending,
               // rather than leaving a confident tick on unreadable content.
+              // A report from OUR OWN other device (self-sync) means the
+              // session is dead and must be rebuilt — which the line above just
+              // did — but it says nothing about whether the real recipient got
+              // the message. Marking it failed here would show a red message
+              // the other person is reading perfectly well.
+              //
+              // Self-sync previously sent no report at all, which is why this
+              // break was permanent: nothing told the sender to rebuild, so
+              // every later message to that device failed identically. Report
+              // and repair, but do not lie about delivery.
+              if (recipientId === currentUser.userId) return;
+
               await updateMessageStatus(chatId, messageId, 'failed');
               return;
             }
