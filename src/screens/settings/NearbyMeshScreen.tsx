@@ -34,7 +34,7 @@ import {
 } from '@/services/mesh/transportPreferences';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useState, useSyncExternalStore } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { Icon, Switch, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -168,7 +168,13 @@ export const NearbyMeshScreen = () => {
             />
           </View>
 
-          {(diagnostics?.transports ?? []).map((transport) => {
+          {(diagnostics?.transports ?? [])
+            // MultipeerConnectivity is Apple-only and can NEVER work on
+            // Android. Listing it there as "unavailable on this device" reads
+            // as a fault the user might try to fix, when it is a permanent
+            // property of the platform.
+            .filter((transport) => !(transport.id === 'mpc' && Platform.OS !== 'ios'))
+            .map((transport) => {
             // Disabled by the user reads differently from unavailable on this
             // device — collapsing them would make a toggled-off radio look
             // broken, which is the confusion this screen exists to remove.
