@@ -3605,6 +3605,8 @@ PODS:
     - ExpoModulesCore
   - SplitCircleBackup (1.0.0):
     - ExpoModulesCore
+  - SplitCircleBle (1.0.0):
+    - ExpoModulesCore
   - SplitCircleCrypto (1.0.0):
     - ExpoModulesCore
     - LibSignalClient (= 0.99.1)
@@ -3805,6 +3807,7 @@ DEPENDENCIES:
   - SocketRocket (~> 0.7.1)
   - SplitCircleAI (from `../modules/splitcircle-ai/ios`)
   - SplitCircleBackup (from `../modules/splitcircle-backup/ios`)
+  - SplitCircleBle (from `../modules/splitcircle-ble/ios`)
   - SplitCircleCrypto (from `../modules/splitcircle-crypto/ios`)
   - SplitCircleMedia (from `../modules/splitcircle-media/ios`)
   - SplitCircleMesh (from `../modules/splitcircle-mesh/ios`)
@@ -4125,6 +4128,8 @@ EXTERNAL SOURCES:
     :path: "../modules/splitcircle-ai/ios"
   SplitCircleBackup:
     :path: "../modules/splitcircle-backup/ios"
+  SplitCircleBle:
+    :path: "../modules/splitcircle-ble/ios"
   SplitCircleCrypto:
     :path: "../modules/splitcircle-crypto/ios"
   SplitCircleMedia:
@@ -4300,6 +4305,7 @@ SPEC CHECKSUMS:
   SocketRocket: d4aabe649be1e368d1318fdf28a022d714d65748
   SplitCircleAI: 470f32b271eb52d947c8082a2599f909075e8066
   SplitCircleBackup: 2ab08d943d66dbb947e2a508c4f3ad561eb495f2
+  SplitCircleBle: 2061434fbc818b4f1ead49bba3e05b37ea0caa61
   SplitCircleCrypto: 579ebfd5855cd893dfd6aac045b3a5bc2709268d
   SplitCircleMedia: 92c1b997de5a0caa63be687d14d905475ba3fd56
   SplitCircleMesh: afb8bbe582188b3a87e8854780daf77ea15d0b3a
