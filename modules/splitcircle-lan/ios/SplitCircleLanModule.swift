@@ -42,7 +42,11 @@ public class SplitCircleLanModule: Module {
       }
     }
 
-    Function("isAvailable") { () -> Bool in true }
+    // HONEST, not hardcoded true. This drives the diagnostics screen and the
+    // switch's decision about what may travel here — reporting "available" on
+    // a cellular-only phone would claim a Wi-Fi link that cannot exist, and
+    // make "no network" indistinguishable from "no peers yet".
+    Function("isAvailable") { () -> Bool in controller.hasLocalNetworkPath() }
 
     AsyncFunction("start") { (deviceId: String, trusted: [String], promise: Promise) in
       controller.start(deviceId: deviceId, trusted: trusted) { ok in promise.resolve(ok) }
@@ -78,6 +82,14 @@ final class LanController: NSObject {
   /// arrive here. That is the entire locking strategy.
   private let queue = DispatchQueue(label: "com.splitcircle.lan")
 
+  /**
+   * Watches for a usable local-network path. Started once and left running:
+   * NWPathMonitor is cheap, and a phone moving between Wi-Fi and cellular is
+   * exactly the case this transport must react to rather than assume.
+   */
+  private let pathMonitor = NWPathMonitor()
+  private var hasPath = false
+
   private var listener: NWListener?
   private var browser: NWBrowser?
   private var localDeviceId = ""
@@ -91,6 +103,25 @@ final class LanController: NSObject {
   private var pendingConnections: [ObjectIdentifier: NWConnection] = [:]
   private var identityByConnection: [ObjectIdentifier: String] = [:]
   private var buffers: [ObjectIdentifier: Data] = [:]
+
+  override init() {
+    super.init()
+    pathMonitor.pathUpdateHandler = { [weak self] path in
+      guard let self else { return }
+      // `satisfied` alone is not enough: a cellular-only path satisfies, and
+      // Bonjour over cellular reaches nobody. Require a local-network
+      // interface, which is what this transport actually needs.
+      let local = path.usesInterfaceType(.wifi)
+        || path.usesInterfaceType(.wiredEthernet)
+        || path.usesInterfaceType(.other)
+      self.queue.async { self.hasPath = path.status == .satisfied && local }
+    }
+    pathMonitor.start(queue: queue)
+  }
+
+  func hasLocalNetworkPath() -> Bool {
+    queue.sync { hasPath }
+  }
 
   // MARK: lifecycle
 

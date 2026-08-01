@@ -148,7 +148,14 @@ export const createLanTransport = (native: NativeLanModule): MeshTransport => {
         : { ok: false, reason: 'no-route' };
     },
 
-    onFrame: (cb): Unsubscribe => native.addFrameListener(cb),
+    // ARGUMENTS ARE SWAPPED BETWEEN THESE TWO CONTRACTS, deliberately not
+    // passed through. The native listener emits (peerDeviceId, frame) — sender
+    // first — while `MeshTransport.onFrame` is (data, from) — payload first.
+    // Both are (string, string), so handing `cb` straight to the native
+    // listener compiles perfectly and silently delivers every frame with the
+    // peer id as its content. Caught by a test, not by tsc.
+    onFrame: (cb): Unsubscribe =>
+      native.addFrameListener((peerDeviceId, frame) => cb(frame, peerDeviceId)),
 
     onNeighbourChange: (cb): Unsubscribe =>
       native.addPeersChangedListener((peers) => cb(toNeighbours(peers))),
