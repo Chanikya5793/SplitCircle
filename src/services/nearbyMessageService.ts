@@ -9,6 +9,7 @@ import { getCurrentDeviceId } from '@/services/pairingService';
 import { nativeBle } from '../../modules/splitcircle-ble';
 import { createBleTransport } from '@/services/mesh/bleTransport';
 import { createMeshRouter } from '@/services/mesh/router';
+import { loadTransportPreferences } from '@/services/mesh/transportPreferences';
 import {
   MeshEventLog,
   aggregateNeighbours,
@@ -350,6 +351,10 @@ export const startNearbyMessaging = async (
     return () => undefined;
   }
 
+  // Load before any transport starts: the switch consults these synchronously,
+  // so an unloaded snapshot would let a radio the user disabled run until the
+  // read completed.
+  await loadTransportPreferences();
   const deviceId = await getCurrentDeviceId();
   // The router is a module-level singleton but its identity only exists now.
   localNodeId = deviceId;

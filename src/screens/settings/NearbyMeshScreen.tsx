@@ -26,10 +26,16 @@ import {
 } from '@/services/nearbyMessageService';
 import { summariseMesh, type MeshDiagnostics } from '@/services/mesh/diagnostics';
 import { getOutstandingSyncGaps, type SyncGapStatus } from '@/services/syncGapService';
+import {
+  getTransportPreferences,
+  setNearbyEnabled,
+  setTransportEnabled,
+  subscribeToTransportPreferences,
+} from '@/services/mesh/transportPreferences';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useSyncExternalStore } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { Icon, Text } from 'react-native-paper';
+import { Icon, Switch, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /**
@@ -71,6 +77,11 @@ export const NearbyMeshScreen = () => {
   const insets = useSafeAreaInsets();
   const [diagnostics, setDiagnostics] = useState<MeshDiagnostics | null>(null);
   const [gaps, setGaps] = useState<SyncGapStatus[]>([]);
+  const prefs = useSyncExternalStore(
+    subscribeToTransportPreferences,
+    getTransportPreferences,
+    getTransportPreferences,
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -137,23 +148,62 @@ export const NearbyMeshScreen = () => {
           <Text variant="titleSmall" style={[styles.cardTitle, { color: theme.colors.onSurface }]}>
             Transports
           </Text>
-          {(diagnostics?.transports ?? []).map((transport) => (
-            <View key={transport.id} style={styles.listRow}>
-              <Icon
-                source={TRANSPORT_ICON[transport.id] ?? 'lan-connect'}
-                size={18}
-                color={transport.available ? theme.colors.success : theme.colors.onSurfaceVariant}
-              />
-              <Text variant="bodyMedium" style={{ flex: 1, color: theme.colors.onSurface }}>
-                {TRANSPORT_LABEL[transport.id] ?? transport.id.toUpperCase()}
+          <View style={styles.listRow}>
+            <Icon
+              source="access-point-network"
+              size={18}
+              color={prefs.nearbyEnabled ? theme.colors.success : theme.colors.onSurfaceVariant}
+            />
+            <View style={styles.rowCopy}>
+              <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+                Nearby messaging
               </Text>
-              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                {transport.available
-                  ? `${transport.neighbourCount} connected`
-                  : 'Unavailable'}
+              <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
+                Master switch for every radio below.
               </Text>
             </View>
-          ))}
+            <Switch
+              value={prefs.nearbyEnabled}
+              onValueChange={(next) => { void setNearbyEnabled(next); }}
+            />
+          </View>
+
+          {(diagnostics?.transports ?? []).map((transport) => {
+            // Disabled by the user reads differently from unavailable on this
+            // device — collapsing them would make a toggled-off radio look
+            // broken, which is the confusion this screen exists to remove.
+            const enabled = !prefs.disabledTransports.includes(transport.id);
+            return (
+              <View key={transport.id} style={styles.listRow}>
+                <Icon
+                  source={TRANSPORT_ICON[transport.id] ?? 'lan-connect'}
+                  size={18}
+                  color={enabled && transport.available
+                    ? theme.colors.success
+                    : theme.colors.onSurfaceVariant}
+                />
+                <View style={styles.rowCopy}>
+                  <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+                    {TRANSPORT_LABEL[transport.id] ?? transport.id.toUpperCase()}
+                  </Text>
+                  <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
+                    {!prefs.nearbyEnabled
+                      ? 'Off — nearby messaging is disabled'
+                      : !enabled
+                        ? 'Off'
+                        : transport.available
+                          ? `${transport.neighbourCount} connected`
+                          : 'Unavailable on this device'}
+                  </Text>
+                </View>
+                <Switch
+                  value={enabled}
+                  disabled={!prefs.nearbyEnabled}
+                  onValueChange={(next) => { void setTransportEnabled(transport.id, next); }}
+                />
+              </View>
+            );
+          })}
           {diagnostics && !diagnostics.bleEnabled ? (
             <Text variant="bodySmall" style={[styles.note, { color: theme.colors.onSurfaceVariant }]}>
               Bluetooth mesh is off in this build. It’s the only transport that can

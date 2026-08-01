@@ -598,8 +598,8 @@ nothing regressed, then enable origination.
 
 ## 11. Phase 7 (UI) — build log
 
-**Status 2026-07-31: diagnostics + topology BUILT (`NearbyMeshScreen`, Settings
-→ Nearby mesh). Per-transport toggles (§4.1) and per-message delivery states
+**Status: diagnostics + topology + per-transport toggles BUILT
+(`NearbyMeshScreen`, Settings → Nearby mesh). Per-message delivery states
 (§4.3) NOT built.**
 
 Built first, and deliberately, because it is the piece that makes the hardware
@@ -639,9 +639,9 @@ on-disk mesh queue, the router's own pending count. No placeholder stats.
 
 ### 11.3 Not built
 
-- **Per-transport toggles and discoverability mode** (§4.1). The diagnostics
-  half is what the hardware test needs; toggles are a preference surface and
-  can follow.
+- **Discoverability mode** (§4.1). The toggles landed 2026-08-01 (§11.4);
+  discoverability is a separate decision about how visible this device is to
+  strangers, and belongs with Phase 6's pairing work.
 - **Per-message delivery states** (§4.3): queued → in flight → relayed (n hops)
   → delivered → failed. The router already knows hop counts, but plumbing them
   into per-message UI touches the chat rendering path, which is worth doing
@@ -702,3 +702,28 @@ Fixed properly by extracting `mesh/constants.ts`, a native-free leaf both
 import. Note `meshMessageProtocol` must `import` AND re-export it: a bare
 `export ... from` creates no local binding, and that module uses the value
 itself.
+
+### 11.4 Per-transport toggles (2026-08-01)
+
+Master switch plus one toggle per transport, in `mesh/transportPreferences.ts`.
+
+- **Synchronous reads.** The switch consults this on every send and every
+  reachability check, so an async read would either block the hot path or arrive
+  after the decision. Loaded once at startup into an in-memory snapshot; writes
+  are async.
+- **Fails OPEN.** An unreadable or absent preference means ENABLED. Silently
+  disabling someone's nearby messaging because a read failed is
+  indistinguishable from the radio being broken — the invisible-failure class
+  that has cost this project days repeatedly. Only an explicit `false` disables.
+- **Enforced in `transportSwitch.available()`**, not per call site. Every other
+  capability there — `neighbours`, `routesFor`, `capableOf` — derives from it,
+  so one check covers sends, reachability and the topology view. A per-call-site
+  check would eventually miss one and leave a disabled radio still transmitting.
+- **Unknown transport ids in stored data are discarded**, not trusted.
+- **"Off" and "unavailable" read differently in the UI.** Collapsing them would
+  make a toggled-off radio look broken, which is the confusion this screen
+  exists to remove.
+
+Note this made `transportSwitch.ts` no longer free of native imports, and its
+header comment was corrected rather than left asserting the old guarantee — a
+false doc claim is a hazard this repo has already been bitten by three times.

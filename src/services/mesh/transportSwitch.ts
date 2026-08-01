@@ -6,7 +6,11 @@
  * decide WHERE a message goes (that is the router) and does not move bytes
  * (that is a transport).
  *
- * Kept free of native imports so it is unit-testable without a device.
+ * Imports `transportPreferences`, which reaches AsyncStorage for load/save —
+ * so this file is NO LONGER free of native imports, and the suites that cover
+ * it rely on the global AsyncStorage mock. The gate it actually calls
+ * (`isTransportEnabled`) reads an in-memory snapshot and is synchronous and
+ * pure; only the load/save paths touch storage.
  */
 import {
   maxPayloadFor,
@@ -16,6 +20,7 @@ import {
   type PayloadClass,
   type TransportId,
 } from './transport';
+import { isTransportEnabled } from './transportPreferences';
 
 /**
  * Preference order when several links can carry a payload. Fast links first;
@@ -34,7 +39,16 @@ export const createTransportSwitch = (transports: MeshTransport[]) => {
     (a, b) => PREFERENCE.indexOf(a.id) - PREFERENCE.indexOf(b.id),
   );
 
-  const available = (): MeshTransport[] => ordered.filter((t) => t.isAvailable());
+  /**
+   * Gated on the user's preference as well as the radio's own state (doc 33
+   * §4.1). Enforced HERE rather than at each call site because every other
+   * capability in this file — `neighbours`, `routesFor`, `capableOf` — derives
+   * from `available()`, so one check covers sends, reachability and the
+   * topology view at once. A per-call-site check would inevitably miss one and
+   * leave a disabled radio quietly still transmitting.
+   */
+  const available = (): MeshTransport[] =>
+    ordered.filter((t) => isTransportEnabled(t.id) && t.isAvailable());
 
   /** Union of neighbours across transports; the UI's topology source. */
   const neighbours = (): NeighbourState[] =>
