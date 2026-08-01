@@ -30,6 +30,7 @@
  * accepted. The prefix is a discovery hint only, never an identity claim.
  */
 import { requireOptionalNativeModule } from 'expo-modules-core';
+import { PermissionsAndroid, Platform } from 'react-native';
 
 import type { NativeBleModule, NativeBlePeer } from '@/services/mesh/bleTransport';
 
@@ -65,6 +66,32 @@ interface NativeModuleShape {
  */
 const Native = requireOptionalNativeModule<NativeModuleShape>('SplitCircleBle');
 
+/**
+ * Requests the Android 12+ Bluetooth permissions, returning whether BLE may run.
+ *
+ * No-ops on iOS (CoreBluetooth prompts on first use, driven by
+ * NSBluetoothAlwaysUsageDescription) and on Android below 31, where the
+ * manifest declaration plus location permission is the whole story.
+ */
+const ensureAndroidBlePermissions = async (): Promise<boolean> => {
+  if (Platform.OS !== 'android') return true;
+  if (typeof Platform.Version === 'number' && Platform.Version < 31) return true;
+  try {
+    const needed = [
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE,
+    ].filter(Boolean);
+    const result = await PermissionsAndroid.requestMultiple(needed);
+    // ALL three, not some. Scanning without connecting finds peers it can never
+    // reach, and advertising without scanning makes this device visible while
+    // blind — both look like "BLE is flaky" rather than a missing grant.
+    return needed.every((permission) => result[permission] === 'granted');
+  } catch {
+    return false;
+  }
+};
+
 /** True when a build actually carries the native half. */
 export const isBleNativeAvailable = (): boolean => Native != null;
 
@@ -90,6 +117,18 @@ export const nativeBle: NativeBleModule = {
   start: async ({ deviceId, trustedDeviceIds }) => {
     if (!Native) return false;
     try {
+      // ANDROID 12+ REQUIRES A RUNTIME GRANT. Declaring BLUETOOTH_SCAN /
+      // _CONNECT / _ADVERTISE in the manifest is necessary and NOT sufficient:
+      // without an explicit request they stay denied, the native module's own
+      // `hasPermissions()` returns false, `start` returns false, and BLE simply
+      // never runs. Verified on a Pixel 7 — `dumpsys package` reported
+      // `BLUETOOTH_CONNECT: granted=false` with the flag enabled and the module
+      // correctly installed, so the transport was dark with nothing to see.
+      //
+      // Requested here rather than natively so the ask happens exactly when
+      // nearby is switched on, instead of at launch for a feature the user may
+      // never enable.
+      if (!(await ensureAndroidBlePermissions())) return false;
       return await Native.start(deviceId, trustedDeviceIds);
     } catch {
       // A permission denial arrives here. It is a normal state, not an error
