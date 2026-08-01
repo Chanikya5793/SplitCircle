@@ -104,12 +104,27 @@
         }
       }
     },
+    "syncGapBatches": {
+      "$ownerUserId": {
+        ".read": "auth != null && auth.uid == $ownerUserId",
+        ".write": "auth != null && auth.uid == $ownerUserId",
+        "$requesterDeviceId": {
+          "$batchId": {
+            ".validate": "!newData.exists() || newData.hasChildren(['v', 'b', 'sig', 'responderDeviceId'])",
+            "v": { ".validate": "newData.isNumber()" },
+            "b": { ".validate": "newData.isString()" },
+            "sig": { ".validate": "newData.isString()" },
+            "responderDeviceId": { ".validate": "newData.isString()" }
+          }
+        }
+      }
+    },
     "syncGapRequests": {
       "$ownerUserId": {
         ".read": "auth != null && auth.uid == $ownerUserId",
         ".write": "auth != null && auth.uid == $ownerUserId",
         "$requestId": {
-          ".validate": "newData.exists() ? newData.hasChildren(['chatId', 'sinceTimestamp', 'requesterDeviceId', 'createdAt']) : true",
+          ".validate": "!newData.exists() || data.exists() || newData.hasChildren(['chatId', 'sinceTimestamp', 'requesterDeviceId', 'createdAt'])",
           "chatId": {
             ".validate": "newData.isString()"
           },
