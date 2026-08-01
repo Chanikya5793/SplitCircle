@@ -147,6 +147,15 @@ interface ChatContextValue {
   setTyping: (chatId: string, isTyping: boolean) => Promise<void>;
 }
 
+/**
+ * Origin re-seal (doc 33 §2.5) is OFF unless explicitly enabled. It hangs off
+ * the threads effect, which is a per-message hot path, so it stays opt-in until
+ * it has been proven not to cost anything there.
+ */
+const ORIGIN_RESEAL_ENABLED = ['1', 'true'].includes(
+  (process.env.EXPO_PUBLIC_ENABLE_ORIGIN_RESEAL ?? '').trim().toLowerCase(),
+);
+
 const ChatContext = createContext<ChatContextValue | undefined>(undefined);
 
 const normalizeTimestamp = (value: unknown): number => {
@@ -208,6 +217,12 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const threadsRef = useRef<ChatThread[]>([]);
   const userRef = useRef<typeof user | null>(null);
   const activeChatIdsRef = useRef<Set<string>>(new Set());
+  // Origin re-seal guards. The signature is the audience's device set: re-seal
+  // reacts to nothing else, so an unchanged signature means there is provably
+  // no work, and the in-flight flag stops rapid `threads` updates stacking
+  // passes on top of each other.
+  const resealInFlightRef = useRef(false);
+  const lastResealSignatureRef = useRef<string | null>(null);
 
   // Chat ids from the previous snapshot. When a chat vanishes between
   // snapshots (deleted by another participant, or this user removed), we
@@ -281,26 +296,55 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       if (disposed) return;
       setNearbyTrustedPeers(trustedPeers);
 
-      // Origin re-seal (doc 33 §2.5, Phase 8). This effect fires on `threads`
-      // change, which is precisely the moment a device newly added to a
-      // conversation can become known — so it is the natural trigger, and it
-      // costs nothing while the audience is stable.
+      // Origin re-seal (doc 33 §2.5, Phase 8), OFF by default.
       //
-      // Only OUR OWN queued messages are touched; evaluateReseal refuses
-      // anything not originOwned before any other check, because a relay
-      // minting ciphertext attributed to another sender is forgery.
-      await resealOwnedMeshOperations(
-        threads,
-        user.userId,
-        currentDeviceId,
-        async (thread) => {
+      // THIS EFFECT IS A HOT PATH. `threads` changes on every message, because
+      // every message updates its thread's `lastMessage`. The first version of
+      // this ran a full re-seal pass here — a Firestore device read per
+      // participant, per queued operation, per message — and its comment
+      // claimed it "costs nothing while the audience is stable", which was
+      // simply wrong. With rapid sends the passes overlapped without bound.
+      //
+      // Three guards now, and the flag is the outermost:
+      //  - flag-gated, so it cannot affect anyone who has not opted in;
+      //  - skipped entirely unless the audience's device set actually CHANGED,
+      //    which is the only thing re-seal reacts to;
+      //  - never re-entered while a pass is already running.
+      //
+      // Device reads are 'cache-only'. `listSignalDevices` defaults to
+      // 'network-preferred', and its own comment warns that React Native's
+      // memory-only Firestore client can leave getDocs PENDING until
+      // connectivity returns rather than rejecting — exactly what must never
+      // sit on a path that fires per message.
+      if (ORIGIN_RESEAL_ENABLED && !resealInFlightRef.current) {
+        const audienceDeviceIds = async (thread: ChatThread) => {
           const audience = resolveMeshThreadAudience(thread) ?? thread.participantIds;
           const perUser = await Promise.all(
-            audience.map((participantId) => listSignalDevices(participantId).catch(() => [])),
+            audience.map((participantId) =>
+              listSignalDevices(participantId, 'cache-only').catch(() => [])),
           );
           return perUser.flat().map((device) => device.deviceId);
-        },
-      );
+        };
+
+        const signature = (
+          await Promise.all(threads.map((thread) => audienceDeviceIds(thread)))
+        ).flat().sort().join(',');
+
+        if (signature !== lastResealSignatureRef.current) {
+          lastResealSignatureRef.current = signature;
+          resealInFlightRef.current = true;
+          try {
+            await resealOwnedMeshOperations(
+              threads,
+              user.userId,
+              currentDeviceId,
+              audienceDeviceIds,
+            );
+          } finally {
+            resealInFlightRef.current = false;
+          }
+        }
+      }
     })().catch((error) => {
       console.warn('Nearby trust directory refresh failed', error);
       if (!disposed) setNearbyTrustedPeers([]);
