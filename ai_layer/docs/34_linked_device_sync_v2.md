@@ -1,7 +1,8 @@
 # 34 — Linked-device sync v2: encrypted JSON batches
 
-**Status: RESEARCHED 2026-07-31. Two live failures diagnosed from production
-data. Decisions LOCKED. Nothing built.**
+**Status: Two live failures diagnosed from production data 2026-07-31.
+Decisions LOCKED. Steps 1 and 2 BUILT the same day (§7) — NOT device-verified.
+Steps 3-6 (measurement, batching, transport) not started.**
 
 Supersedes nothing. Doc 31 §8.1 (`syncGapService`) and doc 31 Phase 6
 (`historyHandoffService`) stay as-is until this replaces their payload path.
