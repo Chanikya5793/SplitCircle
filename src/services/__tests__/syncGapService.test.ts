@@ -387,3 +387,64 @@ describe('answering', () => {
     await expect(answerGapRequest(UID, request, false)).resolves.toBe(1);
   });
 });
+
+describe('claim retry storm', () => {
+  it('does not re-dispatch the same request on an optimistic-write echo', async () => {
+    // claimGapRequest runs a TRANSACTION, which writes optimistically before
+    // the server answers — firing onChildChanged straight back into this
+    // handler. The "resumed attempt" allowance let that feed itself, and the
+    // server's rejection fired onChildChanged again. Observed on a Pixel:
+    // 11,233 attempts, 99.96% of every JS log line the app emitted.
+    const seen: string[] = [];
+    subscribeToGapRequests(UID, OWN_DEVICE, (request) => { seen.push(request.requestId); });
+    const handler = rtdb.onChildAdded.mock.calls.at(-1)?.[1] as (s: Snapshot) => void;
+
+    const node = {
+      key: 'chat-x__other-device',
+      val: () => ({
+        chatId: 'chat-x',
+        sinceTimestamp: 100,
+        requesterDeviceId: 'other-device',
+        createdAt: 1,
+      }),
+    };
+    handler(node);
+    // The echo: same node, now optimistically stamped with OUR claim.
+    for (let i = 0; i < 50; i += 1) {
+      handler({
+        key: 'chat-x__other-device',
+        val: () => ({
+          chatId: 'chat-x',
+          sinceTimestamp: 100,
+          requesterDeviceId: 'other-device',
+          createdAt: 1,
+          claimedBy: OWN_DEVICE,
+        }),
+      });
+    }
+
+    expect(seen).toHaveLength(1);
+  });
+
+  it('still serves a DIFFERENT request while one is cooling down', async () => {
+    // The brake must be per request, or one stuck gap would block every other
+    // conversation from ever being served.
+    const seen: string[] = [];
+    subscribeToGapRequests(UID, OWN_DEVICE, (request) => { seen.push(request.requestId); });
+    const handler = rtdb.onChildAdded.mock.calls.at(-1)?.[1] as (s: Snapshot) => void;
+
+    for (const chat of ['chat-a', 'chat-b']) {
+      handler({
+        key: `${chat}__other-device`,
+        val: () => ({
+          chatId: chat,
+          sinceTimestamp: 100,
+          requesterDeviceId: 'other-device',
+          createdAt: 1,
+        }),
+      });
+    }
+
+    expect(seen).toHaveLength(2);
+  });
+});

@@ -112,6 +112,14 @@ const ZERO_HISTORY_BACKFILL_MS = 30 * 24 * 60 * 60 * 1000;
  */
 const MAX_ZERO_HISTORY_REQUESTS_PER_PASS = 3;
 
+/**
+ * Minimum gap between claim attempts for ONE request, per device.
+ *
+ * Long enough that an optimistic-write echo cannot drive a retry storm, short
+ * enough that a genuinely transient failure still resolves within a session.
+ */
+const CLAIM_COOLDOWN_MS = 30_000;
+
 /** Bucket the backfill window to this, so repeat passes compute the same value. */
 const BACKFILL_BUCKET_MS = 60 * 60 * 1000;
 
@@ -155,6 +163,10 @@ const requestedWatermarks = new Map<string, number>();
  * once it has been outstanding a while.
  */
 const requestFirstSeenAt = new Map<string, number>();
+/** Last claim attempt per requestId — the retry-storm brake. */
+const claimAttempts = new Map<string, number>();
+/** Injectable only so the cooldown is testable without real time. */
+const now = (): number => Date.now();
 let seededForUserId: string | null = null;
 let checking = false;
 
@@ -275,6 +287,21 @@ export const subscribeToGapRequests = (
     // claimed. Re-entering our OWN claim is fine — that is a resumed attempt.
     if (requesterDeviceId === ownDeviceId) return;
     if (typeof claimedBy === 'string' && claimedBy && claimedBy !== ownDeviceId) return;
+
+    // COOLDOWN. `claimGapRequest` runs a transaction, and a transaction writes
+    // OPTIMISTICALLY before the server answers — which fires `onChildChanged`,
+    // which lands right back here. The `claimedBy === ownDeviceId` case above
+    // deliberately lets a resumed attempt through, so when the server then
+    // REJECTS the write the revert fires `onChildChanged` again and the whole
+    // thing feeds itself.
+    //
+    // Observed on a Pixel 2026-08-01: 11,233 claim attempts, 99.96% of every JS
+    // log line the app produced, saturating the JS thread. The retry loop is
+    // the bug regardless of why the underlying write fails — an unbounded retry
+    // driven by its own optimistic echo can never be correct.
+    const lastAttempt = claimAttempts.get(requestId) ?? 0;
+    if (now() - lastAttempt < CLAIM_COOLDOWN_MS) return;
+    claimAttempts.set(requestId, now());
 
     onRequest({ requestId, chatId, sinceTimestamp, requesterDeviceId });
   };
@@ -487,6 +514,7 @@ export const getOutstandingSyncGaps = (): SyncGapStatus[] =>
 /** Drops in-memory state so a signed-out/revoked device starts clean. */
 export const resetGapState = (): void => {
   requestFirstSeenAt.clear();
+  claimAttempts.clear();
   requestedWatermarks.clear();
   seededForUserId = null;
 };
