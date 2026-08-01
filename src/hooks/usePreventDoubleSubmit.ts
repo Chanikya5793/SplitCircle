@@ -10,6 +10,25 @@ interface PreventDoubleSubmitOptions {
   overlay?: boolean;
 }
 
+/**
+ * DO NOT USE THIS FOR ANY ACTION A USER LEGITIMATELY REPEATS.
+ *
+ * A concurrent call with the same key — or ANY concurrent call, via the
+ * `loadingRef` branch below — returns the in-flight promise and NEVER RUNS the
+ * new task. For "Pay", "Create group", or "Submit", that is exactly right: the
+ * second tap is a mistake.
+ *
+ * For chat messages it is catastrophic. `handleSend` passed
+ * `key: chat-send-<chatId>`, constant for the whole conversation, so a second
+ * message sent while the first was in flight had its task discarded — and the
+ * composer had already cleared the text, so it left no bubble, no error and no
+ * trace. Weeks of "messages get lost when I send quickly", on both platforms,
+ * online and offline. Message sends now call `sendMessage` directly.
+ *
+ * The tell: this returns `Promise<T>` on a path where the task never ran, so
+ * every caller sees a success it did not get. See
+ * `src/utils/__tests__/preventDoubleSubmitHazard.test.ts`.
+ */
 const activeRequestPromises = new Map<string, Promise<unknown>>();
 
 export const usePreventDoubleSubmit = (defaults?: PreventDoubleSubmitOptions) => {

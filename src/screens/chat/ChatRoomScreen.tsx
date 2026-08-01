@@ -44,6 +44,7 @@ import { useChatSearch } from '@/hooks/useChatSearch';
 import { useMediaSendPipeline } from '@/hooks/useMediaSendPipeline';
 import { useMentionAutocomplete } from '@/hooks/useMentionAutocomplete';
 import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
+import { v4 as uuid } from 'uuid';
 import { useSelectionMode } from '@/hooks/useSelectionMode';
 import { useTypingPresence } from '@/hooks/useTypingPresence';
 import type { ChatMessage, ChatParticipant, ChatThread, MessageType, PinnedMessageRef, ReactionMap } from '@/models';
@@ -834,22 +835,43 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     resetMention();
     void setTyping(thread.chatId, false);
 
-    void runSend(async (requestId) => {
-      await sendMessage({
-        chatId: thread.chatId,
-        requestId,
-        content: trimmed,
-        groupId: thread.groupId,
-        replyTo: replyData,
-        mentions: finalMentions && finalMentions.length ? finalMentions : undefined,
-      });
-      successHaptic();
-    }, { key: `chat-send-${thread.chatId}` }).catch((error) => {
-      console.error('Failed to send message:', error);
-      // Restore the text so the user can retry
-      setText(trimmed);
-      alert(error instanceof Error ? error.message : 'Failed to send message');
-    });
+    // NOT `runSend`. `usePreventDoubleSubmit` de-duplicates by key and returns
+    // the IN-FLIGHT promise without running the new task — and the key here was
+    // `chat-send-<chatId>`, constant for the whole conversation. So sending a
+    // second message while the first was still in flight silently discarded it:
+    // its task never ran, and its text had already been cleared from the input
+    // two lines above. No bubble, no error, no trace. That is the rapid-send
+    // message loss, and it was transport-agnostic — online, offline, both
+    // platforms.
+    //
+    // Even passing no key would not have been enough: the hook's `loadingRef`
+    // branch drops concurrent calls the same way. That hook exists to stop a
+    // user double-tapping ONE action, where the second tap is a mistake. A
+    // second chat message is not a mistake; it is a different message and must
+    // always be sent.
+    //
+    // Earlier fixes that removed `await`s from the send path made each send
+    // faster and so shrank the collision window — which is why the loss got
+    // rarer without ever going away.
+    const requestId = uuid();
+    void (async () => {
+      try {
+        await sendMessage({
+          chatId: thread.chatId,
+          requestId,
+          content: trimmed,
+          groupId: thread.groupId,
+          replyTo: replyData,
+          mentions: finalMentions && finalMentions.length ? finalMentions : undefined,
+        });
+        successHaptic();
+      } catch (error) {
+        console.error('Failed to send message:', error);
+        // Restore the text so the user can retry.
+        setText(trimmed);
+        alert(error instanceof Error ? error.message : 'Failed to send message');
+      }
+    })();
   }, [text, replyingTo, editingMessage, pendingMentionUserIds, thread.participants, thread.chatId, thread.groupId, runSend, sendMessage, setTyping]);
 
   // Handle swipe reply from message bubble

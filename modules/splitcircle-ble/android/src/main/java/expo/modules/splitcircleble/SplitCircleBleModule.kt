@@ -119,12 +119,30 @@ class SplitCircleBleModule : Module() {
 
     Events("onChunk", "onPeersChanged")
 
+    /**
+     * HARDWARE AND RADIO ONLY — deliberately NOT permissions.
+     *
+     * This used to include `hasPermissions()`, which deadlocked the whole
+     * transport: `bleTransport.start()` short-circuits on `isAvailable()`, so
+     * with permissions ungranted this returned false, start never ran, and the
+     * runtime permission request that lives inside start was never reached.
+     * Permission could not be obtained without starting, and starting could not
+     * happen without permission. The UI then reported "Unavailable on this
+     * device" on hardware that was perfectly capable.
+     *
+     * Consent is a separate question from capability, and `hasPermissions` below
+     * answers it separately so the UI can say which one is actually missing.
+     */
     Function("isAvailable") {
       val bluetoothAdapter = adapter
       bluetoothAdapter != null &&
         bluetoothAdapter.isEnabled &&
-        bluetoothAdapter.bluetoothLeAdvertiser != null &&
-        hasPermissions()
+        bluetoothAdapter.bluetoothLeAdvertiser != null
+    }
+
+    /** Exposed so the UI can distinguish "no permission" from "no radio". */
+    Function("hasPermissions") {
+      hasPermissions()
     }
 
     AsyncFunction("start") { deviceId: String, trusted: List<String> ->

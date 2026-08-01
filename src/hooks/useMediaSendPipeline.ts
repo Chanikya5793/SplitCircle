@@ -325,20 +325,23 @@ export const useMediaSendPipeline = ({
       };
     }
 
-    await runSend(async () => {
-      await sendMessage({
-        chatId,
-        requestId: job.requestId,
-        content: job.item.caption || getMediaPlaceholder(prepared.messageType),
-        type: prepared.messageType,
-        mediaUri: prepared.processedUri,
-        groupId,
-        replyTo: replyData,
-        mediaMetadata: Object.keys(prepared.mediaMetadata).length > 0
-          ? (prepared.mediaMetadata as any)
-          : undefined,
-      });
-    }, { key: `chat-media-${chatId}-${job.requestId}` });
+    // Direct, NOT via runSend — same defect as the text path.
+    // `usePreventDoubleSubmit` returns the in-flight promise without running a
+    // concurrent task, so a second media item sent while the first was still
+    // uploading was silently discarded. This pipeline exists precisely to send
+    // several items, so de-duplicating them is the opposite of what it needs.
+    await sendMessage({
+      chatId,
+      requestId: job.requestId,
+      content: job.item.caption || getMediaPlaceholder(prepared.messageType),
+      type: prepared.messageType,
+      mediaUri: prepared.processedUri,
+      groupId,
+      replyTo: replyData,
+      mediaMetadata: Object.keys(prepared.mediaMetadata).length > 0
+        ? (prepared.mediaMetadata as any)
+        : undefined,
+    });
   }, [chatId, groupId, participants, runSend, sendMessage]);
 
   const buildFailedItem = useCallback((

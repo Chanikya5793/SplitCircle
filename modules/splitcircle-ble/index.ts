@@ -50,6 +50,8 @@ interface PeersEvent {
 
 interface NativeModuleShape {
   isAvailable(): boolean;
+  /** Android only; iOS reports true (CoreBluetooth prompts on first use). */
+  hasPermissions?(): boolean;
   start(deviceId: string, trustedDeviceIds: string[]): Promise<boolean>;
   stop(): void;
   updateTrust(trustedDeviceIds: string[]): void;
@@ -102,6 +104,27 @@ export const isBleNativeAvailable = (): boolean => Native != null;
  * half is missing: BLE is one transport among several, and the switch is
  * expected to route around a dead one, not crash.
  */
+/**
+ * Whether the radio is usable but merely lacks consent.
+ *
+ * Exists so the UI can say "needs permission" instead of "unavailable on this
+ * device" — which is what it said on a perfectly capable Pixel, and is a
+ * materially different instruction to the person holding the phone.
+ */
+export const bleNeedsPermission = (): boolean => {
+  if (!Native) return false;
+  try {
+    if (!Native.isAvailable()) return false;
+    return Native.hasPermissions ? !Native.hasPermissions() : false;
+  } catch {
+    return false;
+  }
+};
+
+/** Prompts for the Android runtime grant. Safe to call from a UI handler. */
+export const requestBlePermissions = async (): Promise<boolean> =>
+  ensureAndroidBlePermissions();
+
 export const nativeBle: NativeBleModule = {
   isAvailable: () => {
     if (!Native) return false;
