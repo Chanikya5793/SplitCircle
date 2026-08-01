@@ -34,6 +34,13 @@
       "android": {
         "buildType": "app-bundle",
         "credentialsSource": "remote"
+      },
+      "env": {
+        "EXPO_PUBLIC_ENABLE_BLE_MESH": "1",
+        "EXPO_PUBLIC_ENABLE_LAN_MESH": "1",
+        "EXPO_PUBLIC_ENABLE_MESH_ROUTER": "1",
+        "EXPO_PUBLIC_ENABLE_SYNC_BATCH": "1",
+        "EXPO_PUBLIC_ENABLE_ORIGIN_RESEAL": "1"
       }
     }
   },
