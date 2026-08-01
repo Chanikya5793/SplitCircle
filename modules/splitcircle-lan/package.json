@@ -1,0 +1,8 @@
+{
+  "name": "splitcircle-lan",
+  "version": "1.0.0",
+  "description": "LAN (mDNS + TCP) transport for ManaSplit nearby messaging (doc 33 Phase 5)",
+  "main": "index.ts",
+  "license": "MIT",
+  "peerDependencies": { "expo": "*" }
+}

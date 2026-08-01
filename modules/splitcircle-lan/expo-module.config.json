@@ -1,0 +1,5 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": { "modules": ["SplitCircleLanModule"] },
+  "android": { "modules": ["expo.modules.splitcirclelan.SplitCircleLanModule"] }
+}

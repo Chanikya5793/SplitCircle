@@ -88,7 +88,7 @@ describe('MeshEventLog', () => {
 describe('summariseMesh', () => {
   const base: MeshDiagnostics = {
     transports: [], neighbours: [], queuedMessages: 0, routerPending: 0,
-    bleEnabled: false, routerEnabled: false, events: [],
+    bleEnabled: false, lanEnabled: false, routerEnabled: false, events: [],
   };
 
   it('says so plainly when nothing is available', () => {

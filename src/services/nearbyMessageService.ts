@@ -7,7 +7,9 @@ import {
 } from '../../modules/splitcircle-mesh';
 import { getCurrentDeviceId } from '@/services/pairingService';
 import { nativeBle } from '../../modules/splitcircle-ble';
+import { nativeLan } from '../../modules/splitcircle-lan';
 import { createBleTransport } from '@/services/mesh/bleTransport';
+import { createLanTransport } from '@/services/mesh/lanTransport';
 import { createMeshRouter } from '@/services/mesh/router';
 import { loadTransportPreferences } from '@/services/mesh/transportPreferences';
 import {
@@ -84,8 +86,17 @@ const BLE_MESH_ENABLED = ['1', 'true'].includes(
   (process.env.EXPO_PUBLIC_ENABLE_BLE_MESH ?? '').trim().toLowerCase(),
 );
 
+/**
+ * LAN (doc 33 Phase 5), OFF unless enabled. Same staged-rollout rule as BLE:
+ * both native halves compile, neither has moved a byte on a real network.
+ */
+const LAN_MESH_ENABLED = ['1', 'true'].includes(
+  (process.env.EXPO_PUBLIC_ENABLE_LAN_MESH ?? '').trim().toLowerCase(),
+);
+
 const mpcTransport = createMpcTransport();
 const bleTransport = BLE_MESH_ENABLED ? createBleTransport(nativeBle) : null;
+const lanTransport = LAN_MESH_ENABLED ? createLanTransport(nativeLan) : null;
 
 /**
  * Lifecycle, trust and reachability fan out across all of these; sends go
@@ -93,9 +104,14 @@ const bleTransport = BLE_MESH_ENABLED ? createBleTransport(nativeBle) : null;
  * user-visible nearby status — see `startNearbyMessaging`, where BLE is
  * best-effort and a BLE failure cannot degrade a working MPC mesh.
  */
-const activeTransports: MeshTransport[] = bleTransport
-  ? [mpcTransport, bleTransport]
-  : [mpcTransport];
+// MPC stays FIRST and authoritative for the user-visible nearby status; the
+// switch's own PREFERENCE order (mpc, lan, ble) decides what actually carries
+// a given payload.
+const activeTransports: MeshTransport[] = [
+  mpcTransport,
+  ...(lanTransport ? [lanTransport] : []),
+  ...(bleTransport ? [bleTransport] : []),
+];
 
 const transports = createTransportSwitch(activeTransports);
 
@@ -285,6 +301,7 @@ export const getMeshDiagnostics = async (): Promise<MeshDiagnostics> => {
     queuedMessages: queue.filter((operation) => Boolean(operation.wireEnvelope)).length,
     routerPending: router.pendingCount(),
     bleEnabled: BLE_MESH_ENABLED,
+    lanEnabled: LAN_MESH_ENABLED,
     routerEnabled: MESH_ROUTER_ENABLED,
     events: meshEvents.list(),
   };
@@ -464,6 +481,16 @@ export const startNearbyMessaging = async (
   // when a working MPC mesh is already up. console.error because a Release
   // bundle drops console.warn entirely (CLAUDE.md), and a transport that
   // silently never starts is exactly what this flag exists to observe.
+  if (lanTransport) {
+    const lanStarted = await lanTransport.start({
+      userId,
+      deviceId,
+      trustedDeviceIds: Object.keys(trustedPeers),
+    });
+    if (!lanStarted) {
+      console.error('⚠️ LAN transport did not start (no network, or permission denied)');
+    }
+  }
   if (bleTransport) {
     const bleStarted = await bleTransport.start({
       userId,

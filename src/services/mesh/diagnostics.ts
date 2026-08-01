@@ -52,6 +52,7 @@ export interface MeshDiagnostics {
   /** Frames the router is holding for an unreachable destination. */
   routerPending: number;
   bleEnabled: boolean;
+  lanEnabled: boolean;
   routerEnabled: boolean;
   events: MeshEventEntry[];
 }
