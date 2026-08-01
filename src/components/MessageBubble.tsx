@@ -287,6 +287,24 @@ const MessageStatusIndicator = ({ status, isGroupChat: _isGroupChat, totalRecipi
     return <Ionicons name="alert-circle-outline" size={14} color="#FF6B6B" style={styles.statusIconSingle} />;
   }
 
+  // ARRIVED BUT UNREADABLE (doc 33 §4.3) — deliberately NOT the same as failed.
+  // The bytes reached the other phone and proved authentic; it just could not
+  // open them. Red "not sent" would invite a resend of something that already
+  // travelled, and hide that the real repair is the session rebuild the app now
+  // performs automatically on this signal. Amber, not red: something is wrong,
+  // but nothing was lost.
+  if (status === 'undecryptable') {
+    return (
+      <Ionicons
+        name="alert-circle-outline"
+        size={14}
+        color="#FFB020"
+        style={styles.statusIconSingle}
+        accessibilityLabel="Delivered, but the other device couldn’t open it"
+      />
+    );
+  }
+
   const hasAnyRead = read > 0 || status === 'read';
   const hasAnyDelivered = hasAnyRead || delivered > 0 || status === 'delivered';
 

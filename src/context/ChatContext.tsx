@@ -1017,7 +1017,11 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
               // and repair, but do not lie about delivery.
               if (recipientId === currentUser.userId) return;
 
-              await updateMessageStatus(chatId, messageId, 'failed');
+              // 'undecryptable', not 'failed' (doc 33 §4.3). The message DID
+              // arrive and prove authentic — calling it "not sent" invites a
+              // resend of something that already travelled, and hides that the
+              // repair is the session rebuild performed above.
+              await updateMessageStatus(chatId, messageId, 'undecryptable');
               return;
             }
 

@@ -38,7 +38,20 @@ export interface ExpenseRef {
     variable?: boolean;
   };
 }
-export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+/**
+ * `undecryptable` is NOT a kind of `failed` (doc 33 §4.3). The bytes arrived and
+ * proved authentic; the recipient simply could not open them. Telling the user
+ * "not sent" is wrong in a way that matters — it invites a resend of something
+ * that did travel, and hides that the real repair is a session rebuild, which
+ * the app now performs automatically.
+ */
+export type MessageStatus =
+  | 'sending'
+  | 'sent'
+  | 'delivered'
+  | 'read'
+  | 'undecryptable'
+  | 'failed';
 
 export interface ChatParticipant {
   userId: string;

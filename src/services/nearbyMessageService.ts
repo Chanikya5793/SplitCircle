@@ -43,6 +43,16 @@ import {
 
 let broadcastRunning = false;
 
+/**
+ * Minimum gap before the same queued operation is re-broadcast.
+ *
+ * Gossip needs each message to reach a peer that lacks it, not to reach the
+ * same peer every few seconds. Long enough that a stalled queue stops
+ * saturating the radio, short enough that a genuinely undelivered message is
+ * retried well within a conversation.
+ */
+const MESH_REBROADCAST_COOLDOWN_MS = 60_000;
+
 /** Bounded, newest-first. Replaces the single overwritable event slot. */
 const meshEvents = new MeshEventLog();
 
@@ -291,8 +301,27 @@ export const broadcastQueuedNearbyMessages = async (): Promise<number> => {
   let totalRecipients = 0;
   try {
     const operations = await loadMeshMessageQueue();
+    const now = Date.now();
     for (const operation of operations) {
       if (!operation.wireEnvelope) continue;
+      // REBROADCAST COOLDOWN. This runs on every neighbour change and every
+      // offline send, and re-broadcasts the ENTIRE queue each time. With a
+      // queue that is not draining — a cloud relay that exhausted its retries
+      // leaves operations behind permanently, and nothing else removes them —
+      // that is the whole backlog on the air every few seconds, every entry
+      // emitting its own "handed to N phones" event. Observed on an iPhone:
+      // 102 queued messages replaying continuously.
+      //
+      // Gossip only needs each message to reach a peer that does not have it
+      // yet, and a peer that just received one does not need it again seconds
+      // later. Anything genuinely undelivered is still retried, just not at
+      // the rate of the loop that discovers it.
+      if (
+        operation.meshBroadcastAt !== undefined
+        && now - operation.meshBroadcastAt < MESH_REBROADCAST_COOLDOWN_MS
+      ) {
+        continue;
+      }
       try {
         const parsed = parseSignedMeshEnvelope(operation.wireEnvelope);
         const recipientDeviceIds = operation.recipientDeviceIds
