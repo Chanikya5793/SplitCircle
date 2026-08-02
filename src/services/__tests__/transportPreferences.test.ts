@@ -6,9 +6,12 @@
  * indistinguishable from the radio being broken, which is the invisible-failure
  * class that has cost this project days more than once.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  STORAGE_KEY,
   __resetTransportPreferences,
+  loadTransportPreferences,
   getTransportPreferences,
   isTransportEnabled,
   parseTransportPreferences,
@@ -16,7 +19,51 @@ import {
   setTransportEnabled,
 } from '../mesh/transportPreferences';
 
-beforeEach(() => __resetTransportPreferences());
+beforeEach(async () => {
+  __resetTransportPreferences();
+  await AsyncStorage.clear();
+  vi.restoreAllMocks();
+});
+
+/**
+ * The fail-open guarantee lives in `loadTransportPreferences`'s try/catch, and
+ * nothing here used to call it (doc 35). The old "FAILS OPEN" test only fed
+ * pre-parsed values into `parseTransportPreferences`, a pure function that was
+ * already safe — so a regression making the LOAD rethrow, which is where the
+ * risk actually is, would have gone completely undetected and silently disabled
+ * someone's nearby messaging with no signal anywhere.
+ */
+describe('the real load path fails open', () => {
+  it('enables everything when nothing is stored', async () => {
+    const prefs = await loadTransportPreferences();
+    expect(prefs.nearbyEnabled).toBe(true);
+    expect(prefs.disabledTransports).toEqual([]);
+  });
+
+  it('enables everything when the stored value is corrupt JSON', async () => {
+    // JSON.parse throws here, INSIDE the try — the case parseTransportPreferences
+    // can never see, because it is only reached with an already-parsed value.
+    await AsyncStorage.setItem(STORAGE_KEY, '{not json');
+    await expect(loadTransportPreferences()).resolves.toMatchObject({
+      nearbyEnabled: true,
+    });
+    expect(isTransportEnabled('ble')).toBe(true);
+  });
+
+  it('enables everything when storage itself throws', async () => {
+    vi.spyOn(AsyncStorage, 'getItem').mockRejectedValueOnce(new Error('storage unavailable'));
+    await expect(loadTransportPreferences()).resolves.toMatchObject({
+      nearbyEnabled: true,
+    });
+  });
+
+  it('still honours a VALID stored preference — fail-open must not mean ignore', async () => {
+    await setNearbyEnabled(false);
+    __resetTransportPreferences();
+    const prefs = await loadTransportPreferences();
+    expect(prefs.nearbyEnabled).toBe(false);
+  });
+});
 
 describe('defaults and failure modes', () => {
   it('is enabled by default', () => {

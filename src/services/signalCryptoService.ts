@@ -100,14 +100,18 @@ const discardIdentityOrphanedByReinstall = async (): Promise<void> => {
   try {
     if (await AsyncStorage.getItem(INSTALL_MARKER_KEY)) return;
     if (await hasSignalIdentity()) {
-      console.warn('Signal identity outlived its sessions (reinstall) — regenerating');
+      // console.error, not warn: a Release bundle drops console.warn entirely
+      // (CLAUDE.md), and this function exists specifically to repair a prior
+      // "messages appear blank, permanently" bug — if it fires, or fails, in
+      // the field that has to leave a trace.
+      console.error('Signal identity outlived its sessions (reinstall) — regenerating');
       await wipeSignalState();
       cachedSignalDeviceId = null;
       await AsyncStorage.removeItem(SIGNAL_DEVICE_ID_KEY);
     }
     await AsyncStorage.setItem(INSTALL_MARKER_KEY, '1');
   } catch (error) {
-    console.warn('Reinstall identity check failed', error);
+    console.error('Reinstall identity check failed', error);
   }
 };
 

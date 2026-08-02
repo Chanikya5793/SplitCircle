@@ -689,7 +689,10 @@ const attachQueueListener = (
 
     const payload = parseQueuePayload(raw);
     if (!payload) {
-      console.warn('⚠️ Invalid queue message payload, skipping:', messageId);
+      // console.error, not warn (CLAUDE.md): dropping an incoming message here
+      // leaves no other trace anywhere — functionally identical, from the
+      // user's side, to the message simply never arriving.
+      console.error('⚠️ Invalid queue message payload, skipping:', messageId);
       return;
     }
 
@@ -1154,7 +1157,7 @@ export const listenForReceipts = (
     receiptsRef,
     processReceiptSnapshot,
     (error: Error) => {
-      console.warn('⚠️ Receipt listener (added) cancelled:', error);
+      console.error('⚠️ Receipt listener (added) cancelled:', error);
       onError?.(error);
     }
   );
@@ -1162,7 +1165,7 @@ export const listenForReceipts = (
     receiptsRef,
     processReceiptSnapshot,
     (error: Error) => {
-      console.warn('⚠️ Receipt listener (changed) cancelled:', error);
+      console.error('⚠️ Receipt listener (changed) cancelled:', error);
       onError?.(error);
     }
   );

@@ -193,13 +193,24 @@ export const NearbyMeshScreen = () => {
                     {TRANSPORT_LABEL[transport.id] ?? transport.id.toUpperCase()}
                   </Text>
                   <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
+                    {/* The switch shows the PREFERENCE; this line shows what
+                        the hardware is actually doing. When they disagree the
+                        copy has to say so, or the row reads as two
+                        contradictory signals — a Switch sitting ON directly
+                        above the words "Unavailable on this device" (doc 35).
+                        MPC is filtered out on Android above, so an unavailable
+                        transport here is always something that could change:
+                        a radio switched off, a permission not granted, or no
+                        network. */}
                     {!prefs.nearbyEnabled
                       ? 'Off — nearby messaging is disabled'
                       : !enabled
                         ? 'Off'
                         : transport.available
                           ? `${transport.neighbourCount} connected`
-                          : 'Unavailable on this device'}
+                          : transport.id === 'lan'
+                            ? 'On, but not running — no local network'
+                            : 'On, but not running — check the radio and app permissions'}
                   </Text>
                 </View>
                 <Switch

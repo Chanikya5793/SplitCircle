@@ -98,9 +98,16 @@ describe('router frame', () => {
 });
 
 describe('router: flood, dedup, TTL', () => {
-  it('marks its OWN message seen so an echo cannot be re-flooded', async () => {
+  it('marks its OWN message seen so a RELAYED echo cannot be re-flooded', async () => {
     // Otherwise the first echo of our own broadcast passes dedup and we
     // amplify our own traffic.
+    //
+    // origin: 'B' deliberately — this is the echo as REBROADCAST BY A PEER, so
+    // the `self-origin` check does not apply and what is under test is that
+    // `originate` recorded the id in the seen set. The separate case below
+    // covers `self-origin` itself, which fires earlier and would otherwise mask
+    // this branch entirely (doc 35 flagged this test as covering neither; in
+    // fact it covers exactly one of the two, and the other was missing).
     const { router } = makeRouter({ localNodeId: 'A', neighbours: ['B'] });
     await router.originate({
       msgId: 'm1', payload: 'p', dest: BROADCAST_DEST, payloadClass: 'text',
@@ -109,6 +116,21 @@ describe('router: flood, dedup, TTL', () => {
       msgId: 'm1', ttl: 3, payloadClass: 'text', origin: 'B', dest: BROADCAST_DEST, payload: 'p',
     });
     expect(await router.accept(echo, 'B')).toEqual({ action: 'drop', reason: 'duplicate' });
+  });
+
+  it('drops a frame it originated even after the id has aged out of the seen set', async () => {
+    // The reason `self-origin` is a SEPARATE guard and not redundant with
+    // dedup. SeenSet is capacity-bounded and LRU-evicted, so under load a
+    // node's own message id ages out — and from then on `self-origin` is the
+    // only thing standing between a replayed broadcast of our own traffic and
+    // us re-flooding it. Simulated here by never originating through this
+    // router at all, which is precisely the post-eviction state: a frame whose
+    // origin is us, whose id we have no memory of.
+    const { router } = makeRouter({ localNodeId: 'A', neighbours: ['B'] });
+    const replay = encodeRouterFrame({
+      msgId: 'never-seen', ttl: 3, payloadClass: 'text', origin: 'A', dest: BROADCAST_DEST, payload: 'p',
+    });
+    expect(await router.accept(replay, 'B')).toEqual({ action: 'drop', reason: 'self-origin' });
   });
 
   it('drops a second copy of the same message id', async () => {

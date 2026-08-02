@@ -118,6 +118,10 @@ const MAX_ZERO_HISTORY_REQUESTS_PER_PASS = 3;
  * Long enough that an optimistic-write echo cannot drive a retry storm, short
  * enough that a genuinely transient failure still resolves within a session.
  */
+/** Re-subscribe backoff for a cancelled gap-request listener. */
+const LISTENER_RETRY_BASE_MS = 1_000;
+const LISTENER_RETRY_MAX_MS = 60_000;
+
 const CLAIM_COOLDOWN_MS = 30_000;
 
 /** Bucket the backfill window to this, so repeat passes compute the same value. */
@@ -191,7 +195,7 @@ const seedOutstanding = async (userId: string, ownDeviceId: string): Promise<voi
     });
   } catch (error) {
     // Non-fatal: a failed seed only costs a redundant write later.
-    console.warn('Gap-request seed failed', error);
+    console.error('Gap-request seed failed', error);
   }
 };
 
@@ -239,7 +243,7 @@ export const claimGapRequest = async (
     );
     return result.committed && result.snapshot.val() === ownDeviceId;
   } catch (error) {
-    console.warn('Gap-request claim failed', error);
+    console.error('Gap-request claim failed', error);
     return false;
   }
 };
@@ -256,7 +260,7 @@ export const releaseGapRequestClaim = async (
   try {
     await set(ref(rtdb, `${GAP_ROOT}/${ownerUserId}/${requestId}/claimedBy`), null);
   } catch (error) {
-    console.warn('Gap-request release failed', error);
+    console.error('Gap-request release failed', error);
   }
 };
 
@@ -306,19 +310,62 @@ export const subscribeToGapRequests = (
     onRequest({ requestId, chatId, sinceTimestamp, requesterDeviceId });
   };
 
-  const onError = (error: Error): void => {
-    console.warn('Gap-request listener cancelled', error);
+  // A CANCELLED LISTENER MUST RE-SUBSCRIBE (doc 35).
+  //
+  // Firebase cancels a child listener on a rules failure or a transient auth
+  // hiccup and never retries by itself. Without this, one cancellation meant
+  // this device stopped seeing EVERY other device's gap-fill requests for the
+  // rest of the session — silently, and on the one path whose entire purpose is
+  // repairing sync gaps. The structurally identical receipt listener in
+  // ChatContext already re-subscribes; this one simply never learned to.
+  //
+  // Backoff, not a fixed interval: a rules failure is permanent for this
+  // session, and a tight retry against it would be another log-saturating storm
+  // like the claim loop above.
+  let disposed = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryDelayMs = LISTENER_RETRY_BASE_MS;
+  let unsubscribeAdded: (() => void) | null = null;
+  let unsubscribeChanged: (() => void) | null = null;
+
+  const detach = (): void => {
+    unsubscribeAdded?.();
+    unsubscribeChanged?.();
+    unsubscribeAdded = null;
+    unsubscribeChanged = null;
   };
 
-  // Both events: `added` catches requests already present when we come online
-  // (the common case — the requester wrote it while we were closed), `changed`
-  // catches a released claim or an advanced watermark on an existing node.
-  const unsubscribeAdded = onChildAdded(rootRef, handle, onError);
-  const unsubscribeChanged = onChildChanged(rootRef, handle, onError);
+  const attach = (): void => {
+    if (disposed) return;
+    // Both events: `added` catches requests already present when we come online
+    // (the common case — the requester wrote it while we were closed),
+    // `changed` catches a released claim or an advanced watermark on an
+    // existing node.
+    unsubscribeAdded = onChildAdded(rootRef, handle, onError);
+    unsubscribeChanged = onChildChanged(rootRef, handle, onError);
+  };
+
+  function onError(error: Error): void {
+    // console.error, not warn: a Release bundle drops console.warn entirely
+    // (CLAUDE.md), and this is exactly the invisible sync failure doc 34 exists
+    // to make diagnosable.
+    console.error('⚠️ Gap-request listener cancelled; re-subscribing', error);
+    if (disposed || retryTimer) return;
+    detach();
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      retryDelayMs = Math.min(retryDelayMs * 2, LISTENER_RETRY_MAX_MS);
+      attach();
+    }, retryDelayMs);
+  }
+
+  attach();
 
   return () => {
-    unsubscribeAdded();
-    unsubscribeChanged();
+    disposed = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = null;
+    detach();
   };
 };
 
@@ -365,7 +412,7 @@ export const answerGapRequest = async (
         return sent;
       }
     } catch (error) {
-      console.warn('Gap-fill batch failed, falling back to per-message replay', error);
+      console.error('Gap-fill batch failed, falling back to per-message replay', error);
     }
   }
 
@@ -375,7 +422,7 @@ export const answerGapRequest = async (
       if (await queueGapFillMessage(ownerUserId, message, isGroupChat)) queued++;
     } catch (error) {
       // One message failing must not abandon the rest of the gap.
-      console.warn('Gap-fill replay failed for message', message.id, error);
+      console.error('Gap-fill replay failed for message', message.id, error);
     }
   }
 
@@ -455,7 +502,7 @@ export const checkForGapsAndRequestFill = async (
           if (!requestFirstSeenAt.has(chatId)) requestFirstSeenAt.set(chatId, Date.now());
           zeroHistoryRequests += 1;
         } catch (error) {
-          console.warn('Zero-history backfill request failed', chatId, error);
+          console.error('Zero-history backfill request failed', chatId, error);
         }
         continue;
       }
@@ -469,7 +516,7 @@ export const checkForGapsAndRequestFill = async (
           requestedWatermarks.set(chatId, localLatest);
           if (!requestFirstSeenAt.has(chatId)) requestFirstSeenAt.set(chatId, Date.now());
         } catch (error) {
-          console.warn('Gap-fill request failed', chatId, error);
+          console.error('Gap-fill request failed', chatId, error);
         }
       } else if (requestedWatermarks.has(chatId)) {
         try {
@@ -477,7 +524,7 @@ export const checkForGapsAndRequestFill = async (
           requestedWatermarks.delete(chatId);
           requestFirstSeenAt.delete(chatId);
         } catch (error) {
-          console.warn('Gap-fill clear failed', chatId, error);
+          console.error('Gap-fill clear failed', chatId, error);
         }
       }
     }

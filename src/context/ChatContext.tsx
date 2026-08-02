@@ -1343,14 +1343,28 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           // chat type (doc 32 §5a), so the copy no longer promises a DM only a
           // nearby route — that was the wording for a message that could be
           // lost outright if the phones never met again.
-          onStageChange?.(nearbyAttachment ? 'uploading' : 'complete', {
+          // A nearby transfer only actually starts when there is a wire
+          // envelope: the `if (wireEnvelope)` branch above is the sole caller of
+          // broadcastQueuedNearbyMessages, and without it the staged attachment
+          // was just discarded. So both of these must test BOTH (doc 35).
+          const nearbyTransferStarted = Boolean(wireEnvelope && nearbyAttachment);
+          onStageChange?.(nearbyTransferStarted ? 'uploading' : 'complete', {
             message: wireEnvelope
               ? nearbyAttachment
                 ? 'Sending nearby; queued for cloud sync.'
                 : 'Saved nearby and queued for cloud sync.'
               : 'Saved locally and queued for cloud sync.',
           });
-          progressOutlivesSend = Boolean(nearbyAttachment);
+          // Was `Boolean(nearbyAttachment)`, which is built whenever mediaUri is
+          // present — independent of whether the envelope build succeeded. On an
+          // offline media send with no nearby session (the ordinary case: no
+          // paired device in range) the build fails, its error is swallowed,
+          // wireEnvelope stays undefined and no transfer ever starts — so
+          // nothing would ever call clearSendProgress for this message, while
+          // this flag told the `finally` not to clear it either. The ring read
+          // "Uploading…" forever, including long after the message was
+          // delivered fine over cloud relay.
+          progressOutlivesSend = nearbyTransferStarted;
           return;
         }
 

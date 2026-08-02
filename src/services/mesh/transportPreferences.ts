@@ -18,7 +18,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { TransportId } from './transport';
 
-const STORAGE_KEY = 'splitcircle.mesh.transportPrefs.v1';
+/**
+ * Exported for the fail-open test, which must write genuinely corrupt bytes to
+ * the REAL key — a test that guesses the key passes vacuously, having written
+ * nothing the loader will ever read.
+ */
+export const STORAGE_KEY = 'splitcircle.mesh.transportPrefs.v1';
 
 export interface TransportPreferences {
   /** Master switch. Off disables every transport regardless of the rest. */
