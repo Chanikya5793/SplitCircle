@@ -214,6 +214,33 @@ export const requestGapFill = async (
   });
 };
 
+/**
+ * Re-raises a gap request from where a TRUNCATED batch stopped (doc 35).
+ *
+ * Not just `requestGapFill`. `requestedWatermarks` is the in-memory record of
+ * what this device is still waiting for, and `subscribeToSyncBatches` validates
+ * every arriving batch against it via `outstandingRequestFor` +
+ * `isBatchForRequest`, which requires `body.since <= request.sinceTimestamp`.
+ * Writing the RTDB node alone would leave the watermark at the ORIGINAL, earlier
+ * timestamp — so the continuation batch, whose `since` is later by definition,
+ * would fail that check and be discarded on arrival. The continuation would look
+ * wired and silently do nothing, which is the exact defect it exists to fix.
+ *
+ * `requestFirstSeenAt` is deliberately NOT reset: it measures how long this chat
+ * has been un-synced overall, and a chat being served in slices has not started
+ * over.
+ */
+export const requestGapContinuation = async (
+  ownerUserId: string,
+  chatId: string,
+  sinceTimestamp: number,
+  requesterDeviceId: string,
+): Promise<void> => {
+  await requestGapFill(ownerUserId, chatId, sinceTimestamp, requesterDeviceId);
+  requestedWatermarks.set(chatId, sinceTimestamp);
+  if (!requestFirstSeenAt.has(chatId)) requestFirstSeenAt.set(chatId, Date.now());
+};
+
 export const clearGapRequest = async (
   ownerUserId: string,
   chatId: string,

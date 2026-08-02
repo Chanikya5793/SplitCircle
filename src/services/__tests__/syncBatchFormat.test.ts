@@ -16,6 +16,7 @@ import {
   parseSyncBatchBody,
 } from '../syncBatchFormat';
 import type { ChatMessage } from '@/models';
+import type { SyncBatchBody } from '../syncBatchFormat';
 
 const msg = (id: string, createdAt: number, chatId = 'chat-1'): ChatMessage => ({
   id,
@@ -194,5 +195,40 @@ describe('sync batch key derivation', () => {
   it('round-trips a chatId ending in an underscore', () => {
     const chatId = 'direct_alice_';
     expect(decode(encode(chatId))).toBe(chatId);
+  });
+});
+
+/**
+ * A truncated batch must be chaseable (doc 35).
+ *
+ * `needsContinuation` was written, exported and unit-tested, and had zero real
+ * callers — so a responder that hit its size cap sent the first slice and the
+ * requester stopped, believing itself caught up. Nothing would have re-detected
+ * the gap either: the local watermark had advanced past the point that triggers
+ * detection. These pin the property the now-wired caller depends on.
+ */
+describe('continuation of a truncated batch', () => {
+  const body = (over: Partial<SyncBatchBody> = {}): SyncBatchBody => ({
+    v: 1,
+    chatId: 'group_abc',
+    since: 0,
+    until: 500,
+    complete: true,
+    messages: [],
+    ...over,
+  });
+
+  it('asks for more when the responder truncated', () => {
+    expect(needsContinuation(body({ complete: false, messages: [{ id: 'm' } as never] }))).toBe(true);
+  });
+
+  it('stops when the responder said it sent everything', () => {
+    expect(needsContinuation(body({ complete: true, messages: [{ id: 'm' } as never] }))).toBe(false);
+  });
+
+  it('stops on an empty truncated batch, so it cannot loop forever', () => {
+    // A batch with no messages advances nothing; re-requesting from the same
+    // `until` would produce the same empty batch indefinitely.
+    expect(needsContinuation(body({ complete: false, messages: [] }))).toBe(false);
   });
 });

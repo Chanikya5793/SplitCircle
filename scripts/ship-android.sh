@@ -61,6 +61,28 @@ bash scripts/build-libsignal-android.sh --check >/dev/null 2>&1 \
   || fail "libsignal 0.99.1 missing. Run: bash scripts/build-libsignal-android.sh"
 echo "  libsignal 0.99.1 present"
 
+# versionCode, for submit builds only (doc 35).
+#
+# Play requires a STRICTLY INCREASING versionCode for the package's lifetime and
+# rejects a re-used one outright. This path does not go through `eas build`, so
+# eas.json's autoIncrement never runs for Android — the number was a hardcoded
+# literal 1 and would have failed the second submit, whenever that came.
+#
+# Bumped only for --submit: a local APK for a test device does not need a new
+# number, and silently editing a tracked file on every debug build would be
+# noise in `git status`. The change is left UNCOMMITTED on purpose — committing
+# on the user's behalf is not this script's job.
+if [[ "$DO_SUBMIT" == true ]]; then
+  step "Bumping versionCode"
+  PROPS="$ROOT/android/gradle.properties"
+  CURRENT=$(grep -E '^splitcircle\.versionCode=' "$PROPS" | cut -d= -f2)
+  [[ -n "$CURRENT" ]] || fail "splitcircle.versionCode missing from android/gradle.properties"
+  NEXT=$((CURRENT + 1))
+  # -i '' for BSD sed (macOS); this script is macOS-only, like ship:ios.
+  sed -i '' -E "s/^splitcircle\.versionCode=.*/splitcircle.versionCode=${NEXT}/" "$PROPS"
+  echo "  versionCode ${CURRENT} -> ${NEXT} (uncommitted; commit it with the release)"
+fi
+
 step "Building ${FORMAT}"
 cd android
 if [[ "$FORMAT" == "aab" ]]; then

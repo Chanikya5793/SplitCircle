@@ -81,6 +81,13 @@ def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBu
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+// Resolved OUTSIDE the android block: inside `defaultConfig`, `findProperty`
+// resolves against the DSL object rather than the project and returns null.
+def splitCircleVersionCode =
+    (project.hasProperty('splitcircle.versionCode')
+        ? project.property('splitcircle.versionCode').toString()
+        : '1').toInteger()
+
 android {
     // SPIKE (doc 33 Phase 1): libsignal-android:0.86.5 declares that it
     // requires core library desugaring; without this the build fails at
@@ -98,7 +105,18 @@ android {
         applicationId 'com.splitcircle.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
+        // NOT a hardcoded literal (doc 35). Play requires a strictly increasing
+        // versionCode for the package's lifetime, and the sanctioned Android
+        // ship path (`npm run ship:android` -> scripts/ship-android.sh) builds
+        // with raw `./gradlew bundleRelease`, NOT `eas build` — so eas.json's
+        // `autoIncrement`/`appVersionSource: "remote"` never runs for Android
+        // and never bumped this. A literal 1 meant the second submit to Play,
+        // whenever it happened, would be rejected outright.
+        //
+        // Source of truth is `splitcircle.versionCode` in gradle.properties,
+        // which ship-android.sh increments for every --submit build. A local
+        // build without that property still works; it just gets 1.
+        versionCode splitCircleVersionCode
         versionName "0.0.5"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""

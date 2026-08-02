@@ -47,6 +47,7 @@ import {
 import { normalizeAllowedMediaMimeType } from '@/services/mediaPolicy';
 import { resealOwnedMeshOperations } from '@/services/originResealService';
 import { subscribeToSyncBatches } from '@/services/syncBatchService';
+import { needsContinuation } from '@/services/syncBatchFormat';
 import { listSignalDevices } from '@/services/signalCryptoService';
 import { getCurrentDeviceId } from '@/services/pairingService';
 import {
@@ -64,6 +65,7 @@ import {
   checkForGapsAndRequestFill,
   getOutstandingSyncGaps,
   claimGapRequest,
+  requestGapContinuation,
   subscribeToGapRequests,
 } from '@/services/syncGapService';
 import { useAuth } from '@/context/AuthContext';
@@ -868,6 +870,22 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
             await saveMessageLocally({ ...message, isFromMe: message.senderId === user.userId });
           }
           console.log(`Sync batch applied: ${body.messages.length} messages for ${body.chatId}`);
+
+          // A TRUNCATED BATCH MUST BE CHASED (doc 35). `needsContinuation` was
+          // written, exported and unit-tested, and nothing had ever called it —
+          // so a responder that hit its size cap sent the first slice and the
+          // requester simply stopped, believing itself caught up. The gap was
+          // reported repaired while the older half of the history was still
+          // missing, and nothing would have re-detected it: the local watermark
+          // had advanced past the point that triggers detection.
+          //
+          // Re-raise from `body.until`, which is how far this batch actually
+          // got. The request node is keyed by chat+device, so this OVERWRITES
+          // the outstanding request rather than accumulating one per slice.
+          if (needsContinuation(body)) {
+            await requestGapContinuation(user.userId, body.chatId, body.until, deviceId)
+              .catch((error) => console.error('⚠️ Sync batch continuation failed', error));
+          }
         },
       );
 
