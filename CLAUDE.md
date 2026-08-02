@@ -264,6 +264,18 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   already-undefined symbol, no re-scan). Verify with
   `nm -arch arm64 <binary> | grep -c " T _<prefix>"` **and** `nm -u`, plus
   `ls .app/Frameworks/`, not by the build going green.
+  **Caveat learned 2026-08-02: `nm` is BLIND on a shipped Release binary.** It
+  is stripped — the shipped `.ipa`'s app binary had 558 defined text symbols in
+  total — so a Swift/Expo module's class symbols are absent whether or not the
+  module linked. Grepping the shipped binary for `SplitCircleBleModule` returned
+  0, which reads as "the pod did not link"; the identical grep for
+  `SplitCircleMesh`, the transport that has demonstrably worked for weeks, ALSO
+  returned 0. The valid check for an Expo module is
+  `strings -a <binary> | grep -x <ModuleName>` — the registration name survives
+  stripping because it is the exact string `requireOptionalNativeModule()`
+  resolves against — plus the Info.plist keys that module needs
+  (`plutil -extract`). Keep the `nm` check for C archives like LibSignalClient,
+  and run it against the archive's pre-strip binary, not the `.ipa` payload.
 - **A Cloud Function that exists in `functions/src/` is NOT deployed, and
   nothing in the normal workflow tells you.** `npm run ship:ios` builds and
   submits the APP only — it never touches Firebase (`ship:ios:full` does).
