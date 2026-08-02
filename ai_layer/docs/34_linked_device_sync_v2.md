@@ -3,7 +3,10 @@
 **Status: Two live failures diagnosed from production data 2026-07-31.
 Decisions LOCKED. Steps 1 and 2 BUILT the same day (§7) — NOT device-verified.
 Step 4 (batching) BUILT the same day, flag-gated, NOT device-verified. Step 3
-(measurement) needs the Firebase console and is the user's to take. Steps 5-6
+(measurement) is PARTIALLY DONE 2026-08-02 — see §1 for a real
+invocations-per-message figure taken from the function logs; the RTDB-bandwidth
+and Firestore-read halves still need the Firebase console and are the user's to
+take. Steps 5-6
 (transport spike) not started.**
 
 Supersedes nothing. Doc 31 §8.1 (`syncGapService`) and doc 31 Phase 6
@@ -107,12 +110,43 @@ gap of *M* messages across *D* linked devices that is:
 Ten days of an active chat across three devices is thousands of writes to move
 history the devices could have handed each other once.
 
-**Not yet measured.** Before building, read the Firebase console's usage
-breakdown (RTDB bandwidth vs Firestore reads vs function invocations) and record
-it here. Two things distort any reading taken before 2026-07-31: the origin-reseal
-regression fixed in `42b90d2` was doing a Firestore device read per participant
-**per message**, and `listSignalDevices` defaults to `network-preferred`. Design
-decisions should not be anchored to a number that a since-fixed bug produced.
+**PARTIALLY MEASURED 2026-08-02.** The function-invocation half is now a real
+number, taken from `firebase functions:log --only fanOutQueuedMessage` (the last
+400 log lines, 198 of them structured), over a **148-minute window on
+2026-08-01** — i.e. post-`42b90d2`, so the origin-reseal regression is not
+distorting it.
+
+| Measure | Value |
+|---|---|
+| Fan-out invocations in the window | 198 |
+| Distinct messages | 48 |
+| **Invocations per message** | **4.12** |
+| Per-device encryptions + RTDB writes implied | 187 (**3.90 per message**) |
+| `deviceCount` distribution | 1 device × 73, 2 × 30, 3 × 18 |
+| Self-sync mirrors (`skippedOrigin`) | 30 |
+| Distinct recipients | 13 |
+
+77 of the 198 entries are `"no confirmed paired devices, leaving legacy node"` —
+recipients with no paired device at all, which cost an invocation and produce no
+per-device write. Excluding them, the fan-out path costs **~4 encryptions and
+~4 RTDB writes per message**, before the matching deletes.
+
+**What this does and does not settle.** It confirms the §1 arithmetic on a real
+account: cost scales with *devices × messages*, and a three-device account is
+already paying ~4× per message for LIVE traffic — before any gap-fill replay,
+which multiplies the same shape by the size of the gap. That is the case for
+batching (step 4), and it is now backed by a measurement rather than an estimate.
+
+It does NOT settle the cost COMPARISON that steps 5–6 depend on, for two
+reasons. First, this counts invocations, not bytes or dollars: RTDB bandwidth
+and Firestore reads are not in the logs, and the Firebase console is the only
+place those exist. Second, 148 minutes of one developer's testing is not a usage
+profile — the recipient distribution (48/44/27/11/11) is obviously test traffic.
+
+**Still owed, and only the account owner can do it:** the console's usage
+breakdown for RTDB bandwidth, Firestore reads and total function invocations
+over a representative period. Firebase Console → Usage and billing → Details.
+Record it in this table alongside the invocation numbers.
 
 ---
 
@@ -239,7 +273,7 @@ actually reported is fixed first.
 |---|---|---|
 | 1 | Close the coverage hole (§3.6): bounded backfill request when local count is 0 | **BUILT 2026-07-31.** Device-verify: the Pixel raises a request after a reinstall |
 | 2 | Surface sync state (§3.5) | **BUILT 2026-07-31.** Device-verify: a stuck sync is visible instead of silent |
-| 3 | Measure Firebase usage (§1), record it here | A real number, post-`42b90d2` |
+| 3 | Measure Firebase usage (§1), record it here | PARTIAL 2026-08-02 — invocations measured (4.12/message, post-`42b90d2`); RTDB bandwidth + Firestore reads still need the console |
 | 4 | Batch the response (§3.1, §3.2) over the existing RTDB path | **BUILT 2026-07-31**, flag-gated. Device-verify: one write replaces M×D |
 | 5 | Spike the WebRTC data channel (§3.4.1) | Two devices move a blob with no Firebase payload |
 | 6 | Switch transport if the spike passes; keep 4 as fallback | Cost drop measured against step 3 |
