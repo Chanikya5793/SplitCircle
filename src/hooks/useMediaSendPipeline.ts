@@ -30,10 +30,6 @@ interface UseMediaSendPipelineOptions {
   chatId: string;
   groupId?: string;
   participants: ChatParticipant[];
-  runSend: (
-    fn: (requestId: string) => Promise<void>,
-    opts?: { key?: string },
-  ) => Promise<void>;
   sendMessage: (params: {
     chatId: string;
     requestId: string;
@@ -104,7 +100,6 @@ export const useMediaSendPipeline = ({
   chatId,
   groupId,
   participants,
-  runSend,
   sendMessage,
 }: UseMediaSendPipelineOptions) => {
   const [failedItems, setFailedItems] = useState<FailedSendItem[]>([]);
@@ -325,11 +320,13 @@ export const useMediaSendPipeline = ({
       };
     }
 
-    // Direct, NOT via runSend — same defect as the text path.
+    // Direct, and this hook no longer ACCEPTS a `runSend` at all (doc 35).
     // `usePreventDoubleSubmit` returns the in-flight promise without running a
     // concurrent task, so a second media item sent while the first was still
     // uploading was silently discarded. This pipeline exists precisely to send
     // several items, so de-duplicating them is the opposite of what it needs.
+    // The prop was left plumbed in but unused after that fix, which is an
+    // invitation to reintroduce the bug; removing it makes that impossible.
     await sendMessage({
       chatId,
       requestId: job.requestId,
@@ -342,7 +339,7 @@ export const useMediaSendPipeline = ({
         ? (prepared.mediaMetadata as any)
         : undefined,
     });
-  }, [chatId, groupId, participants, runSend, sendMessage]);
+  }, [chatId, groupId, participants, sendMessage]);
 
   const buildFailedItem = useCallback((
     payload: MediaPreviewSendItem,

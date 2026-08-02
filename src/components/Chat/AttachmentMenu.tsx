@@ -621,7 +621,19 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
           break;
       }
     }, {
-      key: 'chat-attachment-selection',
+      // NO `key` (doc 35). A key here was a MODULE-GLOBAL string shared by every
+      // AttachmentMenu in the app, and `usePreventDoubleSubmit` only releases it
+      // in the task promise's `.finally()`. A picker that never settles — which
+      // is a documented failure mode, not a hypothetical: expo-image-picker
+      // hangs materialising a large iCloud video (CLAUDE.md) — therefore wedged
+      // the key permanently, and from then on EVERY attachment tap in EVERY
+      // chat returned that dead promise without running, silently. Unmounting
+      // the sheet did not clear it either.
+      //
+      // The hook's per-instance `loadingRef` still stops a genuine double-tap,
+      // and it self-heals: a remounted sheet gets a fresh ref, so the worst
+      // case is one stuck sheet rather than a permanently broken app.
+      //
       // NO global overlay — it renders behind this Modal and is invisible.
       // Instead we show inline feedback inside the sheet itself.
       overlay: false,

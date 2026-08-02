@@ -70,4 +70,44 @@ describe('the hazard this pattern creates', () => {
 
     expect(ran.sort()).toEqual(['message-1', 'message-2']);
   });
+
+  it('WEDGES A KEY FOREVER when a task never settles', async () => {
+    // The map entry is released only in the task promise's `.finally()`, so a
+    // task that never resolves never releases it. Nothing times it out, and
+    // unmounting the component does not clear it — the map is module-global.
+    //
+    // `AttachmentMenu` used the constant key 'chat-attachment-selection', so
+    // one hung picker would have killed attachment sending in EVERY chat for
+    // the rest of the app's life, silently: subsequent taps get a promise that
+    // never settles, so even a caller that awaits and catches sees nothing.
+    // Not hypothetical — expo-image-picker hangs materialising a large iCloud
+    // video (CLAUDE.md), which is the exact shape of a task that never settles.
+    const run = makeGuardedRunner();
+    const ran: string[] = [];
+
+    void run('stuck-key', () => new Promise<void>(() => { /* never settles */ }));
+    // Give the first call a turn, so it is genuinely in flight.
+    await Promise.resolve();
+
+    let secondSettled = false;
+    void run('stuck-key', async () => { ran.push('second'); }).then(() => {
+      secondSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(ran).toEqual([]);
+    // The worst part: the caller cannot even detect it.
+    expect(secondSettled).toBe(false);
+  });
+
+  it('is safe for the same key once the first call has settled', async () => {
+    // The guard is not wrong in general — this is the case it exists for, and
+    // the reason the fix is "do not key an action the user repeats" rather than
+    // "delete the hook".
+    const run = makeGuardedRunner();
+    const ran: string[] = [];
+    await run('form-submit', async () => { ran.push('first'); });
+    await run('form-submit', async () => { ran.push('second'); });
+    expect(ran).toEqual(['first', 'second']);
+  });
 });

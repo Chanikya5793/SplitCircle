@@ -43,7 +43,6 @@ import { useTheme } from '@/context/ThemeContext';
 import { useChatSearch } from '@/hooks/useChatSearch';
 import { useMediaSendPipeline } from '@/hooks/useMediaSendPipeline';
 import { useMentionAutocomplete } from '@/hooks/useMentionAutocomplete';
-import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import { v4 as uuid } from 'uuid';
 import { useSelectionMode } from '@/hooks/useSelectionMode';
 import { useTypingPresence } from '@/hooks/useTypingPresence';
@@ -474,7 +473,6 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   const [undoDelete, setUndoDelete] = useState<{ messageIds: string[] } | null>(null);
   const markReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const markReadInFlightRef = useRef(false);
-  const { run: runSend } = usePreventDoubleSubmit();
   const mediaPipelineLoading = useLoadingState(`chat-media:${thread.chatId}`);
 
   const participantMap = useMemo(() => {
@@ -568,7 +566,6 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     chatId: thread.chatId,
     groupId: thread.groupId,
     participants: thread.participants,
-    runSend,
     sendMessage,
   });
 
@@ -899,7 +896,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
         alert(error instanceof Error ? error.message : 'Failed to send message');
       }
     })();
-  }, [text, replyingTo, editingMessage, pendingMentionUserIds, thread.participants, thread.chatId, thread.groupId, runSend, sendMessage, setTyping]);
+  }, [text, replyingTo, editingMessage, pendingMentionUserIds, thread.participants, thread.chatId, thread.groupId, sendMessage, setTyping]);
 
   // Handle swipe reply from message bubble
   const handleSwipeReply = (message: ChatMessage) => {
@@ -1302,7 +1299,13 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
           'Someone',
         );
         const baseHopCount = source.forwardedFrom?.hopCount ?? 0;
-        await runSend(async (requestId) => {
+        // NOT `runSend`. Forwarding N messages to M chats is N*M deliberate
+        // sends; the guard's job is stopping ONE accidental repeat. Its key
+        // here was salted with Date.now(), which papered over the per-key
+        // collision but left the hook's `loadingRef` branch — that one drops
+        // ANY concurrent call on this hook instance regardless of key, so a
+        // forward overlapping a location send silently discarded one of them.
+        await (async (requestId: string) => {
           await sendMessage({
             chatId: target.chatId,
             requestId,
@@ -1317,13 +1320,13 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               hopCount: baseHopCount + 1,
             },
           });
-        }, { key: `chat-forward-${target.chatId}-${Date.now()}` }).catch((error) => {
+        })(uuid()).catch((error) => {
           console.error('Forward failed:', error);
         });
       }
     }
     successHaptic();
-  }, [forwardSource, runSend, sendMessage, thread.participants]);
+  }, [forwardSource, sendMessage, thread.participants]);
 
   const handleReplyPress = useCallback((messageId: string) => {
     const rowIdx = messageIdToRowIndex.get(messageId);
@@ -1475,19 +1478,24 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
     location: { latitude: number; longitude: number; address?: string },
     caption?: string,
   ) => {
+    // NOT `runSend` — same reason as `handleSend` above (doc 35). The key was
+    // `chat-location-<chatId>`, constant for the whole conversation, so sending
+    // a second pin while the first was still in flight returned the in-flight
+    // promise WITHOUT running the new task: no bubble, no error, and this
+    // function's own catch never fires because the discarded call resolves
+    // successfully. Sharing a location twice is not a double-tap, it is two
+    // locations.
     try {
-      await runSend(async (requestId) => {
-        await sendMessage({
-          chatId: thread.chatId,
-          requestId,
-          // The emoji placeholder is what MessageBubble suppresses, so a real
-          // note renders as the bubble's text while a bare pin stays clean.
-          content: caption || '📍 Location',
-          type: 'location',
-          groupId: thread.groupId,
-          location,
-        });
-      }, { key: `chat-location-${thread.chatId}` });
+      await sendMessage({
+        chatId: thread.chatId,
+        requestId: uuid(),
+        // The emoji placeholder is what MessageBubble suppresses, so a real
+        // note renders as the bubble's text while a bare pin stays clean.
+        content: caption || '📍 Location',
+        type: 'location',
+        groupId: thread.groupId,
+        location,
+      });
     } catch (error) {
       console.error('Failed to send location:', error);
       alert('Failed to send location');
