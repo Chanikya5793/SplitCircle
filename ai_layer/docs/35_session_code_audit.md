@@ -704,7 +704,14 @@ TIME so the reasoning stays checkable against what was actually found.
   has carried a byte. The three critical fixes are what make that test possible
   for the first time on Android; they do not substitute for running it. Doc 33
   §9.6 (BLE) and the LAN equivalent are still un-run.
-- **The nearby-in-chat UI revamp**, requested and not started.
+- ~~**The nearby-in-chat UI revamp**~~ — DONE 2026-08-02 (`a27dfb8`, `bab8dcd`).
+  It began with a bug, not a restyle: `onNeighbourChange` fired side effects only
+  and never published, so the user-visible snapshot was fed exclusively by an
+  MPC-only native event. On Android every nearby surface therefore reported zero
+  peers and "Looking for known contacts" while BLE or LAN was connected and
+  carrying messages — which is what "both the devices are saying the same" meant.
+  A 27th finding, missed by all nine audit dimensions, and one no restyle could
+  have fixed.
 - **`syncBatchFormat`'s `until`/`complete` cross-validation** (Medium) — the
   claims are still not checked against the actual messages. Deliberately left:
   the failure is a responder lying about its own coverage, which the
