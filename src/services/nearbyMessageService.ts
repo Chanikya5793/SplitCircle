@@ -211,6 +211,41 @@ let nearbySnapshot = createNearbyMessagingSnapshot(
 );
 const nearbyStateListeners = new Set<() => void>();
 
+/**
+ * Records which nodes one transport can currently reach.
+ *
+ * Kept per transport rather than as one merged list so a transport going quiet
+ * clears only its own peers — a single list would need to know which entries
+ * came from where in order to remove them, and would either strand dead peers
+ * or wipe live ones.
+ */
+const publishTransportPeers = (id: TransportId, nodeIds: string[]): void => {
+  const previous = nearbySnapshot.transportPeers?.[id] ?? [];
+  const unchanged =
+    previous.length === nodeIds.length && previous.every((nodeId) => nodeIds.includes(nodeId));
+  if (unchanged) return;
+
+  const transportPeers = {
+    ...(nearbySnapshot.transportPeers ?? { mpc: [], ble: [], lan: [] }),
+    [id]: nodeIds,
+  };
+  const reachable = new Set(Object.values(transportPeers).flat());
+
+  // A transport reporting peers means nearby is genuinely working, whatever the
+  // MPC-driven status last said. Only PROMOTE from here — an empty BLE list must
+  // not overwrite a live MPC 'connected'.
+  const status = reachable.size > 0 && nearbySnapshot.status !== 'connected'
+    ? 'connected'
+    : nearbySnapshot.status;
+
+  publishNearbySnapshot({
+    ...nearbySnapshot,
+    transportPeers,
+    status,
+    lastChangedAt: Date.now(),
+  });
+};
+
 const publishNearbySnapshot = (next: NearbyMessagingSnapshot): void => {
   nearbySnapshot = next;
   nearbyStateListeners.forEach((listener) => listener());
@@ -475,6 +510,18 @@ export const startNearbyMessaging = async (
   // defect where a newly reachable peer's queued messages sat unsent.
   const peerSubscriptions = activeTransports.map((transport) =>
     transport.onNeighbourChange((neighbours) => {
+      // PUBLISH IT. This callback previously fired side effects only, so the
+      // user-visible snapshot was fed exclusively by
+      // `addNearbyStateChangedListener` — an MPC-only native event. On Android
+      // MPC never emits, so every nearby surface in the app reported zero peers
+      // and "Looking for known contacts" while BLE or LAN was actively
+      // connected and carrying messages. Two phones both showing the same
+      // never-changing status, with no way to tell a working mesh from a dead
+      // one, is exactly that.
+      publishTransportPeers(
+        transport.id,
+        neighbours.filter((neighbour) => neighbour.connected).map((neighbour) => neighbour.nodeId),
+      );
       if (neighbours.length > 0) {
         void announceIncomingNearbyAttachmentProgress();
         void broadcastQueuedNearbyMessages();

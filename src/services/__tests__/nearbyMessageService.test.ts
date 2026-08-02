@@ -192,3 +192,11 @@ describe('transport preferences drive the transport lifecycle', () => {
     stop();
   });
 });
+
+// The "a transport's peers reach the snapshot" case deliberately lives in
+// nearbyTransportVisibility.test.ts, not here. In this file only MPC is
+// registered, and MPC's neighbour changes ALSO flow through
+// `applyNearbyMeshState`, which sets `connectedDeviceIds` — so a test written
+// here passes whether or not the publication exists, which is worse than no
+// test. That file enables the BLE flag so a transport MPC cannot cover for is
+// doing the reporting; both of its cases were confirmed to fail without the fix.

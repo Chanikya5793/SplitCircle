@@ -5,7 +5,11 @@ import type {
   NearbyMessagingSnapshot,
   NearbyPeerPresentation,
 } from '@/services/nearbyMessagingState';
-import { getNearbyPeerPresentations } from '@/services/nearbyMessagingState';
+import {
+  getNearbyPeerPresentations,
+  liveTransports,
+  reachableNodeIds,
+} from '@/services/nearbyMessagingState';
 import { testNearbyPeerConnection } from '@/services/nearbyMessageService';
 import { lightHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -39,10 +43,17 @@ const headlineFor = (
       detail: 'Check the requirements below, then scan again.',
     };
   }
-  if (snapshot.connectedPeerCount > 0) {
+  // Reachability across ALL transports, not `connectedPeerCount` — that counter
+  // is written only by MultipeerConnectivity's native state event, so on Android
+  // it stays 0 with a live Bluetooth or Wi-Fi link and this arena sat on
+  // "Looking for known contacts…" forever while messages were flowing.
+  const reachable = reachableNodeIds(snapshot);
+  if (reachable.length > 0) {
+    const names: Record<string, string> = { mpc: 'Apple Direct', lan: 'Wi-Fi', ble: 'Bluetooth' };
+    const live = liveTransports(snapshot).map((id) => names[id]);
     return {
       title: 'Known contact connected',
-      detail: `${snapshot.connectedPeerCount} recognized ${snapshot.connectedPeerCount === 1 ? 'phone is' : 'phones are'} ready. Every message is verified separately.`,
+      detail: `${reachable.length} recognized ${reachable.length === 1 ? 'phone is' : 'phones are'} ready${live.length > 0 ? ` over ${live.join(' and ')}` : ''}. Every message is verified separately.`,
     };
   }
   if (snapshot.connectingPeerCount > 0) {

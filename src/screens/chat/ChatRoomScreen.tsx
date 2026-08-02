@@ -31,6 +31,7 @@ import { MessageBubble } from '@/components/MessageBubble';
 import { ROUTES } from '@/constants';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { useNearbyMessaging } from '@/hooks/useNearbyMessaging';
+import { liveTransports, reachableNodeIds } from '@/services/nearbyMessagingState';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { OFFLINE_BANNER_ROW_HEIGHT } from '@/components/OfflineBanner';
 import { resolveMoneyInChat } from '@/models/group';
@@ -1589,9 +1590,22 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
    */
   const offlineBannerOffset = isOnline ? 0 : OFFLINE_BANNER_ROW_HEIGHT;
 
+  // Peers reachable over ANY transport, not just MultipeerConnectivity's
+  // status field — that field is fed by an iOS-only native event, so on Android
+  // it never leaves its initial value however many BLE or LAN peers are live.
+  const nearbyReachable = reachableNodeIds(nearbySnapshot);
+
+  // Shown whenever there is something TRUE and USEFUL to say. Previously this
+  // required `!isOnline || connected || error`, so a live nearby link on an
+  // online phone was completely invisible — the user had no way to know a
+  // message went straight to the person next to them rather than via the
+  // internet, and no way to notice the link at all until they went offline.
   const showNearbyStatusPill =
     !chatShielded &&
-    (!isOnline || nearbySnapshot.status === 'connected' || nearbySnapshot.status === 'error');
+    (nearbyReachable.length > 0
+      || !isOnline
+      || nearbySnapshot.status === 'connected'
+      || nearbySnapshot.status === 'error');
   const nearbyStatusColor =
     nearbyPresentation.tone === 'success'
       ? theme.colors.success
@@ -1600,14 +1614,25 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
         : nearbyPresentation.tone === 'accent'
           ? theme.colors.primary
           : theme.colors.onSurfaceVariant;
+  // Route-specific, so the icon tells the user WHICH radio is carrying this —
+  // a generic tick left "turn Bluetooth off" looking like a random failure.
+  // Reachability first, for the same reason as `nearbyReachable` above.
   const nearbyPillIcon =
-    nearbySnapshot.status === 'connected'
-      ? 'check-circle'
-      : nearbySnapshot.status === 'error' || nearbySnapshot.status === 'unavailable'
-        ? 'alert-circle-outline'
-        : nearbySnapshot.status === 'connecting'
-          ? 'wifi-sync'
-          : 'access-point';
+    nearbyReachable.length > 0
+      ? (() => {
+        const live = liveTransports(nearbySnapshot);
+        if (live.length > 1) return 'check-circle';
+        if (live[0] === 'ble') return 'bluetooth';
+        if (live[0] === 'lan') return 'wifi';
+        return 'check-circle';
+      })()
+      : nearbySnapshot.status === 'connected'
+        ? 'check-circle'
+        : nearbySnapshot.status === 'error' || nearbySnapshot.status === 'unavailable'
+          ? 'alert-circle-outline'
+          : nearbySnapshot.status === 'connecting'
+            ? 'wifi-sync'
+            : 'access-point';
 
   const dimmedMessageId = useMemo(() => {
     if (!actionTarget) return null;
@@ -2260,10 +2285,13 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
           },
           {
             key: 'nearby',
-            label: nearbySnapshot.status === 'connected'
-              ? `Nearby messaging · ${nearbySnapshot.connectedPeerCount} connected`
+            // Reachability, not `connectedPeerCount` — that counter is only
+            // ever written by MultipeerConnectivity's native state event, so on
+            // Android it reads 0 with a live Bluetooth link.
+            label: nearbyReachable.length > 0
+              ? `Nearby messaging · ${nearbyReachable.length} connected`
               : 'Nearby messaging',
-            icon: nearbySnapshot.status === 'connected'
+            icon: nearbyReachable.length > 0
               ? 'checkmark-circle-outline'
               : 'radio-outline',
             onPress: () => setNearbySheetOpen(true),
