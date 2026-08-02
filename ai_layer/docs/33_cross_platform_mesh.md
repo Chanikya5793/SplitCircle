@@ -498,6 +498,80 @@ failure to ever meet.
 4. An untrusted device is refused by BOTH roles.
 5. Revoking trust on a live peer drops that link and leaves other links up.
 
+### 9.7 Device verification runbook (written 2026-08-02, NOT YET RUN)
+
+§9.6 says what must be shown. This says how, because the first three attempts at
+this test were wasted on the app not having started the transports at all — see
+doc 35's criticals, all three of which had to be fixed before this test could
+produce a meaningful result on Android.
+
+**Read this first: what a green result looks like, and what it does NOT.**
+`transport.isAvailable()` reports HARDWARE capability — adapter present and
+enabled — and is true whether or not `start()` was ever called. "Bluetooth:
+available, 0 connected" in Settings therefore proves nothing about the service
+running. The signal that a route is genuinely alive is a PEER COUNT, which is
+why the nearby sheet now lists one row per route with a live count.
+
+**Build.** Flags are already on in `.env` and in `eas.json`'s production
+profile, so no code change is needed:
+
+    bash scripts/ship-android.sh --install    # Pixel, over adb
+    npm run ship:ios                          # iPhone, via TestFlight
+
+Confirm the flags actually reached the bundle before testing anything — a flag
+that silently failed to inline looks exactly like a broken radio. Open the chat
+menu → Nearby messaging: a route absent from the build reads "Not included in
+this build". If Bluetooth or Wi-Fi says that, stop; the build is wrong.
+
+**Test 1 — discovery with no infrastructure (§9.6.1).**
+Both phones: Wi-Fi OFF, cellular OFF, Bluetooth ON. Same conversation open on
+both. Expect within ~30s: the in-chat pill appears reading "Nearby · 1 phone
+connected", and the sheet's Bluetooth row reads "1 phone connected". Both phones
+must show it — one-sided is a handshake failure, not a discovery failure, and
+means the identity write is not landing (doc 35's BLE staged-link fix is exactly
+about this direction).
+
+**Test 2 — the handshake is bidirectional (§9.6.2).**
+Already covered by "both phones show it" above, and worth being pedantic about:
+before doc 35, a peer entered the sendable map at identity-READ time, so one
+phone could show a peer that could not attribute anything it sent back. If only
+one side shows a peer, capture logs before changing anything.
+
+**Test 3 — a message longer than one MTU (§9.6.3).**
+Send ~2000 characters of continuous text. This is the fragmentation, ordering
+and reassembly path across two independent implementations, and BLE's ATT MTU is
+~20 bytes by default, so this is ~100 fragments. It must arrive intact and in
+order. A truncated or scrambled arrival is a framing mismatch, not a radio
+problem.
+
+**Test 4 — Wi-Fi route (Phase 5).**
+Both phones on the SAME Wi-Fi network, Bluetooth OFF. The sheet's Wi-Fi row
+should reach "1 phone connected". iOS will prompt for Local Network access on
+first scan; denying it is now DETECTED and makes the route report unavailable
+rather than silently doing nothing forever — worth testing the denial path
+deliberately once, then granting it.
+
+**Test 5 — untrusted refusal (§9.6.4) and revocation (§9.6.5).**
+A third device signed into a different account must not appear as a peer on
+either. Then revoke trust on a live peer and confirm that link drops while any
+other stays up — MultipeerConnectivity cannot evict one peer from a session, so
+this is the case where tearing down the shared session is legitimate; every
+other case must not (CLAUDE.md).
+
+**Capturing evidence.** Release JS `console.*` does NOT reach the device log
+(CLAUDE.md), so JS silence proves nothing:
+
+    # Android
+    adb logcat -s SplitCircleBle:V SplitCircleLan:V ReactNativeJS:V
+    # iOS, physical device
+    xcrun devicectl device process launch --device <udid> --console com.splitcircle.app
+
+**If nothing connects**, the order to check is: route rows say "On" on BOTH
+phones (not "Off", not "Not included"); then Android's runtime Bluetooth
+permissions in system Settings; then that both apps are FOREGROUND; then logs.
+Do not conclude "the radios do not work" from an unchanging UI — that was the
+symptom of every software bug found so far, not of a hardware limit.
+
 ## 10. Phase 4 (Router) — build log
 
 **Status 2026-07-31: BUILT, unit-tested (23 tests), and WIRED behind

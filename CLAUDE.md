@@ -370,6 +370,19 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
 - **UIScene lifecycle is mandatory** (iOS 27 kills classic lifecycle, TN3187). Cold-start
   user activities arrive in `SceneDelegate` `connectionOptions.userActivities`, not
   `application(_:continue:)`. Keep the scene manifest through Expo upgrades.
+- **Grepping a Hermes bundle for a string only works if the string is pure
+  ASCII.** Hermes stores any string containing a non-ASCII character as UTF-16,
+  so `grep`/`strings` on `index.android.bundle` reports ABSENT for a literal
+  that is demonstrably present — and typographic characters this codebase uses
+  everywhere (em dash `—`, ellipsis `…`, curly quotes) are exactly what triggers
+  it. Verifying a fresh bundle after a build, four new ASCII strings showed
+  PRESENT while three containing an em dash showed ABSENT, which reads as a
+  stale bundle and is not. Check with
+  `python3 -c "print(s.encode('utf-16-le') in open(p,'rb').read())"` before
+  concluding a change did not make it into a build. Related: a flag inlined by
+  babel (`EXPO_PUBLIC_*`) is constant-folded and generally NOT greppable at all
+  — verify those at RUNTIME (the nearby sheet's route rows say "Not included in
+  this build" for a transport whose flag is off), never by searching the bundle.
 - **patch-package**: patches/ must actually be applied — grep node_modules to verify
   after installs. Patches exist for callkeep, livekit-webrtc, bottom-tabs, expo-sqlite, RN.
 - **expo-audio**: `pause()` deactivates the shared AVAudioSession unless the player was
