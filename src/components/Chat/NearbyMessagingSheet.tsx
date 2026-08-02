@@ -3,7 +3,13 @@ import { APP_NAME } from '@/constants/appInfo';
 import { useTheme } from '@/context/ThemeContext';
 import { useNearbyMessaging } from '@/hooks/useNearbyMessaging';
 import { useNearbyPairing } from '@/hooks/useNearbyPairing';
-import { restartNearbyMessagingDiscovery } from '@/services/nearbyMessageService';
+import { reachableNodeIds } from '@/services/nearbyMessagingState';
+import { describeRoutes } from '@/services/mesh/routeStatus';
+import {
+  getMeshDiagnostics,
+  restartNearbyMessagingDiscovery,
+} from '@/services/nearbyMessageService';
+import type { MeshDiagnostics } from '@/services/mesh/diagnostics';
 import {
   cancelNearbyPairing,
   formatNearbyPairingCode,
@@ -38,6 +44,13 @@ interface NearbyMessagingSheetProps {
   chatType: 'direct' | 'group';
   onClose: () => void;
 }
+
+/** Icon per route. Kept in the view; `describeRoutes` stays free of RN types. */
+const ROUTE_ICON: Record<string, React.ComponentProps<typeof Ionicons>['name']> = {
+  mpc: 'phone-portrait-outline',
+  lan: 'wifi-outline',
+  ble: 'bluetooth-outline',
+};
 
 const Step = ({
   number,
@@ -79,6 +92,37 @@ export const NearbyMessagingSheet = ({
   const [sheetHeight, setSheetHeight] = useState(680);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>();
   const [showSetup, setShowSetup] = useState(false);
+
+  /**
+   * Polled only while the sheet is open, and only for hardware availability —
+   * the connected/not-connected answer comes from `snapshot.transportPeers`,
+   * which is pushed. 3s is slow enough not to matter and fast enough that
+   * flipping a radio in Settings and coming back shows the truth.
+   */
+  const [diagnostics, setDiagnostics] = useState<MeshDiagnostics | null>(null);
+  useEffect(() => {
+    if (!visible) return undefined;
+    let cancelled = false;
+    const read = () => {
+      void getMeshDiagnostics().then((next) => {
+        if (!cancelled) setDiagnostics(next);
+      }).catch(() => undefined);
+    };
+    read();
+    const timer = setInterval(read, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [visible]);
+
+  // Derivation lives in `mesh/routeStatus` so the wording and the precedence
+  // between "connected", "not in this build" and "radio off" are testable
+  // without rendering this sheet.
+  const routeRows = useMemo(
+    () => describeRoutes(snapshot.transportPeers, diagnostics, Platform.OS === 'ios'),
+    [snapshot.transportPeers, diagnostics],
+  );
   const [showPairing, setShowPairing] = useState(false);
   const [pairingEntry, setPairingEntry] = useState(false);
   const [pairingCode, setPairingCode] = useState('');
@@ -146,7 +190,11 @@ export const NearbyMessagingSheet = ({
   );
 
   const hasError = snapshot.status === 'error';
-  const isConnected = snapshot.status === 'connected';
+  // Reachability across all transports, not the MPC-only status field — on
+  // Android that field never leaves its initial value however many BLE or LAN
+  // peers are live, so this whole sheet rendered its disconnected state during
+  // a working session.
+  const isConnected = reachableNodeIds(snapshot).length > 0 || snapshot.status === 'connected';
   const messageEvent = snapshot.lastMessageEvent?.chatId === undefined
     || snapshot.lastMessageEvent.chatId === chatId
     ? snapshot.lastMessageEvent
@@ -459,41 +507,54 @@ export const NearbyMessagingSheet = ({
 
               <GlassCard radius="md" contentStyle={styles.requirementsCard}>
                 <Text style={[styles.requirementsTitle, { color: theme.colors.onSurface }]}>
-                  Connection requirements
+                  Routes
                 </Text>
-                <View style={styles.requirementRail}>
-                  {[
-                    { icon: 'wifi-outline' as const, label: 'Wi-Fi on' },
-                    { icon: 'bluetooth-outline' as const, label: 'Bluetooth on' },
-                    { icon: 'phone-portrait-outline' as const, label: 'Apps open' },
-                  ].map((item) => (
-                    <View key={item.label} style={styles.requirement}>
+                {/* REAL per-route state, replacing a static "Wi-Fi on / Bluetooth
+                    on / Apps open" checklist that was user-verified and only
+                    turned green once something connected. That checklist could
+                    not distinguish the case that actually happens — one radio
+                    working and another off — so when nothing connected, both
+                    phones showed an identical, unactionable screen. */}
+                <View style={styles.routeList}>
+                  {routeRows.map((route) => (
+                    <View key={route.id} style={styles.routeRow}>
                       <View
                         style={[
                           styles.requirementIcon,
                           {
-                            backgroundColor: isConnected
+                            backgroundColor: route.tone === 'success'
                               ? theme.colors.successContainer
-                              : theme.colors.primaryContainer,
+                              : route.tone === 'warning'
+                                ? theme.colors.errorContainer
+                                : theme.colors.primaryContainer,
                           },
                         ]}
                       >
                         <Ionicons
-                          name={isConnected ? 'checkmark' : item.icon}
+                          name={route.connected ? 'checkmark' : ROUTE_ICON[route.id]}
                           size={16}
-                          color={isConnected ? theme.colors.success : theme.colors.primary}
+                          color={route.tone === 'success'
+                            ? theme.colors.success
+                            : route.tone === 'warning'
+                              ? theme.colors.error
+                              : theme.colors.primary}
                         />
                       </View>
-                      <Text style={[styles.requirementLabel, { color: theme.colors.onSurface }]}>
-                        {item.label}
-                      </Text>
+                      <View style={styles.routeCopy}>
+                        <Text style={[styles.routeName, { color: theme.colors.onSurface }]}>
+                          {route.name}
+                        </Text>
+                        <Text style={[styles.routeDetail, { color: theme.colors.onSurfaceVariant }]}>
+                          {route.detail}
+                        </Text>
+                      </View>
                     </View>
                   ))}
                 </View>
                 <Text style={[styles.requirementsHint, { color: theme.colors.onSurfaceVariant }]}>
                   {isConnected
-                    ? 'The active direct link confirms these requirements are available.'
-                    : 'iOS does not let apps read every radio or permission state directly, so these remain user-verified until a phone connects.'}
+                    ? 'Messages in this chat go straight to the other phone. Nothing touches the internet.'
+                    : 'A route has to be On here AND on the other phone. Both apps need to be open.'}
                 </Text>
               </GlassCard>
 
@@ -862,6 +923,28 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: '700',
   },
+  routeList: {
+    marginTop: 10,
+    gap: 10,
+  },
+  routeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+  },
+  routeCopy: {
+    flex: 1,
+  },
+  routeName: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  routeDetail: {
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 1,
+  },
   requirementRail: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -889,8 +972,7 @@ const styles = StyleSheet.create({
   requirementsHint: {
     fontSize: 11,
     lineHeight: 16,
-    marginTop: 11,
-    textAlign: 'center',
+    marginTop: 12,
   },
   disclosureHeader: {
     minHeight: 50,
