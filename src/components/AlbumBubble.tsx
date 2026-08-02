@@ -1,3 +1,4 @@
+import { MessageStatusIndicator } from '@/components/Chat/MessageStatusIndicator';
 import { ReactionsRow } from '@/components/Chat/ReactionsRow';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -379,20 +380,16 @@ export const AlbumBubble = ({
           <Text style={[styles.time, { color: timeColor }]}>
             {formatRelativeTime(anchor.createdAt)}
           </Text>
+          {/* Shared with MessageBubble (doc 35). The hand-rolled ternary that
+              was here knew only read/delivered/sending and fell through to a
+              plain tick for everything else — so a FAILED album, and one whose
+              bytes arrived but could not be decrypted, both showed the same
+              confident "sent" mark. */}
           {isMine && (
-            <Ionicons
-              name={
-                anchor.status === 'read'
-                  ? 'checkmark-done'
-                  : anchor.status === 'delivered'
-                  ? 'checkmark-done-outline'
-                  : anchor.status === 'sending'
-                  ? 'time-outline'
-                  : 'checkmark'
-              }
-              size={14}
-              color={anchor.status === 'read' ? '#35C6FF' : 'rgba(255,255,255,0.7)'}
-              style={{ marginLeft: 4 }}
+            <MessageStatusIndicator
+              status={anchor.status}
+              deliveredCount={anchor.deliveredTo?.length || 0}
+              readCount={anchor.readBy?.length || 0}
             />
           )}
         </View>

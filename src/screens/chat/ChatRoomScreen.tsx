@@ -47,7 +47,7 @@ import { usePreventDoubleSubmit } from '@/hooks/usePreventDoubleSubmit';
 import { v4 as uuid } from 'uuid';
 import { useSelectionMode } from '@/hooks/useSelectionMode';
 import { useTypingPresence } from '@/hooks/useTypingPresence';
-import type { ChatMessage, ChatParticipant, ChatThread, MessageType, PinnedMessageRef, ReactionMap } from '@/models';
+import type { ChatMessage, ChatParticipant, ChatThread, MessageStatus, MessageType, PinnedMessageRef, ReactionMap } from '@/models';
 import { appAlert } from '@/utils/appAlert';
 import {
   markMessageDeletedForUser,
@@ -92,6 +92,23 @@ const MemoizedAlbumBubble = React.memo(AlbumBubble);
 type ChatRow =
   | { kind: 'single'; message: ChatMessage }
   | { kind: 'album'; albumId: string; messages: ChatMessage[]; anchor: ChatMessage };
+
+/**
+ * Distinct code per status for the re-render fingerprint below.
+ *
+ * `Record<MessageStatus, number>` on purpose: adding a status to the union
+ * without adding it here is a compile error, which is the only mechanism that
+ * would have caught the original bug — a ternary chain silently folded
+ * 'undecryptable' into 'sending' and froze that bubble on a spinner.
+ */
+const STATUS_FINGERPRINT_CODE: Record<MessageStatus, number> = {
+  sending: 1,
+  sent: 2,
+  delivered: 3,
+  read: 4,
+  failed: 5,
+  undecryptable: 6,
+};
 
 const buildChatRows = (messages: ChatMessage[], userId?: string): ChatRow[] => {
   const rows: ChatRow[] = [];
@@ -649,7 +666,17 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
         const deletedAll = item.deletedForEveryone ? 1 : 0;
         const editedAt = item.editedAt ?? 0;
         const contentLen = item.content?.length ?? 0;
-        const statusCode = item.status === 'read' ? 4 : item.status === 'delivered' ? 3 : item.status === 'sent' ? 2 : item.status === 'failed' ? 5 : 1;
+        // Every status needs its OWN code, via a Record keyed by the union so a
+        // new MessageStatus is a COMPILE ERROR here rather than a silent
+        // rendering bug (doc 35). The previous ternary chain had no branch for
+        // 'undecryptable' and fell through to the same 1 as 'sending', so a
+        // message going sending → undecryptable produced an identical
+        // fingerprint, this gate concluded nothing had changed, setMessages was
+        // never called and the bubble kept showing a spinner forever — for the
+        // one status whose entire purpose is telling the user something went
+        // wrong. Unknown values still fold to 0 rather than throwing: a bad
+        // status off the wire must not blank the chat.
+        const statusCode = STATUS_FINGERPRINT_CODE[item.status] ?? 0;
         // A plain count (e.g. reactionsCount) is blind to WHICH emoji or WHO
         // reacted — swapping 👍→❤️, or one user's remove exactly offsetting
         // another's add elsewhere in the map, leaves the count unchanged and

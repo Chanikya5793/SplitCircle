@@ -1,6 +1,7 @@
 import { ExpenseCardBubble } from '@/components/Chat/ExpenseCardBubble';
 import { LinkPreview } from '@/components/Chat/LinkPreview';
 import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
+import { MessageStatusIndicator } from '@/components/Chat/MessageStatusIndicator';
 import { ReactionsRow } from '@/components/Chat/ReactionsRow';
 import { SendProgressOverlay } from '@/components/Chat/SendProgressOverlay';
 import { useAuth } from '@/context/AuthContext';
@@ -268,58 +269,9 @@ const getDocumentIcon = (mimeType?: string): keyof typeof Ionicons.glyphMap => {
   return 'document';
 };
 
-// WhatsApp-style message status indicator component
-const MessageStatusIndicator = ({ status, isGroupChat: _isGroupChat, totalRecipients: _totalRecipients, deliveredCount, readCount }: {
-  status: MessageStatus;
-  isGroupChat?: boolean;
-  totalRecipients?: number;
-  deliveredCount?: number;
-  readCount?: number;
-}) => {
-  const delivered = deliveredCount ?? 0;
-  const read = readCount ?? 0;
-
-  if (status === 'sending') {
-    return <Ionicons name="time-outline" size={14} color="rgba(255,255,255,0.6)" style={styles.statusIconSingle} />;
-  }
-
-  if (status === 'failed') {
-    return <Ionicons name="alert-circle-outline" size={14} color="#FF6B6B" style={styles.statusIconSingle} />;
-  }
-
-  // ARRIVED BUT UNREADABLE (doc 33 §4.3) — deliberately NOT the same as failed.
-  // The bytes reached the other phone and proved authentic; it just could not
-  // open them. Red "not sent" would invite a resend of something that already
-  // travelled, and hide that the real repair is the session rebuild the app now
-  // performs automatically on this signal. Amber, not red: something is wrong,
-  // but nothing was lost.
-  if (status === 'undecryptable') {
-    return (
-      <Ionicons
-        name="alert-circle-outline"
-        size={14}
-        color="#FFB020"
-        style={styles.statusIconSingle}
-        accessibilityLabel="Delivered, but the other device couldn’t open it"
-      />
-    );
-  }
-
-  const hasAnyRead = read > 0 || status === 'read';
-  const hasAnyDelivered = hasAnyRead || delivered > 0 || status === 'delivered';
-
-  if (!hasAnyDelivered) {
-    return <Ionicons name="checkmark" size={14} color="rgba(255,255,255,0.7)" style={styles.statusIconSingle} />;
-  }
-
-  const tickColor = hasAnyRead ? '#35C6FF' : 'rgba(255,255,255,0.7)';
-  return (
-    <View style={styles.statusDoubleTick}>
-      <Ionicons name="checkmark" size={13} color={tickColor} style={styles.statusTickBack} />
-      <Ionicons name="checkmark" size={13} color={tickColor} style={styles.statusTickFront} />
-    </View>
-  );
-};
+// Status ticks live in `Chat/MessageStatusIndicator` — see that file's header.
+// A local copy is how AlbumBubble ended up rendering a confident "sent" tick
+// for failed and undecryptable albums.
 
 // Video player component using expo-video
 interface VideoPlayerComponentProps {
@@ -1348,8 +1300,6 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
                   <Text style={[styles.timestamp, { color: 'rgba(255,255,255,0.7)' }]}>{formatRelativeTime(message.createdAt)}</Text>
                   <MessageStatusIndicator
                     status={message.status}
-                    isGroupChat={isGroupChat}
-                    totalRecipients={totalRecipients}
                     deliveredCount={message.deliveredTo?.length || 0}
                     readCount={message.readBy?.length || 0}
                   />

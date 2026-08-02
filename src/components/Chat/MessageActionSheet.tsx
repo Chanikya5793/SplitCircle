@@ -1,3 +1,4 @@
+import { MessageStatusIndicator } from '@/components/Chat/MessageStatusIndicator';
 import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatMessage } from '@/models';
@@ -68,10 +69,6 @@ const MessagePreviewBubble = React.memo(({ message, isMine, theme, isDark }: {
   const textColor = isMine ? theme.colors.onPrimary : theme.colors.onSurface;
   const metaColor = isMine ? 'rgba(255,255,255,0.7)' : theme.colors.onSurfaceVariant;
 
-  const hasAnyRead = (message.readBy?.length ?? 0) > 0 || message.status === 'read';
-  const hasAnyDelivered = hasAnyRead || (message.deliveredTo?.length ?? 0) > 0 || message.status === 'delivered';
-  const tickColor = hasAnyRead ? theme.colors.secondary : 'rgba(255,255,255,0.7)';
-
   let previewText = message.content || '';
   if (message.type === 'image') previewText = previewText || '📷 Photo';
   else if (message.type === 'video') previewText = previewText || '🎥 Video';
@@ -94,18 +91,17 @@ const MessagePreviewBubble = React.memo(({ message, isMine, theme, isDark }: {
         <Text style={[previewStyles.time, { color: metaColor }]}>
           {formatRelativeTime(message.createdAt)}
         </Text>
-        {isMine && message.status !== 'sending' && message.status !== 'failed' && (
-          hasAnyDelivered ? (
-            <View style={previewStyles.doubleTick}>
-              <Ionicons name="checkmark" size={12} color={tickColor} style={{ marginRight: -6 }} />
-              <Ionicons name="checkmark" size={12} color={tickColor} />
-            </View>
-          ) : (
-            <Ionicons name="checkmark" size={12} color="rgba(255,255,255,0.7)" />
-          )
-        )}
-        {isMine && message.status === 'sending' && (
-          <Ionicons name="time-outline" size={12} color={metaColor} />
+        {/* Shared with MessageBubble and AlbumBubble (doc 35). This was a THIRD
+            hand-rolled copy, and the worst of them: 'failed' rendered no mark at
+            all (the sheet for a message that never sent looked identical to one
+            in flight), while 'undecryptable' fell into the first branch and drew
+            a confident delivered tick. */}
+        {isMine && (
+          <MessageStatusIndicator
+            status={message.status}
+            deliveredCount={message.deliveredTo?.length || 0}
+            readCount={message.readBy?.length || 0}
+          />
         )}
       </View>
     </View>
