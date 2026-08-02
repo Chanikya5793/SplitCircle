@@ -121,6 +121,27 @@ final class BleController: NSObject {
 
   /// Links where WE dialled out, keyed by resolved remote device id.
   private var centralLinks: [String: CBPeripheral] = [:]
+  /**
+   Peers whose identity we have READ but to whom we have not yet successfully
+   WRITTEN ours.
+
+   Kept out of `centralLinks` deliberately (doc 35). That map is what
+   `connectedPeers()` and `sendChunk()` read, so publishing a peer into it at
+   identity-read time made it sendable before it could attribute our chunks
+   back to us. `emitPeers()` was already correctly deferred to the announce
+   write, but native `connectedPeers()` bypasses that entirely — it reads the
+   map — so any UNRELATED `emitPeers()` in the window (a third device
+   connecting, routine with 2+ phones around) produced a snapshot containing
+   the half-announced peer, JS sent to it, and the remote's write handler
+   dropped the chunk under its own "no identity yet" guard WHILE ACKING THE
+   GATT WRITE AS SUCCESS. Our `pendingWrites` promise resolved true, the
+   transport counted it delivered, and the router never requeued it: silently
+   and permanently lost, reported as sent by every layer.
+
+   This map exists so the duplicate-link tie-break can still see an in-flight
+   link; nothing else may read it.
+   */
+  private var announcingLinks: [String: CBPeripheral] = [:]
   /// Links where the peer dialled US, keyed by resolved remote device id.
   private var peripheralLinks: [String: CBCentral] = [:]
 
@@ -173,6 +194,7 @@ final class BleController: NSObject {
       }
       self.retainedPeripherals.removeAll()
       self.centralLinks.removeAll()
+      self.announcingLinks.removeAll()
       self.peripheralLinks.removeAll()
       self.identityByPeripheral.removeAll()
       self.identityByCentral.removeAll()
@@ -211,6 +233,8 @@ final class BleController: NSObject {
   }
 
   private func disconnect(deviceId: String) {
+    announcingLinks.removeValue(forKey: deviceId)
+    failDeferredNotifies(forDeviceId: deviceId)
     if let peripheral = centralLinks.removeValue(forKey: deviceId) {
       identityByPeripheral.removeValue(forKey: peripheral.identifier)
       retainedPeripherals.removeValue(forKey: peripheral.identifier)
@@ -404,6 +428,7 @@ extension BleController: CBCentralManagerDelegate {
       return
     }
     centralLinks.removeValue(forKey: deviceId)
+    announcingLinks.removeValue(forKey: deviceId)
     if peripheralLinks[deviceId] == nil { mtuByDeviceId.removeValue(forKey: deviceId) }
     pendingWrites.removeValue(forKey: deviceId)?(false)
     emitPeers()
@@ -447,12 +472,16 @@ extension BleController: CBPeripheralDelegate {
       }
       // Duplicate-link dedup for the prefix-tie case. Both sides run the same
       // comparison and independently reach the same verdict.
-      if centralLinks[remoteId] != nil || peripheralLinks[remoteId] != nil,
+      if centralLinks[remoteId] != nil
+          || announcingLinks[remoteId] != nil
+          || peripheralLinks[remoteId] != nil,
          localDeviceId > remoteId {
         central?.cancelPeripheralConnection(peripheral); return
       }
       identityByPeripheral[peripheral.identifier] = remoteId
-      centralLinks[remoteId] = peripheral
+      // STAGED, not published — see `announcingLinks`. It becomes sendable in
+      // `didWriteValueFor` once our own identity has actually landed.
+      announcingLinks[remoteId] = peripheral
       mtuByDeviceId[remoteId] =
         peripheral.maximumWriteValueLength(for: .withResponse) + attOverhead
 
@@ -494,9 +523,19 @@ extension BleController: CBPeripheralDelegate {
     error: Error?
   ) {
     if characteristic.uuid == identityUUID {
-      // Only NOW is the link genuinely bidirectional. Reporting the peer any
-      // earlier advertises a route it cannot yet honour.
-      if error == nil { emitPeers() } else { central?.cancelPeripheralConnection(peripheral) }
+      // Only NOW is the link genuinely bidirectional, so only now does it enter
+      // `centralLinks` — the map `connectedPeers()` and `sendChunk()` read.
+      // Publishing it any earlier advertises a route the peer cannot honour,
+      // and it drops what we send while ACKing it as written.
+      guard let remoteId = identityByPeripheral[peripheral.identifier] else { return }
+      guard error == nil else {
+        announcingLinks.removeValue(forKey: remoteId)
+        central?.cancelPeripheralConnection(peripheral)
+        return
+      }
+      announcingLinks.removeValue(forKey: remoteId)
+      centralLinks[remoteId] = peripheral
+      emitPeers()
       return
     }
     if characteristic.uuid == chunkUUID {
@@ -594,10 +633,40 @@ extension BleController: CBPeripheralManagerDelegate {
     central: CBCentral,
     didUnsubscribeFrom characteristic: CBCharacteristic
   ) {
+    failDeferredNotifies(for: central)
     guard let deviceId = identityByCentral.removeValue(forKey: central.identifier) else { return }
     peripheralLinks.removeValue(forKey: deviceId)
     if centralLinks[deviceId] == nil { mtuByDeviceId.removeValue(forKey: deviceId) }
     emitPeers()
+  }
+
+
+  /**
+   Settles and removes every deferred notify for one central (doc 35).
+
+   `sendChunk` parks a promise in `deferredNotifies` when the peripheral
+   manager's transmit queue is full, relying on `peripheralManagerIsReady` to
+   drain it. Neither `disconnect(deviceId:)` nor `didUnsubscribeFrom` cleared
+   that peer's entries — so if the peer then lost trust or vanished and no other
+   peripheral-role traffic followed (entirely plausible when it was the last
+   connected peer), the promise NEVER SETTLED. `stop()`'s own comment already
+   calls that unacceptable, because a pending JS promise wedges the send queue;
+   it just was not enforced on the per-peer paths.
+
+   Resolved false, not true: the bytes did not go out. bleTransport treats false
+   as undeliverable and the router stores and forwards.
+   */
+  private func failDeferredNotifies(for central: CBCentral) {
+    var remaining: [(central: CBCentral, data: Data, done: (Bool) -> Void)] = []
+    for item in deferredNotifies {
+      if item.central.identifier == central.identifier { item.done(false) } else { remaining.append(item) }
+    }
+    deferredNotifies = remaining
+  }
+
+  private func failDeferredNotifies(forDeviceId deviceId: String) {
+    guard let central = peripheralLinks[deviceId] else { return }
+    failDeferredNotifies(for: central)
   }
 
   func peripheralManagerIsReady(toUpdateSubscribers manager: CBPeripheralManager) {

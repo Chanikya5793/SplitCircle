@@ -104,17 +104,31 @@
         }
       }
     },
+    "pairingConfirm": {
+      "$uid": {
+        "//": "Written only by the Admin SDK today (functions/src/pairing.ts), which bypasses rules entirely — so this branch grants nothing new and changes no current behaviour. It exists because the ABSENCE of a branch is what bit syncGapBatches this session: a client listener added later would have failed permission_denied for every user, silently, and looked like a feature bug rather than a rules gap (doc 35).",
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid",
+        "$code": {
+          ".validate": "!newData.exists() || newData.hasChildren(['deviceId', 'at'])",
+          "deviceId": { ".validate": "newData.isString()" },
+          "deviceName": { ".validate": "newData.isString()" },
+          "at": { ".validate": "newData.isNumber()" }
+        }
+      }
+    },
     "syncGapBatches": {
       "$ownerUserId": {
         ".read": "auth != null && auth.uid == $ownerUserId",
         ".write": "auth != null && auth.uid == $ownerUserId",
         "$requesterDeviceId": {
           "$batchId": {
-            ".validate": "!newData.exists() || newData.hasChildren(['v', 'b', 'sig', 'responderDeviceId'])",
+            ".validate": "!newData.exists() || newData.hasChildren(['v', 'b', 'sig', 'responderDeviceId', 'createdAt'])",
             "v": { ".validate": "newData.isNumber()" },
             "b": { ".validate": "newData.isString()" },
             "sig": { ".validate": "newData.isString()" },
-            "responderDeviceId": { ".validate": "newData.isString()" }
+            "responderDeviceId": { ".validate": "newData.isString()" },
+            "createdAt": { ".validate": "newData.isNumber()" }
           }
         }
       }

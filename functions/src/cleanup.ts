@@ -209,6 +209,61 @@ export const cleanupOldRtdbData = onSchedule("every 24 hours", async (event) => 
             }
         }
 
+        // 2e. Sealed gap-fill batches (doc 34 §2, reaper added by doc 35).
+        // Path: syncGapBatches/{ownerUserId}/{requesterDeviceId}/{batchId}
+        //
+        // Every other ephemeral path here had a branch and this one did not —
+        // while `syncBatchService.ts`'s own catch comment credited "the reaper"
+        // for bounding how long a batch could linger. There was no reaper
+        // anywhere in the codebase; the comment described a mechanism that had
+        // never been wired, which is a pattern CLAUDE.md already records three
+        // times in this project.
+        //
+        // Normally consumed within seconds: the requesting device deletes each
+        // batch as it processes it, success or failure. What survives is a batch
+        // whose requester never comes back — uninstalled, revoked, or offline
+        // past the point of caring — which is precisely the case doc 34's
+        // zero-history backfill exists to serve, so it is not rare.
+        //
+        // 24 hours, not the one hour used for gap REQUESTS above: a request is
+        // cheap to re-raise and re-raised automatically, whereas a batch is
+        // real history the requester would have to fetch again. A device offline
+        // overnight should still find its history waiting.
+        const batchCutoff = now - 24 * ONE_HOUR_MS;
+        const batchesRef = db.ref("syncGapBatches");
+        const batchesSnapshot = await batchesRef.get();
+
+        if (batchesSnapshot.exists()) {
+            const batchUpdates: Record<string, null> = {};
+            let deletedBatches = 0;
+
+            batchesSnapshot.forEach((userSnapshot) => {
+                const ownerUserId = userSnapshot.key;
+                userSnapshot.forEach((deviceSnapshot) => {
+                    const requesterDeviceId = deviceSnapshot.key;
+                    deviceSnapshot.forEach((batchSnapshot) => {
+                        const batchId = batchSnapshot.key;
+                        const data = batchSnapshot.val();
+                        // A batch written before `createdAt` existed has no
+                        // timestamp; treat it as expired rather than immortal,
+                        // which is the whole point of this branch.
+                        const createdAt = typeof data?.createdAt === "number" ? data.createdAt : 0;
+                        if (createdAt < batchCutoff) {
+                            batchUpdates[
+                                `syncGapBatches/${ownerUserId}/${requesterDeviceId}/${batchId}`
+                            ] = null;
+                            deletedBatches++;
+                        }
+                    });
+                });
+            });
+
+            if (Object.keys(batchUpdates).length > 0) {
+                await applyInChunks(db, batchUpdates);
+                logger.info(`Deleted ${deletedBatches} stale sync-gap batches.`);
+            }
+        }
+
         // 3. Cleanup stale call entries — any call older than 1 hour is dead.
         //    Calls stuck in "ringing" because the client crashed / lost network
         //    will linger forever without this, and the client may surface them

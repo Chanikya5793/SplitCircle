@@ -339,3 +339,45 @@ describe('SeenSet', () => {
     expect(revived.add('b')).toBe(false);
   });
 });
+
+describe('router: identity and honest hold reporting', () => {
+  it('never originates a frame with an empty origin', async () => {
+    // `localNodeId` is resolved asynchronously at startup, and entry points that
+    // reach originate() — queued-send broadcasts, attachment callbacks — are not
+    // gated on it. An empty origin encodes a frame every peer rejects as
+    // malformed, while `deliveredCount` (raw bytes handed to a transport, not
+    // frames anyone accepted) still reported success: a false delivery
+    // confirmation for a message no peer could ever process.
+    const h = makeRouter({ localNodeId: '', neighbours: ['B'] });
+    const result = await h.router.originate({
+      msgId: 'm1', payload: 'p', dest: BROADCAST_DEST, payloadClass: 'text',
+    });
+
+    expect(h.sent).toHaveLength(0);
+    expect(result.delivered).toBe(0);
+    // Buffered rather than dropped: the message is real and this is a transient
+    // startup condition.
+    expect(result.held).toBe(true);
+  });
+
+  it('does not report held:true for a frame its own eviction discarded', async () => {
+    // hold() calls enforceCap(), which can evict the frame it was just given.
+    // The old code returned an unconditional true, so the router's contract
+    // claimed delivery-once-reachable for something already discarded.
+    const h = makeRouter({ localNodeId: 'A', neighbours: [], queueByteCap: 10 });
+    const result = await h.router.originate({
+      msgId: 'big', payload: 'x'.repeat(500), dest: 'C', payloadClass: 'bulk',
+    });
+
+    expect(result.delivered).toBe(0);
+    expect(result.held).toBe(false);
+  });
+
+  it('still reports held:true for a frame that fits', async () => {
+    const h = makeRouter({ localNodeId: 'A', neighbours: [], queueByteCap: 10_000 });
+    const result = await h.router.originate({
+      msgId: 'small', payload: 'p', dest: 'C', payloadClass: 'text',
+    });
+    expect(result.held).toBe(true);
+  });
+});

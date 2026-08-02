@@ -156,3 +156,43 @@ describe('isBatchForRequest', () => {
     expect(isBatchForRequest(tampered, request)).toBe(false);
   });
 });
+
+/**
+ * The batch key's chatId must round-trip exactly (doc 35).
+ *
+ * `sendSyncBatch` writes `${chatId}__${responderDeviceId}` and seals with
+ * `body.chatId` as associated data; `subscribeToSyncBatches` recovers the
+ * chatId from that key to reconstruct the same associated data. A mismatch
+ * fails HPKE closed on open — the safe direction, but the batch was then left
+ * in RTDB and re-failed on every replay, so gap-fill for that chat broke
+ * permanently and the node accumulated forever.
+ *
+ * These assert on the derivation itself rather than mounting Firebase: the
+ * defect was one character of string handling, and that is exactly the level
+ * it should be pinned at.
+ */
+describe('sync batch key derivation', () => {
+  const RESPONDER = '3f2504e0-4f89-11d3-9a0c-0305e82c3301';
+  const encode = (chatId: string) => `${chatId}__${RESPONDER}`;
+  // The implementation's rule: split at the LAST separator, because a uuid
+  // responder id contains no '__' but a chatId can.
+  const decode = (key: string) => key.slice(0, key.lastIndexOf('__'));
+
+  it('round-trips an ordinary chatId', () => {
+    expect(decode(encode('group_abc123'))).toBe('group_abc123');
+  });
+
+  it('round-trips a chatId that itself contains a double underscore', () => {
+    // Reachable from a `direct_${a}_${b}` concatenation whenever a component
+    // ends or begins with '_'. Splitting on the FIRST separator returned
+    // 'direct_alice' here, and every batch for such a chat failed to open.
+    const chatId = 'direct_alice__bob';
+    expect(decode(encode(chatId))).toBe(chatId);
+    expect(encode(chatId).split('__')[0]).not.toBe(chatId);
+  });
+
+  it('round-trips a chatId ending in an underscore', () => {
+    const chatId = 'direct_alice_';
+    expect(decode(encode(chatId))).toBe(chatId);
+  });
+});

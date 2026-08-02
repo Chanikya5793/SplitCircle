@@ -42,6 +42,19 @@ const BATCH_ROOT = 'syncGapBatches';
  * opened as a chat envelope or vice versa even if one were replayed into the
  * wrong path — domain separation is free here and expensive to retrofit.
  */
+/**
+ * How many times one batch may fail before it is discarded rather than retried.
+ *
+ * Three, not one: a genuinely transient failure deserves a retry, and a batch is
+ * history the user would otherwise lose. Three, not unbounded: a batch that
+ * cannot be opened will never become openable, and retrying it on every
+ * reconnect blocks that chat's gap-fill permanently.
+ */
+const MAX_BATCH_ATTEMPTS = 3;
+
+/** Per-batch failure counts, in memory only — a restart may retry, by design. */
+const batchAttempts = new Map<string, number>();
+
 const SYNC_BATCH_HPKE_INFO = 'splitcircle/sync-batch/v1';
 
 /**
@@ -64,6 +77,17 @@ interface SealedBatch {
   b: string;
   /** Signature over `b`, by the responder's identity key. */
   sig: string;
+  /**
+   * Wall-clock write time, for the server-side reaper only (doc 35).
+   *
+   * NOT security-relevant and deliberately outside the sealed body: it is
+   * attacker-controllable and nothing trusts it. It exists because a requester
+   * that never returns (uninstalled, revoked, or simply never catches up) would
+   * otherwise leave this node in RTDB permanently, which CLAUDE.md's
+   * "never let RTDB accumulate" rule forbids — and `cleanupOldRtdbData` needs a
+   * timestamp to expire against.
+   */
+  createdAt: number;
 }
 
 const batchPath = (userId: string, requesterDeviceId: string, batchId: string): string =>
@@ -116,6 +140,7 @@ export const sendSyncBatch = async (
     responderDeviceId,
     b: sealed,
     sig: signature,
+    createdAt: Date.now(),
   };
 
   // Keyed by chat AND responder: two devices answering the same request write
@@ -178,8 +203,23 @@ export const subscribeToSyncBatches = (
           return;
         }
 
+        // LAST '__', not the first (doc 35). The key is
+        // `${chatId}__${responderDeviceId}`, and a chatId can itself contain
+        // '__' — a `direct_${a}_${b}` concatenation produces one whenever a
+        // component ends or begins with '_'. Splitting on the first separator
+        // then yielded a chatId prefix, the associated data disagreed with the
+        // seal side's `body.chatId`, and HPKE failed closed on open.
+        //
+        // Failing closed is the right direction, but the catch below never
+        // consumed the node, so the batch stayed in RTDB and re-failed on every
+        // replay — gap-fill for that chat permanently broken, node accumulating
+        // forever. Splitting from the right is safe because responderDeviceId is
+        // a uuid, which contains no '__'.
         const associatedData = encodeUtf8Base64(
-          JSON.stringify({ chatId: key.split('__')[0], requesterDeviceId: ownDeviceId }),
+          JSON.stringify({
+            chatId: key.slice(0, key.lastIndexOf('__')),
+            requesterDeviceId: ownDeviceId,
+          }),
         );
         const plaintext = await openWithIdentity(raw.b, SYNC_BATCH_HPKE_INFO, associatedData);
         const body = parseSyncBatchBody(JSON.parse(decodeBase64Utf8(plaintext)));
@@ -200,12 +240,27 @@ export const subscribeToSyncBatches = (
         }
 
         await onBatch(body);
+        batchAttempts.delete(key);
         await consume();
       } catch (error) {
-        // Never throw into an RTDB listener. Left in place deliberately: a
-        // transient failure (crypto busy, storage full) should be retried, and
-        // the reaper bounds how long it can linger.
-        console.error('⚠️ Sync batch processing failed', error);
+        // Never throw into an RTDB listener. A transient failure (crypto busy,
+        // storage full) genuinely should be retried — but a PERMANENT one must
+        // not be retried forever, which is what left a node replaying on every
+        // reconnect and app restart with no way out (doc 35). The previous
+        // comment here credited "the reaper" for bounding this; no such reaper
+        // existed anywhere in the codebase. One now does, in
+        // functions/src/cleanup.ts, and this counter bounds the client side so a
+        // poisoned batch stops blocking the chat long before the reaper's TTL.
+        const attempts = (batchAttempts.get(key) ?? 0) + 1;
+        batchAttempts.set(key, attempts);
+        console.error(
+          `⚠️ Sync batch processing failed (attempt ${attempts}/${MAX_BATCH_ATTEMPTS})`,
+          error,
+        );
+        if (attempts >= MAX_BATCH_ATTEMPTS) {
+          batchAttempts.delete(key);
+          await consume();
+        }
       }
     })();
   });

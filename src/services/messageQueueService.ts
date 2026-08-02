@@ -1071,6 +1071,12 @@ export const listenForReceipts = (
   ) => void,
   isGroupChat: boolean = false,
   onError?: (error: Error) => void,
+  /**
+   * The listening user's own id, so a group's undecryptable representative can
+   * avoid being the sender's own self-sync report. Optional for callers that
+   * predate it; without it the old (sorted-first) behaviour applies.
+   */
+  ownUserId?: string,
 ): (() => void) => {
   const receiptsRef = ref(rtdb, `receipts/${chatId}`);
   const fingerprints = new Map<string, string>();
@@ -1121,15 +1127,30 @@ export const listenForReceipts = (
     fingerprints.set(messageId, fingerprint);
 
     if (isGroupChat) {
+      // WHICH undecryptable report represents the group matters (doc 35).
+      //
+      // This picks ONE userId to stand for the whole group, and the consumer in
+      // ChatContext returns early when that userId is the sender's own — a
+      // self-sync report says the sender's session with its own other device is
+      // dead, which must not be shown as a failed delivery to the group. But
+      // `allUndecryptable` is sorted, so if the sender's own account sorted
+      // first, a REAL member's simultaneous report was discarded with it, and
+      // the message kept its previous confident status: a genuine delivery
+      // failure to an actual human, permanently hidden.
+      //
+      // Prefer any OTHER member as the representative, falling back to self
+      // only when self is the only report — the case where returning early is
+      // exactly right.
+      const representative = status === 'undecryptable'
+        ? (allUndecryptable.find((userId) => userId !== ownUserId) ?? allUndecryptable[0])
+        : undefined;
       onReceiptReceived(
         messageId,
         status,
-        status === 'undecryptable' ? allUndecryptable[0] : undefined,
+        representative,
         allDelivered,
         allRead,
-        status === 'undecryptable'
-          ? receiptMap[allUndecryptable[0]]?.undecryptableDeviceId
-          : undefined,
+        representative ? receiptMap[representative]?.undecryptableDeviceId : undefined,
       );
       return;
     }

@@ -1053,6 +1053,9 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
             scheduleReceiptListenerRetry();
           },
+          // So a group's undecryptable representative prefers a real member
+          // over this user's own self-sync report (doc 35).
+          currentUser.userId,
         );
       } catch (error) {
         console.warn('⚠️ Failed to register receipt participant; scheduling retry.', error);

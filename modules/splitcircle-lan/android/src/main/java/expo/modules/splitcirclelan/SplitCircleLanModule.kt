@@ -9,6 +9,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
@@ -63,6 +64,9 @@ class SplitCircleLanModule : Module() {
     const val SERVICE_TYPE = "_manasplit-mesh._tcp"
     /** Refuse absurd frames rather than buffering into an OOM. */
     const val MAX_FRAME_BYTES = 8 * 1024 * 1024
+    /** Bounded so a silent or stale peer cannot hold a thread and socket forever. */
+    const val HANDSHAKE_TIMEOUT_MS = 10_000
+    const val CONNECT_TIMEOUT_MS = 5_000
   }
 
   private val lock = Any()
@@ -131,7 +135,15 @@ class SplitCircleLanModule : Module() {
     }
 
     AsyncFunction("sendFrame") { peerDeviceId: String, frame: String, promise: Promise ->
-      val out = outputs[peerDeviceId]
+      // Captured together so the failure path below closes THIS socket, not
+      // whatever happens to hold the id by the time the write fails — the same
+      // instance-identity rule `closePeer` documents.
+      val out: DataOutputStream?
+      val socket: Socket?
+      synchronized(peers) {
+        out = outputs[peerDeviceId]
+        socket = peers[peerDeviceId]
+      }
       val bytes = frame.toByteArray(Charsets.UTF_8)
       if (out == null || bytes.size > MAX_FRAME_BYTES) {
         promise.resolve(false)
@@ -150,7 +162,7 @@ class SplitCircleLanModule : Module() {
           }
           promise.resolve(true)
         } catch (e: Throwable) {
-          closePeer(peerDeviceId)
+          closePeer(peerDeviceId, socket)
           emitPeers()
           promise.resolve(false)
         }
@@ -232,7 +244,12 @@ class SplitCircleLanModule : Module() {
   private fun dial(host: InetAddress?, port: Int) {
     if (host == null || port <= 0) return
     try {
-      handshake(Socket(host, port))
+      // Bounded connect. `Socket(host, port)` uses the OS default, which on a
+      // stale mDNS record for a device that has left the network can block this
+      // pool thread for minutes.
+      val socket = Socket()
+      socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+      handshake(socket)
     } catch (_: Throwable) {
       // Ordinary on a mesh — the peer may have gone before we connected.
     }
@@ -251,6 +268,13 @@ class SplitCircleLanModule : Module() {
     var deviceId: String? = null
     try {
       socket.tcpNoDelay = true
+      // A peer that opens a socket and never announces itself would otherwise
+      // hold this thread parked in readInt() forever, and its socket with it —
+      // an unbounded accumulation reachable by anyone on the LAN (doc 35).
+      // Cleared once the handshake completes: an established peer may legitimately
+      // stay silent for hours, and a read timeout after that point would drop
+      // healthy idle links.
+      socket.soTimeout = HANDSHAKE_TIMEOUT_MS
       val input = DataInputStream(socket.getInputStream().buffered())
       val output = DataOutputStream(socket.getOutputStream().buffered())
 
@@ -271,14 +295,19 @@ class SplitCircleLanModule : Module() {
 
       // Duplicate-socket dedup for the tie case; keep one deterministically so
       // both ends independently reach the same verdict.
-      peers[claimed]?.let { existing ->
-        if (localDeviceId > claimed) { socket.close(); return }
-        try { existing.close() } catch (_: Throwable) {}
+      // Under the same monitor `closePeer` uses, so a dying thread's cleanup
+      // cannot interleave between the eviction and the registration.
+      synchronized(peers) {
+        peers[claimed]?.let { existing ->
+          if (localDeviceId > claimed) { socket.close(); return }
+          try { existing.close() } catch (_: Throwable) {}
+        }
+        peers[claimed] = socket
+        outputs[claimed] = output
       }
 
       deviceId = claimed
-      peers[claimed] = socket
-      outputs[claimed] = output
+      socket.soTimeout = 0
       emitPeers()
 
       while (true) {
@@ -296,15 +325,41 @@ class SplitCircleLanModule : Module() {
     } catch (_: Throwable) {
       // Disconnects are the normal case here, not an exception worth logging.
     } finally {
-      deviceId?.let { closePeer(it) }
+      // BY INSTANCE: this thread may be unwinding long after the peer
+      // reconnected on a different socket. See `closePeer`.
+      deviceId?.let { closePeer(it, socket) }
       try { socket.close() } catch (_: Throwable) {}
       if (deviceId != null) emitPeers()
     }
   }
 
-  private fun closePeer(deviceId: String) {
-    peers.remove(deviceId)?.let { try { it.close() } catch (_: Throwable) {} }
-    outputs.remove(deviceId)
+  /**
+   * Drops a peer's socket — but only if [socket] is still the one registered
+   * (doc 35).
+   *
+   * Closing by id alone could kill a brand-new HEALTHY connection. Peer X's app
+   * dies without a clean FIN, so our handshake thread sits blocked in
+   * `readInt()` on the dead socket while it is still the registered peer. X
+   * reconnects; the dedup below closes the old socket (unblocking that thread)
+   * and registers the new one. If the first thread's `finally` then runs — an
+   * uncontrolled scheduling race — an id-only close removes the NEW socket, and
+   * the live connection silently disappears until the next reconnect cycle.
+   *
+   * iOS's `drop()` already checked identity; this half did not. Passing null
+   * means "whatever is there", for the deliberate teardown paths.
+   */
+  private fun closePeer(deviceId: String, socket: Socket? = null) {
+    synchronized(peers) {
+      val current = peers[deviceId]
+      if (socket != null && current !== socket) {
+        // Someone else's socket owns this id now. Close only what we were given.
+        try { socket.close() } catch (_: Throwable) {}
+        return
+      }
+      peers.remove(deviceId)
+      outputs.remove(deviceId)
+      current?.let { try { it.close() } catch (_: Throwable) {} }
+    }
   }
 
   private fun emitPeers() {

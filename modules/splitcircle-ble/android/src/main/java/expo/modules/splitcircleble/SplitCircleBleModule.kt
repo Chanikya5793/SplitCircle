@@ -13,6 +13,7 @@ import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -92,6 +93,27 @@ class SplitCircleBleModule : Module() {
 
   /** Links where WE dialled out. Keyed by resolved remote device id. */
   private val centralLinks = mutableMapOf<String, BluetoothGatt>()
+
+  /**
+   * Peers whose identity we have READ but to whom we have not yet successfully
+   * WRITTEN ours. Mirrors the Swift half's `announcingLinks` (doc 35).
+   *
+   * Deliberately not `centralLinks`: that map is what `connectedPeers()` and
+   * `sendChunk()` read, so publishing a peer into it at identity-read time made
+   * it sendable before it could attribute our chunks back to us. `emitPeers()`
+   * was already correctly deferred to the announce write, but `connectedPeers()`
+   * bypasses that and reads the map directly — so any unrelated `emitPeers()` in
+   * the window (a third device connecting, routine with 2+ phones around) put
+   * the half-announced peer in a snapshot, JS sent to it, and the remote dropped
+   * the chunk under its own "no identity yet" guard WHILE ACKING THE WRITE AS
+   * SUCCESS. Reported delivered by every layer, never requeued, gone.
+   *
+   * Only the duplicate-link tie-break may read this.
+   */
+  private val announcingLinks = mutableMapOf<String, BluetoothGatt>()
+
+  /** Guards the shared `chunkCharacteristic` value across notifies. See `notifyChunk`. */
+  private val notifyLock = Any()
   /** Links where the peer dialled US. Keyed by resolved remote device id. */
   private val peripheralLinks = mutableMapOf<String, BluetoothDevice>()
 
@@ -304,6 +326,7 @@ class SplitCircleBleModule : Module() {
       try { gatt.close() } catch (_: Throwable) {}
     }
     centralLinks.clear()
+    announcingLinks.clear()
     peripheralLinks.clear()
     mtuByDeviceId.clear()
     identityByAddress.clear()
@@ -329,6 +352,7 @@ class SplitCircleBleModule : Module() {
    */
   @SuppressLint("MissingPermission")
   private fun disconnectLocked(deviceId: String) {
+    announcingLinks.remove(deviceId)
     centralLinks.remove(deviceId)?.let { gatt ->
       identityByAddress.remove(gatt.address())
       try { gatt.disconnect() } catch (_: Throwable) {}
@@ -398,6 +422,7 @@ class SplitCircleBleModule : Module() {
           val id = identityByAddress.remove(gatt.address())
           if (id != null) {
             centralLinks.remove(id)
+            announcingLinks.remove(id)
             if (!peripheralLinks.containsKey(id)) mtuByDeviceId.remove(id)
             pendingWrites.remove(id)?.resolve(false)
           }
@@ -441,11 +466,16 @@ class SplitCircleBleModule : Module() {
         if (remoteId.isEmpty() || remoteId !in trustedDeviceIds) return@synchronized false
         // Duplicate-link dedup for the prefix-tie case above. Keep the link the
         // lower id opened so both sides independently reach the same verdict.
-        if (centralLinks.containsKey(remoteId) || peripheralLinks.containsKey(remoteId)) {
+        if (centralLinks.containsKey(remoteId)
+          || announcingLinks.containsKey(remoteId)
+          || peripheralLinks.containsKey(remoteId)
+        ) {
           if (localDeviceId > remoteId) return@synchronized false
         }
         identityByAddress[gatt.address()] = remoteId
-        centralLinks[remoteId] = gatt
+        // STAGED, not published — see `announcingLinks`. It becomes sendable in
+        // onCharacteristicWrite once our own identity has actually landed.
+        announcingLinks[remoteId] = gatt
         pendingMtuByAddress.remove(gatt.address())?.let { mtuByDeviceId[remoteId] = it }
         true
       }
@@ -511,7 +541,25 @@ class SplitCircleBleModule : Module() {
         // is genuinely bidirectional and only NOW worth reporting as a peer.
         // Emitting at connect time would advertise reachability the peer cannot
         // yet honour, and the router would send into a hole.
-        IDENTITY_UUID -> if (status == BluetoothGatt.GATT_SUCCESS) emitPeers() else gatt.disconnect()
+        IDENTITY_UUID -> {
+          val promoted = synchronized(lock) {
+            val remoteId = identityByAddress[gatt.address()]
+            if (remoteId == null) {
+              false
+            } else {
+              announcingLinks.remove(remoteId)
+              if (status == BluetoothGatt.GATT_SUCCESS) {
+                // Only NOW does it enter the map `connectedPeers()`/`sendChunk()`
+                // read — the link is bidirectional at this instant and not before.
+                centralLinks[remoteId] = gatt
+                true
+              } else {
+                false
+              }
+            }
+          }
+          if (promoted) emitPeers() else gatt.disconnect()
+        }
         CHUNK_UUID -> {
           val promise = synchronized(lock) {
             identityByAddress[gatt.address()]?.let { pendingWrites.remove(it) }
@@ -633,6 +681,36 @@ class SplitCircleBleModule : Module() {
 
   // ------------------------------------------------------------------ send
 
+  /**
+   * Serializes "set the shared characteristic value, then notify" (doc 35).
+   *
+   * On API 33+ the framework takes the bytes as an argument, so there is no
+   * shared mutable state to race on and this is genuinely correct rather than
+   * merely serialized. Below that, the deprecated two-step is all there is, and
+   * a dedicated lock is the only thing standing between two concurrent sends
+   * and one peer receiving another peer's bytes.
+   *
+   * `notifyLock`, not the module `lock`: this runs OUTSIDE the module lock by
+   * design (a binder call must not be made while holding it), and giving it its
+   * own mutex keeps that property while still making the pair atomic.
+   */
+  @Suppress("DEPRECATION")
+  @SuppressLint("MissingPermission")
+  private fun notifyChunk(
+    server: BluetoothGattServer,
+    device: BluetoothDevice,
+    characteristic: BluetoothGattCharacteristic,
+    bytes: ByteArray,
+  ): Boolean = synchronized(notifyLock) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      server.notifyCharacteristicChanged(device, characteristic, false, bytes) ==
+        BluetoothStatusCodes.SUCCESS
+    } else {
+      characteristic.value = bytes
+      server.notifyCharacteristicChanged(device, characteristic, false)
+    }
+  }
+
   @Suppress("DEPRECATION")
   @SuppressLint("MissingPermission")
   private fun sendChunk(peerDeviceId: String, chunk: String, promise: Promise) {
@@ -666,14 +744,19 @@ class SplitCircleBleModule : Module() {
         if (device == null || characteristic == null || server == null) {
           promise.resolve(false); return
         }
-        characteristic.value = bytes
+        // THE VALUE IS NOT SET HERE (doc 35). `chunkCharacteristic` is a single
+        // module-level object shared by every peripheral-linked peer, so setting
+        // it under `lock` and notifying outside the lock let two concurrent
+        // sends interleave: thread 2 overwrote the value between thread 1's set
+        // and thread 1's notify, and peer X received peer Y's bytes. Silent
+        // cross-peer corruption, reported successful to both. Not rare —
+        // `broadcastQueuedNearbyMessages()` and `router.flush()` both fire
+        // un-awaited off the same neighbour-change event.
+        //
         // Notification, not indication: there is no confirmation callback for
         // notifications, so this resolves on the local enqueue result. The
         // framing layer's reassembly TTL is what actually covers a lost chunk.
-        action = {
-          val ok = server.notifyCharacteristicChanged(device, characteristic, false)
-          promise.resolve(ok)
-        }
+        action = { promise.resolve(notifyChunk(server, device, characteristic, bytes)) }
       }
     }
 

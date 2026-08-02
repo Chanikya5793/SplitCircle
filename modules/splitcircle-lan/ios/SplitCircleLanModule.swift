@@ -1,4 +1,6 @@
 import ExpoModulesCore
+// For kDNSServiceErr_PolicyDenied — the Local Network denial code.
+import dnssd
 import Network
 
 /**
@@ -104,6 +106,22 @@ final class LanController: NSObject {
   private var identityByConnection: [ObjectIdentifier: String] = [:]
   private var buffers: [ObjectIdentifier: Data] = [:]
 
+  /**
+   Set when the OS tells us Local Network access was refused (doc 35).
+
+   Neither `NWListener` nor `NWBrowser` had a `stateUpdateHandler`, and a
+   `.waiting(PolicyDenied)` state is exactly how Local Network permission denial
+   surfaces — so it was discarded entirely. `isAvailable()` is driven by
+   `NWPathMonitor`, which reports interface state and stays `true`; `start()`'s
+   `do/catch` never throws for this. The module therefore reported fully healthy
+   while discovering nobody and being discovered by nobody, forever, and
+   indistinguishable from "no peers nearby". The JS bridge's own comment claimed
+   the denial "arrives here" in a catch that could never fire for it — the same
+   doc-comment-asserts-an-unwired-mechanism pattern CLAUDE.md already records
+   three times.
+   */
+  private var localNetworkDenied = false
+
   override init() {
     super.init()
     pathMonitor.pathUpdateHandler = { [weak self] path in
@@ -120,7 +138,8 @@ final class LanController: NSObject {
   }
 
   func hasLocalNetworkPath() -> Bool {
-    queue.sync { hasPath }
+    // A denial is a hard unavailability: the interface is up and useless.
+    queue.sync { hasPath && !localNetworkDenied }
   }
 
   // MARK: lifecycle
@@ -146,6 +165,13 @@ final class LanController: NSObject {
         listener.newConnectionHandler = { [weak self] connection in
           self?.adopt(connection, dialled: false)
         }
+        listener.stateUpdateHandler = { [weak self] state in
+          switch state {
+          case .waiting(let error), .failed(let error):
+            self?.handleEndpointFailure(error, role: "listener")
+          default: break
+          }
+        }
         listener.start(queue: self.queue)
         self.listener = listener
 
@@ -155,6 +181,13 @@ final class LanController: NSObject {
         )
         browser.browseResultsChangedHandler = { [weak self] results, _ in
           self?.handleBrowse(results)
+        }
+        browser.stateUpdateHandler = { [weak self] state in
+          switch state {
+          case .waiting(let error), .failed(let error):
+            self?.handleEndpointFailure(error, role: "browser")
+          default: break
+          }
         }
         browser.start(queue: self.queue)
         self.browser = browser
@@ -168,10 +201,36 @@ final class LanController: NSObject {
     }
   }
 
+  /**
+   Turns a listener/browser `.waiting`/`.failed` state into a diagnosable signal.
+
+   `.waiting` matters as much as `.failed`: Network.framework reports a Local
+   Network denial as `.waiting(.dns(PolicyDenied))` and keeps retrying forever
+   rather than failing, so treating only `.failed` as an error would miss the
+   one case this exists for.
+
+   NSLog, not a Swift `print`: this has to be readable from a Release build on a
+   real device via `log stream`, which is the only way anyone would ever find
+   out this happened.
+   */
+  private func handleEndpointFailure(_ error: NWError, role: String) {
+    if case .dns(let code) = error, code == DNSServiceErrorType(kDNSServiceErr_PolicyDenied) {
+      localNetworkDenied = true
+      NSLog("⚠️ SplitCircleLan: Local Network permission denied (%@); LAN transport is inert", role)
+      emitPeers()
+      return
+    }
+    NSLog("⚠️ SplitCircleLan: %@ failed: %@", role, String(describing: error))
+  }
+
   func stop() { queue.async { self.stopLocked() } }
 
   private func stopLocked() {
     running = false
+    // Cleared on stop, not held forever: the user can grant permission in
+    // Settings, and a stale denial would keep the transport dead across the
+    // restart that is supposed to pick that up.
+    localNetworkDenied = false
     listener?.cancel()
     listener = nil
     browser?.cancel()

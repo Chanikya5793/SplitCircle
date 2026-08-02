@@ -161,14 +161,24 @@ export const createMeshRouter = (deps: RouterDeps): MeshRouter => {
     pending = pending.filter((item) => !dropped.has(item));
   };
 
-  const hold = (frame: RouterFrame, payloadClass: PayloadClass): void => {
-    pending.push({
+  /**
+   * Buffers a frame for later, returning whether it SURVIVED (doc 35).
+   *
+   * `enforceCap` can evict the very frame just pushed — a large bulk frame into
+   * a full queue does exactly that. `originate` reported `held: true`
+   * regardless, so the router's public contract claimed a message would be
+   * delivered once reachable when it had already been discarded.
+   */
+  const hold = (frame: RouterFrame, payloadClass: PayloadClass): boolean => {
+    const entry: PendingFrame = {
       frame,
       payloadClass,
       bytes: frame.payload.length,
       queuedAt: now(),
-    });
+    };
+    pending.push(entry);
     enforceCap();
+    return pending.includes(entry);
   };
 
   /**
@@ -205,11 +215,31 @@ export const createMeshRouter = (deps: RouterDeps): MeshRouter => {
 
   return {
     originate: async ({ msgId, payload, dest, payloadClass }) => {
+      // NO IDENTITY YET means no valid frame (doc 35). `localNodeId` is resolved
+      // asynchronously during startNearbyMessaging, and other entry points that
+      // reach here — queued-send broadcasts, attachment callbacks — are not
+      // gated on that. Originating with `origin: ''` produces a frame every peer
+      // rejects as malformed in `decodeRouterFrame`, yet `deliveredCount`
+      // counts raw bytes handed to a connected transport, not frames anyone
+      // accepted, so the message was still marked sent: a false delivery
+      // confirmation for something no peer could ever process.
+      //
+      // held: true, not a silent drop — the caller's message is real and this is
+      // a transient startup condition, so it belongs in the store-and-forward
+      // buffer to go out once identity exists.
+      const origin = deps.localNodeId();
+      if (!origin) {
+        const held = hold(
+          { msgId, ttl: DEFAULT_TTL, payloadClass, origin, dest, payload },
+          payloadClass,
+        );
+        return { delivered: 0, held };
+      }
       const frame: RouterFrame = {
         msgId,
         ttl: DEFAULT_TTL,
         payloadClass,
-        origin: deps.localNodeId(),
+        origin,
         dest,
         payload,
       };
@@ -221,8 +251,10 @@ export const createMeshRouter = (deps: RouterDeps): MeshRouter => {
       const targets = forwardTargets(frame);
       if (targets.length === 0) {
         if (!isBroadcast(frame)) {
-          hold(frame, payloadClass);
-          return { delivered: 0, held: true };
+          // `hold` reports whether the frame SURVIVED `enforceCap`, which can
+          // evict the very frame it was just given. This previously returned an
+          // unconditional `true` — a claim the router had never checked (doc 35).
+          return { delivered: 0, held: hold(frame, payloadClass) };
         }
         return { delivered: 0, held: false };
       }
