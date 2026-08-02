@@ -29,6 +29,26 @@ const applyInChunks = async (
  * Scheduled function to sweep Firebase Realtime Database and delete
  * receipts, queued messages, and stale call entries.
  */
+/**
+ * Whether an ephemeral RTDB node is old enough to reap.
+ *
+ * Exported and named rather than inlined because the interesting case is the
+ * one that is easy to get backwards: a node with NO `createdAt` — written
+ * before the field existed, or by a client that omitted it — is treated as
+ * EXPIRED, not immortal. Defaulting a missing timestamp to `now` (or skipping
+ * the node) would make exactly the nodes this reaper exists for permanently
+ * un-reapable, which is the state CLAUDE.md's "never let RTDB accumulate" rule
+ * forbids and which no test would have caught.
+ *
+ * A non-numeric or negative value is treated the same way: unreadable is not a
+ * reason to keep something forever.
+ */
+export const isExpiredNode = (data: unknown, cutoff: number): boolean => {
+    const raw = (data as { createdAt?: unknown } | null)?.createdAt;
+    const createdAt = typeof raw === "number" && Number.isFinite(raw) ? raw : 0;
+    return createdAt < cutoff;
+};
+
 export const cleanupOldRtdbData = onSchedule("every 24 hours", async (event) => {
     const db = getDatabase();
     const now = Date.now();
@@ -243,12 +263,7 @@ export const cleanupOldRtdbData = onSchedule("every 24 hours", async (event) => 
                     const requesterDeviceId = deviceSnapshot.key;
                     deviceSnapshot.forEach((batchSnapshot) => {
                         const batchId = batchSnapshot.key;
-                        const data = batchSnapshot.val();
-                        // A batch written before `createdAt` existed has no
-                        // timestamp; treat it as expired rather than immortal,
-                        // which is the whole point of this branch.
-                        const createdAt = typeof data?.createdAt === "number" ? data.createdAt : 0;
-                        if (createdAt < batchCutoff) {
+                        if (isExpiredNode(batchSnapshot.val(), batchCutoff)) {
                             batchUpdates[
                                 `syncGapBatches/${ownerUserId}/${requesterDeviceId}/${batchId}`
                             ] = null;
