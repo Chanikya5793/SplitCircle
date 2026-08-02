@@ -9,6 +9,7 @@
  * no feedback to either side.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { expectLogged } from '@/testing/expectLogged';
 
 const callable = vi.hoisted(() => ({ invoke: vi.fn(async () => ({ data: {} })) }));
 
@@ -85,7 +86,11 @@ describe('requestChatAudienceRepair', () => {
 
   it('swallows a failed repair — the local union already keeps this device correct', async () => {
     callable.invoke.mockRejectedValueOnce(new Error('unavailable'));
-    await expect(requestChatAudienceRepair(['chat-1'])).resolves.toBeUndefined();
+    // Swallowing is correct — the local union already keeps this device right —
+    // but a repair that never succeeds leaves OTHER devices wrong, so the
+    // failure must not be invisible.
+    await expectLogged('Chat audience repair failed', () =>
+      expect(requestChatAudienceRepair(['chat-1'])).resolves.toBeUndefined());
   });
 
   it('ignores empty ids', async () => {

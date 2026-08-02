@@ -55,6 +55,17 @@ const MAX_BATCH_ATTEMPTS = 3;
 /** Per-batch failure counts, in memory only — a restart may retry, by design. */
 const batchAttempts = new Map<string, number>();
 
+/**
+ * Test seam. Same convention as `__resetTransportPreferences`.
+ *
+ * `batchAttempts` is module state that survives between tests, so without this
+ * one test's exhausted budget silently becomes the next test's starting point —
+ * which reads as a bug in the code under test rather than in the harness.
+ */
+export const __resetSyncBatchState = (): void => {
+  batchAttempts.clear();
+};
+
 const SYNC_BATCH_HPKE_INFO = 'splitcircle/sync-batch/v1';
 
 /**

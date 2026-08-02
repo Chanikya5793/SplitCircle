@@ -10,6 +10,7 @@
  * refuses to let an older remote write overwrite a newer local one.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
+import { expectLogged } from '@/testing/expectLogged';
 
 import { __clearAsyncStorageStore } from './mocks/async-storage';
 import type { ChatMessage } from '@/models';

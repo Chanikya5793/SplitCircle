@@ -10,6 +10,7 @@
  * this". These tests pin the negative receipt that closes that gap.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { expectLogged } from '@/testing/expectLogged';
 
 const rtdbMock = vi.hoisted(() => ({
   update: vi.fn(async () => undefined),
@@ -81,7 +82,11 @@ describe('undecryptable receipts', () => {
 
   it('never rejects, so a reporting failure cannot break message processing', async () => {
     rtdbMock.update.mockRejectedValueOnce(new Error('offline'));
-    await expect(sendUndecryptableReceipt('chat-1', 'm1', 'u2')).resolves.toBeUndefined();
+    // Captured AND asserted: swallowing is right (a failed receipt must not
+    // break message processing) but the sender never learns their session is
+    // dead if this is silent, so the log is the only trace it happened.
+    await expectLogged('Error sending undecryptable receipt', () =>
+      expect(sendUndecryptableReceipt('chat-1', 'm1', 'u2')).resolves.toBeUndefined());
   });
 
   it('surfaces an undecryptable-only receipt to the sender', () => {

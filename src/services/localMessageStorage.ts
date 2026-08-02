@@ -80,6 +80,26 @@ const readMessages = async (chatId: string): Promise<ChatMessage[]> => {
   return JSON.parse(data) as ChatMessage[];
 };
 
+/**
+ * Chatty success logging, DEV only.
+ *
+ * These sit on the hottest paths in the app — every message save, every status
+ * update, every read-receipt batch — so in Release they were a log line per
+ * message per device. CLAUDE.md records a retry storm that produced 99.96% of
+ * the app's JS log output and saturated the JS thread on a Pixel; a per-message
+ * success log is the same class of problem, and it also buries the
+ * `console.error` diagnostics that a Release build actually needs to surface.
+ *
+ * `console.error` is deliberately NOT routed through this — a Release bundle
+ * drops `console.warn` entirely, so error is the only level that reaches a
+ * device log, and gating it would make real failures invisible.
+ */
+const debugLog = (...args: unknown[]): void => {
+  if (__DEV__) {
+    console.log(...args);
+  }
+};
+
 export const waitForChatWrites = async (chatId: string): Promise<void> => {
   const activeChain = chatWriteChains.get(chatId);
   if (!activeChain) {
@@ -124,7 +144,7 @@ export const subscribeToLocalMessages = (
 
 // Initialize the storage (No-op for AsyncStorage but kept for API compatibility)
 export const initMessageDB = async (): Promise<void> => {
-  console.log('✅ Message storage initialized (AsyncStorage)');
+  debugLog('✅ Message storage initialized (AsyncStorage)');
 };
 
 // Save a message to local storage
@@ -157,10 +177,10 @@ export const saveMessageLocally = async (message: ChatMessage): Promise<void> =>
           deliveredTo: mergeUniqueIds(existingMessage.deliveredTo, message.deliveredTo),
           readBy: mergeUniqueIds(existingMessage.readBy, message.readBy),
         };
-        console.log('✅ Message updated locally:', message.id, message.replyTo ? '(with replyTo)' : '');
+        debugLog('✅ Message updated locally:', message.id, message.replyTo ? '(with replyTo)' : '');
       } else {
         messages.push(message);
-        console.log('✅ New message saved locally:', message.id, message.replyTo ? '(with replyTo)' : '');
+        debugLog('✅ New message saved locally:', message.id, message.replyTo ? '(with replyTo)' : '');
       }
 
       sortMessagesByTimestampAsc(messages);
@@ -320,7 +340,7 @@ export const updateMessageStatus = async (
       };
 
       await AsyncStorage.setItem(key, JSON.stringify(messages));
-      console.log(`✅ Message ${messageId} status updated to ${nextStatus}`);
+      debugLog(`✅ Message ${messageId} status updated to ${nextStatus}`);
       notifyMessageListeners(chatId);
     });
   } catch (error) {
@@ -368,7 +388,7 @@ export const markMessagesDelivered = async (
       }
 
       await AsyncStorage.setItem(key, JSON.stringify(messages));
-      console.log(`✅ Marked ${messageIds.length} messages as delivered by ${deliveredByUserId}`);
+      debugLog(`✅ Marked ${messageIds.length} messages as delivered by ${deliveredByUserId}`);
       notifyMessageListeners(chatId);
     });
   } catch (error) {
@@ -420,7 +440,7 @@ export const markMessagesRead = async (
       }
 
       await AsyncStorage.setItem(key, JSON.stringify(messages));
-      console.log(`✅ Marked ${messageIds.length} messages as read by ${readByUserId}`);
+      debugLog(`✅ Marked ${messageIds.length} messages as read by ${readByUserId}`);
       notifyMessageListeners(chatId);
     });
   } catch (error) {
@@ -870,7 +890,7 @@ export const updateMessageLocalPath = async (
       };
 
       await AsyncStorage.setItem(key, JSON.stringify(messages));
-      console.log(`✅ Message ${messageId} local path updated to ${localMediaPath}`);
+      debugLog(`✅ Message ${messageId} local path updated to ${localMediaPath}`);
       notifyMessageListeners(chatId);
     });
   } catch (error) {

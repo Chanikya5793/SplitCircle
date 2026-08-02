@@ -12,6 +12,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { expectLogged } from '@/testing/expectLogged';
 
 type Snapshot = { key: string | null; val: () => unknown };
 type ChildHandler = (snapshot: Snapshot) => void;
@@ -28,12 +29,16 @@ const rtdb = {
       snapshot: { val: () => unknown };
     }>
   >(),
-  onChildAdded: vi.fn<(path: string, handler: ChildHandler) => () => void>(
-    () => () => undefined,
-  ),
-  onChildChanged: vi.fn<(path: string, handler: ChildHandler) => () => void>(
-    () => () => undefined,
-  ),
+  // The THIRD argument is Firebase's cancel callback, and it is the whole
+  // subject of the re-subscribe tests below — a listener Firebase cancels never
+  // retries by itself, so dropping this arg in the mock would make that
+  // behaviour untestable.
+  onChildAdded: vi.fn<
+    (path: string, handler: ChildHandler, onError?: (e: Error) => void) => () => void
+  >(() => () => undefined),
+  onChildChanged: vi.fn<
+    (path: string, handler: ChildHandler, onError?: (e: Error) => void) => () => void
+  >(() => () => undefined),
 };
 
 vi.mock('firebase/database', () => ({
@@ -45,8 +50,10 @@ vi.mock('firebase/database', () => ({
   get: (path: string) => rtdb.get(path),
   runTransaction: (path: string, fn: (current: unknown) => unknown) =>
     rtdb.runTransaction(path, fn),
-  onChildAdded: (path: string, handler: ChildHandler) => rtdb.onChildAdded(path, handler),
-  onChildChanged: (path: string, handler: ChildHandler) => rtdb.onChildChanged(path, handler),
+  onChildAdded: (path: string, handler: ChildHandler, onError?: (e: Error) => void) =>
+    rtdb.onChildAdded(path, handler, onError),
+  onChildChanged: (path: string, handler: ChildHandler, onError?: (e: Error) => void) =>
+    rtdb.onChildChanged(path, handler, onError),
 }));
 
 // syncGapService now delegates to the batch path, which imports the native
@@ -83,6 +90,8 @@ import {
   answerGapRequest,
   checkForGapsAndRequestFill,
   claimGapRequest,
+  getOutstandingSyncGaps,
+  requestGapContinuation,
   resetGapState,
   subscribeToGapRequests,
 } from '../syncGapService';
@@ -384,7 +393,11 @@ describe('answering', () => {
       .mockRejectedValueOnce(new Error('transient'))
       .mockResolvedValueOnce(true);
 
-    await expect(answerGapRequest(UID, request, false)).resolves.toBe(1);
+    // The log is asserted, not merely silenced: a message dropped from a
+    // gap-fill replay is history the user silently never gets back, and this
+    // line is the only trace it happened.
+    await expectLogged('Gap-fill replay failed for message', () =>
+      expect(answerGapRequest(UID, request, false)).resolves.toBe(1));
   });
 });
 
@@ -446,5 +459,111 @@ describe('claim retry storm', () => {
     }
 
     expect(seen).toHaveLength(2);
+  });
+});
+
+/**
+ * A truncated batch's continuation must be ACCEPTED when it arrives.
+ *
+ * `needsContinuation` was wired into ChatContext so a size-capped batch gets
+ * chased. Calling plain `requestGapFill` there would have been INERT and looked
+ * fine: it writes the RTDB node but leaves `requestedWatermarks` at the original
+ * earlier timestamp, and `subscribeToSyncBatches` validates every arriving batch
+ * against that via `isBatchForRequest`, which requires
+ * `body.since <= request.sinceTimestamp`. A continuation's `since` is later by
+ * definition, so it would have been rejected and discarded on arrival — the
+ * feature would have shipped doing nothing.
+ */
+describe('gap continuation', () => {
+  it('advances the outstanding watermark, not just the RTDB node', async () => {
+    await requestGapContinuation(UID, CHAT, 5_000, OWN_DEVICE);
+
+    const outstanding = getOutstandingSyncGaps().find((gap) => gap.chatId === CHAT);
+    expect(outstanding?.sinceTimestamp).toBe(5_000);
+    // And the request itself was actually written.
+    expect(rtdb.set).toHaveBeenCalled();
+  });
+
+  it('lets a later continuation supersede an earlier one', async () => {
+    await requestGapContinuation(UID, CHAT, 5_000, OWN_DEVICE);
+    await requestGapContinuation(UID, CHAT, 9_000, OWN_DEVICE);
+
+    const gaps = getOutstandingSyncGaps().filter((gap) => gap.chatId === CHAT);
+    // ONE entry, not two: the request node is keyed by chat+device, so slices
+    // must overwrite rather than accumulate one outstanding request per slice.
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].sinceTimestamp).toBe(9_000);
+  });
+
+  it('keeps the original requestedAt, since a sliced chat has not started over', async () => {
+    await requestGapContinuation(UID, CHAT, 5_000, OWN_DEVICE);
+    const first = getOutstandingSyncGaps().find((gap) => gap.chatId === CHAT)?.requestedAt;
+    await requestGapContinuation(UID, CHAT, 9_000, OWN_DEVICE);
+    const second = getOutstandingSyncGaps().find((gap) => gap.chatId === CHAT)?.requestedAt;
+
+    // requestedAt measures how long this chat has been un-synced OVERALL;
+    // resetting it per slice would hide a chat that never finishes converging.
+    expect(second).toBe(first);
+  });
+});
+
+/**
+ * A cancelled gap-request listener must come back.
+ *
+ * Firebase cancels a child listener on a rules failure or an auth hiccup and
+ * never retries by itself. Before this, one cancellation stopped this device
+ * seeing EVERY other device's gap-fill requests for the rest of the session —
+ * silently, on the path whose only job is repairing sync gaps.
+ */
+describe('gap-request listener resilience', () => {
+  const cancelBoth = () => {
+    const errors = [
+      ...rtdb.onChildAdded.mock.calls.map(([, , onError]) => onError),
+      ...rtdb.onChildChanged.mock.calls.map(([, , onError]) => onError),
+    ].filter(Boolean) as ((e: Error) => void)[];
+    errors.forEach((fn) => fn(new Error('permission_denied')));
+    return errors.length;
+  };
+
+  it('re-subscribes after a cancellation', async () => {
+    vi.useFakeTimers();
+    try {
+      const stop = subscribeToGapRequests(UID, OWN_DEVICE, vi.fn());
+      const before = rtdb.onChildAdded.mock.calls.length;
+      expect(before).toBeGreaterThan(0);
+
+      await expectLogged('Gap-request listener cancelled', async () => {
+        expect(cancelBoth()).toBeGreaterThan(0);
+      });
+
+      // Backoff, not immediate: a rules failure is permanent for the session,
+      // and a tight retry against it is another log-saturating storm.
+      expect(rtdb.onChildAdded.mock.calls.length).toBe(before);
+      await vi.advanceTimersByTimeAsync(1_100);
+      expect(rtdb.onChildAdded.mock.calls.length).toBeGreaterThan(before);
+
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not re-subscribe after teardown', async () => {
+    vi.useFakeTimers();
+    try {
+      const stop = subscribeToGapRequests(UID, OWN_DEVICE, vi.fn());
+      await expectLogged('Gap-request listener cancelled', async () => {
+        cancelBoth();
+      });
+      stop();
+      const after = rtdb.onChildAdded.mock.calls.length;
+
+      // A pending retry firing after unsubscribe would resurrect a listener the
+      // caller has already disposed — and on sign-out, for a user who is gone.
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(rtdb.onChildAdded.mock.calls.length).toBe(after);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

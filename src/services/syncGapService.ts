@@ -199,6 +199,21 @@ const seedOutstanding = async (userId: string, ownDeviceId: string): Promise<voi
   }
 };
 
+/**
+ * Per-request progress logging, DEV only.
+ *
+ * A gap-fill pass runs once per chat per detection sweep, so in Release this
+ * was a log line per chat on every reconnect — noise that buries the
+ * `console.error` diagnostics on this same path, which are the only evidence a
+ * sync failure leaves (CLAUDE.md: a Release bundle drops `console.warn`
+ * entirely, so error is the level that has to stay readable).
+ */
+const debugLog = (...args: unknown[]): void => {
+  if (__DEV__) {
+    console.log(...args);
+  }
+};
+
 export const requestGapFill = async (
   ownerUserId: string,
   chatId: string,
@@ -435,7 +450,7 @@ export const answerGapRequest = async (
         missing,
       );
       if (sent > 0) {
-        console.log(`Gap-fill: sent ${sent} messages as one batch for ${request.chatId}`);
+        debugLog(`Gap-fill: sent ${sent} messages as one batch for ${request.chatId}`);
         return sent;
       }
     } catch (error) {
@@ -459,7 +474,7 @@ export const answerGapRequest = async (
     await releaseGapRequestClaim(ownerUserId, request.requestId);
   }
 
-  console.log(`Gap-fill: replayed ${queued}/${missing.length} messages for ${request.chatId}`);
+  debugLog(`Gap-fill: replayed ${queued}/${missing.length} messages for ${request.chatId}`);
   return queued;
 };
 

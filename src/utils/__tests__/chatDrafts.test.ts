@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { expectLogged } from '@/testing/expectLogged';
 
 // In-memory stand-in for AsyncStorage so the pure-node vitest config never
 // loads the real react-native module.
@@ -68,8 +69,16 @@ describe('chatDrafts', () => {
     vi.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('disk full'));
     vi.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('io error'));
     vi.mocked(AsyncStorage.removeItem).mockRejectedValueOnce(new Error('io error'));
-    await expect(saveChatDraft('chat-1', 'text')).resolves.toBeUndefined();
-    await expect(getChatDraft('chat-1')).resolves.toBeNull();
-    await expect(clearChatDraft('chat-1')).resolves.toBeUndefined();
+
+    // Captured, not silenced: swallowing a storage failure is correct here (a
+    // lost draft must never break the composer) but it must still leave a
+    // trace, or "my draft vanished" is undiagnosable. Asserting the log also
+    // pins it at console.error — a Release bundle drops console.warn entirely.
+    await expectLogged('failed to save draft', () =>
+      expect(saveChatDraft('chat-1', 'text')).resolves.toBeUndefined());
+    await expectLogged('failed to read draft', () =>
+      expect(getChatDraft('chat-1')).resolves.toBeNull());
+    await expectLogged('failed to clear draft', () =>
+      expect(clearChatDraft('chat-1')).resolves.toBeUndefined());
   });
 });

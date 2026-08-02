@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { expectLogged } from '@/testing/expectLogged';
 
 const signal = vi.hoisted(() => ({
   decryptEnvelope: vi.fn(),
@@ -50,16 +51,23 @@ describe('Signal replay repair policy', () => {
       { code: 'DuplicateSignalMessage' },
     ));
 
-    await expect(decryptMessageEnvelope('peer', 7, { t: 2, b: 'ciphertext' }))
-      .resolves.toBeNull();
+    // The log still fires for a duplicate, and that is correct: the message is
+    // dropped either way, so a user reporting "their message never arrived"
+    // needs the device log to distinguish a harmless gossip repeat from a dead
+    // session. Asserted so the DISTINGUISHING detail — the error name — cannot
+    // quietly disappear from it.
+    await expectLogged(/Decrypt failed[\s\S]*DuplicateSignalMessage/, () =>
+      expect(decryptMessageEnvelope('peer', 7, { t: 2, b: 'ciphertext' }))
+        .resolves.toBeNull());
     expect(signal.markSessionForRebuild).not.toHaveBeenCalled();
   });
 
   it('still requests repair for an actual decrypt failure', async () => {
     signal.decryptEnvelope.mockRejectedValueOnce(new Error('invalid session'));
 
-    await expect(decryptMessageEnvelope('peer', 7, { t: 2, b: 'ciphertext' }))
-      .resolves.toBeNull();
+    await expectLogged(/Decrypt failed[\s\S]*invalid session/, () =>
+      expect(decryptMessageEnvelope('peer', 7, { t: 2, b: 'ciphertext' }))
+        .resolves.toBeNull());
     expect(signal.markSessionForRebuild).toHaveBeenCalledWith('peer', 7);
   });
 

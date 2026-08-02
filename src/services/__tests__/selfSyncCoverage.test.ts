@@ -17,6 +17,7 @@
  * strictly beats reaching none.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { expectLogged } from '@/testing/expectLogged';
 
 const envelope = vi.hoisted(() => ({
   encryptMessageForRecipient: vi.fn(),
@@ -191,7 +192,13 @@ describe('self-sync device coverage', () => {
     // not turn that into a failed message.
     envelope.encryptMessageForRecipient.mockRejectedValue(new Error('boom'));
 
-    await expect(queueMessageToOwnDevices('me', message, false)).resolves.toBeUndefined();
+    // Asserted because a SILENT swallow here is precisely the doc 32 §10.1 bug:
+    // one unreachable sibling stopped the user's own messages reaching ALL
+    // their linked devices, and the catch turned it into a console.warn that a
+    // Release bundle drops — so the only diagnosis available was reading Cloud
+    // Function logs. This line has to exist and has to be at error level.
+    await expectLogged('Failed to mirror message to own devices', () =>
+      expect(queueMessageToOwnDevices('me', message, false)).resolves.toBeUndefined());
     expect(rtdbMock.set).not.toHaveBeenCalled();
   });
 });

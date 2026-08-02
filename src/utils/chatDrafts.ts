@@ -26,7 +26,12 @@ export const saveChatDraft = async (
       await AsyncStorage.setItem(draftKey(chatId), text);
     }
   } catch (error) {
-    console.warn('chatDrafts: failed to save draft', error);
+    // console.error, not warn: a Release bundle drops console.warn entirely
+    // (CLAUDE.md). Swallowing this is correct — a storage hiccup must never
+    // break the composer — but a draft that silently vanishes is exactly the
+    // "I typed a message and it disappeared" report that is impossible to
+    // diagnose without a line in the device log.
+    console.error('chatDrafts: failed to save draft', error);
   }
 };
 
@@ -38,7 +43,7 @@ export const getChatDraft = async (chatId: string): Promise<string | null> => {
     const value = await AsyncStorage.getItem(draftKey(chatId));
     return value && value.trim().length > 0 ? value : null;
   } catch (error) {
-    console.warn('chatDrafts: failed to read draft', error);
+    console.error('chatDrafts: failed to read draft', error);
     return null;
   }
 };
@@ -50,6 +55,6 @@ export const clearChatDraft = async (chatId: string): Promise<void> => {
   try {
     await AsyncStorage.removeItem(draftKey(chatId));
   } catch (error) {
-    console.warn('chatDrafts: failed to clear draft', error);
+    console.error('chatDrafts: failed to clear draft', error);
   }
 };
