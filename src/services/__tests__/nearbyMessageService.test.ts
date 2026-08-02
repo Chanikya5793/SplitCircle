@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const native = vi.hoisted(() => ({
@@ -39,6 +40,11 @@ vi.mock('../meshMessageProtocol', () => ({
   parseSignedMeshEnvelope: vi.fn(() => null),
 }));
 
+import {
+  __resetTransportPreferences,
+  setNearbyEnabled,
+  setTransportEnabled,
+} from '../mesh/transportPreferences';
 import {
   broadcastQueuedNearbyMessages,
   getNearbyMessagingSnapshot,
@@ -97,5 +103,92 @@ describe('nearby message service trust handoff', () => {
       'signed-wire-envelope',
       ['friend-phone'],
     );
+  });
+});
+
+/**
+ * The Settings toggles must stop the RADIO, not merely bias routing (doc 35,
+ * high #1).
+ *
+ * `isTransportEnabled` was consulted in exactly one place — the switch's
+ * `available()` gate, which only picks a carrier for a NEW outbound send.
+ * Nothing started or stopped a transport, so "Nearby messaging: Off" left every
+ * radio advertising, scanning, accepting inbound frames and relaying other
+ * people's traffic. The UI said one thing and the hardware did another, and no
+ * existing test could tell the difference because they all assert on sends.
+ */
+describe('transport preferences drive the transport lifecycle', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    queue.loadMeshMessageQueue.mockResolvedValue([]);
+    // Both halves: the in-memory snapshot AND the persisted copy that
+    // `startNearbyMessaging` reads back through `loadTransportPreferences`.
+    __resetTransportPreferences();
+    await AsyncStorage.clear();
+  });
+
+  it('stops a running transport when nearby is switched off', async () => {
+    const stop = await startNearbyMessaging('me', 'Me', vi.fn());
+    expect(native.start).toHaveBeenCalledTimes(1);
+    expect(native.stop).not.toHaveBeenCalled();
+
+    await setNearbyEnabled(false);
+
+    expect(native.stop).toHaveBeenCalledTimes(1);
+    expect(getNearbyMessagingSnapshot().status).toBe('unavailable');
+    stop();
+  });
+
+  it('brings the radio back when it is switched on again, without an app restart', async () => {
+    const stop = await startNearbyMessaging('me', 'Me', vi.fn());
+    await setNearbyEnabled(false);
+    native.start.mockClear();
+
+    await setNearbyEnabled(true);
+    // start() is fired without awaiting the listener, so let it settle.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(native.start).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it('honours a per-transport toggle, not just the master switch', async () => {
+    const stop = await startNearbyMessaging('me', 'Me', vi.fn());
+
+    await setTransportEnabled('mpc', false);
+
+    expect(native.stop).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it('never starts a transport the user had already disabled', async () => {
+    await setNearbyEnabled(false);
+    const stop = await startNearbyMessaging('me', 'Me', vi.fn());
+
+    // Started-then-stopped would still have advertised, however briefly.
+    expect(native.start).not.toHaveBeenCalled();
+    expect(getNearbyMessagingSnapshot().status).toBe('unavailable');
+    stop();
+  });
+
+  it('keeps the paired-peer list across an off/on cycle', async () => {
+    setNearbyTrustedPeers([{
+      deviceId: 'friend-phone',
+      userId: 'friend',
+      label: 'Asha',
+      relationship: 'direct',
+      sharedChatCount: 1,
+    }]);
+    const stop = await startNearbyMessaging('me', 'Me', vi.fn());
+
+    await setNearbyEnabled(false);
+    await setNearbyEnabled(true);
+    await Promise.resolve();
+
+    // A full snapshot rebuild would zero this, and nothing re-populates it
+    // until the next pairing event — the peers would simply vanish.
+    expect(getNearbyMessagingSnapshot().trustedPeers['friend-phone']?.label).toBe('Asha');
+    stop();
   });
 });

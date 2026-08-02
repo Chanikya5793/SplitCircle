@@ -11,7 +11,11 @@ import { nativeLan } from '../../modules/splitcircle-lan';
 import { createBleTransport } from '@/services/mesh/bleTransport';
 import { createLanTransport } from '@/services/mesh/lanTransport';
 import { createMeshRouter } from '@/services/mesh/router';
-import { loadTransportPreferences } from '@/services/mesh/transportPreferences';
+import {
+  isTransportEnabled,
+  loadTransportPreferences,
+  subscribeToTransportPreferences,
+} from '@/services/mesh/transportPreferences';
 import {
   MeshEventLog,
   aggregateNeighbours,
@@ -19,7 +23,7 @@ import {
 } from '@/services/mesh/diagnostics';
 import { BROADCAST_DEST, decodeRouterFrame } from '@/services/mesh/routerFrame';
 import { createMpcTransport } from '@/services/mesh/mpcTransport';
-import type { MeshTransport, PayloadClass } from '@/services/mesh/transport';
+import type { MeshTransport, PayloadClass, TransportId } from '@/services/mesh/transport';
 import { createTransportSwitch } from '@/services/mesh/transportSwitch';
 import {
   loadMeshMessageQueue,
@@ -506,39 +510,113 @@ export const startNearbyMessaging = async (
   // (CLAUDE.md), and a transport that silently never starts is precisely what
   // needs to be diagnosable here — this whole finding existed because nothing
   // reported it.
-  const startResults = await Promise.all(
-    activeTransports.map(async (transport) => {
-      try {
-        const ok = await transport.start({
-          userId,
-          deviceId,
-          trustedDeviceIds: Object.keys(trustedPeers),
-        });
-        if (!ok) {
-          console.error(
-            `⚠️ ${transport.id} transport did not start `
-            + '(radio/network off, permission denied, or unavailable on this platform)',
-          );
-        }
-        return ok;
-      } catch (error) {
-        console.error(`⚠️ ${transport.id} transport threw while starting`, error);
-        return false;
+  // A DISABLED TRANSPORT MUST NOT RUN ITS RADIO (doc 35, high #1).
+  //
+  // `isTransportEnabled` was previously consulted in exactly one place: the
+  // switch's `available()` gate, which only decides which transport carries a
+  // NEW outbound send. Nothing ever stopped — or declined to start — a running
+  // transport. So a user who turned "Nearby messaging" off in Settings still
+  // had every radio advertising, scanning, accepting inbound frames and, with
+  // the router on, RELAYING other people's traffic, while the UI said "Off".
+  // That is a broken privacy promise, not a cosmetic bug, and it is worse on
+  // the individual toggles: "Bluetooth off" left BLE fully live.
+  //
+  // Enabled transports are started; disabled ones are skipped outright rather
+  // than started-then-stopped, so a radio the user has already refused never
+  // comes up even briefly.
+  /**
+   * Flips availability WITHOUT resetting the rest of the snapshot.
+   *
+   * `createNearbyMessagingSnapshot` builds a fresh one, which zeroes
+   * `trustedPeers` — correct at module load, wrong once running. The block
+   * above went out of its way to preserve the offline identity allowlist across
+   * a start, and then the "no transport started" branch below threw it away
+   * again; nothing re-populates it until the next pairing event, so the user's
+   * paired peers simply vanished on any device where every radio was off. The
+   * same reset on a Settings toggle would have lost them on every off/on cycle.
+   */
+  const publishAvailability = (available: boolean): void => {
+    if (available === (nearbySnapshot.status !== 'unavailable')) return;
+    publishNearbySnapshot({
+      ...nearbySnapshot,
+      status: available ? 'idle' : 'unavailable',
+      connectedPeerCount: available ? nearbySnapshot.connectedPeerCount : 0,
+      connectedDeviceIds: available ? nearbySnapshot.connectedDeviceIds : [],
+      discoveredPeerCount: available ? nearbySnapshot.discoveredPeerCount : 0,
+      discoveredDeviceIds: available ? nearbySnapshot.discoveredDeviceIds : [],
+      connectingPeerCount: available ? nearbySnapshot.connectingPeerCount : 0,
+      connectingDeviceIds: available ? nearbySnapshot.connectingDeviceIds : [],
+      lastChangedAt: Date.now(),
+    });
+  };
+
+  const runningTransports = new Set<TransportId>();
+
+  const startTransport = async (transport: MeshTransport): Promise<boolean> => {
+    try {
+      const ok = await transport.start({
+        userId,
+        deviceId,
+        trustedDeviceIds: Object.keys(nearbySnapshot.trustedPeers),
+      });
+      if (ok) runningTransports.add(transport.id);
+      else {
+        console.error(
+          `⚠️ ${transport.id} transport did not start `
+          + '(radio/network off, permission denied, or unavailable on this platform)',
+        );
       }
-    }),
+      return ok;
+    } catch (error) {
+      console.error(`⚠️ ${transport.id} transport threw while starting`, error);
+      return false;
+    }
+  };
+
+  const startResults = await Promise.all(
+    activeTransports.map((transport) =>
+      (isTransportEnabled(transport.id) ? startTransport(transport) : Promise.resolve(false))),
   );
 
-  if (!startResults.some(Boolean)) {
-    publishNearbySnapshot(createNearbyMessagingSnapshot(false));
-  }
+  if (!startResults.some(Boolean)) publishAvailability(false);
   void broadcastQueuedNearbyMessages();
+
+  // Reconcile on every preference change, in both directions. Toggling nearby
+  // off and back on must bring the radios back without restarting the app.
+  let reconciling = false;
+  const applyPreferences = (): void => {
+    // `stop()` can itself emit a state change; without this a re-entrant call
+    // could observe a half-applied `runningTransports` and double-start.
+    if (reconciling) return;
+    reconciling = true;
+    try {
+      for (const transport of activeTransports) {
+        const wanted = isTransportEnabled(transport.id);
+        if (wanted === runningTransports.has(transport.id)) continue;
+        if (wanted) {
+          void startTransport(transport).then((ok) => {
+            if (ok) publishAvailability(true);
+          });
+        } else {
+          transport.stop();
+          runningTransports.delete(transport.id);
+        }
+      }
+      publishAvailability(runningTransports.size > 0);
+    } finally {
+      reconciling = false;
+    }
+  };
+  const unsubscribePreferences = subscribeToTransportPreferences(applyPreferences);
 
   return () => {
     cancelNearbyPairing();
     envelopeSubscriptions.forEach((unsubscribe) => unsubscribe());
     peerSubscriptions.forEach((unsubscribe) => unsubscribe());
     stateSubscription.remove();
+    unsubscribePreferences();
     activeTransports.forEach((transport) => transport.stop());
+    runningTransports.clear();
     publishNearbySnapshot(createNearbyMessagingSnapshot(true));
   };
 };
