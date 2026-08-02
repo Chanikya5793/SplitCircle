@@ -27,6 +27,7 @@ import type {
   TransportFrame,
   Unsubscribe,
 } from './transport';
+import { MAX_MESH_ENVELOPE_BYTES } from './constants';
 
 /**
  * MPC negotiates its own framing and handles large payloads via its resource
@@ -65,6 +66,12 @@ export const createMpcTransport = (): MeshTransport => {
   return {
     id: 'mpc',
     mtu: MPC_MTU,
+    /**
+     * MultipeerConnectivity streams a message of any size itself, so the
+     * per-frame figure above is not a total budget. Bounded by the mesh
+     * envelope ceiling, which is the real limit on anything this app sends.
+     */
+    maxPayloadBytes: MAX_MESH_ENVELOPE_BYTES,
     throughputClass: 'fast',
 
     isAvailable: () => isNearbyMeshAvailable(),

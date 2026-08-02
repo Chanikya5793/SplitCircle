@@ -16,6 +16,7 @@ import {
   BLE_MIN_USABLE_MTU,
   fragment,
 } from './bleFraming';
+import { MAX_MESH_ENVELOPE_BYTES } from './constants';
 import type {
   MeshTransport,
   NeighbourState,
@@ -95,6 +96,14 @@ export const createBleTransport = (native: NativeBleModule): MeshTransport => {
      * that decision must hold for the worst link, not the best.
      */
     mtu: DEFAULT_ATT_MTU - ATT_OVERHEAD,
+    /**
+     * Far larger than `mtu` on purpose: `fragment()` splits any payload across
+     * as many chunks as needed, so a 20-byte frame budget is not a 20-byte
+     * message budget. Capped at the mesh envelope ceiling because BLE is slow
+     * enough that anything bigger would take minutes and read as broken —
+     * `throughputClass: 'slow'` separately bars bulk media entirely.
+     */
+    maxPayloadBytes: MAX_MESH_ENVELOPE_BYTES,
     throughputClass: 'slow',
 
     isAvailable: () => native.isAvailable(),

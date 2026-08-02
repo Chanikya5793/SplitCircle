@@ -197,7 +197,14 @@ const sendEnvelopeViaTransports = async (
   });
   return result.delivered;
 };
-let nearbySnapshot = createNearbyMessagingSnapshot(isNearbyMeshAvailable());
+// Availability across EVERY registered transport, not just MPC (doc 35,
+// critical #1). Seeding this from `isNearbyMeshAvailable()` — an
+// iOS-only MultipeerConnectivity probe — made the initial snapshot report
+// "nearby unavailable" on every Android device even with BLE and LAN
+// registered and usable.
+let nearbySnapshot = createNearbyMessagingSnapshot(
+  activeTransports.some((transport) => transport.isAvailable()),
+);
 const nearbyStateListeners = new Set<() => void>();
 
 const publishNearbySnapshot = (next: NearbyMessagingSnapshot): void => {
@@ -392,7 +399,28 @@ export const startNearbyMessaging = async (
   displayName: string,
   onEnvelope: (envelope: string, peerDeviceId: string) => void,
 ): Promise<() => void> => {
-  if (!isNearbyMeshAvailable()) {
+  // NOT gated on isNearbyMeshAvailable() any more (doc 35, critical #1).
+  //
+  // That function is `Platform.OS === 'ios' ? requireOptionalNativeModule(...)
+  // : null` — it probes the MULTIPEERCONNECTIVITY module specifically, so on
+  // Android it is unconditionally false. Returning here meant this function
+  // exited before loadTransportPreferences(), getCurrentDeviceId(), and every
+  // transport's start(), so BLE and LAN — the only transports that can reach
+  // Android at all (doc 33 §0) — never ran on the one platform they exist for.
+  // Their runtime permission requests, GATT handshake and NSD/TCP stacks were
+  // unreachable from the app's real entry point regardless of any flag or
+  // Settings toggle.
+  //
+  // The diagnostics screen hid this: `transport.isAvailable()` reports HARDWARE
+  // capability (adapter present and enabled), which is true whether or not
+  // start() was ever called — so "Bluetooth: available, 0 connected" was
+  // truthful about the radio and silent about the service never having started.
+  //
+  // Nothing needs this guard: every transport's own start() already returns
+  // false when its native half is missing, and the MPC-specific calls below
+  // (configureNearbyPairing / addNearbyStateChangedListener) are individually
+  // no-ops or guarded. Bail only when there is genuinely nothing to run.
+  if (activeTransports.length === 0) {
     publishNearbySnapshot(createNearbyMessagingSnapshot(false));
     return () => undefined;
   }
@@ -466,40 +494,42 @@ export const startNearbyMessaging = async (
     status: 'searching',
     trustedPeers,
   });
-  const started = await mpcTransport.start({
-    userId,
-    deviceId,
-    trustedDeviceIds: Object.keys(trustedPeers),
-  });
-  if (!started) {
+  // EVERY transport is started, and availability reflects whether ANY of them
+  // came up — not whether MPC did (doc 35, critical #1).
+  //
+  // Previously MPC's result alone drove the snapshot, so on Android — where MPC
+  // can never start — the UI reported "nearby unavailable" even with BLE and
+  // LAN running. A radio failing to start is an ordinary state on a phone (off,
+  // permission denied, no network) and must not condemn the others.
+  //
+  // console.error, not warn: a Release bundle drops console.warn entirely
+  // (CLAUDE.md), and a transport that silently never starts is precisely what
+  // needs to be diagnosable here — this whole finding existed because nothing
+  // reported it.
+  const startResults = await Promise.all(
+    activeTransports.map(async (transport) => {
+      try {
+        const ok = await transport.start({
+          userId,
+          deviceId,
+          trustedDeviceIds: Object.keys(trustedPeers),
+        });
+        if (!ok) {
+          console.error(
+            `⚠️ ${transport.id} transport did not start `
+            + '(radio/network off, permission denied, or unavailable on this platform)',
+          );
+        }
+        return ok;
+      } catch (error) {
+        console.error(`⚠️ ${transport.id} transport threw while starting`, error);
+        return false;
+      }
+    }),
+  );
+
+  if (!startResults.some(Boolean)) {
     publishNearbySnapshot(createNearbyMessagingSnapshot(false));
-  }
-  // STRICTLY ADDITIVE. BLE starts after MPC, its result is deliberately not
-  // folded into `started`, and a failure here leaves the nearby status exactly
-  // as MPC reported it. Bluetooth being off, or its permission denied, is an
-  // ordinary state on a phone — it must not present as "nearby is unavailable"
-  // when a working MPC mesh is already up. console.error because a Release
-  // bundle drops console.warn entirely (CLAUDE.md), and a transport that
-  // silently never starts is exactly what this flag exists to observe.
-  if (lanTransport) {
-    const lanStarted = await lanTransport.start({
-      userId,
-      deviceId,
-      trustedDeviceIds: Object.keys(trustedPeers),
-    });
-    if (!lanStarted) {
-      console.error('⚠️ LAN transport did not start (no network, or permission denied)');
-    }
-  }
-  if (bleTransport) {
-    const bleStarted = await bleTransport.start({
-      userId,
-      deviceId,
-      trustedDeviceIds: Object.keys(trustedPeers),
-    });
-    if (!bleStarted) {
-      console.error('⚠️ BLE transport did not start (radio off, or permission denied)');
-    }
   }
   void broadcastQueuedNearbyMessages();
 

@@ -29,10 +29,13 @@ import {
   MEDIA_MAX_FILE_SIZE_BYTES,
 } from '@/services/mediaPolicy';
 
-import { MAX_MESH_MESSAGE_AGE_MS } from '@/services/mesh/constants';
+import { MAX_MESH_ENVELOPE_BYTES, MAX_MESH_MESSAGE_AGE_MS } from '@/services/mesh/constants';
 
 export const MESH_PROTOCOL_VERSION = 1 as const;
-export const MAX_MESH_ENVELOPE_BYTES = 256 * 1024;
+// Imported AND re-exported (a bare `export ... from` creates no local binding
+// and this module uses the value itself). Defined in a native-free leaf so
+// bleTransport can share it without breaking its device-free tests.
+export { MAX_MESH_ENVELOPE_BYTES };
 // Imported AND re-exported: a bare `export ... from` creates no local binding,
 // and this module uses the value itself. Lives in a native-free leaf module so
 // pure consumers (originReseal) can share it without dragging crypto into their

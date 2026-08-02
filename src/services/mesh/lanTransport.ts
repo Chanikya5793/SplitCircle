@@ -71,6 +71,8 @@ export const createLanTransport = (native: NativeLanModule): MeshTransport => {
   return {
     id: 'lan',
     mtu: LAN_ADVERTISED_MTU,
+    /** TCP streams whatever it is given; the real bound is the frame cap. */
+    maxPayloadBytes: LAN_MAX_FRAME_BYTES,
     throughputClass: 'fast',
 
     isAvailable: () => {

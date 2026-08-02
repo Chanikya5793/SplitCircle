@@ -38,7 +38,29 @@ import kotlin.concurrent.thread
 class SplitCircleLanModule : Module() {
 
   private companion object {
-    const val SERVICE_TYPE = "_manasplit-mesh._tcp."
+    /**
+     * MUST STAY BYTE-IDENTICAL TO THE SWIFT HALF (doc 35, critical #3).
+     *
+     * This previously carried a TRAILING DOT (`"_manasplit-mesh._tcp."`),
+     * which is the form Android's own NSD documentation and samples use, while
+     * the Swift half uses `"_manasplit-mesh._tcp"` — the form Apple's
+     * Network.framework documentation requires and the exact string declared in
+     * Info.plist's NSBonjourServices. Each platform was following its own
+     * vendor's convention, which is what made the mismatch invisible: both
+     * halves looked correct in isolation.
+     *
+     * AOSP's mDNS query construction splits the raw type string on literal '.'
+     * with no trailing-dot normalization, so the extra dot can reach the wire
+     * and make the two platforms advertise/browse different names — iOS and
+     * Android would never discover each other, silently, with no error and no
+     * way to tell it apart from "no peers nearby".
+     *
+     * Normalized to the no-dot form because that is what iOS REQUIRES and what
+     * Info.plist already declares; Android accepts it. There is no version of
+     * this worth risking on a documentation nuance, so the two strings are now
+     * literally the same characters.
+     */
+    const val SERVICE_TYPE = "_manasplit-mesh._tcp"
     /** Refuse absurd frames rather than buffering into an OOM. */
     const val MAX_FRAME_BYTES = 8 * 1024 * 1024
   }

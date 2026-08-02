@@ -15,3 +15,13 @@
  * trigger a re-seal of every message ever queued.
  */
 export const MAX_MESH_MESSAGE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Largest signed mesh envelope accepted on the wire.
+ *
+ * Lives here rather than in `meshMessageProtocol.ts` for the same reason as
+ * the age constant above: `bleTransport.ts` needs it to declare its total
+ * payload budget, and a REAL import of the protocol module would drag native
+ * crypto into a file whose unit tests must run without a device.
+ */
+export const MAX_MESH_ENVELOPE_BYTES = 256 * 1024;

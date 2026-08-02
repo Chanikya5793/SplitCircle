@@ -59,6 +59,18 @@ export interface MeshTransport {
   readonly id: TransportId;
   /** Usable payload bytes per frame after this transport's own headers. */
   readonly mtu: number;
+  /**
+   * Largest total payload this transport can carry, across as many frames as
+   * it needs.
+   *
+   * DISTINCT FROM `mtu`, and conflating the two made BLE unusable (doc 35,
+   * critical #2). `mtu` is a per-FRAME figure — BLE's is ~20 bytes at the ATT
+   * default — but BLE fragments internally in `bleFraming`, so it can carry a
+   * payload far larger than one frame, just slowly. Treating `mtu` as the
+   * total cap meant `maxPayloadFor` computed `20 - 54 = 0` for BLE and the
+   * switch excluded it from carrying any non-empty payload at all, forever.
+   */
+  readonly maxPayloadBytes: number;
   readonly throughputClass: ThroughputClass;
 
   /** False when the native half is missing (e.g. MPC on Android). */
@@ -99,9 +111,15 @@ export const ROUTER_HEADER_BYTES = 54;
  * silently is what makes an offline feature feel broken rather than degraded.
  */
 export const maxPayloadFor = (
-  transport: Pick<MeshTransport, 'mtu' | 'throughputClass'>,
+  transport: Pick<MeshTransport, 'maxPayloadBytes' | 'throughputClass'>,
   payloadClass: PayloadClass,
 ): number | null => {
   if (payloadClass === 'bulk' && transport.throughputClass === 'slow') return null;
-  return Math.max(0, transport.mtu - ROUTER_HEADER_BYTES);
+  // Against the TOTAL payload budget, not the per-frame `mtu` (doc 35,
+  // critical #2). Subtracting the router header from BLE's ~20-byte per-frame
+  // mtu yielded a negative number, clamped to 0, so `capableOf`'s `size <= cap`
+  // test excluded BLE from every non-empty payload — making "the universal
+  // floor, the only transport that reaches Android" dead code at the switch,
+  // regardless of hardware or a successfully negotiated larger ATT MTU.
+  return Math.max(0, transport.maxPayloadBytes - ROUTER_HEADER_BYTES);
 };

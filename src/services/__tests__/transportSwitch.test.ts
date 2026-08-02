@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { createTransportSwitch } from '../mesh/transportSwitch';
+import { createBleTransport } from '../mesh/bleTransport';
 import { maxPayloadFor, type MeshTransport, type NeighbourState, type TransportId } from '../mesh/transport';
 
 const fake = (
@@ -16,6 +17,7 @@ const fake = (
     available?: boolean;
     throughputClass?: 'slow' | 'fast';
     mtu?: number;
+    maxPayloadBytes?: number;
     peers?: string[];
   } = {},
 ): MeshTransport => {
@@ -27,6 +29,7 @@ const fake = (
   return {
     id,
     mtu: opts.mtu ?? 60_000,
+    maxPayloadBytes: opts.maxPayloadBytes ?? opts.mtu ?? 60_000,
     throughputClass: opts.throughputClass ?? 'fast',
     isAvailable: () => opts.available ?? true,
     start: async () => true,
@@ -44,15 +47,60 @@ describe('maxPayloadFor', () => {
     // Not "allow a small amount" — null. A 12MP photo over BLE is effectively
     // never, and letting it queue there silently is what makes an offline
     // feature read as broken rather than degraded.
-    expect(maxPayloadFor({ mtu: 185, throughputClass: 'slow' }, 'bulk')).toBeNull();
+    expect(maxPayloadFor({ maxPayloadBytes: 185, throughputClass: 'slow' }, 'bulk')).toBeNull();
   });
 
   it('allows bulk on a fast link, minus router header', () => {
-    expect(maxPayloadFor({ mtu: 60_000, throughputClass: 'fast' }, 'bulk')).toBe(60_000 - 54);
+    expect(maxPayloadFor({ maxPayloadBytes: 60_000, throughputClass: 'fast' }, 'bulk')).toBe(60_000 - 54);
   });
 
   it('allows text on a slow link', () => {
-    expect(maxPayloadFor({ mtu: 185, throughputClass: 'slow' }, 'text')).toBe(185 - 54);
+    expect(maxPayloadFor({ maxPayloadBytes: 185, throughputClass: 'slow' }, 'text')).toBe(185 - 54);
+  });
+});
+
+describe('BLE payload capacity (doc 35, critical #2)', () => {
+  it('lets a real BLE transport carry a normal text payload', () => {
+    // THE REGRESSION. maxPayloadFor used to subtract ROUTER_HEADER_BYTES (54)
+    // from the per-FRAME mtu, and BLE's is 20 at the ATT default — giving
+    // Math.max(0, -34) = 0, so capableOf's `size <= cap` excluded BLE from
+    // every non-empty payload. "The universal floor, the only transport that
+    // reaches Android" could not carry one byte, on any hardware, forever.
+    //
+    // Built from the REAL transport rather than a fixture: a fixture with a
+    // hand-picked mtu is exactly what let this survive the original suite.
+    const ble = createBleTransport({
+      isAvailable: () => true,
+      start: async () => true,
+      stop: () => undefined,
+      updateTrust: () => undefined,
+      connectedPeers: () => [{ deviceId: 'p', mtu: 23 }],
+      sendChunk: async () => true,
+      addChunkListener: () => () => undefined,
+      addPeersChangedListener: () => () => undefined,
+    });
+
+    const cap = maxPayloadFor(ble, 'text');
+    expect(cap).not.toBeNull();
+    expect(cap as number).toBeGreaterThan(1024);
+
+    // And the switch must actually select it for an ordinary message.
+    const chosen = createTransportSwitch([ble]).capableOf('text', 4096);
+    expect(chosen.map((t) => t.id)).toEqual(['ble']);
+  });
+
+  it('still refuses bulk over BLE — slow links must not take photos', () => {
+    const ble = createBleTransport({
+      isAvailable: () => true,
+      start: async () => true,
+      stop: () => undefined,
+      updateTrust: () => undefined,
+      connectedPeers: () => [{ deviceId: 'p', mtu: 23 }],
+      sendChunk: async () => true,
+      addChunkListener: () => () => undefined,
+      addPeersChangedListener: () => () => undefined,
+    });
+    expect(maxPayloadFor(ble, 'bulk')).toBeNull();
   });
 });
 
