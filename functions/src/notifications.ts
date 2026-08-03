@@ -3,6 +3,8 @@ import {
     getFirestore,
 } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
+
+import { sendDirectPush, type DirectPushTarget } from "./directPush";
 import { buildRevokeData, type RevokeFilter } from "./revoke";
 
 export type NotificationCategory =
@@ -1004,10 +1006,38 @@ export const sendMessagePushes = async (params: {
         return { sent: 0 };
     }
 
+    // DIRECT WHERE POSSIBLE, EXPO WHERE NOT (doc 36 §6). Split per device, not
+    // globally: no install had a native token before 2026-08-03, so a global
+    // switch would silently stop notifications for every device that has not
+    // checked in since. As tokens arrive, devices migrate one at a time with no
+    // flag day and no window where anyone goes dark.
+    const directTargets: DirectPushTarget[] = [];
     const messages: ExpoPushMessage[] = [];
     for (const device of resolved.devices) {
-        if (!device.expoPushToken || !isExpoPushToken(device.expoPushToken)) continue;
         const preview = params.previews?.[device.deviceId] ?? null;
+        const data = toStringRecord({
+            type: "message",
+            chatId: params.chatId,
+            messageId: params.messageId,
+            ...(preview ? { preview } : {}),
+        });
+
+        if (device.nativePushToken) {
+            directTargets.push({
+                platform: device.platform,
+                nativeToken: device.nativePushToken,
+                title: "ManaSplit",
+                body: "New message",
+                data,
+                // Lets an iOS NSE rewrite the body once it has opened the
+                // preview. Without it the extension is never invoked.
+                mutableContent: true,
+                channelId: mapCategoryToChannel("messages"),
+            });
+            continue;
+        }
+
+        if (!device.expoPushToken || !isExpoPushToken(device.expoPushToken)) continue;
 
         messages.push({
             to: device.expoPushToken,
@@ -1031,13 +1061,32 @@ export const sendMessagePushes = async (params: {
         });
     }
 
-    if (messages.length === 0) return { sent: 0 };
+    const direct = await sendDirectPush(directTargets);
+
+    // A device with a native token that FAILED is not retried via Expo here:
+    // the failure reasons that matter (dead token, unregistered) mean Expo
+    // would fail too, and retrying a transient one would double-deliver. The
+    // invalid tokens are reported so a future pass can clear them.
+    if (direct.invalidTokens.length > 0) {
+        logger.warn("sendMessagePushes: dead native tokens", {
+            count: direct.invalidTokens.length,
+        });
+    }
+
+    if (messages.length === 0) {
+        return { sent: direct.sent };
+    }
 
     const ticketResults = await sendExpoPush(messages);
-    const sent = ticketResults.filter((entry) => entry.ticket.status === "ok").length;
+    const sent = direct.sent
+        + ticketResults.filter((entry) => entry.ticket.status === "ok").length;
     logger.info("sendMessagePushes: dispatched", {
         chatId: params.chatId,
-        deviceCount: messages.length,
+        deviceCount: messages.length + directTargets.length,
+        // The number that says how far the Expo cutover has got. When
+        // `viaExpo` reaches 0 across real traffic, the relay can be deleted.
+        viaDirect: directTargets.length,
+        viaExpo: messages.length,
         sent,
         // Diagnostic only — how many devices got a real preview vs generic
         // copy. A persistent zero here means sealing is failing on the sender.

@@ -10,19 +10,50 @@
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
 		4EF575E01B8C8EC23B536C61 /* Pods_SplitCircle.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7B9CA00B9C982715614A0DC1 /* Pods_SplitCircle.framework */; };
+		687428EE41B3B74EC90C66EB /* PreviewOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEE33B46FC3C51EB85F07529 /* PreviewOpener.swift */; };
+		6DFF6B07990B2D19ADF196A9 /* SplitCircleNotificationService.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 4778B5CF7E6D659AD6957018 /* SplitCircleNotificationService.appex */; };
+		7AA083994791A01D727ABB28 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FCBB70DFADE7256F3DC8622C /* Foundation.framework */; };
 		A1B2C3D4E5F6A7B8C9D0E1F2 /* VisionKitReceiptScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F3 /* VisionKitReceiptScanner.swift */; };
 		A1B2C3D4E5F6A7B8C9D0E1F4 /* VisionKitReceiptScannerBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F5 /* VisionKitReceiptScannerBridge.m */; };
+		A4B298E9CC2ACDBDDA28085A /* SharedDeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0B6FE333754B5B0E6939DF0 /* SharedDeviceIdentity.swift */; };
 		AABA8598452C69DA3604F290 /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FB7E4F3067E35A37F92325E /* ExpoModulesProvider.swift */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		C0F0F879798F833CDA5E1EF9 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = C149692B82C473B25E81C5FA /* PrivacyInfo.xcprivacy */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
+		F955A71B2D11DEBE1FD8A28C /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0A6A02C255C48A52D9912A2 /* NotificationService.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		35A804E053E6BADC81432082 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 134CA39D1A04FCDA98E222F6;
+			remoteInfo = SplitCircleNotificationService;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		9364148690124D90923608FF /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				6DFF6B07990B2D19ADF196A9 /* SplitCircleNotificationService.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		13B07F961A680F5B00A75B9A /* SplitCircle.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SplitCircle.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = SplitCircle/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = SplitCircle/Info.plist; sourceTree = "<group>"; };
 		1DB11AC021A732412D57542F /* Pods-SplitCircle.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SplitCircle.release.xcconfig"; path = "Target Support Files/Pods-SplitCircle/Pods-SplitCircle.release.xcconfig"; sourceTree = "<group>"; };
+		3B60C32297C3950D486AC450 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		4778B5CF7E6D659AD6957018 /* SplitCircleNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SplitCircleNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		6FB7E4F3067E35A37F92325E /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-SplitCircle/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		7B9CA00B9C982715614A0DC1 /* Pods_SplitCircle.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_SplitCircle.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		8507C3A47FC725288ECB3BAD /* Pods-SplitCircle.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SplitCircle.debug.xcconfig"; path = "Target Support Files/Pods-SplitCircle/Pods-SplitCircle.debug.xcconfig"; sourceTree = "<group>"; };
@@ -30,10 +61,15 @@
 		A1B2C3D4E5F6A7B8C9D0E1F5 /* VisionKitReceiptScannerBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = VisionKitReceiptScannerBridge.m; path = SplitCircle/VisionKitReceiptScannerBridge.m; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = SplitCircle/SplashScreen.storyboard; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
+		BEE33B46FC3C51EB85F07529 /* PreviewOpener.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PreviewOpener.swift; sourceTree = "<group>"; };
+		C136E19CA144A3C49A3B563E /* SplitCircleNotificationService.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = SplitCircleNotificationService.entitlements; sourceTree = "<group>"; };
 		C149692B82C473B25E81C5FA /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = SplitCircle/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		D0B6FE333754B5B0E6939DF0 /* SharedDeviceIdentity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedDeviceIdentity.swift; sourceTree = "<group>"; };
+		E0A6A02C255C48A52D9912A2 /* NotificationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = SplitCircle/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* SplitCircle-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "SplitCircle-Bridging-Header.h"; path = "SplitCircle/SplitCircle-Bridging-Header.h"; sourceTree = "<group>"; };
+		FCBB70DFADE7256F3DC8622C /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -45,9 +81,25 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D02F08B3796F846EFB13C831 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7AA083994791A01D727ABB28 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1185FED1D6ED160C734B53A7 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				FCBB70DFADE7256F3DC8622C /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
 		13B07FAE1A68108700A75B9A /* SplitCircle */ = {
 			isa = PBXGroup;
 			children = (
@@ -69,6 +121,7 @@
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
 				7B9CA00B9C982715614A0DC1 /* Pods_SplitCircle.framework */,
+				1185FED1D6ED160C734B53A7 /* iOS */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -98,6 +151,7 @@
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				3245285F510BEC27E47C443B /* Pods */,
 				E384402A0D87AF36BF6C17A5 /* ExpoModulesProviders */,
+				CBB1CF7FEE4A72341CAAED70 /* SplitCircleNotificationService */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -108,6 +162,7 @@
 			isa = PBXGroup;
 			children = (
 				13B07F961A680F5B00A75B9A /* SplitCircle.app */,
+				4778B5CF7E6D659AD6957018 /* SplitCircleNotificationService.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -129,6 +184,19 @@
 			path = SplitCircle/Supporting;
 			sourceTree = "<group>";
 		};
+		CBB1CF7FEE4A72341CAAED70 /* SplitCircleNotificationService */ = {
+			isa = PBXGroup;
+			children = (
+				E0A6A02C255C48A52D9912A2 /* NotificationService.swift */,
+				BEE33B46FC3C51EB85F07529 /* PreviewOpener.swift */,
+				D0B6FE333754B5B0E6939DF0 /* SharedDeviceIdentity.swift */,
+				3B60C32297C3950D486AC450 /* Info.plist */,
+				C136E19CA144A3C49A3B563E /* SplitCircleNotificationService.entitlements */,
+			);
+			name = SplitCircleNotificationService;
+			path = SplitCircleNotificationService;
+			sourceTree = SOURCE_ROOT;
+		};
 		E384402A0D87AF36BF6C17A5 /* ExpoModulesProviders */ = {
 			isa = PBXGroup;
 			children = (
@@ -140,6 +208,23 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		134CA39D1A04FCDA98E222F6 /* SplitCircleNotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 23C4B60D15AB97C0AB0B2E15 /* Build configuration list for PBXNativeTarget "SplitCircleNotificationService" */;
+			buildPhases = (
+				DC490ABFCFE51CCF6FC1BBFA /* Sources */,
+				D02F08B3796F846EFB13C831 /* Frameworks */,
+				845BF766C9F36CB93FD74B94 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SplitCircleNotificationService;
+			productName = SplitCircleNotificationService;
+			productReference = 4778B5CF7E6D659AD6957018 /* SplitCircleNotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		13B07F861A680F5B00A75B9A /* SplitCircle */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "SplitCircle" */;
@@ -153,10 +238,12 @@
 				E725CEA0B2454DABB31D1B51 /* [Expo Dev Launcher] Strip Local Network Keys for Release */,
 				ACA9C15FF944E66CB1E35729 /* [CP] Embed Pods Frameworks */,
 				1029BB715F678655841AC9CE /* [CP] Copy Pods Resources */,
+				9364148690124D90923608FF /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				C28517DD0E1E4119F5917B00 /* PBXTargetDependency */,
 			);
 			name = SplitCircle;
 			productName = SplitCircle;
@@ -197,6 +284,7 @@
 			projectRoot = "";
 			targets = (
 				13B07F861A680F5B00A75B9A /* SplitCircle */,
+				134CA39D1A04FCDA98E222F6 /* SplitCircleNotificationService */,
 			);
 		};
 /* End PBXProject section */
@@ -210,6 +298,13 @@
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
 				C0F0F879798F833CDA5E1EF9 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		845BF766C9F36CB93FD74B94 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -435,7 +530,26 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		DC490ABFCFE51CCF6FC1BBFA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F955A71B2D11DEBE1FD8A28C /* NotificationService.swift in Sources */,
+				687428EE41B3B74EC90C66EB /* PreviewOpener.swift in Sources */,
+				A4B298E9CC2ACDBDDA28085A /* SharedDeviceIdentity.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C28517DD0E1E4119F5917B00 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = SplitCircleNotificationService;
+			target = 134CA39D1A04FCDA98E222F6 /* SplitCircleNotificationService */;
+			targetProxy = 35A804E053E6BADC81432082 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
@@ -508,6 +622,29 @@
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Release;
+		};
+		1AB076D4D433705162E23F7E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = NO;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = SplitCircleNotificationService/SplitCircleNotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = SplitCircleNotificationService/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.splitcircle.app.NotificationService;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
 		};
 		83CBBA201A601CBA00E9B192 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -670,6 +807,30 @@
 			};
 			name = Release;
 		};
+		F67BF4227FA2B9EC1D62D213 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = NO;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = SplitCircleNotificationService/SplitCircleNotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = SplitCircleNotificationService/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.splitcircle.app.NotificationService;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -678,6 +839,15 @@
 			buildConfigurations = (
 				13B07F941A680F5B00A75B9A /* Debug */,
 				13B07F951A680F5B00A75B9A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		23C4B60D15AB97C0AB0B2E15 /* Build configuration list for PBXNativeTarget "SplitCircleNotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F67BF4227FA2B9EC1D62D213 /* Release */,
+				1AB076D4D433705162E23F7E /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

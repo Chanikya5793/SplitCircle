@@ -4,6 +4,7 @@ import * as logger from "firebase-functions/logger";
 import { onValueCreated } from "firebase-functions/v2/database";
 
 import { sendMessagePushes } from "./notifications";
+import { voipPushSecrets } from "./voipPush";
 
 /** chatId off the queue payload, or "" when absent/malformed. */
 const readChatId = (payload: unknown): string => {
@@ -52,7 +53,14 @@ const toSafeError = (
 };
 
 export const fanOutQueuedMessage = onValueCreated(
-    { ref: "/messageQueue/{recipientId}/{messageId}" },
+    {
+        ref: "/messageQueue/{recipientId}/{messageId}",
+        // REQUIRED for the direct-APNs path (doc 36 §6). `sendDirectPush`
+        // reads these via `defineSecret().value()`, and accessing a secret not
+        // bound to the function THROWS at runtime — so without this line every
+        // iOS message push would fail, and only in production.
+        secrets: voipPushSecrets,
+    },
     async (event) => {
         const recipientId = event.params.recipientId;
         const messageId = event.params.messageId;
