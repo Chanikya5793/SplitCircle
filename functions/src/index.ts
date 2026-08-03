@@ -483,33 +483,14 @@ export const onChatUpdated = onDocumentUpdated(
         // Recipients who LOCKED this chat (users/{uid}.lockedChats.<chatId>)
         // must not receive sender name or message content in the push — the
         // chat sits behind a biometric gate on their device, so the lock
-        // screen/notification tray must stay just as opaque. They get a
-        // generic copy instead; the data payload is identical so tapping it
-        // still deep-links into the (client-side gated) chat.
-        const normalRecipientIds: string[] = [];
-        const lockedRecipientIds: string[] = [];
-        await Promise.all(
-            recipientIds.map(async (recipientId) => {
-                try {
-                    const recipientDoc = await getFirestore()
-                        .collection("users")
-                        .doc(recipientId)
-                        .get();
-                    const lockedChats = recipientDoc.data()?.lockedChats as
-                        | Record<string, unknown>
-                        | undefined;
-                    if (lockedChats && lockedChats[chatId] !== undefined) {
-                        lockedRecipientIds.push(recipientId);
-                    } else {
-                        normalRecipientIds.push(recipientId);
-                    }
-                } catch {
-                    // If the lookup fails, fail CLOSED for privacy: deliver
-                    // the generic copy rather than risking a locked preview.
-                    lockedRecipientIds.push(recipientId);
-                }
-            }),
-        );
+        // screen/notification tray must stay just as opaque.
+        //
+        // The split now happens INSIDE sendPushToUsers, from user documents it
+        // already batch-reads. This used to issue a `users/{uid}.get()` per
+        // recipient right here, immediately before calling into the function
+        // that had just read those same documents — doubling per-recipient user
+        // reads on every message sent (doc 36 §1.1). Same privacy behaviour,
+        // same fail-closed default, half the reads.
 
         const dataPayload = {
             type: "message",
@@ -528,40 +509,32 @@ export const onChatUpdated = onDocumentUpdated(
         const lockedDataPayload = { type: "message", chatId };
 
         try {
-            if (normalRecipientIds.length > 0) {
+            {
                 const dispatch = await sendPushToUsers(
-                    normalRecipientIds,
+                    recipientIds,
                     notificationCopy.title,
                     notificationCopy.body,
                     dataPayload,
                     "messages",
                     chatId,
                     "messages",
-                    // Attach the message quick-reply category so UNLOCKED
-                    // recipients get lock-screen Reply + Mark-as-read actions.
-                    // Locked recipients (dispatched below) intentionally omit
-                    // it — their generic push carries no chat context and must
-                    // never expose a reply field for a gated chat.
-                    { subtitle: notificationCopy.subtitle, categoryId: "message" },
+                    {
+                        // Attach the message quick-reply category so UNLOCKED
+                        // recipients get lock-screen Reply + Mark-as-read
+                        // actions. `sendPushToUsers` drops both the subtitle
+                        // and the category for locked recipients — their push
+                        // carries no chat context and must never expose a reply
+                        // field for a gated chat.
+                        subtitle: notificationCopy.subtitle,
+                        categoryId: "message",
+                        lockedVariant: {
+                            title: "ManaSplit",
+                            body: "New message",
+                            data: lockedDataPayload,
+                        },
+                    },
                 );
                 logger.info("Queued message notifications", {
-                    chatId,
-                    deliveryId: dispatch.deliveryId,
-                    acceptedCount: dispatch.acceptedCount,
-                    targetedDeviceCount: dispatch.targetedDeviceCount,
-                });
-            }
-            if (lockedRecipientIds.length > 0) {
-                const dispatch = await sendPushToUsers(
-                    lockedRecipientIds,
-                    "ManaSplit",
-                    "New message",
-                    lockedDataPayload,
-                    "messages",
-                    chatId,
-                    "messages",
-                );
-                logger.info("Queued locked-chat message notifications", {
                     chatId,
                     deliveryId: dispatch.deliveryId,
                     acceptedCount: dispatch.acceptedCount,

@@ -65,6 +65,17 @@ interface NotificationUserState {
     pushEnabled: boolean;
     categoryEnabled: boolean;
     isMuted: boolean;
+    /**
+     * This recipient has locked THIS chat behind a biometric gate, so the tray
+     * copy must stay generic (doc 36 §1.1).
+     *
+     * Read from the user document this function ALREADY fetches. The caller
+     * used to re-read the very same documents one at a time purely to answer
+     * this, doubling the per-recipient user reads on every single message —
+     * `index.ts` did `users/{uid}.get()` per recipient immediately before
+     * calling in here, where `db.getAll` had just batched them.
+     */
+    chatLocked: boolean;
     legacyPushToken: string | null;
 }
 
@@ -600,11 +611,15 @@ const resolveNotificationTargets = async (
                 ? mutedChatIdsRaw.filter((value): value is string => typeof value === "string")
                 : [];
 
+            const lockedChats = data.lockedChats as Record<string, unknown> | undefined;
             users.push({
                 userId: requestedUserId,
                 pushEnabled: preferences.pushEnabled === true,
                 categoryEnabled: preferences[category] !== false,
                 isMuted: chatId ? mutedChatIds.includes(chatId) : false,
+                // Presence of the key is the signal, matching the client's own
+                // `lockedChats[chatId] !== undefined` test.
+                chatLocked: Boolean(chatId && lockedChats && lockedChats[chatId] !== undefined),
                 legacyPushToken: (() => {
                     const legacyToken = normalizeString(data.pushToken);
                     return legacyToken && isExpoPushToken(legacyToken) ? legacyToken : null;
@@ -888,6 +903,34 @@ export const unregisterNotificationDeviceRecord = async (
     }, { merge: true });
 };
 
+/**
+ * Whether this recipient gets the generic, locked-chat copy.
+ *
+ * Exported and pure because it is a PRIVACY decision, and the interesting case
+ * is the one that is easy to get wrong: a recipient whose user document could
+ * not be resolved. They are absent from `resolvedUserIds`, and they must be
+ * treated as LOCKED — failing open would put a sender name and message preview
+ * on the lock screen of a chat its owner deliberately gated.
+ *
+ * The previous implementation got this right via a try/catch around a
+ * per-recipient read; that read is gone (doc 36 §1.1), so the fail-closed
+ * property has to be re-established here explicitly rather than inherited from
+ * an exception handler.
+ */
+export const shouldUseLockedCopy = (params: {
+    userId: string;
+    lockedUserIds: ReadonlySet<string>;
+    resolvedUserIds: ReadonlySet<string>;
+    hasLockedVariant: boolean;
+}): boolean => {
+    // With no generic variant to fall back to there is nothing to choose; the
+    // caller simply is not using this feature.
+    if (!params.hasLockedVariant) return false;
+    if (params.lockedUserIds.has(params.userId)) return true;
+    // Unresolved -> fail closed.
+    return !params.resolvedUserIds.has(params.userId);
+};
+
 export const sendPushToUsers = async (
     userIds: string[],
     title: string,
@@ -902,6 +945,25 @@ export const sendPushToUsers = async (
         // "missed_call" category carries a text-input quick-reply action that
         // the client registers at startup via setNotificationCategoryAsync).
         categoryId?: string;
+        /**
+         * Copy for recipients who have LOCKED this chat behind a biometric
+         * gate — their tray must stay as opaque as the chat itself.
+         *
+         * Handled here rather than by the caller splitting the recipient list
+         * itself. That split cost a `users/{uid}.get()` PER RECIPIENT, issued
+         * immediately before calling in here — where `resolveNotificationTargets`
+         * had already batch-read those exact documents. It doubled the
+         * per-recipient user reads on every message sent (doc 36 §1.1), and on
+         * a 4-person group that is 4 avoidable reads per message.
+         *
+         * Omitting `categoryId` here is deliberate and load-bearing: a locked
+         * chat must never expose a lock-screen reply field.
+         */
+        lockedVariant?: {
+            title: string;
+            body: string;
+            data: Record<string, string>;
+        };
     },
 ): Promise<NotificationDispatchResult> => {
     const db = getFirestore();
@@ -948,18 +1010,36 @@ export const sendPushToUsers = async (
         };
     }
 
+    // Which recipients locked this chat, from the user documents already read.
+    const lockedUserIds = new Set(
+        resolved.users.filter((entry) => entry.chatLocked).map((entry) => entry.userId),
+    );
+    const resolvedUserIds = new Set(resolved.users.map((entry) => entry.userId));
+    const isLocked = (userId: string): boolean =>
+        shouldUseLockedCopy({
+            userId,
+            lockedUserIds,
+            resolvedUserIds,
+            hasLockedVariant: Boolean(options?.lockedVariant),
+        });
+
     const dispatchTargets = [...targetDevices];
     const messages: ExpoPushMessage[] = dispatchTargets.map((device) => {
+        const locked = isLocked(device.userId);
+        const variant = locked ? options!.lockedVariant! : { title, body, data };
         return {
             to: device.expoPushToken!,
-            title,
-            ...(options?.subtitle ? { subtitle: options.subtitle } : {}),
-            body,
-            data: toStringRecord({ ...data, deliveryId }),
+            title: variant.title,
+            // No subtitle for a locked chat: it carries the sender name.
+            ...(!locked && options?.subtitle ? { subtitle: options.subtitle } : {}),
+            body: variant.body,
+            data: toStringRecord({ ...variant.data, deliveryId }),
             sound: "default",
             priority: "high",
             channelId: channelId ?? mapCategoryToChannel(category),
-            ...(options?.categoryId ? { categoryId: options.categoryId } : {}),
+            // Never on a locked chat — a reply field would let anyone holding
+            // the phone answer into a chat the owner gated.
+            ...(!locked && options?.categoryId ? { categoryId: options.categoryId } : {}),
         };
     });
 
