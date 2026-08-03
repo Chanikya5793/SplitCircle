@@ -50,7 +50,14 @@ interface PeersEvent {
 
 interface NativeModuleShape {
   isAvailable(): boolean;
-  /** Android only; iOS reports true (CoreBluetooth prompts on first use). */
+  /**
+   * Consent, separate from capability, on BOTH platforms now.
+   *
+   * Android reads its runtime grants; iOS reads `CBManager.authorization`,
+   * which is static and so answers "has the user refused?" WITHOUT
+   * constructing a manager — constructing one is what triggers the prompt.
+   * `.notDetermined` reports true on iOS: nothing has been refused yet.
+   */
   hasPermissions?(): boolean;
   start(deviceId: string, trustedDeviceIds: string[]): Promise<boolean>;
   stop(): void;

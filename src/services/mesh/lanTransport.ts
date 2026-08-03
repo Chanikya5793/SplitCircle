@@ -83,9 +83,19 @@ export const createLanTransport = (native: NativeLanModule): MeshTransport => {
       }
     },
 
+    /**
+     * NO `isAvailable()` PRE-GATE — same reasoning as the BLE half, different
+     * mechanism.
+     *
+     * iOS `isAvailable()` is `hasPath && !localNetworkDenied`, and `hasPath`
+     * starts FALSE, set only by `NWPathMonitor`'s first asynchronous callback.
+     * `startNearbyMessaging` runs at app launch and usually wins that race, so
+     * this returned early, `NWListener`/`NWBrowser` were never created — and
+     * starting them is what makes iOS show the Local Network prompt. Nothing
+     * retried, so one lost race disabled LAN for the whole session.
+     */
     start: async ({ deviceId, trustedDeviceIds }) => {
       try {
-        if (!native.isAvailable()) return false;
         return await native.start({ deviceId, trustedDeviceIds });
       } catch {
         // Local-network permission denial (iOS) arrives here. An ordinary

@@ -83,13 +83,28 @@ export const describeRoutes = (
         };
       }
       const view = diagnostics?.transports.find((entry) => entry.id === id);
+      // CONSENT BEFORE CAPABILITY. "Turn Bluetooth on" and "allow ManaSplit to
+      // use Bluetooth" are different actions, and giving the wrong instruction
+      // sends someone hunting through Settings for something already correct.
+      // Checked first because a refused permission also makes some platforms
+      // report the radio as unavailable, so the availability branch below would
+      // otherwise swallow it.
+      if (view?.needsPermission) {
+        return {
+          id,
+          name: NAMES[id],
+          detail: 'Needs permission — allow nearby devices in Settings',
+          tone: 'warning' as const,
+          connected: false,
+        };
+      }
       if (view && !view.available) {
         return {
           id,
           name: NAMES[id],
           detail: id === 'lan'
             ? 'Off — join a Wi-Fi network'
-            : 'Off — turn the radio on and allow nearby access',
+            : 'Off — turn the radio on',
           tone: 'warning' as const,
           connected: false,
         };

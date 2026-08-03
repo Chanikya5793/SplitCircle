@@ -108,10 +108,34 @@ export const createBleTransport = (native: NativeBleModule): MeshTransport => {
 
     isAvailable: () => native.isAvailable(),
 
-    start: async ({ deviceId, trustedDeviceIds }) => {
-      if (!native.isAvailable()) return false;
-      return native.start({ deviceId, trustedDeviceIds });
-    },
+    /**
+     * NO `isAvailable()` PRE-GATE. It is a deadlock, and it made BLE impossible
+     * on iOS.
+     *
+     * iOS `isAvailable()` is
+     * `central?.state == .poweredOn && peripheralManager?.state == .poweredOn`,
+     * and those two managers are constructed INSIDE the native `start()`.
+     * Before start they are nil, so `isAvailable()` is false, so this returned
+     * early, so `CBCentralManager` was never created — and constructing it is
+     * precisely what makes iOS show the Bluetooth permission prompt. The prompt
+     * therefore could never appear, and BLE could never run on iOS, forever,
+     * with no error anywhere.
+     *
+     * This is the SAME defect already fixed once on the Android half, where
+     * `isAvailable()` folded in `hasPermissions()`: permission could not be
+     * obtained without starting, and starting could not happen without
+     * permission. That fix was applied natively on Android and the identical
+     * gate here — which breaks iOS for a different reason — was missed.
+     *
+     * The rule: an availability check that consults state only `start()` can
+     * produce must never guard `start()`. Native `start()` is the authority; it
+     * already returns false when the radio genuinely cannot run, and on iOS it
+     * is the only thing that can make the radio available at all.
+     *
+     * `isAvailable()` remains correct for REPORTING — the Settings route rows
+     * use it to say "Off — turn the radio on" — which is why it still exists.
+     */
+    start: async ({ deviceId, trustedDeviceIds }) => native.start({ deviceId, trustedDeviceIds }),
 
     stop: () => {
       peerCache = [];

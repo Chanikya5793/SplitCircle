@@ -56,6 +56,29 @@ public class SplitCircleBleModule: Module {
       controller.isAvailable()
     }
 
+    /**
+     Consent, asked separately from capability — the Android half already
+     distinguishes these and iOS could not.
+
+     `CBManager.authorization` is a STATIC property, readable without
+     constructing a manager, which matters because constructing one is what
+     triggers the prompt. So this answers "has the user refused?" without
+     causing the ask.
+
+     Returns false only for an explicit refusal. `.notDetermined` reports TRUE:
+     nothing has been refused yet, and the prompt appears the moment `start()`
+     builds the manager. Reporting false there would make the UI say "denied"
+     before the user had ever been asked, which is the same lie the Android
+     half used to tell in reverse ("unavailable on this device" on a perfectly
+     capable Pixel).
+     */
+    Function("hasPermissions") { () -> Bool in
+      switch CBManager.authorization {
+      case .denied, .restricted: return false
+      default: return true
+      }
+    }
+
     AsyncFunction("start") { (deviceId: String, trusted: [String], promise: Promise) in
       controller.start(deviceId: deviceId, trusted: trusted) { started in
         promise.resolve(started)

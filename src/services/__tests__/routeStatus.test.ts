@@ -18,12 +18,14 @@ const diagnostics = (over: Partial<{
   ble: boolean;
   lan: boolean;
   available: Record<string, boolean>;
+  needsPermission: Record<string, boolean>;
 }> = {}) => ({
   bleEnabled: over.ble ?? true,
   lanEnabled: over.lan ?? true,
   transports: (['mpc', 'lan', 'ble'] as const).map((id) => ({
     id,
     available: over.available?.[id] ?? true,
+    needsPermission: over.needsPermission?.[id] ?? false,
     neighbourCount: 0,
   })),
 });
@@ -71,6 +73,39 @@ describe('route status', () => {
     expect(rows.find((row) => row.id === 'ble')?.detail).toMatch(/turn the radio on/);
     expect(rows.find((row) => row.id === 'lan')?.tone).toBe('neutral');
     expect(rows.find((row) => row.id === 'lan')?.detail).toMatch(/no phones found yet/);
+  });
+
+  it('says "needs permission" rather than "turn the radio on" when consent is missing', () => {
+    // Different actions. Telling someone to turn on a radio that is already on
+    // sends them hunting through Settings for something already correct — and
+    // this is precisely the iOS case that had NO signal at all until
+    // CBManager.authorization was exposed.
+    const rows = describeRoutes({}, diagnostics({ needsPermission: { ble: true } }), true);
+    const ble = rows.find((row) => row.id === 'ble');
+    expect(ble?.detail).toMatch(/[Nn]eeds permission/);
+    expect(ble?.detail).not.toMatch(/turn the radio on/);
+    expect(ble?.tone).toBe('warning');
+  });
+
+  it('reports permission BEFORE availability, since a denial can also read as unavailable', () => {
+    // On some platforms a refused permission makes the adapter query fail, so
+    // checking availability first would swallow the more useful message.
+    const rows = describeRoutes(
+      {},
+      diagnostics({ available: { ble: false }, needsPermission: { ble: true } }),
+      true,
+    );
+    expect(rows.find((row) => row.id === 'ble')?.detail).toMatch(/[Nn]eeds permission/);
+  });
+
+  it('still prefers CONNECTED over a stale permission flag', () => {
+    // A route carrying messages is carrying messages.
+    const rows = describeRoutes(
+      { ble: ['pixel-7'] },
+      diagnostics({ needsPermission: { ble: true } }),
+      true,
+    );
+    expect(rows.find((row) => row.id === 'ble')?.connected).toBe(true);
   });
 
   it('tells Wi-Fi users to join a network, not to turn on a radio', () => {

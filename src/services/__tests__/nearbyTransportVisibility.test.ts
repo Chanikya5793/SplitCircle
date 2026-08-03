@@ -88,11 +88,16 @@ import {
   reachableNodeIds,
 } from '../nearbyMessagingState';
 
+// FILE level, not inside one describe. Scoped to a single block, the reset did
+// not apply to later blocks and their mock call counts inherited every earlier
+// test's — which looks exactly like the code under test starting a radio twice.
+beforeEach(() => {
+  ble.listeners.length = 0;
+  vi.clearAllMocks();
+  ble.module.start.mockResolvedValue(true);
+});
+
 describe('a BLE peer is visible without any MPC event', () => {
-  beforeEach(() => {
-    ble.listeners.length = 0;
-    vi.clearAllMocks();
-  });
 
   it('reaches the snapshot, the status and the route name', async () => {
     const stop = await startNearbyMessaging('me', 'Me', vi.fn());
@@ -126,5 +131,70 @@ describe('a BLE peer is visible without any MPC event', () => {
     expect(reachableNodeIds(getNearbyMessagingSnapshot())).not.toContain('pixel-7');
 
     stop();
+  });
+});
+
+/**
+ * A transport that could not start must be re-attempted.
+ *
+ * Every reason a radio declines is temporary and user-controlled: Bluetooth
+ * off, no Wi-Fi yet, an Android grant not given, an iOS prompt not yet
+ * answered. Nothing retried, so the state at the instant of launch decided the
+ * whole session — turning Bluetooth on five seconds after opening the app left
+ * nearby dark until a full restart.
+ *
+ * On iOS this is also what makes the permission prompts reachable at all: the
+ * prompt appears when the native manager is constructed inside `start()`, so a
+ * start that never happens is a prompt that never appears.
+ */
+describe('transport start retry', () => {
+  it('re-attempts a transport that declined, and reports it once it succeeds', async () => {
+    vi.useFakeTimers();
+    try {
+      // Radio off at launch.
+      ble.module.start.mockResolvedValueOnce(false);
+      const stop = await startNearbyMessaging('me', 'Me', vi.fn());
+      expect(ble.module.start).toHaveBeenCalledTimes(1);
+
+      // User switches Bluetooth on; the next attempt succeeds.
+      ble.module.start.mockResolvedValue(true);
+      await vi.advanceTimersByTimeAsync(16_000);
+
+      expect(ble.module.start.mock.calls.length).toBeGreaterThan(1);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops retrying once the transport is running', async () => {
+    vi.useFakeTimers();
+    try {
+      const stop = await startNearbyMessaging('me', 'Me', vi.fn());
+      const afterStart = ble.module.start.mock.calls.length;
+
+      // Already running: the tick must not restart a healthy radio, which
+      // would drop every live peer every 15 seconds.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(ble.module.start.mock.calls.length).toBe(afterStart);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not keep retrying after teardown', async () => {
+    vi.useFakeTimers();
+    try {
+      ble.module.start.mockResolvedValue(false);
+      const stop = await startNearbyMessaging('me', 'Me', vi.fn());
+      stop();
+      const afterStop = ble.module.start.mock.calls.length;
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(ble.module.start.mock.calls.length).toBe(afterStop);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

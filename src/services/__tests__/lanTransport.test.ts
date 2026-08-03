@@ -13,6 +13,8 @@ import { maxPayloadFor } from '../mesh/transport';
 const makeNative = (opts: {
   peers?: NativeLanPeer[];
   available?: boolean;
+  /** Lets a test model a native `start()` that declines (no network yet). */
+  startResult?: boolean;
   sendFrame?: (peer: string, frame: string) => Promise<boolean>;
 } = {}) => {
   const sent: { peer: string; frame: string }[] = [];
@@ -20,7 +22,7 @@ const makeNative = (opts: {
   const peersCbs: ((p: NativeLanPeer[]) => void)[] = [];
   const native: NativeLanModule = {
     isAvailable: () => opts.available ?? true,
-    start: vi.fn(async () => true),
+    start: vi.fn(async () => opts.startResult ?? true),
     stop: vi.fn(),
     updateTrust: vi.fn(),
     connectedPeers: () => opts.peers ?? [],
@@ -52,11 +54,27 @@ describe('capability', () => {
   });
 
   it('reports unavailable rather than throwing when the native side is dead', async () => {
-    const t = createLanTransport(makeNative({ available: false }).native);
+    const t = createLanTransport(makeNative({ available: false, startResult: false }).native);
     expect(t.isAvailable()).toBe(false);
     expect(await t.start({ userId: 'u', deviceId: 'd', trustedDeviceIds: [] })).toBe(false);
     expect(await t.send({ data: 'x', payloadClass: 'text' }, ['p']))
       .toEqual({ ok: false, reason: 'unavailable' });
+  });
+
+  it('CALLS native start even while isAvailable() is false — the iOS prompt depends on it', async () => {
+    // Same rule as the BLE half, different mechanism. iOS `isAvailable()` is
+    // `hasPath && !localNetworkDenied`, and `hasPath` starts FALSE until
+    // NWPathMonitor's first async callback — which `startNearbyMessaging`
+    // usually beats at launch. A JS pre-gate therefore returned early,
+    // NWListener/NWBrowser were never created, and starting THEM is what makes
+    // iOS show the Local Network prompt. Nothing retried, so losing that race
+    // once disabled LAN for the entire session.
+    const harness = makeNative({ available: false, startResult: true });
+    const t = createLanTransport(harness.native);
+
+    expect(t.isAvailable()).toBe(false);
+    await expect(t.start({ userId: 'u', deviceId: 'd', trustedDeviceIds: [] })).resolves.toBe(true);
+    expect(harness.native.start).toHaveBeenCalled();
   });
 });
 

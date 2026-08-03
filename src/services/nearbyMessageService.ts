@@ -6,7 +6,7 @@ import {
   sendPreparedNearbyAttachment,
 } from '../../modules/splitcircle-mesh';
 import { getCurrentDeviceId } from '@/services/pairingService';
-import { nativeBle } from '../../modules/splitcircle-ble';
+import { bleNeedsPermission, nativeBle } from '../../modules/splitcircle-ble';
 import { nativeLan } from '../../modules/splitcircle-lan';
 import { createBleTransport } from '@/services/mesh/bleTransport';
 import { createLanTransport } from '@/services/mesh/lanTransport';
@@ -58,6 +58,14 @@ let broadcastRunning = false;
  * retried well within a conversation.
  */
 const MESH_REBROADCAST_COOLDOWN_MS = 60_000;
+
+/**
+ * How often to re-attempt a transport that is enabled but not running.
+ *
+ * Cheap: when everything that should be running is running, the tick does
+ * nothing but a filter over at most three entries.
+ */
+const TRANSPORT_RETRY_INTERVAL_MS = 15_000;
 
 /** Bounded, newest-first. Replaces the single overwritable event slot. */
 const meshEvents = new MeshEventLog();
@@ -342,6 +350,11 @@ export const getMeshDiagnostics = async (): Promise<MeshDiagnostics> => {
       id: transport.id,
       available: transport.isAvailable(),
       neighbourCount: transport.neighbours().filter((n) => n.connected).length,
+      // BLE is the only transport with a queryable consent state on either
+      // platform. Local Network has no such API on iOS at all — Apple provides
+      // none — which is why a denial there is inferred from the listener's
+      // `.waiting(PolicyDenied)` state instead.
+      ...(transport.id === 'ble' ? { needsPermission: bleNeedsPermission() } : {}),
     })),
     neighbours: aggregateNeighbours(transports.neighbours(), nearbySnapshot.trustedPeers),
     queuedMessages: queue.filter((operation) => Boolean(operation.wireEnvelope)).length,
@@ -599,7 +612,20 @@ export const startNearbyMessaging = async (
 
   const runningTransports = new Set<TransportId>();
 
-  const startTransport = async (transport: MeshTransport): Promise<boolean> => {
+  /**
+   * `quiet` exists because the retry below runs every 15s forever.
+   *
+   * A phone with Bluetooth switched off would otherwise log an error on every
+   * tick for the life of the session — the exact log-saturation this codebase
+   * has already been burned by (CLAUDE.md: a retry storm that produced 99.96%
+   * of all JS output and saturated the JS thread). The FIRST attempt is loud,
+   * because a transport failing at startup is genuinely diagnostic; the
+   * repeats are not.
+   */
+  const startTransport = async (
+    transport: MeshTransport,
+    quiet = false,
+  ): Promise<boolean> => {
     try {
       const ok = await transport.start({
         userId,
@@ -607,7 +633,7 @@ export const startNearbyMessaging = async (
         trustedDeviceIds: Object.keys(nearbySnapshot.trustedPeers),
       });
       if (ok) runningTransports.add(transport.id);
-      else {
+      else if (!quiet) {
         console.error(
           `⚠️ ${transport.id} transport did not start `
           + '(radio/network off, permission denied, or unavailable on this platform)',
@@ -615,7 +641,7 @@ export const startNearbyMessaging = async (
       }
       return ok;
     } catch (error) {
-      console.error(`⚠️ ${transport.id} transport threw while starting`, error);
+      if (!quiet) console.error(`⚠️ ${transport.id} transport threw while starting`, error);
       return false;
     }
   };
@@ -656,7 +682,36 @@ export const startNearbyMessaging = async (
   };
   const unsubscribePreferences = subscribeToTransportPreferences(applyPreferences);
 
+  // A TRANSPORT THAT COULD NOT START MUST BE RE-ATTEMPTED.
+  //
+  // Every reason a radio declines to start is temporary and user-controlled:
+  // Bluetooth switched off, no Wi-Fi yet, an Android runtime grant not given,
+  // an iOS prompt not yet answered. Nothing retried, so the state at the
+  // instant of launch decided the whole session — turn Bluetooth on five
+  // seconds after opening the app and nearby stayed dark until a full restart,
+  // with the UI reporting the radio as available the entire time.
+  //
+  // This is also what makes the permission prompts reachable at all on iOS:
+  // the prompt appears when the native manager is constructed inside `start()`,
+  // so a start that never happens is a prompt that never appears.
+  //
+  // Polled rather than event-driven because there is no cross-platform signal
+  // for "the user just granted permission" or "Bluetooth came back" that
+  // reaches JS — CBManager state changes and Android adapter broadcasts stay
+  // native. 15s is slow enough to be free and fast enough that flipping a
+  // switch in Settings and returning to the app just works.
+  const retryTimer = setInterval(() => {
+    const pending = activeTransports.filter(
+      (transport) => isTransportEnabled(transport.id) && !runningTransports.has(transport.id),
+    );
+    if (pending.length === 0) return;
+    void Promise.all(pending.map((transport) => startTransport(transport, true))).then((results) => {
+      if (results.some(Boolean)) publishAvailability(true);
+    });
+  }, TRANSPORT_RETRY_INTERVAL_MS);
+
   return () => {
+    clearInterval(retryTimer);
     cancelNearbyPairing();
     envelopeSubscriptions.forEach((unsubscribe) => unsubscribe());
     peerSubscriptions.forEach((unsubscribe) => unsubscribe());

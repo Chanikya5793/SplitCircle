@@ -42,6 +42,17 @@ export interface MeshTransportView {
   id: TransportId;
   available: boolean;
   neighbourCount: number;
+  /**
+   * The radio is capable but the user has refused access.
+   *
+   * Distinct from `available` because they need different words in front of a
+   * person: "turn Bluetooth on" versus "allow ManaSplit to use Bluetooth" are
+   * different actions, and telling someone the wrong one sends them hunting
+   * through Settings for something that is already correct. The Android half
+   * always distinguished these; iOS could not until `CBManager.authorization`
+   * was exposed.
+   */
+  needsPermission?: boolean;
 }
 
 export interface MeshDiagnostics {

@@ -11,6 +11,8 @@ import { createBleTransport, type NativeBleModule, type NativeBlePeer } from '..
 const makeNative = (opts: {
   peers?: NativeBlePeer[];
   available?: boolean;
+  /** Lets a test model a native `start()` that declines (radio off, no grant). */
+  startResult?: boolean;
   sendChunk?: (peer: string, chunk: string) => Promise<boolean>;
 } = {}) => {
   const sent: { peer: string; chunk: string }[] = [];
@@ -21,7 +23,7 @@ const makeNative = (opts: {
   const peersCbs: ((p: NativeBlePeer[]) => void)[] = [];
   const native: NativeBleModule = {
     isAvailable: () => opts.available ?? true,
-    start: vi.fn(async () => true),
+    start: vi.fn(async () => opts.startResult ?? true),
     stop: vi.fn(),
     updateTrust: vi.fn(),
     connectedPeers: () => opts.peers ?? [],
@@ -146,10 +148,34 @@ describe('BLE transport', () => {
   });
 
   it('reports unavailable rather than throwing when the radio is missing', async () => {
-    const t = createBleTransport(makeNative({ available: false }).native);
+    const t = createBleTransport(makeNative({ available: false, startResult: false }).native);
     expect(t.isAvailable()).toBe(false);
+    // Native declines, so start is false — but it is NATIVE that decided, not
+    // a JS pre-check. See the next test.
     expect(await t.start({ userId: 'u', deviceId: 'd', trustedDeviceIds: [] })).toBe(false);
     expect(await t.send({ data: 'x', payloadClass: 'text' }, ['p']))
       .toEqual({ ok: false, reason: 'unavailable' });
+  });
+
+  it('CALLS native start even while isAvailable() is false — the iOS prompt depends on it', async () => {
+    // This test previously asserted the OPPOSITE, and that assertion encoded a
+    // permanent deadlock as correct behaviour.
+    //
+    // iOS `isAvailable()` is `central?.state == .poweredOn && peripheralManager?
+    // .state == .poweredOn`, and BOTH managers are constructed inside native
+    // `start()`. So before the first start they are nil, `isAvailable()` is
+    // false, and a JS pre-gate returned early — meaning `CBCentralManager` was
+    // never created, and constructing it is exactly what makes iOS show the
+    // Bluetooth permission prompt. The prompt could never appear and BLE could
+    // never run on iOS, with no error anywhere.
+    //
+    // The rule this pins: an availability check that consults state only
+    // `start()` can produce must never guard `start()`.
+    const harness = makeNative({ available: false, startResult: true });
+    const t = createBleTransport(harness.native);
+
+    expect(t.isAvailable()).toBe(false);
+    await expect(t.start({ userId: 'u', deviceId: 'd', trustedDeviceIds: [] })).resolves.toBe(true);
+    expect(harness.native.start).toHaveBeenCalled();
   });
 });
