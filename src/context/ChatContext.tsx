@@ -1505,7 +1505,18 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
             messageId: message.messageId,
             senderId: message.senderId,
             type: message.type,
-            content: type !== 'text' ? getMessageTypeLabel(type) : content,
+            // NO PLAINTEXT (doc 36 §1). This used to carry the message text
+            // for text messages, which put the most recent message of every
+            // chat in Firestore in the clear — readable by the server, and by
+            // the Cloud Function that used to build notifications from it,
+            // against this project's own rule that messages never go in
+            // Firestore.
+            //
+            // A TYPE LABEL, not an empty string: `ChatThreadRow` uses
+            // `thread.lastMessage` as its preview until local storage loads,
+            // so a blank here shows an empty row on a fresh install. The label
+            // is what every non-text message already displayed.
+            content: getMessageTypeLabel(type),
             createdAt: message.createdAt,
           },
         }).catch((error) => {

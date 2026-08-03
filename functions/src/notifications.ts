@@ -45,6 +45,15 @@ interface ExpoPushMessage {
     // iOS: sets apns content-available:1 so the system wakes the app's
     // background notification task without presenting anything.
     _contentAvailable?: boolean;
+    /**
+     * iOS: sets apns `mutable-content:1`, which lets a Notification Service
+     * Extension rewrite the body before it is shown (doc 36 §3.2).
+     *
+     * Required for the encrypted-preview flow: the visible copy ships generic
+     * and the extension replaces it once it has opened the sealed blob. Without
+     * this the extension is never invoked and every notification stays generic.
+     */
+    mutableContent?: boolean;
 }
 
 interface ExpoPushTicket {
@@ -951,6 +960,86 @@ export const shouldUseLockedCopy = (params: {
     if (params.lockedUserIds.has(params.userId)) return true;
     // Unresolved -> fail closed.
     return !params.resolvedUserIds.has(params.userId);
+};
+
+/**
+ * Sends one message push per device, carrying a SEALED preview.
+ *
+ * The replacement for the Firestore-triggered notification (doc 36 §1). That
+ * one read `lastMessage.content` — the message plaintext — and put it in the
+ * notification body, so this server, Expo and APNs/FCM could all read every
+ * message. This function never sees plaintext: it forwards an opaque blob the
+ * recipient device opens locally.
+ *
+ * The visible title/body are deliberately GENERIC. They are what shows if the
+ * device cannot open the preview — an old client, a failed decrypt, an iOS
+ * extension that timed out. Putting anything real there would undo the whole
+ * exercise, since the fallback is exactly what an attacker or a middleman sees.
+ */
+export const sendMessagePushes = async (params: {
+    recipientId: string;
+    chatId: string;
+    messageId: string;
+    targets: { deviceId: string; preview: string | null }[];
+}): Promise<{ sent: number }> => {
+    if (!params.chatId || params.targets.length === 0) {
+        return { sent: 0 };
+    }
+
+    const resolved = await resolveNotificationTargets(
+        [params.recipientId],
+        "messages",
+        params.chatId,
+    );
+    if (resolved.devices.length === 0) {
+        return { sent: 0 };
+    }
+
+    // Preview per device id, so each push carries only its own.
+    const previewByDevice = new Map(
+        params.targets.map((target) => [target.deviceId, target.preview]),
+    );
+
+    const messages: ExpoPushMessage[] = [];
+    for (const device of resolved.devices) {
+        if (!device.expoPushToken || !isExpoPushToken(device.expoPushToken)) continue;
+        const preview = previewByDevice.get(device.deviceId) ?? null;
+
+        messages.push({
+            to: device.expoPushToken,
+            // Generic, always. See the header.
+            title: "ManaSplit",
+            body: "New message",
+            data: toStringRecord({
+                type: "message",
+                chatId: params.chatId,
+                messageId: params.messageId,
+                // Absent when the sender could not seal for this device; the
+                // client then shows the generic copy above.
+                ...(preview ? { preview } : {}),
+            }),
+            sound: "default",
+            priority: "high",
+            channelId: mapCategoryToChannel("messages"),
+            // Lets an iOS Notification Service Extension rewrite the body once
+            // it has opened the preview (doc 36 §3.2).
+            mutableContent: true,
+        });
+    }
+
+    if (messages.length === 0) return { sent: 0 };
+
+    const ticketResults = await sendExpoPush(messages);
+    const sent = ticketResults.filter((entry) => entry.ticket.status === "ok").length;
+    logger.info("sendMessagePushes: dispatched", {
+        chatId: params.chatId,
+        deviceCount: messages.length,
+        sent,
+        // Diagnostic only — how many devices got a real preview vs generic
+        // copy. A persistent zero here means sealing is failing on the sender.
+        withPreview: messages.filter((m) => Boolean((m.data as Record<string, unknown>)?.preview)).length,
+    });
+    return { sent };
 };
 
 export const sendPushToUsers = async (

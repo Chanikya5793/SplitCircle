@@ -20,6 +20,7 @@ import { Platform } from 'react-native';
 
 import { dismissNotificationsForEntity } from './notifications';
 import { extractRevokeFilters } from './notificationRevoke';
+import { applyDecryptedPreview } from '@/services/notificationPreviewDisplay';
 
 export const BACKGROUND_NOTIFICATION_TASK = 'background-notification-revoke';
 
@@ -39,7 +40,44 @@ export const handleBackgroundNotificationPayload = async (
   } catch {
     // A malformed payload must never crash a headless launch.
   }
+
+  // Message pushes now ship GENERIC copy plus a sealed preview the server
+  // cannot read (doc 36 §3.2). Open it here and replace the notification with
+  // the real one. Android only — see `applyDecryptedPreview`.
+  //
+  // Separate try/catch from the revoke handling above: these are unrelated
+  // jobs, and a failure in one must not skip the other.
+  try {
+    await applyDecryptedPreview(extractPushData(payload));
+  } catch {
+    // Never throw from a headless launch. The generic notification stands.
+  }
   return dismissed;
+};
+
+/**
+ * Digs the `data` payload out of whatever shape the OS handed the task.
+ *
+ * expo-notifications delivers different envelopes per platform and per launch
+ * route (cold headless launch vs backgrounded app), so this checks the known
+ * nestings rather than assuming one. A wrong guess here is silent: the preview
+ * simply never opens and every notification stays generic, which is exactly the
+ * kind of failure that looks like "the feature doesn't work" with nothing in
+ * the logs.
+ */
+export const extractPushData = (payload: unknown): unknown => {
+  if (!payload || typeof payload !== 'object') return payload;
+  const value = payload as Record<string, unknown>;
+
+  // Android headless task: { notification: { data: {...} } }
+  const notification = value.notification as Record<string, unknown> | undefined;
+  if (notification?.data) return notification.data;
+
+  // iOS / already-unwrapped: { data: {...} }
+  if (value.data) return value.data;
+
+  // Some routes hand the data object directly.
+  return value;
 };
 
 if (Platform.OS !== 'web') {

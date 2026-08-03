@@ -188,44 +188,13 @@ const getAuthenticatedUid = async (authorizationHeader: string | undefined): Pro
     }
 };
 
-const describeMessagePreview = (messageType: string, content: string): string => {
-    switch (messageType) {
-        case "image":
-            return "sent a photo";
-        case "video":
-            return "sent a video";
-        case "audio":
-            return "sent an audio message";
-        case "file":
-            return "shared a file";
-        case "location":
-            return "shared a location";
-        default:
-            return truncate(content || "sent a message", 110);
-    }
-};
-
-const buildMessageNotificationCopy = (params: {
-    senderName: string;
-    groupName?: string;
-    messageType: string;
-    content: string;
-}): { title: string; subtitle?: string; body: string } => {
-    const preview = describeMessagePreview(params.messageType, params.content);
-
-    if (params.groupName) {
-        return {
-            title: params.groupName,
-            subtitle: params.senderName,
-            body: preview,
-        };
-    }
-
-    return {
-        title: params.senderName,
-        body: preview,
-    };
-};
+/*
+ * `describeMessagePreview` / `buildMessageNotificationCopy` REMOVED alongside
+ * `onChatUpdated` (doc 36 §1). Both existed solely to turn message plaintext
+ * into notification copy server-side. The equivalent now runs ON THE DEVICE,
+ * in `src/services/notificationPreview.ts`, against a blob only that device can
+ * open — same wording, no plaintext.
+ */
 
 const buildExpenseNotificationCopy = (params: {
     groupName: string;
@@ -407,152 +376,25 @@ export const sendTestPushNotification = onCall(async (request) => {
 // Push Notifications — Chat Messages
 // ─────────────────────────────────────────────────────────────
 
-export const onChatUpdated = onDocumentUpdated(
-    "chats/{chatId}",
-    async (event) => {
-        const before = event.data?.before.data();
-        const after = event.data?.after.data();
-
-        if (!before || !after) {
-            return;
-        }
-
-        const chatId = event.params.chatId;
-
-        // Detect new lastMessage
-        const beforeMsg = before.lastMessage as Record<string, unknown> | undefined;
-        const afterMsg = after.lastMessage as Record<string, unknown> | undefined;
-
-        if (!afterMsg) {
-            return;
-        }
-
-        // Skip if lastMessage hasn't changed
-        const beforeMsgId = beforeMsg?.messageId ?? beforeMsg?.id;
-        const afterMsgId = afterMsg.messageId ?? afterMsg.id;
-
-        if (beforeMsgId === afterMsgId) {
-            return;
-        }
-
-        // Skip system messages
-        if (afterMsg.type === "system") {
-            return;
-        }
-
-        const senderId = afterMsg.senderId as string;
-        const content = afterMsg.content as string;
-        const msgType = afterMsg.type as string;
-        const participantIds = (after.participantIds ?? []) as string[];
-
-        // Get sender name
-        let senderName = "Someone";
-        try {
-            const senderDoc = await getFirestore().collection("users").doc(senderId).get();
-            if (senderDoc.exists) {
-                senderName = (senderDoc.data()?.displayName as string) || "Someone";
-            }
-        } catch {
-            // Use fallback name
-        }
-
-        const groupId = after.groupId as string | undefined;
-        let groupName: string | undefined;
-        if (groupId) {
-            try {
-                const groupDoc = await getFirestore().collection("groups").doc(groupId).get();
-                if (groupDoc.exists) {
-                    groupName = getStringValue(groupDoc.data()?.name);
-                }
-            } catch {
-                // Keep direct-chat fallback styling
-            }
-        }
-
-        const notificationCopy = buildMessageNotificationCopy({
-            senderName,
-            groupName,
-            messageType: msgType,
-            content,
-        });
-
-        // Send to all participants except the sender
-        const recipientIds = participantIds.filter((id) => id !== senderId);
-
-        if (recipientIds.length === 0) {
-            return;
-        }
-
-        // Recipients who LOCKED this chat (users/{uid}.lockedChats.<chatId>)
-        // must not receive sender name or message content in the push — the
-        // chat sits behind a biometric gate on their device, so the lock
-        // screen/notification tray must stay just as opaque.
-        //
-        // The split now happens INSIDE sendPushToUsers, from user documents it
-        // already batch-reads. This used to issue a `users/{uid}.get()` per
-        // recipient right here, immediately before calling into the function
-        // that had just read those same documents — doubling per-recipient user
-        // reads on every message sent (doc 36 §1.1). Same privacy behaviour,
-        // same fail-closed default, half the reads.
-
-        const dataPayload = {
-            type: "message",
-            chatId,
-            ...(groupId ? { groupId } : {}),
-            senderId,
-            senderName,
-        };
-        // Locked recipients' visible title/body are already genericized above
-        // — the DATA payload must match, or anything that reads it raw (a
-        // future notification-service extension, widget, background handler)
-        // can still recover who sent it before the recipient unlocks the
-        // chat. Only chatId (needed for the tap-to-open-the-still-gated-chat
-        // deep link) and the bare type survive; senderId/senderName/groupId
-        // are all either unused client-side or directly identifying.
-        const lockedDataPayload = { type: "message", chatId };
-
-        try {
-            {
-                const dispatch = await sendPushToUsers(
-                    recipientIds,
-                    notificationCopy.title,
-                    notificationCopy.body,
-                    dataPayload,
-                    "messages",
-                    chatId,
-                    "messages",
-                    {
-                        // Attach the message quick-reply category so UNLOCKED
-                        // recipients get lock-screen Reply + Mark-as-read
-                        // actions. `sendPushToUsers` drops both the subtitle
-                        // and the category for locked recipients — their push
-                        // carries no chat context and must never expose a reply
-                        // field for a gated chat.
-                        subtitle: notificationCopy.subtitle,
-                        categoryId: "message",
-                        lockedVariant: {
-                            title: "ManaSplit",
-                            body: "New message",
-                            data: lockedDataPayload,
-                        },
-                    },
-                );
-                logger.info("Queued message notifications", {
-                    chatId,
-                    deliveryId: dispatch.deliveryId,
-                    acceptedCount: dispatch.acceptedCount,
-                    targetedDeviceCount: dispatch.targetedDeviceCount,
-                });
-            }
-        } catch (error) {
-            logger.error("Failed to send message notifications", toSafeError(error));
-        }
-    },
-);
-
-// ─────────────────────────────────────────────────────────────
-// Push Notifications — Group Updates (Expenses, Settlements, Members)
-// ─────────────────────────────────────────────────────────────
+/**
+ * REMOVED 2026-08-03 — the plaintext notification path (doc 36 §1).
+ *
+ * `onChatUpdated` triggered on `chats/{chatId}` and built every message
+ * notification from `lastMessage.content`, which is the message PLAINTEXT. That
+ * meant this server, Expo's relay and APNs/FCM could all read every message —
+ * the end-to-end claim was false for the most recent message in every chat,
+ * and the plaintext sat in Firestore indefinitely, against this project's own
+ * first architectural rule ("Never store messages in Firestore").
+ *
+ * Message pushes now originate from `fanOutQueuedMessage` (messageFanout.ts),
+ * which triggers on the RTDB queue write and forwards a SEALED per-device
+ * preview it cannot read. That path is per-recipient-device, is deleted after
+ * delivery, and needs no plaintext anywhere.
+ *
+ * Nothing replaces this trigger: it existed only to send those notifications.
+ * The chat document is still written (participants, timestamps, unread counts);
+ * it simply no longer carries message text, and nothing server-side reads it.
+ */
 
 export const onGroupUpdated = onDocumentUpdated(
     "groups/{groupId}",

@@ -3,6 +3,8 @@ import { getFirestore } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
 import { onValueCreated } from "firebase-functions/v2/database";
 
+import { sendMessagePushes } from "./notifications";
+
 /**
  * Per-device message fan-out (ai_layer/docs/31_multi_device_icloud_sync.md
  * §3.1, §5 Phase 2). The CLIENT still writes exactly as it always has —
@@ -95,6 +97,16 @@ export const fanOutQueuedMessage = onValueCreated(
             // to a session it does not hold.
             const originDeviceId = (payload as Record<string, unknown>).originDeviceId;
 
+            // Sealed notification previews, one per device (doc 36 §3.2).
+            // Opaque to this function by design — it forwards bytes it cannot
+            // read, which is the entire point. Stripped from the fanned-out
+            // payload for the same reason the envelope map is: no device should
+            // receive another device's blob.
+            const previews = (payload as Record<string, unknown>).previews as
+                | Record<string, string>
+                | undefined;
+            const pushTargets: { deviceId: string; preview: string | null }[] = [];
+
             const updates: Record<string, unknown> = {};
             for (const deviceDoc of devicesSnap.docs) {
                 if (originDeviceId && deviceDoc.id === originDeviceId) {
@@ -118,7 +130,14 @@ export const fanOutQueuedMessage = onValueCreated(
                     }
                     devicePayload = { ...payload, envelope, envelopes: null };
                 }
+                // Never ship the whole preview map onward — same rule as the
+                // envelope map above.
+                devicePayload = { ...(devicePayload as Record<string, unknown>), previews: null };
                 updates[`messageQueueDevices/${recipientId}/${deviceDoc.id}/${messageId}`] = devicePayload;
+                pushTargets.push({
+                    deviceId: deviceDoc.id,
+                    preview: previews?.[deviceDoc.id] ?? null,
+                });
             }
             // This function is the sole deleter of the relay node — avoids a
             // multi-device race where each device's own listener tries to
@@ -137,6 +156,27 @@ export const fanOutQueuedMessage = onValueCreated(
                 deviceCount: Object.keys(updates).length - 1,
                 encrypted: Boolean(envelopes),
                 skippedOrigin: Boolean(originDeviceId),
+            });
+
+            // PUSH FROM HERE, not from a Firestore trigger on the chat doc.
+            //
+            // The old path read `lastMessage.content` — the message PLAINTEXT —
+            // out of Firestore and put it in the notification body, so our
+            // server, Expo and APNs/FCM could all read every message (doc 36
+            // §1). This path has only the sealed preview, which none of them
+            // can open.
+            //
+            // Same trigger as the fan-out rather than a second function on the
+            // same ref: two triggers would double the invocations for no gain,
+            // and this one has already resolved exactly the devices that need
+            // notifying.
+            await sendMessagePushes({
+                recipientId,
+                chatId: typeof (payload as Record<string, unknown>).chatId === "string"
+                    ? ((payload as Record<string, unknown>).chatId as string)
+                    : "",
+                messageId,
+                targets: pushTargets,
             });
         } catch (error) {
             // Best-effort by design, matching the reaper/relay pattern
