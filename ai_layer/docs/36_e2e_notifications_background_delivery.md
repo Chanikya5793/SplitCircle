@@ -388,3 +388,57 @@ in. The HPKE call mirrors `SignalSessionEngine.openWithIdentity` line for line
 query mirrors `SignalKeychain`, but *mirrors* is not *verified*. Expect to fix
 compile errors on first build; treat §9.3 as the real acceptance test, not the
 absence of errors.
+
+---
+
+## 10. NSE target: attempted and BACKED OUT (2026-08-03)
+
+The target was created, compiled against, and then **removed**, restoring a
+green build. The source files, the shared keychain access group, the migration
+and `publishInstallationId` all remain — none of that is lost, and the keychain
+work is a prerequisite for any future extension regardless.
+
+### 10.1 Why it was backed out
+
+Not because the extension's own code was wrong. Five separate integration
+failures surfaced, each invisible until something was actually compiled:
+
+1. `Xcodeproj.new_target` does not set `PRODUCT_NAME` for an app extension, so
+   the product was a NAMELESS `.appex` and two build commands claimed the same
+   output. Fixed with `$(TARGET_NAME)`.
+2. `LibSignalClient` was not linked — a new target inherits nothing.
+3. `inherit! :search_paths` drags the PARENT's headers in, and several are
+   annotated `unavailable` in an app extension
+   (`RTCCameraVideoCapturer`: "Camera not available in app extensions"). Merely
+   seeing that header fails the compile, so the extension's own sources failed
+   for a reason external to them.
+4. **Expo autolinking installs `ExpoModulesProvider.swift` into every target in
+   the Podfile**, including the extension, where it cannot compile — there are
+   deliberately no Expo modules there. Moving the target to the Podfile's top
+   level is rejected outright by CocoaPods: an embedded target must be nested
+   under its host.
+5. A `post_install` strip aimed at `Pods.xcodeproj` missed, because Expo adds
+   the provider to the **app project's** target, not the Pods project's.
+
+The tree was left non-building for a stretch while chasing (5). That is worse
+than an unfinished feature — a broken iOS project blocks every future ship,
+including a hotfix — so the target was removed and the build verified green
+before stopping.
+
+### 10.2 What the next attempt needs
+
+The unsolved problem is narrow and nameable: **make an app-extension target
+coexist with Expo's autolinking.** Options worth investigating, in order:
+
+- `expo-build-properties`' extension support, if it can scope autolinking to
+  the app target only.
+- A `post_install` hook against the USER project
+  (`installer.aggregate_targets` / the `SplitCircle.xcodeproj` target), not the
+  Pods project — that is where the provider is actually added.
+- Declaring the extension in the Podfile with no pods at all and vendoring
+  LibSignalClient into it by hand, sidestepping the CocoaPods/Expo integration
+  entirely.
+
+Anything attempted here must end with a full workspace build, not a target
+build: four of the five failures above only appeared when the whole workspace
+was compiled.

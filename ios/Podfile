@@ -94,19 +94,6 @@ target 'SplitCircle' do
   # hook below instead, which flips MACH_O_TYPE for just this one target.
   pod 'LibSignalClient', :git => 'https://github.com/signalapp/libsignal', :tag => 'v0.99.1'
 
-  # Notification Service Extension (ai_layer/docs/36 §4). It opens the sealed
-  # notification preview with HPKE, so it needs LibSignalClient — and ONLY that.
-  #
-  # A nested target inherits nothing by default, which is what we want here: an
-  # extension has a hard memory ceiling (~24MB) and pulling React Native or the
-  # Expo modules into it would blow that even if it linked. The extension runs
-  # no JS at all; it reads the identity key from the shared keychain group and
-  # calls one primitive.
-  target 'SplitCircleNotificationService' do
-    inherit! :search_paths
-    pod 'LibSignalClient', :git => 'https://github.com/signalapp/libsignal', :tag => 'v0.99.1'
-  end
-
   use_react_native!(
     :path => config[:reactNativePath],
     :hermes_enabled => podfile_properties['expo.jsEngine'] == nil || podfile_properties['expo.jsEngine'] == 'hermes',
