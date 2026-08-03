@@ -77,14 +77,37 @@ if (Platform.OS === 'web') {
   }
 }
 
+/**
+ * `ignoreUndefinedProperties` — a field whose value is `undefined` is SKIPPED
+ * rather than throwing.
+ *
+ * Without it the SDK rejects the whole write with "Unsupported field value:
+ * undefined", and an optional field spread from a source object is the ordinary
+ * way to produce one. That took out chat creation entirely for anyone with no
+ * profile photo: `photoURL: member.photoURL` on an avatar-less member threw
+ * before the write left the device, so you could not start a group chat or a DM
+ * with them at all.
+ *
+ * A blanket setting rather than only fixing those call sites, because the call
+ * sites are not the point — there were six building participants by hand and
+ * one had it right. Any optional field, anywhere, is the same landmine.
+ *
+ * The trade-off, stated plainly: a field you MEANT to write but computed as
+ * undefined is now silently dropped instead of throwing. That is strictly
+ * better than today, where it takes the entire document with it — and clearing
+ * a field was never `undefined`'s job anyway; `deleteField()` does that, and
+ * still does.
+ */
 const db: Firestore = Platform.OS === 'web'
   ? initializeFirestore(app, {
+      ignoreUndefinedProperties: true,
       localCache: persistentLocalCache({
         tabManager: persistentMultipleTabManager(),
         cacheSizeBytes: CACHE_SIZE_UNLIMITED,
       }),
     })
   : initializeFirestore(app, {
+      ignoreUndefinedProperties: true,
       experimentalForceLongPolling: true,
     });
 

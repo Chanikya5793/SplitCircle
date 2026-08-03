@@ -71,6 +71,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { dismissNotificationsForEntity } from '@/utils/notifications';
 import { markSessionForRebuild } from '@/services/signalCryptoService';
+import { toChatParticipant, toChatParticipants } from '@/utils/chatParticipant';
 import { resolveDisplayName } from '@/utils/identity';
 import { diffRemovedChatIds } from '@/utils/notificationEntityMatch';
 import { loadCachedChatThreads, persistChatThreads } from '@/services/chatThreadCache';
@@ -1552,16 +1553,31 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         return existing.chatId;
       }
 
-      const chatId = uuid();
-      await setDoc(doc(db, 'chats', chatId), {
-        chatId,
-        type: 'group',
-        participantIds: participants.map((participant) => participant.userId),
-        participants,
-        groupId,
-        unreadCount: 0,
-        updatedAt: Date.now(),
-      } satisfies Partial<ChatThread>);
+      // DETERMINISTIC, not a fresh uuid. Two members opening a chat-less group
+      // at the same moment each minted their own id and created a SEPARATE
+      // group chat, splitting the conversation in two with no way back. The
+      // same happened to one person alone whenever the `threads` listener had
+      // not yet synced — the guard above only sees what has already arrived.
+      //
+      // A legacy uuid chat still wins, because the lookup above is by
+      // `groupId` and returns before reaching here.
+      const chatId = `group_${groupId}`;
+      const safeParticipants = toChatParticipants(participants, 'Member');
+      await setDoc(
+        doc(db, 'chats', chatId),
+        {
+          chatId,
+          type: 'group',
+          participantIds: safeParticipants.map((participant) => participant.userId),
+          participants: safeParticipants,
+          groupId,
+          unreadCount: 0,
+          updatedAt: Date.now(),
+        } satisfies Partial<ChatThread>,
+        // merge, so two members racing converge on one doc instead of the
+        // second overwriting the first's participant list.
+        { merge: true },
+      );
 
       return chatId;
     },
@@ -1584,13 +1600,24 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       const existing = threads.find((thread) => thread.chatId === chatId);
       if (existing) return chatId;
 
-      const me: ChatParticipant = {
-        userId: user.userId,
-        displayName: resolveDisplayName(user, 'You'),
-        photoURL: user.photoURL ?? undefined,
-        status: 'online',
-      };
-      const participants: ChatParticipant[] = [me, otherParticipant];
+      // SANITIZED HERE, not at the call sites. Firestore throws on an
+      // `undefined` field value, and `photoURL` is optional — so a participant
+      // without an avatar produced `photoURL: undefined` and the write threw
+      // before reaching the server. `?? undefined` on the line below was the
+      // literal poison: it converts null to undefined, which is the one value
+      // this SDK refuses.
+      //
+      // Doing it in the function that WRITES protects every caller, present and
+      // future. Six call sites built these objects by hand and exactly one got
+      // it right, which is the argument against fixing it call site by call site.
+      const me = toChatParticipant(
+        { userId: user.userId, photoURL: user.photoURL, status: 'online' },
+        resolveDisplayName(user, 'You'),
+      );
+      const participants: ChatParticipant[] = [
+        me,
+        toChatParticipant(otherParticipant, 'Someone'),
+      ];
 
       // setDoc with merge: tolerates both sides racing on first open.
       await setDoc(

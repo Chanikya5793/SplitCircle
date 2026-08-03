@@ -274,8 +274,18 @@ export const FriendsScreen = () => {
         backTitle: ROOT_SCREEN_TITLES.friends,
       });
     } catch (error) {
-      console.warn('Failed to open direct chat', error);
-      appAlert('Could not open chat', 'Please try again in a moment.');
+      // console.error, not warn: a Release bundle drops warn entirely
+      // (CLAUDE.md), and this failure was reported from a TestFlight build with
+      // no log to go on.
+      console.error('Failed to open direct chat', error);
+      // The real reason, not "try again in a moment" — retrying could never
+      // help for the malformed-write failure this used to hide, and telling
+      // someone to retry a thing that cannot succeed wastes their time and
+      // buries the bug.
+      appAlert(
+        'Could not open chat',
+        error instanceof Error ? error.message : 'Something went wrong opening this chat.',
+      );
     }
   };
 

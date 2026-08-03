@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { IncomingCallModal } from '@/components/IncomingCallModal';
+import { appAlert } from '@/utils/appAlert';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useCallContext } from '@/context/CallContext';
@@ -232,7 +233,16 @@ const GroupTabAccessory = ({ groupId, placement }: GroupTabAccessoryProps) => {
         backTitle: group.name,
       });
     } catch (error) {
+      // TELL THE USER. This was a bare console.error, so a failure here looked
+      // like a dead button — tap Chat, nothing happens, no explanation. That is
+      // how the undefined-photoURL write failure went unreported: it was
+      // invisible from the outside and a Release bundle does not surface JS
+      // logs anyway.
       console.error('Unable to open chat', error);
+      appAlert(
+        'Could not open the group chat',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
     }
   };
 
@@ -430,7 +440,16 @@ const GroupDetailsRoute = ({ route, navigation }: any) => {
         backTitle: group.name,
       });
     } catch (error) {
+      // TELL THE USER. This was a bare console.error, so a failure here looked
+      // like a dead button — tap Chat, nothing happens, no explanation. That is
+      // how the undefined-photoURL write failure went unreported: it was
+      // invisible from the outside and a Release bundle does not surface JS
+      // logs anyway.
       console.error('Unable to open chat', error);
+      appAlert(
+        'Could not open the group chat',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
     }
   };
   return (
