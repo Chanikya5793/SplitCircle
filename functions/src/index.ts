@@ -312,6 +312,9 @@ export const syncNotificationDevice = onCall(async (request) => {
         deviceId,
         platform,
         expoPushToken: getStringValue(request.data?.expoPushToken) || null,
+        // Doc 36 §6 — stored now, sent with later. An older client that does
+        // not send this field simply keeps its stored value.
+        nativePushToken: getStringValue(request.data?.nativePushToken) || null,
         permissionState,
         projectId: getStringValue(request.data?.projectId) || null,
         appVersion: getStringValue(request.data?.appVersion) || null,

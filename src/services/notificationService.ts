@@ -21,6 +21,18 @@ type SyncNotificationDeviceInput = {
   deviceId: string;
   platform: 'ios' | 'android';
   expoPushToken: string | null;
+  /**
+   * The NATIVE APNs/FCM token, registered alongside the Expo one (doc 36 §6).
+   *
+   * Every push today is relayed through Expo's servers, which see the title and
+   * body in the clear. Sending direct needs a native token, and no device has
+   * ever stored one — so this is collected first and used later, giving existing
+   * installs a window to report theirs before the server can prefer it.
+   *
+   * Additive on purpose: nothing reads it yet, so a device that fails to
+   * produce one is exactly as functional as it is today.
+   */
+  nativePushToken: string | null;
   permissionState: NotificationPermissionState;
   projectId: string | null;
   appVersion: string | null;
@@ -75,6 +87,8 @@ export type NotificationRegistrationAttempt = {
   deviceId: string;
   projectId: string | null;
   expoPushToken: string | null;
+  /** Native APNs/FCM token — see `SyncNotificationDeviceInput`. */
+  nativePushToken: string | null;
   permission: NotificationPermissionSnapshot;
   isPhysicalDevice: boolean;
   error: string | null;
@@ -333,6 +347,7 @@ export const createNotificationRegistrationAttempt = async (
       deviceId,
       projectId: null,
       expoPushToken: null,
+      nativePushToken: null,
       permission: {
         state: 'denied',
         granted: false,
@@ -357,6 +372,7 @@ export const createNotificationRegistrationAttempt = async (
       deviceId,
       projectId,
       expoPushToken: null,
+      nativePushToken: null,
       permission,
       isPhysicalDevice,
       error: null,
@@ -368,6 +384,7 @@ export const createNotificationRegistrationAttempt = async (
       deviceId,
       projectId: null,
       expoPushToken: null,
+      nativePushToken: null,
       permission,
       isPhysicalDevice,
       error: 'EAS projectId is missing; Expo push token registration cannot complete.',
@@ -380,6 +397,7 @@ export const createNotificationRegistrationAttempt = async (
       deviceId,
       projectId,
       expoPushToken: options.tokenOverride,
+      nativePushToken: null,
       permission,
       isPhysicalDevice,
       error: null,
@@ -390,10 +408,23 @@ export const createNotificationRegistrationAttempt = async (
     const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
     await setupNotificationChannels();
 
+    // The NATIVE token, best-effort and never fatal (doc 36 §6). Failing to get
+    // one must leave the device exactly as functional as before, because the
+    // Expo token above is still what actually delivers pushes today — this is
+    // collected now so the server has something to prefer later.
+    let nativePushToken: string | null = null;
+    try {
+      const native = await Notifications.getDevicePushTokenAsync();
+      nativePushToken = typeof native.data === 'string' ? native.data : null;
+    } catch (error) {
+      console.error('Native push token unavailable (Expo relay still in use)', error);
+    }
+
     return {
       deviceId,
       projectId,
       expoPushToken: tokenData.data,
+      nativePushToken,
       permission,
       isPhysicalDevice,
       error: null,
@@ -410,6 +441,7 @@ export const createNotificationRegistrationAttempt = async (
       deviceId,
       projectId,
       expoPushToken: null,
+      nativePushToken: null,
       permission,
       isPhysicalDevice,
       error: errorMessage,
@@ -427,6 +459,7 @@ export const syncCurrentDeviceRegistration = async (
       deviceId: attempt.deviceId,
       platform: Platform.OS === 'ios' ? 'ios' : 'android',
       expoPushToken: attempt.expoPushToken,
+      nativePushToken: attempt.nativePushToken,
       permissionState: attempt.permission.state,
       projectId: attempt.projectId,
       appVersion: getAppVersion(),

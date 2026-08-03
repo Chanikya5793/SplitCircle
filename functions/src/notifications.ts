@@ -85,6 +85,12 @@ interface NotificationDeviceState {
     path: string;
     platform: "ios" | "android";
     expoPushToken: string | null;
+    /**
+     * Native APNs/FCM token (doc 36 §6). Surfaced here so coverage can be
+     * MEASURED before the sender switches — flipping to direct delivery while
+     * a chunk of installs still have none would silently stop their pushes.
+     */
+    nativePushToken: string | null;
     permissionState: NotificationPermissionState;
     registrationStatus: NotificationRegistrationStatus;
     projectId: string | null;
@@ -136,6 +142,8 @@ interface SyncNotificationDeviceInput {
     deviceId: string;
     platform: "ios" | "android";
     expoPushToken: string | null;
+    /** Native APNs/FCM token (doc 36 §6). Optional — older clients omit it. */
+    nativePushToken?: string | null;
     permissionState: NotificationPermissionState;
     projectId: string | null;
     appVersion: string | null;
@@ -274,6 +282,7 @@ const normalizeDeviceRecord = (
     path,
     platform: data.platform === "android" ? "android" : "ios",
     expoPushToken: normalizeString(data.expoPushToken),
+    nativePushToken: normalizeString(data.nativePushToken),
     permissionState:
         data.permissionState === "granted" ||
         data.permissionState === "provisional" ||
@@ -306,6 +315,9 @@ const buildLegacyDevice = (userId: string, token: string): NotificationDeviceSta
     path: `${USER_COLLECTION}/${userId}`,
     platform: "ios",
     expoPushToken: token,
+    // Legacy per-user record, pre-dating per-device registration — it can
+    // never carry a native token.
+    nativePushToken: null,
     permissionState: "granted",
     registrationStatus: "active",
     projectId: null,
@@ -697,6 +709,11 @@ export const syncNotificationDeviceRecord = async (
 
     const expoPushToken = normalizeString(input.expoPushToken);
     const safeToken = expoPushToken && isExpoPushToken(expoPushToken) ? expoPushToken : null;
+    // Native APNs/FCM token (doc 36 §6). STORED ONLY — nothing sends with it
+    // yet. Collecting first means that when the sender switches, existing
+    // installs already have one on file; a device that has not checked in since
+    // will simply keep using the Expo relay until it does.
+    const nativePushToken = normalizeString(input.nativePushToken);
     const lastRegistrationError = normalizeString(input.lastRegistrationError);
     const permissionState = input.permissionState;
 
@@ -744,6 +761,11 @@ export const syncNotificationDeviceRecord = async (
             nextStatus === "invalid_token"
                 ? null
                 : safeToken ?? (preserveExistingActiveToken ? previousToken : null),
+        // Preserved rather than nulled when absent, for the same reason as the
+        // Expo token above: a re-registration that fails to produce one must
+        // not discard a working token already on file.
+        nativePushToken:
+            nativePushToken ?? normalizeString(existing.nativePushToken) ?? null,
         projectId: normalizeString(input.projectId),
         appVersion: normalizeString(input.appVersion),
         deviceName: normalizeString(input.deviceName),
@@ -1316,6 +1338,7 @@ export const processPendingNotificationReceipts = async (): Promise<{ processed:
                 path: pending.devicePath ?? `${USER_COLLECTION}/${pending.userId}`,
                 platform: "ios",
                 expoPushToken: null,
+                nativePushToken: null,
                 permissionState: "granted",
                 registrationStatus: "active",
                 projectId: null,
