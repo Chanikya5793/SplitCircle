@@ -106,7 +106,6 @@
     },
     "pairingConfirm": {
       "$uid": {
-        "//": "Written only by the Admin SDK today (functions/src/pairing.ts), which bypasses rules entirely — so this branch grants nothing new and changes no current behaviour. It exists because the ABSENCE of a branch is what bit syncGapBatches this session: a client listener added later would have failed permission_denied for every user, silently, and looked like a feature bug rather than a rules gap (doc 35).",
         ".read": "auth != null && auth.uid == $uid",
         ".write": "auth != null && auth.uid == $uid",
         "$code": {
