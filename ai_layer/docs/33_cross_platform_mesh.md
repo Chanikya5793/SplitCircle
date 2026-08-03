@@ -523,6 +523,34 @@ that silently failed to inline looks exactly like a broken radio. Open the chat
 menu → Nearby messaging: a route absent from the build reads "Not included in
 this build". If Bluetooth or Wi-Fi says that, stop; the build is wrong.
 
+**Permissions — what each platform asks, and when (fixed 2026-08-02).**
+
+Both prompts appear when the NATIVE MANAGER IS CONSTRUCTED, which happens
+inside each transport's `start()`. That is why a JS `isAvailable()` pre-gate on
+`start()` was fatal: it skipped the construction, so the prompt could never
+appear and the transport could never run. iOS was affected permanently
+(`isAvailable()` needs managers only `start()` creates) and LAN by a launch race
+(`hasPath` is false until NWPathMonitor's first callback). Both gates removed;
+a 15s retry now re-attempts anything enabled but not running, so granting a
+permission or switching a radio on mid-session takes effect without a restart.
+
+- **Android / Bluetooth:** runtime grant for BLUETOOTH_SCAN, _CONNECT and
+  _ADVERTISE, requested from JS when nearby starts. All three or nothing —
+  scanning without connecting finds peers it can never reach.
+- **Android / Wi-Fi (NSD):** no runtime prompt.
+- **iOS / Bluetooth:** system prompt on first `CBCentralManager`. Consent is
+  readable WITHOUT prompting via `CBManager.authorization`, which is what the
+  route rows use to say "Needs permission" rather than "turn the radio on".
+- **iOS / Local Network:** system prompt on first `NWListener`/`NWBrowser`.
+  There is no API to query this one — Apple provides none — so a denial is
+  inferred from the listener reporting `.waiting(.dns(PolicyDenied))`.
+
+**KNOWN LIMITATION — BLE stops in the background on iOS.** `UIBackgroundModes`
+deliberately does NOT include `bluetooth-central`/`bluetooth-peripheral`. Adding
+them is an App Review justification and a battery trade-off, not a bug fix, so it
+has not been done. Consequence for this test: keep BOTH apps in the foreground.
+A disconnect on switching apps is expected behaviour, not a failure to chase.
+
 **Test 1 — discovery with no infrastructure (§9.6.1).**
 Both phones: Wi-Fi OFF, cellular OFF, Bluetooth ON. Same conversation open on
 both. Expect within ~30s: the in-chat pill appears reading "Nearby · 1 phone
