@@ -5,6 +5,12 @@ import { onValueCreated } from "firebase-functions/v2/database";
 
 import { sendMessagePushes } from "./notifications";
 
+/** chatId off the queue payload, or "" when absent/malformed. */
+const readChatId = (payload: unknown): string => {
+    const value = (payload as Record<string, unknown> | null)?.chatId;
+    return typeof value === "string" ? value : "";
+};
+
 /**
  * Per-device message fan-out (ai_layer/docs/31_multi_device_icloud_sync.md
  * §3.1, §5 Phase 2). The CLIENT still writes exactly as it always has —
@@ -78,6 +84,25 @@ export const fanOutQueuedMessage = onValueCreated(
                     recipientId,
                     messageId,
                 });
+                // STILL NOTIFY. The Firestore-triggered notification that used
+                // to cover this path is gone (doc 36 §1), so returning here
+                // without a push means these recipients get NOTHING — and this
+                // branch is 39% of real fan-outs (doc 34 §1), i.e. most of an
+                // account's notifications, silently.
+                //
+                // Their devices are resolved from `notificationDevices`, a
+                // different collection to the `pairedDevices` query above, so
+                // they are reachable even with no confirmed pairing. Any
+                // preview whose device id matches is used; the rest get the
+                // generic copy.
+                await sendMessagePushes({
+                    recipientId,
+                    chatId: readChatId(payload),
+                    messageId,
+                    previews: (payload as Record<string, unknown>).previews as
+                        | Record<string, string>
+                        | undefined,
+                });
                 return;
             }
 
@@ -105,7 +130,6 @@ export const fanOutQueuedMessage = onValueCreated(
             const previews = (payload as Record<string, unknown>).previews as
                 | Record<string, string>
                 | undefined;
-            const pushTargets: { deviceId: string; preview: string | null }[] = [];
 
             const updates: Record<string, unknown> = {};
             for (const deviceDoc of devicesSnap.docs) {
@@ -134,10 +158,6 @@ export const fanOutQueuedMessage = onValueCreated(
                 // envelope map above.
                 devicePayload = { ...(devicePayload as Record<string, unknown>), previews: null };
                 updates[`messageQueueDevices/${recipientId}/${deviceDoc.id}/${messageId}`] = devicePayload;
-                pushTargets.push({
-                    deviceId: deviceDoc.id,
-                    preview: previews?.[deviceDoc.id] ?? null,
-                });
             }
             // This function is the sole deleter of the relay node — avoids a
             // multi-device race where each device's own listener tries to
@@ -172,11 +192,9 @@ export const fanOutQueuedMessage = onValueCreated(
             // notifying.
             await sendMessagePushes({
                 recipientId,
-                chatId: typeof (payload as Record<string, unknown>).chatId === "string"
-                    ? ((payload as Record<string, unknown>).chatId as string)
-                    : "",
+                chatId: readChatId(payload),
                 messageId,
-                targets: pushTargets,
+                previews,
             });
         } catch (error) {
             // Best-effort by design, matching the reaper/relay pattern

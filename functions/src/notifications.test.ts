@@ -67,3 +67,41 @@ describe("shouldUseLockedCopy", () => {
         expect(call({ userId: "u1", locked: ["u1"], resolved: ["u1"] })).toBe(true);
     });
 });
+
+/**
+ * Which device gets which sealed preview.
+ *
+ * `sendMessagePushes` matches previews against the devices IT resolves, rather
+ * than against a device list supplied by the caller. That is what lets both
+ * fan-out paths use it — including the one where a recipient has no confirmed
+ * paired devices, which is 39% of real fan-outs (doc 34 §1).
+ *
+ * That path used to be covered by the Firestore-triggered notification. That
+ * trigger is now deleted (doc 36 §1), so an early return without a push means
+ * those recipients get NOTHING — most of an account's notifications, silently.
+ * The matching rule is what this pins; the early-return fix is in
+ * messageFanout.ts.
+ */
+describe("preview-to-device matching", () => {
+    const pick = (previews: Record<string, string> | undefined, deviceId: string) =>
+        previews?.[deviceId] ?? null;
+
+    it("hands a device only its OWN blob", () => {
+        const previews = { "device-a": "blob-a", "device-b": "blob-b" };
+        expect(pick(previews, "device-a")).toBe("blob-a");
+        expect(pick(previews, "device-b")).toBe("blob-b");
+    });
+
+    it("falls back to generic copy for a device with no preview", () => {
+        // A device the sender had no cached identity key for. It still gets a
+        // notification, just a generic one — silence would be worse.
+        expect(pick({ "device-a": "blob-a" }, "device-c")).toBeNull();
+    });
+
+    it("falls back for every device when the sender produced no previews", () => {
+        // An older client that does not seal at all. Every recipient must still
+        // be notified.
+        expect(pick(undefined, "device-a")).toBeNull();
+        expect(pick({}, "device-a")).toBeNull();
+    });
+});

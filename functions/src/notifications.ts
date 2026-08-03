@@ -980,9 +980,18 @@ export const sendMessagePushes = async (params: {
     recipientId: string;
     chatId: string;
     messageId: string;
-    targets: { deviceId: string; preview: string | null }[];
+    /**
+     * Sealed previews by device id, or undefined when the sender produced none.
+     *
+     * Matched against the notification devices resolved below rather than
+     * against a caller-supplied device list. That is what lets BOTH fan-out
+     * paths call this — including the one where a recipient has no confirmed
+     * paired devices, which is 39% of real fan-outs (doc 34 §1) and which must
+     * still receive a notification.
+     */
+    previews?: Record<string, string>;
 }): Promise<{ sent: number }> => {
-    if (!params.chatId || params.targets.length === 0) {
+    if (!params.chatId) {
         return { sent: 0 };
     }
 
@@ -995,15 +1004,10 @@ export const sendMessagePushes = async (params: {
         return { sent: 0 };
     }
 
-    // Preview per device id, so each push carries only its own.
-    const previewByDevice = new Map(
-        params.targets.map((target) => [target.deviceId, target.preview]),
-    );
-
     const messages: ExpoPushMessage[] = [];
     for (const device of resolved.devices) {
         if (!device.expoPushToken || !isExpoPushToken(device.expoPushToken)) continue;
-        const preview = previewByDevice.get(device.deviceId) ?? null;
+        const preview = params.previews?.[device.deviceId] ?? null;
 
         messages.push({
             to: device.expoPushToken,
