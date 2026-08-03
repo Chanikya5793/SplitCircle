@@ -137,3 +137,26 @@ export function openWithIdentity(
 export function wipeSignalState(): Promise<void> {
   return requireModule().wipe();
 }
+
+/**
+ * Publishes the installation id into the iOS App Group, for the Notification
+ * Service Extension (ai_layer/docs/36 §4).
+ *
+ * The extension needs it to rebuild a preview's associated data
+ * (`{chatId, deviceId}`) — the binding that stops a blob sealed for one device
+ * opening on another.
+ *
+ * iOS-only and best-effort: Android decrypts previews in the app's own
+ * background task and needs nothing shared. Returns false rather than throwing
+ * when the native half or the App Group is absent, because a build without the
+ * entitlement must keep working — just with generic notifications.
+ */
+export function publishInstallationId(installationId: string): boolean {
+  const native = requireModule() as { publishInstallationId?: (id: string) => boolean };
+  if (typeof native.publishInstallationId !== 'function') return false;
+  try {
+    return native.publishInstallationId(installationId);
+  } catch {
+    return false;
+  }
+}

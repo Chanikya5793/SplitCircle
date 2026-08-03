@@ -66,6 +66,19 @@ final class SplitCircleSignalStore {
   /// second identity — that would invalidate every session peers already hold.
   @discardableResult
   func ensureIdentity() throws -> (identity: IdentityKeyPair, registrationId: UInt32) {
+    // Move an existing key into the shared access group so the Notification
+    // Service Extension can read it (doc 36 §4). Here because this runs on
+    // every app start and ALWAYS from the app — the extension cannot see the
+    // app-private group, so it could never perform this itself.
+    //
+    // Before the reads below, or a device migrating for the first time would
+    // read the private copy, and the extension would keep seeing nothing until
+    // the next launch.
+    SignalKeychain.migrateToSharedAccessGroup([
+      Self.identityKeyAccount,
+      Self.registrationIdAccount,
+    ])
+
     if let existing = try SignalKeychain.get(Self.identityKeyAccount),
        let idData = try SignalKeychain.get(Self.registrationIdAccount),
        idData.count == 4 {

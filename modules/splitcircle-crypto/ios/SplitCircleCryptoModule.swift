@@ -158,6 +158,28 @@ public class SplitCircleCryptoModule: Module {
       }
     }
 
+    /**
+     Publishes the installation id into the App Group, for the Notification
+     Service Extension (doc 36 §4).
+
+     The extension needs it because a preview's associated data is
+     `{chatId, deviceId}` — the binding that stops a blob sealed for one device
+     opening on another. App Group `UserDefaults` rather than the keychain: this
+     is a device identifier, not a secret. It is already sent to the server on
+     every push registration and travels in the payload, so protecting it would
+     buy nothing while costing a second keychain migration.
+
+     Silently no-ops when the App Group is unavailable — a build without the
+     entitlement must keep working, just without decrypted previews.
+     */
+    Function("publishInstallationId") { (installationId: String) -> Bool in
+      guard let defaults = UserDefaults(suiteName: "group.com.splitcircle.app") else {
+        return false
+      }
+      defaults.set(installationId, forKey: "splitcircle.installationId")
+      return true
+    }
+
     /// Destroys all Signal state on this device. Called on revocation (§3.7)
     /// and account deletion (doc 28) — stale sessions would otherwise keep
     /// decrypting a revoked peer's ciphertext.

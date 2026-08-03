@@ -319,3 +319,72 @@ Nothing here has been exercised on a real push. In order:
 
 If Android shows generic copy, `sendMessagePushes` logs `withPreview`, which
 distinguishes "sender never sealed" from "device could not open".
+
+---
+
+## 9. iOS NSE — everything except the Xcode target (2026-08-03)
+
+All source, entitlements and the app-side plumbing are written and the crypto
+module compiles. **The extension does not build or run yet**, because creating
+an Xcode TARGET is not something that can be done safely by hand: it means new
+`PBXNativeTarget`, build phases, configurations, an `Embed App Extensions`
+phase on the app target and scheme edits, all inside the `pbxproj` that ships
+the app. A malformed edit there breaks `ship:ios` for everything. This project
+already treats target creation as a manual step (doc 19 §4 says the same for
+widgets).
+
+### 9.1 What is already done
+
+- `ios/SplitCircleNotificationService/` — `NotificationService.swift`,
+  `PreviewOpener.swift`, `SharedDeviceIdentity.swift`, `Info.plist`,
+  `SplitCircleNotificationService.entitlements`.
+- `SignalKeychain` writes the identity key to the **app group as a keychain
+  access group**, reads both groups, and migrates existing installs
+  (copy → verify → delete, never delete-first).
+- `publishInstallationId` puts the installation id in App Group `UserDefaults`,
+  republished on every read.
+
+### 9.2 The one-time Xcode step
+
+1. Xcode → **File ▸ New ▸ Target ▸ Notification Service Extension**.
+   Product name **SplitCircleNotificationService**, language Swift, embed in
+   **SplitCircle**. Let Xcode create it, then **delete the files it generates**
+   and add the four in `ios/SplitCircleNotificationService/` instead.
+2. Bundle identifier **`com.splitcircle.app.NotificationService`**.
+3. Signing & Capabilities on the NEW target: add **App Groups**, tick
+   `group.com.splitcircle.app`. Set `CODE_SIGN_ENTITLEMENTS` to the
+   entitlements file above.
+4. Same capability on the **app** target — it is provisioned on the App ID
+   already (2026-08-03) but is not yet in `SplitCircle.entitlements`.
+5. Add **LibSignalClient** to the extension's *Link Binary With Libraries*.
+   `PreviewOpener` needs `IdentityKeyPair` and `PrivateKey.open`.
+6. Set the extension's deployment target to match the app.
+7. `cd ios && pod install` — CLAUDE.md: a new `.swift` absent from
+   `Pods.xcodeproj` compiles to nothing and the build stays green.
+
+### 9.3 Verifying it, given nothing here is proven
+
+The failure mode is silence — every notification stays generic and no log says
+why. So check in this order:
+
+1. **Did the extension run at all?** `NSLog` from `didReceive` via
+   `xcrun devicectl device process launch --console`. No line means the target
+   is not embedded, or `mutable-content` is missing from the payload.
+2. **Is the key visible?** `loadIdentityKeyPair` returning nil means the app has
+   not run `migrateToSharedAccessGroup` since installing, or the entitlement is
+   missing on one of the two targets.
+3. **Is the device id there?** `SharedDeviceIdentity.installationId()` nil means
+   the app has not called `publishInstallationId` — it does so on every
+   `getOrCreateInstallationId`.
+4. **Does the blob open?** If 1-3 pass and it still fails, the associated data
+   disagrees. It is `base64(JSON({chatId, deviceId}))` with **sorted keys** on
+   both sides; the TS half builds it in `previewAssociatedData`.
+
+### 9.4 Known risk, stated plainly
+
+`PreviewOpener.swift` has never been compiled — there is no target to compile it
+in. The HPKE call mirrors `SignalSessionEngine.openWithIdentity` line for line
+(`identity.privateKey.open(ciphertext, info:associatedData:)`), and the keychain
+query mirrors `SignalKeychain`, but *mirrors* is not *verified*. Expect to fix
+compile errors on first build; treat §9.3 as the real acceptance test, not the
+absence of errors.

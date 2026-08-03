@@ -9,6 +9,7 @@ import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
+import { publishInstallationId } from '../../modules/splitcircle-crypto';
 import { doc, onSnapshot, type Unsubscribe } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { Platform } from 'react-native';
@@ -251,12 +252,34 @@ const persistInstallationId = async (installationId: string): Promise<void> => {
 export const getOrCreateInstallationId = async (): Promise<string> => {
   const existing = await loadStoredInstallationId();
   if (existing) {
+    // Republished on EVERY read, not only on creation. The App Group value can
+    // be absent on an install that predates it, and it is cleared when the user
+    // deletes the app group container — a write-once-at-creation approach would
+    // leave those devices permanently without decrypted previews, with nothing
+    // to indicate why. The write is a local UserDefaults set; re-doing it is
+    // cheaper than detecting whether it is needed.
+    publishInstallationIdToAppGroup(existing);
     return existing;
   }
 
   const generated = uuidv4();
   await persistInstallationId(generated);
+  publishInstallationIdToAppGroup(generated);
   return generated;
+};
+
+/**
+ * Best-effort, iOS-only (ai_layer/docs/36 §4). A failure here costs a generic
+ * notification, never anything functional, so it must never throw into the
+ * caller — `getOrCreateInstallationId` is on the send and registration paths.
+ */
+const publishInstallationIdToAppGroup = (installationId: string): void => {
+  if (Platform.OS !== 'ios') return;
+  try {
+    publishInstallationId(installationId);
+  } catch {
+    // The native half or the App Group entitlement may be absent.
+  }
 };
 
 export const setupNotificationChannels = async (): Promise<void> => {
