@@ -192,6 +192,21 @@ they hog the Mac. Native changes → `npm run ship:ios` or eas build.
   read-granting membership/participant status on the target collection, assume it
   will hit this same Firestore query-provability wall — route it through a Cloud
   Function instead of trying to loosen the read rule.
+- **`database.rules.json` is NOT JSON-with-comments, and valid JSON proves
+  nothing about deployability.** RTDB treats every key in that file as a PATH
+  SEGMENT, so a `"//"` documentation key is a syntax error (`Expected '{'` —
+  it wants an object where a string was given). A rules file can therefore
+  `json.load` cleanly, pass review, be committed, and still be rejected by the
+  rules engine at deploy time; ours sat undeployable for hours in exactly that
+  state 2026-08-03, and the failure only surfaced when a `firebase deploy` that
+  was really about FUNCTIONS aborted on the database step. Same shape as the
+  `isGroupJoinUpdate` gotcha one rung lower: there the client shipped clean and
+  Firestore rejected the write; here the file parsed clean and the engine
+  rejected the file. Validate with
+  `firebase deploy --only database --dry-run`, which prints "rules syntax …
+  is valid" without releasing anything — run it on ANY rules edit, and never
+  treat a JSON parse as the check. Put explanatory prose in the commit message
+  or a doc, never in the rules file.
 - **Never `setDoc(ref, data, { merge: true })` when `data` has a nested map/object field
   you might need to shrink (e.g. delete a key).** Firestore's plain `merge: true`
   recursively merges nested objects — it can only ADD/overwrite keys present in the new
