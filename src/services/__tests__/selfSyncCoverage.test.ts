@@ -58,6 +58,14 @@ vi.mock('@/services/signalCryptoService', () => ({
   // crypto, which these suites neither have nor need.
   getCachedSignalDeviceId: () => 7,
 }));
+vi.mock('@/services/notificationPreview', () => ({
+  // Pulls in native libsignal transitively; this suite must run without a
+  // device (CLAUDE.md's "Cannot read properties of undefined (reading
+  // 'EventEmitter')" hazard). Previews are best-effort on the send path, so a
+  // stub changes nothing these tests assert.
+  previewForType: (_type: string, content: string) => content,
+  sealPreviewForDevice: vi.fn(async () => null),
+}));
 vi.mock('@/services/mediaService', () => ({ downloadMedia: vi.fn() }));
 
 import { queueMessageToOwnDevices } from '../messageQueueService';

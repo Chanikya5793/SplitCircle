@@ -1460,7 +1460,18 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         const sendFailures: unknown[] = [];
         for (const recipientId of recipientIds) {
           try {
-            await queueMessage(recipientId, message, isGroupChat);
+            // Sender name for the sealed notification preview (doc 36 §3.2).
+            // `resolveDisplayName` rather than a raw read: doc 30 exists
+            // because an empty displayName is a real shipped state, and a
+            // blank notification title is exactly the unlabelled-chip failure
+            // it catalogues. An empty result skips the preview and falls back
+            // to generic copy.
+            await queueMessage(
+              recipientId,
+              message,
+              isGroupChat,
+              resolveDisplayName(user, ''),
+            );
           } catch (error) {
             sendFailures.push(error);
           }

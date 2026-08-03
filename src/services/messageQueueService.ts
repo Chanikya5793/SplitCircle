@@ -23,7 +23,14 @@ import {
   encryptMessageForRecipient,
 } from '@/services/messageEnvelope';
 import { getOrCreateInstallationId } from '@/services/notificationService';
-import { getCachedSignalDeviceId } from '@/services/signalCryptoService';
+import {
+  getCachedSignalDeviceId,
+  listSignalDevices,
+} from '@/services/signalCryptoService';
+import {
+  previewForType,
+  sealPreviewForDevice,
+} from '@/services/notificationPreview';
 
 // Get Realtime Database instance
 const rtdb = getDatabase();
@@ -181,10 +188,82 @@ const getReceiptFingerprint = (
  * Send a message to recipient's queue in Realtime Database
  * Message will be temporarily stored until delivered
  */
+
+/**
+ * Seals one notification preview per recipient device (doc 36 §3.2).
+ *
+ * `cache-only`, matching the mesh path: this runs on the send hot path and must
+ * never wait on Firestore. A device whose identity key is not cached simply
+ * gets no preview and falls back to generic copy — strictly better than
+ * delaying the message.
+ *
+ * Scoped to the devices the message was actually ENCRYPTED for. Sealing a
+ * preview for a device that cannot open the message itself would put a readable
+ * notification on a phone that then shows an empty chat.
+ *
+ * Returns `{}` rather than null on total failure, because RTDB rejects
+ * `undefined` and an empty map is the correct "no previews" signal.
+ */
+const sealPreviewsForRecipient = async (
+  recipientId: string,
+  message: ChatMessage,
+  encryptedDeviceIds: string[],
+  senderName: string | undefined,
+): Promise<Record<string, string>> => {
+  const previews: Record<string, string> = {};
+  if (encryptedDeviceIds.length === 0) return previews;
+
+  try {
+    // Passed in, NOT read from auth. Importing firebaseConfig here to reach
+    // `auth.currentUser` drags expo-constants -> expo-modules-core into every
+    // suite that touches this file, which is CLAUDE.md's
+    // "Cannot read properties of undefined (reading 'EventEmitter')" hazard.
+    // The caller already knows who is sending; an explicit parameter is both
+    // cheaper and honest about the dependency.
+    //
+    // Absent means no preview: a blank notification title is the unlabelled
+    // -chip failure doc 30 catalogues, and generic copy is better.
+    if (!senderName) return previews;
+
+    const body = previewForType(message.type, message.content ?? '');
+    const devices = await listSignalDevices(recipientId, 'cache-only').catch(() => []);
+
+    for (const device of devices) {
+      if (!encryptedDeviceIds.includes(device.deviceId)) continue;
+      if (typeof device.identityKey !== 'string' || !device.identityKey) continue;
+
+      const sealed = await sealPreviewForDevice(
+        { senderName, body },
+        {
+          identityKey: device.identityKey,
+          chatId: message.chatId,
+          deviceId: device.deviceId,
+        },
+      );
+      if (sealed) previews[device.deviceId] = sealed;
+    }
+  } catch (error) {
+    // A preview is an enhancement; the send is not. console.error because a
+    // Release bundle drops warn and a silently preview-less app is exactly the
+    // kind of degradation nobody would report.
+    console.error('⚠️ Failed to seal notification previews', error);
+  }
+  return previews;
+};
+
 export const queueMessage = async (
   recipientId: string,
   message: ChatMessage,
-  isGroupChat: boolean = false
+  isGroupChat: boolean = false,
+  /**
+   * Sender's display name, for the sealed notification preview (doc 36 §3.2).
+   *
+   * Optional so existing callers are unaffected — omitting it costs a generic
+   * notification, never a failed send. Passed rather than read from `auth`
+   * here: that import drags expo-modules-core into every suite touching this
+   * file.
+   */
+  senderName?: string,
 ): Promise<void> => {
   try {
     const messageQueueRef = ref(rtdb, `messageQueue/${recipientId}/${message.id}`);
@@ -307,6 +386,24 @@ export const queueMessage = async (
       messageData.envelopes = encrypted.envelopes;
       messageData.senderSignalDeviceId = encrypted.senderSignalDeviceId;
       messageData.encrypted = true;
+      // Sealed notification previews, one per recipient device (doc 36 §3.2).
+      //
+      // Attached HERE rather than to the Firestore chat doc, deliberately. The
+      // chat doc has a live `onSnapshot` per participant, so a preview map there
+      // would ship EVERY device's blob to EVERY participant on every message —
+      // and `lastMessage` persists indefinitely, leaving encrypted previews at
+      // rest forever with the device-count metadata exposed. This path is
+      // per-recipient and is deleted after delivery, which is what the transit
+      // tier is for.
+      //
+      // Best-effort: a failure here costs a generic notification, never a
+      // failed send.
+      messageData.previews = await sealPreviewsForRecipient(
+        recipientId,
+        message,
+        Object.keys(encrypted.envelopes),
+        senderName,
+      );
       // Blank the plaintext copies now that ciphertext carries them. Not
       // deleted outright: the receive path and every existing consumer expect
       // these keys to exist, and RTDB treats undefined as "remove field".
