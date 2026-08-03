@@ -301,8 +301,15 @@ export const FriendsScreen = () => {
       });
       startCallSession({ chatId, type });
     } catch (error) {
-      console.warn('Failed to start call to friend', error);
-      appAlert('Could not place call', 'Please try again in a moment.');
+      // Calling a friend also goes through `ensureDirectThread`, so the
+      // undefined-photoURL write failure broke CALLS to anyone you had never
+      // chatted with too — a third symptom of the same root cause, hidden
+      // behind the same unhelpful "try again" copy.
+      console.error('Failed to start call to friend', error);
+      appAlert(
+        'Could not place call',
+        error instanceof Error ? error.message : 'Something went wrong starting this call.',
+      );
     }
   };
 

@@ -161,8 +161,11 @@ export const FriendInfoScreen = () => {
       });
       startCallSession({ chatId, type });
     } catch (error) {
-      console.warn('FriendInfoScreen placeCall failed', error);
-      appAlert('Could not place call', 'Please try again.');
+      console.error('FriendInfoScreen placeCall failed', error);
+      appAlert(
+        'Could not place call',
+        error instanceof Error ? error.message : 'Something went wrong starting this call.',
+      );
     }
   };
 
@@ -182,7 +185,14 @@ export const FriendInfoScreen = () => {
         backTitle: params.backTitle ?? 'Friend Info',
       });
     } catch (error) {
-      console.warn('FriendInfoScreen openDirectChat failed', error);
+      // Was a bare log, so this button did nothing visible on failure — the
+      // same silence that let the group Chat button hide this bug all the way
+      // into TestFlight.
+      console.error('FriendInfoScreen openDirectChat failed', error);
+      appAlert(
+        'Could not open chat',
+        error instanceof Error ? error.message : 'Something went wrong opening this chat.',
+      );
     }
   };
 
@@ -344,7 +354,14 @@ export const FriendInfoScreen = () => {
                   title: resolveDisplayName(profile, 'Friend'),
                 });
               } catch (error) {
-                console.warn('FriendInfoScreen starred-open failed', error);
+                // The last silent one of this family. Every entry point that
+                // creates a chat now says what went wrong instead of doing
+                // nothing — the silence is what kept this bug alive.
+                console.error('FriendInfoScreen starred-open failed', error);
+                appAlert(
+                  'Could not open starred messages',
+                  error instanceof Error ? error.message : 'Something went wrong.',
+                );
               }
             }}
           />
