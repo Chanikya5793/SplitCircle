@@ -103,14 +103,18 @@ export const fanOutQueuedMessage = onValueCreated(
                 // they are reachable even with no confirmed pairing. Any
                 // preview whose device id matches is used; the rest get the
                 // generic copy.
-                await sendMessagePushes({
-                    recipientId,
-                    chatId: readChatId(payload),
-                    messageId,
-                    previews: (payload as Record<string, unknown>).previews as
-                        | Record<string, string>
-                        | undefined,
-                });
+                // Same self-mirror rule as below: never notify a user about a
+                // message they sent themselves.
+                if (!(payload as Record<string, unknown>).originDeviceId) {
+                    await sendMessagePushes({
+                        recipientId,
+                        chatId: readChatId(payload),
+                        messageId,
+                        previews: (payload as Record<string, unknown>).previews as
+                            | Record<string, string>
+                            | undefined,
+                    });
+                }
                 return;
             }
 
@@ -198,12 +202,23 @@ export const fanOutQueuedMessage = onValueCreated(
             // same ref: two triggers would double the invocations for no gain,
             // and this one has already resolved exactly the devices that need
             // notifying.
-            await sendMessagePushes({
-                recipientId,
-                chatId: readChatId(payload),
-                messageId,
-                previews,
-            });
+            // NO PUSH FOR A SELF-MIRROR. `originDeviceId` is set only by
+            // `queueMessageToOwnDevices`, which copies a message the user JUST
+            // SENT to their own other devices. Notifying them announces your own
+            // message back to you — and because that path seals no previews, it
+            // arrived as a bare "New message", which is what `withPreview: 0`
+            // on a multi-device recipient was showing in the logs.
+            //
+            // The mirror itself still fans out; only the notification is
+            // suppressed.
+            if (!originDeviceId) {
+                await sendMessagePushes({
+                    recipientId,
+                    chatId: readChatId(payload),
+                    messageId,
+                    previews,
+                });
+            }
         } catch (error) {
             // Best-effort by design, matching the reaper/relay pattern
             // elsewhere in this codebase: if fan-out fails, the legacy node

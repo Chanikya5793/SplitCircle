@@ -22,6 +22,19 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+  <!--
+    Android 13+ (API 33) gates EVERY notification on this runtime permission,
+    and a permission that is not declared here cannot be requested at all —
+    `requestPermissionsAsync()` returns denied without prompting, so the app
+    can never post or receive a notification. On a Pixel running Android 16
+    that means silence with no error anywhere.
+
+    It is missing because expo-notifications' config plugin would normally add
+    it and CONFIG PLUGINS DO NOT RUN IN THIS PROJECT (committed `android/` and
+    `ios/`, non-CNG — see CLAUDE.md). Every plugin-supplied manifest entry has
+    to be written by hand here.
+  -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" tools:replace="android:maxSdkVersion"/>
   <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
   <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>

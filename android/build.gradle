@@ -9,6 +9,12 @@ buildscript {
     classpath('com.android.tools.build:gradle')
     classpath('com.facebook.react:react-native-gradle-plugin')
     classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
+    // FCM (doc 36). Without this plugin `google-services.json` is an inert
+    // file: nothing reads it, no google-services resources are generated, and
+    // the app can never obtain a push token. Android notifications had NEVER
+    // worked for this reason — there was also no Android app registered in the
+    // Firebase project at all until 2026-08-03.
+    classpath('com.google.gms:google-services:4.4.2')
   }
 }
 

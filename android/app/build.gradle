@@ -1,6 +1,10 @@
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
+// Must come AFTER the android application plugin. Reads
+// `android/app/google-services.json` and generates the resources the Firebase
+// SDK needs to resolve a sender id — no plugin, no FCM token, no notifications.
+apply plugin: "com.google.gms.google-services"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
