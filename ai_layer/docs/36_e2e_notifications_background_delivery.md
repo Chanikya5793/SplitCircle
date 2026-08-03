@@ -1,6 +1,9 @@
 # 36 — E2E notifications, background delivery, and dropping the Expo push relay
 
-**Status: RESEARCH ONLY, 2026-08-02. Nothing built.** Written after a user
+**Status: STEPS 1, 3, 5a AND 6 BUILT AND DEPLOYED 2026-08-03. Step 2 (App Group)
+DONE on the portal. Step 4 (iOS NSE) is the remaining piece; step 5b (dropping
+Expo) is gated on native-token coverage. NOTHING IS DEVICE-VERIFIED — no real
+push has yet carried a sealed preview. See §8.** Written after a user
 noticed that a message which showed as *undecryptable in the app* arrived
 *perfectly readable in the notification* — which is not a quirk, it is the
 symptom of three separate plaintext exposures.
@@ -249,3 +252,70 @@ Each step is independently shippable and independently useful.
 
 Step 6 is the one that actually closes the hole. Steps 1–5 are what make it
 possible to do without degrading the product.
+
+---
+
+## 8. What actually shipped (2026-08-03)
+
+Deployed and live. The plaintext hole this doc was written to close is CLOSED:
+`onChatUpdated` is deleted from production (verified against
+`firebase functions:list`, not the deploy log), and no message plaintext is
+written to Firestore or read by any server.
+
+| Step | State |
+|---|---|
+| 1 — kill the per-recipient `lockedChats` read | DONE (`2d7df3e`) |
+| 2 — provision the App Group | DONE on the portal; `group.com.splitcircle.app` enabled on the App ID |
+| 3 — sealed previews, sender + server + Android | DONE (`d8e021d`, `766e9cb`, `d91d304`) |
+| 4 — iOS NSE | NOT STARTED — now unblocked by step 2 |
+| 5a — collect native tokens | DONE (`e9c9ea8`) |
+| 5b — drop the Expo relay | BLOCKED on measuring native-token coverage |
+| 6 — stop writing plaintext to Firestore | DONE (`d91d304`) |
+
+### 8.1 Deviations from the plan above
+
+- **Previews ride the RTDB queue, not Firestore.** §3.2 did not say where they
+  live; the plan implied the Firestore chat doc, since the notification trigger
+  was there. That was wrong on both cost and security. `ChatContext` holds a
+  live `onSnapshot` per chat, so a preview map on the chat doc ships EVERY
+  device's blob to EVERY participant on every message; and `lastMessage`
+  persists indefinitely, leaving encrypted previews at rest forever with
+  per-participant device counts exposed. The RTDB queue is already per-device
+  and is deleted after delivery. It also made step 6 fall out for free rather
+  than becoming a later migration.
+- **The push rides `fanOutQueuedMessage`**, not a new trigger on the same ref.
+  Two triggers on one path would double invocations for no gain, and that
+  function has already resolved exactly the devices needing a push.
+- **Android replaces the notification rather than receiving a data-only push.**
+  A data-only push means a failed handler shows NOTHING. Shipping generic
+  visible copy plus a blob means the worst case is a less informative
+  notification, never a missing one.
+
+### 8.2 Two bugs worth remembering
+
+- **The no-paired-devices branch would have gone silent.**
+  `fanOutQueuedMessage` returns early when a recipient has no confirmed
+  `pairedDevices` row, and the push was initially placed after that return.
+  With `onChatUpdated` deleted, those recipients would have received nothing at
+  all — and doc 34 §1's own measurement puts that branch at 77 of 198 real
+  fan-outs (39%). Caught while preparing to deploy, not by a test. Same shape
+  as the bug that opened this whole line of work: a mechanism removed and its
+  replacement not covering every path the old one did.
+- **`database.rules.json` was undeployable for hours** because of a `"//"`
+  comment key added earlier in the session. RTDB treats every key as a path
+  segment, so that is a syntax error; the file was valid JSON and invalid
+  rules, and only a `firebase deploy` that was really about functions surfaced
+  it. Now in CLAUDE.md, with the `--dry-run` check that catches it.
+
+### 8.3 Device verification still owed
+
+Nothing here has been exercised on a real push. In order:
+
+1. iPhone → Pixel: Android should show the REAL message text.
+2. Pixel → iPhone: iOS should show "New message" — correct until step 4, not a
+   bug.
+3. An account with NO confirmed paired devices must still be notified — the
+   branch §8.2 nearly broke.
+
+If Android shows generic copy, `sendMessagePushes` logs `withPreview`, which
+distinguishes "sender never sealed" from "device could not open".
