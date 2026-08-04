@@ -1,6 +1,79 @@
 import ExpoModulesCore
 import LibSignalClient
 
+/**
+ A dedicated, stateless HPKE identity for notification previews.
+
+ The ordinary Signal identity is intentionally Keychain-backed. A Notification
+ Service Extension is a separate process, however, and iOS has shown that its
+ shared-Keychain visibility can be inconsistent across TestFlight upgrades.
+ This key is restricted to the already-provisioned App Group, where the
+ extension has deterministic access. It encrypts only the short notification
+ preview; it is never used for message envelopes, sessions, signatures, or
+ long-lived chat data.
+ */
+private enum NotificationPreviewIdentity {
+  private static let suiteName = "group.com.splitcircle.app"
+  private static let storageKey = "splitcircle.notificationPreview.identityKeyPair"
+  private static let fileName = "notification-preview-identity.bin"
+  private static let installationIdFileName = "notification-preview-installation-id.txt"
+
+  private static func storageURL() -> URL? {
+    FileManager.default
+      .containerURL(forSecurityApplicationGroupIdentifier: suiteName)?
+      .appendingPathComponent(fileName, isDirectory: false)
+  }
+
+  static func installationIdStorageURL() -> URL? {
+    FileManager.default
+      .containerURL(forSecurityApplicationGroupIdentifier: suiteName)?
+      .appendingPathComponent(installationIdFileName, isDirectory: false)
+  }
+
+  private static func persist(_ data: Data, defaults: UserDefaults) {
+    // App Group UserDefaults ordinarily propagate across processes, but that
+    // propagation is not synchronous. The NSE can be launched by APNs within
+    // seconds of this app publishing its public key, so make that path
+    // explicit and maintain an atomic file copy as the extension's primary
+    // source of truth.
+    defaults.set(data, forKey: storageKey)
+    defaults.synchronize()
+
+    guard let url = storageURL() else { return }
+    do {
+      try data.write(to: url, options: .atomic)
+      try? FileManager.default.setAttributes(
+        [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+        ofItemAtPath: url.path
+      )
+    } catch {
+      // The UserDefaults copy above is still a valid compatibility fallback.
+    }
+  }
+
+  static func publicKey() -> String? {
+    guard let defaults = UserDefaults(suiteName: suiteName) else { return nil }
+    if let url = storageURL(),
+       let data = try? Data(contentsOf: url),
+       let existing = try? IdentityKeyPair(bytes: data) {
+      return existing.identityKey.serialize().base64EncodedString()
+    }
+
+    if let data = defaults.data(forKey: storageKey),
+       let existing = try? IdentityKeyPair(bytes: data) {
+      // Migration from build 215's defaults-only storage. Preserve the same
+      // public key so a sender that already fetched it does not need to wait
+      // for another directory refresh.
+      persist(data, defaults: defaults)
+      return existing.identityKey.serialize().base64EncodedString()
+    }
+
+    let created = IdentityKeyPair.generate()
+    persist(created.serialize(), defaults: defaults)
+    return created.identityKey.serialize().base64EncodedString()
+  }
+}
+
 /// JS bridge for per-device Signal sessions (doc 31 §3.3, Phase 3).
 ///
 /// Everything runs on ONE serial queue. This is not incidental: a Signal
@@ -158,6 +231,13 @@ public class SplitCircleCryptoModule: Module {
       }
     }
 
+    /// Publishes only the public half of the App-Group preview identity. See
+    /// `NotificationPreviewIdentity`: this is a narrow reliability fallback
+    /// for the extension, not a replacement for Signal message encryption.
+    AsyncFunction("notificationPreviewIdentityKey") { () -> String? in
+      NotificationPreviewIdentity.publicKey()
+    }
+
     /**
      Publishes the installation id into the App Group, for the Notification
      Service Extension (doc 36 §4).
@@ -176,7 +256,30 @@ public class SplitCircleCryptoModule: Module {
       guard let defaults = UserDefaults(suiteName: "group.com.splitcircle.app") else {
         return false
       }
-      defaults.set(installationId, forKey: "splitcircle.installationId")
+      let normalized = installationId.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !normalized.isEmpty else { return false }
+
+      // The Notification Service Extension can be started by APNs before an
+      // App-Group UserDefaults write has propagated to its process. Its HPKE
+      // associated data includes this id, so an invisible value turns every
+      // otherwise-valid sealed preview into the generic fallback. Keep the
+      // defaults copy for compatibility, but publish an atomic file as the
+      // extension's deterministic source just as we do for its preview key.
+      defaults.set(normalized, forKey: "splitcircle.installationId")
+      defaults.synchronize()
+
+      guard let url = NotificationPreviewIdentity.installationIdStorageURL() else {
+        return true
+      }
+      do {
+        try Data(normalized.utf8).write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes(
+          [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+          ofItemAtPath: url.path
+        )
+      } catch {
+        // UserDefaults above remains a best-effort compatibility fallback.
+      }
       return true
     }
 

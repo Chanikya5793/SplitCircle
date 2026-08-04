@@ -41,6 +41,11 @@ export interface DirectPushTarget {
     /** iOS: allows the Notification Service Extension to rewrite the body. */
     mutableContent?: boolean;
     channelId?: string;
+    /**
+     * Android only. Data-only FCM wakes Expo's background task, which can open
+     * an encrypted preview before posting the one visible notification.
+     */
+    dataOnly?: boolean;
 }
 
 export interface DirectPushResult {
@@ -93,6 +98,11 @@ const sendApns = async (targets: DirectPushTarget[]): Promise<DirectPushResult> 
     for (const target of targets) {
         const note = new apn.Notification();
         note.topic = bundleId;
+        // iOS 13+ requires APNs push-type classification. APNs can infer
+        // `alert` from aps.alert, but a Notification Service Extension is too
+        // important to rely on that inference: an explicitly-classified alert
+        // is the documented route for mutable-content delivery.
+        note.pushType = "alert";
         note.alert = {
             title: target.title,
             ...(target.subtitle ? { subtitle: target.subtitle } : {}),
@@ -100,7 +110,13 @@ const sendApns = async (targets: DirectPushTarget[]): Promise<DirectPushResult> 
         };
         note.sound = "default";
         note.payload = target.data;
-        if (target.mutableContent) note.mutableContent = true;
+        if (target.mutableContent) {
+            // `mutable-content` invokes the NSE before iOS renders the alert.
+            // Do not add `content-available`: this is an alert push, not a
+            // silent/background push, and Apple documents the NSE contract as
+            // alert + mutable-content.
+            note.mutableContent = true;
+        }
 
         // Preferred gateway first, then the other. Doing this per notification
         // rather than caching a verdict per token: a device can move between
@@ -134,14 +150,23 @@ const sendFcm = async (targets: DirectPushTarget[]): Promise<DirectPushResult> =
     const response = await getMessaging().sendEach(
         targets.map((target) => ({
             token: target.nativeToken,
-            notification: { title: target.title, body: target.body },
+            // Android renders a `notification` payload itself while the app is
+            // backgrounded. That races ahead of JS and permanently exposes the
+            // generic fallback instead of the decrypted preview. Message
+            // pushes use data-only delivery and are presented locally instead.
+            ...(target.dataOnly ? {} : { notification: { title: target.title, body: target.body } }),
             data: target.data,
             android: {
                 priority: "high" as const,
-                notification: {
-                    ...(target.channelId ? { channelId: target.channelId } : {}),
-                    sound: "default",
-                },
+                // Do not add Android-specific presentation fields either:
+                // they can turn an otherwise data-only message into an OS
+                // notification before the encrypted preview is available.
+                ...(target.dataOnly ? {} : {
+                    notification: {
+                        ...(target.channelId ? { channelId: target.channelId } : {}),
+                        sound: "default",
+                    },
+                }),
             },
         })),
     );

@@ -29,6 +29,7 @@ import { v4 as uuid } from 'uuid';
 interface UseMediaSendPipelineOptions {
   chatId: string;
   groupId?: string;
+  groupName?: string;
   participants: ChatParticipant[];
   sendMessage: (params: {
     chatId: string;
@@ -37,6 +38,7 @@ interface UseMediaSendPipelineOptions {
     type: MessageType;
     mediaUri?: string;
     groupId?: string;
+    groupName?: string;
     replyTo?: any;
     mediaMetadata?: any;
     onStageChange?: (stage: string, details?: { message?: string }) => void;
@@ -99,6 +101,7 @@ interface PreparedMedia {
 export const useMediaSendPipeline = ({
   chatId,
   groupId,
+  groupName,
   participants,
   sendMessage,
 }: UseMediaSendPipelineOptions) => {
@@ -334,12 +337,13 @@ export const useMediaSendPipeline = ({
       type: prepared.messageType,
       mediaUri: prepared.processedUri,
       groupId,
+      groupName,
       replyTo: replyData,
       mediaMetadata: Object.keys(prepared.mediaMetadata).length > 0
         ? (prepared.mediaMetadata as any)
         : undefined,
     });
-  }, [chatId, groupId, participants, sendMessage]);
+  }, [chatId, groupId, groupName, participants, sendMessage]);
 
   const buildFailedItem = useCallback((
     payload: MediaPreviewSendItem,

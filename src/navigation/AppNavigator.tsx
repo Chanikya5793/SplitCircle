@@ -1317,6 +1317,7 @@ const IncomingCallHandler = () => {
     <IncomingCallModal
       visible={!!incomingCall}
       callerName={incomingCall?.initiatorName || 'Unknown'}
+      callerPhotoURL={incomingCall?.initiatorPhotoURL}
       callType={incomingCall?.type || 'audio'}
       onAccept={acceptIncomingCall}
       onDecline={dismissIncomingCall}
@@ -1505,6 +1506,55 @@ const NotificationNavigator = () => {
   }, [pendingNavigation, consumeNavigation, navigation, startCallSession]);
 
   return null;
+};
+
+/**
+ * WhatsApp/Instagram-style foreground message cue. This is intentionally in
+ * the navigation tree rather than a system notification: when ManaSplit is
+ * open, a banner in Notification Center is a distraction and can pile up
+ * while the recipient types in another conversation.
+ */
+const ForegroundMessageToast = () => {
+  const { foregroundMessage, dismissForegroundMessage, threads } = useChat();
+  const { groups } = useGroups();
+  const { user } = useAuth();
+  const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
+
+  if (!foregroundMessage) return null;
+
+  const thread = threads.find((candidate) => candidate.chatId === foregroundMessage.chatId);
+  const senderName = thread?.participants.find(
+    (participant) => participant.userId === foregroundMessage.senderId,
+  )?.displayName ?? 'New message';
+  const conversationName = getChatThreadTitle(thread, groups, user?.userId);
+  const preview = foregroundMessage.type === 'text'
+    ? foregroundMessage.content
+    : `Sent a ${foregroundMessage.type}`;
+  const countPrefix = foregroundMessage.count > 1
+    ? `${foregroundMessage.count} new messages · `
+    : '';
+
+  return (
+    <GlassToast
+      visible
+      message={`${countPrefix}${senderName}${conversationName ? ` in ${conversationName}` : ''}: ${preview}`}
+      icon="message-text-outline"
+      duration={5000}
+      bottomOffset={insets.bottom + 88}
+      onDismiss={dismissForegroundMessage}
+      action={{
+        label: 'Open',
+        onPress: () => {
+          navigation.navigate(ROUTES.APP.GROUP_CHAT, {
+            chatId: foregroundMessage.chatId,
+            initialTitle: conversationName || senderName,
+          });
+          dismissForegroundMessage();
+        },
+      }}
+    />
+  );
 };
 
 const styles = StyleSheet.create({
@@ -1716,6 +1766,7 @@ export const AppNavigator = () => {
         {user ? <AppStackNavigator /> : <AuthStackNavigator />}
         {user && <IncomingCallHandler />}
         {user && <NotificationNavigator />}
+        {user && <ForegroundMessageToast />}
         {user && <MinimizedCallBanner />}
         {user && <ActiveCallHost />}
         {user && <DeepLinkHandler />}

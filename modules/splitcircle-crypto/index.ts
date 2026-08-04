@@ -130,6 +130,21 @@ export function openWithIdentity(
 }
 
 /**
+ * Public half of an iOS-only identity held in the App Group shared with the
+ * Notification Service Extension. It deliberately has no Android equivalent:
+ * Android opens previews in the app process using its ordinary Signal key.
+ */
+export function getNotificationPreviewIdentityKey(): Promise<string | null> {
+  const native = requireModule() as {
+    notificationPreviewIdentityKey?: () => Promise<string | null>;
+  };
+  if (typeof native.notificationPreviewIdentityKey !== 'function') {
+    return Promise.resolve(null);
+  }
+  return native.notificationPreviewIdentityKey().catch(() => null);
+}
+
+/**
  * Destroys all Signal state on this device (revocation §3.7, account deletion
  * doc 28). Stale sessions would otherwise keep decrypting a revoked peer's
  * ciphertext.

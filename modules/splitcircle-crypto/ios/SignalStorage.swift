@@ -42,11 +42,9 @@ enum SignalKeychain {
    Shared access group, so the Notification Service Extension can read the
    identity key (ai_layer/docs/36 §4).
 
-   An APP GROUP is used as the keychain access group deliberately, rather than a
-   separate Keychain Sharing capability. iOS accepts an app-group identifier
-   here provided both targets carry the App Group entitlement — which they must
-   anyway for the shared container — so this needs no additional App ID
-   capability and no further provisioning-profile invalidation.
+   An App Group is not a Keychain access group. Keychain Sharing identifiers
+   use the Apple team prefix, and both the app and Notification Service
+   Extension declare this same group in their entitlements.
 
    Items are keyed by service+account, and the access group is part of an item's
    IDENTITY: writing with a group and reading without one will not find the same
@@ -54,7 +52,7 @@ enum SignalKeychain {
    exists — an install predating this change has its key in the app-private
    group, where the extension can never see it.
    */
-  static let sharedAccessGroup = "group.com.splitcircle.app"
+  static let sharedAccessGroup = "YDF2TB9967.com.splitcircle.app"
 
   /**
    Whether the shared group is usable in this process.

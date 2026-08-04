@@ -19,6 +19,7 @@ import {
   decryptFromDevice,
   establishSession,
   generatePublishableBundle,
+  getNotificationPreviewIdentityKey,
   hasSession,
   hasSignalIdentity,
   isCryptoAvailable,
@@ -139,6 +140,7 @@ export const initializeSignalForDevice = async (
   // re-bootstrapping with the real id is safe: ensureIdentity() is idempotent
   // and never mints a second identity.
   const identity = await bootstrapSignalIdentity(userId, cachedSignalDeviceId ?? 1);
+  const notificationPreviewIdentityKey = await getNotificationPreviewIdentityKey();
 
   // Reuse an existing healthy publication instead of rotating on every call.
   // This runs on EVERY notification-registration sync (app launch, foreground,
@@ -159,9 +161,12 @@ export const initializeSignalForDevice = async (
       const remaining = Array.isArray(data?.oneTimePreKeys) ? data.oneTimePreKeys.length : 0;
       const publishedSignalDeviceId = Number(data?.signalDeviceId);
       const identityMatches = data?.identityKey === identity.identityKey;
+      const previewIdentityMatches = !notificationPreviewIdentityKey
+        || data?.notificationPreviewIdentityKey === notificationPreviewIdentityKey;
 
       if (
         identityMatches &&
+        previewIdentityMatches &&
         remaining > REPLENISH_THRESHOLD &&
         Number.isFinite(publishedSignalDeviceId) &&
         publishedSignalDeviceId > 0
@@ -177,7 +182,13 @@ export const initializeSignalForDevice = async (
     // redundant publish is wasteful but correct; skipping one is not.
   }
 
-  const bundle = await generatePublishableBundle(ONE_TIME_PREKEY_COUNT);
+  const generatedBundle = await generatePublishableBundle(ONE_TIME_PREKEY_COUNT);
+  const bundle = {
+    ...generatedBundle,
+    ...(notificationPreviewIdentityKey
+      ? { notificationPreviewIdentityKey }
+      : {}),
+  };
   const { data } = await publishCallable({ deviceId, bundle });
 
   // Re-bootstrap with the authoritative id so encrypt/decrypt use the same
@@ -336,6 +347,9 @@ export const listSignalDevices = async (
         // Carried so senders can tell "same device" from "same device id, new
         // keypair" without a second read per device on every message.
         identityKey: typeof d.data()?.identityKey === 'string' ? (d.data()?.identityKey as string) : null,
+        notificationPreviewIdentityKey: typeof d.data()?.notificationPreviewIdentityKey === 'string'
+          ? (d.data()?.notificationPreviewIdentityKey as string)
+          : null,
       })));
     const devices = resolveSignalDeviceDirectory({
       remote,

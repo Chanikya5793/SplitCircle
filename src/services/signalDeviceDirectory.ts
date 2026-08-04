@@ -2,6 +2,8 @@ export interface SignalDeviceDirectoryEntry {
   deviceId: string;
   signalDeviceId: number;
   identityKey: string | null;
+  /** iOS NSE preview public key; absent on Android and pre-migration iPhones. */
+  notificationPreviewIdentityKey?: string | null;
 }
 
 export const normalizeSignalDeviceDirectory = (

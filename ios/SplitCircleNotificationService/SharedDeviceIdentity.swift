@@ -22,9 +22,23 @@ import Foundation
 enum SharedDeviceIdentity {
   static let suiteName = "group.com.splitcircle.app"
   static let installationIdKey = "splitcircle.installationId"
+  private static let installationIdFileName = "notification-preview-installation-id.txt"
 
   static func installationId() -> String? {
+    if let url = FileManager.default
+      .containerURL(forSecurityApplicationGroupIdentifier: suiteName)?
+      .appendingPathComponent(installationIdFileName, isDirectory: false),
+      let data = try? Data(contentsOf: url),
+      let fileValue = String(data: data, encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+      !fileValue.isEmpty {
+      return fileValue
+    }
+
     guard let defaults = UserDefaults(suiteName: suiteName) else { return nil }
+    // Keep the former defaults-only storage as a migration fallback. The
+    // explicit synchronize matters for an extension process launched by APNs.
+    defaults.synchronize()
     let value = defaults.string(forKey: installationIdKey)?
       .trimmingCharacters(in: .whitespacesAndNewlines)
     return (value?.isEmpty == false) ? value : nil

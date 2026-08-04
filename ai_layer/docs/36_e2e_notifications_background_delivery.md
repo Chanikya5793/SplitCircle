@@ -1,9 +1,12 @@
 # 36 — E2E notifications, background delivery, and dropping the Expo push relay
 
 **Status: STEPS 1, 3, 5a AND 6 BUILT AND DEPLOYED 2026-08-03. Step 2 (App Group)
-DONE on the portal. Step 4 (iOS NSE) is the remaining piece; step 5b (dropping
-Expo) is gated on native-token coverage. NOTHING IS DEVICE-VERIFIED — no real
-push has yet carried a sealed preview. See §8.** Written after a user
+DONE on the portal. Step 4 (iOS NSE) is back in the tree and, as of 2026-08-04,
+opens previews correctly — §10's back-out is superseded, and the three defects
+that made it show "New message" for every message are in §11. Step 5b (dropping
+Expo) is gated on native-token coverage. STILL NOT DEVICE-VERIFIED — read §11.1
+before treating iOS previews as working, and §9.3 is still the acceptance
+test.** Written after a user
 noticed that a message which showed as *undecryptable in the app* arrived
 *perfectly readable in the notification* — which is not a quirk, it is the
 symptom of three separate plaintext exposures.
@@ -370,24 +373,52 @@ why. So check in this order:
 1. **Did the extension run at all?** `NSLog` from `didReceive` via
    `xcrun devicectl device process launch --console`. No line means the target
    is not embedded, or `mutable-content` is missing from the payload.
-2. **Is the key visible?** `loadIdentityKeyPair` returning nil means the app has
+2. **Did it find the payload?** The app's `data` is at the APNs payload's TOP
+   LEVEL for a direct push (`directPush.ts` sets `note.payload = target.data`)
+   but NESTED under `body` for an Expo-relayed one — expo-notifications'
+   `NotificationRecords.serializedNotificationData` reads exactly
+   `userInfo["body"]`. Both transports are live at once during the per-device
+   native-token migration (§6), so `NotificationService.messageData` must
+   accept either shape. Reading only the top level makes every Expo delivery
+   record `missing-preview-or-chat`, which is indistinguishable from a sender
+   that sealed no preview.
+3. **Is the key visible?** `loadIdentityKeyPair` returning nil means the app has
    not run `migrateToSharedAccessGroup` since installing, or the entitlement is
    missing on one of the two targets.
-3. **Is the device id there?** `SharedDeviceIdentity.installationId()` nil means
+4. **Is the device id there?** `SharedDeviceIdentity.installationId()` nil means
    the app has not called `publishInstallationId` — it does so on every
    `getOrCreateInstallationId`.
-4. **Does the blob open?** If 1-3 pass and it still fails, the associated data
-   disagrees. It is `base64(JSON({chatId, deviceId}))` with **sorted keys** on
-   both sides; the TS half builds it in `previewAssociatedData`.
+5. **Does the blob open?** If 1-4 pass and it still fails, the associated data
+   or the plaintext framing disagrees. **Both are the RAW JSON bytes, not
+   base64** — and this is the single most expensive mistake this feature has
+   made, because it fails totally and silently.
+
+   The TS half passes `base64(JSON({chatId, deviceId}))` into
+   `sealToIdentity`, and reading only that is what misled us. Base64 is the
+   BRIDGE encoding: `SplitCircleCryptoModule.swift` calls
+   `Data(base64Encoded:)` on both the plaintext and the associated-data
+   arguments *before* anything reaches HPKE. So what HPKE actually seals and
+   authenticates is:
+
+   - associated data → `{"chatId":"…","deviceId":"…"}` UTF-8, keys sorted
+   - plaintext → `{"senderName":"…","groupName":"…","body":"…"}` UTF-8
+
+   `PreviewOpener` must therefore pass `JSONSerialization.data(…, .sortedKeys)`
+   **as-is** (never `.base64EncodedData()`), and parse `open`'s output as JSON
+   **directly** (never `Data(base64Encoded:)` first). An AEAD mismatch on the
+   associated data makes `open` throw on every delivery; the second-layer
+   base64 decode returns nil on every delivery. Either one alone is enough to
+   pin every iOS notification to "New message" forever.
 
 ### 9.4 Known risk, stated plainly
 
-`PreviewOpener.swift` has never been compiled — there is no target to compile it
-in. The HPKE call mirrors `SignalSessionEngine.openWithIdentity` line for line
-(`identity.privateKey.open(ciphertext, info:associatedData:)`), and the keychain
-query mirrors `SignalKeychain`, but *mirrors* is not *verified*. Expect to fix
-compile errors on first build; treat §9.3 as the real acceptance test, not the
-absence of errors.
+The original text here said `PreviewOpener.swift` had never been compiled and to
+expect compile errors on first build. That risk was the wrong one to worry
+about, and saying so is the lesson: the file was written to *mirror*
+`SignalSessionEngine.openWithIdentity`, it compiled, it ran — and it was wrong
+in three places the compiler cannot see (§11). Mirroring a call's SHAPE proves
+nothing about the BYTES on either side of it. A cross-language wire protocol
+needs its bytes pinned, not its call sites matched.
 
 ---
 
@@ -442,3 +473,62 @@ coexist with Expo's autolinking.** Options worth investigating, in order:
 Anything attempted here must end with a full workspace build, not a target
 build: four of the five failures above only appeared when the whole workspace
 was compiled.
+
+---
+
+## 11. Why iOS showed "New message" for every message (fixed 2026-08-04)
+
+The NSE target was back in the tree, embedded, signed, and running. It opened
+zero previews. Three independent defects, each on its own sufficient to pin
+every iOS notification to the generic copy, and none visible to `tsc`, the test
+suites, code review, or a green build — the extension failed exactly the way
+§9's header promises it would: silently, with correct-but-less copy.
+
+**1. Associated data was base64-encoded a second time.** `PreviewOpener` built
+`JSONSerialization.data(…, .sortedKeys)` and then called `.base64EncodedData()`
+on it. The sender does not do that: the TS half's `base64(JSON)` is consumed by
+`SplitCircleCryptoModule.sealToIdentity`'s `Data(base64Encoded:)` before HPKE
+sees it, so HPKE authenticates the RAW JSON. AEAD authenticates associated data,
+so `privateKey.open` threw on every single delivery.
+
+**2. The plaintext was base64-decoded a second time.** Same root cause, other
+end: `open` returns the preview JSON directly, and the code ran
+`Data(base64Encoded: plaintext)` on it first. `{` is not a base64 character, so
+that returned nil on every delivery — meaning even a correct AAD would still
+have produced generic copy.
+
+Both came from reading the TS side's *bridge arguments* as if they were the
+*wire format*. §9.3's own checklist asserted the wrong contract
+(`base64(JSON({chatId, deviceId}))`), which is the third time this repo has had
+a doc-comment assert a mechanism that was never true — it is now corrected
+there, with the decode boundary spelled out.
+
+**3. Expo-relayed pushes were never read at all.** The NSE looked for
+`userInfo["preview"]`. That is correct for `directPush.ts`
+(`note.payload = target.data` → top level) and wrong for Expo, which nests the
+whole `data` map under `body` (expo-notifications'
+`NotificationRecords.serializedNotificationData` reads exactly `userInfo["body"]`).
+§6's migration is per-device and deliberately runs BOTH transports at once, so
+this silently excluded every device that had not yet stored a native token —
+which, since native-token collection only shipped 2026-08-03, was most of them.
+`NotificationService.messageData` now accepts either shape, top level winning.
+
+### 11.1 Verification status — read before believing this works
+
+Verified: the AAD and plaintext bytes now match the sender's exactly, checked by
+reproducing both sides' encoding independently rather than by re-reading the
+code, and `messageData` resolves the preview from both a direct-push and an
+Expo-shaped `userInfo`. The edited expressions type-check.
+
+NOT verified: a real notification on a real device. The NSE only runs on an
+actual APNs delivery, so §9.3 remains the acceptance test and nothing here
+substitutes for it. Per CLAUDE.md's standing rule, this is not "done" until a
+person's phone shows a sender name and message text on the lock screen.
+
+When running §9.3, read the flight recorder rather than guessing: the extension
+writes `splitcircle.notificationPreview.lastResult` into the
+`group.com.splitcircle.app` App Group on every delivery (`opened`,
+`open-failed`, `missing-preview-or-chat`, `timed-out`). Nothing in the app reads
+it yet — worth wiring into the notification-debug surface, since it is the only
+thing that distinguishes these failure modes from each other on a TestFlight
+build.

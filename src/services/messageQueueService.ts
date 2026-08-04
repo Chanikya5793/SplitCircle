@@ -207,11 +207,10 @@ const getReceiptFingerprint = (
 const sealPreviewsForRecipient = async (
   recipientId: string,
   message: ChatMessage,
-  encryptedDeviceIds: string[],
   senderName: string | undefined,
+  groupName?: string,
 ): Promise<Record<string, string>> => {
   const previews: Record<string, string> = {};
-  if (encryptedDeviceIds.length === 0) return previews;
 
   try {
     // Passed in, NOT read from auth. Importing firebaseConfig here to reach
@@ -226,16 +225,26 @@ const sealPreviewsForRecipient = async (
     if (!senderName) return previews;
 
     const body = previewForType(message.type, message.content ?? '');
-    const devices = await listSignalDevices(recipientId, 'cache-only').catch(() => []);
+    // This runs only on the online cloud-send path. Unlike the nearby/offline
+    // path, it is therefore safe — and necessary — to refresh the recipient's
+    // public device directory before sealing. iOS has no opportunity to
+    // decrypt the message queue before it presents a banner; if its current
+    // identity is absent from an old sender-side cache, it can only show the
+    // generic APNs fallback forever. Android happened to mask this because it
+    // opens the queued message and renders locally after delivery.
+    //
+    // `network-preferred` still uses the short in-memory TTL on the hot path,
+    // so normal bursts do not turn into one Firestore read per message.
+    const devices = await listSignalDevices(recipientId, 'network-preferred').catch(() => []);
 
     for (const device of devices) {
-      if (!encryptedDeviceIds.includes(device.deviceId)) continue;
-      if (typeof device.identityKey !== 'string' || !device.identityKey) continue;
+      const previewIdentityKey = device.notificationPreviewIdentityKey || device.identityKey;
+      if (typeof previewIdentityKey !== 'string' || !previewIdentityKey) continue;
 
       const sealed = await sealPreviewForDevice(
-        { senderName, body },
+        { senderName, body, ...(groupName ? { groupName } : {}) },
         {
-          identityKey: device.identityKey,
+          identityKey: previewIdentityKey,
           chatId: message.chatId,
           deviceId: device.deviceId,
         },
@@ -264,6 +273,8 @@ export const queueMessage = async (
    * file.
    */
   senderName?: string,
+  /** Resolved group label for the iOS Notification Service Extension. */
+  groupName?: string,
 ): Promise<void> => {
   try {
     const messageQueueRef = ref(rtdb, `messageQueue/${recipientId}/${message.id}`);
@@ -386,24 +397,6 @@ export const queueMessage = async (
       messageData.envelopes = encrypted.envelopes;
       messageData.senderSignalDeviceId = encrypted.senderSignalDeviceId;
       messageData.encrypted = true;
-      // Sealed notification previews, one per recipient device (doc 36 §3.2).
-      //
-      // Attached HERE rather than to the Firestore chat doc, deliberately. The
-      // chat doc has a live `onSnapshot` per participant, so a preview map there
-      // would ship EVERY device's blob to EVERY participant on every message —
-      // and `lastMessage` persists indefinitely, leaving encrypted previews at
-      // rest forever with the device-count metadata exposed. This path is
-      // per-recipient and is deleted after delivery, which is what the transit
-      // tier is for.
-      //
-      // Best-effort: a failure here costs a generic notification, never a
-      // failed send.
-      messageData.previews = await sealPreviewsForRecipient(
-        recipientId,
-        message,
-        Object.keys(encrypted.envelopes),
-        senderName,
-      );
       // Blank the plaintext copies now that ciphertext carries them. Not
       // deleted outright: the receive path and every existing consumer expect
       // these keys to exist, and RTDB treats undefined as "remove field".
@@ -415,6 +408,20 @@ export const queueMessage = async (
         messageData.location = null;
       }
     }
+
+    // Notification previews are independent of the Signal message-encryption
+    // rollout. Gating them on `encrypted` made every older client, and every
+    // device still establishing a Signal session, send an APNs payload with no
+    // `preview` at all — guaranteeing the "New message" fallback. The preview
+    // is separately HPKE-sealed to each recipient device and is safe whenever
+    // this recipient queue exists, whether the message body is currently
+    // transported as an envelope or during the temporary plaintext fallback.
+    messageData.previews = await sealPreviewsForRecipient(
+      recipientId,
+      message,
+      senderName,
+      isGroupChat ? groupName : undefined,
+    );
 
     await set(messageQueueRef, messageData);
     console.log('✅ Message queued for:', recipientId, encrypted ? '(encrypted)' : '(plaintext)');

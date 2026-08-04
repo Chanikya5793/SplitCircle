@@ -18,7 +18,11 @@ import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 
-import { dismissNotificationsForEntity } from './notifications';
+import {
+  dismissNotificationsForEntity,
+  scheduleLocalNotification,
+  type NotificationData,
+} from './notifications';
 import { extractRevokeFilters } from './notificationRevoke';
 import { applyDecryptedPreview } from '@/services/notificationPreviewDisplay';
 
@@ -41,17 +45,29 @@ export const handleBackgroundNotificationPayload = async (
     // A malformed payload must never crash a headless launch.
   }
 
-  // Message pushes now ship GENERIC copy plus a sealed preview the server
-  // cannot read (doc 36 §3.2). Open it here and replace the notification with
-  // the real one. Android only — see `applyDecryptedPreview`.
-  //
-  // Separate try/catch from the revoke handling above: these are unrelated
-  // jobs, and a failure in one must not skip the other.
-  try {
-    await applyDecryptedPreview(extractPushData(payload));
-  } catch {
-    // Never throw from a headless launch. The generic notification stands.
+  // Android message pushes intentionally have no server-rendered notification:
+  // Expo cannot replace one in the tray without leaving a duplicate generic
+  // row. The high-priority data push wakes this task, which presents exactly
+  // one local alert — rich when the device can open its sealed preview and the
+  // same privacy-safe generic fallback otherwise.
+  const data = extractPushData(payload);
+  if (
+    Platform.OS === 'android'
+    && data
+    && typeof data === 'object'
+    && (data as { type?: unknown }).type === 'message'
+  ) {
+    const wasRenderedRich = await applyDecryptedPreview(data);
+    if (!wasRenderedRich) {
+      await scheduleLocalNotification(
+        'ManaSplit',
+        'New message',
+        data as NotificationData,
+        'messages',
+      );
+    }
   }
+
   return dismissed;
 };
 

@@ -1013,7 +1013,29 @@ export const sendMessagePushes = async (params: {
     // flag day and no window where anyone goes dark.
     const directTargets: DirectPushTarget[] = [];
     const messages: ExpoPushMessage[] = [];
+    // Device records outlive reinstalls and token rotation. Multiple stale
+    // rows can point at one physical phone, so dedupe by delivery address
+    // rather than the Firestore document id. Prefer a record with a sealed
+    // preview: an old row can share the push token but no longer match the
+    // installation identity the sender encrypted for.
+    const devicesByAddress = new Map<string, NotificationDeviceState>();
     for (const device of resolved.devices) {
+        const address = device.nativePushToken
+            ? `native:${device.platform}:${device.nativePushToken}`
+            : device.expoPushToken && isExpoPushToken(device.expoPushToken)
+                ? `expo:${device.platform}:${device.expoPushToken}`
+                : null;
+        if (!address) continue;
+
+        const existing = devicesByAddress.get(address);
+        const hasPreview = Boolean(params.previews?.[device.deviceId]);
+        const existingHasPreview = Boolean(existing && params.previews?.[existing.deviceId]);
+        if (!existing || (hasPreview && !existingHasPreview)) {
+            devicesByAddress.set(address, device);
+        }
+    }
+
+    for (const device of devicesByAddress.values()) {
         const preview = params.previews?.[device.deviceId] ?? null;
         const data = toStringRecord({
             type: "message",
@@ -1022,6 +1044,10 @@ export const sendMessagePushes = async (params: {
             ...(preview ? { preview } : {}),
         });
 
+        // Direct FCM/APNs is the authoritative route for native-token devices.
+        // Android carries only data so its background task can decrypt the
+        // per-device preview and post a single rich local alert. iOS keeps the
+        // generic encrypted fallback for its Notification Service Extension.
         if (device.nativePushToken) {
             directTargets.push({
                 platform: device.platform,
@@ -1033,30 +1059,43 @@ export const sendMessagePushes = async (params: {
                 // preview. Without it the extension is never invoked.
                 mutableContent: true,
                 channelId: mapCategoryToChannel("messages"),
+                // Android data-only wakes the same Expo background task used
+                // by relay-delivered messages, which decrypts and posts ONE
+                // rich local notification. A visible FCM payload would race
+                // ahead and leave the generic copy in the tray forever.
+                dataOnly: device.platform === "android",
             });
             continue;
         }
 
         if (!device.expoPushToken || !isExpoPushToken(device.expoPushToken)) continue;
 
+        if (device.platform === "android") {
+            // Android receives a high-priority data push and renders the alert
+            // locally after opening its per-device sealed preview. A visible
+            // remote fallback cannot be upgraded in place by Expo; it either
+            // leaves "New message" behind or produces a duplicate alert. The
+            // registered headless task supplies the generic local fallback if
+            // a preview is absent or cannot be opened.
+            messages.push({
+                to: device.expoPushToken,
+                data,
+                priority: "high",
+                _contentAvailable: true,
+            });
+            continue;
+        }
+
         messages.push({
             to: device.expoPushToken,
-            // Generic, always. See the header.
+            // iOS keeps a generic remote fallback; its Notification Service
+            // Extension upgrades it before display.
             title: "ManaSplit",
             body: "New message",
-            data: toStringRecord({
-                type: "message",
-                chatId: params.chatId,
-                messageId: params.messageId,
-                // Absent when the sender could not seal for this device; the
-                // client then shows the generic copy above.
-                ...(preview ? { preview } : {}),
-            }),
+            data,
             sound: "default",
             priority: "high",
             channelId: mapCategoryToChannel("messages"),
-            // Lets an iOS Notification Service Extension rewrite the body once
-            // it has opened the preview (doc 36 §3.2).
             mutableContent: true,
         });
     }
@@ -1091,6 +1130,7 @@ export const sendMessagePushes = async (params: {
         // Diagnostic only — how many devices got a real preview vs generic
         // copy. A persistent zero here means sealing is failing on the sender.
         withPreview: messages.filter((m) => Boolean((m.data as Record<string, unknown>)?.preview)).length,
+        directWithPreview: directTargets.filter((target) => Boolean(target.data.preview)).length,
     });
     return { sent };
 };
@@ -1315,6 +1355,29 @@ export const sendPushToUsers = async (
         pendingReceiptCount: pendingReceipts.length,
         status: finalStatus,
     };
+};
+
+/**
+ * Sends the settings diagnostic through the exact native Android transport
+ * used by chat messages. This avoids treating an Expo ticket as delivery
+ * proof when the Expo FCM credential is unavailable or stale.
+ */
+export const sendNativeAndroidTestPush = async (
+    userId: string,
+): Promise<number> => {
+    const resolved = await resolveNotificationTargets([userId], "general");
+    const targets: DirectPushTarget[] = resolved.devices
+        .filter((device) => device.platform === "android" && Boolean(device.nativePushToken))
+        .map((device) => ({
+            platform: "android" as const,
+            nativeToken: device.nativePushToken!,
+            title: "ManaSplit test notification",
+            body: "Direct FCM is working on this Android device.",
+            data: { type: "general", source: "settings_test_native" },
+            channelId: mapCategoryToChannel("general"),
+        }));
+    if (targets.length === 0) return 0;
+    return (await sendDirectPush(targets)).sent;
 };
 
 // ─────────────────────────────────────────────────────────────

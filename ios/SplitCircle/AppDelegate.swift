@@ -1,9 +1,11 @@
 internal import Expo
+internal import ExpoNotifications
 internal import React
 internal import ReactAppDependencyProvider
 import PushKit
 import CallKit
 import Intents
+import UserNotifications
 // `internal import` to match this file's other imports — Xcode 27's Swift flags a
 // plain `import` here as an "ambiguous implicit access level" build error because the
 // module is imported at internal access elsewhere in the target.
@@ -50,7 +52,18 @@ class AppDelegate: ExpoAppDelegate, PKPushRegistryDelegate {
 
     registerVoipPushKit()
 
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    let didFinishLaunching = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+
+    // Direct APNs alerts arrive through the system notification-center
+    // delegate. Keep Expo's multiplexer as the final owner after every
+    // subscriber has initialized: another native dependency may install its
+    // own delegate during launch, which bypasses `setNotificationHandler` and
+    // causes iOS to show a system banner over an already-open ManaSplit chat.
+    // The Expo manager still forwards taps, quick actions, and the JS
+    // foreground handler; it simply lets that handler suppress presentation.
+    UNUserNotificationCenter.current().delegate = NotificationCenterManager.shared
+
+    return didFinishLaunching
   }
 
   // MARK: - PushKit (VoIP)

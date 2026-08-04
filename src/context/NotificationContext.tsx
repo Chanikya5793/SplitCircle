@@ -105,7 +105,6 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
   const [currentDevice, setCurrentDevice] = useState<NotificationDeviceRecord | null>(null);
   const [pendingNavigation, setPendingNavigation] = useState<NotificationData | null>(null);
 
-  const notificationListenerRef = useRef<Notifications.EventSubscription | null>(null);
   const responseListenerRef = useRef<Notifications.EventSubscription | null>(null);
   const currentDeviceRef = useRef<NotificationDeviceRecord | null>(null);
   const syncInFlightRef = useRef<Promise<void> | null>(null);
@@ -290,10 +289,6 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
     // lock-screen reply field never appears. Idempotent; no-op on web.
     void setupNotificationCategories();
 
-    notificationListenerRef.current = Notifications.addNotificationReceivedListener((notification) => {
-      console.log('Notification received (foreground):', notification.request.content.title);
-    });
-
     responseListenerRef.current = Notifications.addNotificationResponseReceivedListener((response) => {
       // Action-button responses (missed-call and message quick replies, plus
       // "Mark as read") are handled by MissedCallQuickReply inside ChatProvider
@@ -326,7 +321,6 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
     void checkInitialNotification();
 
     return () => {
-      notificationListenerRef.current?.remove();
       responseListenerRef.current?.remove();
     };
   }, []);

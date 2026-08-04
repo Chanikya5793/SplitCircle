@@ -301,6 +301,11 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   // group's balance for the current user, rendered through the guard/lens
   // funnel so shielded or converted amounts behave like everywhere else.
   const linkedGroup = thread.groupId ? groups.find((g) => g.groupId === thread.groupId) : undefined;
+  // This is transit-only metadata, sealed separately to every receiving
+  // device. It lets iOS render “Trip to Austin — Rose” before the app runs.
+  const notificationGroupName = thread.type === 'group'
+    ? linkedGroup?.name || 'Group Chat'
+    : undefined;
   const { postGroupDigest, postRecurringBillCards, postRecurringRequestCards } = useGroups();
   const fmtChatMoney = useMoneyDisplay(thread.groupId);
   const myGroupBalance =
@@ -566,6 +571,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
   } = useMediaSendPipeline({
     chatId: thread.chatId,
     groupId: thread.groupId,
+    groupName: notificationGroupName,
     participants: thread.participants,
     sendMessage,
   });
@@ -886,6 +892,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
           requestId,
           content: trimmed,
           groupId: thread.groupId,
+          groupName: notificationGroupName,
           replyTo: replyData,
           mentions: finalMentions && finalMentions.length ? finalMentions : undefined,
         });
@@ -897,7 +904,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
         alert(error instanceof Error ? error.message : 'Failed to send message');
       }
     })();
-  }, [text, replyingTo, editingMessage, pendingMentionUserIds, thread.participants, thread.chatId, thread.groupId, sendMessage, setTyping]);
+  }, [text, replyingTo, editingMessage, pendingMentionUserIds, thread.participants, thread.chatId, thread.groupId, notificationGroupName, sendMessage, setTyping]);
 
   // Handle swipe reply from message bubble
   const handleSwipeReply = (message: ChatMessage) => {
@@ -1495,6 +1502,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
         content: caption || '📍 Location',
         type: 'location',
         groupId: thread.groupId,
+        groupName: notificationGroupName,
         location,
       });
     } catch (error) {

@@ -17,6 +17,8 @@ import LibSignalClient
 enum PreviewOpener {
   /// MUST match NOTIFICATION_PREVIEW_HPKE_INFO in notificationPreview.ts.
   static let info = "splitcircle/notification-preview/v1"
+  private static let appGroupId = "group.com.splitcircle.app"
+  private static let previewIdentityFileName = "notification-preview-identity.bin"
 
   struct Copy {
     let title: String
@@ -27,10 +29,9 @@ enum PreviewOpener {
   /**
    Reads the device identity key from the SHARED keychain access group.
 
-   The app group doubles as the keychain access group (see
-   `SignalKeychain.sharedAccessGroup`), so this needs only the App Group
-   entitlement — no separate Keychain Sharing capability, and no further
-   provisioning invalidation.
+   It shares the app's Keychain Sharing group (see
+   `SignalKeychain.sharedAccessGroup`). App Groups and Keychain Sharing are
+   distinct capabilities, so both targets declare the team-prefixed group.
 
    `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` on the stored item is what
    makes this work on a LOCKED phone, which is when notifications matter most.
@@ -46,7 +47,7 @@ enum PreviewOpener {
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: "com.splitcircle.app.signal",
       kSecAttrAccount as String: "identityKeyPair",
-      kSecAttrAccessGroup as String: "group.com.splitcircle.app",
+      kSecAttrAccessGroup as String: "YDF2TB9967.com.splitcircle.app",
       kSecReturnData as String: true,
       kSecMatchLimit as String: kSecMatchLimitOne,
     ]
@@ -56,42 +57,94 @@ enum PreviewOpener {
     return try? IdentityKeyPair(bytes: data)
   }
 
-  static func open(sealed: String, chatId: String, deviceId: String) async -> Copy? {
-    guard
-      let ciphertext = Data(base64Encoded: sealed),
-      let identity = loadIdentityKeyPair()
-    else { return nil }
+  /**
+   The current preview key lives in the App Group shared by the app and this
+   extension. It avoids the TestFlight Keychain-sharing edge case that made the
+   otherwise-valid primary Signal identity intermittently invisible here. The
+   old Keychain identity stays as a migration fallback until every sender has
+   observed the new public key.
+   */
+  private static func loadAppGroupPreviewIdentityKeyPair() -> IdentityKeyPair? {
+    let fileManager = FileManager.default
+    if let url = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupId)?
+      .appendingPathComponent(previewIdentityFileName, isDirectory: false),
+      let data = try? Data(contentsOf: url),
+      let identity = try? IdentityKeyPair(bytes: data) {
+      return identity
+    }
 
-    // Associated data MUST be byte-identical to the sender's:
-    // base64(JSON({chatId, deviceId})), with keys in that order.
+    guard let defaults = UserDefaults(suiteName: appGroupId) else { return nil }
+    // A message may arrive immediately after the foreground app generated its
+    // preview identity. Synchronize before the compatibility fallback so this
+    // independently launched extension sees the newest shared value.
+    defaults.synchronize()
+    guard let data = defaults.data(forKey: "splitcircle.notificationPreview.identityKeyPair")
+    else { return nil }
+    return try? IdentityKeyPair(bytes: data)
+  }
+
+  static func open(sealed: String, chatId: String, deviceId: String) async -> Copy? {
+    guard let ciphertext = Data(base64Encoded: sealed) else { return nil }
+    // New senders seal to the App-Group preview identity. Keep the old
+    // Keychain identity as a *decryption* fallback during rollout: a sender
+    // on an already-installed build still only knows that public key. Merely
+    // choosing the new key first would make every such message generic until
+    // every sender was updated, even though the extension can open it safely.
+    let identities = [
+      loadAppGroupPreviewIdentityKeyPair(),
+      loadIdentityKeyPair(),
+    ].compactMap { $0 }
+    guard !identities.isEmpty else { return nil }
+
+    // Associated data MUST be byte-identical to the sender's: the UTF-8 bytes
+    // of JSON({chatId, deviceId}), keys in that order.
+    //
+    // NOT its base64 form, which is the trap this got wrong. The JS half's
+    // `previewAssociatedData` returns base64(JSON) only because the Expo
+    // bridge moves bytes as strings — `sealToIdentity` in
+    // SplitCircleCryptoModule.swift immediately calls `Data(base64Encoded:)`
+    // on it, so what HPKE actually authenticates is the decoded JSON. Sealing
+    // over JSON while opening over base64(JSON) is an AEAD mismatch: every
+    // `open` below threw, every iOS notification fell back to "New message",
+    // and — exactly as this file's header warns — nothing logged why.
     guard
-      let adJson = try? JSONSerialization.data(
+      let associatedData = try? JSONSerialization.data(
         withJSONObject: ["chatId": chatId, "deviceId": deviceId],
         options: [.sortedKeys]
       )
     else { return nil }
-    let associatedData = adJson.base64EncodedData()
 
-    do {
-      // Identical to `SignalSessionEngine.openWithIdentity`, which is what the
-      // app uses — same primitive, same argument order. Deliberately NOT a call
-      // into that engine: it is an Expo module needing the React Native
-      // runtime, which does not exist in an extension process.
-      let plaintext = try identity.privateKey.open(
-        ciphertext,
-        info: info,
-        associatedData: associatedData
-      )
-      // The JS side base64s the JSON before sealing, so unwrap twice.
-      guard
-        let inner = Data(base64Encoded: plaintext),
-        let object = try? JSONSerialization.jsonObject(with: inner) as? [String: Any]
-      else { return nil }
-      return copy(from: object)
-    } catch {
-      NSLog("PreviewOpener: could not open preview: %@", String(describing: error))
-      return nil
+    for identity in identities {
+      do {
+        // Identical to `SignalSessionEngine.openWithIdentity`, which is what
+        // the app uses — same primitive, same argument order. Deliberately NOT
+        // a call into that engine: it is an Expo module needing the React
+        // Native runtime, which does not exist in an extension process.
+        let plaintext = try identity.privateKey.open(
+          ciphertext,
+          info: info,
+          associatedData: associatedData
+        )
+        // What comes out is ALREADY the preview JSON. The JS half's
+        // `encodeUtf8Base64(JSON.stringify(preview))` is a bridge transport
+        // encoding, decoded by `sealToIdentity` before anything is sealed —
+        // so the sealed plaintext is the JSON itself. Unwrapping a second
+        // base64 layer here found none: `Data(base64Encoded:)` rejected the
+        // leading `{` and returned nil on every single delivery.
+        guard
+          let object = try? JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
+          let resolved = copy(from: object)
+        else { continue }
+        return resolved
+      } catch {
+        // Try the migration fallback. The blob is authenticated, so a wrong
+        // key cannot produce a false preview.
+        continue
+      }
     }
+
+    NSLog("PreviewOpener: could not open preview with any local identity")
+    return nil
   }
 
   /**

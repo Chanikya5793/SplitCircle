@@ -26,6 +26,7 @@ interface IncomingCall {
   groupId?: string;
   initiatorId: string;
   initiatorName: string;
+  initiatorPhotoURL?: string;
   type: 'audio' | 'video';
   startedAt: number;
 }
@@ -190,6 +191,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
         initiatorName: (payload.initiatorName as string | undefined)
           || (payload.callerName as string | undefined)
           || 'Incoming call',
+        initiatorPhotoURL: (payload.photoURL as string | undefined) || undefined,
         type,
         startedAt: Date.now(),
       };
@@ -453,6 +455,7 @@ export const CallProvider = ({ children }: { children: ReactNode }) => {
           groupId: session.groupId,
           initiatorId: session.initiatorId,
           initiatorName: resolveDisplayName(initiator, 'Unknown'),
+          initiatorPhotoURL: initiator?.photoURL,
           type: session.type,
           startedAt: session.startedAt,
         });

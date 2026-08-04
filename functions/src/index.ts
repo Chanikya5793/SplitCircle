@@ -12,6 +12,7 @@ import { AccessToken } from "livekit-server-sdk";
 import { processAllDueRecurringBills, processGroupDueRecurringBills } from "./recurringBills";
 import {
     processPendingNotificationReceipts,
+    sendNativeAndroidTestPush,
     sendPushToUsers,
     sendSilentRevokePush,
     syncNotificationDeviceRecord,
@@ -327,6 +328,7 @@ export const sendTestPushNotification = onCall(async (request) => {
     }
 
     try {
+        const nativeAndroidSent = await sendNativeAndroidTestPush(uid);
         const result = await sendPushToUsers(
             [uid],
             "ManaSplit test notification",
@@ -340,7 +342,7 @@ export const sendTestPushNotification = onCall(async (request) => {
             "general",
         );
 
-        if (result.acceptedCount === 0) {
+        if (result.acceptedCount === 0 && nativeAndroidSent === 0) {
             throw new HttpsError(
                 "failed-precondition",
                 "No eligible devices are currently registered for remote push delivery.",
@@ -352,7 +354,7 @@ export const sendTestPushNotification = onCall(async (request) => {
             );
         }
 
-        return result;
+        return { ...result, nativeAndroidSent };
     } catch (error) {
         if (error instanceof HttpsError) {
             throw error;
@@ -1691,4 +1693,3 @@ export const authorizeScannedDevice = onCall(async (request) => {
         throw new HttpsError("internal", "Couldn't link that device. Please try again.");
     }
 });
-

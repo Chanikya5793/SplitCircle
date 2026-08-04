@@ -35,6 +35,44 @@ final class NotificationService: UNNotificationServiceExtension {
   private var contentHandler: ((UNNotificationContent) -> Void)?
   private var bestAttempt: UNMutableNotificationContent?
 
+  /// A tiny, content-free flight recorder in the shared App Group. It lets us
+  /// distinguish “APNs never carried a preview” from “the extension could not
+  /// open it” on a real TestFlight device without logging sender names or
+  /// message text. The app never depends on this data; it is solely an iOS
+  /// transport diagnostic and is overwritten for every delivery.
+  private func recordPreviewResult(_ state: String) {
+    guard let defaults = UserDefaults(suiteName: "group.com.splitcircle.app") else { return }
+    defaults.set(state, forKey: "splitcircle.notificationPreview.lastResult")
+    defaults.set(Date().timeIntervalSince1970, forKey: "splitcircle.notificationPreview.lastAt")
+    defaults.synchronize()
+  }
+
+  /**
+   Finds the app's data dictionary, which sits in a DIFFERENT PLACE depending
+   on which transport delivered the push.
+
+   `sendMessagePushes` is mid-migration and uses both (doc 36 §6): a device is
+   sent direct the moment it has a native token on file, and via Expo until
+   then. `directPush.ts` assigns `note.payload = target.data`, so those keys
+   land at the APNs payload's TOP LEVEL. Expo's relay instead nests the whole
+   `data` object under a `body` key — see expo-notifications'
+   `NotificationRecords.serializedNotificationData`, which reads exactly
+   `userInfo["body"]` for any remote notification.
+
+   Reading only the top level therefore worked for direct pushes and found
+   nothing at all for Expo-relayed ones, which — while native tokens are still
+   propagating — is most deliveries. That is indistinguishable here from a
+   sender that never sealed a preview, so it failed as the generic notification
+   with the flight recorder honestly reporting "missing-preview-or-chat".
+
+   Top level wins when both carry the key: it is the transport we are moving
+   to, and Expo's own `body` is only ever a nested copy of the same map.
+   */
+  private static func messageData(in userInfo: [AnyHashable: Any]) -> [AnyHashable: Any] {
+    guard let nested = userInfo["body"] as? [AnyHashable: Any] else { return userInfo }
+    return userInfo.merging(nested) { top, _ in top }
+  }
+
   override func didReceive(
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
@@ -44,17 +82,19 @@ final class NotificationService: UNNotificationServiceExtension {
     self.bestAttempt = mutable
 
     guard let mutable else {
+      recordPreviewResult("mutable-copy-failed")
       contentHandler(request.content)
       return
     }
 
-    let info = request.content.userInfo
+    let info = Self.messageData(in: request.content.userInfo)
     guard
       let sealed = info["preview"] as? String, !sealed.isEmpty,
       let chatId = info["chatId"] as? String, !chatId.isEmpty
     else {
       // No preview: an older sender, or a device the sender had no cached
       // identity key for. The generic copy is correct here.
+      recordPreviewResult("missing-preview-or-chat")
       contentHandler(request.content)
       return
     }
@@ -64,10 +104,12 @@ final class NotificationService: UNNotificationServiceExtension {
         let deviceId = SharedDeviceIdentity.installationId(),
         let preview = await PreviewOpener.open(sealed: sealed, chatId: chatId, deviceId: deviceId)
       else {
+        recordPreviewResult("open-failed")
         contentHandler(mutable)
         return
       }
 
+      recordPreviewResult("opened")
       mutable.title = preview.title
       if let subtitle = preview.subtitle { mutable.subtitle = subtitle }
       mutable.body = preview.body
@@ -84,6 +126,7 @@ final class NotificationService: UNNotificationServiceExtension {
    than its preview.
    */
   override func serviceExtensionTimeWillExpire() {
+    recordPreviewResult("timed-out")
     if let contentHandler, let bestAttempt {
       contentHandler(bestAttempt)
     }

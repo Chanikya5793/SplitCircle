@@ -4,6 +4,8 @@ import { requireOptionalNativeModule } from 'expo';
 export interface PublishableBundle {
   registrationId: number;
   identityKey: string;
+  /** iOS-only public key for the Notification Service Extension preview path. */
+  notificationPreviewIdentityKey?: string;
   signedPreKeyId: number;
   signedPreKeyPublic: string;
   signedPreKeySignature: string;
@@ -72,6 +74,11 @@ export interface SplitCircleCryptoNativeModule {
     info: string,
     associatedDataBase64: string,
   ): Promise<string>;
+  /**
+   * Returns a public identity whose private half lives in the iOS App Group.
+   * Optional because Android never needs an NSE-specific key.
+   */
+  notificationPreviewIdentityKey?(): Promise<string | null>;
   wipe(): Promise<void>;
 }
 

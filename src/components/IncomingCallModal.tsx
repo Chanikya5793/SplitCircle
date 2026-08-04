@@ -1,13 +1,13 @@
-import { colors } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Modal, StyleSheet, View } from 'react-native';
-import { Button, Text } from 'react-native-paper';
-import { GlassView } from './GlassView';
+import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Icon, Text } from 'react-native-paper';
+import { GlassCard, UserAvatar } from './ui';
 
 interface IncomingCallModalProps {
   visible: boolean;
   callerName: string;
+  callerPhotoURL?: string;
   callType: 'audio' | 'video';
   onAccept: () => void;
   onDecline: () => void;
@@ -16,6 +16,7 @@ interface IncomingCallModalProps {
 export const IncomingCallModal = ({
   visible,
   callerName,
+  callerPhotoURL,
   callType,
   onAccept,
   onDecline,
@@ -23,39 +24,51 @@ export const IncomingCallModal = ({
   const { theme } = useTheme();
 
   return (
-    <Modal visible={visible} transparent animationType="slide">
+    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onDecline}>
       <View style={styles.overlay}>
-        <GlassView style={styles.container}>
-          <MaterialCommunityIcons
-            name={callType === 'video' ? 'video' : 'phone'}
-            size={48}
-            color={theme.colors.primary}
-          />
-          <Text variant="headlineSmall" style={[styles.title, { color: theme.colors.onSurface }]}>
-            Incoming {callType === 'video' ? 'Video' : 'Audio'} Call
+        <GlassCard style={styles.container} contentStyle={styles.content} radius="xl">
+          <View style={[styles.avatarHalo, { borderColor: theme.colors.primary }]}>
+            <UserAvatar photoURL={callerPhotoURL} displayName={callerName} size={104} />
+          </View>
+          <Text variant="labelLarge" style={[styles.eyebrow, { color: theme.colors.primary }]}>
+            ManaSplit call
           </Text>
-          <Text variant="titleMedium" style={[styles.caller, { color: theme.colors.onSurfaceVariant }]}>
+          <Text variant="headlineMedium" style={[styles.caller, { color: theme.colors.onSurface }]}>
             {callerName}
           </Text>
-          <View style={styles.actions}>
-            <Button
-              mode="contained"
-              onPress={onDecline}
-              style={[styles.button, { backgroundColor: colors.danger }]}
-              icon="phone-hangup"
-            >
-              Decline
-            </Button>
-            <Button
-              mode="contained"
-              onPress={onAccept}
-              style={[styles.button, { backgroundColor: colors.success }]}
-              icon={callType === 'video' ? 'video' : 'phone'}
-            >
-              Accept
-            </Button>
+          <View style={[styles.callTypePill, { backgroundColor: theme.colors.surfaceVariant }]}>
+            <MaterialCommunityIcons
+              name={callType === 'video' ? 'video-outline' : 'phone-outline'}
+              size={17}
+              color={theme.colors.onSurfaceVariant}
+            />
+            <Text variant="labelLarge" style={{ color: theme.colors.onSurfaceVariant }}>
+              Incoming {callType === 'video' ? 'video' : 'audio'} call
+            </Text>
           </View>
-        </GlassView>
+          <View style={styles.actions}>
+            <Pressable
+              onPress={onDecline}
+              accessibilityRole="button"
+              accessibilityLabel="Decline call"
+              style={[styles.actionButton, { backgroundColor: theme.colors.error }]}
+            >
+              <Icon source="phone-hangup" size={26} color={theme.colors.onError} />
+            </Pressable>
+            <Pressable
+              onPress={onAccept}
+              accessibilityRole="button"
+              accessibilityLabel={`Accept ${callType} call`}
+              style={[styles.actionButton, { backgroundColor: theme.colors.primary }]}
+            >
+              <Icon source={callType === 'video' ? 'video' : 'phone'} size={26} color={theme.colors.onPrimary} />
+            </Pressable>
+          </View>
+          <View style={styles.actionLabels}>
+            <Text variant="labelLarge" style={{ color: theme.colors.onSurfaceVariant }}>Decline</Text>
+            <Text variant="labelLarge" style={{ color: theme.colors.onSurfaceVariant }}>Accept</Text>
+          </View>
+        </GlassCard>
       </View>
     </Modal>
   );
@@ -66,29 +79,61 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
     padding: 24,
   },
   container: {
     width: '100%',
-    maxWidth: 340,
-    padding: 32,
-    borderRadius: 24,
-    alignItems: 'center',
+    maxWidth: 380,
   },
-  title: {
-    marginTop: 16,
-    fontWeight: 'bold',
+  content: {
+    alignItems: 'center',
+    paddingHorizontal: 28,
+    paddingVertical: 32,
+  },
+  avatarHalo: {
+    width: 124,
+    height: 124,
+    borderRadius: 62,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  eyebrow: {
+    letterSpacing: 0.5,
   },
   caller: {
-    marginTop: 8,
+    marginTop: 6,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  callTypePill: {
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
   },
   actions: {
     flexDirection: 'row',
-    marginTop: 32,
-    gap: 16,
+    justifyContent: 'space-between',
+    width: '76%',
+    marginTop: 34,
   },
-  button: {
-    flex: 1,
+  actionButton: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '78%',
+    marginTop: 9,
   },
 });

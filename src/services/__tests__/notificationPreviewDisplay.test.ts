@@ -26,7 +26,10 @@ vi.mock('expo-notifications', () => ({
   scheduleNotificationAsync: vi.fn(async () => 'id'),
 }));
 
-import { parseMessagePushData } from '../notificationPreviewDisplay';
+import {
+  claimMessageNotification,
+  parseMessagePushData,
+} from '../notificationPreviewDisplay';
 
 describe('parseMessagePushData', () => {
   const valid = { type: 'message', chatId: 'chat-1', messageId: 'm1', preview: 'blob' };
@@ -79,5 +82,13 @@ describe('parseMessagePushData', () => {
     const parsed = parseMessagePushData({ type: 'message', chatId: 'c', preview: 'b' });
     expect(parsed?.messageId).toBe('');
     expect(parsed?.preview).toBe('b');
+  });
+});
+
+describe('message notification de-duplication', () => {
+  it('claims each message id only once', () => {
+    expect(claimMessageNotification('dedupe-test-1')).toBe(true);
+    expect(claimMessageNotification('dedupe-test-1')).toBe(false);
+    expect(claimMessageNotification('dedupe-test-2')).toBe(true);
   });
 });

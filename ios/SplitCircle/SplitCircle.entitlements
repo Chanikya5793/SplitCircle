@@ -43,10 +43,8 @@
          above states, and the reason it is safe now when it was not before.
          Verified on the portal: "Enabled App Groups (1)".
 
-         Serves two things: the Notification Service Extension's shared
-         container and keychain access group (it doubles as a keychain access
-         group, which is why no separate Keychain Sharing capability is needed),
-         and the still-unbuilt widget target.
+         Serves the Notification Service Extension's shared container and the
+         still-unbuilt widget target.
 
          If signing ever rejects this key, check the group is still assigned on
          the App ID — do not delete the key. -->
@@ -54,12 +52,12 @@
     <array>
       <string>group.com.splitcircle.app</string>
     </array>
-    <!-- Lets the app and the NSE share the Signal identity key. An app group
-         identifier is valid here precisely because both targets carry the
-         entitlement above. -->
+    <!-- App Groups and Keychain Sharing are distinct capabilities. The
+         notification service extension needs this shared Keychain group to
+         decrypt its per-device preview before iOS displays the alert. -->
     <key>keychain-access-groups</key>
     <array>
-      <string>group.com.splitcircle.app</string>
+      <string>YDF2TB9967.com.splitcircle.app</string>
     </array>
   </dict>
 </plist>

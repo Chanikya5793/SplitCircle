@@ -31,6 +31,8 @@ const MAX_SIGNAL_DEVICE_ID = 127;
 export interface PublishablePrekeyBundle {
     registrationId: number;
     identityKey: string;
+    /** Public-only iOS Notification Service Extension preview identity. */
+    notificationPreviewIdentityKey?: string;
     signedPreKeyId: number;
     signedPreKeyPublic: string;
     signedPreKeySignature: string;
@@ -110,6 +112,10 @@ export async function publishSignalPrekeys(
         signalDeviceId,
         registrationId: bundle.registrationId,
         identityKey: bundle.identityKey,
+        ...(typeof bundle.notificationPreviewIdentityKey === "string"
+            && bundle.notificationPreviewIdentityKey.length > 0
+            ? { notificationPreviewIdentityKey: bundle.notificationPreviewIdentityKey }
+            : {}),
         signedPreKeyId: bundle.signedPreKeyId,
         signedPreKeyPublic: bundle.signedPreKeyPublic,
         signedPreKeySignature: bundle.signedPreKeySignature,

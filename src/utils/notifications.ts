@@ -9,7 +9,6 @@ import {
   type EntityNotificationFilter,
 } from './notificationEntityMatch';
 import { extractRevokeFilters } from './notificationRevoke';
-import { isChatIdLocked } from './lockedChatRegistry';
 
 // ─────────────────────────────────────────────────────────────
 // Notification Channels (Android)
@@ -58,7 +57,7 @@ export interface NotificationData {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Default handler — show notifications in foreground
+// Default handler — system notifications belong to the background
 // ─────────────────────────────────────────────────────────────
 
 Notifications.setNotificationHandler({
@@ -84,25 +83,20 @@ Notifications.setNotificationHandler({
       };
     }
 
-    // Messages for LOCKED chats must never flash sender/content on screen
-    // while the app is foregrounded — the chat sits behind a Face ID gate.
-    // (The server already genericizes the copy; this hides even that.)
-    if (data?.type === 'message' && isChatIdLocked(data?.chatId as string | undefined)) {
-      return {
-        shouldShowAlert: false,
-        shouldPlaySound: false,
-        shouldSetBadge: true,
-        shouldShowBanner: false,
-        shouldShowList: false,
-      };
-    }
-
+    // This callback is only asked to choose presentation while the app is
+    // foregrounded. Never allow iOS to stack a system banner over a live
+    // ManaSplit screen: encrypted queue listeners already update the open
+    // conversation, and AppNavigator supplies the quiet in-app toast for
+    // other conversations. Importantly this cannot rely on Expo mapping every
+    // custom APNs field into `content.data`; direct APNs alerts may omit that
+    // mapping even though the Notification Service Extension has opened the
+    // preview successfully.
     return {
-      shouldShowAlert: true,
-      shouldPlaySound: true,
+      shouldShowAlert: false,
+      shouldPlaySound: false,
       shouldSetBadge: true,
-      shouldShowBanner: true,
-      shouldShowList: true,
+      shouldShowBanner: false,
+      shouldShowList: false,
     };
   },
 });

@@ -14,7 +14,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { v4 as uuid } from 'uuid';
 import {
@@ -118,6 +118,8 @@ interface SendMessagePayload {
   mediaUri?: string;
   mediaMetadata?: MediaMetadata;
   groupId?: string;
+  /** Group label carried in the sealed iOS notification preview only. */
+  groupName?: string;
   replyTo?: {
     messageId: string;
     senderId: string;
@@ -150,6 +152,19 @@ interface ChatContextValue {
   togglePinMessage: (chatId: string, message: ChatMessage) => Promise<void>;
   deleteMessageForEveryone: (chatId: string, messageId: string) => Promise<void>;
   setTyping: (chatId: string, isTyping: boolean) => Promise<void>;
+  foregroundMessage: ForegroundMessageAlert | null;
+  dismissForegroundMessage: () => void;
+}
+
+/** A compact in-app alert for a message received while ManaSplit is open. */
+export interface ForegroundMessageAlert {
+  chatId: string;
+  messageId: string;
+  senderId: string;
+  content: string;
+  type: MessageType;
+  /** Coalesces a quick burst from one conversation into one unobtrusive row. */
+  count: number;
 }
 
 /**
@@ -218,10 +233,12 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const { user } = useAuth();
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [loading, setLoading] = useState(true);
+  const [foregroundMessage, setForegroundMessage] = useState<ForegroundMessageAlert | null>(null);
 
   const threadsRef = useRef<ChatThread[]>([]);
   const userRef = useRef<typeof user | null>(null);
   const activeChatIdsRef = useRef<Set<string>>(new Set());
+  const foregroundAlertedMessageIdsRef = useRef<Map<string, number>>(new Map());
   // Origin re-seal guards. The signature is the audience's device set: re-seal
   // reacts to nothing else, so an unchanged signature means there is provably
   // no work, and the in-flight flag stops rapid `threads` updates stacking
@@ -834,7 +851,47 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
       if (activeChatIdsRef.current.has(message.chatId)) {
         await markChatAsRead(message.chatId);
+        return;
       }
+
+      // Never surface the user's own cross-device copy, nor a toast while the
+      // app is backgrounded. The latter belongs to the operating system; the
+      // former already exists visibly in the conversation.
+      const currentUser = userRef.current;
+      if (
+        !currentUser
+        || message.senderId === currentUser.userId
+        || message.isFromMe
+        || AppState.currentState !== 'active'
+      ) {
+        return;
+      }
+
+      // Queue delivery is intentionally at-least-once during the per-device
+      // migration. A duplicated delivery must not turn into a second in-app
+      // toast just because local storage deduped the message successfully.
+      const messageId = message.messageId || message.id;
+      const now = Date.now();
+      for (const [id, receivedAt] of foregroundAlertedMessageIdsRef.current) {
+        if (now - receivedAt > 5 * 60 * 1000) {
+          foregroundAlertedMessageIdsRef.current.delete(id);
+        }
+      }
+      if (!messageId || foregroundAlertedMessageIdsRef.current.has(messageId)) {
+        return;
+      }
+      foregroundAlertedMessageIdsRef.current.set(messageId, now);
+
+      setForegroundMessage((previous) => ({
+        chatId: message.chatId,
+        messageId,
+        senderId: message.senderId,
+        content: message.content,
+        type: message.type,
+        // Consecutive messages in the same conversation replace the preview
+        // and increment the count instead of repeatedly interrupting typing.
+        count: previous?.chatId === message.chatId ? previous.count + 1 : 1,
+      }));
     };
 
     const unsubscribeLegacy = listenForMessages(user.userId, onMessage);
@@ -918,6 +975,10 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       unsubscribeSyncBatches?.();
     };
   }, [markChatAsRead, user?.userId]);
+
+  const dismissForegroundMessage = useCallback(() => {
+    setForegroundMessage(null);
+  }, []);
 
   const subscribeToMessages = useCallback((chatId: string, onData: (messages: ChatMessage[]) => void) => {
     const currentUser = userRef.current;
@@ -1137,7 +1198,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   );
 
   const sendMessage = useCallback(
-    async ({ chatId, requestId, content, type = 'text', mediaUri, mediaMetadata, groupId, replyTo, location, forwardedFrom, mentions, onStageChange }: SendMessagePayload) => {
+    async ({ chatId, requestId, content, type = 'text', mediaUri, mediaMetadata, groupId, groupName, replyTo, location, forwardedFrom, mentions, onStageChange }: SendMessagePayload) => {
       if (!user) {
         throw new Error('Missing user for chat send');
       }
@@ -1471,6 +1532,7 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
               message,
               isGroupChat,
               resolveDisplayName(user, ''),
+              groupName,
             );
           } catch (error) {
             sendFailures.push(error);
@@ -1756,6 +1818,8 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       togglePinMessage,
       deleteMessageForEveryone,
       setTyping,
+      foregroundMessage,
+      dismissForegroundMessage,
     }),
     [
       ensureGroupThread,
@@ -1769,6 +1833,8 @@ export const ChatProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       togglePinMessage,
       deleteMessageForEveryone,
       setTyping,
+      foregroundMessage,
+      dismissForegroundMessage,
     ],
   );
 

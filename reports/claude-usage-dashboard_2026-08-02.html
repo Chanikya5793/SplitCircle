@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Usage Dashboard</title>
+<style>
+:root{
+  --surface:#fcfcfb; --page:#f9f9f7; --ink:#0b0b0b; --ink2:#52514e;
+  --muted:#898781; --border:rgba(11,11,11,.10); --grid:#c3c2b7;
+  --s1:#2a78d6; --s2:#1baf7a; --s3:#eda100; --s4:#008300;
+  --bar:#2a78d6; --bar2:#1baf7a; --good:#006300;
+}
+:root[data-theme="dark"]{
+  --surface:#1a1a19; --page:#141413; --ink:#ffffff; --ink2:#c3c2b7;
+  --muted:#898781; --border:rgba(255,255,255,.10); --grid:#383835;
+  --s1:#3987e5; --s2:#199e70; --s3:#c98500; --s4:#008300;
+  --bar:#3987e5; --bar2:#199e70; --good:#0ca30c;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme]){
+    --surface:#1a1a19; --page:#141413; --ink:#ffffff; --ink2:#c3c2b7;
+    --muted:#898781; --border:rgba(255,255,255,.10); --grid:#383835;
+    --s1:#3987e5; --s2:#199e70; --s3:#c98500; --s4:#008300;
+    --bar:#3987e5; --bar2:#199e70; --good:#0ca30c;
+  }
+}
+*{box-sizing:border-box;margin:0}
+body{font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
+  background:var(--page);color:var(--ink);padding:24px;max-width:1080px;margin:0 auto}
+header{display:flex;justify-content:space-between;align-items:baseline;
+  gap:12px;flex-wrap:wrap;margin-bottom:20px}
+h1{font-size:20px;font-weight:650}
+.sub{color:var(--ink2);font-size:13px}
+button#mode{background:var(--surface);color:var(--ink2);border:1px solid var(--border);
+  border-radius:8px;padding:4px 12px;cursor:pointer;font:inherit;font-size:12px}
+.card{background:var(--surface);border:1px solid var(--border);
+  border-radius:12px;padding:16px 18px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:12px;margin-bottom:16px}
+.kpi .v{font-size:26px;font-weight:650;letter-spacing:-.01em}
+.kpi .l{color:var(--ink2);font-size:12px;margin-top:2px}
+.kpi .badge{display:inline-block;font-size:10px;font-weight:600;color:var(--ink2);
+  border:1px solid var(--border);border-radius:99px;padding:0 7px;margin-left:6px;
+  vertical-align:3px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+@media (max-width:760px){.grid2{grid-template-columns:1fr}}
+h2{font-size:13px;font-weight:650;margin-bottom:12px}
+.row{display:grid;grid-template-columns:minmax(90px,160px) 1fr 48px;
+  gap:10px;align-items:center;padding:3px 0}
+.row .n{font-size:12px;color:var(--ink2);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.row .track{height:14px}
+.row .fill{height:14px;border-radius:0 4px 4px 0;min-width:2px}
+.row .v{font-size:12px;color:var(--ink);text-align:right;
+  font-variant-numeric:tabular-nums}
+.row:hover .fill{filter:brightness(1.12)}
+.stack{display:flex;height:22px;border-radius:4px;overflow:hidden;gap:2px;
+  background:var(--surface)}
+.stack div{min-width:2px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:12px;
+  color:var(--ink2)}
+.legend .chip{display:inline-block;width:10px;height:10px;border-radius:3px;
+  margin-right:5px;vertical-align:-1px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--muted);font-weight:600;text-align:right;font-size:11px;
+  text-transform:uppercase;letter-spacing:.04em;padding:6px 8px;
+  border-bottom:1px solid var(--border)}
+th:first-child,td:first-child{text-align:left}
+td{padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;
+  border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:0}
+tr:hover td{background:rgba(128,128,128,.06)}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.chips span{background:var(--surface);border:1px solid var(--border);
+  border-radius:99px;padding:3px 12px;font-size:12px;color:var(--ink2)}
+.chips b{color:var(--ink);font-weight:600}
+footer{color:var(--muted);font-size:12px;margin-top:16px}
+footer li{margin-left:16px;margin-top:3px}
+.mb{margin-bottom:16px}
+</style>
+</head>
+<body>
+<script>
+const DATA = {
+ "generated": "2026-08-02",
+ "window": "Last 30 days (2026-07-12 \u2013 2026-08-02)",
+ "kpis": {
+  "hours_saved": 171.6,
+  "active_hours": 85.8,
+  "sessions": 30,
+  "prompts": 4100,
+  "files_touched": 615,
+  "tokens_total": 12379427705
+ },
+ "tokens": {
+  "input": 545117,
+  "cache_read": 12119262725,
+  "cache_write": 231525658,
+  "output": 28094205
+ },
+ "themes": [
+  {
+   "name": "Multi-device sync & messaging",
+   "count": 6,
+   "desc": "iCloud/linked-device chat sync, nearby-mesh and cloud-relay offline delivery"
+  },
+  {
+   "name": "Feature development",
+   "count": 4,
+   "desc": "Currency conversion, recurring bills, Photos-style search UI, usage reporting"
+  },
+  {
+   "name": "Tooling, ops & environment",
+   "count": 4,
+   "desc": "Remote control, cross-account sessions, orphaned Cloud Function removal, OSINT exercise"
+  },
+  {
+   "name": "On-device AI & Siri",
+   "count": 4,
+   "desc": "App Intents planning + build, on-device AI pipeline, stats-narrative reliability"
+  },
+  {
+   "name": "Debugging & fixes",
+   "count": 4,
+   "desc": "Reaction sync, flaky test, Simulator attach, keyboard overlap"
+  },
+  {
+   "name": "Code review & audits",
+   "count": 3,
+   "desc": "Two 50k-line branch diffs with tests, chat-section anomaly cross-check"
+  },
+  {
+   "name": "Remediation execution",
+   "count": 2,
+   "desc": "Working audit ticket queues from TCKT-6 onward"
+  },
+  {
+   "name": "Refactoring & UI polish",
+   "count": 2,
+   "desc": "Shake-to-hide menu redesign, stats layout density"
+  }
+ ],
+ "tools": [
+  {
+   "name": "Bash",
+   "count": 7580
+  },
+  {
+   "name": "Edit",
+   "count": 2973
+  },
+  {
+   "name": "Read",
+   "count": 1803
+  },
+  {
+   "name": "computer-use \u00b7 screenshot",
+   "count": 546
+  },
+  {
+   "name": "TaskUpdate",
+   "count": 485
+  },
+  {
+   "name": "computer-use \u00b7 batch",
+   "count": 478
+  },
+  {
+   "name": "computer-use \u00b7 click",
+   "count": 446
+  },
+  {
+   "name": "Write",
+   "count": 411
+  },
+  {
+   "name": "Other (49 tools)",
+   "count": 1915
+  }
+ ],
+ "projects": [
+  {
+   "name": "SplitCircle",
+   "sessions": 30,
+   "prompts": 4100,
+   "active_hours": 85.8,
+   "hours_saved": 171.6
+  }
+ ],
+ "surfaces": [
+  {
+   "name": "Claude Code CLI",
+   "sessions": 30,
+   "hours_saved": 171.6
+  }
+ ],
+ "assumptions": [
+  "Time-saved multiplier 3\u00d7 \u2014 hours_saved = active_hours \u00d7 (3 \u2212 1). This is an assumption, not a measurement.",
+  "Active time excludes gaps longer than 300s (5 min), so idle stretches are not counted.",
+  "Savings reported as HOURS ONLY \u2014 no monetary cost or money value is computed anywhere.",
+  "Measured facts: sessions, prompts, tokens, active/wall time, tool counts, files touched, model mix. Only hours-saved is estimated.",
+  "Subagent transcripts are folded into their parent session for tokens/tools/files, but not for time."
+ ],
+ "notes": [
+  "Claude Desktop Chat-tab conversations are stored server-side only and can never be included.",
+  "Claude Desktop Code-tab and Cowork session directories do not exist on this machine \u2014 no such usage is reflected.",
+  "Sessions are windowed by start time; a session begun before 2026-07-12 is excluded even if it continued into the window."
+ ]
+};
+</script>
+<header>
+  <div>
+    <h1>Claude Usage Dashboard</h1>
+    <div class="sub" id="sub"></div>
+  </div>
+  <button id="mode">◐ theme</button>
+</header>
+<div class="kpis" id="kpis"></div>
+<div class="chips" id="chips"></div>
+<div class="grid2">
+  <div class="card"><h2>What Claude was used for</h2><div id="themes"></div></div>
+  <div class="card"><h2>Top tools</h2><div id="tools"></div></div>
+</div>
+<div class="card mb"><h2>Token composition</h2>
+  <div class="stack" id="stack"></div><div class="legend" id="legend"></div>
+</div>
+<div class="card mb"><h2>Per-project</h2><table id="proj"></table></div>
+<footer class="card"><h2>Assumptions &amp; notes</h2><ul id="foot"></ul></footer>
+<script>
+const $=id=>document.getElementById(id);
+const fmt=n=>n>=1e9?(n/1e9).toFixed(1)+"B":n>=1e6?(n/1e6).toFixed(1)+"M":
+  n>=1e3?(n/1e3).toFixed(1)+"k":String(n);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+$("mode").onclick=()=>{const r=document.documentElement;
+  const dark=(r.dataset.theme||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"))==="dark";
+  r.dataset.theme=dark?"light":"dark";};
+const d=DATA;
+$("sub").textContent=`${d.window} · generated ${d.generated}`;
+const K=[["hours_saved","Hours saved",1,"estimate"],["active_hours","Active hours",1],
+  ["sessions","Sessions",0],["prompts","Prompts",0],
+  ["files_touched","Files touched",0],["tokens_total","Tokens",0,null,fmt]];
+$("kpis").innerHTML=K.map(([k,l,dec,badge,f])=>{
+  const v=d.kpis[k]??0;
+  return `<div class="card kpi"><div class="v">${f?f(v):v.toFixed?v.toFixed(dec):v}`+
+    (badge?`<span class="badge">${badge}</span>`:"")+
+    `</div><div class="l">${l}</div></div>`;}).join("");
+$("chips").innerHTML=(d.surfaces||[]).map(s=>
+  `<span><b>${esc(s.name)}</b> · ${s.sessions} sessions · ${s.hours_saved} h saved</span>`).join("");
+function bars(el,items,color){
+  const max=Math.max(...items.map(i=>i.count),1);
+  el.innerHTML=items.map(i=>
+    `<div class="row" title="${esc(i.desc||i.name)}"><div class="n">${esc(i.name)}</div>`+
+    `<div class="track"><div class="fill" style="width:${100*i.count/max}%;background:${color}"></div></div>`+
+    `<div class="v">${fmt(i.count)}</div></div>`).join("");
+}
+bars($("themes"),d.themes,"var(--bar)");
+bars($("tools"),d.tools,"var(--bar2)");
+const TOK=[["input","Input","--s1"],["cache_read","Cache read","--s2"],
+  ["cache_write","Cache write","--s3"],["output","Output","--s4"]];
+const tot=TOK.reduce((a,[k])=>a+(d.tokens[k]||0),0)||1;
+$("stack").innerHTML=TOK.map(([k,l,c])=>
+  `<div style="width:${100*(d.tokens[k]||0)/tot}%;background:var(${c})" title="${l}: ${fmt(d.tokens[k]||0)}"></div>`).join("");
+$("legend").innerHTML=TOK.map(([k,l,c])=>
+  `<span><span class="chip" style="background:var(${c})"></span>${l} ${fmt(d.tokens[k]||0)} (${(100*(d.tokens[k]||0)/tot).toFixed(1)}%)</span>`).join("");
+$("proj").innerHTML=`<tr><th>Project</th><th>Sessions</th><th>Prompts</th><th>Active h</th><th>Saved h</th></tr>`+
+  d.projects.map(p=>`<tr><td>${esc(p.name)}</td><td>${p.sessions}</td><td>${p.prompts}</td>`+
+  `<td>${p.active_hours}</td><td style="color:var(--good)">${p.hours_saved}</td></tr>`).join("");
+$("foot").innerHTML=[...(d.assumptions||[]),...(d.notes||[])].map(x=>`<li>${esc(x)}</li>`).join("");
+</script>
+</body>
+</html>

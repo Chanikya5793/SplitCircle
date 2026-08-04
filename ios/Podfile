@@ -149,14 +149,42 @@ target 'SplitCircle' do
     # target makes `$(inherited)` expand to the aggregate xcconfig's flags
     # (including that -framework) and pins the archive strictly after them.
     installer.aggregate_targets.each do |aggregate_target|
-      next unless aggregate_target.name == 'Pods-SplitCircle'
-      aggregate_target.user_targets.each do |user_target|
-        user_target.build_configurations.each do |config|
-          config.build_settings['OTHER_LDFLAGS'] =
-            '$(inherited) $(LIBSIGNAL_FFI_LIB_TO_LINK)'
+      next unless ['Pods-SplitCircle', 'Pods-SplitCircleNotificationService'].include?(aggregate_target.name)
+      target_name = aggregate_target.name.delete_prefix('Pods-')
+      user_target = aggregate_target.user_project.targets.find { |target| target.name == target_name }
+      next unless user_target
+      user_target.build_configurations.each do |config|
+        config.build_settings['OTHER_LDFLAGS'] =
+          '$(inherited) $(LIBSIGNAL_FFI_LIB_TO_LINK)'
+        if user_target.name == 'SplitCircleNotificationService'
+          config.build_settings['CARGO_BUILD_TARGET[sdk=iphonesimulator*][arch=arm64]'] = 'aarch64-apple-ios-sim'
+          config.build_settings['CARGO_BUILD_TARGET[sdk=iphonesimulator*][arch=*]'] = 'x86_64-apple-ios'
+          config.build_settings['CARGO_BUILD_TARGET[sdk=iphoneos*][arch=arm64e]'] = 'arm64e-apple-ios'
+          config.build_settings['CARGO_BUILD_TARGET[sdk=iphoneos*]'] = 'aarch64-apple-ios'
+          config.build_settings['LIBSIGNAL_FFI_TEMP_DIR'] = '$(PROJECT_TEMP_ROOT)/Pods.build/libsignal_ffi'
+          config.build_settings['LIBSIGNAL_FFI_LIB_TO_LINK'] = '$(LIBSIGNAL_FFI_TEMP_DIR)/target/$(CARGO_BUILD_TARGET)/release/libsignal_ffi.a'
         end
       end
       aggregate_target.user_project.save
+    end
+
+    # LibSignalClient is static under Expo's required linkage. Its pod target
+    # knows where its Rust FFI archive is built, but CocoaPods does not export
+    # that final archive to a bare extension target. Put it after the framework
+    # in the extension aggregate xcconfig, where ld sees LibSignalClient's
+    # unresolved symbols first. This mirrors the app target's proven ordering.
+    %w[debug release].each do |configuration|
+      extension_xcconfig = File.join(
+        __dir__,
+        'Pods',
+        'Target Support Files',
+        'Pods-SplitCircleNotificationService',
+        "Pods-SplitCircleNotificationService.#{configuration}.xcconfig",
+      )
+      next unless File.exist?(extension_xcconfig)
+      File.open(extension_xcconfig, 'a') do |file|
+        file.puts 'OTHER_LDFLAGS = $(inherited) -ObjC -framework "LibSignalClient" $(PROJECT_TEMP_ROOT)/Pods.build/libsignal_ffi/target/$(CARGO_BUILD_TARGET)/release/libsignal_ffi.a'
+      end
     end
 
     # ExpoSQLite's umbrella header can resolve to system sqlite3.h; force pod-scoped header.
@@ -167,4 +195,14 @@ target 'SplitCircle' do
       File.write(umbrella_path, patched_content) if patched_content != umbrella_content
     end
   end
+end
+
+# This target is deliberately separate from the Expo application target. A
+# notification service extension must not inherit the app's complete pod graph:
+# doing so drags LiveKit/WebRTC into an app-extension build, where WebRTC APIs
+# are correctly rejected by Xcode. The extension only needs the stateless
+# LibSignal HPKE opener used to unwrap its device-sealed preview.
+target 'SplitCircleNotificationService' do
+  use_frameworks! :linkage => :static
+  pod 'LibSignalClient', :git => 'https://github.com/signalapp/libsignal', :tag => 'v0.99.1'
 end

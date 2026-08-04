@@ -38,6 +38,33 @@ interface MessagePushData {
 const asString = (value: unknown): string =>
   typeof value === 'string' ? value : '';
 
+// Push transport is at-least-once. Claim synchronously, before decryption, so
+// concurrent FCM/Expo callbacks cannot each post the same local alert.
+const recentlyClaimedMessageIds = new Map<string, number>();
+const MESSAGE_DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_TRACKED_MESSAGE_IDS = 512;
+
+/** Returns true only for the first delivery of a message during the window. */
+export const claimMessageNotification = (messageId: string): boolean => {
+  if (!messageId) return true; // Legacy payloads cannot be reliably deduped.
+
+  const now = Date.now();
+  for (const [id, claimedAt] of recentlyClaimedMessageIds) {
+    if (now - claimedAt > MESSAGE_DEDUPE_WINDOW_MS) {
+      recentlyClaimedMessageIds.delete(id);
+    }
+  }
+  if (recentlyClaimedMessageIds.has(messageId)) return false;
+
+  recentlyClaimedMessageIds.set(messageId, now);
+  while (recentlyClaimedMessageIds.size > MAX_TRACKED_MESSAGE_IDS) {
+    const oldest = recentlyClaimedMessageIds.keys().next().value;
+    if (!oldest) break;
+    recentlyClaimedMessageIds.delete(oldest);
+  }
+  return true;
+};
+
 /**
  * Reads the fields this module needs, or null when the payload is not a
  * message push carrying a preview.
@@ -108,8 +135,27 @@ export const applyDecryptedPreview = async (
 ): Promise<boolean> => {
   if (Platform.OS !== 'android') return false;
 
+  // The foreground listener receives every notification category. Only message
+  // pushes use the data-only/decrypt-and-present path; never turn an expense,
+  // call, or revoke into a bogus "New message" local notification.
+  if (!raw || typeof raw !== 'object' || (raw as MessagePushData).type !== 'message') {
+    return false;
+  }
+
+  // Return handled for a duplicate so the background fallback cannot turn it
+  // into a second generic local notification.
+  if (!claimMessageNotification(asString((raw as MessagePushData).messageId))) {
+    return true;
+  }
+
   const copy = await resolvePreviewCopy(raw);
+  // A visible remote notification already supplied the privacy-safe fallback.
+  // Do not schedule a second local "New message" when preview opening fails:
+  // Android retains every scheduled notification and eventually suppresses an
+  // app that has accumulated too many. A local notification is only useful
+  // when we actually improved the copy.
   if (!copy) return false;
+  const notificationCopy = copy;
 
   try {
     // Dismiss FIRST: presenting before dismissing leaves both on screen for a
@@ -120,14 +166,14 @@ export const applyDecryptedPreview = async (
 
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: copy.title,
-        ...(copy.subtitle ? { subtitle: copy.subtitle } : {}),
-        body: copy.body,
+        title: notificationCopy.title,
+        ...(notificationCopy.subtitle ? { subtitle: notificationCopy.subtitle } : {}),
+        body: notificationCopy.body,
         // The original data, so tapping still deep-links into the chat.
         data: (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>,
       },
-      // Immediately.
-      trigger: null,
+      // Immediately, using the channel that carries the message alert policy.
+      trigger: { channelId: 'messages' },
     });
     return true;
   } catch (error) {
