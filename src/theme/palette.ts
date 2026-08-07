@@ -164,15 +164,27 @@ export const NEUTRALS = {
     // masking this; borderless flat mode has no material left to mask it.
     muted: '#5A6675',
     border: '#E2E8F0',
-    success: '#059669',
+    // Darkened 2026-08-07 for WCAG AA, same pass as the money tokens. All three
+    // failed in light mode in BOTH directions — as text on the canvas, and as a
+    // fill under white `on*` text:
+    //   success #059669  text 3.33-3.77  white-on-fill 3.77
+    //   warning #D97706  text 2.82-3.19  white-on-fill 3.19
+    //   danger  #E03C31  text 3.82-4.32  white-on-fill 4.32
+    // `danger` mattered most: it is used as a TEXT colour in 24 places (error
+    // messages, destructive labels) and as a background in none.
+    // Hue preserved; darkened until the worst shipped background ('ink',
+    // #EEF1F7) clears 4.6:1. Dark scheme already passed and is unchanged.
+    // `success` is set to moneyPositive's exact value — they were identical
+    // before and read as the same green side by side.
+    success: '#047C57',
     onSuccess: '#FFFFFF',
     successContainer: '#D1FAE5',
     onSuccessContainer: '#065F46',
-    warning: '#D97706',
+    warning: '#A45A05',
     onWarning: '#FFFFFF',
     warningContainer: '#FEF3C7',
     onWarningContainer: '#92400E',
-    danger: '#E03C31',
+    danger: '#D02A1F',
     onDanger: '#FFFFFF',
     dangerContainer: '#FBE0DE',
     onDangerContainer: '#7A1610',

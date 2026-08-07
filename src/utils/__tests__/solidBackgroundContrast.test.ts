@@ -112,6 +112,50 @@ describe('solid background presets', () => {
     }
   });
 
+  // Semantic status colours, checked in BOTH directions — this class of bug was
+  // found three times in one session (muted, then money, then these), always
+  // because a token was only ever eyeballed in one role.
+  //   as TEXT : `danger` alone colours text in 24 places (error messages,
+  //             destructive labels) and was 3.82:1.
+  //   as FILL : `success` is a background in 8 places with white `onSuccess`
+  //             over it, which was 3.77:1.
+  const STATUS = ['success', 'warning', 'danger'] as const;
+  const ON: Record<(typeof STATUS)[number], 'onSuccess' | 'onWarning' | 'onDanger'> = {
+    success: 'onSuccess',
+    warning: 'onWarning',
+    danger: 'onDanger',
+  };
+
+  it.each(
+    SOLID_BACKGROUNDS.flatMap((bg) => STATUS.map((t) => [`${bg.id}/${t}`, bg, t] as const)),
+  )('%s as text clears WCAG AA in both schemes', (_label, bg, token) => {
+    expect(contrast(NEUTRALS.light[token], bg.light)).toBeGreaterThanOrEqual(AA_BODY);
+    expect(contrast(NEUTRALS.dark[token], bg.dark)).toBeGreaterThanOrEqual(AA_BODY);
+  });
+
+  it.each(STATUS.map((t) => [t, t] as const))(
+    '%s used as a fill is readable under its on-colour',
+    (_label, token) => {
+      for (const scheme of ['light', 'dark'] as const) {
+        expect(
+          contrast(NEUTRALS[scheme][ON[token]], NEUTRALS[scheme][token]),
+          `${scheme} ${ON[token]} on ${token}`,
+        ).toBeGreaterThanOrEqual(AA_BODY);
+      }
+    },
+  );
+
+  it('status colours also clear AA as text on the plain app background', () => {
+    for (const token of STATUS) {
+      for (const scheme of ['light', 'dark'] as const) {
+        expect(
+          contrast(NEUTRALS[scheme][token], NEUTRALS[scheme].appBackground),
+          `${scheme} ${token}`,
+        ).toBeGreaterThanOrEqual(AA_BODY);
+      }
+    }
+  });
+
   it('light presets are light and dark presets are dark', () => {
     // Guards a copy/paste swap of the two fields, which contrast alone would
     // not catch (a dark fill still passes against dark-scheme text).
