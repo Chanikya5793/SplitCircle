@@ -139,7 +139,10 @@ const CallHistoryRow = memo(function CallHistoryRow({
       onSwipeableOpen={(_direction, swipeable) => onOpen(entry.callId, swipeable)}
       renderRightActions={() => (
         <TouchableOpacity
-          style={styles.deleteAction}
+          // Fill comes from the token, not the StyleSheet: this was a hardcoded
+          // '#E03C31' — the OLD danger value — so it silently diverged the
+          // moment danger was darkened for contrast.
+          style={[styles.deleteAction, { backgroundColor: theme.colors.danger }]}
           onPress={() => onDelete(entry.callId)}
           activeOpacity={0.7}
         >
@@ -1126,7 +1129,8 @@ const styles = StyleSheet.create({
   },
   // -- Swipe Delete --
   deleteAction: {
-    backgroundColor: '#E03C31',
+    // backgroundColor is applied inline from theme.colors.danger — see the
+    // call site. DESIGN.md: zero hardcoded hex in screens.
     justifyContent: 'center',
     alignItems: 'center',
     width: 80,
