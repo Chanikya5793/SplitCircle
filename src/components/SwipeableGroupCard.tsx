@@ -92,7 +92,17 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
       >
         <Animated.View style={pressScaleStyle}>
         <GlassView style={styles.container}>
-          <TouchableRipple onPress={loading ? undefined : handlePress} onLongPress={loading || !onLongPress ? undefined : () => { lightHaptic(); onLongPress(group); }} onPressIn={onPressIn} onPressOut={onPressOut} style={{ flex: 1 }} disabled={loading}>
+          <TouchableRipple
+            onPress={loading ? undefined : handlePress}
+            onLongPress={loading || !onLongPress ? undefined : () => { lightHaptic(); onLongPress(group); }}
+            onPressIn={onPressIn}
+            onPressOut={onPressOut}
+            style={{ flex: 1 }}
+            disabled={loading}
+            // theme.colors.pressed, not Paper's onSurface-alpha default (2026-08-07).
+            rippleColor={theme.colors.pressed}
+            underlayColor={theme.colors.pressed}
+          >
             <View style={styles.content}>
               <View style={styles.header}>
                 <GroupAvatar photoURL={group.photoURL} name={displayName} size={48} />
@@ -125,11 +135,15 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
 const styles = StyleSheet.create({
   container: {
     borderRadius: 24,
-    marginBottom: 12,
+    // Tightened 12 -> 6 (2026-08-07, compact density pass) — rows should sit
+    // close together, iOS-Settings density rather than card spacing. Must
+    // match rightAction's marginBottom so the swipe action stays aligned.
+    marginBottom: 6,
     marginHorizontal: 4,
   },
   content: {
-    padding: 16,
+    // Tightened 16 -> 11.
+    padding: 11,
   },
   header: {
     flexDirection: 'row',
@@ -143,7 +157,8 @@ const styles = StyleSheet.create({
     // color handled dynamically
   },
   total: {
-    marginTop: 12,
+    // Tightened 12 -> 6, matches the container-level tightening above.
+    marginTop: 6,
     fontWeight: '600',
     textAlign: 'right',
   },
@@ -155,7 +170,7 @@ const styles = StyleSheet.create({
   },
   rightAction: {
     justifyContent: 'center',
-    marginBottom: 12,
+    marginBottom: 6,
     marginRight: 4,
   },
   archiveButton: {

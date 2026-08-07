@@ -571,7 +571,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
         scrollEventThrottle={16}
       >
         <View style={{ height: 110 }} />
-        <GlassView style={styles.headerCard}>
+        <GlassView role="glass" style={styles.headerCard}>
           <View style={styles.header}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <GroupAvatar photoURL={group.photoURL} name={group.name} size={44} />
@@ -919,16 +919,18 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
 const styles = StyleSheet.create({
   container: {
-    padding: 8,
+    // Tightened 8 -> 6 (2026-08-07, compact density pass): iOS-Settings
+    // density, sections sit closer together.
+    padding: 6,
     paddingBottom: 180,
-    gap: 8,
+    gap: 6,
   },
   headerCard: {
-    padding: 10,
+    padding: 8,
     borderRadius: 16,
   },
   header: {
-    marginBottom: 6,
+    marginBottom: 4,
     alignItems: 'center',
   },
   subtitle: {
@@ -944,8 +946,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 4,
-    marginBottom: 4,
+    marginTop: 2,
+    marginBottom: 2,
   },
   emptyCard: {
     padding: 24,

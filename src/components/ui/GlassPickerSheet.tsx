@@ -106,7 +106,8 @@ export const GlassPickerSheet = ({
                   accessibilityLabel={opt.label}
                   style={({ pressed }) => [
                     styles.row,
-                    idx < options.length - 1 && { borderBottomColor: hairline, borderBottomWidth: StyleSheet.hairlineWidth },
+                    // No dividers between list items in flat mode (2026-08-07).
+                    idx < options.length - 1 && theme?.surfaceStyle !== 'flat' && { borderBottomColor: hairline, borderBottomWidth: StyleSheet.hairlineWidth },
                     pressed && { opacity: 0.6 },
                   ]}
                 >

@@ -1,7 +1,7 @@
 import { GlassView } from '@/components/GlassView';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GroupAvatar, GroupPhotoUploader, GuardedScreen} from '@/components/ui';
+import { Divider, GroupAvatar, GroupPhotoUploader, GuardedScreen} from '@/components/ui';
 import { CurrencyConvertSheet, MoneyInChatSheet, WallpaperPickerSheet } from '@/components/ui';
 import { getWallpaperSync } from '@/services/wallpaperService';
 import { ROUTES } from '@/constants';
@@ -20,7 +20,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Share, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import { Avatar, Button, Divider, IconButton, List, Text, TextInput } from 'react-native-paper';
+import { Avatar, Button, IconButton, List, Text, TextInput } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const errorMessage = (error: unknown, fallback: string): string => {
@@ -916,8 +916,9 @@ const styles = StyleSheet.create({
     },
     section: {
         marginHorizontal: 16,
-        marginBottom: 16,
-        padding: 16,
+        // Tightened 16 -> 8 (2026-08-07, compact density pass).
+        marginBottom: 8,
+        padding: 12,
         borderRadius: 16,
     },
     sectionTitle: {

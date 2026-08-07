@@ -86,6 +86,23 @@ export const buildTheme = (
       onPrimaryContainer: accent.onPrimaryContainer,
       secondary: accent.secondary,
       surface: neutral.surface,
+      // Real bug found 2026-08-07: these were never overridden, so every
+      // TouchableRipple/List.Item in the app (react-native-paper's
+      // getRippleColor/getUnderlayColor, TouchableRipple/utils.ts) derived its
+      // press-state color from `color(theme.colors.onSurface).alpha(0.12)` —
+      // and onSurface was silently falling through to MD3's STOCK Material-You
+      // palette (`rgba(28,27,31,1)` light / `rgba(230,225,229,1)` dark, both
+      // purple-tinted), never our own `neutral.text`/`neutral.muted`. On iOS,
+      // TouchableRipple isn't natively supported (Platform.OS !== 'android'),
+      // so it falls back to an absolute-fill underlay View in that same
+      // color — a full-row purple-tinted grey wash on every tap, on a design
+      // system with zero purple hue anywhere else. This is what read as "tap
+      // highlight looks wrong against the flat/glass UI". Setting these two
+      // tokens fixes every TouchableRipple/List.Item call site at once (~90
+      // TouchableRipple sites + every List.Item, which wraps one) — no need
+      // to touch individual Touchable components for this class of surface.
+      onSurface: neutral.text,
+      onSurfaceVariant: neutral.muted,
       // Kept transparent so the LiquidBackground blobs show through Paper
       // surfaces that inherit `background` — long-standing app DNA.
       background: 'transparent',

@@ -120,14 +120,19 @@ export const FailedItemsSheet = ({
           <FlatList
             data={items}
             keyExtractor={(it) => `${it.batchIndex}:${it.payload.media.uri}`}
-            ItemSeparatorComponent={() => (
-              <View
-                style={{
-                  height: StyleSheet.hairlineWidth,
-                  backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-                }}
-              />
-            )}
+            // No dividers between list items in flat mode (2026-08-07).
+            ItemSeparatorComponent={
+              theme?.surfaceStyle === 'flat'
+                ? undefined
+                : () => (
+                    <View
+                      style={{
+                        height: StyleSheet.hairlineWidth,
+                        backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+                      }}
+                    />
+                  )
+            }
             renderItem={({ item }) => {
               const isVideo = item.payload.media.type === 'video';
               const canTrim = isVideo;

@@ -16,7 +16,8 @@ import {
 } from '@/services/devicePreferencesService';
 import { Animated, ScrollView, StyleSheet, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { Button, Divider, List, Switch, Text } from 'react-native-paper';
+import { Button, List, Switch, Text } from 'react-native-paper';
+import { Divider } from '@/components/ui';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -951,7 +952,8 @@ export const NotificationSettingsScreen = () => {
 const styles = StyleSheet.create({
   container: {
     padding: 16,
-    gap: 16,
+    // Tightened 16 -> 8 (2026-08-07, compact density pass).
+    gap: 8,
   },
   stickyHeader: {
     position: 'absolute',

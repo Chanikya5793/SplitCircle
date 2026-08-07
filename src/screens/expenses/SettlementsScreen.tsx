@@ -238,7 +238,8 @@ export const SettlementsScreen = ({
 const styles = StyleSheet.create({
   container: {
     padding: 16,
-    gap: 12,
+    // Tightened 12 -> 8 (2026-08-07, compact density pass).
+    gap: 8,
   },
   card: {
     padding: 24,

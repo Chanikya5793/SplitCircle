@@ -1,8 +1,8 @@
 /**
  * AiIndexScreen — transparency for the on-device AI index (Settings → On-Device AI).
  *
- * Shows what's indexed on the device (per-group expense/settlement counts), that
- * indexing + Q&A run entirely on-device (nothing leaves the phone), the Apple
+ * Shows what's indexed on the device (per-group expense/settlement counts), how
+ * exact calculations differ from optional Private Cloud narration, the Apple
  * Intelligence status for conversational chat, and a Rebuild action. The index
  * is the deterministic analytics persisted in SQLite (see `aiIndexStore`) — it
  * survives app restarts and is recomputed only when a group changes. Freshness,
@@ -28,6 +28,7 @@ import {
   isIndexFresh,
 } from '@/utils/expenseAnalytics';
 import { mediumHaptic, successHaptic } from '@/utils/haptics';
+import { AI_CONVERSATIONAL_ACTIVE_COPY, AI_INDEX_PRIVACY_COPY } from '@/utils/aiDisclosure';
 import { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Icon, Text } from 'react-native-paper';
@@ -87,9 +88,7 @@ export const AiIndexScreen = () => {
             <Text variant="titleMedium" style={{ fontWeight: '700', color: theme.colors.onSurface }}>Private by design</Text>
           </View>
           <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 6, lineHeight: 19 }}>
-            Your expenses are indexed and analyzed entirely on this iPhone using its own
-            computing power. Nothing about your spending leaves the device for the
-            assistant's answers.
+            {AI_INDEX_PRIVACY_COPY}
           </Text>
         </GlassView>
 
@@ -100,7 +99,7 @@ export const AiIndexScreen = () => {
           </View>
           <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant, marginTop: 6, lineHeight: 19 }}>
             {aiActive
-              ? 'Apple Intelligence is active — open-ended questions are answered by the on-device model. Calculations are always computed exactly (no AI guessing).'
+              ? AI_CONVERSATIONAL_ACTIVE_COPY
               : `${ON_DEVICE_UNAVAILABLE_COPY[availability]} Exact answers (spending, balances, settle-up) still work on this device without it.`}
           </Text>
         </GlassView>
@@ -159,8 +158,9 @@ export const AiIndexScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { padding: 16, gap: 12 },
-  card: { borderRadius: 18, padding: 16 },
+  // Tightened 12 -> 8 (2026-08-07, compact density pass).
+  container: { padding: 16, gap: 8 },
+  card: { borderRadius: 18, padding: 12 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   groupRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 },
 });

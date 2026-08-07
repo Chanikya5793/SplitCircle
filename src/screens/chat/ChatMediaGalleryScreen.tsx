@@ -851,7 +851,8 @@ const MediaInfoPanel = ({ message, senderName, visible, onClose }: MediaInfoPane
               key={row.label}
               style={[
                 styles.infoRow,
-                i < rows.length - 1 && {
+                // No dividers between list items in flat mode (2026-08-07).
+                i < rows.length - 1 && theme?.surfaceStyle !== 'flat' && {
                   borderBottomWidth: StyleSheet.hairlineWidth,
                   borderBottomColor: isDark
                     ? 'rgba(255,255,255,0.08)'
@@ -2127,8 +2128,11 @@ export const ChatMediaGalleryScreen = () => {
               {
                 paddingBottom: insets.bottom + 8,
                 backgroundColor: isDark ? 'rgba(18,18,18,0.96)' : 'rgba(253,251,251,0.96)',
-                borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
               },
+              // No dividers anywhere in flat mode (2026-08-07).
+              theme?.surfaceStyle === 'flat'
+                ? { borderTopWidth: 0 }
+                : { borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' },
             ]}
           >
             <View style={styles.selectionBarRow}>

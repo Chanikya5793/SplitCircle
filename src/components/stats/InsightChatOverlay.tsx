@@ -11,6 +11,7 @@
  */
 
 import { GlassView } from '@/components/GlassView';
+import { AiEvidenceSheet } from '@/components/ai/AiEvidenceSheet';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GuardedScreen } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
@@ -451,10 +452,16 @@ export const InsightChatOverlay = ({
         await updateExpense(group.groupId, a.expense, undefined, undefined, newMessageId());
         ok = '✓ Expense updated.';
       } else if (a.type === 'delete_expense') {
-        await deleteExpense(group.groupId, a.expenseId);
+        await deleteExpense(group.groupId, a.expenseId, {
+          expectedRevision: a.expectedRevision,
+          expectedUpdatedAt: a.expectedUpdatedAt,
+        });
         ok = '✓ Expense deleted.';
       } else if (a.type === 'delete_settlement') {
-        await deleteSettlement(group.groupId, a.settlementId);
+        await deleteSettlement(group.groupId, a.settlementId, {
+          expectedRevision: a.expectedRevision,
+          expectedUpdatedAt: a.expectedUpdatedAt,
+        });
         ok = '✓ Settlement deleted.';
       } else if (a.type === 'set_budget') {
         const next = { ...(group.budgets ?? {}) };
@@ -567,7 +574,6 @@ export const InsightChatOverlay = ({
       );
     }
     const isUser = item.role === 'user';
-    const badge = item.source ? SOURCE_BADGE[item.source] : null;
     const isLatestMsg = thread?.messages[thread.messages.length - 1]?.id === item.id;
     const actionPayload = isUser ? null : actionPayloadOf(item.payload);
     return (
@@ -669,13 +675,13 @@ export const InsightChatOverlay = ({
               ))}
             </View>
           )}
-          {!isUser && badge && (
-            <View style={styles.badgeRow}>
-              <Icon source={badge.icon} size={11} color={theme.colors.onSurfaceVariant} />
-              <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, fontSize: 10 }}>
-                {badge.label}
-              </Text>
-            </View>
+          {!isUser && (
+            <AiEvidenceSheet
+              engine={item.source}
+              capabilities={item.evidence}
+              sources={item.sources}
+              fallbackCurrency={group?.currency ?? 'USD'}
+            />
           )}
           {/* Doc 25 flywheel: thumbs → reason chips → local eval fixture. */}
           {!isUser &&
@@ -934,7 +940,8 @@ export const InsightChatOverlay = ({
                           key={t.threadId}
                           style={[
                             styles.historyRow,
-                            i < history.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: hairline },
+                            // No dividers between list items in flat mode (2026-08-07).
+                            i < history.length - 1 && theme?.surfaceStyle !== 'flat' && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: hairline },
                           ]}
                         >
                           <TouchableOpacity
@@ -1200,7 +1207,6 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 10,
   },
-  badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 },
   sources: { marginTop: 8, gap: 4 },
   sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   starterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingBottom: 8 },

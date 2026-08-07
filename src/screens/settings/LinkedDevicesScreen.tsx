@@ -3,7 +3,7 @@
 // A companion device can remove itself; only the main device can remove a
 // DIFFERENT device (enforced server-side in pairing.ts's revokeDevice).
 
-import { GlassCard } from '@/components/ui';
+import { Divider, GlassCard } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -26,7 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { ActivityIndicator, Button, Divider, List, Text } from 'react-native-paper';
+import { ActivityIndicator, Button, List, Text } from 'react-native-paper';
 
 const MAX_DEVICES = 4; // doc 31 decision #21
 

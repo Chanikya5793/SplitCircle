@@ -630,7 +630,13 @@ export const NearbyMessagingSheet = ({
                 </View>
               </GlassCard>
 
-              <View style={[styles.deliveryNote, { borderColor: theme.colors.outline }]}>
+              <View
+                style={[
+                  styles.deliveryNote,
+                  // No dividers anywhere in flat mode (2026-08-07).
+                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderColor: theme.colors.outline },
+                ]}
+              >
                 <Ionicons
                   name={chatType === 'group' ? 'people-outline' : 'person-outline'}
                   size={19}
@@ -644,7 +650,13 @@ export const NearbyMessagingSheet = ({
               </View>
             </ScrollView>
 
-            <View style={[styles.footer, { borderTopColor: theme.colors.outline }]}>
+            <View
+              style={[
+                styles.footer,
+                // No dividers anywhere in flat mode (2026-08-07).
+                theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: theme.colors.outline },
+              ]}
+            >
               <View style={styles.footerCopy}>
                 <Text style={[styles.footerTitle, { color: theme.colors.onSurface }]}>
                   {isConnected ? 'Phone link ready' : hasError ? 'Discovery paused' : 'Discovery runs automatically'}

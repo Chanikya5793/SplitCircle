@@ -185,7 +185,8 @@ export const AiMemoryScreen = () => {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  content: { padding: 16, paddingBottom: 48, gap: 12 },
+  // Tightened 12 -> 8 (2026-08-07, compact density pass).
+  content: { padding: 16, paddingBottom: 48, gap: 8 },
   card: { borderRadius: 16, padding: 14 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
   sectionTitle: { flex: 1 },

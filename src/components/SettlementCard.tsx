@@ -93,7 +93,13 @@ export const SettlementCard = ({
                 containerStyle={{ borderRadius: 16, overflow: 'hidden' }}
             >
                 <GlassView style={styles.container}>
-                    <TouchableRipple onPress={handlePress} style={{ flex: 1 }}>
+                    <TouchableRipple
+                        onPress={handlePress}
+                        style={{ flex: 1 }}
+                        // theme.colors.pressed, not Paper's onSurface-alpha default (2026-08-07).
+                        rippleColor={theme.colors.pressed}
+                        underlayColor={theme.colors.pressed}
+                    >
                         <View style={styles.content}>
                             <View style={styles.header}>
                                 <View style={styles.titleRow}>

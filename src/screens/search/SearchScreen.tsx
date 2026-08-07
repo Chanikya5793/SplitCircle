@@ -602,7 +602,7 @@ export const SearchScreen = () => {
                     </View>
                     <View style={[styles.recentsList, { borderRadius: theme.radius.lg }]}>
                       {recents.map((r, i) => (
-                        <View key={r} style={i < recents.length - 1 ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: hairline } : null}>
+                        <View key={r} style={i < recents.length - 1 && theme?.surfaceStyle !== 'flat' ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: hairline } : null}>
                           <RecentRow
                             value={r}
                             onPress={() => {

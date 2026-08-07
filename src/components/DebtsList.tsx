@@ -163,6 +163,7 @@ export const DebtsList = ({ group }: DebtsListProps) => {
   const fmtMoney = useMoneyDisplay(group.groupId);
   const { maskGroupText } = usePrivacyMask();
     const { theme, isDark } = useTheme();
+    const isFlat = theme?.surfaceStyle === 'flat';
     const navigation = useNavigation<any>();
     const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
     const [isCollapsed, setIsCollapsed] = useState(false);
@@ -262,7 +263,7 @@ export const DebtsList = ({ group }: DebtsListProps) => {
 
     return (
         <>
-            <GlassView style={styles.container}>
+            <GlassView role="glass" style={styles.container}>
                 <TouchableOpacity
                     onPress={() => setIsCollapsed(!isCollapsed)}
                     style={styles.headerRow}
@@ -360,7 +361,15 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                                     const sign = isReducing ? '-' : '+';
 
                                     return (
-                                        <View key={item.id} style={[styles.transactionRow, { borderBottomColor: theme.colors.outlineVariant }]}>
+                                        <View
+                                            key={item.id}
+                                            style={[
+                                                styles.transactionRow,
+                                                // No dividers between list items in flat mode — the
+                                                // existing paddingVertical rhythm already separates rows.
+                                                { borderBottomColor: theme.colors.outlineVariant, borderBottomWidth: isFlat ? 0 : 0.5 },
+                                            ]}
+                                        >
                                             <View style={{ flex: 1 }}>
                                                 <Text style={{ color: theme.colors.onSurface, fontWeight: '500' }}>{item.title}</Text>
                                                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -390,9 +399,10 @@ export const DebtsList = ({ group }: DebtsListProps) => {
 
 const styles = StyleSheet.create({
     container: {
-        padding: 16,
+        padding: 14,
         borderRadius: 16,
-        gap: 16,
+        // Tightened 16 -> 10 (2026-08-07, compact density pass).
+        gap: 10,
     },
     title: {
         fontWeight: '600',
@@ -405,7 +415,8 @@ const styles = StyleSheet.create({
         marginBottom: 4,
     },
     list: {
-        gap: 10,
+        // Tightened 10 -> 8.
+        gap: 8,
     },
     row: {
         flexDirection: 'row',

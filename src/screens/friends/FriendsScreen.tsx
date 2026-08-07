@@ -362,7 +362,14 @@ export const FriendsScreen = () => {
         primaryColor={theme.colors.primary}
       >
       <GlassView style={styles.rowCard}>
-        <TouchableRipple onPress={() => openDirectChat(row)} onLongPress={() => handleRemove(row)} borderless>
+        <TouchableRipple
+          onPress={() => openDirectChat(row)}
+          onLongPress={() => handleRemove(row)}
+          borderless
+          // theme.colors.pressed, not Paper's onSurface-alpha default (2026-08-07).
+          rippleColor={theme.colors.pressed}
+          underlayColor={theme.colors.pressed}
+        >
           <View style={styles.row}>
             {/* Avatar opens the friend profile — previously FriendInfoScreen
                 had no entry point from this list at all. */}
@@ -538,7 +545,9 @@ const styles = StyleSheet.create({
   rowCard: {
     borderRadius: 18,
     overflow: 'hidden',
-    marginBottom: 8,
+    // Tightened 8 -> 6 (2026-08-07, compact density pass), matching the
+    // baseline set on SwipeableGroupCard/ChatThreadRow.
+    marginBottom: 6,
   },
   row: {
     flexDirection: 'row',
@@ -563,7 +572,9 @@ const styles = StyleSheet.create({
   },
   rowActionContainer: {
     flexDirection: 'row',
-    marginBottom: 8,
+    // Must stay equal to rowCard's marginBottom or the swipe action drifts
+    // out of alignment with the row.
+    marginBottom: 6,
     borderRadius: 18,
     overflow: 'hidden',
   },

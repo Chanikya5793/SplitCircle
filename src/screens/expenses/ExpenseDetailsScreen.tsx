@@ -1,6 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { EmptyState, GlassCard, GuardedScreen } from '@/components/ui';
+import { Divider, EmptyState, GlassCard, GuardedScreen } from '@/components/ui';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
@@ -18,7 +18,7 @@ import * as Linking from 'expo-linking';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, Modal, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
-import { Button, Chip, Divider, Icon, IconButton, Text, TextInput } from 'react-native-paper';
+import { Button, Chip, Icon, IconButton, Text, TextInput } from 'react-native-paper';
 
 // Category to Icon mapping
 const getCategoryIcon = (category: string): string => {

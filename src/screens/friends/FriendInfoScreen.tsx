@@ -1,6 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GuardedScreen } from '@/components/ui';
+import { Divider, GuardedScreen } from '@/components/ui';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useCallContext } from '@/context/CallContext';
@@ -17,7 +17,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
-import { Avatar, Button, Divider, IconButton, List, Text } from 'react-native-paper';
+import { Avatar, Button, IconButton, List, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface FriendInfoParams {
@@ -209,7 +209,7 @@ export const FriendInfoScreen = () => {
         contentContainerStyle={[styles.container, { paddingTop: insets.top + 64, paddingBottom: insets.bottom + 32 }]}
       >
         {/* Hero card — avatar centered, name, bio, action row */}
-        <GlassView style={styles.heroCard}>
+        <GlassView role="glass" style={styles.heroCard}>
           <View style={styles.avatarWrapper}>
             {profile?.photoURL ? (
               <Avatar.Image size={112} source={{ uri: profile.photoURL }} />
@@ -272,7 +272,7 @@ export const FriendInfoScreen = () => {
         </GlassView>
 
         {/* Balance section */}
-        <GlassView style={styles.sectionCard}>
+        <GlassView role="glass" style={styles.sectionCard}>
           <List.Section>
             <List.Subheader>Balance</List.Subheader>
             {balances.length === 0 ? (
@@ -400,7 +400,8 @@ export const FriendInfoScreen = () => {
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
-    gap: 16,
+    // Tightened 16 -> 10 (2026-08-07, compact density pass).
+    gap: 10,
   },
   heroCard: {
     alignItems: 'center',

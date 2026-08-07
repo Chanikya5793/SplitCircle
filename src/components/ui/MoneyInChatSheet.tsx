@@ -170,7 +170,13 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
                 ))}
               </View>
 
-              <View style={[styles.switchRow, { borderTopColor: hairline }]}>
+              <View
+                style={[
+                  styles.switchRow,
+                  // No dividers anywhere in flat mode (2026-08-07).
+                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                ]}
+              >
                 <View style={styles.switchCopy}>
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
                     Stale-debt reminders
@@ -234,7 +240,13 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
                 ))}
               </View>
 
-              <View style={[styles.switchRow, { borderTopColor: hairline }]}>
+              <View
+                style={[
+                  styles.switchRow,
+                  // No dividers anywhere in flat mode (2026-08-07).
+                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                ]}
+              >
                 <View style={styles.switchCopy}>
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
                     Invite links
@@ -253,7 +265,13 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
                 />
               </View>
 
-              <View style={[styles.switchRow, { borderTopColor: hairline }]}>
+              <View
+                style={[
+                  styles.switchRow,
+                  // No dividers anywhere in flat mode (2026-08-07).
+                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                ]}
+              >
                 <View style={styles.switchCopy}>
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
                     Share receipts outside the app
@@ -298,7 +316,13 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
                 ))}
               </View>
 
-              <View style={[styles.switchRow, { borderTopColor: hairline }]}>
+              <View
+                style={[
+                  styles.switchRow,
+                  // No dividers anywhere in flat mode (2026-08-07).
+                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                ]}
+              >
                 <View style={styles.switchCopy}>
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
                     Unusual-spend alerts
@@ -317,7 +341,13 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
                 />
               </View>
 
-              <View style={[styles.switchRow, { borderTopColor: hairline }]}>
+              <View
+                style={[
+                  styles.switchRow,
+                  // No dividers anywhere in flat mode (2026-08-07).
+                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                ]}
+              >
                 <View style={styles.switchCopy}>
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
                     Budget alerts
@@ -336,7 +366,13 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
                 />
               </View>
 
-              <View style={[styles.switchRow, { borderTopColor: hairline }]}>
+              <View
+                style={[
+                  styles.switchRow,
+                  // No dividers anywhere in flat mode (2026-08-07).
+                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                ]}
+              >
                 <View style={styles.switchCopy}>
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
                     Fairness meter admins-only
@@ -394,7 +430,13 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
               )}
             </ScrollView>
 
-            <View style={[styles.footer, { borderTopColor: hairline }]}>
+            <View
+              style={[
+                styles.footer,
+                // No dividers anywhere in flat mode (2026-08-07).
+                theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+              ]}
+            >
               <Text
                 variant="labelSmall"
                 numberOfLines={2}

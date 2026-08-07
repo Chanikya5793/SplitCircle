@@ -470,7 +470,13 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
                       {filteredCurrencies.slice(0, 50).map((item) => (
                         <TouchableOpacity
                           key={item.code}
-                          style={[styles.currencyItem, { borderBottomColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)' }]}
+                          style={[
+                            styles.currencyItem,
+                            // No dividers between list items in flat mode (2026-08-07).
+                            theme?.surfaceStyle === 'flat'
+                              ? { borderBottomWidth: 0 }
+                              : { borderBottomColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)' },
+                          ]}
                           onPress={() => {
                             setCurrencyInput(item.code);
                             setShowCurrencyList(false);

@@ -5,6 +5,16 @@ committed as `9a957e9` on `ui-revamp` (67 files); Phase 4 follows it. Typecheck
 clean, 993 tests green, and `9a957e9` was verified to typecheck *in isolation*
 in a detached worktree — the working tree also carries unrelated in-progress AI
 work, so a green tree does not by itself prove the commit is self-consistent.
+Four WCAG follow-ups landed after that (status/money/danger-token/accent-primary
+tokens, commits `716ab46`→`e501046`). **Phase 5 (2026-08-07) — new design
+direction, scoped to `GroupListScreen`/`GroupDetailsScreen`/`DebtsList` as a
+starting point.** **Phase 6 (2026-08-07, same session, "keep going, apply
+consistently") — generalized Phase 5 app-wide: zero dividers (~40 sites, 20
+files), compact spacing (~20 files), 2 more glass-accent containers. See §8.**
+**Phase 7 (2026-08-07) — tap/press-state color root-cause fix.** **Phase 8
+(2026-08-07, user: "zero dividers anywhere, no exceptions") — final divider
+audit, 16 more sites across 12 more files. See §11.** Uncommitted as of
+writing.
 
 **Installed and launched on a physical iPhone 17 Pro (iOS 27), but the visual
 result has NOT been reviewed on a screen.** The app starts and stays up; that is
@@ -402,3 +412,337 @@ than by loosening the threshold.
 **Not verified: nothing has run on a simulator or device.** Per this repo's
 "verify the user-facing path" rule, flat mode is not proven until someone flips
 the toggle on a real screen. The spike proves it compiles and type-checks.
+
+---
+
+## 8. Phase 5 — compact density + a third role, `'glass'` (2026-08-07)
+
+New direction from the user, on top of Phases 1–4: no dividers between list
+items, a materially more compact layout ("iOS Settings density, not
+card-based spacing"), and a small set of hero containers that should read as
+real Liquid Glass even in an otherwise flat/borderless UI. Scoped to
+`GroupListScreen`, `GroupDetailsScreen`, and `DebtsList` ("who owes whom")
+first, per the user's own "start here, then apply consistently" instruction —
+**not yet applied app-wide.**
+
+**A third `SurfaceRole`, `'glass'`** (`src/components/ui/surfaceRole.ts`).
+`'section'` and `'floating'` are both flat-mode-dependent; `'glass'` opts OUT
+of `surfaceStyle` entirely — it always falls through to `GlassCard`'s
+existing native-liquid-glass-or-BlurView path (`expo-glass-effect` /
+`ExpoGlassEffect`, the same mechanism glass mode already used everywhere,
+already wired — no new native module work). One-line change in `GlassCard.tsx`:
+the flat-opaque-fill branch's guard became `if (isFlat && role !== 'glass')`.
+Applied to exactly two containers: `GroupDetailsScreen`'s `headerCard`
+(group name/avatar + `BalanceSummary` — a single existing container, so
+"group header" and "balance section" from the request are the same surface)
+and `DebtsList`'s outer `GlassView` ("who owes whom"). Use sparingly — this is
+a named accent, not a new default treatment; doc comment says so explicitly.
+
+`surfaceRoleCoverage.test.ts`'s Modal-chrome safety check was extended to
+also treat `role="glass"` as safe (same invariant as `floating`: it always
+renders a real, visible material, so it can never be the "invisible sheet in
+flat mode" bug the test exists to catch). Neither of the two `'glass'` sites
+added here are inside a `<Modal>`, so this didn't change today's pass/fail —
+it's forward coverage for whoever uses `'glass'` inside a sheet later.
+
+**Dividers:** audited before assuming there was work to do. `theme.colors.
+divider` (the only divider token) turned out to be used in exactly one screen
+app-wide (`SettingsScreen`) — Phase 4 already found dividers "largely
+unnecessary" (§5) and that held up under a fresh grep. The one real separator
+in this session's three target files was `DebtsList`'s debt-breakdown modal
+transaction rows (`borderBottomWidth: 0.5`) — now `0` in flat mode, kept in
+glass mode. `GroupListScreen`/`GroupDetailsScreen`/the main `DebtsList` rows
+never had divider lines to begin with (row-to-row separation is spacing, via
+`gap`/`marginBottom`, not a hairline) — "remove all dividers" cost one edit,
+not a sweep.
+
+**Compactness — exact deltas** (all `src/components/SwipeableGroupCard.tsx`
+unless noted): card `marginBottom` 12→6, `content.padding` 16→11,
+`total.marginTop` 12→6, `rightAction.marginBottom` 12→6 (kept equal to the
+card's own, or the swipe action drifts out of alignment with the card).
+`GroupDetailsScreen.tsx`: `container.padding`/`gap` 8→6, `headerCard.padding`
+10→8, `header.marginBottom` 6→4, `sectionHeader` margins 4→2. `DebtsList.tsx`:
+`container.gap` 16→10, `list.gap` 10→8. These are literal, hand-picked pixel
+deltas, not a new spacing-token scale (unlike `flatRadius`, there is no
+`flatSpacing` — most of this app's screens use raw numbers in
+`StyleSheet.create`, not `theme.spacing`, so a token-driven density switch
+would be a much larger refactor than these two screens needed).
+
+**Not done / open questions for whoever picks this up next:**
+- **Not visually verified anywhere.** No simulator runtime is currently
+  available on this machine (wiped by an Xcode update, see
+  [[ios27-sim-verification-workflow]]) — every number above is a reasoned
+  guess, not something anyone has looked at. Treat this phase as unverified
+  until it's actually seen on a screen, same as Phases 1–4.
+- **"Apply consistently" is not done.** Only the three named files were
+  touched. No other screen's spacing or divider usage was audited or changed.
+- The user described a screenshot showing the current state; it was never
+  actually received in this session, so the exact compactness/glass-placement
+  target was inferred from the written description alone.
+- No test suite covers spacing/density (there's no pixel-value test
+  methodology in this repo, unlike the contrast tests) — `tsc` and the
+  existing suites passing here says nothing about whether the new density
+  reads right.
+
+---
+
+## 9. Phase 6 — generalizing Phase 5 app-wide (2026-08-07, same session)
+
+User: "keep going... apply consistently across all other screens in the app,
+don't limit to just the two screens from Phase 5." This is the actual
+app-wide sweep — 43 files touched, `tsc --noEmit` clean and 1,083 tests green
+throughout (checked after every batch, not just at the end).
+
+**The real divider scope was bigger than Phase 5's audit found.** Phase 5
+only grepped for the `theme.colors.divider` token and concluded dividers were
+basically a non-issue outside `SettingsScreen`. That grep missed two other
+patterns entirely: bare `<Divider>` from `react-native-paper` (found in 11
+files, ~50 individual call sites — `NotificationSettingsScreen` alone had 16,
+`GroupInfoScreen` had 7) and ad-hoc `View`s with `borderBottomWidth` used as
+row separators (another ~10 files). Correcting course rather than
+under-reporting it: the true count is **~40 real list-item dividers across
+~20 files**, not "one edit."
+
+**Fix: a themed `Divider` wrapper** (`src/components/ui/Divider.tsx`), same
+"one primitive" lever as `GlassCard` — rather than hand-editing ~50 call
+sites, it wraps `react-native-paper`'s `Divider` and renders `null` when
+`surfaceStyle === 'flat'`. Every file importing bare `Divider` from
+`'react-native-paper'` was switched to import it from `@/components/ui`
+instead (11 files: `DeviceRetirementScreen`, `LinkedDevicesScreen`,
+`NotificationSettingsScreen`, `ExpenseDetailsScreen`, `BackupSettingsScreen`,
+`MessageInfoScreen`, `GroupInfoScreen`, `FriendInfoScreen`,
+`ReceiptScannerSheet`, `DeviceSetupChoice`, `BackupInsightCards`). Two DOM
+tests (`expenseDetailsFallback.test.tsx`, `groupInfoFallbackRecovery.test.tsx`,
+plus `groupLoadingFallback.test.tsx` pre-emptively) hand-mock `@/components/ui`
+and needed `Divider: () => <div />` added to their mock object — a real
+`vi.mock` gap this change exposed, not a design flaw.
+
+The ~10 ad-hoc `borderBottomWidth` sites (`CallInfoScreen`'s detail rows,
+`ChatMediaGalleryScreen`'s info panel, `SearchScreen`'s recents list,
+`AiChatScreen`/`InsightChatOverlay`'s history rows, `GlassPickerSheet`'s
+options, `DisplayCurrencySheet`/`CurrencyConvertSheet`'s currency rows, and
+three Chat floating menus — `HeaderMenu`, `MessageActionSheet`,
+`MentionAutocomplete`) can't route through a shared primitive (they're plain
+`View`s, not a paper component) — each was individually gated on
+`theme?.surfaceStyle === 'flat'` inline. **Deliberately NOT touched:** the
+`headerRow` `borderBottomWidth` in `LockedChatsScreen`/`StarredMessagesScreen`/
+`ArchivedChatsScreen`/`ArchivedGroupsScreen` — that's a sticky header
+separating itself from the scrolling list below, not a divider *between list
+items*, so it's out of scope for this specific instruction. Also not touched:
+`BillSplit/*` (`ParticipantList`, `BillSplitScreen`, `AdvancedModeContent`) —
+CLAUDE.md's dense-editor DNA override locks those to opaque/solid by a
+separate, earlier user mandate; this pass doesn't touch it. Also not touched:
+crop-tool guide lines, input underlines, tab-bar/menu structural borders —
+none of those are list separators.
+
+**Compactness — leverage-first, not file-by-file.** Tightened the shared
+row components first since they're reused everywhere (`ChatThreadRow`:
+`marginBottom` 12→6 across all 4 style variants, matching
+`SwipeableGroupCard`'s Phase-5 numbers). Found `SwipeableExpenseCard.tsx` and
+`SettlementCard.tsx` were **already** "ultra-compact" from an earlier,
+undocumented pass (`padding: 10`, `marginBottom: 1-4`) — left untouched, no
+regression to a looser number. Found `src/components/ExpenseCard.tsx` (the
+non-swipeable variant) is dead code, imported nowhere — skipped rather than
+polishing something unreachable. `CallHistoryScreen` was already denser than
+this session's new baseline (`marginBottom: 2`) — also left alone. Then
+tightened container-level `gap`/`marginBottom` on every remaining screen with
+a `GlassCard`/`GlassView` (main tabs: `FriendsScreen`, `PersonalStatsScreen`;
+secondary: `ExpenseDetailsScreen` *(spacing left alone — see below)*,
+`SettlementsScreen`, `GroupStatsScreen`, `FriendInfoScreen`, `CallInfoScreen`,
+`MessageInfoScreen`, `GroupInfoScreen`; settings: `AiIndexScreen`,
+`AiMemoryScreen`, `AiEvalsScreen`, `BackupPassphraseScreen`,
+`BackupSettingsScreen`, `DeviceRetirementScreen`, `NearbyMeshScreen`,
+`NotificationSettingsScreen`, `OfflineSyncScreen`). Pattern: container
+`gap: 12` or `16` → `8`; `card.padding: 16` → `12`; row `marginBottom` in the
+16–24 range → roughly half. Single-form screens (`EditNameScreen`,
+`LinkDeviceScreen`, one settlement-entry card in `SettlementsScreen`) were
+deliberately left at their original padding — that's form breathing room, not
+list density, and tightening it would fight the form's own legibility for no
+list-density benefit. `LinkedDevicesScreen` needed no spacing change: its
+device list is a single card with `Divider`-separated rows, so the divider
+fix alone tightened it.
+
+**`ExpenseDetailsScreen` is the one screen using `theme.spacing.*` tokens
+instead of raw numbers** (`spacing.lg`/`.md`/`.sm`/`.xs` throughout) — every
+other screen in this pass used literal pixel values, which is what made the
+"hand-pick a smaller literal" technique consistent across ~20 files. Doing
+the same to this one file would mean either inventing a `flatSpacing` scale
+(mirrors `flatRadius`, but is real, unscoped, unverified new infrastructure
+for a single call site) or hardcoding literals into an otherwise
+token-disciplined file (worse hygiene than leaving it alone). Left untouched
+this session — a real `flatSpacing` token is the correct fix if/when more
+screens move onto the token system, not a one-off.
+
+**Glass-accent: two more containers**, both found by the same test Phase 5
+used — is there an existing container that already plays the "hero summary"
+role. `FriendInfoScreen`'s `heroCard` (avatar/name/actions — literally named
+"hero" in a pre-existing comment) and its `Balance` section directly mirror
+`GroupDetailsScreen`'s header+balance and `DebtsList`, so both got
+`role="glass"`. **`GroupInfoScreen` was checked and skipped** — its
+group-photo/name header was never wrapped in a `GlassView` to begin with (the
+identity block renders bare), so there's no existing container to convert;
+wrapping bare content in a brand-new glass container would be inventing UI,
+not applying an existing pattern consistently. **`ChatRoomScreen`'s header
+pills, balance pill, and composer were checked and left as `role="floating"`**
+— they're already correctly classified per Phase 2's audit (opaque chrome
+over a scrolling message list), and upgrading them to `role="glass"` would
+mean real blur material on VERY frequently re-rendered chrome during active
+scrolling/typing, a performance/complexity tradeoff this pass didn't have the
+verification budget to sign off on. `role="glass"` stayed at 4 containers
+total app-wide (2 from Phase 5, 2 from Phase 6) — deliberately, per the
+user's own "don't put Liquid Glass on every element" instruction.
+
+**Explicitly still not covered** (a genuine "app-wide" claim would need
+these, and none of them were touched):
+- `AddExpenseScreen`/`BillSplit/*` — out of scope by the dense-editor DNA
+  override, not an oversight.
+- Auth screens (`SignInScreen`, `RegisterScreen`, etc.), onboarding, call
+  session/live-call UI, chat message bubbles themselves (decision (5), out of
+  scope from Phase 5 onward), and the native search tab (doc 20, system
+  material, not this primitive).
+- No `flatSpacing` token — see the `ExpenseDetailsScreen` note above. Every
+  compactness number in Phases 5–6 is a literal, independently hand-picked
+  per file/style-block, not driven by a shared scale. Two files styled
+  identically could plausibly have picked slightly different deltas.
+- Same visual-verification gap as Phase 5: nothing in Phase 6 has been seen
+  on a screen either. The scope grew considerably (43 files); the risk that
+  something reads wrong in practice grew with it.
+
+---
+
+## 10. Phase 7 — tap/press-state colors (2026-08-07, same session)
+
+User report: "grey tap feedback... was designed for the card-based UI and
+looks wrong now." Went looking for it rather than tuning components blind,
+and found a real, one-line-fix bug rather than 800 call sites to touch.
+
+**Root cause.** `src/theme/buildTheme.ts` never overrode MD3's `onSurface`/
+`onSurfaceVariant` color tokens — react-native-paper's `TouchableRipple`
+(`TouchableRipple/utils.ts`, `getRippleColor`/`getUnderlayColor`) computes its
+press-state color as `color(theme.colors.onSurface).alpha(0.12)`, and with no
+override that fell through to MD3's STOCK Material-You palette
+(`rgba(28,27,31,1)` light / `rgba(230,225,229,1)` dark — both carry a purple
+hue bias baked into Material 3's default neutral tones), never this app's own
+`neutral.text`/`neutral.muted`. Worse on iOS specifically:
+`TouchableRipple.supported` checks `Platform.OS === 'android'`, so iOS never
+gets the native ripple at all — it falls back to an absolute-fill `View`
+painted with that same color, i.e. a full-row purple-tinted grey wash on
+every tap, on a design system with zero purple anywhere else in its palette.
+That's what read as "wrong against the flat/glass UI."
+
+**Fix:** two lines in `buildTheme.ts` — `onSurface: neutral.text`,
+`onSurfaceVariant: neutral.muted`. Every `TouchableRipple` (~90 call sites)
+and every `List.Item` (which wraps one internally — confirmed by reading
+`ListItem.tsx`: its `Props` type extends `TouchableRipple`'s) picks this up
+automatically. No per-component sweep needed for the *color-mismatch* half of
+the bug — this is the same "one primitive" shape as the `GlassCard`/
+`Divider` fixes, just one level lower (a theme token feeding a *third-party*
+component's internal default, not one of this app's own primitives).
+
+**On top of the root-cause fix, explicit tuning on the named surfaces**
+(per the request: "tuning underlayColor... SwipeableGroupCard, ChatThreadRow,
+expense rows, settings rows"). Rather than leaving these on Paper's now
+correctly-hued-but-still-generic 12%-alpha default, they now pass
+`rippleColor`/`underlayColor` explicitly using `theme.colors.pressed` — the
+semantic token this app already had sitting unused for exactly this purpose
+("neutral interactive/divider fill", added earlier in the flat-mode work but
+never wired to anything). Touched: `src/components/ui/ListRow.tsx` (the
+shared primitive `SettingsScreen` and other info screens use instead of
+per-screen `List.Item` — fixes every settings row in one place),
+`SwipeableGroupCard.tsx`, `ChatThreadRow.tsx` (its `List.Item`),
+`SwipeableExpenseCard.tsx`, `SettlementCard.tsx`, `FriendsScreen.tsx`'s row,
+`CallHistoryScreen.tsx`'s row.
+
+**Checked and deliberately left alone:**
+- `MessageBubble.tsx`'s one `android_ripple={undefined}` — already correct,
+  a deliberate opt-out (a system ripple over a bubble shape would look
+  wrong; consistent with chat bubbles being out of scope since Phase 1's
+  decision (5)).
+- `DebtsList`'s swipeable debt rows use `TouchableOpacity` (activeOpacity
+  dimming), not `TouchableRipple` — a different mechanism, not the reported
+  "grey overlay" bug, so not touched.
+- The other 650+ `TouchableOpacity` and 78 `Pressable` call sites app-wide —
+  `TouchableOpacity` has no ripple/underlay concept at all (only
+  `activeOpacity`, which dims the child, not an overlay tint), so it was
+  never a candidate for this specific bug. Not audited for consistency of
+  `activeOpacity` values themselves — a different, smaller-stakes ask than
+  what was reported.
+
+**Verification:** `tsc --noEmit` clean, full suite green (590 unit + 466
+services + 27 dom = 1,083), no failures and no bugs surfaced by the change —
+reported as found, not invented, per the instruction to fix anything broken
+"along the way." **Not visually verified** — same gap as Phases 5–6; nobody
+has watched a real tap on a real screen since this landed.
+
+---
+
+## 11. Phase 8 — final divider audit, "no exceptions" (2026-08-07, same session)
+
+User, after seeing the app-wide sweep and shipping two builds: "there should
+be zero dividers anywhere in the app, no exceptions... grep for any remaining
+Divider usage, borderBottomWidth separators, or any visual line separators
+that might still be rendering." A genuine re-audit, not a rubber stamp —
+Phase 6's own sweep (§9) had already found real gaps in Phase 5's original
+divider audit, so the expectation going in was that another pass would find
+more, and it did: **16 more sites across 12 files**, none of which route
+through `@/components/ui/Divider` and so were invisible to a plain "grep for
+Divider" check.
+
+**What the fresh grep covered that earlier passes didn't:**
+- `ItemSeparatorComponent` (the FlatList/SectionList divider prop) — never
+  grepped for in Phases 6–7. Found one live site:
+  `FailedItemsSheet.tsx` (an unconditional hairline between failed-upload
+  rows). Fixed by making the prop itself `undefined` in flat mode rather than
+  conditioning the rendered View — cheaper, and avoids rendering a
+  zero-height separator component per row for no reason.
+- `borderTopWidth` app-wide — Phases 6–7's sweep was `borderBottomWidth`-
+  only; a divider built as the NEXT item's top border is functionally
+  identical and was completely unaudited until now. Found real, live,
+  unconditional dividers in `RecurringBillsScreen.tsx` (2: a bill card's
+  action-row separator, a sheet footer), `MoneyInChatSheet.tsx` (7: six
+  `switchRow` settings toggles + a footer), `NearbyMessagingSheet.tsx` (a
+  delivery-note callout — `fallbackNote` shares the same style but is dead
+  code, never rendered, left alone), `ChatMediaGalleryScreen.tsx` (a
+  multi-select action bar), `ReceiptScannerSheet.tsx` (2: an advanced-split
+  panel, a bottom actions bar), `DisplayCurrencySheet.tsx` (a rate-info
+  panel).
+- **A real, pre-existing bug independent of this session's work:**
+  `PrivacyGuardSheet.tsx`'s `Row` component already computed
+  `const flat = theme?.surfaceStyle === 'flat'` and used it for
+  `styles.rowFlat` padding — but the row's OWN divider right below that,
+  `!last && {borderBottomColor...}`, never checked `!flat` too. The
+  surrounding comment even documented this as deliberate: "Rows keep their
+  own dividers, which is what carries the grouping" — a real design decision
+  from the original Phase 3 build, now explicitly overridden by the user's
+  "no exceptions." Three more unguarded dividers in the same file
+  (`scopeHeader`, `scopeRow`, `previewChatRow`) followed the same pattern.
+
+**Judgment call, resolved toward "no exceptions" rather than my own earlier
+narrower reading.** Phases 6–7 drew a line between dividers *between list
+items* (fixed) and structural chrome separators — a sticky header's edge
+against scrolling content below it, a card's action row separated from its
+own content above, a sheet's fixed footer separated from its scrollable body
+(left alone, reasoned as a "different UI pattern" in §9). Given this
+session's explicit, repeated "no exceptions," that distinction is no longer
+being applied — Phase 8 removed ALL of these too, including the sticky-
+header separators in `LockedChatsScreen`/`StarredMessagesScreen`/
+`ArchivedChatsScreen`/`ArchivedGroupsScreen` and the currency-picker dropdown
+divider in `GroupListScreen`'s create-group dialog that §9 had explicitly
+deferred as "minor, leave for now." If a future session wants the structural
+distinction back, this paragraph is the place that changed it and why.
+
+**Deliberately still NOT touched, and why:**
+- Full-perimeter `borderWidth` (all four sides) app-wide — a box outline on
+  a card/chip/pill/tile, not a one-sided separator LINE between adjacent
+  items. Different visual concept; not what "divider" means here. (Grepped
+  and manually triaged; the ~70 hits are overwhelmingly BillSplit option
+  tiles, chip borders, and card outlines.)
+- `src/components/Chat/editor/CropOverlay.tsx`'s rule-of-thirds grid lines
+  and `ScanningAnimation.tsx`'s scanner-viewfinder corner brackets — not
+  dividers at all, just non-list UI chrome that happens to use
+  `border*Width`.
+- `BillSplit/*` — still excluded by the CLAUDE.md dense-editor DNA override,
+  unchanged by any instruction in this session.
+
+**Verification:** `tsc --noEmit` clean, full suite green (1,083 tests), same
+as every prior phase this session. Still nothing visually verified.

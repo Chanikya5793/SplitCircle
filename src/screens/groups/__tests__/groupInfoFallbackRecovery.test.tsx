@@ -45,6 +45,7 @@ vi.mock('@/components/ui', () => ({
   CurrencyConvertSheet: () => null,
   MoneyInChatSheet: () => null,
   WallpaperPickerSheet: () => null,
+  Divider: () => <div />,
 }));
 
 vi.mock('@/services/wallpaperService', () => ({

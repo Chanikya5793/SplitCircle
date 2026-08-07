@@ -12,14 +12,14 @@
 // `sizes` in BackupManifest for why write-time measurement is the only
 // accurate option available to us.
 
-import { GlassCard } from '@/components/ui';
+import { Divider, GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { BACKUP_CATEGORIES, type BackupCategory } from '@/services/backupContentService';
 import type { BackupRunEntry } from '@/services/backupHistoryService';
 import type { BackupReadiness } from '@/services/backupReadinessService';
 import type { BackupManifest } from '@/services/backupService';
 import { Linking, StyleSheet, View } from 'react-native';
-import { Button, Divider, Text } from 'react-native-paper';
+import { Button, Text } from 'react-native-paper';
 
 /** Bytes → a short human string. Binary units, matching what iOS shows. */
 export const formatBytes = (bytes: number): string => {

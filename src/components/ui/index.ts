@@ -2,6 +2,7 @@ export { AppButton, type AppButtonProps, type AppButtonVariant } from './AppButt
 export { AppTextInput, type AppTextInputProps } from './AppTextInput';
 export { EmptyState, OfflineState, type EmptyStateProps, type OfflineStateProps } from './EmptyState';
 export { GlassCard, type GlassCardProps } from './GlassCard';
+export { Divider, type DividerProps } from './Divider';
 export type { SurfaceRole } from './surfaceRole';
 export { GlassPickerSheet, type GlassPickerSheetProps, type GlassPickerSheetOption } from './GlassPickerSheet';
 export { GlassToast, type GlassToastProps, type GlassToastAction } from './GlassToast';

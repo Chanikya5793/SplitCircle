@@ -407,7 +407,9 @@ const styles = StyleSheet.create({
   container: {
     padding: 16,
     paddingBottom: 140,
-    gap: 12,
+    // Tightened 12 -> 8 (2026-08-07, compact density pass) - stacked cards
+    // sit closer together.
+    gap: 8,
   },
   rangeRow: {
     flexDirection: 'row',
@@ -422,7 +424,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   card: {
-    padding: 16,
+    // Tightened 16 -> 12.
+    padding: 12,
     borderRadius: 20,
   },
   sectionTitle: {

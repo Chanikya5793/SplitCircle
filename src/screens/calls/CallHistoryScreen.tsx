@@ -166,6 +166,9 @@ const CallHistoryRow = memo(function CallHistoryRow({
             onPressOut={onPressOut}
             style={styles.callItemContent}
             borderless
+            // theme.colors.pressed, not Paper's onSurface-alpha default (2026-08-07).
+            rippleColor={theme.colors.pressed}
+            underlayColor={theme.colors.pressed}
           >
             <View style={styles.callRow}>
               {/* Left: Avatar + Delete button in edit mode */}

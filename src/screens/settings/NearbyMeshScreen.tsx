@@ -397,8 +397,9 @@ export const NearbyMeshScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { padding: 16, gap: 12 },
-  card: { padding: 16, gap: 10 },
+  // Tightened 12 -> 8 (2026-08-07, compact density pass).
+  container: { padding: 16, gap: 8 },
+  card: { padding: 12, gap: 10 },
   cardTitle: { fontWeight: '700' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   rowCopy: { flex: 1 },

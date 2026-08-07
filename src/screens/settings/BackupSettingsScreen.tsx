@@ -10,7 +10,7 @@
 // when background work actually happens and inventing a schedule we cannot
 // keep is worse than admitting we don't know.
 
-import { GlassCard } from '@/components/ui';
+import { Divider, GlassCard } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -60,7 +60,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
-import { Button, Divider, List, ProgressBar, Switch, Text, TextInput } from 'react-native-paper';
+import { Button, List, ProgressBar, Switch, Text, TextInput } from 'react-native-paper';
 
 const FREQUENCIES: BackupFrequency[] = ['daily', 'every3days', 'weekly', 'off'];
 
@@ -597,7 +597,8 @@ export const BackupSettingsScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { padding: 16, gap: 16 },
+  // Tightened 16 -> 8 (2026-08-07, compact density pass).
+  container: { padding: 16, gap: 8 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   card: { borderRadius: 20 },
   cardContent: { padding: 20, gap: 12 },

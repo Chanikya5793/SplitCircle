@@ -164,8 +164,10 @@ export const GlassCard = React.memo(
 
     // Flat + floating → one opaque view on every platform. No BlurView, no
     // native material, and deliberately no Android elevation: a flat surface
-    // that casts a shadow is just a card again.
-    if (isFlat) {
+    // that casts a shadow is just a card again. role="glass" opts OUT of this
+    // entirely — it always falls through to the native/blur glass path below,
+    // the same one glass mode uses, regardless of surfaceStyle.
+    if (isFlat && role !== 'glass') {
       return (
         <Animated.View style={[styles.flat, { borderRadius }, animatedStyle, style]}>
           <View style={[styles.content, contentStyle]}>{children}</View>

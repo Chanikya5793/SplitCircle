@@ -206,7 +206,8 @@ export const AiEvalsScreen = () => {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  content: { padding: 16, gap: 12, paddingBottom: 48 },
+  // Tightened 12 -> 8 (2026-08-07, compact density pass).
+  content: { padding: 16, gap: 8, paddingBottom: 48 },
   card: { borderRadius: 16, padding: 14, gap: 4 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   runBtn: { marginTop: 10 },

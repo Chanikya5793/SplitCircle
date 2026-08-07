@@ -91,6 +91,11 @@ export const ListRow = ({
       accessibilityRole="button"
       accessibilityLabel={title}
       style={disabled ? styles.disabled : undefined}
+      // theme.colors.pressed, not Paper's own onSurface-alpha default — it's
+      // the app's purpose-built neutral press token (see buildTheme.ts's
+      // onSurface/onSurfaceVariant fix for the root-cause version of this).
+      rippleColor={theme.colors.pressed}
+      underlayColor={theme.colors.pressed}
     >
       {content}
     </TouchableRipple>

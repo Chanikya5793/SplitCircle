@@ -10,6 +10,7 @@
  */
 
 import { GlassView } from '@/components/GlassView';
+import { AiEvidenceSheet } from '@/components/ai/AiEvidenceSheet';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GuardedScreen } from '@/components/ui';
 import { ROUTES } from '@/constants';
@@ -24,6 +25,8 @@ import { buildFactsBlock } from '@/services/onDeviceAiService';
 import { noteTurn, thumbsDown, thumbsUp } from '@/services/aiFeedbackService';
 import { prewarmOnDeviceModel } from '../../../modules/splitcircle-ai';
 import { FEEDBACK_REASON_LABELS, type FeedbackReason } from '@/utils/aiFeedback';
+import type { AiToolEvidence } from '@/utils/aiTools';
+import type { AiThreadSource } from '@/utils/aiThreads';
 import {
   activateChatThread,
   deleteChatThread,
@@ -63,6 +66,8 @@ interface ChatMsg {
   clarify?: boolean;
   /** Stated reading under mild ambiguity — small caption under the answer. */
   assumption?: string;
+  engineSource?: 'deterministic' | 'ondevice' | 'pcc';
+  evidence?: AiToolEvidence[];
 }
 
 const GREETING = (name: string): ChatMsg => ({
@@ -254,6 +259,8 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           choices: turn.choices,
           clarify: turn.clarify,
           assumption: turn.assumption,
+          engineSource: turn.engineSource,
+          evidence: turn.evidence,
         });
         // Doc 25: register the turn snapshot so a later 👎 can capture it.
         noteTurn(replyId, turn.trace);
@@ -380,7 +387,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
   };
 
   // Tap a citation → open that expense's details (the RAG "cite" step made actionable).
-  const openSource = (s: ExpenseAiSource) => {
+  const openSource = (s: AiThreadSource) => {
     if (!s.expenseId) return;
     lightHaptic();
     navigation.navigate(ROUTES.APP.EXPENSE_DETAILS, {
@@ -407,7 +414,10 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
         await updateExpense(group.groupId, a.expense, undefined, undefined, uid());
         ok = '✓ Expense updated.';
       } else if (a.type === 'delete_settlement') {
-        await deleteSettlement(group.groupId, a.settlementId);
+        await deleteSettlement(group.groupId, a.settlementId, {
+          expectedRevision: a.expectedRevision,
+          expectedUpdatedAt: a.expectedUpdatedAt,
+        });
         ok = '✓ Settlement deleted.';
       } else if (a.type === 'set_budget') {
         const next = { ...(group.budgets ?? {}) };
@@ -416,7 +426,10 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
         await updateGroupBudgets(group.groupId, next);
         ok = a.amount > 0 ? '✓ Budget set.' : '✓ Budget removed.';
       } else {
-        await deleteExpense(group.groupId, a.expenseId);
+        await deleteExpense(group.groupId, a.expenseId, {
+          expectedRevision: a.expectedRevision,
+          expectedUpdatedAt: a.expectedUpdatedAt,
+        });
         ok = '✓ Expense deleted.';
       }
       successHaptic();
@@ -501,6 +514,16 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                 </TouchableOpacity>
               ))}
             </View>
+          ) : null}
+
+          {!isUser ? (
+            <AiEvidenceSheet
+              engine={item.engineSource}
+              capabilities={item.evidence}
+              sources={item.sources}
+              fallbackCurrency={group.currency}
+              onOpenExpense={openSource}
+            />
           ) : null}
 
           {!isUser && item.choices && item.choices.length > 0 ? (
@@ -618,7 +641,10 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                   key={t.threadId}
                   style={[
                     styles.historyRow,
-                    { borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)' },
+                    // No dividers between list items in flat mode (2026-08-07).
+                    theme?.surfaceStyle === 'flat'
+                      ? { borderBottomWidth: 0 }
+                      : { borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)' },
                   ]}
                 >
                   <TouchableOpacity

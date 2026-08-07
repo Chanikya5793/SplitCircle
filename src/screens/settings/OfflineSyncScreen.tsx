@@ -229,8 +229,9 @@ export const OfflineSyncScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { padding: 16, gap: 12 },
-  card: { borderRadius: 18, padding: 16 },
+  // Tightened 12 -> 8 (2026-08-07, compact density pass).
+  container: { padding: 16, gap: 8 },
+  card: { borderRadius: 18, padding: 12 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   rowCopy: { flex: 1 },
   statusIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },

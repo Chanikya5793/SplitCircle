@@ -35,6 +35,7 @@ vi.mock('@/components/ui', () => ({
       ) : null}
     </div>
   ),
+  Divider: () => <div />,
 }));
 
 vi.mock('@/context/ThemeContext', () => ({

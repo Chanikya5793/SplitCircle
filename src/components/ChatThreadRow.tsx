@@ -433,6 +433,9 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
           ) : undefined}
           onPress={handleOpen}
           onLongPress={handleLongPress}
+          // theme.colors.pressed, not Paper's onSurface-alpha default (2026-08-07).
+          rippleColor={theme.colors.pressed}
+          underlayColor={theme.colors.pressed}
           style={styles.chatItemRow}
           titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
           descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
@@ -445,7 +448,10 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
 
 const styles = StyleSheet.create({
   chatItem: {
-    marginBottom: 12,
+    // Tightened 12 -> 6 (2026-08-07, compact density pass), matching
+    // SwipeableGroupCard. Swipe-action marginBottom must stay equal to the
+    // row's own or the action drifts out of alignment with the row.
+    marginBottom: 6,
     borderRadius: 16,
     overflow: 'hidden',
   },
@@ -470,15 +476,24 @@ const styles = StyleSheet.create({
   },
   rowAction: {
     justifyContent: 'center',
-    marginBottom: 12,
+    // Tightened 12 -> 6 (2026-08-07, compact density pass), matching
+    // SwipeableGroupCard. Swipe-action marginBottom must stay equal to the
+    // row's own or the action drifts out of alignment with the row.
+    marginBottom: 6,
   },
   rowActionLeft: {
     justifyContent: 'center',
-    marginBottom: 12,
+    // Tightened 12 -> 6 (2026-08-07, compact density pass), matching
+    // SwipeableGroupCard. Swipe-action marginBottom must stay equal to the
+    // row's own or the action drifts out of alignment with the row.
+    marginBottom: 6,
   },
   rowActionRow: {
     flexDirection: 'row',
-    marginBottom: 12,
+    // Tightened 12 -> 6 (2026-08-07, compact density pass), matching
+    // SwipeableGroupCard. Swipe-action marginBottom must stay equal to the
+    // row's own or the action drifts out of alignment with the row.
+    marginBottom: 6,
   },
   rowActionButton: {
     flex: 1,

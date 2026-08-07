@@ -710,7 +710,15 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                                     </View>
 
                                     {/* Dedicated, spaced action row — brought out of the cramped edge */}
-                                    <View style={[styles.cardActionRow, { borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' }]}>
+                                    <View
+                                        style={[
+                                            styles.cardActionRow,
+                                            // No dividers anywhere in flat mode (2026-08-07).
+                                            theme?.surfaceStyle === 'flat'
+                                                ? { borderTopWidth: 0 }
+                                                : { borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' },
+                                        ]}
+                                    >
                                         <CardAction
                                             icon="skip-next-outline"
                                             label="Skip"
@@ -1086,7 +1094,16 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                             </ScrollView>
 
                             {/* Docked footer — actions live here, not buried at the bottom of the scroll */}
-                            <View style={[styles.sheetFooter, { borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)', paddingBottom: insets.bottom + 10 }]}>
+                            <View
+                                style={[
+                                    styles.sheetFooter,
+                                    { paddingBottom: insets.bottom + 10 },
+                                    // No dividers anywhere in flat mode (2026-08-07).
+                                    theme?.surfaceStyle === 'flat'
+                                        ? { borderTopWidth: 0 }
+                                        : { borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' },
+                                ]}
+                            >
                                 <Button
                                     mode="text"
                                     onPress={closeModal}

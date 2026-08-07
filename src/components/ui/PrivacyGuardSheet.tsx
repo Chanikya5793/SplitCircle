@@ -157,7 +157,11 @@ const Segment = <T extends string>({ options, value, onChange }: SegmentProps<T>
  * mode they must go borderless: the sheet already supplies the opaque fill
  * that holds this content off the canvas, and a second tinted box inside it
  * reads as a card-in-a-card — exactly the nesting flat mode exists to remove.
- * Rows keep their own dividers, which is what carries the grouping.
+ * Rows no longer keep dividers in flat mode either (2026-08-07 — "zero
+ * dividers anywhere, no exceptions"); this used to be a deliberate carve-out
+ * ("rows keep their own dividers, which is what carries the grouping") but
+ * that's now explicitly overridden. Vertical padding alone carries the
+ * grouping, same as everywhere else in flat mode.
  */
 const Card = ({ children, style }: { children: React.ReactNode; style?: object }) => {
   const { isDark, theme } = useTheme();
@@ -200,7 +204,7 @@ const Row = ({
       style={[
         styles.row,
         flat && styles.rowFlat,
-        !last && { borderBottomColor: hairline(isDark), borderBottomWidth: StyleSheet.hairlineWidth },
+        !last && !flat && { borderBottomColor: hairline(isDark), borderBottomWidth: StyleSheet.hairlineWidth },
       ]}
     >
       <View style={styles.rowText}>
@@ -304,7 +308,8 @@ const ScopeEditor = ({ scope, items, onChange }: ScopeEditorProps) => {
           <View
             style={[
               styles.scopeHeader,
-              { borderBottomColor: hairline(isDark), borderBottomWidth: StyleSheet.hairlineWidth },
+              // No dividers anywhere in flat mode (2026-08-07).
+              theme?.surfaceStyle !== 'flat' && { borderBottomColor: hairline(isDark), borderBottomWidth: StyleSheet.hairlineWidth },
             ]}
           >
             <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, flex: 1 }}>
@@ -346,7 +351,8 @@ const ScopeEditor = ({ scope, items, onChange }: ScopeEditorProps) => {
                   <View
                     style={[
                       styles.scopeRow,
-                      idx < items.length - 1 && {
+                      // No dividers anywhere in flat mode (2026-08-07).
+                      idx < items.length - 1 && theme?.surfaceStyle !== 'flat' && {
                         borderBottomColor: hairline(isDark),
                         borderBottomWidth: StyleSheet.hairlineWidth,
                       },
@@ -418,7 +424,8 @@ const DisguisePreview = ({ draft }: { draft: Draft }) => {
       <View
         style={[
           styles.previewChatRow,
-          { borderBottomColor: hairline(isDark), borderBottomWidth: StyleSheet.hairlineWidth },
+          // No dividers anywhere in flat mode (2026-08-07).
+          theme?.surfaceStyle !== 'flat' && { borderBottomColor: hairline(isDark), borderBottomWidth: StyleSheet.hairlineWidth },
         ]}
       >
         <View style={[styles.previewAvatar, { backgroundColor: trackBg(isDark) }]}>

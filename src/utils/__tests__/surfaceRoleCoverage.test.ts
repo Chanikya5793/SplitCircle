@@ -32,6 +32,11 @@ const walk = (dir: string, out: string[] = []): string[] => {
 interface GlassTag {
   start: number;
   end: number;
+  // Named `floating` for historical reasons, but really means "always renders
+  // a real, opaque/material fill regardless of surfaceStyle" — role="glass"
+  // (added 2026-08-07, doc 37 Phase 5) shares that invariant: it always falls
+  // through to the native/blur glass path, so it is equally safe as Modal
+  // chrome as role="floating" is.
   floating: boolean;
   selfClosing: boolean;
   line: number;
@@ -45,7 +50,7 @@ const glassTags = (src: string): GlassTag[] => {
     tags.push({
       start: m.index,
       end: m.index + m[0].length,
-      floating: /\brole=["'{]?\s*["']?floating/.test(m[2]),
+      floating: /\brole=["'{]?\s*["']?(floating|glass)/.test(m[2]),
       selfClosing: m[3] === '/',
       line: src.slice(0, m.index).split('\n').length,
     });

@@ -331,7 +331,8 @@ export const BackupPassphraseScreen = () => {
 const styles = StyleSheet.create({
   container: {
     padding: 16,
-    gap: 16,
+    // Tightened 16 -> 10 (2026-08-07, compact density pass).
+    gap: 10,
   },
   card: {
     borderRadius: 20,

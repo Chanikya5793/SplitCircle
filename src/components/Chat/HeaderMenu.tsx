@@ -109,7 +109,8 @@ export const HeaderMenu = ({ visible, topInset, items, onClose }: HeaderMenuProp
                 }}
                 style={[
                   styles.row,
-                  idx < items.length - 1 && {
+                  // No dividers between list items in flat mode (2026-08-07).
+                  idx < items.length - 1 && theme?.surfaceStyle !== 'flat' && {
                     borderBottomColor: divider,
                     borderBottomWidth: StyleSheet.hairlineWidth,
                   },

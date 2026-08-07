@@ -688,7 +688,8 @@ const styles = StyleSheet.create({
   container: {
     padding: 16,
     paddingBottom: 180,
-    gap: 12,
+    // Tightened 12 -> 8 (2026-08-07, compact density pass).
+    gap: 8,
   },
   center: {
     flex: 1,
@@ -708,7 +709,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   card: {
-    padding: 16,
+    // Tightened 16 -> 12, matching PersonalStatsScreen.
+    padding: 12,
     borderRadius: 20,
   },
   sectionTitle: {

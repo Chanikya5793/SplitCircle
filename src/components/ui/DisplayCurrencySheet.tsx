@@ -180,7 +180,13 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
                 activeOpacity={0.7}
                 accessibilityRole="button"
                 accessibilityLabel={`Show amounts in ${base}, the group currency`}
-                style={[styles.row, { borderBottomColor: hairline }]}
+                style={[
+                  styles.row,
+                  // No dividers between list items in flat mode (2026-08-07).
+                  theme?.surfaceStyle === 'flat'
+                    ? { borderBottomWidth: 0 }
+                    : { borderBottomColor: hairline },
+                ]}
               >
                 <View>
                   <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
@@ -200,7 +206,13 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
                   activeOpacity={0.7}
                   accessibilityRole="button"
                   accessibilityLabel={`View amounts in ${code}`}
-                  style={[styles.row, { borderBottomColor: hairline }]}
+                  style={[
+                  styles.row,
+                  // No dividers between list items in flat mode (2026-08-07).
+                  theme?.surfaceStyle === 'flat'
+                    ? { borderBottomWidth: 0 }
+                    : { borderBottomColor: hairline },
+                ]}
                 >
                   <View>
                     <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>
@@ -220,7 +232,13 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
             </ScrollView>
 
             {staged ? (
-              <View style={[styles.ratePanel, { borderTopColor: hairline }]}>
+              <View
+                style={[
+                  styles.ratePanel,
+                  // No dividers anywhere in flat mode (2026-08-07).
+                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                ]}
+              >
                 <View style={styles.rateEditRow}>
                   <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
                     1 {base} =

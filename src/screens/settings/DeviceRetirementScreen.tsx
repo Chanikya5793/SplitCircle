@@ -19,7 +19,7 @@
 // genuinely round-trip through the server, which is the property that
 // mattered — a structurally-intact-but-corrupt backup still fails.
 
-import { GlassCard } from '@/components/ui';
+import { Divider, GlassCard } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -34,7 +34,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHeaderHeight } from '@react-navigation/elements';
-import { Button, Divider, Text, TextInput } from 'react-native-paper';
+import { Button, Text, TextInput } from 'react-native-paper';
 
 /** Typed verbatim to sign out without a verified backup. */
 const FORCE_PHRASE = 'DELETE MY CHAT HISTORY';
@@ -354,7 +354,8 @@ export const DeviceRetirementScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { padding: 16, gap: 16 },
+  // Tightened 16 -> 8 (2026-08-07, compact density pass).
+  container: { padding: 16, gap: 8 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   card: { borderRadius: 20 },
   cardContent: { padding: 20, gap: 12 },

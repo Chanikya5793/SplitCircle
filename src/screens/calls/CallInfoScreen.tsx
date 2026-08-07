@@ -37,6 +37,9 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
   const { threads } = useChat();
   const { groups } = useGroups();
   const { theme, isDark } = useTheme();
+  // No dividers between list items in flat mode (2026-08-07) — the existing
+  // paddingVertical rhythm in detailRow already separates rows.
+  const isFlat = theme?.surfaceStyle === 'flat';
 
   const [relatedCalls, setRelatedCalls] = useState<CallHistoryEntry[]>([]);
 
@@ -243,7 +246,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
             </Text>
           </View>
 
-          <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
+          {!isFlat && <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />}
 
           <View style={styles.detailRow}>
             <Text style={[styles.detailLabel, { color: theme.colors.onSurfaceVariant }]}>
@@ -254,7 +257,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
             </Text>
           </View>
 
-          <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
+          {!isFlat && <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />}
 
           <View style={styles.detailRow}>
             <Text style={[styles.detailLabel, { color: theme.colors.onSurfaceVariant }]}>
@@ -281,7 +284,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
             </View>
           </View>
 
-          <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
+          {!isFlat && <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />}
 
           <View style={styles.detailRow}>
             <Text style={[styles.detailLabel, { color: theme.colors.onSurfaceVariant }]}>
@@ -301,7 +304,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
 
           {entry.status === 'completed' && entry.duration > 0 && (
             <>
-              <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
+              {!isFlat && <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />}
               <View style={styles.detailRow}>
                 <Text style={[styles.detailLabel, { color: theme.colors.onSurfaceVariant }]}>
                   Duration
@@ -324,7 +327,7 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
             </View>
             {relatedCalls.slice(0, 10).map((call, index) => (
               <View key={call.callId}>
-                {index > 0 && (
+                {index > 0 && !isFlat && (
                   <View
                     style={[
                       styles.divider,
@@ -413,7 +416,8 @@ const styles = StyleSheet.create({
   // -- Profile --
   profileSection: {
     alignItems: 'center',
-    marginBottom: 24,
+    // Tightened 24 -> 14 (2026-08-07, compact density pass).
+    marginBottom: 14,
     gap: 8,
   },
   profileName: {
@@ -428,7 +432,7 @@ const styles = StyleSheet.create({
   actionRow: {
     flexDirection: 'row',
     gap: 12,
-    marginBottom: 24,
+    marginBottom: 14,
   },
   actionCard: {
     flex: 1,
@@ -448,7 +452,8 @@ const styles = StyleSheet.create({
   detailCard: {
     borderRadius: 14,
     overflow: 'hidden',
-    marginBottom: 16,
+    // Tightened 16 -> 10.
+    marginBottom: 10,
     paddingHorizontal: 16,
   },
   detailHeader: {

@@ -17,7 +17,7 @@
 // meaningless without knowing what would come back — and a stale or missing
 // backup is exactly the thing you want to notice before you commit.
 
-import { GlassCard } from '@/components/ui';
+import { Divider, GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import {
   BackupProofError,
@@ -31,7 +31,7 @@ import { errorHaptic, successHaptic } from '@/utils/haptics';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, Divider, Text, TextInput } from 'react-native-paper';
+import { Button, Text, TextInput } from 'react-native-paper';
 
 /** Typed verbatim to continue without a backup — deliberately effortful. */
 const NO_BACKUP_PHRASE = 'DELETE MY CHAT HISTORY';

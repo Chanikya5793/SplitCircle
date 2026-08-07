@@ -414,10 +414,13 @@ export const SettingsScreen = () => {
     return <Image source={{ uri: entry.uri }} style={styles.wallpaperThumb} accessibilityIgnoresInvertColors />;
   };
 
-  const divider = (
+  // No dividers anywhere in flat mode (2026-08-07, compact/no-dividers pass)
+  // — row-to-row separation there comes from spacing alone, same as every
+  // other flat surface in the app. Glass mode is untouched: SettingsScreen's
+  // cards still group rows with this hairline, exactly as shipped.
+  const divider = surfaceStyle === 'flat' ? null : (
     <View
-      // theme.colors.divider, not a literal: in flat mode the card edge is gone
-      // and this hairline IS the grouping, so it has to follow the theme rather
+      // theme.colors.divider, not a literal: it has to follow the theme rather
       // than a hardcoded alpha tuned for sitting inside a glass card.
       style={[styles.divider, { backgroundColor: theme.colors.divider }]}
     />

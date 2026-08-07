@@ -1,6 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GuardedScreen } from '@/components/ui';
+import { Divider, GuardedScreen } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { useTheme } from '@/context/ThemeContext';
@@ -21,7 +21,7 @@ import {
     StyleSheet,
     View,
 } from 'react-native';
-import { Avatar, Divider, Text } from 'react-native-paper';
+import { Avatar, Text } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface MessageInfoRouteParams {
@@ -411,7 +411,8 @@ const styles = StyleSheet.create({
   },
   previewCard: {
     marginHorizontal: 16,
-    marginBottom: 16,
+    // Tightened 16 -> 10 (2026-08-07, compact density pass).
+    marginBottom: 10,
     borderRadius: 16,
     padding: 10,
   },
@@ -436,7 +437,8 @@ const styles = StyleSheet.create({
   },
   section: {
     marginHorizontal: 16,
-    marginBottom: 14,
+    // Tightened 14 -> 8.
+    marginBottom: 8,
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
