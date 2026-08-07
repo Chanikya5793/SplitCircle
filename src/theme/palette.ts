@@ -27,7 +27,13 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
     id: 'ocean',
     label: 'Ocean',
     light: {
-      primary: '#1F6FEB',
+      // Darkened #1F6FEB -> #1465E3 (2026-08-07) for WCAG AA. ocean is
+      // DEFAULT_ACCENT, so this was the specific case flagged as "marginal"
+      // in the money/status token pass: 4.10-4.63 across the six solid
+      // backgrounds, failing 4 of 6. Hue preserved; darkened until the worst
+      // ('ink', #EEF1F7) clears 4.6:1. Dark scheme already passed and is
+      // unchanged. Guarded by accentPrimaryContrast.test.ts.
+      primary: '#1465E3',
       onPrimary: '#FFFFFF',
       primaryContainer: '#D8E6FD',
       onPrimaryContainer: '#0A2E66',
@@ -67,7 +73,13 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
     id: 'emerald',
     label: 'Emerald',
     light: {
-      primary: '#059669',
+      // Darkened #059669 -> #047C57 (2026-08-07), same value as `success`/
+      // `moneyPositive` — this was literally the same hex before, so all
+      // three read as the identical green anyway. Was 3.33-3.77 across the
+      // six solid backgrounds (never passed AA anywhere). Hue preserved;
+      // darkened until 'ink' clears 4.6:1. Guarded by
+      // accentPrimaryContrast.test.ts.
+      primary: '#047C57',
       onPrimary: '#FFFFFF',
       primaryContainer: '#CFF5E7',
       onPrimaryContainer: '#054D37',
@@ -87,7 +99,11 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
     id: 'sunset',
     label: 'Sunset',
     light: {
-      primary: '#EA580C',
+      // Darkened #EA580C -> #BB460A (2026-08-07) for WCAG AA. Was 3.15-3.56
+      // across the six solid backgrounds, the worst-failing accent (never
+      // passed AA anywhere). Hue preserved; darkened until 'ink' clears
+      // 4.6:1. Guarded by accentPrimaryContrast.test.ts.
+      primary: '#BB460A',
       onPrimary: '#FFFFFF',
       primaryContainer: '#FDE3D2',
       onPrimaryContainer: '#79300A',
@@ -107,7 +123,11 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
     id: 'rose',
     label: 'Rose',
     light: {
-      primary: '#E11D48',
+      // Darkened #E11D48 -> #D31B44 (2026-08-07) for WCAG AA. Was 4.15-4.70
+      // across the six solid backgrounds, just under the line on the darker
+      // presets. Hue preserved; darkened until 'ink' clears 4.6:1. Guarded
+      // by accentPrimaryContrast.test.ts.
+      primary: '#D31B44',
       onPrimary: '#FFFFFF',
       primaryContainer: '#FBDCE3',
       onPrimaryContainer: '#750A24',
