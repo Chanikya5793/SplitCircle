@@ -176,9 +176,20 @@ export const NEUTRALS = {
     onDanger: '#FFFFFF',
     dangerContainer: '#FBE0DE',
     onDangerContainer: '#7A1610',
-    moneyPositive: '#059669',
-    moneyNegative: '#DC2626',
-    moneyNeutral: '#64748B',
+    // Darkened 2026-08-07 for WCAG AA. Row-level money amounts are 15px — normal
+    // text, so they need 4.5:1, not the 3:1 large-text allowance the 28px hero
+    // figure gets. The old values failed across the board in light mode:
+    // moneyPositive was 3.64:1 on appBackground and 3.33:1 on the darkest solid
+    // preset, i.e. it never passed anywhere, glass or flat. Hue is preserved —
+    // these are the same green/red, darkened until the worst shipped background
+    // ('ink', #EEF1F7) clears 4.6:1.
+    //   moneyPositive #059669 -> 3.33-3.77  |  #047C57 -> 4.61-5.22
+    //   moneyNegative #DC2626 -> 4.27-4.83  |  #D32222 -> 4.62-5.22
+    //   moneyNeutral  #64748B -> 4.21-4.76  |  #5A6675 -> 5.17-5.85 (= muted)
+    // Guarded by moneyContrast in solidBackgroundContrast.test.ts.
+    moneyPositive: '#047C57',
+    moneyNegative: '#D32222',
+    moneyNeutral: '#5A6675',
     // Brighter glass: a higher-alpha white lift under the blur/liquid material
     // (was a near-invisible 0.01) so light-mode surfaces read luminous and airy
     // rather than dim. Border gets a crisper white rim to match.

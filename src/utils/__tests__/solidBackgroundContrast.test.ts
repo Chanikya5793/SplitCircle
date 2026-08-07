@@ -79,6 +79,39 @@ describe('solid background presets', () => {
     },
   );
 
+  // Money is the app's most important text and was the gap in this file's first
+  // version, which checked only `text` and `muted`. Every money token failed AA
+  // in light mode and nothing caught it — moneyPositive was 3.64:1 on the
+  // DEFAULT background, i.e. wrong long before flat mode or solid presets
+  // existed.
+  //
+  // 4.5:1 is the right bar even though the 28px hero figure would qualify for
+  // the 3:1 large-text allowance: the same tokens colour 15px row amounts
+  // ("you are owed ₹1,850.00"), which are normal text.
+  const MONEY = ['moneyPositive', 'moneyNegative', 'moneyNeutral'] as const;
+
+  it.each(
+    SOLID_BACKGROUNDS.flatMap((bg) => MONEY.map((t) => [`${bg.id}/${t}`, bg, t] as const)),
+  )('%s clears WCAG AA in both schemes', (_label, bg, token) => {
+    expect(contrast(NEUTRALS.light[token], bg.light)).toBeGreaterThanOrEqual(AA_BODY);
+    expect(contrast(NEUTRALS.dark[token], bg.dark)).toBeGreaterThanOrEqual(AA_BODY);
+  });
+
+  it('money tokens also clear AA on the plain app background', () => {
+    // Not just the presets — the default canvas is where most users will be,
+    // and it is exactly where moneyPositive was failing unnoticed.
+    for (const token of MONEY) {
+      expect(
+        contrast(NEUTRALS.light[token], NEUTRALS.light.appBackground),
+        `light ${token}`,
+      ).toBeGreaterThanOrEqual(AA_BODY);
+      expect(
+        contrast(NEUTRALS.dark[token], NEUTRALS.dark.appBackground),
+        `dark ${token}`,
+      ).toBeGreaterThanOrEqual(AA_BODY);
+    }
+  });
+
   it('light presets are light and dark presets are dark', () => {
     // Guards a copy/paste swap of the two fields, which contrast alone would
     // not catch (a dark fill still passes against dark-scheme text).
