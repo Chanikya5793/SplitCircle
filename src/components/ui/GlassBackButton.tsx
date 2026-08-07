@@ -38,7 +38,7 @@ export const GlassBackButton = ({ onPress, size = 40, lightContent, style }: Gla
       accessibilityLabel="Go back"
       style={style}
     >
-      <GlassCard radius={size / 2} style={{ width: size, height: size }} contentStyle={styles.content}>
+      <GlassCard role="floating" radius={size / 2} style={{ width: size, height: size }} contentStyle={styles.content}>
         <Ionicons
           name="chevron-back"
           size={size * 0.55}

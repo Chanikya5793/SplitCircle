@@ -341,7 +341,7 @@ const VideoRoomContent = ({ theme, isCameraOff, peer, cameraFacing }: VideoRoomC
 
       {hasRemoteVideo && (
         <View style={styles.videoTopPillWrap} pointerEvents="none">
-          <GlassCard radius={16} contentStyle={styles.videoTopPillContent}>
+          <GlassCard role="floating" radius={16} contentStyle={styles.videoTopPillContent}>
             <Text style={styles.videoTopPillText} numberOfLines={1}>
               {peer.name}
             </Text>
@@ -907,7 +907,7 @@ export const CallSessionScreen = ({
       <View style={styles.container}>
         {/* Status chip — call type + live status, iOS-thin, top center. */}
         <View style={[styles.statusChipWrap, { top: insets.top + 10 }]} pointerEvents="none">
-          <GlassCard radius={14} contentStyle={styles.statusChipContent}>
+          <GlassCard role="floating" radius={14} contentStyle={styles.statusChipContent}>
             <Ionicons
               name={callType === 'video' ? 'videocam' : 'call'}
               size={13}
@@ -926,7 +926,7 @@ export const CallSessionScreen = ({
             accessibilityLabel="Minimize call"
             style={[styles.minimizeBtnWrap, { top: insets.top + 4 }]}
           >
-            <GlassCard radius={18} style={styles.minimizeBtnGlass} contentStyle={styles.minimizeBtnContent}>
+            <GlassCard role="floating" radius={18} style={styles.minimizeBtnGlass} contentStyle={styles.minimizeBtnContent}>
               <Ionicons name="chevron-down" size={22} color="#fff" />
             </GlassCard>
           </TouchableOpacity>

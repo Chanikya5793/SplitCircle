@@ -32,7 +32,12 @@ export type BlobTrio = [string, string, string];
  */
 export type WallpaperEntry =
   | { kind: 'photo'; uri: string; setAt: number }
-  | { kind: 'blob'; light: BlobTrio; dark: BlobTrio; adaptive?: boolean; setAt: number };
+  | { kind: 'blob'; light: BlobTrio; dark: BlobTrio; adaptive?: boolean; setAt: number }
+  // A flat, unanimated fill. Added for flat surface mode, where borderless
+  // content sits directly on the canvas and there is no glass material left to
+  // hold it off a moving backdrop — but it is an independent choice, available
+  // in glass mode too.
+  | { kind: 'solid'; light: string; dark: string; setAt: number };
 
 /**
  * What we actually persist. For photos we store the FILE NAME only, never an
@@ -43,7 +48,8 @@ export type WallpaperEntry =
  */
 type StoredEntry =
   | { kind: 'photo'; file: string; setAt: number }
-  | { kind: 'blob'; light: BlobTrio; dark: BlobTrio; adaptive?: boolean; setAt: number };
+  | { kind: 'blob'; light: BlobTrio; dark: BlobTrio; adaptive?: boolean; setAt: number }
+  | { kind: 'solid'; light: string; dark: string; setAt: number };
 
 type WallpaperMap = Partial<Record<string, StoredEntry>>;
 
@@ -79,12 +85,25 @@ export const onWallpapersChanged = (listener: () => void): (() => void) => {
 /** Filename → absolute URI against the CURRENT container (see StoredEntry). */
 const basename = (p: string): string => p.split('/').pop() ?? p;
 const resolveUri = (file: string): string => new File(wallpapersDir(), file).uri;
-const toEntry = (stored: StoredEntry): WallpaperEntry =>
-  stored.kind === 'blob'
-    ? { kind: 'blob', light: stored.light, dark: stored.dark, adaptive: stored.adaptive, setAt: stored.setAt }
-    : { kind: 'photo', uri: resolveUri(stored.file), setAt: stored.setAt };
+const toEntry = (stored: StoredEntry): WallpaperEntry => {
+  if (stored.kind === 'blob') {
+    return { kind: 'blob', light: stored.light, dark: stored.dark, adaptive: stored.adaptive, setAt: stored.setAt };
+  }
+  if (stored.kind === 'solid') {
+    return { kind: 'solid', light: stored.light, dark: stored.dark, setAt: stored.setAt };
+  }
+  return { kind: 'photo', uri: resolveUri(stored.file), setAt: stored.setAt };
+};
 
-type RawStored = { kind?: string; file?: string; uri?: string; light?: BlobTrio; dark?: BlobTrio; adaptive?: boolean; setAt?: number };
+type RawStored = {
+  kind?: string;
+  file?: string;
+  uri?: string;
+  light?: BlobTrio | string;
+  dark?: BlobTrio | string;
+  adaptive?: boolean;
+  setAt?: number;
+};
 
 const loadMap = async (): Promise<WallpaperMap> => {
   if (cache) return cache;
@@ -97,7 +116,15 @@ const loadMap = async (): Promise<WallpaperMap> => {
     for (const [slot, entry] of Object.entries(parsed)) {
       if (!entry) continue;
       const setAt = entry.setAt ?? Date.now();
-      if (entry.kind === 'blob' && entry.light && entry.dark) {
+      // Order matters: 'solid' stores light/dark as single strings while 'blob'
+      // stores trios, so narrow on the shape, never on truthiness alone.
+      if (entry.kind === 'solid' && typeof entry.light === 'string' && typeof entry.dark === 'string') {
+        next[slot] = { kind: 'solid', light: entry.light, dark: entry.dark, setAt };
+      } else if (
+        entry.kind === 'blob' &&
+        Array.isArray(entry.light) &&
+        Array.isArray(entry.dark)
+      ) {
         next[slot] = { kind: 'blob', light: entry.light, dark: entry.dark, adaptive: entry.adaptive, setAt };
       } else if (entry.file) {
         next[slot] = { kind: 'photo', file: entry.file, setAt };
@@ -236,6 +263,23 @@ export const setWallpaperBlob = async (
   });
 };
 
+/** Set a slot to a flat, unanimated fill. Mirrors setWallpaperBlob — same
+ *  write lock, same previous-file cleanup if it replaces a photo. */
+export const setWallpaperSolid = async (
+  slot: WallpaperSlot,
+  light: string,
+  dark: string,
+): Promise<WallpaperEntry> => {
+  return withWriteLock(async () => {
+    const map = { ...(await loadMap()) };
+    const previous = map[slot];
+    map[slot] = { kind: 'solid', light, dark, setAt: Date.now() };
+    await persistMap(map);
+    deletePreviousFile(previous); // frees the old photo file if we replaced one
+    return toEntry(map[slot]!);
+  });
+};
+
 /**
  * Set a slot from a bundled catalog wallpaper (a require()'d asset module).
  * Copies the asset into the wallpapers dir so entries survive OTA updates
@@ -280,13 +324,18 @@ export const copyWallpaper = async (
     // snapshot was taken before the lock was granted and may be stale by now.
     const fresh = { ...(await loadMap()) };
     const previous = fresh[targetSlot];
-    fresh[targetSlot] = {
-      kind: 'blob' as const,
-      light: [...source.light] as BlobTrio,
-      dark: [...source.dark] as BlobTrio,
-      adaptive: source.adaptive,
-      setAt: Date.now(),
-    };
+    // Branch on the actual kind. This used to assume "not photo ⇒ blob", which
+    // would spread a solid's hex STRING into single characters.
+    fresh[targetSlot] =
+      source.kind === 'solid'
+        ? { kind: 'solid' as const, light: source.light, dark: source.dark, setAt: Date.now() }
+        : {
+            kind: 'blob' as const,
+            light: [...source.light] as BlobTrio,
+            dark: [...source.dark] as BlobTrio,
+            adaptive: source.adaptive,
+            setAt: Date.now(),
+          };
     await persistMap(fresh);
     deletePreviousFile(previous);
     return toEntry(fresh[targetSlot]!);

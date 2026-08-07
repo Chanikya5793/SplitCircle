@@ -196,7 +196,7 @@ export const SettlementsScreen = ({
 
       {showMemberSelector && (
         <View style={styles.modalOverlay}>
-          <GlassView style={styles.modalContent}>
+          <GlassView role="floating" style={styles.modalContent}>
             <Text variant="titleLarge" style={[styles.modalTitle, { color: theme.colors.onSurface }]}>
               Select {selectionMode === 'from' ? 'Payer' : 'Receiver'}
             </Text>

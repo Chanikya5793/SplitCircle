@@ -129,7 +129,7 @@ export const GroupFilterSortSheet: React.FC<GroupFilterSortSheetProps> = ({
                         entering={SlideInDown.springify().damping(30).stiffness(350).mass(1)}
                         style={[styles.sheetContainer, animatedStyle]}
                     >
-                        <GlassCard style={styles.sheetGlass} contentStyle={styles.sheet} intensity={80}>
+                        <GlassCard role="floating" style={styles.sheetGlass} contentStyle={styles.sheet} intensity={80}>
                             {/* Handle bar */}
                             <View style={styles.handleContainer}>
                                 <View style={[styles.handle, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)' }]} />

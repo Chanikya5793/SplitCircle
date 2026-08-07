@@ -431,7 +431,7 @@ export const GroupInfoScreen = () => {
                     style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }], paddingTop: insets.top }]}
                     pointerEvents="none"
                 >
-                    <GlassView style={styles.stickyHeaderGlass}>
+                    <GlassView role="floating" style={styles.stickyHeaderGlass}>
                         <View style={styles.stickyHeaderContent}>
                             <GroupAvatar photoURL={group.photoURL} name={group.name} size={32} />
                             <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>

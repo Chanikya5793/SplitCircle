@@ -2,7 +2,7 @@ import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { ReactionMap } from '@/models';
 import { lightHaptic } from '@/utils/haptics';
-import { BlurView } from 'expo-blur';
+import { ScrimBackdrop } from '@/components/ui/ScrimBackdrop';
 import React, { useEffect } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -91,11 +91,7 @@ export const ReactionDetailsSheet = ({
       <View style={styles.root}>
         {/* Blur backdrop */}
         <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
-          <BlurView
-            intensity={40}
-            tint={isDark ? 'dark' : 'default'}
-            style={StyleSheet.absoluteFill}
-          />
+          <ScrimBackdrop intensity={40} tint={isDark ? 'dark' : 'default'} />
           <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} />
         </Animated.View>
 
@@ -105,7 +101,7 @@ export const ReactionDetailsSheet = ({
         {/* Sheet — anchored to bottom, passes through touches above */}
         <View style={styles.sheetContainer} pointerEvents="box-none">
           <Animated.View style={[styles.sheetWrap, sheetStyle]}>
-            <GlassCard
+            <GlassCard role="floating"
               style={styles.sheetGlass}
               contentStyle={[styles.sheetContent, { paddingBottom: insets.bottom + 16 }]}
             >

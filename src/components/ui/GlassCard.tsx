@@ -1,11 +1,29 @@
-// Unified glass surface for the whole app.
-//   iOS 26+  → native liquid glass via expo-glass-effect
-//   older iOS → expo-blur BlurView with animated theme tint
-//   Android  → near-opaque tinted card (BlurView can't render there)
+// Unified content surface for the whole app. Two treatments, user-selectable
+// (ThemeContext.surfaceStyle) and persisted with mode/accent:
+//
+//   'glass' (default) — the liquid-glass DNA, EXACTLY as it ships today:
+//       iOS 26+  → native liquid glass via expo-glass-effect
+//       older iOS → expo-blur BlurView with animated theme tint
+//       Android  → near-opaque tinted card (BlurView can't render there)
+//   'flat'            — borderless. No blur, no fill, no border, no elevation;
+//       content sits on the canvas and is grouped by section labels and
+//       dividers instead of card edges.
+//
+// `role` matters ONLY in flat mode — glass ignores it, so the shipping UI is
+// bit-for-bit unchanged:
+//
+//   'section'  (default) — a content card. Goes fully borderless when flat.
+//   'floating'           — chrome that must stay readable off the canvas:
+//       bottom sheets, toasts, menus, dropdowns, circular buttons, pills.
+//       A borderless toast is an invisible toast, so these keep an opaque
+//       fill + hairline even in flat mode.
+//
 // Tints, borders, and radii come from theme tokens — never hardcode them here.
 
 import { useTheme } from '@/context/ThemeContext';
 import { NEUTRALS } from '@/theme/palette';
+import { flatRadius } from '@/theme/tokens';
+import type { SurfaceRole } from './surfaceRole';
 import { BlurView } from 'expo-blur';
 import React from 'react';
 import { Platform, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
@@ -52,6 +70,11 @@ const BORDERS =
     ? ([NEUTRALS.light.glassBorderAndroid, NEUTRALS.dark.glassBorderAndroid] as const)
     : ([NEUTRALS.light.glassBorder, NEUTRALS.dark.glassBorder] as const);
 
+// Flat treatment reads the palette directly for the same reason the glass
+// tints do — the themeProgress crossfade worklet needs BOTH schemes at once.
+const FLAT_FILLS = [NEUTRALS.light.flatSurface, NEUTRALS.dark.flatSurface] as const;
+const FLAT_BORDERS = [NEUTRALS.light.flatBorder, NEUTRALS.dark.flatBorder] as const;
+
 export interface GlassCardProps {
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
@@ -62,21 +85,93 @@ export interface GlassCardProps {
   radius?: keyof AppRadius | number;
   /** Escape hatch: skip the native liquid-glass material even when available. */
   forceBlur?: boolean;
+  /**
+   * Flat-mode only (glass ignores it). 'section' goes borderless; 'floating'
+   * keeps an opaque fill so sheets/menus/toasts/buttons stay readable.
+   */
+  role?: SurfaceRole;
 }
+
+/**
+ * Neutralizes a card's own box in borderless mode. Horizontal padding is
+ * zeroed because in glass mode it sat INSIDE a visible card — with the card
+ * gone it reads as a stray indent, pushing content out of line with the
+ * screen's own gutter and with the section label above it. Vertical padding
+ * survives: it becomes the rhythm between rows.
+ */
+const BORDERLESS_RESET = {
+  backgroundColor: 'transparent',
+  borderWidth: 0,
+  borderRadius: 0,
+  paddingHorizontal: 0,
+  paddingLeft: 0,
+  paddingRight: 0,
+  elevation: 0,
+  shadowOpacity: 0,
+} as const;
 
 type AppRadius = ReturnType<typeof useTheme>['theme']['radius'];
 
 export const GlassCard = React.memo(
-  ({ children, style, contentStyle, intensity = 38, radius = 'lg', forceBlur = false }: GlassCardProps) => {
+  ({
+    children,
+    style,
+    contentStyle,
+    intensity = 38,
+    radius = 'lg',
+    forceBlur = false,
+    role = 'section',
+  }: GlassCardProps) => {
     const { isDark, theme, themeProgress } = useTheme();
-    const borderRadius = typeof radius === 'number' ? radius : theme.radius[radius];
+    // Defaulted, not asserted: several component tests mock useTheme() with a
+    // partial theme object, and an undefined surfaceStyle must mean 'glass'
+    // rather than throwing or silently flattening.
+    const isFlat = theme?.surfaceStyle === 'flat';
+    const isBorderless = isFlat && role === 'section';
+
+    // A NUMERIC radius is an explicit geometric requirement from the caller
+    // (circular icon buttons pass radius={50}), so it survives flattening
+    // untouched. Only the token scale is pulled in.
+    const borderRadius =
+      typeof radius === 'number'
+        ? radius
+        : isFlat
+          ? flatRadius[radius]
+          : theme.radius[radius];
 
     const animatedStyle = useAnimatedStyle(() => {
+      const fills = isFlat ? FLAT_FILLS : TINTS;
+      const borders = isFlat ? FLAT_BORDERS : BORDERS;
       return {
-        backgroundColor: interpolateColor(themeProgress.value, [0, 1], [TINTS[0], TINTS[1]]),
-        borderColor: interpolateColor(themeProgress.value, [0, 1], [BORDERS[0], BORDERS[1]]),
+        backgroundColor: interpolateColor(themeProgress.value, [0, 1], [fills[0], fills[1]]),
+        borderColor: interpolateColor(themeProgress.value, [0, 1], [borders[0], borders[1]]),
       };
-    });
+    }, [isFlat]);
+
+    // Flat + section → borderless. Caller styles are flattened first so the
+    // reset can override padding/fill they set themselves; margins, width and
+    // layout survive untouched. Plain Views: nothing here animates, so there is
+    // no reason to pay for Reanimated.
+    if (isBorderless) {
+      return (
+        <View style={[StyleSheet.flatten(style), BORDERLESS_RESET]}>
+          <View style={[styles.content, StyleSheet.flatten(contentStyle), BORDERLESS_RESET]}>
+            {children}
+          </View>
+        </View>
+      );
+    }
+
+    // Flat + floating → one opaque view on every platform. No BlurView, no
+    // native material, and deliberately no Android elevation: a flat surface
+    // that casts a shadow is just a card again.
+    if (isFlat) {
+      return (
+        <Animated.View style={[styles.flat, { borderRadius }, animatedStyle, style]}>
+          <View style={[styles.content, contentStyle]}>{children}</View>
+        </Animated.View>
+      );
+    }
 
     if (LIQUID_GLASS && NativeGlassView && !forceBlur) {
       // Native material carries its own rim highlight — no manual border.
@@ -123,6 +218,10 @@ const styles = StyleSheet.create({
   },
   nativeGlass: {
     overflow: 'hidden',
+  },
+  flat: {
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
   },
   content: {
     zIndex: 1,

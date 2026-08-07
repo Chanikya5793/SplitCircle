@@ -326,7 +326,7 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                 <Pressable style={styles.modalBackdrop} onPress={() => setSelectedDebt(null)} accessibilityLabel="Close breakdown" />
                 <View style={styles.modalContainer} pointerEvents="box-none">
                     {selectedDebt && (
-                        <GlassView
+                        <GlassView role="floating"
                             style={[
                                 styles.modalContent,
                                 {

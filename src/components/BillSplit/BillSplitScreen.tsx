@@ -1,7 +1,7 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
-import { BlurView } from 'expo-blur';
+import { ScrimBackdrop } from '@/components/ui/ScrimBackdrop';
 import type { ExpenseSplitMetadata } from '@/models';
 import { recordSplit } from '@/services/splitHistoryService';
 import { spacing } from '@/theme';
@@ -798,7 +798,7 @@ export const BillSplitScreen = ({
               burns vertical space below. Tapping the subtitle opens the payer
               picker as an overlay. */}
           <View style={styles.headerWrap}>
-            <GlassCard style={styles.headerGlass} contentStyle={styles.header}>
+            <GlassCard role="floating" style={styles.headerGlass} contentStyle={styles.header}>
               <TouchableOpacity onPress={onCancel} activeOpacity={0.7} style={styles.headerSide}>
                 <Text variant="labelLarge" style={{ color: theme.colors.primary }}>Cancel</Text>
               </TouchableOpacity>
@@ -846,7 +846,7 @@ export const BillSplitScreen = ({
                 style={StyleSheet.absoluteFill}
                 onPress={() => { setShowPayerMenu(false); setShowParticipantMenu(false); }}
               >
-                <BlurView intensity={60} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+                <ScrimBackdrop intensity={60} tint={theme.dark ? 'dark' : 'light'} />
                 <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.12)' }]} />
               </Pressable>
             </Animated.View>
@@ -855,7 +855,7 @@ export const BillSplitScreen = ({
           {/* Payer picker — overlay under the header, glass surface */}
           {showPayerMenu && (
             <Animated.View entering={SlideInDown.duration(150)} exiting={SlideOutUp.duration(120)} style={styles.payerOverlay}>
-              <GlassCard style={styles.payerDropdownGlass}>
+              <GlassCard role="floating" style={styles.payerDropdownGlass}>
                 {participants.map((p) => (
                   <Pressable
                     key={p.id}
@@ -880,7 +880,7 @@ export const BillSplitScreen = ({
               Stays open while you toggle several; the header chevron closes it. */}
           {showParticipantMenu && (
             <Animated.View entering={SlideInDown.duration(150)} exiting={SlideOutUp.duration(120)} style={styles.payerOverlay}>
-              <GlassCard style={styles.payerDropdownGlass}>
+              <GlassCard role="floating" style={styles.payerDropdownGlass}>
                 <Pressable
                   onPress={handleSelectAll}
                   style={({ pressed }) => [
@@ -1007,7 +1007,7 @@ export const BillSplitScreen = ({
               exiting={FadeOut.duration(150)}
               style={styles.winnerOverlay}
             >
-              <BlurView intensity={80} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} pointerEvents="none" />
+              <ScrimBackdrop intensity={80} tint={theme.dark ? 'dark' : 'light'} pointerEvents="none" />
               <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} pointerEvents="none" />
               <ConfettiBurst key={loserId} />
               <TouchableOpacity
@@ -1062,7 +1062,7 @@ export const BillSplitScreen = ({
               exiting={FadeOut.duration(150)}
               style={styles.winnerOverlay}
             >
-              <BlurView intensity={80} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} pointerEvents="none" />
+              <ScrimBackdrop intensity={80} tint={theme.dark ? 'dark' : 'light'} pointerEvents="none" />
               <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} pointerEvents="none" />
               <ConfettiBurst key={weightedOutcomeRows.map((row) => `${row.id}:${row.percentage}`).join('|')} />
               <TouchableOpacity
@@ -1079,7 +1079,7 @@ export const BillSplitScreen = ({
                 <Text variant="bodyMedium" style={{ color: theme.colors.muted }}>Everyone can see their final share.</Text>
               </View>
 
-              <GlassCard style={styles.weightedOutcomeGlass} contentStyle={styles.weightedOutcomeContent} forceBlur>
+              <GlassCard role="floating" style={styles.weightedOutcomeGlass} contentStyle={styles.weightedOutcomeContent} forceBlur>
                 <ScrollView showsVerticalScrollIndicator={false}>
                   {weightedOutcomeRows.map((row, index) => (
                     <View key={row.id} style={[
@@ -1124,7 +1124,7 @@ export const BillSplitScreen = ({
               exiting={FadeOut.duration(150)}
               style={styles.winnerOverlay}
             >
-              <BlurView intensity={80} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} pointerEvents="none" />
+              <ScrimBackdrop intensity={80} tint={theme.dark ? 'dark' : 'light'} pointerEvents="none" />
               <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} pointerEvents="none" />
               <ConfettiBurst key={karmaOutcomeRows.map((row) => `${row.id}:${row.amount}`).join('|')} />
               <TouchableOpacity
@@ -1141,7 +1141,7 @@ export const BillSplitScreen = ({
                 <Text variant="bodyMedium" style={{ color: theme.colors.muted }}>Past contributions are reflected in every share.</Text>
               </View>
 
-              <GlassCard style={styles.weightedOutcomeGlass} contentStyle={styles.weightedOutcomeContent} forceBlur>
+              <GlassCard role="floating" style={styles.weightedOutcomeGlass} contentStyle={styles.weightedOutcomeContent} forceBlur>
                 <ScrollView showsVerticalScrollIndicator={false}>
                   {karmaOutcomeRows.map((row, index) => (
                     <View key={row.id} style={[

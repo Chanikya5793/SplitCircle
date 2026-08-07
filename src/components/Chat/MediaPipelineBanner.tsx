@@ -44,7 +44,7 @@ export const MediaPipelineBanner = ({
       pointerEvents="box-none"
       style={[styles.wrapper, { bottom: bottomOffset }]}
     >
-      <GlassView style={styles.banner}>
+      <GlassView role="floating" style={styles.banner}>
         <ActivityIndicator size="small" color={theme.colors.primary} />
         <Text
           numberOfLines={1}

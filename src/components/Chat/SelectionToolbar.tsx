@@ -29,7 +29,7 @@ export const SelectionToolbar = ({
 
   return (
     <View style={[styles.wrap, { paddingTop: topInset + 6 }]}>
-      <GlassView style={styles.bar} intensity={50}>
+      <GlassView role="floating" style={styles.bar} intensity={50}>
         <TouchableOpacity onPress={onClose} hitSlop={10} style={styles.iconBtn}>
           <Ionicons name="close" size={22} color={theme.colors.primary} />
         </TouchableOpacity>

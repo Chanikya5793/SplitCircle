@@ -57,7 +57,8 @@ const errorMessage = (error: unknown, fallback: string): string => {
 export const SettingsScreen = () => {
   const navigation = useNavigation();
   const { user, signOutUser, deleteAccountAndSignOut } = useAuth();
-  const { isDark, theme, mode, setMode, accent, setAccent } = useTheme();
+  const { isDark, theme, mode, setMode, accent, setAccent, surfaceStyle, setSurfaceStyle } =
+    useTheme();
   const appWallpaper = useWallpaperSlot('app');
   const chatDefaultWallpaper = useWallpaperSlot('chat-default');
   const { active: guardActive, duress: guardDuress, settings: guardSettings } = usePrivacyGuard();
@@ -403,6 +404,13 @@ export const SettingsScreen = () => {
         </View>
       );
     }
+    if (entry.kind === 'solid') {
+      return (
+        <View
+          style={[styles.wallpaperThumb, { backgroundColor: isDark ? entry.dark : entry.light }]}
+        />
+      );
+    }
     return <Image source={{ uri: entry.uri }} style={styles.wallpaperThumb} accessibilityIgnoresInvertColors />;
   };
 
@@ -511,6 +519,17 @@ export const SettingsScreen = () => {
                 { value: 'system', label: 'System', icon: 'theme-light-dark' },
                 { value: 'light', label: 'Light', icon: 'white-balance-sunny' },
                 { value: 'dark', label: 'Dark', icon: 'weather-night' },
+              ]}
+            />
+            <SegmentedButtons
+              value={surfaceStyle}
+              onValueChange={(next) => {
+                selectionHaptic();
+                setSurfaceStyle(next as typeof surfaceStyle);
+              }}
+              buttons={[
+                { value: 'glass', label: 'Glass', icon: 'blur' },
+                { value: 'flat', label: 'Flat', icon: 'square-outline' },
               ]}
             />
             <View style={styles.accentRow}>

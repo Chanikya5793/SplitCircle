@@ -134,7 +134,7 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
       <View style={styles.overlay} pointerEvents="box-none">
         <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close Money in Chat settings" />
         <Animated.View onLayout={(e) => setSheetH(e.nativeEvent.layout.height)} style={{ transform: [{ translateY }] }}>
-          <GlassCard
+          <GlassCard role="floating"
             style={styles.sheet}
             contentStyle={[styles.sheetContent, { paddingBottom: insets.bottom + 10 }]}
             intensity={70}

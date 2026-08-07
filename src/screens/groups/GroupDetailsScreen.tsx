@@ -18,7 +18,6 @@ import { errorHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { resolveDisplayName } from '@/utils/identity';
 import * as Clipboard from 'expo-clipboard';
 import { useNavigation } from '@react-navigation/native';
-import { BlurView } from 'expo-blur';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, InteractionManager, Platform, StyleSheet, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
@@ -477,7 +476,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
   return (
     <LiquidBackground wallpaperSlots={[`group:${group.groupId}`, 'app']}>
       <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }] }]}>
-        <GlassView style={styles.stickyHeaderGlass}>
+        <GlassView role="floating" style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]}>{groupDisplayName}</Text>
         </GlassView>
       </Animated.View>
@@ -822,7 +821,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                     opacity kills the native iOS 26 glass material (DESIGN.md's kill
                     list). Not a one-shot mount animation, so it can't be restructured
                     to transform-only like an entering/exiting preset. */}
-                <GlassCard style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
+                <GlassCard role="floating" style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
                   <IconButton icon="chart-pie" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
                 </GlassCard>
@@ -833,7 +832,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 style={styles.compactButtonSmall}
                 borderless
               >
-                <GlassCard style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
+                <GlassCard role="floating" style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
                   <IconButton icon="chat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
                 </GlassCard>
@@ -844,7 +843,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                 style={styles.compactButtonSmall}
                 borderless
               >
-                <GlassCard style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
+                <GlassCard role="floating" style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
                   <IconButton icon="repeat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
                 </GlassCard>
@@ -864,7 +863,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               ]}
               pointerEvents={isCompact ? 'auto' : 'none'}
             >
-              <GlassCard style={styles.androidDock} contentStyle={styles.androidDockContent} radius={50}>
+              <GlassCard role="floating" style={styles.androidDock} contentStyle={styles.androidDockContent} radius={50}>
                 <TouchableRipple onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.success }]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="handshake" size={18} color="#fff" />

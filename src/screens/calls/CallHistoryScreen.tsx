@@ -646,7 +646,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
               {/* Title row: Edit button + "Calls" + new call icon */}
               <View style={styles.titleRow}>
                 <TouchableOpacity onPress={toggleEdit} style={styles.editButton} activeOpacity={0.7}>
-                  <GlassView style={styles.headerPillGlass} contentStyle={styles.editButtonInner}>
+                  <GlassView role="floating" style={styles.headerPillGlass} contentStyle={styles.editButtonInner}>
                     <Text
                       style={[
                         styles.editButtonText,
@@ -674,7 +674,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                   style={styles.newCallButton}
                   activeOpacity={0.7}
                 >
-                  <GlassView style={styles.headerPillGlass} contentStyle={styles.newCallButtonInner}>
+                  <GlassView role="floating" style={styles.headerPillGlass} contentStyle={styles.newCallButtonInner}>
                     <MaterialCommunityIcons
                       name="phone-plus-outline"
                       size={22}
@@ -686,7 +686,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
 
               {/* Filter chips: All | Missed (Apple style segmented) */}
               <View style={styles.filterRow}>
-                <GlassView
+                <GlassView role="floating"
                   style={styles.segmentedGlass}
                   contentStyle={styles.segmentedControl}
                 >
@@ -838,7 +838,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                 entering={SlideInDown.springify().damping(30).stiffness(350).mass(1)}
                 style={[styles.sheetContainer, sheetAnimatedStyle]}
               >
-                <GlassCard style={styles.sheetGlassInner} contentStyle={styles.sheetInner} intensity={80}>
+                <GlassCard role="floating" style={styles.sheetGlassInner} contentStyle={styles.sheetInner} intensity={80}>
                   {/* Handle bar */}
                   <View style={styles.sheetHandle}>
                     <View

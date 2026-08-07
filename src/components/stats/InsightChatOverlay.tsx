@@ -541,7 +541,7 @@ export const InsightChatOverlay = ({
       const isLatest = thread?.messages[thread.messages.length - 1]?.id === item.id;
       return (
         <View style={[styles.msgRow, { justifyContent: 'flex-start' }]}>
-          <GlassView style={[styles.bubble, { borderTopLeftRadius: 4 }]}>
+          <GlassView role="floating" style={[styles.bubble, { borderTopLeftRadius: 4 }]}>
             <Text style={{ color: theme.colors.onSurface, lineHeight: 20 }}>{item.text}</Text>
             {isLatest && (item.options?.length ?? 0) > 0 && (
               <View style={styles.clarifyRow}>
@@ -553,7 +553,7 @@ export const InsightChatOverlay = ({
                     accessibilityRole="button"
                     accessibilityLabel={opt}
                   >
-                    <GlassView style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
+                    <GlassView role="floating" style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
                       <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600' }}>
                         {opt}
                       </Text>
@@ -572,7 +572,7 @@ export const InsightChatOverlay = ({
     const actionPayload = isUser ? null : actionPayloadOf(item.payload);
     return (
       <View style={[styles.msgRow, { justifyContent: isUser ? 'flex-end' : 'flex-start' }]}>
-        <GlassView
+        <GlassView role="floating"
           style={[
             styles.bubble,
             isUser
@@ -639,7 +639,7 @@ export const InsightChatOverlay = ({
                   accessibilityRole="button"
                   accessibilityLabel={opt}
                 >
-                  <GlassView style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
+                  <GlassView role="floating" style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
                     <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600' }}>
                       {opt}
                     </Text>
@@ -688,7 +688,7 @@ export const InsightChatOverlay = ({
                     accessibilityRole="button"
                     accessibilityLabel={FEEDBACK_REASON_LABELS[r]}
                   >
-                    <GlassView style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
+                    <GlassView role="floating" style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
                       <Text variant="labelSmall" style={{ color: theme.colors.primary, fontWeight: '600' }}>
                         {FEEDBACK_REASON_LABELS[r]}
                       </Text>
@@ -760,7 +760,7 @@ export const InsightChatOverlay = ({
                       accessibilityRole="button"
                       accessibilityLabel="Close insights chat"
                     >
-                      <GlassView style={styles.glassCircle}>
+                      <GlassView role="floating" style={styles.glassCircle}>
                         <Icon source="chevron-down" size={24} color={theme.colors.onSurface} />
                       </GlassView>
                     </TouchableOpacity>
@@ -772,7 +772,7 @@ export const InsightChatOverlay = ({
                         accessibilityRole="button"
                         accessibilityLabel="Model and context settings"
                       >
-                        <GlassView style={styles.titlePill} contentStyle={styles.titlePillContent}>
+                        <GlassView role="floating" style={styles.titlePill} contentStyle={styles.titlePillContent}>
                           <Text
                             variant="titleSmall"
                             numberOfLines={1}
@@ -802,7 +802,7 @@ export const InsightChatOverlay = ({
                       accessibilityRole="button"
                       accessibilityLabel="Conversation history"
                     >
-                      <GlassView style={styles.glassCircle}>
+                      <GlassView role="floating" style={styles.glassCircle}>
                         <Icon
                           source="history"
                           size={20}
@@ -818,7 +818,7 @@ export const InsightChatOverlay = ({
                       accessibilityRole="button"
                       accessibilityLabel="New thread"
                     >
-                      <GlassView style={styles.glassCircle}>
+                      <GlassView role="floating" style={styles.glassCircle}>
                         <Icon source="plus" size={22} color={theme.colors.onSurface} />
                       </GlassView>
                     </TouchableOpacity>
@@ -828,7 +828,7 @@ export const InsightChatOverlay = ({
 
                 {/* Model + context picker — the title pill's liquid-glass menu */}
                 {settingsOpen && (
-                  <GlassView style={[styles.historyPanel, { top: insets.top + 66 }]}>
+                  <GlassView role="floating" style={[styles.historyPanel, { top: insets.top + 66 }]}>
                     <Text
                       variant="labelSmall"
                       style={[styles.menuSection, { color: theme.colors.onSurfaceVariant }]}
@@ -920,7 +920,7 @@ export const InsightChatOverlay = ({
 
                 {/* History dropdown */}
                 {historyOpen && (
-                  <GlassView style={[styles.historyPanel, { top: insets.top + 66 }]}>
+                  <GlassView role="floating" style={[styles.historyPanel, { top: insets.top + 66 }]}>
                     {history.length === 0 ? (
                       <Text
                         variant="labelSmall"
@@ -1002,7 +1002,7 @@ export const InsightChatOverlay = ({
                   ListFooterComponent={
                     busy ? (
                       <View style={[styles.msgRow, { justifyContent: 'flex-start' }]}>
-                        <GlassView style={[styles.bubble, { borderTopLeftRadius: 4 }]}>
+                        <GlassView role="floating" style={[styles.bubble, { borderTopLeftRadius: 4 }]}>
                           {pending?.partial ? (
                             // Streamed narration filling in live (P2).
                             <Text style={{ color: theme.colors.onSurface, lineHeight: 20 }}>
@@ -1042,7 +1042,7 @@ export const InsightChatOverlay = ({
                         accessibilityRole="button"
                         accessibilityLabel={p}
                       >
-                        <GlassView style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
+                        <GlassView role="floating" style={[styles.starterChip, { borderColor: `${theme.colors.primary}70` }]}>
                           <Text
                             variant="labelSmall"
                             style={{ color: theme.colors.primary, fontWeight: '600' }}
@@ -1057,7 +1057,7 @@ export const InsightChatOverlay = ({
 
                 {/* Composer — layout lives in contentStyle: GlassCard lays out
                     children in its INNER content view, not the outer shell. */}
-                <GlassView
+                <GlassView role="floating"
                   style={[
                     styles.inputBarShell,
                     { marginBottom: keyboardShown ? 6 : Math.max(insets.bottom, 10) },

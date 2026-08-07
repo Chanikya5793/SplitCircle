@@ -1368,7 +1368,7 @@ const MinimizedCallBanner = () => {
 
   return (
     <TouchableOpacity activeOpacity={0.92} onPress={showActiveCallUi} style={styles.callBannerWrap}>
-      <GlassView style={styles.callBanner}>
+      <GlassView role="floating" style={styles.callBanner}>
         <View
           style={[
             styles.callBannerIcon,

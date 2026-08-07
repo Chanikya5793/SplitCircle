@@ -42,12 +42,12 @@ export const ChatSearchBar = ({
     <View style={[styles.wrap, { paddingTop: topInset + 6 }]}>
       <View style={styles.row}>
         <TouchableOpacity onPress={onClose} style={styles.button} hitSlop={8}>
-          <GlassView style={styles.buttonGlass} intensity={40}>
+          <GlassView role="floating" style={styles.buttonGlass} intensity={40}>
             <Ionicons name="close" size={22} color={theme.colors.primary} />
           </GlassView>
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <GlassView style={styles.searchGlass} intensity={40}>
+          <GlassView role="floating" style={styles.searchGlass} intensity={40}>
             <Ionicons name="search" size={16} color={subtle} style={{ marginLeft: 12 }} />
             <TextInput
               ref={inputRef}
@@ -74,7 +74,7 @@ export const ChatSearchBar = ({
             style={[styles.navButton, matchCount === 0 && { opacity: 0.4 }]}
             hitSlop={8}
           >
-            <GlassView style={styles.navGlass} intensity={40}>
+            <GlassView role="floating" style={styles.navGlass} intensity={40}>
               <Ionicons name="chevron-up" size={18} color={theme.colors.primary} />
             </GlassView>
           </TouchableOpacity>
@@ -84,7 +84,7 @@ export const ChatSearchBar = ({
             style={[styles.navButton, matchCount === 0 && { opacity: 0.4 }]}
             hitSlop={8}
           >
-            <GlassView style={styles.navGlass} intensity={40}>
+            <GlassView role="floating" style={styles.navGlass} intensity={40}>
               <Ionicons name="chevron-down" size={18} color={theme.colors.primary} />
             </GlassView>
           </TouchableOpacity>

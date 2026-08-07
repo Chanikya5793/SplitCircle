@@ -101,7 +101,7 @@ export const FailedItemsSheet = ({
     >
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable onPress={() => undefined}>
-        <GlassCard style={styles.sheetGlass} contentStyle={styles.sheetContent}>
+        <GlassCard role="floating" style={styles.sheetGlass} contentStyle={styles.sheetContent}>
           <View style={styles.handle} />
           <View style={styles.headerRow}>
             <View style={{ flex: 1 }}>

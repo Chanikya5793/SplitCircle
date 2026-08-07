@@ -366,7 +366,7 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
     >
       <GestureHandlerRootView style={styles.root}>
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-          <GlassCard radius="lg" style={styles.headerPill} contentStyle={styles.headerPillContent}>
+          <GlassCard role="floating" radius="lg" style={styles.headerPill} contentStyle={styles.headerPillContent}>
             <Pressable onPress={onCancel} hitSlop={12} style={styles.headerButton}>
               <Text style={styles.headerButtonText}>Cancel</Text>
             </Pressable>
@@ -484,7 +484,7 @@ export const MediaEditor = ({ visible, uri, onCancel, onDone }: MediaEditorProps
         </View>
 
         <View style={[styles.controls, { paddingBottom: insets.bottom + 8 }]}>
-          <GlassCard style={styles.controlCard} contentStyle={styles.controlCardContent}>
+          <GlassCard role="floating" style={styles.controlCard} contentStyle={styles.controlCardContent}>
             {tool === 'crop' ? (
               <CropControls
                 aspectId={aspectId}

@@ -16,6 +16,7 @@ import {
   pickAndSetWallpaper,
   setWallpaperBlob,
   setWallpaperFromBundled,
+  setWallpaperSolid,
   type WallpaperSlot,
 } from '@/services/wallpaperService';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
@@ -91,6 +92,7 @@ export const WallpaperPickerSheet = ({
     setBusyId(item.id);
     try {
       if (item.kind === 'blob') await setWallpaperBlob(slot, item.light, item.dark, item.adaptive);
+      else if (item.kind === 'solid') await setWallpaperSolid(slot, item.light, item.dark);
       else await setWallpaperFromBundled(slot, item.source);
       successHaptic();
       onChanged?.(slot);
@@ -242,11 +244,21 @@ export const WallpaperPickerSheet = ({
               accessibilityLabel={`${item.label} wallpaper`}
             >
               <View>
-                <Image
-                  source={item.kind === 'blob' ? item.thumb : item.source}
-                  style={styles.thumb}
-                  accessibilityIgnoresInvertColors
-                />
+                {item.kind === 'solid' ? (
+                  // No thumbnail asset for a solid — the swatch IS the colour.
+                  <View
+                    style={[
+                      styles.thumb,
+                      { backgroundColor: isDark ? item.dark : item.light },
+                    ]}
+                  />
+                ) : (
+                  <Image
+                    source={item.kind === 'blob' ? item.thumb : item.source}
+                    style={styles.thumb}
+                    accessibilityIgnoresInvertColors
+                  />
+                )}
                 {item.kind === 'blob' && (
                   <View style={styles.animBadge} pointerEvents="none">
                     <Ionicons name="sparkles" size={11} color="#fff" />

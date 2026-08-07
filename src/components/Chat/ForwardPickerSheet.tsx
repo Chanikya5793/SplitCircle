@@ -102,7 +102,7 @@ export const ForwardPickerSheet = ({
         <Pressable style={StyleSheet.absoluteFill} onPress={handleClose}>
           <View style={styles.backdrop} />
         </Pressable>
-        <GlassCard style={styles.sheetGlass} contentStyle={styles.sheetContent}>
+        <GlassCard role="floating" style={styles.sheetGlass} contentStyle={styles.sheetContent}>
           <View style={styles.handleWrap}>
             <View style={[styles.handle, { backgroundColor: isDark ? '#555' : '#ccc' }]} />
           </View>

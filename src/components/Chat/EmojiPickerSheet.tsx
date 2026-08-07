@@ -1,7 +1,7 @@
 import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import { lightHaptic } from '@/utils/haptics';
-import { BlurView } from 'expo-blur';
+import { ScrimBackdrop } from '@/components/ui/ScrimBackdrop';
 import React, { memo, useMemo, useState } from 'react';
 import {
   Dimensions,
@@ -193,14 +193,10 @@ export const EmojiPickerSheet = memo(({
       onRequestClose={onClose}
     >
       <Pressable style={styles.overlay} onPress={onClose}>
-        <BlurView
-          intensity={15}
-          tint={isDark ? 'dark' : 'light'}
-          style={StyleSheet.absoluteFill}
-        />
+        <ScrimBackdrop intensity={15} tint={isDark ? 'dark' : 'light'} />
       </Pressable>
       <Animated.View style={styles.sheetAnchor} entering={SlideInDown.duration(260)}>
-        <GlassCard style={styles.sheetGlass} contentStyle={styles.sheetContent}>
+        <GlassCard role="floating" style={styles.sheetGlass} contentStyle={styles.sheetContent}>
           <View style={styles.sheetHandle} />
           <Text
             variant="titleSmall"

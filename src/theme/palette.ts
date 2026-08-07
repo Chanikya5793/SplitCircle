@@ -158,7 +158,11 @@ export const NEUTRALS = {
     appBackground: '#F9FBFF',
     surface: '#FFFFFF',
     text: '#1F2937',
-    muted: '#64748B',
+    // Darkened from '#64748B' (2026-08-06). The old value was only 4.59:1 on
+    // appBackground — right on the WCAG AA line before anything is layered
+    // over it, and under it on any tinted solid background. Glass mode was
+    // masking this; borderless flat mode has no material left to mask it.
+    muted: '#5A6675',
     border: '#E2E8F0',
     success: '#059669',
     onSuccess: '#FFFFFF',
@@ -182,6 +186,16 @@ export const NEUTRALS = {
     glassBorder: 'rgba(255, 255, 255, 0.35)',
     glassBorderAndroid: 'rgba(15, 23, 42, 0.08)',
     glassFallback: 'rgba(255, 255, 255, 0.9)',
+    // Flat surface treatment (surfaceStyle === 'flat'). OPAQUE by design: the
+    // glass material is doing legibility work over the ambient blobs, and a
+    // translucent flat fill would inherit the blob contrast failure instead of
+    // fixing it (muted text hits 2.92:1 over the worst blob — below AA).
+    flatSurface: '#FFFFFF',
+    // Second level, for a surface that must sit ON a flatSurface (nested rows,
+    // inputs) without a border doing the separating.
+    flatSurfaceAlt: '#F1F5F9',
+    flatBorder: 'rgba(15, 23, 42, 0.10)',
+    divider: 'rgba(15, 23, 42, 0.08)',
     skeleton: 'rgba(15, 23, 42, 0.08)',
     // Semantic scrims/fills so screens stop hand-rolling rgba(0,0,0,x) literals.
     // overlay: full modal backdrop · backdrop: subtle content scrim ·
@@ -222,6 +236,12 @@ export const NEUTRALS = {
     // Nudged up in step with the lifted dark surface so Android dark cards match
     // (was 'rgba(28, 30, 36, 0.86)') — still deep, avoids the muddy look.
     glassFallback: 'rgba(36, 36, 40, 0.86)',
+    // Flat surface treatment — see the light-scheme note above. Sits just off
+    // appBackground (#121212) so a group reads as structure without a border.
+    flatSurface: '#1C1C1F',
+    flatSurfaceAlt: '#252529',
+    flatBorder: 'rgba(255, 255, 255, 0.10)',
+    divider: 'rgba(255, 255, 255, 0.08)',
     skeleton: 'rgba(255, 255, 255, 0.10)',
     // Semantic scrims/fills so screens stop hand-rolling rgba(0,0,0,x) literals.
     // overlay: full modal backdrop · backdrop: subtle content scrim ·

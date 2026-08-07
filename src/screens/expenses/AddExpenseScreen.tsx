@@ -1059,7 +1059,7 @@ export const AddExpenseScreen = ({ group, expenseId, initialAmount, initialTitle
 
         {/* Docked action bar — Cancel / Save are always in reach, no scroll to
             the bottom of the form required. */}
-        <GlassCard style={styles.dockedGlass} contentStyle={styles.dockedActions}>
+        <GlassCard role="floating" style={styles.dockedGlass} contentStyle={styles.dockedActions}>
           <Button mode="outlined" onPress={onClose} style={[styles.dockedCancel, { borderColor: `${theme.colors.primary}55` }]}>
             Cancel
           </Button>

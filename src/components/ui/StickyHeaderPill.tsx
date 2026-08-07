@@ -16,7 +16,7 @@ export interface StickyHeaderPillProps {
 }
 
 export const StickyHeaderPill = ({ children, style }: StickyHeaderPillProps) => (
-  <GlassCard radius={20} intensity={45} contentStyle={[styles.pillContent, style]}>
+  <GlassCard role="floating" radius={20} intensity={45} contentStyle={[styles.pillContent, style]}>
     {children}
   </GlassCard>
 );

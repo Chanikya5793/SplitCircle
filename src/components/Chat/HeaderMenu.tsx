@@ -90,7 +90,7 @@ export const HeaderMenu = ({ visible, topInset, items, onClose }: HeaderMenuProp
           <Animated.View style={[styles.backdrop, backdropStyle]} />
         </Pressable>
         <Animated.View style={[styles.menuWrap, { top: topInset + 56 }, sheetStyle]}>
-          <GlassCard radius={14} contentStyle={styles.menuContent}>
+          <GlassCard role="floating" radius={14} contentStyle={styles.menuContent}>
             {items.map((item, idx) => (
               <TouchableOpacity
                 key={item.key}

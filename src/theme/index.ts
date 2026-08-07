@@ -4,5 +4,5 @@ export { buildTheme } from './buildTheme';
 export type { AppTheme, BlobPalettes, ColorScheme, SemanticColors } from './buildTheme';
 export { brand, mugguMotion } from './brand';
 export type { BrandTokens } from './brand';
-export { animation, radius, spacing, typography } from './tokens';
-export type { Radius, Spacing, Typography, TypeToken } from './tokens';
+export { animation, flatRadius, radius, spacing, typography } from './tokens';
+export type { Radius, Spacing, SurfaceStyle, Typography, TypeToken } from './tokens';

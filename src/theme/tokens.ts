@@ -21,6 +21,28 @@ export const radius = {
   pill: 999,
 } as const;
 
+/**
+ * Surface treatment for every bounded content surface in the app.
+ *   'glass' — the liquid-glass DNA (blur/native material, floats over blobs)
+ *   'flat'  — opaque fill, hairline edge, calmer radii, no blur or elevation
+ * User-selectable and persisted alongside mode/accent (see ThemeContext).
+ */
+export type SurfaceStyle = 'glass' | 'flat';
+
+/**
+ * Corner radii used when surfaceStyle is 'flat'. Flattening pulls the scale in:
+ * a 20pt pill-ish card reads as decoration, a 12pt one reads as structure.
+ * `pill` stays 999 — circular controls stay circular in both modes.
+ */
+export const flatRadius = {
+  xs: 6,
+  sm: 8,
+  md: 10,
+  lg: 12,
+  xl: 16,
+  pill: 999,
+} as const;
+
 export interface TypeToken {
   fontSize: number;
   lineHeight: number;

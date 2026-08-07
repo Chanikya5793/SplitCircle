@@ -113,7 +113,7 @@ export const SplitFooter = React.memo(({
   const ctaIcon = isSpinning ? 'timer-sand' : canSpin ? 'rotate-right' : 'check';
 
   return (
-    <GlassCard style={styles.footerGlass} contentStyle={styles.footer}>
+    <GlassCard role="floating" style={styles.footerGlass} contentStyle={styles.footer}>
       <View style={styles.summary}>
         <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '800' }} numberOfLines={1}>
           {headline}

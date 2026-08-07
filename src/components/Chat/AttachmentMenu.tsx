@@ -692,7 +692,7 @@ export const AttachmentMenu = ({ visible, onClose, onMediaSelected }: Attachment
         {/* Menu */}
         <GestureDetector gesture={gesture}>
           <Animated.View style={menuStyle}>
-            <GlassCard style={styles.menuGlass} contentStyle={styles.menuContent}>
+            <GlassCard role="floating" style={styles.menuGlass} contentStyle={styles.menuContent}>
               {/* Handle */}
               <View style={styles.handleContainer}>
                 <View style={[styles.handle, { backgroundColor: theme.colors.outlineVariant ?? (isDark ? '#555' : '#ccc') }]} />

@@ -150,9 +150,20 @@ const Segment = <T extends string>({ options, value, onChange }: SegmentProps<T>
   );
 };
 
-/** Grouped rows in a translucent inset card (the glass shows through). */
+/**
+ * Grouped rows in a translucent inset card (the glass shows through).
+ *
+ * These sit INSIDE the sheet's own `role="floating"` GlassCard, so in flat
+ * mode they must go borderless: the sheet already supplies the opaque fill
+ * that holds this content off the canvas, and a second tinted box inside it
+ * reads as a card-in-a-card — exactly the nesting flat mode exists to remove.
+ * Rows keep their own dividers, which is what carries the grouping.
+ */
 const Card = ({ children, style }: { children: React.ReactNode; style?: object }) => {
-  const { isDark } = useTheme();
+  const { isDark, theme } = useTheme();
+  if (theme?.surfaceStyle === 'flat') {
+    return <View style={[styles.cardFlat, style]}>{children}</View>;
+  }
   return (
     <View
       style={[
@@ -180,8 +191,18 @@ const Row = ({
   last?: boolean;
 }) => {
   const { theme, isDark } = useTheme();
+  // Flat: the enclosing Card has no box any more, so the row's own 14pt inset
+  // would sit content at 34pt while the section headings around it sit at the
+  // body's 20pt gutter. Drop it and let one gutter govern the whole sheet.
+  const flat = theme?.surfaceStyle === 'flat';
   const inner = (
-    <View style={[styles.row, !last && { borderBottomColor: hairline(isDark), borderBottomWidth: StyleSheet.hairlineWidth }]}>
+    <View
+      style={[
+        styles.row,
+        flat && styles.rowFlat,
+        !last && { borderBottomColor: hairline(isDark), borderBottomWidth: StyleSheet.hairlineWidth },
+      ]}
+    >
       <View style={styles.rowText}>
         <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
           {label}
@@ -561,7 +582,7 @@ export const PrivacyGuardSheet = ({ visible, onClose }: PrivacyGuardSheetProps) 
           onLayout={(e) => setSheetH(e.nativeEvent.layout.height)}
           style={[styles.sheetWrap, { transform: [{ translateY }] }]}
         >
-          <GlassCard style={styles.sheet} contentStyle={styles.sheetContent} intensity={70}>
+          <GlassCard role="floating" style={styles.sheet} contentStyle={styles.sheetContent} intensity={70}>
             <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)' }]} />
             <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
               Shake to hide
@@ -1057,6 +1078,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
+  },
+  // Flat: no fill, no border, no radius — the row dividers do the grouping.
+  cardFlat: {
+    overflow: 'hidden',
+  },
+  rowFlat: {
+    paddingHorizontal: 0,
   },
   row: {
     flexDirection: 'row',

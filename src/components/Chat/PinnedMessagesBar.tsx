@@ -58,7 +58,7 @@ export const PinnedMessagesBar = ({ pinned, topInset, resolveSenderName, onPress
       pointerEvents="box-none"
     >
       <TouchableOpacity onPress={handleTap} activeOpacity={0.85} style={styles.touchable}>
-        <GlassView style={styles.bar} intensity={50}>
+        <GlassView role="floating" style={styles.bar} intensity={50}>
           <View style={[styles.accent, { backgroundColor: theme.colors.primary }]} />
           <Ionicons
             name={iconForType(current.type)}

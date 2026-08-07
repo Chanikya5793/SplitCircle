@@ -497,7 +497,7 @@ export const NotificationSettingsScreen = () => {
         ]}
         pointerEvents="none"
       >
-        <GlassView style={styles.stickyHeaderGlass}>
+        <GlassView role="floating" style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={{ fontWeight: 'bold', color: primaryTextColor }}>
             {SCREEN_TITLES.notifications}
           </Text>

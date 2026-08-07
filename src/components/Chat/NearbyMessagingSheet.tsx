@@ -240,7 +240,7 @@ export const NearbyMessagingSheet = ({
             },
           ]}
         >
-          <GlassCard
+          <GlassCard role="floating"
             radius="xl"
             style={styles.sheetCard}
             contentStyle={styles.sheetContent}
@@ -267,7 +267,7 @@ export const NearbyMessagingSheet = ({
                 accessibilityLabel="Close"
                 style={styles.closeButton}
               >
-                <GlassCard radius={17} contentStyle={styles.closeButtonContent}>
+                <GlassCard role="floating" radius={17} contentStyle={styles.closeButtonContent}>
                   <Ionicons name="close" size={20} color={theme.colors.onSurfaceVariant} />
                 </GlassCard>
               </Pressable>

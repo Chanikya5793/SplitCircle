@@ -458,7 +458,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
     const isUser = item.role === 'user';
     return (
       <View style={[styles.row, { justifyContent: isUser ? 'flex-end' : 'flex-start' }]}>
-        <GlassView
+        <GlassView role="floating"
           style={[
             styles.bubble,
             isUser
@@ -607,7 +607,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
         keyboardVerticalOffset={0}
       >
         {historyOpen && (
-          <GlassView style={[styles.historyPanel, { top: headerHeight + 4 }]}>
+          <GlassView role="floating" style={[styles.historyPanel, { top: headerHeight + 4 }]}>
             {threads.length === 0 ? (
               <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant, padding: 14 }}>
                 No conversations yet.
@@ -672,7 +672,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           ListFooterComponent={
             busy ? (
               <View style={[styles.row, { justifyContent: 'flex-start' }]}>
-                <GlassView style={[styles.bubble, { borderTopLeftRadius: 4 }]}>
+                <GlassView role="floating" style={[styles.bubble, { borderTopLeftRadius: 4 }]}>
                   {pending?.partial ? (
                     <Text style={{ color: theme.colors.onSurface, lineHeight: 20 }}>{pending.partial}</Text>
                   ) : (
@@ -701,7 +701,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
           </View>
         ) : null}
 
-        <GlassView
+        <GlassView role="floating"
           style={[styles.inputBarShell, { marginBottom: keyboardVisible ? 6 : Math.max(insets.bottom, 10) }]}
           contentStyle={styles.inputBarRow}
         >

@@ -156,7 +156,7 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
           onLayout={(e) => setSheetH(e.nativeEvent.layout.height)}
           style={{ transform: [{ translateY }] }}
         >
-          <GlassCard
+          <GlassCard role="floating"
             style={styles.sheet}
             contentStyle={[styles.sheetContent, { paddingBottom: insets.bottom + 10 }]}
             intensity={70}

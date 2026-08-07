@@ -762,7 +762,7 @@ export const RecurringBillsScreen = ({ group }: RecurringBillsScreenProps) => {
                         onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}
                         style={{ transform: [{ translateY: sheetTranslateY }] }}
                     >
-                        <GlassView style={styles.sheet} intensity={80}>
+                        <GlassView role="floating" style={styles.sheet} intensity={80}>
                             <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)' }]} />
                             <Text variant="titleLarge" style={{ fontWeight: '700', color: theme.colors.onSurface, textAlign: 'center', marginBottom: 12 }}>
                                 {editingBillId ? 'Edit Recurring Bill' : 'New Recurring Bill'}

@@ -1115,7 +1115,7 @@ export const MediaPreview = ({ items, visible, onClose, onSend, onPreviewReady }
             onPress={() => setQualityMenuOpen(false)}
           >
             <TouchableOpacity activeOpacity={1} style={styles.qualitySheetTouchWrap}>
-              <GlassCard style={styles.qualitySheetGlass} contentStyle={styles.qualitySheetContent}>
+              <GlassCard role="floating" style={styles.qualitySheetGlass} contentStyle={styles.qualitySheetContent}>
               <Text style={[styles.qualitySheetTitle, { color: theme.colors.onSurface }]}>
                 {internalItems.length > 1
                   ? `Send item ${safeIndex + 1} of ${internalItems.length} as`

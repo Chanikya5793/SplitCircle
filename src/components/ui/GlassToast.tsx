@@ -89,7 +89,7 @@ export const GlassToast = ({
   return (
     <View pointerEvents="box-none" style={[styles.wrapper, { bottom: bottomOffset }]}>
       <Animated.View style={{ transform: [{ translateY: translate }] }}>
-        <GlassCard style={styles.toast} contentStyle={styles.toastContent} radius={16}>
+        <GlassCard role="floating" style={styles.toast} contentStyle={styles.toastContent} radius={16}>
           {icon ? (
             <Icon source={icon} size={20} color={theme.colors.primary} />
           ) : null}

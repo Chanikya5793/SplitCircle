@@ -323,7 +323,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
                   style={styles.filterButton}
                   borderless
                 >
-                  <GlassView intensity={40} style={styles.filterButtonContent}>
+                  <GlassView role="floating" intensity={40} style={styles.filterButtonContent}>
                     <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
                     {(selectedCurrencies.length > 0) && (
                       <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary, borderColor: theme.colors.background }]}>
@@ -392,7 +392,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           activeOpacity={0.8}
           style={styles.glassAction}
         >
-          <GlassView style={styles.glassActionInner}>
+          <GlassView role="floating" style={styles.glassActionInner}>
             <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Friends</Text>
           </GlassView>
         </TouchableOpacity>
@@ -403,7 +403,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           style={styles.glassAction}
         >
           {/* GlassView provides the blurred/frosted fill inside the button */}
-          <GlassView style={styles.glassActionInner}>
+          <GlassView role="floating" style={styles.glassActionInner}>
             <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Join via code</Text>
           </GlassView>
         </TouchableOpacity>
@@ -440,7 +440,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           style={[styles.modalContainer, keyboardVisible && { marginBottom: 300 }]}
           pointerEvents="box-none"
         >
-          <GlassCard style={styles.glassCard}>
+          <GlassCard role="floating" style={styles.glassCard}>
             <Text variant="headlineSmall" style={[styles.modalTitle, { color: theme.colors.onSurface }]}>Create group</Text>
             <ScrollView contentContainerStyle={{ paddingHorizontal: 4 }} keyboardShouldPersistTaps="handled">
               <FloatingLabelInput
@@ -462,7 +462,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
                   style={showCurrencyList ? { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } : undefined}
                 />
                 {showCurrencyList && (
-                  <GlassCard
+                  <GlassCard role="floating"
                     style={[styles.currencyList, { borderTopLeftRadius: 0, borderTopRightRadius: 0 }]}
                     radius={20}
                   >
@@ -513,7 +513,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           style={[styles.modalContainer, keyboardVisible && { marginBottom: 150 }]}
           pointerEvents="box-none"
         >
-          <GlassCard style={styles.glassCard}>
+          <GlassCard role="floating" style={styles.glassCard}>
             <Text variant="headlineSmall" style={[styles.modalTitle, { color: theme.colors.onSurface }]}>Join group</Text>
             <FloatingLabelInput
               label="Invite code"

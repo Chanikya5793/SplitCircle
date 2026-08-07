@@ -5,7 +5,7 @@ import type { ChatMessage } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
 import { errorHaptic, lightHaptic, mediumHaptic } from '@/utils/haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { BlurView } from 'expo-blur';
+import { ScrimBackdrop } from '@/components/ui/ScrimBackdrop';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal,
@@ -267,11 +267,7 @@ export const MessageActionSheet = ({
       <View style={styles.root}>
         {/* Blur visual layer */}
         <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
-          <BlurView
-            intensity={60}
-            tint={isDark ? 'dark' : 'default'}
-            style={StyleSheet.absoluteFill}
-          />
+          <ScrimBackdrop intensity={60} tint={isDark ? 'dark' : 'default'} />
           <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)' }]} />
         </Animated.View>
 
@@ -286,7 +282,7 @@ export const MessageActionSheet = ({
           <View style={styles.scrollContent} pointerEvents="box-none">
             {/* Reaction strip */}
             <View style={styles.reactionRowWrap}>
-              <GlassCard style={styles.reactionRowGlass} contentStyle={styles.reactionRowContent}>
+              <GlassCard role="floating" style={styles.reactionRowGlass} contentStyle={styles.reactionRowContent}>
                 {QUICK_REACTIONS.map((emoji) => {
                   const active = currentUserReactions?.includes(emoji) ?? false;
                   return (
@@ -354,7 +350,7 @@ export const MessageActionSheet = ({
                 setHoveredAction(null);
               }}
             >
-              <GlassCard style={styles.actionCardGlass}>
+              <GlassCard role="floating" style={styles.actionCardGlass}>
                 {visibleItems.map((item, idx) => (
                   <TouchableOpacity
                     key={item.key}

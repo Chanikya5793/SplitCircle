@@ -39,7 +39,7 @@ export const MentionAutocomplete = ({
   const divider = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)';
 
   return (
-    <GlassCard style={styles.root}>
+    <GlassCard role="floating" style={styles.root}>
       <FlatList
         data={filtered}
         keyboardShouldPersistTaps="always"

@@ -174,7 +174,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
     <LiquidBackground>
       <GuardedScreen target="expenses" entityId={groupId} label="Expense hidden">
       <Animated.View style={[styles.stickyHeader, { transform: [{ translateY: headerTranslate }] }]}>
-        <GlassView style={styles.stickyHeaderGlass}>
+        <GlassView role="floating" style={styles.stickyHeaderGlass}>
           <Text variant="titleMedium" style={[styles.stickyHeaderTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
             {expense.title}
           </Text>
@@ -516,7 +516,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             accessibilityLabel="Dismiss delete confirmation"
           />
           <View style={styles.deleteDialogWrap} pointerEvents="box-none">
-            <GlassCard style={styles.deleteDialogCard}>
+            <GlassCard role="floating" style={styles.deleteDialogCard}>
               <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '700' }}>
                 Delete Expense
               </Text>

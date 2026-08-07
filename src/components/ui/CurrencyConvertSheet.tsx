@@ -78,7 +78,7 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
   return (
     <Modal visible={visible} transparent statusBarTranslucent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close currency picker" />
-      <GlassCard style={styles.sheetGlass} contentStyle={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
+      <GlassCard role="floating" style={styles.sheetGlass} contentStyle={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
         <View style={[styles.grabber, { backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }]} />
         <Text variant="titleMedium" style={[styles.title, { color: theme.colors.onSurface }]}>
           Convert currency

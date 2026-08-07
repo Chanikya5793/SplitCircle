@@ -15,7 +15,7 @@ export const LoadingOverlay = ({ visible, message = 'Loading…' }: LoadingOverl
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent>
       <View style={[styles.backdrop, { backgroundColor: theme.colors.overlay }]}>
-        <GlassCard style={styles.container} contentStyle={styles.content}>
+        <GlassCard role="floating" style={styles.container} contentStyle={styles.content}>
           <MugguLoader
             size={48}
             variant={isDark ? 'reversed' : 'primary'}

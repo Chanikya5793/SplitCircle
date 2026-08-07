@@ -1,6 +1,14 @@
 import { MD3DarkTheme, MD3LightTheme, type MD3Theme } from 'react-native-paper';
 import { ACCENTS, CHART_BASE, NEUTRALS, type AccentId } from './palette';
-import { radius, spacing, typography, type Radius, type Spacing, type Typography } from './tokens';
+import {
+  radius,
+  spacing,
+  typography,
+  type Radius,
+  type Spacing,
+  type SurfaceStyle,
+  type Typography,
+} from './tokens';
 
 export type ColorScheme = 'light' | 'dark';
 
@@ -26,6 +34,10 @@ export interface SemanticColors {
   glassBorder: string;
   glassBorderAndroid: string;
   glassFallback: string;
+  flatSurface: string;
+  flatSurfaceAlt: string;
+  flatBorder: string;
+  divider: string;
   skeleton: string;
   overlay: string;
   backdrop: string;
@@ -48,9 +60,15 @@ export interface AppTheme extends MD3Theme {
   blob: BlobPalettes;
   accentId: AccentId;
   scheme: ColorScheme;
+  /** Surface treatment for bounded content surfaces. Defaults to 'glass'. */
+  surfaceStyle: SurfaceStyle;
 }
 
-export const buildTheme = (scheme: ColorScheme, accentId: AccentId): AppTheme => {
+export const buildTheme = (
+  scheme: ColorScheme,
+  accentId: AccentId,
+  surfaceStyle: SurfaceStyle = 'glass',
+): AppTheme => {
   const base = scheme === 'dark' ? MD3DarkTheme : MD3LightTheme;
   const accent = ACCENTS[accentId][scheme];
   const neutral = NEUTRALS[scheme];
@@ -97,6 +115,10 @@ export const buildTheme = (scheme: ColorScheme, accentId: AccentId): AppTheme =>
       glassBorder: neutral.glassBorder,
       glassBorderAndroid: neutral.glassBorderAndroid,
       glassFallback: neutral.glassFallback,
+      flatSurface: neutral.flatSurface,
+      flatSurfaceAlt: neutral.flatSurfaceAlt,
+      flatBorder: neutral.flatBorder,
+      divider: neutral.divider,
       skeleton: neutral.skeleton,
       overlay: neutral.overlay,
       backdrop: neutral.backdrop,
@@ -114,5 +136,6 @@ export const buildTheme = (scheme: ColorScheme, accentId: AccentId): AppTheme =>
     },
     accentId,
     scheme,
+    surfaceStyle,
   };
 };

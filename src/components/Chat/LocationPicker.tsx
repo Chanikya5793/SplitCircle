@@ -866,7 +866,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
 
           {/* ── Floating glass search ─────────────────────────────────── */}
           <View style={[styles.searchWrap, { top: insets.top + 10 }]} pointerEvents="box-none">
-            <GlassCard radius="lg" style={styles.searchCard} contentStyle={styles.searchCardContent}>
+            <GlassCard role="floating" radius="lg" style={styles.searchCard} contentStyle={styles.searchCardContent}>
               <TouchableOpacity
                 onPress={() => {
                   // Back out of searching first, close the picker second — a
@@ -934,7 +934,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
               style={[styles.mapKindWrap, { top: insets.top + 72 }, chromeStyle]}
               pointerEvents={inSearchMode ? 'none' : 'box-none'}
             >
-              <GlassCard radius="pill" style={styles.mapKindCard} contentStyle={styles.mapKindContent}>
+              <GlassCard role="floating" radius="pill" style={styles.mapKindCard} contentStyle={styles.mapKindContent}>
                 {MAP_KINDS.map((kind) => {
                   const active = mapKind === kind.id;
                   return (
@@ -972,7 +972,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
               pointerEvents={inSearchMode ? 'none' : 'box-none'}
             >
               <TouchableOpacity onPress={goToCurrentLocation} accessibilityLabel="Go to my location">
-                <GlassCard radius={24} style={styles.locateButton} contentStyle={styles.locateContent}>
+                <GlassCard role="floating" radius={24} style={styles.locateButton} contentStyle={styles.locateContent}>
                   <Ionicons name="locate" size={20} color={theme.colors.primary} />
                 </GlassCard>
               </TouchableOpacity>
@@ -991,7 +991,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
                   void loadNearby(under.latitude, under.longitude);
                 }}
               >
-                <GlassCard radius="lg" style={styles.searchAreaCard} contentStyle={styles.searchAreaContent}>
+                <GlassCard role="floating" radius="lg" style={styles.searchAreaCard} contentStyle={styles.searchAreaContent}>
                   <Ionicons name="refresh" size={15} color={theme.colors.primary} />
                   <Text style={{ color: theme.colors.onSurface, fontWeight: '600', fontSize: 13 }}>
                     Search this area
@@ -1007,7 +1007,7 @@ export const LocationPicker = ({ visible, onClose, onSendLocation }: LocationPic
               style={[styles.sheet, { height: sheetH }, sheetStyle]}
             >
               <GestureDetector gesture={sheetGesture}>
-              <GlassCard radius="xl" style={styles.sheetCard} contentStyle={styles.sheetContent}>
+              <GlassCard role="floating" radius="xl" style={styles.sheetCard} contentStyle={styles.sheetContent}>
                 {/* Tapping the collapsed sheet opens it — the grabber is a hint,
                     not the only way in. */}
                 <TouchableOpacity

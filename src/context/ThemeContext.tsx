@@ -9,6 +9,7 @@ import {
   animation,
   type AccentId,
   type AppTheme,
+  type SurfaceStyle,
 } from '@/theme';
 import { NEUTRALS } from '@/theme/palette';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -34,6 +35,9 @@ type ThemeContextType = {
   setMode: (mode: ThemeMode) => void;
   accent: AccentId;
   setAccent: (accent: AccentId) => void;
+  /** Glass (liquid-glass DNA) vs flat (opaque fill, hairline edge). */
+  surfaceStyle: SurfaceStyle;
+  setSurfaceStyle: (style: SurfaceStyle) => void;
   /** Kept for existing callers — flips between explicit light/dark. */
   toggleTheme: () => void;
 };
@@ -52,6 +56,8 @@ const ThemeContext = createContext<ThemeContextType>({
   setMode: () => {},
   accent: DEFAULT_ACCENT,
   setAccent: () => {},
+  surfaceStyle: 'glass',
+  setSurfaceStyle: () => {},
   toggleTheme: () => {},
 });
 
@@ -60,6 +66,7 @@ export const useTheme = () => useContext(ThemeContext);
 interface StoredAppearance {
   mode?: ThemeMode;
   accent?: AccentId;
+  surfaceStyle?: SurfaceStyle;
 }
 
 const isValidMode = (value: unknown): value is ThemeMode =>
@@ -68,10 +75,17 @@ const isValidMode = (value: unknown): value is ThemeMode =>
 const isValidAccent = (value: unknown): value is AccentId =>
   typeof value === 'string' && (ACCENT_IDS as string[]).includes(value);
 
+const isValidSurfaceStyle = (value: unknown): value is SurfaceStyle =>
+  value === 'glass' || value === 'flat';
+
 export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
   const systemScheme = useColorScheme();
   const [mode, setModeState] = useState<ThemeMode>('system');
   const [accent, setAccentState] = useState<AccentId>(DEFAULT_ACCENT);
+  // Glass stays the default — an existing install must not silently reskin on
+  // upgrade. A stored blob written before this key existed simply has no
+  // surfaceStyle and falls through to 'glass'.
+  const [surfaceStyle, setSurfaceStyleState] = useState<SurfaceStyle>('glass');
   const [hydrated, setHydrated] = useState(false);
 
   const isDark = (mode === 'system' ? systemScheme : mode) === 'dark';
@@ -87,6 +101,7 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
           if (cancelled) return;
           if (isValidMode(stored.mode)) setModeState(stored.mode);
           if (isValidAccent(stored.accent)) setAccentState(stored.accent);
+          if (isValidSurfaceStyle(stored.surfaceStyle)) setSurfaceStyleState(stored.surfaceStyle);
         } else {
           // Migrate the legacy boolean preference once, then leave it behind.
           const legacy = await AsyncStorage.getItem(LEGACY_KEY);
@@ -117,14 +132,14 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
     if (!hydrated) return;
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(() => {
-      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ mode, accent })).catch((error) =>
-        console.error('Failed to save appearance preference', error),
+      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ mode, accent, surfaceStyle })).catch(
+        (error) => console.error('Failed to save appearance preference', error),
       );
     }, 50);
     return () => {
       if (persistTimer.current) clearTimeout(persistTimer.current);
     };
-  }, [mode, accent, hydrated]);
+  }, [mode, accent, surfaceStyle, hydrated]);
 
   useEffect(() => {
     themeProgress.value = withTiming(isDark ? 1 : 0, {
@@ -140,6 +155,7 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
 
   const setMode = useCallback((next: ThemeMode) => setModeState(next), []);
   const setAccent = useCallback((next: AccentId) => setAccentState(next), []);
+  const setSurfaceStyle = useCallback((next: SurfaceStyle) => setSurfaceStyleState(next), []);
   const toggleTheme = useCallback(() => {
     setModeState((prev) => {
       const currentlyDark =
@@ -149,13 +165,35 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
   }, [systemScheme]);
 
   const theme = useMemo(
-    () => buildTheme(isDark ? 'dark' : 'light', accent),
-    [isDark, accent],
+    () => buildTheme(isDark ? 'dark' : 'light', accent, surfaceStyle),
+    [isDark, accent, surfaceStyle],
   );
 
   const value = useMemo(
-    () => ({ isDark, theme, themeProgress, mode, setMode, accent, setAccent, toggleTheme }),
-    [isDark, theme, themeProgress, mode, setMode, accent, setAccent, toggleTheme],
+    () => ({
+      isDark,
+      theme,
+      themeProgress,
+      mode,
+      setMode,
+      accent,
+      setAccent,
+      surfaceStyle,
+      setSurfaceStyle,
+      toggleTheme,
+    }),
+    [
+      isDark,
+      theme,
+      themeProgress,
+      mode,
+      setMode,
+      accent,
+      setAccent,
+      surfaceStyle,
+      setSurfaceStyle,
+      toggleTheme,
+    ],
   );
 
   // Hold the first paint until the stored preference is read (~ms). Render a

@@ -26,7 +26,7 @@ export const IncomingCallModal = ({
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onDecline}>
       <View style={styles.overlay}>
-        <GlassCard style={styles.container} contentStyle={styles.content} radius="xl">
+        <GlassCard role="floating" style={styles.container} contentStyle={styles.content} radius="xl">
           <View style={[styles.avatarHalo, { borderColor: theme.colors.primary }]}>
             <UserAvatar photoURL={callerPhotoURL} displayName={callerName} size={104} />
           </View>

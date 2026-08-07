@@ -1848,7 +1848,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               accessibilityRole="button"
               hitSlop={8}
             >
-              <GlassView style={styles.headerBackButtonGlass} intensity={40}>
+              <GlassView role="floating" style={styles.headerBackButtonGlass} intensity={40}>
                 <Icon source="chevron-left" size={26} color={theme.colors.primary} />
               </GlassView>
             </TouchableOpacity>
@@ -1857,7 +1857,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               activeOpacity={0.7}
               style={styles.headerPillTouchable}
             >
-              <GlassView style={styles.headerPill} intensity={40}>
+              <GlassView role="floating" style={styles.headerPill} intensity={40}>
                 <View style={styles.headerPillContent}>
                   <View style={{ marginRight: 10 }}>
                     {thread.type === 'direct' ? (
@@ -1902,12 +1902,12 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               {!chatShielded && (
                 <>
                   <TouchableOpacity onPress={placeAudioCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Audio call">
-                    <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                    <GlassView role="floating" style={styles.headerCallButtonGlass} intensity={40}>
                       <Icon source="phone" size={18} color={theme.colors.primary} />
                     </GlassView>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={placeVideoCall} style={styles.headerCallButton} activeOpacity={0.7} accessibilityLabel="Video call">
-                    <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                    <GlassView role="floating" style={styles.headerCallButtonGlass} intensity={40}>
                       <Icon source="video" size={18} color={theme.colors.primary} />
                     </GlassView>
                   </TouchableOpacity>
@@ -1922,7 +1922,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
                 activeOpacity={0.7}
                 accessibilityLabel="More options"
               >
-                <GlassView style={styles.headerCallButtonGlass} intensity={40}>
+                <GlassView role="floating" style={styles.headerCallButtonGlass} intensity={40}>
                   <Icon source="dots-vertical" size={18} color={theme.colors.primary} />
                 </GlassView>
               </TouchableOpacity>
@@ -1942,7 +1942,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               }
               style={styles.balancePillTouchable}
             >
-              <GlassView style={styles.balancePillGlass} intensity={40} contentStyle={styles.balancePillContent}>
+              <GlassView role="floating" style={styles.balancePillGlass} intensity={40} contentStyle={styles.balancePillContent}>
                 <Icon
                   source={myGroupBalance < 0 ? 'arrow-top-right' : 'arrow-bottom-left'}
                   size={13}
@@ -1973,7 +1973,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
               accessibilityLabel={`${nearbyPresentation.label}. Open nearby messaging help.`}
               style={styles.nearbyPillTouchable}
             >
-              <GlassCard radius="pill" contentStyle={styles.nearbyPillContent}>
+              <GlassCard role="floating" radius="pill" contentStyle={styles.nearbyPillContent}>
                 <Icon source={nearbyPillIcon} size={14} color={nearbyStatusColor} />
                 <Text
                   variant="labelSmall"
@@ -2178,7 +2178,7 @@ export const ChatRoomScreen = ({ thread, initialComposerText }: ChatRoomScreenPr
                 composerFocused && { borderWidth: 2, borderColor: theme.colors.primary },
               ]}
             >
-              <GlassView style={styles.composer}>
+              <GlassView role="floating" style={styles.composer}>
                 <TextInput
                   ref={inputRef}
                   mode="flat"

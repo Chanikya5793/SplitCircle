@@ -191,6 +191,24 @@ export const LiquidBackground = ({
     return { backgroundColor };
   });
 
+  if (wallpaper?.kind === 'solid') {
+    // Flat fill: no blobs, no image, no animation. Still crossfades light↔dark
+    // with themeProgress so switching scheme matches the rest of the app.
+    // Deliberately does NOT touch the blob or photo paths below.
+    return (
+      <Animated.View style={[styles.container, containerStyle, style]}>
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            { backgroundColor: isDark ? wallpaper.dark : wallpaper.light },
+          ]}
+        />
+        <View style={styles.content}>{children}</View>
+      </Animated.View>
+    );
+  }
+
   if (wallpaper?.kind === 'photo') {
     // Photo background: no blobs, no theme crossfade — the photo IS the
     // backdrop. The scrim adapts to the scheme so text stays readable in

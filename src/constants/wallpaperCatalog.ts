@@ -7,6 +7,11 @@
 //               JPEGs, ~150-250KB) so users can pick a backdrop without photo
 //               access.
 
+import { SOLID_BACKGROUNDS, type SolidBackground } from './solidBackgrounds';
+
+export { SOLID_BACKGROUNDS };
+export type { SolidBackground };
+
 export type BlobTrio = [string, string, string];
 
 export type CatalogWallpaper =
@@ -27,7 +32,8 @@ export type CatalogWallpaper =
       label: string;
       kind: 'photo';
       source: number; // require() module id
-    };
+    }
+  | SolidBackground;
 
 const mono = (light: string, dark: string): { light: BlobTrio; dark: BlobTrio } => ({
   light: [light, light, light],
@@ -35,6 +41,7 @@ const mono = (light: string, dark: string): { light: BlobTrio; dark: BlobTrio } 
 });
 
 export const WALLPAPER_CATALOG: CatalogWallpaper[] = [
+  ...SOLID_BACKGROUNDS,
   // Adaptive — animated blobs that follow the app's current accent theme (recolour
   // live when you change the accent). light/dark are placeholders; adaptive wins.
   { id: 'blob-adaptive', label: 'Adaptive', kind: 'blob', adaptive: true, light: ['#a5c8ff', '#d0b3ff', '#9df0cf'], dark: ['#173B66', '#432C7A', '#0B4A37'], thumb: require('../../assets/wallpapers/blob-adaptive.jpg') },
