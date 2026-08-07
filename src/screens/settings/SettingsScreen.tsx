@@ -416,7 +416,10 @@ export const SettingsScreen = () => {
 
   const divider = (
     <View
-      style={[styles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}
+      // theme.colors.divider, not a literal: in flat mode the card edge is gone
+      // and this hairline IS the grouping, so it has to follow the theme rather
+      // than a hardcoded alpha tuned for sitting inside a glass card.
+      style={[styles.divider, { backgroundColor: theme.colors.divider }]}
     />
   );
 

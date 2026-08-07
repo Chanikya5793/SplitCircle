@@ -1,9 +1,15 @@
 # 37 — Flat surface mode (borderless UI behind a toggle)
 
-**Status:** Decisions LOCKED 2026-08-06. **Phases 1, 2 and 3 BUILT** (uncommitted
-on `ui-revamp`): typecheck clean, 993 tests green. Phase 4 (dividers +
-DESIGN.md rewrite) not started.
-Nothing device-verified.
+**Status:** Decisions LOCKED 2026-08-06. **Phases 1–4 BUILT.** Phases 1–3
+committed as `9a957e9` on `ui-revamp` (67 files); Phase 4 follows it. Typecheck
+clean, 993 tests green, and `9a957e9` was verified to typecheck *in isolation*
+in a detached worktree — the working tree also carries unrelated in-progress AI
+work, so a green tree does not by itself prove the commit is self-consistent.
+
+**Installed and launched on a physical iPhone 17 Pro (iOS 27), but the visual
+result has NOT been reviewed on a screen.** The app starts and stays up; that is
+all that has been shown. Per this repo's own "verify the user-facing path" rule,
+flat mode is not proven until someone actually looks at it.
 
 **Goal:** a second, **borderless** UI the user can switch to, the same way they
 already switch light/dark and accent. The shipping liquid-glass UI is untouched
@@ -281,8 +287,36 @@ Net effect: `expo-blur` is now imported in exactly **two** files, `GlassCard`
 and `ScrimBackdrop` — which makes DESIGN.md's hand-grep self-audit rule
 mechanically checkable for the first time, and it is now a test (§7).
 
-**Phase 4 — polish.** Dividers where card edges used to do the grouping, and the
-DESIGN.md rewrite (§6).
+**Phase 4 — DESIGN.md + dividers. BUILT (docs); dividers mostly unnecessary.**
+
+DESIGN.md rewritten: "One surface class / when in doubt: glass" became **"Two
+surface styles, ONE primitive"** — the binding rule is now *everything goes
+through the primitive, and the primitive decides the material*, with the glass
+contract preserved beneath it as the default treatment. The self-audit checklist
+was re-scoped (a flat-token fill resolved BY the primitive is correct; a fill the
+call site chose is still the bug), the BlurView carve-out was deleted now that
+`ScrimBackdrop` exists, and the `role` requirement was added to the
+before-you-touch-a-sheet checklist. Without this the next audit would have
+reported flat mode as 244 violations.
+
+**Dividers turned out to be largely unnecessary** — worth recording, because the
+plan assumed otherwise. The existing structure already survives flattening:
+
+- `SettingsScreen` and friends are already SectionLabel + one card + inner
+  `{divider}` rows; the labels and hairlines group with no card edge needed.
+- `GroupStatsScreen` / `PersonalStatsScreen` stack cards that each carry their
+  own `sectionTitle`, so the headings separate them.
+- Borderless **keeps vertical padding** (only horizontal is zeroed), so the
+  rhythm between stacked sections survives on its own.
+
+Only one hand-rolled divider colour existed app-wide (`SettingsScreen`); it is
+now `theme.colors.divider`, which matters more in flat where the hairline IS the
+grouping rather than a detail inside a card.
+
+No speculative `divided` prop was added to `GlassCard`. Whether stacked
+*list-row* screens (group list, friends) need explicit separators is a visual
+judgement that needs a real screen — inventing an unused API ahead of that would
+be guessing.
 
 Phase 1 alone is coherent and shippable-to-yourself: body text stays legible in
 every combination. Phase 2 is required before anyone else sees it.

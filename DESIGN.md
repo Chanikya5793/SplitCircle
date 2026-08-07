@@ -8,15 +8,61 @@ Current design contract. Rules only — history lives in git.
   **Zero hardcoded hex/rgba in screens** — replace on touch.
 - Semantic tokens: `success/warning/danger` families, `moneyPositive/moneyNegative/
   moneyNeutral` (all money coloring goes through these), `appBackground`,
-  `glassTint/glassBorder`, `skeleton`, `chart[8]`, `theme.blob.*` (LiquidBackground),
-  `spacing.{xs..xxl}`, `radius.{xs..pill}`, `typography.{display..label}`.
-- User customization: mode System/Light/Dark + 6 accents (`ocean` default), persisted
-  offline in AsyncStorage `appearance_v1`. iOS native chrome syncs via `RNThemeIsDark`.
+  `glassTint/glassBorder`, `flatSurface/flatSurfaceAlt/flatBorder/divider`,
+  `skeleton`, `chart[8]`, `theme.blob.*` (LiquidBackground),
+  `spacing.{xs..xxl}`, `radius.{xs..pill}` (+ `flatRadius` for flat mode),
+  `typography.{display..label}`.
+- User customization: mode System/Light/Dark + 6 accents (`ocean` default)
+  + surface style Glass/Flat, persisted offline in AsyncStorage `appearance_v1`
+  (one blob, all three keys). iOS native chrome syncs via `RNThemeIsDark`.
+- Backgrounds: animated blobs, a photo, or a **solid** preset — all three are
+  wallpaper kinds, per-slot (app / chat-default / per-chat / per-group).
 - UI kit: `src/components/ui/` (GlassCard, ScreenScaffold, AppButton, AppTextInput,
   ListRow, EmptyState, OfflineState, SyncBadge, MoneyText, SectionLabel). Reuse these;
   no new UI libraries; keep react-native-paper.
 
-## One surface class
+## Two surface styles, ONE primitive
+
+The app ships two surface treatments, user-selectable in Settings ▸ Appearance
+and persisted with mode/accent (`ThemeContext.surfaceStyle`, doc 37):
+
+| | |
+|---|---|
+| **`glass`** (default) | the liquid-glass DNA below, unchanged |
+| **`flat`** | borderless: no fill, border, radius or elevation on content |
+
+**The rule is no longer "everything is glass" — it is "everything goes through
+the primitive, and the primitive decides the material."** A surface that
+hand-rolls its own material is a bug in BOTH modes, because `surfaceStyle`
+cannot reach it: in glass it drifts (the Calls-tab incident below), and in flat
+it stays a card while everything around it flattens.
+
+**Every bounded surface declares a structural role** (`ui/surfaceRole.ts`),
+which is read only in flat mode — glass ignores it entirely, which is what keeps
+the shipping UI byte-identical:
+
+- **`role="section"`** (default) — a content card. Goes fully borderless in
+  flat; grouping is carried by section labels and dividers.
+- **`role="floating"`** — chrome that sits OFF the canvas over unrelated
+  scrolling content: sheets, menus, dropdowns, autocompletes, toasts, sticky
+  header pills, circular icon buttons, modals. **Keeps an opaque fill in flat.**
+
+*Test: if deleting the surface entirely would leave its content floating over
+unrelated scrolling content, it is `floating`.* A borderless toast is an
+invisible toast. Getting this wrong is invisible in glass mode and invisible to
+`tsc` — `role="section"` is always valid TypeScript — so it is enforced by
+`src/utils/__tests__/surfaceRoleCoverage.test.ts`, which fails if any glass
+surface inside a `<Modal>` is neither floating nor nested inside one.
+
+**Flat mode implies contrast obligations.** With no card fill, whatever the
+user picks as their background IS the text background. `muted` measures 2.92:1
+over the worst blob with no material to lift it. Solid background presets exist
+for this (`constants/solidBackgrounds.ts`) and are contrast-tested; never add
+one without running `solidBackgroundContrast.test.ts`.
+
+### Glass mode — the original contract
+
+Everything below describes the `glass` treatment, which remains the default.
 
 **EVERY screen/overlay ships GLASS-FIRST** (LiquidBackground canvas + glass cards,
 bubbles, chrome) — lists, home, settings, chats, browsing, stats, conversational
@@ -55,9 +101,10 @@ and shows the live engine where a conversation is ongoing. Context injections
 ## Liquid glass DNA (binding)
 
 **One primitive.** ALL glass goes through `GlassCard` (`src/components/ui/GlassCard.tsx`);
-`GlassView` is a deprecated shim over it. Never hand-roll BlurView + rgba tints for a
-surface that should be glass — that's how the Calls tab drifted. Three-tier material,
-resolved once at startup:
+`GlassView` is a deprecated shim over it (and forwards `role`). Never hand-roll BlurView
++ rgba tints for a surface that should be glass — that's how the Calls tab drifted.
+Three-tier material, resolved once at startup. **Flat mode bypasses all three tiers**
+— no blur, no native material, no Android elevation on any of them:
 
 | Tier | Path | Notes |
 |---|---|---|
@@ -79,15 +126,22 @@ of the app):
 - `backgroundColor:` set to a hardcoded hex (`#1c1c1e`, `#1c1c20`, ...) or an
   `rgba(...)` literal with alpha ⪆ 0.5, on anything that floats/overlays/pops up
   (menu, dialog, dropdown, dropdown-under-header, winner/result reveal) — GlassCard
-  replaces this for a bounded card; a full-bleed `BlurView` backdrop for a full-screen
-  reveal (see "Dense editors" below).
-- A direct `import { BlurView } from 'expo-blur'` OUTSIDE `GlassCard.tsx` itself, UNLESS
-  it's a deliberate full-bleed backdrop (a context-menu or celebratory-reveal scrim
-  behind bounded glass content, e.g. `MessageActionSheet`, `BillSplitScreen`'s winner
-  overlays) — every bounded card should get blur BY WAY OF GlassCard, never call
-  BlurView directly for a surface with its own border/radius (that's the exact shape of
-  the Calls-tab drift this rule already names, and it recurred in `ScreenScaffold.tsx`'s
-  sticky header after the rule was written).
+  replaces this for a bounded card; a `ScrimBackdrop` for a full-screen reveal.
+  **Scope note:** flat mode legitimately paints opaque fills for
+  `role="floating"` surfaces. What this rule forbids is a fill the component
+  chose *itself*; a fill resolved from a flat token via the primitive is correct.
+  The question is always "who decided this colour" — the primitive, or the
+  call site?
+- **A direct `import { BlurView } from 'expo-blur'` anywhere except
+  `ui/GlassCard.tsx` and `ui/ScrimBackdrop.tsx`.** This used to be a judgement
+  call ("unless it's a deliberate full-bleed backdrop"), which is exactly how it
+  drifted — the Calls tab, then `ScreenScaffold.tsx`'s sticky header after the
+  rule was written. Scrims now have their own primitive, so the carve-out is
+  gone and the rule is absolute: bounded surfaces get blur via `GlassCard`,
+  full-bleed backdrops via `ScrimBackdrop`, and blur lives in two files.
+  This is no longer grep-by-hand — `surfaceRoleCoverage.test.ts` asserts it.
+  A stray BlurView also renders a glass surface `surfaceStyle` cannot reach, so
+  in flat mode it is visibly wrong with nothing to explain why.
 - `react-native-paper`'s `Dialog`, `Menu`, or `Snackbar` used to present a picker,
   action list, or popup. These render Material-style opaque library chrome — they are
   never glass and don't take a `GlassCard`-shaped fix, they need rebuilding as a
@@ -98,6 +152,16 @@ of the app):
 - Before touching any modal/menu/dropdown/sheet: does it call `GlassCard` (or
   `StickyHeaderPill`) somewhere in its own render tree? If not, that's the bug — there
   is no screen left where a solid/hand-rolled surface is the documented answer.
+  **And does it pass `role="floating"`?** A sheet that reaches `GlassCard` but
+  keeps the default `role="section"` renders with no background at all in flat
+  mode. Both halves are required.
+- **Not everything with a `borderRadius` + `backgroundColor` is a card.** A 2026-08-07
+  audit flagged 53 such style blocks as "hand-rolled cards"; reading them showed 30
+  were round/pill geometry (avatars, badges, chips, progress bars) and most of the rest
+  were media or overlay chrome — photo-grid cells, video PiP, swipe-delete actions,
+  image placeholders. Those keep their fills in both modes; flattening them is a bug,
+  not a flatter UI. Exactly one was a real content surface. Read the style body before
+  acting on a grep count.
 - One narrow, deliberate exception: the roulette/weighted-roulette wheel's center
   **hub** (`RouletteWheel.tsx`/`WeightedRouletteWheel.tsx`, `hubBg`/`hubBorder`) stays
   a small solid circle — it reads as the wheel's physical spin button, not a floating
