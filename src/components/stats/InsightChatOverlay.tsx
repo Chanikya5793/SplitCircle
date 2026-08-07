@@ -940,8 +940,7 @@ export const InsightChatOverlay = ({
                           key={t.threadId}
                           style={[
                             styles.historyRow,
-                            // No dividers between list items in flat mode (2026-08-07).
-                            i < history.length - 1 && theme?.surfaceStyle !== 'flat' && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: hairline },
+                            i < history.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: hairline },
                           ]}
                         >
                           <TouchableOpacity

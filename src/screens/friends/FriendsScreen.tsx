@@ -9,6 +9,7 @@ import { useCallContext } from '@/context/CallContext';
 import { useChat } from '@/context/ChatContext';
 import { useGroups } from '@/context/GroupContext';
 import { useTheme } from '@/context/ThemeContext';
+import { usePressFeedback } from '@/hooks/usePressFeedback';
 import type { GroupMember } from '@/models';
 import { ROOT_SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
@@ -118,6 +119,7 @@ export const FriendsScreen = () => {
   const navigation = useNavigation<any>();
   const { user } = useAuth();
   const { theme } = useTheme();
+  const { touchableProps } = usePressFeedback();
   const { groups } = useGroups();
   const { ensureDirectThread } = useChat();
   const { startCallSession } = useCallContext();
@@ -366,9 +368,7 @@ export const FriendsScreen = () => {
           onPress={() => openDirectChat(row)}
           onLongPress={() => handleRemove(row)}
           borderless
-          // theme.colors.pressed, not Paper's onSurface-alpha default (2026-08-07).
-          rippleColor={theme.colors.pressed}
-          underlayColor={theme.colors.pressed}
+          {...touchableProps}
         >
           <View style={styles.row}>
             {/* Avatar opens the friend profile — previously FriendInfoScreen

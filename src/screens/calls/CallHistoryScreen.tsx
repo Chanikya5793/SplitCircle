@@ -19,7 +19,7 @@ import {
 import { formatCallDuration, formatCallTime, getCallDateSection } from '@/utils/format';
 import { resolveDisplayName, resolveInitials } from '@/utils/identity';
 import { lightHaptic, mediumHaptic, warningHaptic } from '@/utils/haptics';
-import { usePressScale } from '@/hooks/usePressScale';
+import { usePressFeedback } from '@/hooks/usePressFeedback';
 import { appAlert } from '@/utils/appAlert';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -128,7 +128,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
   onOpen,
   onRegister,
 }: CallHistoryRowProps) {
-  const { pressScaleStyle, onPressIn, onPressOut } = usePressScale();
+  const { pressScaleStyle, touchableProps } = usePressFeedback();
   const missed = isMissedOrDeclined(entry);
   const nameColor = missed ? theme.colors.error : theme.colors.onSurface;
   const initials = resolveInitials(entry.otherParticipant.displayName, 'U');
@@ -162,13 +162,9 @@ const CallHistoryRow = memo(function CallHistoryRow({
           <TouchableRipple
             onPress={() => onPressInfo(entry)}
             onLongPress={() => onLongPressRow(entry)}
-            onPressIn={onPressIn}
-            onPressOut={onPressOut}
             style={styles.callItemContent}
             borderless
-            // theme.colors.pressed, not Paper's onSurface-alpha default (2026-08-07).
-            rippleColor={theme.colors.pressed}
-            underlayColor={theme.colors.pressed}
+            {...touchableProps}
           >
             <View style={styles.callRow}>
               {/* Left: Avatar + Delete button in edit mode */}

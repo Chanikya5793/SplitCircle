@@ -3,7 +3,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
-import { usePressScale } from '@/hooks/usePressScale';
+import { usePressFeedback } from '@/hooks/usePressFeedback';
 import { getExpenseSplitLabel } from '@/utils/expenseSplit';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
@@ -54,8 +54,9 @@ export const SwipeableExpenseCard = ({
   const fmtMoney = useMoneyDisplay(groupId);
   const { maskGroupText } = usePrivacyMask();
   const { theme } = useTheme();
+  const isFlat = theme?.surfaceStyle === 'flat';
   const swipeableRef = useRef<Swipeable>(null);
-  const { pressScaleStyle, onPressIn, onPressOut } = usePressScale();
+  const { pressScaleStyle, touchableProps } = usePressFeedback();
   const payerName = maskGroupText(memberMap[expense.paidBy] || 'Unknown', groupId, 'person');
   const isSettlement = expense.category === 'Settlement';
   const splitLabel = getExpenseSplitLabel(expense);
@@ -100,8 +101,18 @@ export const SwipeableExpenseCard = ({
     );
   };
 
+  // Flat mode draws its own bottom hairline instead of relying on a gap: this
+  // list is a .map(), not a FlatList, so there is no ItemSeparatorComponent to
+  // hang a ListSeparator off. Glass mode keeps the gap and no line — the cards
+  // separate themselves.
   return (
-    <View style={{ marginBottom: 4 }}>
+    <View
+      style={
+        isFlat
+          ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.divider }
+          : { marginBottom: 4 }
+      }
+    >
       <Swipeable
         ref={swipeableRef}
         renderRightActions={onDelete ? renderRightActions : undefined}
@@ -120,12 +131,8 @@ export const SwipeableExpenseCard = ({
           <TouchableRipple
             onPress={handlePress}
             onLongPress={onLongPress}
-            onPressIn={onPressIn}
-            onPressOut={onPressOut}
             style={{ flex: 1 }}
-            // theme.colors.pressed, not Paper's onSurface-alpha default (2026-08-07).
-            rippleColor={theme.colors.pressed}
-            underlayColor={theme.colors.pressed}
+            {...touchableProps}
           >
             <View style={styles.content}>
               <View style={styles.header}>

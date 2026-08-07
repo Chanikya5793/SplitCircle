@@ -173,8 +173,7 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
               <View
                 style={[
                   styles.switchRow,
-                  // No dividers anywhere in flat mode (2026-08-07).
-                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                  { borderTopColor: hairline },
                 ]}
               >
                 <View style={styles.switchCopy}>
@@ -243,8 +242,7 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
               <View
                 style={[
                   styles.switchRow,
-                  // No dividers anywhere in flat mode (2026-08-07).
-                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                  { borderTopColor: hairline },
                 ]}
               >
                 <View style={styles.switchCopy}>
@@ -268,8 +266,7 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
               <View
                 style={[
                   styles.switchRow,
-                  // No dividers anywhere in flat mode (2026-08-07).
-                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                  { borderTopColor: hairline },
                 ]}
               >
                 <View style={styles.switchCopy}>
@@ -319,8 +316,7 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
               <View
                 style={[
                   styles.switchRow,
-                  // No dividers anywhere in flat mode (2026-08-07).
-                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                  { borderTopColor: hairline },
                 ]}
               >
                 <View style={styles.switchCopy}>
@@ -344,8 +340,7 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
               <View
                 style={[
                   styles.switchRow,
-                  // No dividers anywhere in flat mode (2026-08-07).
-                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                  { borderTopColor: hairline },
                 ]}
               >
                 <View style={styles.switchCopy}>
@@ -369,8 +364,7 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
               <View
                 style={[
                   styles.switchRow,
-                  // No dividers anywhere in flat mode (2026-08-07).
-                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                  { borderTopColor: hairline },
                 ]}
               >
                 <View style={styles.switchCopy}>
@@ -433,8 +427,7 @@ export const MoneyInChatSheet = ({ visible, group, onClose }: MoneyInChatSheetPr
             <View
               style={[
                 styles.footer,
-                // No dividers anywhere in flat mode (2026-08-07).
-                theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                { borderTopColor: hairline },
               ]}
             >
               <Text

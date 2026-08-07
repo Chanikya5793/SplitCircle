@@ -361,8 +361,7 @@ export const MessageActionSheet = ({
                           ? (isDark ? 'rgba(255,80,80,0.2)' : 'rgba(255,0,0,0.08)')
                           : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.08)'),
                       },
-                      // No dividers between list items in flat mode (2026-08-07).
-                      idx < visibleItems.length - 1 && theme?.surfaceStyle !== 'flat' && { borderBottomColor: divider, borderBottomWidth: StyleSheet.hairlineWidth },
+                      idx < visibleItems.length - 1 && { borderBottomColor: divider, borderBottomWidth: StyleSheet.hairlineWidth },
                     ]}
                     onPress={() => handleAction(item.key)}
                     activeOpacity={0.55}

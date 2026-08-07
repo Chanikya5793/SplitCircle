@@ -55,8 +55,7 @@ export const MentionAutocomplete = ({
               activeOpacity={0.7}
               style={[
                 styles.row,
-                // No dividers between list items in flat mode (2026-08-07).
-                index < filtered.length - 1 && theme?.surfaceStyle !== 'flat' && {
+                index < filtered.length - 1 && {
                   borderBottomColor: divider,
                   borderBottomWidth: StyleSheet.hairlineWidth,
                 },

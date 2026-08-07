@@ -80,10 +80,7 @@ export const ArchivedGroupsScreen = () => {
         style={[
           styles.headerRow,
           { paddingTop: HEADER_TOP_PAD },
-          // No dividers anywhere in flat mode (2026-08-07).
-          theme?.surfaceStyle === 'flat'
-            ? { borderBottomWidth: 0 }
-            : { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' },
+          { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' },
         ]}
       >
         <View style={styles.headerBtn}>

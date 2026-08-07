@@ -182,10 +182,7 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
                 accessibilityLabel={`Show amounts in ${base}, the group currency`}
                 style={[
                   styles.row,
-                  // No dividers between list items in flat mode (2026-08-07).
-                  theme?.surfaceStyle === 'flat'
-                    ? { borderBottomWidth: 0 }
-                    : { borderBottomColor: hairline },
+                  { borderBottomColor: hairline },
                 ]}
               >
                 <View>
@@ -208,10 +205,7 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
                   accessibilityLabel={`View amounts in ${code}`}
                   style={[
                   styles.row,
-                  // No dividers between list items in flat mode (2026-08-07).
-                  theme?.surfaceStyle === 'flat'
-                    ? { borderBottomWidth: 0 }
-                    : { borderBottomColor: hairline },
+                  { borderBottomColor: hairline },
                 ]}
                 >
                   <View>
@@ -235,8 +229,7 @@ export const DisplayCurrencySheet = ({ visible, group, onClose }: DisplayCurrenc
               <View
                 style={[
                   styles.ratePanel,
-                  // No dividers anywhere in flat mode (2026-08-07).
-                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: hairline },
+                  { borderTopColor: hairline },
                 ]}
               >
                 <View style={styles.rateEditRow}>

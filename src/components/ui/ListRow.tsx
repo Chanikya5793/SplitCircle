@@ -3,9 +3,11 @@
 // per-screen List.Item restyling.
 
 import { useTheme } from '@/context/ThemeContext';
+import { usePressFeedback } from '@/hooks/usePressFeedback';
 import React from 'react';
 import { StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { Icon, Text, TouchableRipple } from 'react-native-paper';
+import Animated from 'react-native-reanimated';
 
 export interface ListRowProps {
   title: string;
@@ -35,6 +37,7 @@ export const ListRow = ({
   style,
 }: ListRowProps) => {
   const { theme } = useTheme();
+  const { pressScaleStyle, touchableProps } = usePressFeedback();
   const tint = destructive ? theme.colors.danger : (iconColor ?? theme.colors.primary);
   const showChevron = chevron ?? (Boolean(onPress) && !trailing);
 
@@ -91,13 +94,9 @@ export const ListRow = ({
       accessibilityRole="button"
       accessibilityLabel={title}
       style={disabled ? styles.disabled : undefined}
-      // theme.colors.pressed, not Paper's own onSurface-alpha default — it's
-      // the app's purpose-built neutral press token (see buildTheme.ts's
-      // onSurface/onSurfaceVariant fix for the root-cause version of this).
-      rippleColor={theme.colors.pressed}
-      underlayColor={theme.colors.pressed}
+      {...touchableProps}
     >
-      {content}
+      <Animated.View style={pressScaleStyle}>{content}</Animated.View>
     </TouchableRipple>
   );
 };

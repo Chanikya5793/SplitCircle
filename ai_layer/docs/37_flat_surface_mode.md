@@ -12,9 +12,11 @@ starting point.** **Phase 6 (2026-08-07, same session, "keep going, apply
 consistently") — generalized Phase 5 app-wide: zero dividers (~40 sites, 20
 files), compact spacing (~20 files), 2 more glass-accent containers. See §8.**
 **Phase 7 (2026-08-07) — tap/press-state color root-cause fix.** **Phase 8
-(2026-08-07, user: "zero dividers anywhere, no exceptions") — final divider
-audit, 16 more sites across 12 more files. See §11.** Uncommitted as of
-writing.
+(2026-08-07) — "zero dividers anywhere"; see §11, and note it was REVERSED
+the same day and never shipped.** **Phase 9 (2026-08-07, current) — dividers
+RESTORED and properly implemented for the first time, group rows compacted
+3 lines → 2, press feedback rebuilt per-platform from Paper's actual source.
+See §12, and §12.4 before touching dividers again.**
 
 **Installed and launched on a physical iPhone 17 Pro (iOS 27), but the visual
 result has NOT been reviewed on a screen.** The app starts and stays up; that is
@@ -746,3 +748,112 @@ distinction back, this paragraph is the place that changed it and why.
 
 **Verification:** `tsc --noEmit` clean, full suite green (1,083 tests), same
 as every prior phase this session. Still nothing visually verified.
+
+> **REVERSED THE SAME DAY. Do not re-apply §11 (or the divider half of §9).**
+> See §12. Phase 8 shipped nothing; it was undone before any build reached a
+> device. This section is kept only so the next person understands what the
+> code used to do and why it is gone.
+
+---
+
+## 12. Phase 9 — dividers RESTORED, rows compacted, press states rebuilt (2026-08-07)
+
+The user saw the result on a screen and reversed the direction: **"there are
+no dividers whatsoever" was a complaint, not the goal.** This phase undoes all
+divider suppression, adds dividers where the flat UI genuinely lacked them,
+compacts the list rows further, and rebuilds press feedback from the actual
+root cause. Phases 5–8 were never shipped — the `ship:ios` run carrying them
+was aborted mid-dependency-install.
+
+### 12.1 Dividers restored, then actually implemented
+
+Every suppression point from §9 and §11 is gone — ~56 sites across 32 files.
+`Divider.tsx` no longer returns `null` in flat mode. The wrapper itself was
+KEPT rather than reverting 11 files back to bare `react-native-paper`
+imports: it is now the one place that colors dividers from
+`theme.colors.divider` (the app's own token) instead of Paper's MD3 default,
+which is derived from a stock Material-You palette this app doesn't use.
+A reverted-suppression comment sits at the top of that file so this doesn't
+get re-litigated a third time.
+
+**But restoring suppression was only half the ask.** The main lists — groups,
+expenses, chats — never had dividers *at all*; they were spaced cards, and
+flat mode removed the card without putting anything in its place, which is
+exactly what "no dividers whatsoever" was describing. So they now get real
+ones, via a new `ListSeparator` (`src/components/ui/ListSeparator.tsx`):
+
+- **glass** → renders nothing. Each row is a floating card with a gap; a
+  hairline in that gap reads as a stray line, not structure.
+- **flat** → renders an inset hairline. The rows butt together, so the line
+  IS the structure, same as a native iOS grouped list.
+
+Rows collapse their bottom margin in flat mode (`containerGlass` /
+`rightActionGlass` in `SwipeableGroupCard`) so the separator sits *between*
+rows rather than floating inside a row's own margin. `GroupListScreen` hangs
+it off `ItemSeparatorComponent`; the expense/settlement/chat lists render
+through `.map()` or several different parent screens, so those rows draw
+their own bottom hairline instead — noted at each site.
+
+### 12.2 Press states: the real root cause, found by reading Paper's source
+
+§10 fixed the press *color* (Paper was deriving it from MD3's stock
+purple-tinted `onSurface`, since this app never overrode that token). That
+was real, and it stays. But the user reported the result still "not perfect
+at all", so this pass went to `TouchableRipple`'s implementation instead of
+guessing at colors again. `TouchableRipple.supported` is
+`Platform.OS === 'android' && Version >= ANDROID_VERSION_LOLLIPOP` — **iOS
+never gets a ripple**. It takes a fallback branch that paints a plain `View`:
+
+```js
+underlay: { ...StyleSheet.absoluteFillObject, zIndex: 2 }
+```
+
+Three independent defects, which compound:
+
+1. `zIndex: 2` puts the tint **on top of** the row's own content — over the
+   title, avatar and amount, not behind them.
+2. No `borderRadius`, so on a rounded row (group cards 24pt, chat rows 16pt)
+   it paints **square corners** over a rounded surface. Only rows whose
+   parent happened to clip (`overflow: 'hidden'`) hid it — which is why it
+   looked fine in some places and wrong in others.
+3. It is binary: appears and vanishes with no fade, while the cards
+   underneath are running a smooth 110ms scale via `usePressScale`.
+
+No choice of grey fixes any of that. New `usePressFeedback`
+(`src/hooks/usePressFeedback.ts`) settles it per-platform, once:
+
+- **iOS** — no painted overlay at all (`rippleColor`/`underlayColor` →
+  `'transparent'`). The scale IS the feedback: the platform idiom, and
+  something this app already did on its group/expense/call cards.
+- **Android** — a real ripple, the platform idiom there, in the app's own
+  `pressed` token.
+
+Applied to every row a user actually taps: `ListRow` (all settings/info
+rows), `SwipeableGroupCard`, `ChatThreadRow`, `SwipeableExpenseCard`,
+`SettlementCard`, `FriendsScreen`, `CallHistoryScreen`. Rows that had no
+press feedback at all on iOS (`ListRow`, `ChatThreadRow`, `SettlementCard`)
+gained the scale, so they now respond to touch where before they did nothing
+but flash a grey box.
+
+### 12.3 Group rows compacted (three lines → two)
+
+The row spent a full line of height on a right-aligned `Total spent ₹X`
+under the name/members line. The amount now sits at the END of the meta row
+where a list amount belongs, the `Total spent ` label is dropped (the
+currency beside it already says what it is), the avatar goes 48 → 40, and
+`IconButton` (which carries 48pt of its own touch padding) is replaced with a
+plain `Icon`. Net: one line shorter and visibly tighter per row, which is
+what "they are so wide and taking more space" was about.
+
+### 12.4 Standing rule, so this stops flip-flopping
+
+**Dividers are part of this app's design. Flat mode means no card fills — it
+does NOT mean no separators.** The two surface styles differ in what
+separates rows (glass: a gap between floating cards; flat: a hairline), not
+in whether rows are separated at all. Anyone reading §9/§11 and thinking
+about removing hairlines again should read this line first.
+
+**Verification:** `tsc --noEmit` clean, 1,083 tests green (590 unit + 466
+services + 27 dom). **Still not visually verified** — the sim runtime is
+gone from this machine, so as with every phase in this session, the pixel
+values and the press behavior are reasoned from source, not seen.

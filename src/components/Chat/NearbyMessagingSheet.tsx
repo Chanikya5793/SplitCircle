@@ -633,8 +633,7 @@ export const NearbyMessagingSheet = ({
               <View
                 style={[
                   styles.deliveryNote,
-                  // No dividers anywhere in flat mode (2026-08-07).
-                  theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderColor: theme.colors.outline },
+                  { borderColor: theme.colors.outline },
                 ]}
               >
                 <Ionicons
@@ -653,8 +652,7 @@ export const NearbyMessagingSheet = ({
             <View
               style={[
                 styles.footer,
-                // No dividers anywhere in flat mode (2026-08-07).
-                theme?.surfaceStyle === 'flat' ? { borderTopWidth: 0 } : { borderTopColor: theme.colors.outline },
+                { borderTopColor: theme.colors.outline },
               ]}
             >
               <View style={styles.footerCopy}>

@@ -641,10 +641,7 @@ export const AiChatScreen = ({ group, initialQuestion }: AiChatScreenProps) => {
                   key={t.threadId}
                   style={[
                     styles.historyRow,
-                    // No dividers between list items in flat mode (2026-08-07).
-                    theme?.surfaceStyle === 'flat'
-                      ? { borderBottomWidth: 0 }
-                      : { borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)' },
+                    { borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)' },
                   ]}
                 >
                   <TouchableOpacity

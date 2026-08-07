@@ -29,6 +29,8 @@ import { heavyHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { usePressFeedback } from '@/hooks/usePressFeedback';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { IconButton, List, Text } from 'react-native-paper';
 
@@ -173,6 +175,7 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
   const { user } = useAuth();
   const { groups } = useGroups();
   const { theme } = useTheme();
+  const { pressScaleStyle, touchableProps } = usePressFeedback();
   const { preferences, updatePreference } = useNotificationContext();
   const { isShielded } = usePrivacyGuard();
   const { maskChatTitle: maskChatTitleRaw, maskPreview } = usePrivacyMask();
@@ -392,7 +395,19 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
       onLock={() => void handleLock()}
       onUnlock={() => void handleUnlock()}
     >
-      <GlassView style={styles.chatItem} contentStyle={styles.chatItemContent}>
+      {/* Flat mode: a bottom hairline instead of a gap. The chat list renders
+          rows through several different parents (list, archived, locked), so
+          the separator lives on the row rather than on each list. */}
+      <Animated.View style={pressScaleStyle}>
+      <GlassView
+        style={[
+          styles.chatItem,
+          theme?.surfaceStyle === 'flat'
+            ? { marginBottom: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.divider }
+            : null,
+        ]}
+        contentStyle={styles.chatItemContent}
+      >
         <List.Item
           title={maskChatTitle(getChatTitle(), thread.chatId)}
           description={
@@ -433,15 +448,14 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
           ) : undefined}
           onPress={handleOpen}
           onLongPress={handleLongPress}
-          // theme.colors.pressed, not Paper's onSurface-alpha default (2026-08-07).
-          rippleColor={theme.colors.pressed}
-          underlayColor={theme.colors.pressed}
+          {...touchableProps}
           style={styles.chatItemRow}
           titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
           descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
           descriptionNumberOfLines={1}
         />
       </GlassView>
+      </Animated.View>
     </SwipeableChatRow>
   );
 };

@@ -688,18 +688,7 @@ const ItemCard = memo(({
 
     {/* Advanced Split Panel */}
     {isExpanded && (
-      <View
-        style={{
-          paddingHorizontal: 12,
-          paddingBottom: 12,
-          paddingTop: 4,
-          gap: 12,
-          // No dividers anywhere in flat mode (2026-08-07).
-          ...(theme?.surfaceStyle === 'flat'
-            ? { borderTopWidth: 0 }
-            : { borderTopWidth: 1, borderTopColor: isValid ? `${theme.colors.outline}30` : theme.colors.error }),
-        }}
-      >
+      <View style={{ paddingHorizontal: 12, paddingBottom: 12, paddingTop: 4, gap: 12, borderTopWidth: 1, borderTopColor: isValid ? `${theme.colors.outline}30` : theme.colors.error }}>
         <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
           {(['equal', 'exact', 'percentage', 'shares'] as InlineSplitMode[]).map(m => (
             <TouchableOpacity
@@ -1733,15 +1722,7 @@ export const ReceiptScannerSheet = ({
                 <View style={{ height: 16 }} />
 
                 {/* Actions natively integrated into the page to preserve single GlassView layer natively */}
-                <View
-                  style={[
-                    styles.actions,
-                    // No dividers anywhere in flat mode (2026-08-07).
-                    theme?.surfaceStyle === 'flat'
-                      ? { borderTopWidth: 0 }
-                      : { borderTopWidth: 1, borderTopColor: `${theme.colors.outline}15` },
-                  ]}
-                >
+                <View style={[styles.actions, { borderTopWidth: 1, borderTopColor: `${theme.colors.outline}15` }]}>
                   <Button
                     mode="outlined"
                     onPress={onCancel}

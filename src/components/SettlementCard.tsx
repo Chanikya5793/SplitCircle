@@ -6,11 +6,13 @@ import { useTheme } from '@/context/ThemeContext';
 import type { Settlement } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
+import { usePressFeedback } from '@/hooks/usePressFeedback';
 import { errorHaptic, lightHaptic } from '@/utils/haptics';
 import React, { useRef } from 'react';
 import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { IconButton, Text, TouchableRipple } from 'react-native-paper';
+import Animated from 'react-native-reanimated';
 
 interface SettlementCardProps {
     settlement: Settlement;
@@ -34,6 +36,8 @@ export const SettlementCard = ({
   const fmtMoney = useMoneyDisplay(groupId);
   const { maskGroupText } = usePrivacyMask();
     const { theme } = useTheme();
+    const isFlat = theme?.surfaceStyle === 'flat';
+    const { pressScaleStyle, touchableProps } = usePressFeedback();
     const { pendingSyncIds } = useGroups();
     const isPendingSync = pendingSyncIds.has(settlement.settlementId);
     const swipeableRef = useRef<Swipeable>(null);
@@ -80,8 +84,15 @@ export const SettlementCard = ({
         );
     };
 
+    // See SwipeableExpenseCard — same list, same reasoning.
     return (
-        <View style={{ marginBottom: 1 }}>
+        <View
+            style={
+                isFlat
+                    ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.divider }
+                    : { marginBottom: 1 }
+            }
+        >
             <Swipeable
                 ref={swipeableRef}
                 onSwipeableWillOpen={() => setOpenSwipeable(swipeableRef.current)}
@@ -92,14 +103,9 @@ export const SettlementCard = ({
                 overshootRight={false}
                 containerStyle={{ borderRadius: 16, overflow: 'hidden' }}
             >
+                <Animated.View style={pressScaleStyle}>
                 <GlassView style={styles.container}>
-                    <TouchableRipple
-                        onPress={handlePress}
-                        style={{ flex: 1 }}
-                        // theme.colors.pressed, not Paper's onSurface-alpha default (2026-08-07).
-                        rippleColor={theme.colors.pressed}
-                        underlayColor={theme.colors.pressed}
-                    >
+                    <TouchableRipple onPress={handlePress} style={{ flex: 1 }} {...touchableProps}>
                         <View style={styles.content}>
                             <View style={styles.header}>
                                 <View style={styles.titleRow}>
@@ -138,6 +144,7 @@ export const SettlementCard = ({
                         </View>
                     </TouchableRipple>
                 </GlassView>
+                </Animated.View>
             </Swipeable>
         </View>
     );

@@ -97,10 +97,7 @@ export const CurrencyConvertSheet = ({ visible, group, onClose }: CurrencyConver
               accessibilityLabel={`Convert to ${code}`}
               style={[
                 styles.row,
-                // No dividers between list items in flat mode (2026-08-07).
-                theme?.surfaceStyle === 'flat'
-                  ? { borderBottomWidth: 0 }
-                  : { borderBottomColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)' },
+                { borderBottomColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.18)' },
               ]}
             >
               <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>

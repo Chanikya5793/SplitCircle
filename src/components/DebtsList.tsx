@@ -163,7 +163,6 @@ export const DebtsList = ({ group }: DebtsListProps) => {
   const fmtMoney = useMoneyDisplay(group.groupId);
   const { maskGroupText } = usePrivacyMask();
     const { theme, isDark } = useTheme();
-    const isFlat = theme?.surfaceStyle === 'flat';
     const navigation = useNavigation<any>();
     const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
     const [isCollapsed, setIsCollapsed] = useState(false);
@@ -361,15 +360,7 @@ export const DebtsList = ({ group }: DebtsListProps) => {
                                     const sign = isReducing ? '-' : '+';
 
                                     return (
-                                        <View
-                                            key={item.id}
-                                            style={[
-                                                styles.transactionRow,
-                                                // No dividers between list items in flat mode — the
-                                                // existing paddingVertical rhythm already separates rows.
-                                                { borderBottomColor: theme.colors.outlineVariant, borderBottomWidth: isFlat ? 0 : 0.5 },
-                                            ]}
-                                        >
+                                        <View key={item.id} style={[styles.transactionRow, { borderBottomColor: theme.colors.outlineVariant }]}>
                                             <View style={{ flex: 1 }}>
                                                 <Text style={{ color: theme.colors.onSurface, fontWeight: '500' }}>{item.title}</Text>
                                                 <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
