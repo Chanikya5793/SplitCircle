@@ -51,14 +51,38 @@ export const ListRow = ({
    *
    * A control that already names itself keeps its own label.
    */
+  /**
+   * A trailing Switch measures 47x27dp — that is Paper's control size, not
+   * something a style can raise, so the switch itself can never be a
+   * compliant 44pt target. The fix is the one iOS itself uses: make the whole
+   * ROW toggle it. The row is >=48pt tall, so the target becomes compliant,
+   * and it is better UX besides.
+   *
+   * Only applied when the row has no onPress of its own — a row that already
+   * navigates somewhere must not silently start toggling instead.
+   */
+  const trailingSwitch = React.isValidElement(trailing)
+    ? (trailing.props as { onValueChange?: (v: boolean) => void; value?: boolean; disabled?: boolean })
+    : undefined;
+  const rowToggles =
+    !onPress && typeof trailingSwitch?.onValueChange === 'function' && !trailingSwitch.disabled;
+  const effectiveOnPress = rowToggles
+    ? () => trailingSwitch!.onValueChange!(!trailingSwitch!.value)
+    : onPress;
+
   const labelledTrailing = React.useMemo(() => {
     if (!React.isValidElement(trailing)) return trailing;
     const existing = (trailing.props as { accessibilityLabel?: string }).accessibilityLabel;
     if (existing) return trailing;
     return React.cloneElement(trailing as React.ReactElement<any>, {
       accessibilityLabel: title,
+      // If the ROW now owns the toggle, the control must stop being its own
+      // focus stop — otherwise a screen reader hits the same setting twice.
+      ...(rowToggles
+        ? { accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const }
+        : null),
     });
-  }, [trailing, title]);
+  }, [trailing, title, rowToggles]);
 
   const content = (
     <View style={[styles.row, { paddingVertical: theme.spacing.sm + 2, paddingHorizontal: theme.spacing.md }, style]}>
@@ -104,14 +128,18 @@ export const ListRow = ({
     </View>
   );
 
-  if (!onPress) return content;
+  if (!effectiveOnPress) return content;
 
   return (
     <TouchableRipple
-      onPress={onPress}
+      onPress={effectiveOnPress}
       disabled={disabled}
-      accessibilityRole="button"
+      // When the row IS the switch, it must announce as one ("AI receipt
+      // parsing, switch, on") rather than as a button with no state.
+      accessibilityRole={rowToggles ? 'switch' : 'button'}
       accessibilityLabel={title}
+      accessibilityHint={subtitle}
+      accessibilityState={rowToggles ? { checked: !!trailingSwitch?.value, disabled } : { disabled }}
       style={disabled ? styles.disabled : undefined}
       {...touchableProps}
     >

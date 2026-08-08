@@ -214,10 +214,16 @@ const CallHistoryRow = memo(function CallHistoryRow({
                   {resolveDisplayName(entry.otherParticipant, 'Unknown')}
                 </Text>
                 <View style={styles.callMeta}>
+                  {/* Decorative: getSubtitle() below already says "Missed
+                      Audio". Left visible to a screen reader it was announced
+                      as its raw glyph — the row read "Chan, \uf03fa, Missed
+                      Audio, 9:44 PM". */}
                   <MaterialCommunityIcons
                     name={getCallIcon(entry)}
                     size={14}
                     color={getCallIconColor(entry, theme)}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no"
                   />
                   <Text
                     style={[styles.callSubtitle, { color: theme.colors.onSurfaceVariant }]}
@@ -236,7 +242,11 @@ const CallHistoryRow = memo(function CallHistoryRow({
                 {!isEditing && (
                   <TouchableOpacity
                     onPress={() => onCallBack(entry)}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    // Measured 22x23dp with hitSlop 10 (=42) — still under the
+                    // minimum, and unnamed so it announced its glyph.
+                    style={styles.rowActionTarget}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Call ${resolveDisplayName(entry.otherParticipant, 'Unknown')} back, ${entry.type === 'video' ? 'video' : 'audio'}`}
                   >
                     <MaterialCommunityIcons
                       name={entry.type === 'video' ? 'video-outline' : 'phone-outline'}
@@ -248,7 +258,9 @@ const CallHistoryRow = memo(function CallHistoryRow({
                 {!isEditing && (
                   <TouchableOpacity
                     onPress={() => onPressInfo(entry)}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    style={styles.rowActionTarget}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Call details for ${resolveDisplayName(entry.otherParticipant, 'Unknown')}`}
                   >
                     <MaterialCommunityIcons
                       name="information-outline"
@@ -649,7 +661,13 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
             <View style={styles.headerContainer}>
               {/* Title row: Edit button + "Calls" + new call icon */}
               <View style={styles.titleRow}>
-                <TouchableOpacity onPress={toggleEdit} style={styles.editButton} activeOpacity={0.7}>
+                <TouchableOpacity
+                  onPress={toggleEdit}
+                  style={styles.editButton}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={isEditing ? 'Done editing call history' : 'Edit call history'}
+                >
                   <GlassView role="floating" style={styles.headerPillGlass} contentStyle={styles.editButtonInner}>
                     <Text
                       style={[
@@ -677,6 +695,8 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                   }}
                   style={styles.newCallButton}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="New call"
                 >
                   <GlassView role="floating" style={styles.headerPillGlass} contentStyle={styles.newCallButtonInner}>
                     <MaterialCommunityIcons
@@ -1005,6 +1025,14 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontWeight: 'bold',
   },
+  /** 44pt minimum touch target for the per-row icon actions. hitSlop alone
+   *  left them at 42dp and does not show up as node bounds to an audit. */
+  rowActionTarget: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   editButton: {
     zIndex: 10,
   },
@@ -1014,12 +1042,16 @@ const styles = StyleSheet.create({
     borderRadius: 21,
   },
   editButtonInner: {
+    // Measured 58x34dp — under the minimum. Height floored rather than
+    // padding bumped, so the pill's look barely changes.
+    minHeight: 44,
+    justifyContent: 'center',
     paddingVertical: 8,
     paddingHorizontal: 18,
   },
   newCallButtonInner: {
-    width: 42,
-    height: 42,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1046,6 +1078,10 @@ const styles = StyleSheet.create({
   segment: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    // Measured 97x29dp — well under the minimum. 48, not 44: the container's
+    // 3pt padding ate into it and left the item at 43.99dp.
+    minHeight: 48,
     paddingVertical: 7,
     borderRadius: 8,
   },

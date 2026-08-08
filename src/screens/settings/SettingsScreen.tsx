@@ -512,12 +512,9 @@ export const SettingsScreen = () => {
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
           {wrapAnchor(SETTING_IDS.appearance, (
           <View style={styles.appearanceBlock}>
-            {/* KNOWN GAP: measured 142x36dp on a Pixel 7 — under the 44pt
-                HIG / 48dp Material minimum. Paper's SegmentedButtons sizes its
-                INNER items, so neither a `style` minHeight on the container
-                (tried; no effect) nor `density` raises it. Fixing this means
-                replacing the component, which is a design change rather than
-                an a11y patch — left as a deliberate, recorded gap. */}
+            {/* Measured 142x36dp — under the minimum. The floor goes on each
+                BUTTON (see styles.segmentItem); a minHeight on the container
+                does nothing, because Paper sizes the inner items. */}
             <SegmentedButtons
               value={mode}
               onValueChange={(next) => {
@@ -525,9 +522,9 @@ export const SettingsScreen = () => {
                 setMode(next as typeof mode);
               }}
               buttons={[
-                { value: 'system', label: 'System', icon: 'theme-light-dark' },
-                { value: 'light', label: 'Light', icon: 'white-balance-sunny' },
-                { value: 'dark', label: 'Dark', icon: 'weather-night' },
+                { value: 'system', label: 'System', icon: 'theme-light-dark', style: styles.segmentItem },
+                { value: 'light', label: 'Light', icon: 'white-balance-sunny', style: styles.segmentItem },
+                { value: 'dark', label: 'Dark', icon: 'weather-night', style: styles.segmentItem },
               ]}
             />
             <SegmentedButtons
@@ -537,8 +534,8 @@ export const SettingsScreen = () => {
                 setSurfaceStyle(next as typeof surfaceStyle);
               }}
               buttons={[
-                { value: 'glass', label: 'Glass', icon: 'blur' },
-                { value: 'flat', label: 'Flat', icon: 'square-outline' },
+                { value: 'glass', label: 'Glass', icon: 'blur', style: styles.segmentItem },
+                { value: 'flat', label: 'Flat', icon: 'square-outline', style: styles.segmentItem },
               ]}
             />
             <View style={styles.accentRow}>
@@ -548,6 +545,7 @@ export const SettingsScreen = () => {
                 return (
                   <TouchableOpacity
                     key={id}
+                    hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
                     accessibilityRole="button"
                     accessibilityLabel={`${ACCENTS[id].label} accent`}
                     accessibilityState={{ selected }}
@@ -943,7 +941,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 4,
   },
+  /** Paper sizes SegmentedButtons' INNER items, so the floor has to go on
+   *  each button — a minHeight on the container had no effect (measured
+   *  142x36dp before and after). */
+  segmentItem: {
+    minHeight: 48,
+  },
   accentSwatch: {
+    // 40pt circle is the intended visual; hitSlop lifts the TAPPABLE area to
+    // 48 without changing the swatch. (Measured 40x40dp in the audit.)
     width: 40,
     height: 40,
     borderRadius: 20,
