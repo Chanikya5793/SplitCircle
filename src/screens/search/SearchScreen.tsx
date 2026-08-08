@@ -278,6 +278,35 @@ export const SearchScreen = () => {
     };
   }, []);
 
+  /**
+   * Re-collapse the fallback pill when the keyboard goes away with nothing
+   * typed.
+   *
+   * WHY: on iOS 26 the tab bar IS the search field, so there is never a second
+   * search affordance on screen. The Android fallback fakes that morph, but it
+   * left the pill fully STRETCHED once the keyboard dropped — measured on a
+   * Pixel 7, an empty 786px-wide field parked at y=2307 of 2400 with the real
+   * tab bar (including its own Search tab) still drawn underneath it. Two
+   * search affordances stacked, which is what read as "stranded".
+   *
+   * Collapsing back to the circle over the tab's search button means the
+   * at-rest state matches iOS — one affordance — and the stretch becomes a
+   * thing that only happens WHILE you are searching, which is the whole point
+   * of the morph. A committed query keeps the pill open, because the text has
+   * to stay visible (Photos semantics: tab-switch keeps a committed search).
+   */
+  useEffect(() => {
+    if (nativeMode) return;
+    if (keyboardUp || query.trim()) return;
+    morph.value = withTiming(0, { duration: MORPH_OUT_MS, easing: Easing.in(Easing.cubic) });
+  }, [keyboardUp, query, morph, nativeMode]);
+
+  // Re-stretch when the field is focused again (tapping the collapsed circle).
+  const handleFieldFocus = useCallback(() => {
+    if (nativeMode) return;
+    morph.value = withTiming(1, { duration: MORPH_IN_MS, easing: Easing.out(Easing.cubic) });
+  }, [morph, nativeMode]);
+
   // Debounce so typing stays smooth even on a large index.
   useEffect(() => {
     const t = setTimeout(() => setDebounced(query.trim()), 130);
@@ -782,6 +811,7 @@ export const SearchScreen = () => {
                 ref={inputRef}
                 value={query}
                 onChangeText={setQuery}
+                onFocus={handleFieldFocus}
                 placeholder="Search"
                 placeholderTextColor={theme.colors.onSurfaceVariant}
                 style={[styles.input, { color: theme.colors.onSurface }]}
