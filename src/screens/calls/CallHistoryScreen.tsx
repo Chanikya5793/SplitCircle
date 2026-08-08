@@ -1,6 +1,6 @@
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
-import { GlassCard, StickyHeaderPill } from '@/components/ui';
+import { GlassCard, ListSeparator, StickyHeaderPill } from '@/components/ui';
 import { ChatListSkeleton } from '@/components/SkeletonLoader';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
@@ -275,6 +275,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
           </TouchableRipple>
         </GlassView>
       </Animated.View>
+      <ListSeparator />
     </Swipeable>
   );
 });
@@ -710,9 +711,22 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                 </TouchableOpacity>
               </View>
 
-              {/* Filter chips: All | Missed (Apple style segmented) */}
+              {/* Filter chips: All | Missed (Apple style segmented).
+
+                  The selected segment is an ACCENT-FILLED pill. It used to be a
+                  white fill lifted by `elevation` — which on Android escapes the
+                  container's clip: the shadow spilled past the rounded corner on
+                  the leading edge, and the lifted background painted a
+                  hard-cornered rectangle inside the pill (the "extra square
+                  inside All"). Dropping the elevation exposed the real problem
+                  underneath — a white-on-near-white fill is invisible on this
+                  surface, so the shadow was the ONLY thing saying which filter
+                  was active. `primaryContainer`/`onPrimaryContainer` is the
+                  palette's own paired fill+foreground, so it reads in both
+                  schemes and against every accent. */}
               <View style={styles.filterRow}>
                 <GlassView role="floating"
+                  radius={50}
                   style={styles.segmentedGlass}
                   contentStyle={styles.segmentedControl}
                 >
@@ -723,12 +737,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                     }}
                     style={[
                       styles.segment,
-                      filter === 'all' && {
-                        backgroundColor: isDark
-                          ? 'rgba(255,255,255,0.15)'
-                          : 'rgba(255,255,255,0.9)',
-                      },
-                      filter === 'all' && styles.segmentActive,
+                      filter === 'all' && { backgroundColor: theme.colors.primaryContainer },
                     ]}
                   >
                     <Text
@@ -737,7 +746,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                         {
                           color:
                             filter === 'all'
-                              ? theme.colors.primary
+                              ? theme.colors.onPrimaryContainer
                               : theme.colors.onSurfaceVariant,
                         },
                         filter === 'all' && styles.segmentTextActive,
@@ -753,12 +762,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                     }}
                     style={[
                       styles.segment,
-                      filter === 'missed' && {
-                        backgroundColor: isDark
-                          ? 'rgba(255,255,255,0.15)'
-                          : 'rgba(255,255,255,0.9)',
-                      },
-                      filter === 'missed' && styles.segmentActive,
+                      filter === 'missed' && { backgroundColor: theme.colors.primaryContainer },
                     ]}
                   >
                     <Text
@@ -767,7 +771,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                         {
                           color:
                             filter === 'missed'
-                              ? theme.colors.primary
+                              ? theme.colors.onPrimaryContainer
                               : theme.colors.onSurfaceVariant,
                         },
                         filter === 'missed' && styles.segmentTextActive,
@@ -1072,8 +1076,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  /** Pill, not a rounded rect. At 54dp tall a 10pt radius left the container
+   *  looking square next to the round chrome around it, and the active segment
+   *  sat inside it at a DIFFERENT radius — two mismatched corner curves nested
+   *  in each other. A radius past half the height clamps to a pill, so both
+   *  stay in step regardless of what the touch-target floor does to the height. */
   segmentedGlass: {
-    borderRadius: 10,
+    borderRadius: 50,
     width: 200,
   },
   segmentedControl: {
@@ -1088,14 +1097,7 @@ const styles = StyleSheet.create({
     // 3pt padding ate into it and left the item at 43.99dp.
     minHeight: 48,
     paddingVertical: 7,
-    borderRadius: 8,
-  },
-  segmentActive: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    borderRadius: 50,
   },
   segmentText: {
     fontSize: 13,
@@ -1128,13 +1130,14 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     overflow: 'hidden',
   },
-  /** Flat: full-bleed row with its own hairline, matching the group and chat
-   *  lists. The rounded 14pt clip is what made the press highlight read as a
-   *  "squircle" instead of a list row. */
+  /** Flat: full-bleed row, matching the group and chat lists. The rounded 14pt
+   *  clip is what made the press highlight read as a "squircle" instead of a
+   *  list row. The hairline is drawn by a sibling ListSeparator rather than a
+   *  borderBottom here — a border covers its whole box, so it can only be
+   *  full-bleed, and a full-bleed hairline reads as a crack across the screen. */
   callItemFlat: {
     marginBottom: 0,
     borderRadius: 0,
-    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   callRowFlat: {
     paddingHorizontal: 16,

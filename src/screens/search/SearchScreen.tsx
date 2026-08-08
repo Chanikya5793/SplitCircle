@@ -14,9 +14,9 @@
 //   Liquid Glass animation). This screen renders no field at all — it mirrors
 //   the native field's text via the splitcircle-ai bridge events and only draws
 //   content. Cancelling natively returns to the previous tab (system behavior).
-// - FALLBACK (Android / older builds): a JS bottom-docked field that fakes the
-//   morph — the pill stretches out of the tab bar's search button while the
-//   keyboard rises, and collapses back on dismiss.
+// - FALLBACK (Android / older builds): a plain JS field pinned to the TOP of
+//   the screen, where the keyboard can never reach it. It deliberately does
+//   NOT imitate the iOS morph — see the note at its render site.
 //
 // Reopen semantics (measured off Photos): switching tabs away and back KEEPS a
 // committed search; only cancelling (native Cancel / the fallback X) clears it.
@@ -54,12 +54,10 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  useWindowDimensions,
   View,
 } from 'react-native';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, {
-  Easing,
   interpolate,
   runOnJS,
   useAnimatedStyle,
@@ -72,12 +70,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const RECENTS_KEY = 'search_recents_v1';
 
-// Morph choreography, measured off the Phone app at 60fps: the circle-to-field
-// stretch runs ~18 frames (~300ms) with a strong ease-out, the keyboard rising
-// in parallel; content fades in slightly behind the field. Dismiss reverses it.
-const MORPH_IN_MS = 320;
-const MORPH_OUT_MS = 240;
 const CONTENT_IN_MS = 260;
+
+// Raising the keyboard is BEST-EFFORT, not a single call. The native tab host
+// mounts this screen lazily and detaches it again on blur, so a lone focus() at
+// a fixed delay can land on a view that isn't attached yet, or during the tab
+// transition, and Android drops the showSoftInput silently — which is exactly
+// why the keyboard came up "sometimes and not other times". Retry on this
+// schedule until the IME is actually up.
+//
+// The retry MUST NOT be guarded on `isFocused()`. Measured on a Pixel 7: the
+// first focus() reliably wins view focus (the caret blinks in the field) while
+// the IME stays down — `mInputShown=false` in `dumpsys input_method` — so a
+// guard on focus state skips every remaining attempt and the keyboard never
+// appears at all. View focus and keyboard visibility are separate states here,
+// and the keyboard is the one being waited on.
+const FOCUS_RETRY_MS = [0, 60, 180, 360, 700, 1100];
 
 // Fallback "try this" pills, used only until (or when) the user has no real
 // data to draw dynamic suggestions from. See useAppSearch.getSuggestions.
@@ -206,7 +214,6 @@ export const SearchScreen = () => {
   const navigation = useNavigation<any>();
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  const { width: windowWidth } = useWindowDimensions();
   const { search, firstSearchableGroupId, getSuggestions } = useAppSearch();
   const { groups } = useGroups();
   const { user } = useAuth();
@@ -220,38 +227,17 @@ export const SearchScreen = () => {
   const [recents, setRecents] = useState<string[]>([]);
   const inputRef = useRef<TextInput>(null);
 
-  // The tab bar sits over the bottom of this screen, so the field must clear it when
-  // idle — but once the keyboard is up it covers the tab bar, and that same padding
-  // would leave the field floating in a gap. Track the keyboard and swap.
+  // Native mode only: the system search field docks at the tab bar when the
+  // keyboard is down and rides on top of the keyboard when it's up, so the
+  // predictions panel has to know which to clear. The fallback field is
+  // top-anchored and never has to move.
   const [keyboardUp, setKeyboardUp] = useState(false);
 
-  // ── Open/close morph ──────────────────────────────────────────────────────
-  // 0 = a 44pt circle hugging the right edge (where the tab bar's search button
-  // lives), 1 = the full-width field with the round X beside it. The field row
-  // is right-justified so width growth stretches LEFTWARD, like the real morph.
-  const morph = useSharedValue(0);
+  // The content block fades/rises in on entry. There is deliberately no field
+  // MORPH any more: the fallback field is top-anchored and simply present (see
+  // the note at its render site), so there is nothing to stretch out of.
   const contentIn = useSharedValue(0);
 
-  const FIELD_HEIGHT = 44;
-  const CLOSE_SIZE = 40;
-  const CLOSE_GAP = 10;
-  // Full field width once the X and paddings are accounted for.
-  const fieldMaxWidth = windowWidth - 16 * 2 - CLOSE_SIZE - CLOSE_GAP;
-
-  const fieldMorphStyle = useAnimatedStyle(() => ({
-    width: interpolate(morph.value, [0, 1], [FIELD_HEIGHT, fieldMaxWidth]),
-  }));
-  // Placeholder/icon/input fade in only once the pill has mostly stretched.
-  const fieldInnerStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(morph.value, [0.45, 1], [0, 1], 'clamp'),
-  }));
-  // The X pops in at the tail of the morph, in the spot the circle started from.
-  const closeStyle = useAnimatedStyle(() => ({
-    width: interpolate(morph.value, [0, 1], [0, CLOSE_SIZE]),
-    marginLeft: interpolate(morph.value, [0, 1], [0, CLOSE_GAP]),
-    opacity: interpolate(morph.value, [0.55, 1], [0, 1], 'clamp'),
-    transform: [{ scale: interpolate(morph.value, [0.55, 1], [0.6, 1], 'clamp') }],
-  }));
   const contentStyle = useAnimatedStyle(() => ({
     opacity: contentIn.value,
     transform: [{ translateY: interpolate(contentIn.value, [0, 1], [10, 0]) }],
@@ -278,26 +264,44 @@ export const SearchScreen = () => {
     };
   }, []);
 
-  /**
-   * The fallback field STAYS OPEN for as long as this screen is on top.
-   *
-   * Do NOT re-add a "collapse it when the keyboard drops" effect. That was
-   * tried on 2026-08-07 and is exactly wrong: on iOS 26 collapsing is safe
-   * because the tab bar ITSELF is the search field, so something visible and
-   * typable always remains. On Android nothing morphs — the tab bar stays a
-   * tab bar — so collapsing the pill leaves the search screen with no visible
-   * text box whatsoever, just an anonymous circle floating over the tab bar.
-   * A search screen you cannot see the input on is broken, however faithfully
-   * it imitates the iOS choreography.
-   *
-   * The morph still plays on ENTRY (circle -> field, keyboard rising with it),
-   * which is the part that reads as native. It simply never plays backwards
-   * except on an explicit cancel, where the screen is leaving anyway.
-   */
-  const handleFieldFocus = useCallback(() => {
+  // Raise the keyboard on the fallback field. See FOCUS_RETRY_MS for why this
+  // is a retry loop and not a single focus() call.
+  const focusTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const clearFocusTimers = useCallback(() => {
+    focusTimers.current.forEach(clearTimeout);
+    focusTimers.current = [];
+  }, []);
+  const focusField = useCallback(() => {
     if (nativeMode) return;
-    morph.value = withTiming(1, { duration: MORPH_IN_MS, easing: Easing.out(Easing.cubic) });
-  }, [morph, nativeMode]);
+    clearFocusTimers();
+    const attempt = () => {
+      // Stop once the IME is actually up — not once the field has focus.
+      //
+      // Keyboard.isVisible() rather than this screen's own keyboard state:
+      // that state is maintained by listeners on THIS component, which the
+      // native tab host can freeze while the tab is inactive, whereas
+      // Keyboard's own bookkeeping is module-level and always live.
+      if (Keyboard.isVisible()) return;
+      const input = inputRef.current;
+      if (!input) return;
+      if (input.isFocused()) {
+        // The field already holds view focus while the keyboard is down — the
+        // state it is left in after Back, a scroll dismiss, or a tab switch.
+        // focus() is a NO-OP there and never reaches showSoftInput: measured on
+        // a Pixel 7, six attempts all logged `focused=true` and `mInputShown`
+        // stayed false throughout. Drop focus and retake it on the next tick so
+        // Android runs a real focus transition. The bounce has to happen on
+        // EVERY attempt — doing it once before the loop fixed only the first.
+        input.blur();
+        focusTimers.current.push(setTimeout(() => inputRef.current?.focus(), 32));
+        return;
+      }
+      input.focus();
+    };
+    for (const delay of FOCUS_RETRY_MS) {
+      focusTimers.current.push(setTimeout(attempt, delay));
+    }
+  }, [clearFocusTimers, nativeMode]);
 
   // Debounce so typing stays smooth even on a large index.
   useEffect(() => {
@@ -309,21 +313,31 @@ export const SearchScreen = () => {
     useCallback(() => {
       contentIn.value = 0;
       contentIn.value = withDelay(90, withTiming(1, { duration: CONTENT_IN_MS }));
-      if (nativeMode) {
-        // UIKit runs the real tab-bar → field morph and focuses the field itself.
-        morph.value = 1;
-        return;
-      }
-      morph.value = 0;
-      morph.value = withTiming(1, { duration: MORPH_IN_MS, easing: Easing.out(Easing.cubic) });
-      // Focus almost immediately so the keyboard rises IN PARALLEL with the
-      // stretch, exactly like the native morph — not after it.
-      const t = setTimeout(() => inputRef.current?.focus(), 40);
+      // Native mode: UIKit owns the field and raises its own keyboard.
+      focusField();
       // NOTE: the query deliberately survives losing focus — switching tabs away
       // and back keeps a committed search (Photos). Only cancel/X clears it.
-      return () => clearTimeout(t);
-    }, [contentIn, morph, nativeMode]),
+      return clearFocusTimers;
+    }, [clearFocusTimers, contentIn, focusField]),
   );
+
+  /*
+   * NO "re-tap the Search tab to reopen the keyboard" HANDLER — it cannot be
+   * built on this navigator, so don't spend time trying again.
+   *
+   * `createNativeBottomTabNavigator` emits `tabPress` from
+   * `onNativeFocusChange` (@react-navigation/bottom-tabs
+   * unstable/NativeBottomTabView.native), and react-native-screens' native tab
+   * bar exposes `onNativeFocusChange` as its ONLY event. Tapping the tab you
+   * are already on changes no focus, so nothing crosses to JS at all: a
+   * `tabPress` listener here was verified silent on a Pixel 7. This is the same
+   * class of native-tab-bar limitation as the note on the SEARCH_TAB screen in
+   * AppNavigator.
+   *
+   * The recovery path is the field itself, which is why it's wrapped in a
+   * Pressable — the whole pill raises the keyboard, not just the text. Coming
+   * back from another tab is covered by useFocusEffect above.
+   */
 
   const results = useMemo(() => (debounced ? search(debounced, 'all') : []), [debounced, search]);
   const sections = useMemo(() => groupByType(results), [results]);
@@ -487,9 +501,9 @@ export const SearchScreen = () => {
     if (backTo) navigation.navigate(backTo);
   }, [navigation]);
 
-  // Animated dismiss (fallback X = the cancel affordance): keyboard drops while
-  // the field collapses back into the circle it was born from, the query clears
-  // (cancel ends the search session, Photos semantics), then we leave the tab.
+  // Animated dismiss (fallback X = the cancel affordance): keyboard drops, the
+  // content fades out, the query clears (cancel ends the search session, Photos
+  // semantics), then we leave the tab.
   const clearAndNavBack = useCallback(() => {
     setQuery('');
     setDebounced('');
@@ -498,15 +512,11 @@ export const SearchScreen = () => {
 
   const dismiss = useCallback(() => {
     Keyboard.dismiss();
-    contentIn.value = withTiming(0, { duration: 150 });
-    morph.value = withTiming(
-      0,
-      { duration: MORPH_OUT_MS, easing: Easing.in(Easing.cubic) },
-      (finished) => {
-        if (finished) runOnJS(clearAndNavBack)();
-      },
-    );
-  }, [clearAndNavBack, contentIn, morph]);
+    clearFocusTimers();
+    contentIn.value = withTiming(0, { duration: 150 }, (finished) => {
+      if (finished) runOnJS(clearAndNavBack)();
+    });
+  }, [clearAndNavBack, clearFocusTimers, contentIn]);
 
   // Route query changes from taps (recents / suggestions / predictions) through
   // the native field when it owns the input, so field and results stay in sync.
@@ -580,7 +590,7 @@ export const SearchScreen = () => {
         style={styles.body}
         pointerEvents="box-none"
       >
-        {/* Fallback search bar — TOP-anchored on purpose.
+        {/* Fallback search bar — TOP-anchored, and always visible.
 
             It used to be bottom-docked, imitating iOS 26 where the tab bar
             itself morphs into the system search field. That cannot work here:
@@ -591,13 +601,25 @@ export const SearchScreen = () => {
             (KeyboardAvoidingView could not save it either: `behavior` was
             undefined on Android, so it was inert.)
 
+            For the same reason, do NOT re-add a "collapse it to a circle when
+            the keyboard drops" effect. On iOS 26 collapsing is safe because the
+            tab bar ITSELF is the field, so something typable always remains;
+            here it just leaves the search screen with no visible input at all.
+
             At the top the field is always visible, can never be covered by the
             keyboard, and matches what Android users expect. iOS is untouched —
             nativeMode renders no JS field at all and keeps the real
             UISearchTab (ai_layer/docs/20). */}
         {!nativeMode && (
         <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-          <View style={[styles.field, styles.fieldTop, { backgroundColor: fieldBg }]}>
+          {/* Pressable, not a plain View: the icon and the padding around the
+              input are dead zones otherwise, and a tap that lands on the search
+              glyph and does nothing reads as a broken field. */}
+          <Pressable
+            onPress={focusField}
+            accessibilityRole="search"
+            style={[styles.field, styles.fieldTop, { backgroundColor: fieldBg }]}
+          >
             <View style={styles.fieldInner}>
               <Ionicons name="search" size={18} color={theme.colors.onSurfaceVariant} />
               <TextInput
@@ -628,7 +650,7 @@ export const SearchScreen = () => {
                 </TouchableOpacity>
               )}
             </View>
-          </View>
+          </Pressable>
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel="Close search"
@@ -649,7 +671,11 @@ export const SearchScreen = () => {
             contentContainerStyle={[
               styles.scrollContent,
               {
-                paddingTop: insets.top + 12,
+                // Only native mode starts at the top of the window; the fallback
+                // top bar has ALREADY spent the safe-area inset above this, so
+                // repeating it here left a ~75px dead band between the field and
+                // the first result (measured on a Pixel 7).
+                paddingTop: nativeMode ? insets.top + 12 : 4,
                 // Native mode has no JS bottom bar below the scroll view — pad the
                 // content itself past the tab bar / integrated search field.
                 paddingBottom: nativeMode ? getFloatingTabBarEnvelopeHeight(insets.bottom) + 16 : 12,
@@ -861,7 +887,6 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 16, paddingBottom: 12 },
   largeTitle: { fontWeight: '700', marginBottom: 4 },
-  // Bottom bar right-justified: the field grows LEFTWARD from the circle.
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -869,17 +894,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 8,
   },
-  /** Top-anchored field fills the row; no morph width to interpolate. */
+  /** Top-anchored field fills the row. */
   fieldTop: {
     flex: 1,
     width: undefined,
-  },
-  bottomBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingHorizontal: 16,
-    paddingTop: 8,
   },
   field: {
     borderRadius: 22,

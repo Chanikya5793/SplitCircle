@@ -1,4 +1,5 @@
 import { GlassView } from '@/components/GlassView';
+import { ListSeparator } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
@@ -105,14 +106,13 @@ export const SwipeableExpenseCard = ({
   // list is a .map(), not a FlatList, so there is no ItemSeparatorComponent to
   // hang a ListSeparator off. Glass mode keeps the gap and no line — the cards
   // separate themselves.
+  //
+  // The line is a SIBLING ELEMENT, not a borderBottom on this wrapper: a border
+  // covers its whole box, so it can only be full-bleed, and a full-bleed
+  // hairline reads as a crack across the screen. ListSeparator insets both ends
+  // and self-gates on surface style.
   return (
-    <View
-      style={
-        isFlat
-          ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.divider }
-          : { marginBottom: 4 }
-      }
-    >
+    <View style={isFlat ? undefined : styles.glassGap}>
       <Swipeable
         ref={swipeableRef}
         renderRightActions={onDelete ? renderRightActions : undefined}
@@ -171,11 +171,15 @@ export const SwipeableExpenseCard = ({
         </GlassView>
         </Animated.View>
       </Swipeable>
+      <ListSeparator />
     </View>
   );
 };
 
 const styles = StyleSheet.create({
+  glassGap: {
+    marginBottom: 4,
+  },
   container: {
     // borderRadius handled by Swipeable containerStyle
     flex: 1,

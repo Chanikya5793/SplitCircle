@@ -967,7 +967,12 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: StyleSheet.hairlineWidth,
+    // Leading inset clears the row icon so the line starts at the label;
+    // trailing inset stops it short of the screen edge, because a hairline that
+    // runs the full width reads as a crack rather than a separator. Matches
+    // DIVIDER_INSET in components/ui/Divider.
     marginLeft: 56,
+    marginRight: 16,
   },
   wallpaperThumb: {
     width: 34,

@@ -477,7 +477,9 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    marginLeft: 0,
+    // Stops short of both edges — a full-bleed hairline reads as a crack across
+    // the screen. Matches DIVIDER_INSET in components/ui/Divider.
+    marginHorizontal: 16,
   },
   // -- Recent Calls --
   recentCallRow: {

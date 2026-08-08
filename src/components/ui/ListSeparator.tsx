@@ -20,6 +20,7 @@
 // dividers and properly implement them" asked for.
 
 import { useTheme } from '@/context/ThemeContext';
+import { DIVIDER_INSET } from './Divider';
 import { StyleSheet, View } from 'react-native';
 
 export interface ListSeparatorProps {
@@ -27,7 +28,16 @@ export interface ListSeparatorProps {
   inset?: number;
 }
 
-export const ListSeparator = ({ inset = 0 }: ListSeparatorProps) => {
+/**
+ * A separator element rather than a `borderBottomWidth` on the row: a border
+ * spans its whole box by definition, so it can only ever be full-bleed. Rows
+ * themselves MUST stay full-bleed (their press highlight has to run edge to
+ * edge), which leaves the line as the only thing that can be inset — hence a
+ * sibling View. Lists that use `.map()` instead of a FlatList can render this
+ * directly; it self-gates on surface style, same as when it's passed as
+ * `ItemSeparatorComponent`.
+ */
+export const ListSeparator = ({ inset = DIVIDER_INSET }: ListSeparatorProps) => {
   const { theme } = useTheme();
   // Defensive `?.` — component tests mock useTheme() with partial themes.
   if (theme?.surfaceStyle !== 'flat') return null;
@@ -36,6 +46,7 @@ export const ListSeparator = ({ inset = 0 }: ListSeparatorProps) => {
       style={{
         height: StyleSheet.hairlineWidth,
         marginLeft: inset,
+        marginRight: DIVIDER_INSET,
         backgroundColor: theme?.colors?.divider ?? 'rgba(15, 23, 42, 0.08)',
       }}
     />

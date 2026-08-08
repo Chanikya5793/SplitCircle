@@ -441,7 +441,10 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           activeOpacity={0.8}
           style={[styles.glassAction, bigText && styles.actionStacked]}
         >
-          <GlassView role="floating" style={styles.glassActionInner}>
+          {/* radius={50}: GlassView paints the fill, so the pill shape has to be
+              set on IT — the wrapper's overflow:'hidden' clips the corners but
+              leaves a squared-off fill underneath on Android. */}
+          <GlassView role="floating" radius={50} style={styles.glassActionInner}>
             <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Friends</Text>
           </GlassView>
         </TouchableOpacity>
@@ -452,7 +455,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           style={[styles.glassAction, bigText && styles.actionStacked]}
         >
           {/* GlassView provides the blurred/frosted fill inside the button */}
-          <GlassView role="floating" style={styles.glassActionInner}>
+          <GlassView role="floating" radius={50} style={styles.glassActionInner}>
             <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Join via code</Text>
           </GlassView>
         </TouchableOpacity>
@@ -622,10 +625,14 @@ const styles = StyleSheet.create({
     flex: 0,
     width: '100%',
   },
+  /** Pill, to match the "New group" Button sitting right beside it — Paper
+   *  rounds a contained Button to a full pill, so a 15pt radius here read as
+   *  two different button shapes in one row. A radius larger than half the
+   *  height is clamped to a pill, so this tracks any future height change. */
   glassAction: {
     flex: 1,
     minWidth: 0,
-    borderRadius: 15,
+    borderRadius: 50,
     overflow: 'hidden',
     borderWidth: 0,
     borderColor: 'rgba(0,0,0,0.08)',

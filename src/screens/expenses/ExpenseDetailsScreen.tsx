@@ -241,7 +241,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
           {/* Receipt Items Section (from itemized split / scan) */}
           {expense.splitMetadata?.method === 'itemized' && expense.splitMetadata.receiptItems && expense.splitMetadata.receiptItems.length > 0 && (
             <>
-              <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />
+              <Divider style={styles.divider} />
               <View style={styles.section}>
                 <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
                   Scanned Items
@@ -294,7 +294,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             if (insightRows.length === 0) return null;
             return (
               <>
-                <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />
+                <Divider style={styles.divider} />
                 <View style={styles.section}>
                   <TouchableOpacity
                     onPress={() => setShowMoreInfo((v) => !v)}
@@ -328,7 +328,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             );
           })()}
 
-          <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />
+          <Divider style={styles.divider} />
 
           <View style={styles.section}>
             <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
@@ -342,7 +342,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             </View>
           </View>
 
-          <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />
+          <Divider style={styles.divider} />
 
           {splitDetails ? (
             <View style={styles.section}>
@@ -374,7 +374,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             </View>
           ) : null}
 
-          <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />
+          <Divider style={styles.divider} />
 
           <View style={styles.section}>
             <Text variant="titleMedium" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
@@ -442,7 +442,7 @@ export const ExpenseDetailsScreen = ({ route }: ExpenseDetailsScreenProps) => {
             })}
           </View>
 
-          <Divider style={[styles.divider, { backgroundColor: theme.colors.pressed }]} />
+          <Divider style={styles.divider} />
 
           <View style={styles.section}>
             <View style={styles.row}>
@@ -611,6 +611,10 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     gap: spacing.xs,
   },
+  /** Colour comes from the Divider primitive's own `divider` token. These used
+   *  to override it with `pressed` (0.05 alpha) — a fill meant for press
+   *  states, four times fainter than the divider token, so these lines stayed
+   *  invisible through the pass that made every other divider visible. */
   divider: {
     marginVertical: spacing.md,
   },

@@ -6,7 +6,7 @@
 
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
-import { GroupAvatar, UserAvatar } from '@/components/ui';
+import { GroupAvatar, ListSeparator, UserAvatar } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useNotificationContext } from '@/context/NotificationContext';
@@ -398,15 +398,13 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
     >
       {/* Flat mode: a bottom hairline instead of a gap. The chat list renders
           rows through several different parents (list, archived, locked), so
-          the separator lives on the row rather than on each list. */}
+          the separator lives on the row rather than on each list. It is a
+          SIBLING element, not a borderBottom: a border covers its whole box, so
+          it could only ever be full-bleed, and a full-bleed hairline reads as a
+          crack across the screen rather than a separator between rows. */}
       <Animated.View style={pressScaleStyle}>
       <GlassView
-        style={[
-          styles.chatItem,
-          theme?.surfaceStyle === 'flat'
-            ? { marginBottom: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.divider }
-            : null,
-        ]}
+        style={[styles.chatItem, theme?.surfaceStyle === 'flat' ? styles.chatItemFlatGap : null]}
         contentStyle={styles.chatItemContent}
       >
         {/* Animated.View wraps List.Item (rather than overlaying it) so the
@@ -492,11 +490,15 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
         </Animated.View>
       </GlassView>
       </Animated.View>
+      <ListSeparator />
     </SwipeableChatRow>
   );
 };
 
 const styles = StyleSheet.create({
+  chatItemFlatGap: {
+    marginBottom: 0,
+  },
   chatItem: {
     // Tightened 12 -> 6 (2026-08-07, compact density pass), matching
     // SwipeableGroupCard. Swipe-action marginBottom must stay equal to the

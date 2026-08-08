@@ -61,20 +61,20 @@ export const BalanceHeadline = ({ groupIds, style }: BalanceHeadlineProps) => {
     <View style={[styles.wrap, style]} accessible accessibilityRole="summary">
       {owed.length > 0 && (
         <View style={styles.line}>
-          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+          <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
             You are owed
           </Text>
-          <Text variant="titleMedium" style={[styles.amount, { color: theme.colors.moneyPositive }]}>
+          <Text variant="bodyMedium" style={[styles.amount, { color: theme.colors.moneyPositive }]}>
             {joinAmounts(owed)}
           </Text>
         </View>
       )}
       {owing.length > 0 && (
         <View style={styles.line}>
-          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+          <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
             You owe
           </Text>
-          <Text variant="titleMedium" style={[styles.amount, { color: theme.colors.moneyNegative }]}>
+          <Text variant="bodyMedium" style={[styles.amount, { color: theme.colors.moneyNegative }]}>
             {joinAmounts(owing)}
           </Text>
         </View>
@@ -85,18 +85,23 @@ export const BalanceHeadline = ({ groupIds, style }: BalanceHeadlineProps) => {
 
 const styles = StyleSheet.create({
   wrap: {
-    gap: 6,
+    gap: 2,
     paddingBottom: 4,
   },
+  /** Label and amount read as ONE phrase — "You are owed $799.32" — so they sit
+   *  next to each other at the same size, with the weight and the money colour
+   *  carrying the emphasis. They used to be a bodySmall label pinned to the
+   *  left and a titleMedium amount pinned to the right by space-between, which
+   *  put a screen's width between two halves of the same sentence and made the
+   *  label look like a caption for something else. */
   line: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    justifyContent: 'space-between',
-    gap: 12,
+    flexWrap: 'wrap',
+    gap: 6,
   },
   amount: {
     fontWeight: '700',
     flexShrink: 1,
-    textAlign: 'right',
   },
 });
