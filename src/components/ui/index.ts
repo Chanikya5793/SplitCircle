@@ -5,6 +5,7 @@ export { GlassCard, type GlassCardProps } from './GlassCard';
 export { Divider, type DividerProps } from './Divider';
 export { fullBleed, SCREEN_GUTTER, TRANSPARENT_HEADER_CLEARANCE } from './layout';
 export { ListSeparator, type ListSeparatorProps } from './ListSeparator';
+export { SegmentedControl, type SegmentedControlOption, type SegmentedControlProps } from './SegmentedControl';
 export type { SurfaceRole } from './surfaceRole';
 export { GlassPickerSheet, type GlassPickerSheetProps, type GlassPickerSheetOption } from './GlassPickerSheet';
 export { GlassToast, type GlassToastProps, type GlassToastAction } from './GlassToast';

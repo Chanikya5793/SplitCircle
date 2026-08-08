@@ -1,6 +1,6 @@
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
-import { fullBleed, GlassCard, ListSeparator, SCREEN_GUTTER, StickyHeaderPill } from '@/components/ui';
+import { fullBleed, GlassCard, ListSeparator, SCREEN_GUTTER, SegmentedControl, StickyHeaderPill } from '@/components/ui';
 import { ChatListSkeleton } from '@/components/SkeletonLoader';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
@@ -722,76 +722,19 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                 </TouchableOpacity>
               </View>
 
-              {/* Filter chips: All | Missed (Apple style segmented).
-
-                  The selected segment is an ACCENT-FILLED pill. It used to be a
-                  white fill lifted by `elevation` — which on Android escapes the
-                  container's clip: the shadow spilled past the rounded corner on
-                  the leading edge, and the lifted background painted a
-                  hard-cornered rectangle inside the pill (the "extra square
-                  inside All"). Dropping the elevation exposed the real problem
-                  underneath — a white-on-near-white fill is invisible on this
-                  surface, so the shadow was the ONLY thing saying which filter
-                  was active. `primaryContainer`/`onPrimaryContainer` is the
-                  palette's own paired fill+foreground, so it reads in both
-                  schemes and against every accent. */}
+              {/* Filter chips: All | Missed. Shares ui/SegmentedControl with the
+                  Appearance rows in Settings so the two cannot drift apart. */}
               <View style={styles.filterRow}>
-                <GlassView role="floating"
-                  radius={50}
+                <SegmentedControl
+                  accessibilityLabel="Call filter"
                   style={styles.segmentedGlass}
-                  contentStyle={styles.segmentedControl}
-                >
-                  <TouchableOpacity
-                    onPress={() => {
-                      lightHaptic();
-                      setFilter('all');
-                    }}
-                    style={[
-                      styles.segment,
-                      filter === 'all' && { backgroundColor: theme.colors.primaryContainer },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.segmentText,
-                        {
-                          color:
-                            filter === 'all'
-                              ? theme.colors.onPrimaryContainer
-                              : theme.colors.onSurfaceVariant,
-                        },
-                        filter === 'all' && styles.segmentTextActive,
-                      ]}
-                    >
-                      All
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      lightHaptic();
-                      setFilter('missed');
-                    }}
-                    style={[
-                      styles.segment,
-                      filter === 'missed' && { backgroundColor: theme.colors.primaryContainer },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.segmentText,
-                        {
-                          color:
-                            filter === 'missed'
-                              ? theme.colors.onPrimaryContainer
-                              : theme.colors.onSurfaceVariant,
-                        },
-                        filter === 'missed' && styles.segmentTextActive,
-                      ]}
-                    >
-                      Missed
-                    </Text>
-                  </TouchableOpacity>
-                </GlassView>
+                  value={filter}
+                  onChange={setFilter}
+                  options={[
+                    { value: 'all', label: 'All' },
+                    { value: 'missed', label: 'Missed' },
+                  ]}
+                />
               </View>
 
               {/* Clear all button in edit mode */}
@@ -1096,30 +1039,9 @@ const styles = StyleSheet.create({
    *  sat inside it at a DIFFERENT radius — two mismatched corner curves nested
    *  in each other. A radius past half the height clamps to a pill, so both
    *  stay in step regardless of what the touch-target floor does to the height. */
+  /** Radius is the control's own (pill); only the width belongs here. */
   segmentedGlass: {
-    borderRadius: 50,
-    width: 200,
-  },
-  segmentedControl: {
-    flexDirection: 'row',
-    padding: 3,
-  },
-  segment: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    // Measured 97x29dp — well under the minimum. 48, not 44: the container's
-    // 3pt padding ate into it and left the item at 43.99dp.
-    minHeight: 48,
-    paddingVertical: 7,
-    borderRadius: 50,
-  },
-  segmentText: {
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  segmentTextActive: {
-    fontWeight: '600',
+    width: 220,
   },
   // -- Clear All --
   clearAllButton: {

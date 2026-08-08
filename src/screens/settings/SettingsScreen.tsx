@@ -6,7 +6,7 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
 import { MugguMark } from '@/components/brand';
-import { fullBleed, GlassCard, GuardCodePad, ListRow, PrivacyGuardSheet, SCREEN_GUTTER, SectionLabel, StickyHeaderPill, WallpaperPickerSheet } from '@/components/ui';
+import { fullBleed, GlassCard, GuardCodePad, ListRow, PrivacyGuardSheet, SCREEN_GUTTER, SectionLabel, SegmentedControl, StickyHeaderPill, WallpaperPickerSheet } from '@/components/ui';
 import { attemptUnlock, getGuardSync, hashCode, updateGuard } from '@/services/privacyGuardService';
 import { useAppLock } from '@/context/AppLockContext';
 import { AUTO_LOCK_OPTIONS, updateAppLock } from '@/services/appLockService';
@@ -42,7 +42,7 @@ import { errorHaptic, lightHaptic, selectionHaptic, successHaptic } from '@/util
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Animated, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Button, SegmentedButtons, Switch, Text } from 'react-native-paper';
+import { Button, Switch, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { appAlert, appPrompt } from '@/utils/appAlert';
 import { checkDeletionBlockers } from '@/services/accountDeletionService';
@@ -513,30 +513,26 @@ export const SettingsScreen = () => {
         <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           {wrapAnchor(SETTING_IDS.appearance, (
           <View style={styles.appearanceBlock}>
-            {/* Measured 142x36dp — under the minimum. The floor goes on each
-                BUTTON (see styles.segmentItem); a minHeight on the container
-                does nothing, because Paper sizes the inner items. */}
-            <SegmentedButtons
+            {/* Not Paper's SegmentedButtons — it sizes its own inner touchable,
+                so the 44pt floor grew only the painted box and left the tappable
+                area at 36dp sitting at the top of it. See ui/SegmentedControl. */}
+            <SegmentedControl
+              accessibilityLabel="Appearance"
               value={mode}
-              onValueChange={(next) => {
-                selectionHaptic();
-                setMode(next as typeof mode);
-              }}
-              buttons={[
-                { value: 'system', label: 'System', icon: 'theme-light-dark', style: styles.segmentItem },
-                { value: 'light', label: 'Light', icon: 'white-balance-sunny', style: styles.segmentItem },
-                { value: 'dark', label: 'Dark', icon: 'weather-night', style: styles.segmentItem },
+              onChange={setMode}
+              options={[
+                { value: 'system', label: 'System', icon: 'theme-light-dark' },
+                { value: 'light', label: 'Light', icon: 'white-balance-sunny' },
+                { value: 'dark', label: 'Dark', icon: 'weather-night' },
               ]}
             />
-            <SegmentedButtons
+            <SegmentedControl
+              accessibilityLabel="Surface style"
               value={surfaceStyle}
-              onValueChange={(next) => {
-                selectionHaptic();
-                setSurfaceStyle(next as typeof surfaceStyle);
-              }}
-              buttons={[
-                { value: 'glass', label: 'Glass', icon: 'blur', style: styles.segmentItem },
-                { value: 'flat', label: 'Flat', icon: 'square-outline', style: styles.segmentItem },
+              onChange={setSurfaceStyle}
+              options={[
+                { value: 'glass', label: 'Glass', icon: 'blur' },
+                { value: 'flat', label: 'Flat', icon: 'square-outline' },
               ]}
             />
             <View style={styles.accentRow}>
@@ -957,12 +953,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 4,
   },
-  /** Paper sizes SegmentedButtons' INNER items, so the floor has to go on
-   *  each button — a minHeight on the container had no effect (measured
-   *  142x36dp before and after). */
-  segmentItem: {
-    minHeight: 48,
-  },
+
   accentSwatch: {
     // 40pt circle is the intended visual; hitSlop lifts the TAPPABLE area to
     // 48 without changing the swatch. (Measured 40x40dp in the audit.)
