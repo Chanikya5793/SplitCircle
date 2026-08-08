@@ -1,18 +1,23 @@
 import { registerAppAlertHost, type AppAlertRequest } from '@/utils/appAlert';
 import { useCallback, useEffect, useState } from 'react';
-import { Platform, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { Button, Dialog, Portal, Text } from 'react-native-paper';
 import type { AlertButton } from 'react-native';
 
 /**
- * Web-only host that renders appAlert() requests as themed Paper dialogs.
- * On native this renders nothing (appAlert delegates to Alert.alert there).
+ * Renders appAlert() requests as themed Paper dialogs.
+ *
+ * Not web-only any more (2026-08-07): appAlert also routes here on ANDROID
+ * when a menu has more than three buttons, because Android's AlertDialog has
+ * only three button slots and RN silently drops the rest — which is how the
+ * long-press quick-action menus ended up with no visible Cancel. See
+ * utils/appAlert.ts. Everything else still goes to the native Alert.
  */
 export function AppAlertHost() {
   const [pending, setPending] = useState<AppAlertRequest[]>([]);
 
   useEffect(() => {
-    if (Platform.OS !== 'web') return undefined;
+    // Subscribe on every platform — appAlert decides what reaches here.
     return registerAppAlertHost((request) => {
       setPending((previous) => [...previous, request]);
     });
@@ -40,7 +45,7 @@ export function AppAlertHost() {
     current.options?.onDismiss?.();
   }, [current, dismiss]);
 
-  if (Platform.OS !== 'web' || !current) return null;
+  if (!current) return null;
 
   return (
     <Portal>

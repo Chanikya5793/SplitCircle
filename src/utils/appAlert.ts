@@ -31,11 +31,21 @@ export function registerAppAlertHost(next: AlertListener): () => void {
 }
 
 /**
- * Drop-in replacement for Alert.alert that actually works on web.
+ * Drop-in replacement for Alert.alert that actually works on web — and on
+ * Android for menus with more than three options.
  *
- * Native: delegates to Alert.alert untouched.
  * Web: renders a themed react-native-paper Dialog via AppAlertHost
  * (RN-web's Alert.alert with buttons is a silent no-op).
+ *
+ * ANDROID + >3 BUTTONS: also routed to AppAlertHost. Android's AlertDialog
+ * has exactly three button slots (positive / negative / neutral), so RN
+ * silently DROPS every button past the third. The long-press quick-action
+ * menus pass five (e.g. Add expense / Settle up / Stats / Archive / Cancel),
+ * so "Cancel" — the last one — never rendered, leaving the menu with no
+ * visible way out. AppAlertHost has no such limit and is already mounted
+ * app-wide in App.tsx, so the fix is to stop gating it to web.
+ *
+ * iOS is untouched: its action sheets take any number of buttons.
  */
 export function appAlert(
   title: string,
@@ -43,7 +53,8 @@ export function appAlert(
   buttons?: AlertButton[],
   options?: AlertOptions,
 ): void {
-  if (Platform.OS !== 'web') {
+  const overAndroidButtonLimit = Platform.OS === 'android' && (buttons?.length ?? 0) > 3;
+  if (Platform.OS !== 'web' && !overAndroidButtonLimit) {
     Alert.alert(title, message, buttons, options);
     return;
   }

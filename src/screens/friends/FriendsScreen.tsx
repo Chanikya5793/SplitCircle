@@ -1,4 +1,5 @@
 import { FONT_CAP } from '@/utils/a11yText';
+import { BalanceHeadline } from '@/components/BalanceHeadline';
 import { GlassView } from '@/components/GlassView';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { StickyHeaderPill } from '@/components/ui';
@@ -489,6 +490,9 @@ export const FriendsScreen = () => {
           <Text variant="displaySmall" style={{ fontWeight: 'bold', color: theme.colors.onSurface }}>
             Friends
           </Text>
+          {/* Same on-device computation as the Expenses screen — see
+              components/BalanceHeadline. */}
+          <BalanceHeadline style={{ marginTop: 8 }} />
         </View>
 
         {rows.length === 0 && !loading ? (

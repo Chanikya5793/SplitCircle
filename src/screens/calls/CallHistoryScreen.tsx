@@ -129,7 +129,8 @@ const CallHistoryRow = memo(function CallHistoryRow({
   onOpen,
   onRegister,
 }: CallHistoryRowProps) {
-  const { pressScaleStyle, touchableProps } = usePressFeedback();
+  const { pressScaleStyle, pressHighlightStyle, touchableProps } = usePressFeedback();
+  const isFlat = theme?.surfaceStyle === 'flat';
   const missed = isMissedOrDeclined(entry);
   const nameColor = missed ? theme.colors.error : theme.colors.onSurface;
   const initials = resolveInitials(entry.otherParticipant.displayName, 'U');
@@ -159,7 +160,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
           liquid glass — Fade/Layout animations here would kill the material
           (DESIGN.md liquid glass DNA) and forced the old blur fallback. */}
       <Animated.View style={pressScaleStyle}>
-        <GlassView style={styles.callItem}>
+        <GlassView style={[styles.callItem, isFlat && styles.callItemFlat]}>
           <TouchableRipple
             onPress={() => onPressInfo(entry)}
             onLongPress={() => onLongPressRow(entry)}
@@ -167,7 +168,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
             borderless
             {...touchableProps}
           >
-            <View style={styles.callRow}>
+            <Animated.View style={[styles.callRow, isFlat && styles.callRowFlat, pressHighlightStyle]}>
               {/* Left: Avatar + Delete button in edit mode */}
               <View style={styles.leftSection}>
                 {isEditing && (
@@ -270,7 +271,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
                   </TouchableOpacity>
                 )}
               </View>
-            </View>
+            </Animated.View>
           </TouchableRipple>
         </GlassView>
       </Animated.View>
@@ -655,6 +656,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
           stickySectionHeadersEnabled={false}
           contentContainerStyle={[
             styles.listContent,
+            theme?.surfaceStyle === 'flat' && styles.listContentFlat,
             { paddingTop: insets.top + 24, paddingBottom: listBottomPadding },
           ]}
           ListHeaderComponent={
@@ -1010,6 +1012,9 @@ const styles = StyleSheet.create({
   listContent: {
     padding: 16,
   },
+  listContentFlat: {
+    paddingHorizontal: 0,
+  },
   // -- Header --
   headerContainer: {
     paddingHorizontal: 4,
@@ -1122,6 +1127,17 @@ const styles = StyleSheet.create({
     marginBottom: 2,
     borderRadius: 14,
     overflow: 'hidden',
+  },
+  /** Flat: full-bleed row with its own hairline, matching the group and chat
+   *  lists. The rounded 14pt clip is what made the press highlight read as a
+   *  "squircle" instead of a list row. */
+  callItemFlat: {
+    marginBottom: 0,
+    borderRadius: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  callRowFlat: {
+    paddingHorizontal: 16,
   },
   callItemContent: {
     paddingVertical: 10,

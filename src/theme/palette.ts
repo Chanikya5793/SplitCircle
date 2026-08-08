@@ -238,7 +238,11 @@ export const NEUTRALS = {
     // inputs) without a border doing the separating.
     flatSurfaceAlt: '#F1F5F9',
     flatBorder: 'rgba(15, 23, 42, 0.10)',
-    divider: 'rgba(15, 23, 42, 0.08)',
+    // Raised from 0.08 (2026-08-07): at 8% the hairline was effectively
+    // invisible, which is what "there are no dividers" was really about
+    // once they were restored. This is the STRUCTURE in flat mode, not a
+    // detail inside a card, so it has to actually read.
+    divider: 'rgba(15, 23, 42, 0.20)',
     skeleton: 'rgba(15, 23, 42, 0.08)',
     // Semantic scrims/fills so screens stop hand-rolling rgba(0,0,0,x) literals.
     // overlay: full modal backdrop · backdrop: subtle content scrim ·
@@ -291,7 +295,9 @@ export const NEUTRALS = {
     flatSurface: '#1C1C1F',
     flatSurfaceAlt: '#252529',
     flatBorder: 'rgba(255, 255, 255, 0.10)',
-    divider: 'rgba(255, 255, 255, 0.08)',
+    // See the light-scheme note. Dark needs a touch more to read against
+    // a near-black row.
+    divider: 'rgba(255, 255, 255, 0.22)',
     skeleton: 'rgba(255, 255, 255, 0.10)',
     // Semantic scrims/fills so screens stop hand-rolling rgba(0,0,0,x) literals.
     // overlay: full modal backdrop · backdrop: subtle content scrim ·

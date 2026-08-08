@@ -6,6 +6,8 @@ import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { usePressFeedback } from '@/hooks/usePressFeedback';
 import { isAccessibilityTextSize } from '@/utils/a11yText';
+import { computeMyGroupBalance } from '@/utils/myBalance';
+import { useAuth } from '@/context/AuthContext';
 import { heavyHaptic, lightHaptic } from '@/utils/haptics';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import React, { useRef } from 'react';
@@ -37,7 +39,21 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
   const bigText = isAccessibilityTextSize(theme?.fontScale ?? 1);
   const swipeableRef = useRef<Swipeable>(null);
   const { pressScaleStyle, pressHighlightStyle, touchableProps } = usePressFeedback();
-  const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+  // What the row shows is YOUR position, not the group's turnover: total
+  // spend is the same number for everyone in the group and says nothing about
+  // whether you need to do anything. Derived on-device from the expenses and
+  // settlements already in memory — no Firebase read, and correct even for an
+  // expense added offline that hasn't pushed yet. See utils/myBalance.ts.
+  const { user } = useAuth();
+  const myBalance = computeMyGroupBalance(user?.userId, group);
+  const balanceLabel =
+    myBalance > 0 ? 'you are owed' : myBalance < 0 ? 'you owe' : 'settled up';
+  const balanceColor =
+    myBalance > 0
+      ? theme.colors.moneyPositive
+      : myBalance < 0
+        ? theme.colors.moneyNegative
+        : theme.colors.moneyNeutral;
 
   const handlePress = () => {
     if (loading) {
@@ -105,7 +121,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
             // Spelled out rather than left to RN's child-concatenation, which
             // produced "Budget, 7 members · USD, $29,214.18" — the middot is
             // read aloud and the amount arrives with no idea what it means.
-            accessibilityLabel={`${displayName}, ${group.members.length} member${group.members.length === 1 ? '' : 's'}, total spent ${fmtMoney(total, group.currency)}`}
+            accessibilityLabel={`${displayName}, ${group.members.length} member${group.members.length === 1 ? '' : 's'}, ${myBalance === 0 ? 'settled up' : `${balanceLabel} ${fmtMoney(Math.abs(myBalance), group.currency)}`}`}
             accessibilityHint="Opens the group"
             accessibilityState={{ busy: loading }}
             // Archive is otherwise a SWIPE-ONLY action, i.e. unreachable with a
@@ -152,14 +168,14 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
                     {group.members.length} members · {group.currency}
                   </Text>
                   {bigText && (
-                    <Text variant="bodyMedium" style={[styles.totalStacked, { color: theme.colors.primary }]}>
-                      {fmtMoney(total, group.currency)}
+                    <Text variant="bodyMedium" style={[styles.totalStacked, { color: balanceColor }]}>
+                      {myBalance === 0 ? 'Settled up' : `${myBalance > 0 ? 'Owed' : 'You owe'} ${fmtMoney(Math.abs(myBalance), group.currency)}`}
                     </Text>
                   )}
                 </View>
                 {!bigText && (
-                  <Text variant="bodyMedium" style={[styles.total, { color: theme.colors.primary }]} numberOfLines={1}>
-                    {fmtMoney(total, group.currency)}
+                  <Text variant="bodyMedium" style={[styles.total, { color: balanceColor }]} numberOfLines={1}>
+                    {myBalance === 0 ? 'Settled' : fmtMoney(Math.abs(myBalance), group.currency)}
                   </Text>
                 )}
                 {loading ? (

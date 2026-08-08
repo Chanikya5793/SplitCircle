@@ -482,7 +482,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
       </Animated.View>
 
       <Animated.ScrollView
-        contentContainerStyle={[styles.container, { paddingBottom: contentBottomPadding }]}
+        contentContainerStyle={[styles.container, theme?.surfaceStyle === 'flat' && styles.containerFlat, { paddingBottom: contentBottomPadding }]}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
           {
@@ -924,6 +924,12 @@ const styles = StyleSheet.create({
     padding: 6,
     paddingBottom: 180,
     gap: 6,
+  },
+  /** Flat: drop the horizontal gutter so expense rows are full-bleed and
+   *  their press highlight reaches both screen edges (see SwipeableGroupCard).
+   *  Vertical padding and the gap between sections survive. */
+  containerFlat: {
+    paddingHorizontal: 0,
   },
   headerCard: {
     padding: 8,

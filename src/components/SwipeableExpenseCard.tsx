@@ -124,7 +124,10 @@ export const SwipeableExpenseCard = ({
         setOpenSwipeable(swipeableRef.current);
       }}
       onSwipeableClose={() => clearOpenSwipeable(swipeableRef.current)}
-        containerStyle={{ borderRadius: 16, overflow: 'hidden' }}
+        // Flat rows are square, full-width list rows — the 16pt rounded clip
+        // is what made the press highlight read as a "squircle" floating
+        // inside the row instead of filling it.
+        containerStyle={isFlat ? undefined : { borderRadius: 16, overflow: 'hidden' }}
       >
         <Animated.View style={pressScaleStyle}>
         <GlassView style={styles.container}>
@@ -134,7 +137,7 @@ export const SwipeableExpenseCard = ({
             style={{ flex: 1 }}
             {...touchableProps}
           >
-            <Animated.View style={[styles.content, pressHighlightStyle]}>
+            <Animated.View style={[styles.content, isFlat && styles.contentFlat, pressHighlightStyle]}>
               <View style={styles.header}>
                 <View style={styles.titleRow}>
                   <View style={styles.iconContainer}>
@@ -179,6 +182,10 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 10, // Ultra-compact
+  },
+  /** Flat: full-bleed, text inset by the row's own padding. */
+  contentFlat: {
+    paddingHorizontal: 16,
   },
   header: {
     flexDirection: 'row',

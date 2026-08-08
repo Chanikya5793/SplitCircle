@@ -440,7 +440,7 @@ export const SettingsScreen = () => {
 
       <Animated.ScrollView
         ref={scrollRef}
-        contentContainerStyle={[styles.container, { paddingTop: insets.top + 24, paddingBottom: bottomPadding }]}
+        contentContainerStyle={[styles.container, surfaceStyle === 'flat' && styles.containerFlat, { paddingTop: insets.top + 24, paddingBottom: bottomPadding }]}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
           useNativeDriver: true,
         })}
@@ -870,6 +870,15 @@ export const SettingsScreen = () => {
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
+  },
+  /** Flat mode: the screen gutter is dropped so a row's press highlight and
+   *  its dividers reach both screen edges, exactly like the group/chat lists.
+   *  ListRow's own paddingHorizontal keeps the text inset. */
+  containerFlat: {
+    paddingHorizontal: 0,
+  },
+  cardFlat: {
+    borderRadius: 0,
   },
   stickyHeader: {
     position: 'absolute',

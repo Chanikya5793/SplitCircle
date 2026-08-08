@@ -1,4 +1,5 @@
 import { FONT_CAP, isAccessibilityTextSize } from '@/utils/a11yText';
+import { BalanceHeadline } from '@/components/BalanceHeadline';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { GlassCard, ListSeparator, StickyHeaderPill } from '@/components/ui';
@@ -366,6 +367,10 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
                   </GlassView>
                 </TouchableRipple>
               </View>
+              {/* Overall position across every group — computed on-device from
+                  data already in GroupContext (utils/myBalance.ts), not read
+                  back from Firebase. */}
+              {!groupsShielded && <BalanceHeadline style={{ marginTop: 8 }} />}
             </View>
 
             {archivedGroups.length > 0 && (
