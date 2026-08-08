@@ -19,11 +19,17 @@ rm -rf "$DERIVED"/SplitCircle-* 2>/dev/null || true
 # NOTE: do NOT touch eas-build-local-nodejs temp dirs here — this hook runs
 # INSIDE the current build's temp workdir; deleting it kills the build.
 
-# 2. Fail fast (with a readable reason) if the disk can't fit an archive.
+# 2. Fail fast (with a readable reason) if the disk can't fit the selected
+# build.  Android AAB builds do not need the 12GB reserve required by an iOS
+# archive, so allow the smaller, still-safe Android reserve.
+MIN_FREE_GB=12
+if [ "${EAS_BUILD_PLATFORM:-}" = "android" ]; then
+  MIN_FREE_GB=6
+fi
 FREE_GB=$(df -g / | awk 'NR==2 {print $4}')
-if [ "${FREE_GB:-0}" -lt 12 ]; then
-  echo "❌ eas-local-preflight: only ${FREE_GB}GB free — an iOS archive needs ~12GB."
-  echo "   Free up space (check ~/Library/Developer/Xcode/DerivedData and old .ipa files) and retry."
+if [ "${FREE_GB:-0}" -lt "$MIN_FREE_GB" ]; then
+  echo "❌ eas-local-preflight: only ${FREE_GB}GB free — this build needs ~${MIN_FREE_GB}GB."
+  echo "   Free up space (check ~/Library/Developer/Xcode/DerivedData and old build artifacts) and retry."
   exit 1
 fi
 
