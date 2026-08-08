@@ -98,6 +98,13 @@ export interface GlassCardProps {
  * gone it reads as a stray indent, pushing content out of line with the
  * screen's own gutter and with the section label above it. Vertical padding
  * survives: it becomes the rhythm between rows.
+ *
+ * THE CONTRACT THIS ASSUMES (see components/ui/layout): the SCREEN keeps its
+ * gutter, so zeroing the card's padding lands content exactly on it. A card
+ * that has been bled out with `fullBleed` starts at x=0 instead, and its
+ * children must then carry their own inset — ListRow already does, and any
+ * other block inside a bled card needs `paddingHorizontal: SCREEN_GUTTER` of
+ * its own or it ends up flush against the screen edge.
  */
 const BORDERLESS_RESET = {
   backgroundColor: 'transparent',

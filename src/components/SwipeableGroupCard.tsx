@@ -1,5 +1,5 @@
 import { GlassView } from '@/components/GlassView';
-import { GroupAvatar } from '@/components/ui';
+import { fullBleed, GroupAvatar } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { Group } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
@@ -96,8 +96,12 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
     );
   };
 
+    // Flat rows are FULL-BLEED: they cancel the list's gutter so the press
+    // highlight and the row divider reach both screen edges, like a native
+    // list. Both consumers (GroupListScreen, ArchivedGroupsScreen) use the
+    // standard SCREEN_GUTTER, so this is safe to bake in. See ui/layout.
   return (
-    <View>
+    <View style={isFlat ? styles.bleed : undefined}>
       <Swipeable
         ref={swipeableRef}
         renderRightActions={onArchive ? renderRightActions : undefined}
@@ -196,6 +200,9 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
 });
 
 const styles = StyleSheet.create({
+  bleed: {
+    ...fullBleed,
+  },
   container: {
     borderRadius: 24,
   },

@@ -25,7 +25,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Platform, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
-import { StickyHeaderPill } from '@/components/ui';
+import { SCREEN_GUTTER, StickyHeaderPill } from '@/components/ui';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
@@ -228,9 +228,11 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
               </Text>
             )
           }
-          // Flat rows are full-bleed so their press highlight reaches both screen
-          // edges (see SwipeableGroupCard); the row's own padding insets the text.
-          contentContainerStyle={{ paddingHorizontal: theme?.surfaceStyle === 'flat' ? 0 : 16, paddingTop: insets.top + 24, paddingBottom: listBottomPadding }}
+          // The gutter STAYS in both modes — the flat rows cancel it themselves
+          // (ChatThreadRow.bleed) so their highlight and hairline reach both
+          // screen edges. Dropping it here instead also un-guttered the "Chats"
+          // title and the empty state. See components/ui/layout.
+          contentContainerStyle={{ paddingHorizontal: SCREEN_GUTTER, paddingTop: insets.top + 24, paddingBottom: listBottomPadding }}
           ListHeaderComponent={
             <View>
               <View style={styles.headerContainer}>

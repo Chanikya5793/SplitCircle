@@ -2,7 +2,7 @@ import { FONT_CAP } from '@/utils/a11yText';
 import { BalanceHeadline } from '@/components/BalanceHeadline';
 import { GlassView } from '@/components/GlassView';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
-import { StickyHeaderPill } from '@/components/ui';
+import { StickyHeaderPill, TRANSPARENT_HEADER_CLEARANCE } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
 import { ROUTES } from '@/constants';
@@ -465,7 +465,7 @@ export const FriendsScreen = () => {
       <Shield
         target="friends"
         duressFallback={
-          <View style={[styles.container, { paddingTop: insets.top + 24, flex: 1, justifyContent: 'center' }]}>
+          <View style={[styles.container, { paddingTop: insets.top + TRANSPARENT_HEADER_CLEARANCE, flex: 1, justifyContent: 'center' }]}>
             <GlassView style={styles.emptyCard}>
               <Text style={[styles.emptyTitle, { color: theme.colors.onSurface }]}>No friends yet</Text>
               <Text style={[styles.emptyBody, { color: theme.colors.onSurfaceVariant }]}>
@@ -478,7 +478,7 @@ export const FriendsScreen = () => {
       <Animated.ScrollView
         contentContainerStyle={[
           styles.container,
-          { paddingTop: insets.top + 24, paddingBottom: bottomPadding },
+          { paddingTop: insets.top + TRANSPARENT_HEADER_CLEARANCE, paddingBottom: bottomPadding },
         ]}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],

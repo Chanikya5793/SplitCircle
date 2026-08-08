@@ -17,7 +17,7 @@ import {
 import { Animated, ScrollView, StyleSheet, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Button, List, Switch, Text } from 'react-native-paper';
-import { Divider } from '@/components/ui';
+import { Divider, TRANSPARENT_HEADER_CLEARANCE } from '@/components/ui';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SCREEN_TITLES } from '@/navigation/screenTitles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -510,7 +510,7 @@ export const NotificationSettingsScreen = () => {
         contentContainerStyle={[
           styles.container,
           {
-            paddingTop: insets.top + 24,
+            paddingTop: insets.top + TRANSPARENT_HEADER_CLEARANCE,
             paddingBottom: insets.bottom + 32,
           },
         ]}

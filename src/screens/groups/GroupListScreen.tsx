@@ -2,7 +2,7 @@ import { FONT_CAP, isAccessibilityTextSize } from '@/utils/a11yText';
 import { BalanceHeadline } from '@/components/BalanceHeadline';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
-import { GlassCard, ListSeparator, StickyHeaderPill } from '@/components/ui';
+import { GlassCard, ListSeparator, SCREEN_GUTTER, StickyHeaderPill } from '@/components/ui';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
@@ -49,7 +49,11 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   // row's own padding insets its text. Glass keeps the gutter — floating
   // cards are meant to be inset from the edge.
   const isFlat = theme?.surfaceStyle === 'flat';
-  const listGutter = isFlat ? 0 : 16;
+  // The list ALWAYS keeps its gutter; the rows cancel it themselves via
+  // fullBleed (see components/ui/layout). Dropping the gutter here instead is
+  // what forced every non-row child — header, empty state — to re-add its own
+  // `paddingHorizontal: isFlat ? 16 : 0`, and anything that forgot ended up
+  // pinned to the screen edge.
   const bigText = isAccessibilityTextSize(theme?.fontScale ?? 1);
   const { isShielded: guardIsShielded, isVanished: guardIsVanished, duress: guardDuress } = usePrivacyGuard();
   // Creating/joining expense groups is blocked while expenses are hidden —
@@ -321,13 +325,19 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         )}
         // Renders only in flat mode — in glass mode the gap between the
         // floating cards already separates the rows.
-        ItemSeparatorComponent={() => <ListSeparator inset={68} />}
+        // Bled out with the rows it separates — otherwise the list gutter
+        // would push the hairline 16pt further in than the rows it belongs to.
+        ItemSeparatorComponent={() => (
+          <View style={styles.separatorBleed}>
+            <ListSeparator inset={68} />
+          </View>
+        )}
         contentContainerStyle={[
           groups.length === 0 && !loading ? styles.emptyContainer : undefined,
-          { paddingTop: insets.top + 32, paddingBottom: listBottomPadding, paddingHorizontal: listGutter }
+          { paddingTop: insets.top + 32, paddingBottom: listBottomPadding, paddingHorizontal: SCREEN_GUTTER }
         ]}
         ListHeaderComponent={
-          <View style={{ paddingHorizontal: isFlat ? 16 : 0 }}>
+          <View>
             <View style={styles.headerContainer}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Expenses</Text>
@@ -407,7 +417,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
               <GroupCardSkeleton />
             </View>
           ) : (
-            <Text style={[styles.empty, { paddingHorizontal: isFlat ? 16 : 0 }, { color: theme.colors.onSurfaceVariant }]}>
+            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
               {archivedGroups.length > 0
                 ? 'All your groups are archived.'
                 : groups.length > 0
@@ -594,6 +604,9 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
 };
 
 const styles = StyleSheet.create({
+  separatorBleed: {
+    marginHorizontal: -SCREEN_GUTTER,
+  },
   container: {
     flex: 1,
   },

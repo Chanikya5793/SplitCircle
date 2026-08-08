@@ -6,7 +6,7 @@
 
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
-import { GroupAvatar, ListSeparator, UserAvatar } from '@/components/ui';
+import { fullBleed, GroupAvatar, ListSeparator, UserAvatar } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
 import { useNotificationContext } from '@/context/NotificationContext';
@@ -496,8 +496,12 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
 };
 
 const styles = StyleSheet.create({
+  /** Flat rows cancel the list's gutter so the press highlight and the row's
+   *  hairline reach both screen edges; the row's own padding keeps the text
+   *  inset. See components/ui/layout. */
   chatItemFlatGap: {
     marginBottom: 0,
+    ...fullBleed,
   },
   chatItem: {
     // Tightened 12 -> 6 (2026-08-07, compact density pass), matching

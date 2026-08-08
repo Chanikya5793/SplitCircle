@@ -1,5 +1,5 @@
 import { GlassView } from '@/components/GlassView';
-import { ListSeparator } from '@/components/ui';
+import { fullBleed, ListSeparator } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { Expense } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
@@ -112,7 +112,7 @@ export const SwipeableExpenseCard = ({
   // hairline reads as a crack across the screen. ListSeparator insets both ends
   // and self-gates on surface style.
   return (
-    <View style={isFlat ? undefined : styles.glassGap}>
+    <View style={isFlat ? styles.bleed : styles.glassGap}>
       <Swipeable
         ref={swipeableRef}
         renderRightActions={onDelete ? renderRightActions : undefined}
@@ -177,6 +177,12 @@ export const SwipeableExpenseCard = ({
 };
 
 const styles = StyleSheet.create({
+  /** Flat rows cancel the screen gutter so the highlight and the row's
+   *  hairline reach both edges. The text stays inset via the row's own
+   *  padding. See components/ui/layout. */
+  bleed: {
+    ...fullBleed,
+  },
   glassGap: {
     marginBottom: 4,
   },

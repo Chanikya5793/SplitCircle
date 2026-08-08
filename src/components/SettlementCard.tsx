@@ -1,5 +1,6 @@
 import { GlassView } from '@/components/GlassView';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
+import { fullBleed } from '@/components/ui/layout';
 import { ListSeparator } from '@/components/ui/ListSeparator';
 import { SyncBadge } from '@/components/ui/SyncBadge';
 import { useGroups } from '@/context/GroupContext';
@@ -88,7 +89,7 @@ export const SettlementCard = ({
     // See SwipeableExpenseCard — same list, same reasoning, including why the
     // hairline is a sibling element rather than a borderBottom.
     return (
-        <View style={isFlat ? undefined : styles.glassGap}>
+        <View style={isFlat ? styles.bleed : styles.glassGap}>
             <Swipeable
                 ref={swipeableRef}
                 onSwipeableWillOpen={() => setOpenSwipeable(swipeableRef.current)}
@@ -148,6 +149,10 @@ export const SettlementCard = ({
 };
 
 const styles = StyleSheet.create({
+    /** See SwipeableExpenseCard.bleed. */
+    bleed: {
+        ...fullBleed,
+    },
     glassGap: {
         marginBottom: 1,
     },

@@ -6,7 +6,7 @@
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
 import { MugguMark } from '@/components/brand';
-import { GlassCard, GuardCodePad, ListRow, PrivacyGuardSheet, SectionLabel, StickyHeaderPill, WallpaperPickerSheet } from '@/components/ui';
+import { fullBleed, GlassCard, GuardCodePad, ListRow, PrivacyGuardSheet, SCREEN_GUTTER, SectionLabel, StickyHeaderPill, WallpaperPickerSheet } from '@/components/ui';
 import { attemptUnlock, getGuardSync, hashCode, updateGuard } from '@/services/privacyGuardService';
 import { useAppLock } from '@/context/AppLockContext';
 import { AUTO_LOCK_OPTIONS, updateAppLock } from '@/services/appLockService';
@@ -59,6 +59,7 @@ export const SettingsScreen = () => {
   const { user, signOutUser, deleteAccountAndSignOut } = useAuth();
   const { isDark, theme, mode, setMode, accent, setAccent, surfaceStyle, setSurfaceStyle } =
     useTheme();
+  const isFlat = surfaceStyle === 'flat';
   const appWallpaper = useWallpaperSlot('app');
   const chatDefaultWallpaper = useWallpaperSlot('chat-default');
   const { active: guardActive, duress: guardDuress, settings: guardSettings } = usePrivacyGuard();
@@ -440,7 +441,7 @@ export const SettingsScreen = () => {
 
       <Animated.ScrollView
         ref={scrollRef}
-        contentContainerStyle={[styles.container, surfaceStyle === 'flat' && styles.containerFlat, { paddingTop: insets.top + 24, paddingBottom: bottomPadding }]}
+        contentContainerStyle={[styles.container, { paddingTop: insets.top + 24, paddingBottom: bottomPadding }]}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
           useNativeDriver: true,
         })}
@@ -509,7 +510,7 @@ export const SettingsScreen = () => {
         </GlassCard>
 
         <SectionLabel style={styles.sectionLabel}>Appearance</SectionLabel>
-        <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+        <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           {wrapAnchor(SETTING_IDS.appearance, (
           <View style={styles.appearanceBlock}>
             {/* Measured 142x36dp — under the minimum. The floor goes on each
@@ -604,7 +605,7 @@ export const SettingsScreen = () => {
         </GlassCard>
 
         <SectionLabel style={styles.sectionLabel}>Receipts & AI</SectionLabel>
-        <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+        <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           {wrapAnchor(SETTING_IDS.aiReceipts, (
           <ListRow
             title="AI receipt parsing"
@@ -662,7 +663,7 @@ export const SettingsScreen = () => {
         </GlassCard>
 
         <SectionLabel style={styles.sectionLabel}>Security</SectionLabel>
-        <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+        <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           {wrapAnchor(SETTING_IDS.appLock, (
           <ListRow
             title={`App Lock (${bioLabel})`}
@@ -747,7 +748,7 @@ export const SettingsScreen = () => {
         </GlassCard>
 
         <SectionLabel style={styles.sectionLabel}>General</SectionLabel>
-        <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+        <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           <ListRow
             title="Your spending"
             subtitle="Cross-group stats, budgets & deep analysis"
@@ -801,7 +802,7 @@ export const SettingsScreen = () => {
           ))}
         </GlassCard>
 
-        <GlassCard style={[styles.card, styles.signOutCard]} contentStyle={styles.cardContent}>
+        <GlassCard style={[styles.card, styles.signOutCard, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           <ListRow
             title="Sign out"
             icon="logout"
@@ -869,16 +870,17 @@ export const SettingsScreen = () => {
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: 16,
+    paddingHorizontal: SCREEN_GUTTER,
   },
-  /** Flat mode: the screen gutter is dropped so a row's press highlight and
-   *  its dividers reach both screen edges, exactly like the group/chat lists.
-   *  ListRow's own paddingHorizontal keeps the text inset. */
-  containerFlat: {
-    paddingHorizontal: 0,
-  },
+  /** Flat mode: only the ROW CARDS run edge to edge, via a negative margin
+   *  that cancels the screen gutter (see components/ui/layout). The gutter
+   *  itself STAYS — dropping it from the screen was the first attempt and it
+   *  pinned the page title, the profile header, the section labels and the
+   *  appearance controls to x=0 as collateral damage: "Settings" sat 1pt from
+   *  the edge and the avatar was clipped by it. */
   cardFlat: {
     borderRadius: 0,
+    ...fullBleed,
   },
   stickyHeader: {
     position: 'absolute',
@@ -939,8 +941,13 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     marginLeft: 4,
   },
+  /** SCREEN_GUTTER, not less: this block sits inside a card that runs edge to
+   *  edge in flat mode (cardFlat), so its own padding is the ONLY thing keeping
+   *  the segmented controls and swatches off the screen edge — and they should
+   *  line up with the page title and section label above them, not sit 3pt
+   *  further out. */
   appearanceBlock: {
-    paddingHorizontal: 12,
+    paddingHorizontal: SCREEN_GUTTER,
     paddingTop: 12,
     paddingBottom: 14,
     gap: 14,

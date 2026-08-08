@@ -1,6 +1,6 @@
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
-import { GlassCard, ListSeparator, StickyHeaderPill } from '@/components/ui';
+import { fullBleed, GlassCard, ListSeparator, SCREEN_GUTTER, StickyHeaderPill } from '@/components/ui';
 import { ChatListSkeleton } from '@/components/SkeletonLoader';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
@@ -155,6 +155,7 @@ const CallHistoryRow = memo(function CallHistoryRow({
       overshootRight={false}
       friction={2}
       onSwipeableWillOpen={lightHaptic}
+      containerStyle={isFlat ? styles.rowBleed : undefined}
     >
       {/* Transform-only animation (press scale) so the row keeps REAL native
           liquid glass — Fade/Layout animations here would kill the material
@@ -668,7 +669,6 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
           stickySectionHeadersEnabled={false}
           contentContainerStyle={[
             styles.listContent,
-            theme?.surfaceStyle === 'flat' && styles.listContentFlat,
             { paddingTop: insets.top + 24, paddingBottom: listBottomPadding },
           ]}
           ListHeaderComponent={
@@ -1025,10 +1025,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    padding: 16,
+    paddingHorizontal: SCREEN_GUTTER,
+    paddingVertical: 16,
   },
-  listContentFlat: {
-    paddingHorizontal: 0,
+  /** Flat rows run edge to edge by CANCELLING the list gutter, not by removing
+   *  it. Removing it un-guttered the header too — the Edit button sat 4pt from
+   *  the screen edge and the section headers 7pt. See components/ui/layout. */
+  rowBleed: {
+    ...fullBleed,
   },
   // -- Header --
   headerContainer: {

@@ -3,7 +3,7 @@ import { DebtsList } from '@/components/DebtsList';
 import { ActivityTypeFilter, DateRange, FilterSortSheet, SortField, SortOrder } from '@/components/FilterSortSheet';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GroupAvatar, GlassCard } from '@/components/ui';
+import { GroupAvatar, GlassCard, SCREEN_GUTTER } from '@/components/ui';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { SettlementCard } from '@/components/SettlementCard';
 import { ExpenseCardSkeleton } from '@/components/SkeletonLoader';
@@ -482,7 +482,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
       </Animated.View>
 
       <Animated.ScrollView
-        contentContainerStyle={[styles.container, theme?.surfaceStyle === 'flat' && styles.containerFlat, { paddingBottom: contentBottomPadding }]}
+        contentContainerStyle={[styles.container, { paddingBottom: contentBottomPadding }]}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
           {
@@ -919,18 +919,19 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
 const styles = StyleSheet.create({
   container: {
-    // Tightened 8 -> 6 (2026-08-07, compact density pass): iOS-Settings
-    // density, sections sit closer together.
-    padding: 6,
+    // Vertical stays tight (8 -> 6, 2026-08-07 compact density pass: iOS
+    // Settings density, sections sit closer together). HORIZONTAL is the
+    // standard screen gutter — at 6 the group header, balances and section
+    // titles all sat a hair off the screen edge.
+    paddingHorizontal: SCREEN_GUTTER,
+    paddingVertical: 6,
     paddingBottom: 180,
     gap: 6,
   },
-  /** Flat: drop the horizontal gutter so expense rows are full-bleed and
-   *  their press highlight reaches both screen edges (see SwipeableGroupCard).
-   *  Vertical padding and the gap between sections survive. */
-  containerFlat: {
-    paddingHorizontal: 0,
-  },
+  /** Flat: the expense/settlement ROWS run edge to edge by cancelling this
+   *  gutter themselves (SwipeableExpenseCard / SettlementCard), not by the
+   *  screen dropping it. Dropping it here also un-guttered the group header,
+   *  the balances block and every section title. See components/ui/layout. */
   headerCard: {
     padding: 8,
     borderRadius: 16,
