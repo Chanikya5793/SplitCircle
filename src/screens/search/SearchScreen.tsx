@@ -279,29 +279,21 @@ export const SearchScreen = () => {
   }, []);
 
   /**
-   * Re-collapse the fallback pill when the keyboard goes away with nothing
-   * typed.
+   * The fallback field STAYS OPEN for as long as this screen is on top.
    *
-   * WHY: on iOS 26 the tab bar IS the search field, so there is never a second
-   * search affordance on screen. The Android fallback fakes that morph, but it
-   * left the pill fully STRETCHED once the keyboard dropped — measured on a
-   * Pixel 7, an empty 786px-wide field parked at y=2307 of 2400 with the real
-   * tab bar (including its own Search tab) still drawn underneath it. Two
-   * search affordances stacked, which is what read as "stranded".
+   * Do NOT re-add a "collapse it when the keyboard drops" effect. That was
+   * tried on 2026-08-07 and is exactly wrong: on iOS 26 collapsing is safe
+   * because the tab bar ITSELF is the search field, so something visible and
+   * typable always remains. On Android nothing morphs — the tab bar stays a
+   * tab bar — so collapsing the pill leaves the search screen with no visible
+   * text box whatsoever, just an anonymous circle floating over the tab bar.
+   * A search screen you cannot see the input on is broken, however faithfully
+   * it imitates the iOS choreography.
    *
-   * Collapsing back to the circle over the tab's search button means the
-   * at-rest state matches iOS — one affordance — and the stretch becomes a
-   * thing that only happens WHILE you are searching, which is the whole point
-   * of the morph. A committed query keeps the pill open, because the text has
-   * to stay visible (Photos semantics: tab-switch keeps a committed search).
+   * The morph still plays on ENTRY (circle -> field, keyboard rising with it),
+   * which is the part that reads as native. It simply never plays backwards
+   * except on an explicit cancel, where the screen is leaving anyway.
    */
-  useEffect(() => {
-    if (nativeMode) return;
-    if (keyboardUp || query.trim()) return;
-    morph.value = withTiming(0, { duration: MORPH_OUT_MS, easing: Easing.in(Easing.cubic) });
-  }, [keyboardUp, query, morph, nativeMode]);
-
-  // Re-stretch when the field is focused again (tapping the collapsed circle).
   const handleFieldFocus = useCallback(() => {
     if (nativeMode) return;
     morph.value = withTiming(1, { duration: MORPH_IN_MS, easing: Easing.out(Easing.cubic) });
@@ -581,10 +573,72 @@ export const SearchScreen = () => {
         />
       )}
       <KeyboardAvoidingView
+        // 'padding' on iOS only: Android uses windowSoftInputMode=adjustResize
+        // (see AndroidManifest), and the field is top-anchored there anyway, so
+        // the keyboard can never reach it.
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.body}
         pointerEvents="box-none"
       >
+        {/* Fallback search bar — TOP-anchored on purpose.
+
+            It used to be bottom-docked, imitating iOS 26 where the tab bar
+            itself morphs into the system search field. That cannot work here:
+            Android has no such morph, so the bar simply sat UNDER the tab bar,
+            and once the keyboard opened it was buried behind both. Verified on
+            a Pixel 7 — typing produced no visible field anywhere on screen, so
+            you could not see what you were typing.
+            (KeyboardAvoidingView could not save it either: `behavior` was
+            undefined on Android, so it was inert.)
+
+            At the top the field is always visible, can never be covered by the
+            keyboard, and matches what Android users expect. iOS is untouched —
+            nativeMode renders no JS field at all and keeps the real
+            UISearchTab (ai_layer/docs/20). */}
+        {!nativeMode && (
+        <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
+          <View style={[styles.field, styles.fieldTop, { backgroundColor: fieldBg }]}>
+            <View style={styles.fieldInner}>
+              <Ionicons name="search" size={18} color={theme.colors.onSurfaceVariant} />
+              <TextInput
+                ref={inputRef}
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search"
+                placeholderTextColor={theme.colors.onSurfaceVariant}
+                style={[styles.input, { color: theme.colors.onSurface }]}
+                autoCorrect={false}
+                returnKeyType="search"
+                onSubmitEditing={() => {
+                  // Committing a search (Photos): keyboard drops, results stay.
+                  // Use the LIVE typed text, not the 130ms-debounced value —
+                  // submitting inside that window (typing then immediately
+                  // hitting return) would otherwise save/answer a stale,
+                  // truncated query.
+                  const live = query.trim();
+                  setDebounced(live);
+                  rememberRecent(live);
+                  runSearchAnswer(live);
+                  Keyboard.dismiss();
+                }}
+              />
+              {query.length > 0 && (
+                <TouchableOpacity onPress={() => setQuery('')} accessibilityLabel="Clear search text">
+                  <Ionicons name="close-circle" size={18} color={theme.colors.onSurfaceVariant} />
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Close search"
+            onPress={dismiss}
+            style={[styles.closeButton, { backgroundColor: fieldBg }]}
+          >
+            <Ionicons name="close" size={22} color={theme.colors.onSurface} />
+          </TouchableOpacity>
+        </View>
+        )}
         {/* Content anchored at the TOP (Photos/Phone): large title while idle,
             plain result sections while typing. */}
         <Animated.View style={[styles.content, contentStyle]}>
@@ -795,63 +849,6 @@ export const SearchScreen = () => {
           </View>
         )}
 
-        {/* Fallback bottom bar: the morphing JS field + round X, riding above the
-            keyboard. In native mode the system field lives in the tab bar itself. */}
-        {!nativeMode && (
-        <View
-          style={[
-            styles.bottomBar,
-            { paddingBottom: keyboardUp ? 10 : getFloatingTabBarEnvelopeHeight(insets.bottom) + 8 },
-          ]}
-        >
-          <Animated.View style={[styles.field, { backgroundColor: fieldBg }, fieldMorphStyle]}>
-            <Animated.View style={[styles.fieldInner, fieldInnerStyle]}>
-              <Ionicons name="search" size={18} color={theme.colors.onSurfaceVariant} />
-              <TextInput
-                ref={inputRef}
-                value={query}
-                onChangeText={setQuery}
-                onFocus={handleFieldFocus}
-                placeholder="Search"
-                placeholderTextColor={theme.colors.onSurfaceVariant}
-                style={[styles.input, { color: theme.colors.onSurface }]}
-                autoCorrect={false}
-                returnKeyType="search"
-                onSubmitEditing={() => {
-                  // Committing a search (Photos): keyboard drops, results stay.
-                  // Use the LIVE typed text, not the 130ms-debounced value —
-                  // submitting inside that window (typing then immediately
-                  // hitting return) would otherwise save/answer a stale,
-                  // truncated query. Mirrors native mode's 'submit', which
-                  // already uses the live event.text for the same reason.
-                  const live = query.trim();
-                  setDebounced(live);
-                  rememberRecent(live);
-                  runSearchAnswer(live);
-                  Keyboard.dismiss();
-                }}
-              />
-              {query.length > 0 && (
-                <TouchableOpacity onPress={() => setQuery('')} accessibilityLabel="Clear">
-                  <Ionicons name="close-circle" size={18} color={theme.colors.onSurfaceVariant} />
-                </TouchableOpacity>
-              )}
-            </Animated.View>
-          </Animated.View>
-          {/* The round X — closes search and drops the user back where they were.
-              Both Phone and Photos keep this beside the docked field. */}
-          <Animated.View style={closeStyle}>
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel="Close search"
-              onPress={dismiss}
-              style={[styles.closeButton, { backgroundColor: fieldBg }]}
-            >
-              <Ionicons name="close" size={22} color={theme.colors.onSurface} />
-            </TouchableOpacity>
-          </Animated.View>
-        </View>
-        )}
       </KeyboardAvoidingView>
     </LiquidBackground>
   );
@@ -865,6 +862,18 @@ const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: 16, paddingBottom: 12 },
   largeTitle: { fontWeight: '700', marginBottom: 4 },
   // Bottom bar right-justified: the field grows LEFTWARD from the circle.
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  /** Top-anchored field fills the row; no morph width to interpolate. */
+  fieldTop: {
+    flex: 1,
+    width: undefined,
+  },
   bottomBar: {
     flexDirection: 'row',
     alignItems: 'center',
