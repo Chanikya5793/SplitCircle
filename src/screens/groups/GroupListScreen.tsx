@@ -41,6 +41,13 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const { user } = useAuth();
   const { isOnline } = useOfflineSync();
   const { theme, isDark } = useTheme();
+  // Flat rows are FULL-BLEED: the list drops its horizontal gutter so a row's
+  // press highlight and its divider reach both screen edges, like a native
+  // list. The gutter moves onto the header/empty-state instead, and each
+  // row's own padding insets its text. Glass keeps the gutter — floating
+  // cards are meant to be inset from the edge.
+  const isFlat = theme?.surfaceStyle === 'flat';
+  const listGutter = isFlat ? 0 : 16;
   const { isShielded: guardIsShielded, isVanished: guardIsVanished, duress: guardDuress } = usePrivacyGuard();
   // Creating/joining expense groups is blocked while expenses are hidden —
   // but not in duress, where a disabled button would betray the fake unlock.
@@ -311,13 +318,13 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         )}
         // Renders only in flat mode — in glass mode the gap between the
         // floating cards already separates the rows.
-        ItemSeparatorComponent={() => <ListSeparator inset={16} />}
+        ItemSeparatorComponent={() => <ListSeparator inset={68} />}
         contentContainerStyle={[
           groups.length === 0 && !loading ? styles.emptyContainer : undefined,
-          { paddingTop: insets.top + 32, paddingBottom: listBottomPadding, paddingHorizontal: 16 }
+          { paddingTop: insets.top + 32, paddingBottom: listBottomPadding, paddingHorizontal: listGutter }
         ]}
         ListHeaderComponent={
-          <View>
+          <View style={{ paddingHorizontal: isFlat ? 16 : 0 }}>
             <View style={styles.headerContainer}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Expenses</Text>
@@ -374,7 +381,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
               <GroupCardSkeleton />
             </View>
           ) : (
-            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
+            <Text style={[styles.empty, { paddingHorizontal: isFlat ? 16 : 0 }, { color: theme.colors.onSurfaceVariant }]}>
               {archivedGroups.length > 0
                 ? 'All your groups are archived.'
                 : groups.length > 0

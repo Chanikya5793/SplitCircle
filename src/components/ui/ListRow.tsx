@@ -37,7 +37,7 @@ export const ListRow = ({
   style,
 }: ListRowProps) => {
   const { theme } = useTheme();
-  const { pressScaleStyle, touchableProps } = usePressFeedback();
+  const { pressScaleStyle, pressHighlightStyle, touchableProps } = usePressFeedback();
   const tint = destructive ? theme.colors.danger : (iconColor ?? theme.colors.primary);
   const showChevron = chevron ?? (Boolean(onPress) && !trailing);
 
@@ -96,7 +96,7 @@ export const ListRow = ({
       style={disabled ? styles.disabled : undefined}
       {...touchableProps}
     >
-      <Animated.View style={pressScaleStyle}>{content}</Animated.View>
+      <Animated.View style={[pressScaleStyle, pressHighlightStyle]}>{content}</Animated.View>
     </TouchableRipple>
   );
 };

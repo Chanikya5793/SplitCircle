@@ -56,7 +56,7 @@ export const SwipeableExpenseCard = ({
   const { theme } = useTheme();
   const isFlat = theme?.surfaceStyle === 'flat';
   const swipeableRef = useRef<Swipeable>(null);
-  const { pressScaleStyle, touchableProps } = usePressFeedback();
+  const { pressScaleStyle, pressHighlightStyle, touchableProps } = usePressFeedback();
   const payerName = maskGroupText(memberMap[expense.paidBy] || 'Unknown', groupId, 'person');
   const isSettlement = expense.category === 'Settlement';
   const splitLabel = getExpenseSplitLabel(expense);
@@ -134,7 +134,7 @@ export const SwipeableExpenseCard = ({
             style={{ flex: 1 }}
             {...touchableProps}
           >
-            <View style={styles.content}>
+            <Animated.View style={[styles.content, pressHighlightStyle]}>
               <View style={styles.header}>
                 <View style={styles.titleRow}>
                   <View style={styles.iconContainer}>
@@ -163,7 +163,7 @@ export const SwipeableExpenseCard = ({
                   </Text>
                 </View>
               </View>
-            </View>
+            </Animated.View>
           </TouchableRipple>
         </GlassView>
         </Animated.View>

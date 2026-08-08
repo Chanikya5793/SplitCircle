@@ -37,7 +37,7 @@ export const SettlementCard = ({
   const { maskGroupText } = usePrivacyMask();
     const { theme } = useTheme();
     const isFlat = theme?.surfaceStyle === 'flat';
-    const { pressScaleStyle, touchableProps } = usePressFeedback();
+    const { pressScaleStyle, pressHighlightStyle, touchableProps } = usePressFeedback();
     const { pendingSyncIds } = useGroups();
     const isPendingSync = pendingSyncIds.has(settlement.settlementId);
     const swipeableRef = useRef<Swipeable>(null);
@@ -106,7 +106,7 @@ export const SettlementCard = ({
                 <Animated.View style={pressScaleStyle}>
                 <GlassView style={styles.container}>
                     <TouchableRipple onPress={handlePress} style={{ flex: 1 }} {...touchableProps}>
-                        <View style={styles.content}>
+                        <Animated.View style={[styles.content, pressHighlightStyle]}>
                             <View style={styles.header}>
                                 <View style={styles.titleRow}>
                                     <View style={styles.iconContainer}>
@@ -141,7 +141,7 @@ export const SettlementCard = ({
                                     </Text>
                                 </View>
                             </View>
-                        </View>
+                        </Animated.View>
                     </TouchableRipple>
                 </GlassView>
                 </Animated.View>

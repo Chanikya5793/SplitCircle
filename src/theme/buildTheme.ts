@@ -42,6 +42,7 @@ export interface SemanticColors {
   overlay: string;
   backdrop: string;
   pressed: string;
+  pressHighlight: string;
   muted: string;
   chart: string[];
 }
@@ -140,6 +141,7 @@ export const buildTheme = (
       overlay: neutral.overlay,
       backdrop: neutral.backdrop,
       pressed: neutral.pressed,
+      pressHighlight: neutral.pressHighlight,
       muted: neutral.muted,
       chart,
     },

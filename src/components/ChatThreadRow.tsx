@@ -175,7 +175,7 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
   const { user } = useAuth();
   const { groups } = useGroups();
   const { theme } = useTheme();
-  const { pressScaleStyle, touchableProps } = usePressFeedback();
+  const { pressScaleStyle, pressHighlightStyle, touchableProps } = usePressFeedback();
   const { preferences, updatePreference } = useNotificationContext();
   const { isShielded } = usePrivacyGuard();
   const { maskChatTitle: maskChatTitleRaw, maskPreview } = usePrivacyMask();
@@ -408,6 +408,10 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
         ]}
         contentStyle={styles.chatItemContent}
       >
+        {/* Animated.View wraps List.Item (rather than overlaying it) so the
+            highlight paints BEHIND the row's text, and inherits GlassCard's
+            clip + radius. */}
+        <Animated.View style={pressHighlightStyle}>
         <List.Item
           title={maskChatTitle(getChatTitle(), thread.chatId)}
           description={
@@ -449,11 +453,12 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
           onPress={handleOpen}
           onLongPress={handleLongPress}
           {...touchableProps}
-          style={styles.chatItemRow}
+          style={[styles.chatItemRow, theme?.surfaceStyle === 'flat' && styles.chatItemRowFlat]}
           titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}
           descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
           descriptionNumberOfLines={1}
         />
+        </Animated.View>
       </GlassView>
       </Animated.View>
     </SwipeableChatRow>
@@ -476,6 +481,11 @@ const styles = StyleSheet.create({
   chatItemRow: {
     paddingHorizontal: 16,
     borderRadius: 16,
+  },
+  /** Full-bleed flat row: the list drops its gutter, so the text inset moves
+   *  here. 20 = the 16 list gutter + 4, matching SwipeableGroupCard. */
+  chatItemRowFlat: {
+    paddingHorizontal: 20,
   },
   unreadBadge: {
     position: 'absolute',

@@ -33,7 +33,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
   const { theme } = useTheme();
   const isFlat = theme?.surfaceStyle === 'flat';
   const swipeableRef = useRef<Swipeable>(null);
-  const { pressScaleStyle, touchableProps } = usePressFeedback();
+  const { pressScaleStyle, pressHighlightStyle, touchableProps } = usePressFeedback();
   const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
 
   const handlePress = () => {
@@ -106,7 +106,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
                 sits at the end of the row, where a list amount belongs, and
                 the label is dropped (the currency beside it already says
                 what it is). */}
-            <View style={styles.content}>
+            <Animated.View style={[styles.content, isFlat && styles.contentFlat, pressHighlightStyle]}>
               <View style={styles.header}>
                 <GroupAvatar photoURL={group.photoURL} name={displayName} size={40} />
                 <View style={styles.meta}>
@@ -126,7 +126,7 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
                   <Icon source="chevron-right" size={20} color={theme.colors.onSurfaceVariant} />
                 )}
               </View>
-            </View>
+            </Animated.View>
           </TouchableRipple>
         </GlassView>
         </Animated.View>
@@ -138,19 +138,29 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
 const styles = StyleSheet.create({
   container: {
     borderRadius: 24,
-    marginHorizontal: 4,
   },
-  /** Glass only: the gap between floating cards IS the row separation. In
-   *  flat mode the rows butt together and a ListSeparator draws the line, so
-   *  this margin collapses — otherwise the separator sits inside the margin
-   *  and reads asymmetric. Must stay in step with rightAction's margin, or
-   *  the swipe action drifts out of alignment with the row. */
+  /** Glass only. Two things collapse in flat mode:
+   *  - marginBottom: the gap between floating cards IS the row separation in
+   *    glass; in flat a ListSeparator draws the line, and a surviving margin
+   *    would put that line inside a row's own margin (reads asymmetric).
+   *  - marginHorizontal: a floating card is inset from the screen edge, but a
+   *    flat row is FULL-BLEED — its press highlight has to run edge to edge
+   *    like a native list row. Only the TEXT is inset (contentFlat below).
+   *  Must stay in step with rightAction/rightActionGlass or the swipe action
+   *  drifts out of alignment with the row. */
   containerGlass: {
     marginBottom: 6,
+    marginHorizontal: 4,
   },
   content: {
     paddingVertical: 8,
     paddingHorizontal: 11,
+  },
+  /** Flat rows are full-bleed, so the text inset moves from the container's
+   *  margin to the content's own padding. 20 = the 16 list gutter + the 4
+   *  card margin that glass mode used, so text lands where it always did. */
+  contentFlat: {
+    paddingHorizontal: 20,
   },
   header: {
     flexDirection: 'row',
@@ -160,7 +170,6 @@ const styles = StyleSheet.create({
   meta: {
     flex: 1,
     minWidth: 0,
-    marginLeft: 4,
   },
   subtitle: {
     // color handled dynamically
@@ -177,11 +186,11 @@ const styles = StyleSheet.create({
   },
   rightAction: {
     justifyContent: 'center',
-    marginRight: 4,
   },
   /** Mirrors containerGlass — see the note there. */
   rightActionGlass: {
     marginBottom: 6,
+    marginRight: 4,
   },
   archiveButton: {
     flex: 1,

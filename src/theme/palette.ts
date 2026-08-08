@@ -246,6 +246,13 @@ export const NEUTRALS = {
     overlay: 'rgba(0, 0, 0, 0.5)',
     backdrop: 'rgba(0, 0, 0, 0.08)',
     pressed: 'rgba(0, 0, 0, 0.05)',
+    // The TAP HIGHLIGHT — deliberately stronger than `pressed` (2026-08-07).
+    // `pressed` is a static fill for dividers/inactive chips at 0.05 alpha;
+    // reusing it as the press cue made taps invisible on a device (verified by
+    // screenshotting a held press: max channel delta came only from the scale
+    // animation's geometry, zero colour change). A press cue has to be SEEN in
+    // ~100ms against a dark glass surface, so it gets its own token.
+    pressHighlight: 'rgba(0, 0, 0, 0.10)',
     blobSettled: ['#84fab0', '#a8edea', '#b8f6e6'] as [string, string, string],
     blobDebts: ['#ff6b6b', '#ffa07a', '#ff7f50'] as [string, string, string],
   },
@@ -292,6 +299,9 @@ export const NEUTRALS = {
     overlay: 'rgba(0, 0, 0, 0.6)',
     backdrop: 'rgba(0, 0, 0, 0.25)',
     pressed: 'rgba(255, 255, 255, 0.08)',
+    // See the light-scheme note. Dark rows are near-black, so the cue is a
+    // white lift rather than a darkening.
+    pressHighlight: 'rgba(255, 255, 255, 0.13)',
     blobSettled: ['#00695C', '#00897B', '#26A69A'] as [string, string, string],
     blobDebts: ['#B71C1C', '#C62828', '#D84315'] as [string, string, string],
   },

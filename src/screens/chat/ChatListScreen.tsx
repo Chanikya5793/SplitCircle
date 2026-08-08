@@ -228,7 +228,9 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
               </Text>
             )
           }
-          contentContainerStyle={{ padding: 16, paddingTop: insets.top + 24, paddingBottom: listBottomPadding }}
+          // Flat rows are full-bleed so their press highlight reaches both screen
+          // edges (see SwipeableGroupCard); the row's own padding insets the text.
+          contentContainerStyle={{ paddingHorizontal: theme?.surfaceStyle === 'flat' ? 0 : 16, paddingTop: insets.top + 24, paddingBottom: listBottomPadding }}
           ListHeaderComponent={
             <View>
               <View style={styles.headerContainer}>

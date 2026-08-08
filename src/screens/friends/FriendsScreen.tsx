@@ -26,6 +26,7 @@ import { resolveDisplayName, resolveInitials } from '@/utils/identity';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
+import Reanimated from 'react-native-reanimated';
 import { appAlert } from '@/utils/appAlert';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { Avatar, IconButton, Text } from 'react-native-paper';
@@ -119,7 +120,7 @@ export const FriendsScreen = () => {
   const navigation = useNavigation<any>();
   const { user } = useAuth();
   const { theme } = useTheme();
-  const { touchableProps } = usePressFeedback();
+  const { pressHighlightStyle, touchableProps } = usePressFeedback();
   const { groups } = useGroups();
   const { ensureDirectThread } = useChat();
   const { startCallSession } = useCallContext();
@@ -370,7 +371,7 @@ export const FriendsScreen = () => {
           borderless
           {...touchableProps}
         >
-          <View style={styles.row}>
+          <Reanimated.View style={[styles.row, pressHighlightStyle]}>
             {/* Avatar opens the friend profile — previously FriendInfoScreen
                 had no entry point from this list at all. */}
             <TouchableRipple
@@ -427,7 +428,7 @@ export const FriendsScreen = () => {
                 accessibilityLabel="Video call"
               />
             </View>
-          </View>
+          </Reanimated.View>
         </TouchableRipple>
       </GlassView>
       </SwipeableFriendRow>
