@@ -12,7 +12,7 @@
 import { GlassView } from '@/components/GlassView';
 import { AiEvidenceSheet } from '@/components/ai/AiEvidenceSheet';
 import { LiquidBackground } from '@/components/LiquidBackground';
-import { GuardedScreen } from '@/components/ui';
+import { GuardedScreen, SCREEN_GUTTER } from '@/components/ui';
 import { ROUTES } from '@/constants';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -786,9 +786,11 @@ const styles = StyleSheet.create({
   actionCard: { marginTop: 10, borderWidth: 1, borderRadius: 12, padding: 10 },
   actionButtons: { flexDirection: 'row', gap: 8, justifyContent: 'flex-end' },
   actionBtn: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1 },
-  quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
+  // SCREEN_GUTTER so the suggestion chips line up with the composer beneath
+  // them — at 12 they sat 4pt further out than everything else on the screen.
+  quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: SCREEN_GUTTER, paddingBottom: 8 },
   quickChip: { borderRadius: 16, paddingVertical: 6, paddingHorizontal: 12 },
-  inputBarShell: { marginHorizontal: 12, marginTop: 4, borderRadius: 24 },
+  inputBarShell: { marginHorizontal: SCREEN_GUTTER, marginTop: 4, borderRadius: 24 },
   inputBarRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingLeft: 16, paddingRight: 6, paddingVertical: 4 },
   textInput: { flex: 1, backgroundColor: 'transparent', maxHeight: 120, fontSize: 15 },
   sendBtn: { paddingBottom: 6 },
