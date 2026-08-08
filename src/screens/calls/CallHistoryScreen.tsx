@@ -1,3 +1,4 @@
+import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { GlassCard, StickyHeaderPill } from '@/components/ui';
 import { ChatListSkeleton } from '@/components/SkeletonLoader';
@@ -199,7 +200,8 @@ const CallHistoryRow = memo(function CallHistoryRow({
                     label={initials}
                     style={{ backgroundColor: theme.colors.primary }}
                     color={theme.colors.onPrimary}
-                  />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
                 )}
               </View>
 
@@ -918,7 +920,8 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
                               label={initials}
                               style={{ backgroundColor: theme.colors.primary }}
                               color={theme.colors.onPrimary}
-                            />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
                           )}
                           <View style={styles.sheetItemCenter}>
                             <Text

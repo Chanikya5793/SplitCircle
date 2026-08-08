@@ -914,6 +914,20 @@ const AppTabs = () => {
           fontWeight: '600',
           fontSize: 12,
         },
+        // NOTE ON TAB LABEL SCALING (2026-08-07): at a 2× OS text size the
+        // labels truncate ("Expen…"). That is NOT fixable from here and was
+        // deliberately left alone. This is `createNativeBottomTabNavigator`
+        // (react-native-screens) — a REAL native tab bar, UITabBar on iOS and
+        // the native bottom nav on Android, which is the whole point of the
+        // UISearchTab work in ai_layer/docs/20. Its `tabBarLabel` takes a
+        // STRING that crosses to native; a React element with
+        // maxFontSizeMultiplier is not supported and is silently ignored (an
+        // earlier attempt here did nothing, and was additionally shadowed by
+        // the per-screen `tabBarLabel` strings below). Label sizing is
+        // therefore the OS's to decide, which is also the correct outcome —
+        // the platform truncates its own tab labels the same way, the icon
+        // carries the meaning, and the accessible name is still the full
+        // string. Do not "fix" this by dropping to a JS tab bar.
         tabBarStyle: Platform.select({
           ios: {
             backgroundColor: theme.colors.appBackground,

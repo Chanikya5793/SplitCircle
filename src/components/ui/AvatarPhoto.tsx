@@ -2,6 +2,7 @@
 // pair so every surface (friends, chats, groups, calls) renders identity the
 // same way instead of hand-rolling Avatar.Text fallbacks per screen.
 
+import { FONT_CAP } from '@/utils/a11yText';
 import { useTheme } from '@/context/ThemeContext';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { resolveInitials as initialsFor } from '@/utils/identity';
@@ -55,6 +56,10 @@ export const UserAvatar = ({ photoURL, displayName, size = 40 }: UserAvatarProps
       style={{ backgroundColor: theme.colors.primaryContainer }}
       color={theme.colors.onPrimaryContainer}
       labelStyle={{ fontWeight: '700' }}
+      // The circle's diameter is fixed by `size`, so a scaling monogram just
+      // clips ("B…" on a Pixel 7 at 2×). Initials are a graphic, not copy —
+      // the accessible name comes from the row's own text. See a11yText.ts.
+      maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
     />
   );
 };
@@ -105,6 +110,7 @@ export const GroupAvatar = ({ photoURL, name, size = 40 }: GroupAvatarProps) => 
         style={{ backgroundColor: theme.colors.secondaryContainer }}
         color={theme.colors.onSecondaryContainer}
         labelStyle={{ fontWeight: '700' }}
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
       />
     );
   }

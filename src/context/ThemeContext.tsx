@@ -12,6 +12,7 @@ import {
   type SurfaceStyle,
 } from '@/theme';
 import { NEUTRALS } from '@/theme/palette';
+import { useAccessibilitySettings } from '@/hooks/useAccessibilitySettings';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, {
   createContext,
@@ -164,9 +165,18 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
     });
   }, [systemScheme]);
 
+  // OS accessibility state, subscribed once here rather than in each of the
+  // 244 glass surfaces / 1,364 Text nodes that need to react to it.
+  const a11y = useAccessibilitySettings();
+
   const theme = useMemo(
-    () => buildTheme(isDark ? 'dark' : 'light', accent, surfaceStyle),
-    [isDark, accent, surfaceStyle],
+    () =>
+      buildTheme(isDark ? 'dark' : 'light', accent, surfaceStyle, {
+        fontScale: a11y.fontScale,
+        reduceTransparency: a11y.reduceTransparency,
+        reduceMotion: a11y.reduceMotion,
+      }),
+    [isDark, accent, surfaceStyle, a11y.fontScale, a11y.reduceTransparency, a11y.reduceMotion],
   );
 
   const value = useMemo(

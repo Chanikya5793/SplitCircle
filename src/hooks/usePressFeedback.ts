@@ -73,7 +73,11 @@ export const usePressFeedback = () => {
    * floating inset card and a squish is exactly right for it.
    */
   const isFlat = theme?.surfaceStyle === 'flat';
-  const pressedScale = isFlat ? 1 : PRESSED_SCALE;
+  // Reduce Motion: drop the squish, keep the highlight. The highlight is the
+  // CUE (it says what you are touching) and must survive — only the movement
+  // is decorative, and movement is exactly what the setting asks to remove.
+  const reduceMotion = theme?.reduceMotion === true;
+  const pressedScale = isFlat || reduceMotion ? 1 : PRESSED_SCALE;
 
   const onPressIn = useCallback(() => {
     // Fast in — the cue must land while the finger is still going down.

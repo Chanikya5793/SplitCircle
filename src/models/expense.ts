@@ -114,6 +114,8 @@ export interface RecurringExpenseMetadata {
 
 export interface Expense {
   expenseId: string;
+  /** Monotonic optimistic-concurrency token. Missing legacy values read as 1. */
+  revision?: number;
   requestId?: string;
   groupId: string;
   title: string;

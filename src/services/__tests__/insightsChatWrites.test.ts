@@ -42,6 +42,9 @@ import {
   sendInsightsMessage,
 } from '../insightsChatService';
 import type { ConversationState } from '../assistantService';
+import { runAgenticTurn } from '../aiPipelineService';
+
+const agentic = vi.mocked(runAgenticTurn);
 
 const NOW = Date.now();
 
@@ -150,6 +153,36 @@ describe('write delegation (doc 24 P4)', () => {
     expect(actionPayloadOf(card?.payload)?.state).toBe('done');
     expect(done.messages[done.messages.length - 1].text).toBe('✓ Budget set.');
     expect(done.meta?.assistantState).toEqual({});
+  });
+});
+
+describe('answer provenance', () => {
+  it('persists engine and typed evidence returned by the agentic pipeline', async () => {
+    agentic.mockResolvedValueOnce({
+      role: 'assistant',
+      text: 'The group total is 100 USD.',
+      source: 'pcc',
+      evidence: [{
+        kind: 'capability', tool: 'range_totals', version: 1, title: 'Range totals',
+        dataClasses: ['persistent_money'],
+      }],
+    });
+    const thread = await freshThread();
+    const result = await sendInsightsMessage({
+      thread,
+      userText: 'explain our spending pattern',
+      facts: '{"total":100}',
+      personalGroups: [group],
+      currentUserId: 'u1',
+    });
+    expect(result.reply).toMatchObject({
+      source: 'pcc',
+      evidence: [expect.objectContaining({ tool: 'range_totals', version: 1 })],
+    });
+    expect(result.thread.messages.at(-1)).toMatchObject({
+      source: 'pcc',
+      evidence: [expect.objectContaining({ dataClasses: ['persistent_money'] })],
+    });
   });
 });
 

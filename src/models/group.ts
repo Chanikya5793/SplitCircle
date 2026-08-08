@@ -21,11 +21,14 @@ export interface GroupMember {
 
 export interface Settlement {
   settlementId: string;
+  /** Monotonic optimistic-concurrency token. Missing legacy values read as 1. */
+  revision?: number;
   requestId?: string;
   fromUserId: string;
   toUserId: string;
   amount: number;
   createdAt: number;
+  updatedAt?: number;
   note?: string;
   status: 'pending' | 'completed';
 }

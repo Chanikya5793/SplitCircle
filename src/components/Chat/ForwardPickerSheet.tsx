@@ -1,3 +1,4 @@
+import { FONT_CAP } from '@/utils/a11yText';
 import { GlassCard } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
@@ -155,7 +156,8 @@ export const ForwardPickerSheet = ({
                       label={initialsFor(item)}
                       style={{ backgroundColor: theme.colors.primary }}
                       color="#fff"
-                    />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
                   )}
                   <View style={styles.rowText}>
                     <Text style={[styles.rowTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>

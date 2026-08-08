@@ -62,6 +62,29 @@ export const typography: Record<
   label: { fontSize: 11, lineHeight: 14, fontWeight: '600' },
 };
 
+/**
+ * Scales a type ramp for the OS text size.
+ *
+ * WHY THIS IS NEEDED: React Native multiplies `fontSize` by the OS font scale
+ * automatically, but leaves `lineHeight` exactly as written. A token pairing
+ * `fontSize: 20` with `lineHeight: 25` therefore becomes 40pt glyphs crammed
+ * into a 25pt line at a 2× accessibility size — the text is clipped, and
+ * descenders go first (which is why "Budget" rendered as "Budaet" on a device
+ * at an AX size, 2026-08-07).
+ *
+ * `fontSize` is deliberately left ALONE here — RN already scales it, and
+ * pre-multiplying would apply the scale twice.
+ */
+export const scaleTypography = (base: Typography, fontScale: number): Typography => {
+  if (!Number.isFinite(fontScale) || fontScale <= 1) return base;
+  const out = {} as Typography;
+  for (const key of Object.keys(base) as (keyof Typography)[]) {
+    const t = base[key];
+    out[key] = { ...t, lineHeight: Math.round(t.lineHeight * fontScale) };
+  }
+  return out;
+};
+
 export const animation = {
   /** Theme crossfade duration (ThemeContext.themeProgress). */
   themeTransitionMs: 500,

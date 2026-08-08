@@ -1,3 +1,4 @@
+import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { ROUTES } from '@/constants';
@@ -104,7 +105,8 @@ const SwipeableDebtRow = ({
                         label={resolveInitials(fromName)}
                         style={{ backgroundColor: theme.colors.errorContainer }}
                         color={theme.colors.onErrorContainer}
-                    />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
                     <Text
                         style={[
                             styles.name,
@@ -130,7 +132,8 @@ const SwipeableDebtRow = ({
                         label={resolveInitials(toName)}
                         style={{ backgroundColor: theme.colors.primaryContainer }}
                         color={theme.colors.onPrimaryContainer}
-                    />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
                     <Text
                         style={[
                             styles.name,

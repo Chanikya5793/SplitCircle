@@ -1,3 +1,4 @@
+import { FONT_CAP } from '@/utils/a11yText';
 import { GlassCard } from '@/components/ui';
 import { useTheme } from '@/context/ThemeContext';
 import type { ChatParticipant } from '@/models';
@@ -70,7 +71,8 @@ export const MentionAutocomplete = ({
                   style={{ backgroundColor: theme.colors.primary }}
                   labelStyle={{ fontSize: 11, lineHeight: 28 }}
                   color="#fff"
-                />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
               )}
               <Text style={[styles.name, { color: theme.colors.onSurface }]} numberOfLines={1}>
                 {name}

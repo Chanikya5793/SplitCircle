@@ -363,6 +363,7 @@ export async function sendInsightsMessage(args: {
         source: turn.source,
         options: turn.options,
         assumption: turn.assumption,
+        evidence: turn.evidence,
         createdAt: Date.now(),
       };
       // Doc 25: register the turn snapshot so a later 👎 can capture it.

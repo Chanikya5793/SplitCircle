@@ -1,3 +1,4 @@
+import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GuardedScreen } from '@/components/ui';
@@ -148,7 +149,8 @@ export const CallInfoScreen = ({ entry, onCallBack }: CallInfoScreenProps) => {
               label={initials}
               style={{ backgroundColor: theme.colors.primary }}
               color={theme.colors.onPrimary}
-            />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
           )}
           <Text style={[styles.profileName, { color: theme.colors.onSurface }]}>
             {resolveDisplayName(entry.otherParticipant, 'Unknown')}

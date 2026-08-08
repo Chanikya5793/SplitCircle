@@ -21,6 +21,7 @@ import type { ExpenseAiAnswer, ExpenseAiSource } from '@/services/aiService';
 import { runAgenticTurn } from '@/services/aiPipelineService';
 import { addItem as addMemoryItem } from '@/services/aiMemoryService';
 import type { TurnTrace } from '@/utils/aiFeedback';
+import type { AiToolEvidence } from '@/utils/aiTools';
 import { parseRememberCommand } from '@/utils/aiMemory';
 import type { AiThread } from '@/utils/aiThreads';
 import {
@@ -54,9 +55,9 @@ export type NewExpense = Omit<Expense, 'expenseId' | 'createdAt' | 'updatedAt'>;
 export type ProposedAction =
   | { type: 'add_expense'; expense: NewExpense; summary: string }
   | { type: 'settle_up'; settlement: { fromUserId: string; toUserId: string; amount: number }; summary: string }
-  | { type: 'delete_expense'; expenseId: string; summary: string; destructive: true }
+  | { type: 'delete_expense'; expenseId: string; expectedRevision?: number; expectedUpdatedAt?: number; summary: string; destructive: true }
   | { type: 'edit_expense'; expense: Expense; summary: string }
-  | { type: 'delete_settlement'; settlementId: string; summary: string; destructive: true }
+  | { type: 'delete_settlement'; settlementId: string; expectedRevision?: number; expectedUpdatedAt?: number; summary: string; destructive: true }
   | { type: 'navigate'; target: NavTarget; summary: string }
   /** Doc 24 P4 — set/replace a category's monthly budget; amount 0 removes it. */
   | { type: 'set_budget'; category: string; amount: number; summary: string };
@@ -108,7 +109,9 @@ export interface AssistantTurn {
   /** Stated reading under mild ambiguity (doc 24) — rendered as a caption. */
   assumption?: string;
   /** Which engine narrated an agentic answer (badge parity with insights). */
-  engineSource?: 'ondevice' | 'pcc';
+  engineSource?: 'deterministic' | 'ondevice' | 'pcc';
+  /** Content-free capability provenance for the answer details UI. */
+  evidence?: AiToolEvidence[];
   /** Doc 25 — the agentic turn snapshot (screen registers it for 👎 capture). */
   trace?: TurnTrace;
 }
@@ -362,6 +365,8 @@ function handleDeleteExpense(text: string, group: Group): AssistantTurn {
   const action: ProposedAction = {
     type: 'delete_expense',
     expenseId: match.expenseId,
+    expectedRevision: match.revision ?? (match.updatedAt == null ? 1 : undefined),
+    expectedUpdatedAt: match.updatedAt,
     destructive: true,
     summary: `${match.title || 'Untitled'} — ${money(match.amount, group.currency)}`,
   };
@@ -412,6 +417,8 @@ function handleDeleteSettlement(text: string, group: Group, currentUserId: strin
   const action: ProposedAction = {
     type: 'delete_settlement',
     settlementId: match.settlementId,
+    expectedRevision: match.revision ?? (match.updatedAt == null ? 1 : undefined),
+    expectedUpdatedAt: match.updatedAt,
     destructive: true,
     summary: `${from === 'you' ? 'You' : from} → ${to}: ${money(match.amount, group.currency)}`,
   };
@@ -505,7 +512,7 @@ async function answerQuestion(
   agentic?: AgenticAssistContext,
 ): Promise<AssistantTurn> {
   const local: ExpenseAiAnswer | null = answerExpenseLocally(text, group, currentUserId);
-  if (local) return { reply: local.answer, sources: local.sources, state: {} };
+  if (local) return { reply: local.answer, sources: local.sources, engineSource: 'deterministic', state: {} };
 
   // Doc 24 P1: the agentic pipeline replaces the one-shot model chain when the
   // surface provides thread + facts. Null → the legacy chain below is the net.
@@ -531,6 +538,7 @@ async function answerQuestion(
         reply: turn.text,
         assumption: turn.assumption,
         engineSource: turn.source,
+        evidence: turn.evidence,
         state: {},
         trace: turn.trace,
       };
@@ -542,7 +550,7 @@ async function answerQuestion(
   // the old-binary / pipeline-off fallback.
   if (getOnDeviceAiAvailability() === 'available') {
     const ans = await askExpenseAiOnDevice(text, group, currentUserId);
-    if (ans?.answer) return { reply: ans.answer, sources: ans.sources, state: {} };
+    if (ans?.answer) return { reply: ans.answer, sources: ans.sources, engineSource: 'ondevice', state: {} };
   }
 
   return {

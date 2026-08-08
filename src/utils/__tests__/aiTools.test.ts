@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import type { Expense } from '@/models/expense';
 import type { Settlement } from '@/models/group';
 import {
+  AI_TOOL_CONTRACTS,
   MAX_REQUESTS_PER_HOP,
   availableTools,
   executeToolRequests,
@@ -395,7 +396,124 @@ describe('executeToolRequests guards', () => {
 
   it('unknown tools become error results, not throws', async () => {
     const r = await run({ tool: 'hack_the_planet' });
-    expect(r.error).toContain('no tool named');
+    expect(r).toMatchObject({ status: 'error', code: 'forbidden' });
+    expect(r.error).toBe('That capability is not available in this context.');
+    expect(r.error).not.toContain('hack_the_planet');
+  });
+
+  it('enforces a shared deadline and reports a typed timeout', async () => {
+    const ctx: ToolCtx = {
+      ...groupCtx(),
+      chatSearch: async () => new Promise(() => undefined),
+    };
+    const [r] = await executeToolRequests(
+      [{ tool: 'chat_search', query: 'hotel' }],
+      ctx,
+      new Set(),
+      { surface: 'assistant', deadlineAt: Date.now() + 5 },
+    );
+    expect(r).toMatchObject({ status: 'error', code: 'timeout', dataClasses: ['local_chat'] });
+  });
+
+  it('surface packs prevent local history capabilities in insights', () => {
+    const ctx: ToolCtx = {
+      ...groupCtx(),
+      chatSearch: async () => ({ matches: 0, rows: [] }),
+      callStats: async () => ({ calls: 0, totalMinutes: 0, missed: 0, lastCall: null }),
+    };
+    expect(availableTools(ctx, { surface: 'assistant' })).toContain('chat_search');
+    expect(availableTools(ctx, { surface: 'insights' })).not.toContain('chat_search');
+    expect(availableTools(ctx, { surface: 'siri' })).toEqual(
+      expect.arrayContaining(['range_totals', 'balances']),
+    );
+    expect(availableTools(ctx, { surface: 'siri' })).not.toContain('search_expenses');
+  });
+
+  it('fails closed for an unknown or misspelled surface', () => {
+    expect(availableTools(groupCtx(), { surface: 'insigthts' })).toEqual([]);
+    expect(toolCatalog(groupCtx(), { surface: 'insigthts' })).toBe('');
+  });
+
+  it('has a versioned policy contract for every exposed tool', () => {
+    const ctx: ToolCtx = {
+      ...groupCtx(),
+      chatSearch: async () => ({ matches: 0, rows: [] }),
+      callStats: async () => ({ calls: 0, totalMinutes: 0, missed: 0, lastCall: null }),
+    };
+    for (const name of availableTools(ctx)) {
+      expect(AI_TOOL_CONTRACTS[name]).toMatchObject({
+        name,
+        version: 1,
+        effects: ['read'],
+      });
+      expect(AI_TOOL_CONTRACTS[name].timeoutMs).toBeGreaterThan(0);
+      expect(AI_TOOL_CONTRACTS[name].maxResultBytes).toBeGreaterThan(0);
+      expect(Object.isFrozen(AI_TOOL_CONTRACTS[name])).toBe(true);
+      expect(Object.isFrozen(AI_TOOL_CONTRACTS[name].dataClasses)).toBe(true);
+    }
+    expect(Object.keys(AI_TOOL_CONTRACTS)).toHaveLength(21);
+    expect(Object.isFrozen(AI_TOOL_CONTRACTS)).toBe(true);
+  });
+
+  it('returns copies of contract metadata so outcomes cannot mutate policy', async () => {
+    const r = await run({ tool: 'balances' });
+    r.dataClasses?.push('local_chat');
+    expect(AI_TOOL_CONTRACTS.balances.dataClasses).toEqual(['persistent_money']);
+  });
+
+  it('gives tool validation failures a machine-readable code', async () => {
+    const r = await run({ tool: 'month_summary', month: 'banana' });
+    expect(r).toMatchObject({ status: 'error', code: 'invalid_args' });
+  });
+
+  it('propagates parent cancellation into an in-flight local provider', async () => {
+    const controller = new AbortController();
+    let providerSignal: AbortSignal | undefined;
+    const ctx: ToolCtx = {
+      ...groupCtx(),
+      chatSearch: async (_query, _tf, signal) => {
+        providerSignal = signal;
+        return new Promise(() => undefined);
+      },
+    };
+    const pending = executeToolRequests(
+      [{ tool: 'chat_search', query: 'hotel' }],
+      ctx,
+      new Set(),
+      { surface: 'assistant', signal: controller.signal },
+    );
+    controller.abort();
+    const [r] = await pending;
+    expect(providerSignal?.aborted).toBe(true);
+    expect(r).toMatchObject({ status: 'error', code: 'cancelled', dataClasses: ['local_chat'] });
+  });
+
+  it('converts provider exceptions to a safe internal error without leaking details', async () => {
+    const ctx: ToolCtx = {
+      ...groupCtx(),
+      chatSearch: async () => { throw new Error('secret database path /private/messages'); },
+    };
+    const [r] = await executeToolRequests(
+      [{ tool: 'chat_search', query: 'hotel' }], ctx, new Set(), { surface: 'assistant' },
+    );
+    expect(r).toMatchObject({ status: 'error', code: 'internal' });
+    expect(r.error).toBe('The capability could not be completed.');
+    expect(r.json).not.toContain('secret database path');
+  });
+
+  it('rejects oversized provider output before it reaches a model prompt', async () => {
+    const ctx: ToolCtx = {
+      ...groupCtx(),
+      chatSearch: async () => ({
+        matches: 1,
+        rows: [{ text: 'x'.repeat(20_000), from: 'Maya', date: 'Jul 5' }],
+      }),
+    };
+    const [r] = await executeToolRequests(
+      [{ tool: 'chat_search', query: 'hotel' }], ctx, new Set(), { surface: 'assistant' },
+    );
+    expect(r).toMatchObject({ status: 'error', code: 'result_too_large' });
+    expect(r.json.length).toBeLessThan(200);
   });
 
   it('unresolvable args become error results the model can react to', async () => {

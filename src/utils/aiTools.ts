@@ -11,8 +11,8 @@
  * into exact windows/entities. Ambiguity is DATA, not an error: a member arg
  * matching two people returns the candidates so the pipeline can ask back.
  *
- * Local-tier tools (chat_search / call_stats / entity_lookup) are P5 — they do
- * NOT belong here yet; adding one requires the on-device engine pinning rule.
+ * Local-tier tools (chat_search / call_stats) use injected providers and are
+ * constrained by the same declarative contracts and on-device pinning rule.
  */
 
 import type { Expense } from '@/models/expense';
@@ -65,6 +65,34 @@ export interface ToolResult {
   json: string;
   /** Set when args didn't resolve — the model should adjust, not invent. */
   error?: string;
+  /** Machine-readable outcome. Optional only for old persisted traces. */
+  status?: 'ok' | 'error';
+  code?: 'invalid_args' | 'forbidden' | 'timeout' | 'cancelled' | 'unavailable' | 'internal' | 'invalid_output' | 'result_too_large';
+  /** Safe execution metadata — never includes request text or returned data. */
+  durationMs?: number;
+  dataClasses?: AiDataClass[];
+}
+
+export type AiDataClass = 'persistent_money' | 'local_chat' | 'local_calls';
+export type AiSurface = 'assistant' | 'insights' | 'search' | 'siri';
+
+export interface AiToolContract {
+  name: string;
+  version: 1;
+  title: string;
+  dataClasses: AiDataClass[];
+  effects: readonly ['read'];
+  timeoutMs: number;
+  maxResultBytes: number;
+}
+
+/** Content-free provenance safe to persist with a local conversation. */
+export interface AiToolEvidence {
+  kind: 'capability';
+  tool: string;
+  version: 1;
+  title: string;
+  dataClasses: AiDataClass[];
 }
 
 interface GroupCtx {
@@ -115,8 +143,10 @@ export interface ToolCtx {
    * pins the whole turn to the on-device engine, and they are never offered
    * when the user picked Private Cloud. Absent provider ⇒ tool unavailable.
    */
-  chatSearch?: (query: string, tf: Timeframe | null) => Promise<ChatSearchResult>;
-  callStats?: (member: string | undefined, tf: Timeframe | null) => Promise<CallStatsResult>;
+  chatSearch?: (query: string, tf: Timeframe | null, signal?: AbortSignal) => Promise<ChatSearchResult>;
+  callStats?: (member: string | undefined, tf: Timeframe | null, signal?: AbortSignal) => Promise<CallStatsResult>;
+  /** Cooperative cancellation propagated into local providers. */
+  signal?: AbortSignal;
   /** Doc 25 Q2 — learned alias → display-name fixes ("sam" → "Sam Lee"),
    * applied to member args BEFORE resolution so fixed names never re-clarify. */
   entityFixes?: Record<string, string>;
@@ -305,12 +335,14 @@ const err = (tool: string, label: string, error: string): ToolResult => ({
   label,
   json: JSON.stringify({ error }),
   error,
+  status: 'error',
 });
 
 const ok = (tool: string, label: string, payload: unknown): ToolResult => ({
   tool,
   label,
   json: JSON.stringify(payload),
+  status: 'ok',
 });
 
 const needGroup = (ctx: ToolCtx): GroupCtx | null => ctx.group ?? null;
@@ -773,7 +805,7 @@ const TOOLS: Record<
       const q = (req.query ?? '').trim();
       if (!q) return err('chat_search', 'chat search', 'empty query');
       const p = resolvePeriod(req.month, ctx.now);
-      const result = await ctx.chatSearch(q, p?.tf ?? null);
+      const result = await ctx.chatSearch(q, p?.tf ?? null, ctx.signal);
       return ok('chat_search', `chat search "${q}"`, {
         query: q,
         period: periodLabel(p),
@@ -790,7 +822,7 @@ const TOOLS: Record<
     run: async (req, ctx) => {
       if (!ctx.callStats) return err('call_stats', 'call stats', 'call history is not available here');
       const p = resolvePeriod(req.month, ctx.now);
-      const result = await ctx.callStats(req.member?.trim() || undefined, p?.tf ?? null);
+      const result = await ctx.callStats(req.member?.trim() || undefined, p?.tf ?? null, ctx.signal);
       return ok('call_stats', 'call stats', {
         ...(req.member ? { member: req.member } : {}),
         period: periodLabel(p),
@@ -817,6 +849,79 @@ const TOOLS: Record<
 
 // ── Public registry API ──────────────────────────────────────────────────────
 
+const contract = (
+  name: string,
+  title: string,
+  dataClasses: AiDataClass[] = ['persistent_money'],
+  timeoutMs = 2_000,
+): AiToolContract => Object.freeze({
+  name,
+  version: 1,
+  title,
+  dataClasses: Object.freeze([...dataClasses]) as unknown as AiDataClass[],
+  effects: Object.freeze(['read'] as const),
+  timeoutMs,
+  maxResultBytes: 16_384,
+});
+
+/**
+ * Auditable, versioned execution policy. Keep this separate from prompt copy:
+ * changing a description must never silently change privacy or runtime limits.
+ */
+export const AI_TOOL_CONTRACTS: Record<string, AiToolContract> = Object.freeze({
+  range_totals: contract('range_totals', 'Range totals'),
+  month_summary: contract('month_summary', 'Month summary'),
+  compare_ranges: contract('compare_ranges', 'Compare periods'),
+  category_breakdown: contract('category_breakdown', 'Category breakdown'),
+  category_trail: contract('category_trail', 'Category history'),
+  member_stats: contract('member_stats', 'Member statistics'),
+  merchant_stats: contract('merchant_stats', 'Merchant statistics'),
+  top_expenses: contract('top_expenses', 'Top expenses'),
+  search_expenses: contract('search_expenses', 'Expense search'),
+  balances: contract('balances', 'Balances'),
+  settle_plan: contract('settle_plan', 'Settlement plan'),
+  budgets: contract('budgets', 'Budgets'),
+  budget_status: contract('budget_status', 'Budget status'),
+  recurring: contract('recurring', 'Recurring expenses'),
+  forecast: contract('forecast', 'Spending forecast'),
+  anomalies: contract('anomalies', 'Spending anomalies'),
+  personal_overview: contract('personal_overview', 'Personal overview'),
+  entity_lookup: contract('entity_lookup', 'Entity lookup'),
+  chat_search: contract('chat_search', 'Chat search', ['local_chat'], 3_000),
+  call_stats: contract('call_stats', 'Call statistics', ['local_calls'], 3_000),
+  group_compare: contract('group_compare', 'Group comparison'),
+});
+
+const SURFACE_PACKS: Record<AiSurface, ReadonlySet<string>> = {
+  assistant: new Set(Object.keys(AI_TOOL_CONTRACTS)),
+  insights: new Set(Object.keys(AI_TOOL_CONTRACTS).filter((name) => AI_TOOL_CONTRACTS[name].dataClasses.every((kind) => kind === 'persistent_money'))),
+  search: new Set(['entity_lookup', 'search_expenses', 'top_expenses']),
+  siri: new Set(['range_totals', 'month_summary', 'balances', 'settle_plan', 'budget_status']),
+};
+
+export function getToolContract(name: string): AiToolContract | null {
+  return AI_TOOL_CONTRACTS[name] ?? null;
+}
+
+export function evidenceForToolResults(results: readonly ToolResult[]): AiToolEvidence[] {
+  const seen = new Set<string>();
+  const evidence: AiToolEvidence[] = [];
+  for (const result of results) {
+    if (result.error || seen.has(result.tool)) continue;
+    const policy = AI_TOOL_CONTRACTS[result.tool];
+    if (!policy) continue;
+    seen.add(result.tool);
+    evidence.push({
+      kind: 'capability',
+      tool: policy.name,
+      version: policy.version,
+      title: policy.title,
+      dataClasses: [...policy.dataClasses],
+    });
+  }
+  return evidence;
+}
+
 export const MAX_REQUESTS_PER_HOP = 3;
 export const MAX_TOTAL_REQUESTS = 8;
 
@@ -828,12 +933,24 @@ export function toolTier(name: string): 'graph' | 'local' | null {
 export interface ToolFilter {
   /** False when the turn runs on PCC — local-tier tools must not be offered. */
   includeLocal?: boolean;
+  /** Product surface allowlist. Omit only for low-level tests/legacy callers. */
+  surface?: AiSurface | string;
+  /** Absolute wall-clock cutoff shared by the whole data-gathering loop. */
+  deadlineAt?: number;
+  signal?: AbortSignal;
 }
 
 /** Tools runnable with the given ctx (scope + providers + tier filter). */
 export function availableTools(ctx: ToolCtx, filter: ToolFilter = {}): string[] {
   return Object.entries(TOOLS)
     .filter(([name, t]) => {
+      const hasKnownSurface =
+        !!filter.surface && Object.prototype.hasOwnProperty.call(SURFACE_PACKS, filter.surface);
+      const pack = hasKnownSurface ? SURFACE_PACKS[filter.surface as AiSurface] : null;
+      // A supplied but unknown surface is a policy/configuration error. Fail
+      // closed rather than exposing the assistant's broad capability pack.
+      if (filter.surface && !hasKnownSurface) return false;
+      if (pack && !pack.has(name)) return false;
       const scoped =
         t.needs === 'any'
           ? !!ctx.group || !!ctx.personalGroups?.length
@@ -909,13 +1026,78 @@ export async function executeToolRequests(
     if (seenKeys.has(key)) continue;
     seenKeys.add(key);
     if (!available.has(req.tool)) {
-      out.push(err(req.tool || 'unknown', 'unknown tool', `no tool named "${req.tool}" — use only tools from the catalog`));
+      out.push({
+        ...err(req.tool || 'unknown', 'unavailable tool', 'That capability is not available in this context.'),
+        code: 'forbidden',
+        durationMs: 0,
+        dataClasses: [],
+      });
       continue;
     }
+    const tool = TOOLS[req.tool];
+    const policy = AI_TOOL_CONTRACTS[req.tool];
+    const started = Date.now();
+    const remaining = filter.deadlineAt == null ? policy.timeoutMs : Math.min(policy.timeoutMs, filter.deadlineAt - started);
+    if (filter.signal?.aborted || remaining <= 0) {
+      out.push({
+        ...err(req.tool, policy.title, filter.signal?.aborted ? 'The request was cancelled.' : 'The capability timed out.'),
+        code: filter.signal?.aborted ? 'cancelled' : 'timeout',
+        durationMs: 0,
+        dataClasses: [...policy.dataClasses],
+      });
+      continue;
+    }
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    filter.signal?.addEventListener('abort', onAbort, { once: true });
+    const timeout = setTimeout(() => controller.abort(), remaining);
     try {
-      out.push(await TOOLS[req.tool].run(req, ctx));
-    } catch (e) {
-      out.push(err(req.tool, req.tool.replace(/_/g, ' '), `tool failed: ${e instanceof Error ? e.message : 'unknown error'}`));
+      const result = await Promise.race([
+        Promise.resolve(tool.run(req, { ...ctx, signal: controller.signal })),
+        new Promise<ToolResult>((_, reject) => {
+          controller.signal.addEventListener('abort', () => reject(new Error('ABORTED')), { once: true });
+        }),
+      ]);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(result.json);
+      } catch {
+        parsed = null;
+      }
+      if (parsed == null || typeof parsed !== 'object') {
+        out.push({
+          ...err(req.tool, policy.title, 'The capability returned an invalid result.'),
+          code: 'invalid_output',
+          durationMs: Date.now() - started,
+          dataClasses: [...policy.dataClasses],
+        });
+      } else if (result.json.length * 2 > policy.maxResultBytes) {
+        out.push({
+          ...err(req.tool, policy.title, 'The capability returned too much data.'),
+          code: 'result_too_large',
+          durationMs: Date.now() - started,
+          dataClasses: [...policy.dataClasses],
+        });
+      } else {
+        out.push({
+          ...result,
+          status: result.error ? 'error' : 'ok',
+          code: result.error ? result.code ?? 'invalid_args' : undefined,
+          durationMs: Date.now() - started,
+          dataClasses: [...policy.dataClasses],
+        });
+      }
+    } catch {
+      const cancelled = filter.signal?.aborted === true;
+      out.push({
+        ...err(req.tool, policy.title, cancelled ? 'The request was cancelled.' : controller.signal.aborted ? 'The capability timed out.' : 'The capability could not be completed.'),
+        code: cancelled ? 'cancelled' : controller.signal.aborted ? 'timeout' : 'internal',
+        durationMs: Date.now() - started,
+        dataClasses: [...policy.dataClasses],
+      });
+    } finally {
+      clearTimeout(timeout);
+      filter.signal?.removeEventListener('abort', onAbort);
     }
   }
   return out;

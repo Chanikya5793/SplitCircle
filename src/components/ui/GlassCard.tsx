@@ -126,8 +126,27 @@ export const GlassCard = React.memo(
     // Defaulted, not asserted: several component tests mock useTheme() with a
     // partial theme object, and an undefined surfaceStyle must mean 'glass'
     // rather than throwing or silently flattening.
-    const isFlat = theme?.surfaceStyle === 'flat';
-    const isBorderless = isFlat && role === 'section';
+    // REDUCE TRANSPARENCY (2026-08-07). The whole point of this primitive is
+    // translucency, so when the OS asks for less of it there is nothing to
+    // soften — the surface must become opaque. Flat mode already has exactly
+    // that: solid `flatSurface` fills, tuned and contrast-tested (doc 37 §2).
+    // So Reduce Transparency simply forces the flat treatment, rather than
+    // inventing a third material nobody has checked for contrast.
+    //
+    // role="glass" is NOT exempt. It opts out of the user's flat/glass
+    // preference, which is a taste setting; this is an accessibility setting,
+    // and a blurred backdrop is precisely what the user asked to stop seeing.
+    const reduceTransparency = theme?.reduceTransparency === true;
+    const userChoseFlat = theme?.surfaceStyle === 'flat';
+    // Opaque fills come from EITHER the user's flat preference or the OS
+    // accessibility setting…
+    const isFlat = userChoseFlat || reduceTransparency;
+    // …but BORDERLESS comes only from the user's own preference. Reduce
+    // Transparency asks for less see-through, not for the card to disappear:
+    // someone on glass mode who enables it should get solid cards, not a
+    // borderless layout they never chose. Same for role="glass" accents —
+    // they stay a visible surface, just an opaque one.
+    const isBorderless = userChoseFlat && role === 'section';
 
     // A NUMERIC radius is an explicit geometric requirement from the caller
     // (circular icon buttons pass radius={50}), so it survives flattening
@@ -167,7 +186,7 @@ export const GlassCard = React.memo(
     // that casts a shadow is just a card again. role="glass" opts OUT of this
     // entirely — it always falls through to the native/blur glass path below,
     // the same one glass mode uses, regardless of surfaceStyle.
-    if (isFlat && role !== 'glass') {
+    if (isFlat && (role !== 'glass' || reduceTransparency)) {
       return (
         <Animated.View style={[styles.flat, { borderRadius }, animatedStyle, style]}>
           <View style={[styles.content, contentStyle]}>{children}</View>
@@ -175,7 +194,7 @@ export const GlassCard = React.memo(
       );
     }
 
-    if (LIQUID_GLASS && NativeGlassView && !forceBlur) {
+    if (LIQUID_GLASS && NativeGlassView && !forceBlur && !reduceTransparency) {
       // Native material carries its own rim highlight — no manual border.
       return (
         <NativeGlassView

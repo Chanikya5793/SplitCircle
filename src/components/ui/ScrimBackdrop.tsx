@@ -36,7 +36,9 @@ export const ScrimBackdrop = ({
 }: ScrimBackdropProps) => {
   const { isDark, theme } = useTheme();
 
-  if (theme?.surfaceStyle === 'flat') {
+  // Reduce Transparency also drops the blur — a blurred backdrop is exactly
+  // what that setting exists to remove. Falls through to the flat dim layer.
+  if (theme?.surfaceStyle === 'flat' || theme?.reduceTransparency === true) {
     return (
       <View
         pointerEvents={pointerEvents}

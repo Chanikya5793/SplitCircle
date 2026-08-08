@@ -21,7 +21,15 @@ import { enqueueOp, loadOutbox, removeOp } from '@/services/outbox';
 import { findDuplicateExpense, findDuplicateSettlement } from '@/utils/writeIdempotency';
 import { dismissNotificationsForEntity } from '@/utils/notifications';
 import { diffRemovedEntities, type GroupEntityIds } from '@/utils/notificationEntityMatch';
+import {
+    advanceEntityRevision,
+    expectationFor,
+    removeRevisionedEntity,
+    replaceRevisionedEntity,
+    type MutationExpectation,
+} from '@/utils/mutationConflict';
 import { mergeOutboxIntoGroups, type OutboxOp } from '@/utils/outboxApply';
+import { planReceiptUpload, receiptObjectPath } from '@/utils/receiptMutation';
 import NetInfo from '@react-native-community/netinfo';
 import {
     arrayUnion,
@@ -51,11 +59,11 @@ interface GroupContextValue {
   createGroup: (name: string, currency: string, requestId?: string) => Promise<string>;
   joinGroup: (inviteCode: string, requestId?: string) => Promise<void>;
   addExpense: (groupId: string, expense: Omit<Expense, 'expenseId' | 'createdAt' | 'updatedAt'>, fileUri?: string, fileName?: string, requestId?: string) => Promise<void>;
-  updateExpense: (groupId: string, expense: Expense, newFileUri?: string | null, newFileName?: string, requestId?: string) => Promise<void>;
-  deleteExpense: (groupId: string, expenseId: string) => Promise<void>;
+  updateExpense: (groupId: string, expense: Expense, newFileUri?: string | null, newFileName?: string, requestId?: string, expectation?: MutationExpectation) => Promise<void>;
+  deleteExpense: (groupId: string, expenseId: string, expectation?: MutationExpectation) => Promise<void>;
   settleUp: (groupId: string, settlement: Omit<Settlement, 'settlementId' | 'createdAt' | 'status'>, requestId?: string) => Promise<void>;
-  updateSettlement: (groupId: string, settlement: Settlement, requestId?: string) => Promise<void>;
-  deleteSettlement: (groupId: string, settlementId: string) => Promise<void>;
+  updateSettlement: (groupId: string, settlement: Settlement, requestId?: string, expectation?: MutationExpectation) => Promise<void>;
+  deleteSettlement: (groupId: string, settlementId: string, expectation?: MutationExpectation) => Promise<void>;
   updateGroup: (groupId: string, updates: { name?: string; description?: string; photoURL?: string }) => Promise<void>;
   convertGroupCurrency: (groupId: string, newCurrency: string, rate: number) => Promise<void>;
   /** Admin-gated Money-in-Chat policy update (ai_layer/docs/21). */
@@ -453,6 +461,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       ...expense,
       expenseId,
       requestId: reqId,
+      revision: 1,
       participants: splitShares,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -486,69 +495,93 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     maybePostAnomalyAlert(localGroup, groupId, newExpense);
   };
 
-  const updateExpense = async (groupId: string, updatedExpense: Expense, newFileUri?: string | null, newFileName?: string, requestId?: string) => {
+  const updateExpense = async (
+    groupId: string,
+    updatedExpense: Expense,
+    newFileUri?: string | null,
+    newFileName?: string,
+    requestId?: string,
+    expectation: MutationExpectation = expectationFor(updatedExpense),
+  ) => {
+    let uploadedPath: string | undefined;
+    let committed = false;
     try {
       const group = groups.find((g) => g.groupId === groupId);
       if (!group) throw new Error('Group not found');
 
       let receipt = updatedExpense.receipt;
+      let oldReceiptPath: string | undefined;
 
       if (newFileUri !== undefined) {
-        // If explicitly null, delete existing image
+        // Storage cleanup happens only AFTER the transaction commits. A stale
+        // client must never delete a receipt that belongs to the newer record.
         if (newFileUri === null && receipt?.url) {
           // Try to guess path from previous filename or default
           const fileName = receipt.fileName || 'receipt.jpg';
-          const path = `groups/${groupId}/expenses/${updatedExpense.expenseId}/${fileName}`;
-          await deleteFile(path);
+          oldReceiptPath = receiptObjectPath(groupId, updatedExpense.expenseId, fileName);
           receipt = undefined;
         } else if (newFileUri) {
-          // If there was an old file, and the new filename is different, we should delete the old one
-          if (receipt?.fileName && newFileName && receipt.fileName !== newFileName) {
-            const oldPath = `groups/${groupId}/expenses/${updatedExpense.expenseId}/${receipt.fileName}`;
-            await deleteFile(oldPath);
-          }
-
-          let fileName = newFileName;
-          if (!fileName) {
-            const extension = newFileUri.split('.').pop()?.split('?')[0] || 'jpg';
-            fileName = `receipt.${extension}`;
-          }
-
-          const path = `groups/${groupId}/expenses/${updatedExpense.expenseId}/${fileName}`;
-          const url = await uploadFile(newFileUri, path);
+          // Never overwrite the live receipt before the conflict check. A
+          // unique object path lets a failed/stale transaction safely remove
+          // only its own upload.
+          const plan = planReceiptUpload({
+            groupId,
+            expenseId: updatedExpense.expenseId,
+            current: receipt,
+            fileUri: newFileUri,
+            originalFileName: newFileName,
+            uniqueId: uuid(),
+          });
+          oldReceiptPath = plan.oldPath;
+          const url = await uploadFile(newFileUri, plan.uploadPath);
+          uploadedPath = plan.uploadPath;
           // Preserve insights/other receipt metadata across the image swap.
-          receipt = { ...updatedExpense.receipt, url, fileName };
+          receipt = { ...updatedExpense.receipt, url, fileName: plan.fileName };
         }
       }
 
-      const finalExpense = stripUndefinedDeep({
+      const mutationAt = Date.now();
+      const proposedExpense = stripUndefinedDeep({
         ...updatedExpense,
         requestId: requestId ?? updatedExpense.requestId ?? updatedExpense.expenseId,
-        updatedAt: Date.now(),
+        updatedAt: mutationAt,
       });
 
       if (receipt) {
-        finalExpense.receipt = stripUndefinedDeep(receipt);
+        proposedExpense.receipt = stripUndefinedDeep(receipt);
       } else {
-        // If receipt is undefined/null, ensure it's removed if it existed
-        delete finalExpense.receipt;
+        delete proposedExpense.receipt;
       }
 
-      const updatedExpenses = group.expenses.map((exp) =>
-        exp.expenseId === finalExpense.expenseId ? finalExpense : exp
-      );
-
       const docRef = doc(db, 'groups', groupId);
-      await updateDoc(docRef, {
-        expenses: updatedExpenses,
-        updatedAt: serverTimestamp(),
+      let finalExpense: Expense = proposedExpense;
+      await runTransaction(db, async (txn) => {
+        const snap = await txn.get(docRef);
+        if (!snap.exists()) throw new Error('Group not found');
+        const serverGroup = snap.data() as Group;
+        const replaced = replaceRevisionedEntity({
+          entities: serverGroup.expenses ?? [],
+          entityId: updatedExpense.expenseId,
+          idOf: (expense) => expense.expenseId,
+          proposed: proposedExpense,
+          expectation,
+          entityLabel: 'This expense',
+          updatedAt: mutationAt,
+        });
+        finalExpense = stripUndefinedDeep(replaced.entity);
+        txn.update(docRef, { expenses: replaced.entities, updatedAt: serverTimestamp() });
+        txn.set(doc(db, 'expenses', finalExpense.expenseId), {
+          ...finalExpense,
+          groupId,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
       });
-
-      await setDoc(doc(db, 'expenses', finalExpense.expenseId), {
-        ...finalExpense,
-        groupId,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
+      committed = true;
+      if (oldReceiptPath && oldReceiptPath !== uploadedPath) {
+        try { await deleteFile(oldReceiptPath); } catch (cleanupError) {
+          console.warn('Old receipt cleanup skipped (non-fatal):', cleanupError);
+        }
+      }
 
       // Best-effort cleanup of legacy top-level expense docs whose doc ID
       // predates the expenseId-as-doc-ID convention. Its own try/catch for the
@@ -577,32 +610,48 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         console.warn('Legacy expense doc cleanup skipped (non-fatal):', legacyCleanupError);
       }
     } catch (error) {
+      if (!committed && uploadedPath) {
+        try { await deleteFile(uploadedPath); } catch { /* best-effort orphan cleanup */ }
+      }
       console.error('Error updating expense:', error);
       throw error;
     }
   };
 
-  const deleteExpense = async (groupId: string, expenseId: string) => {
+  const deleteExpense = async (groupId: string, expenseId: string, expectation?: MutationExpectation) => {
     try {
       const group = groups.find((g) => g.groupId === groupId);
       if (!group) throw new Error('Group not found');
 
       const expenseToDelete = group.expenses.find((exp) => exp.expenseId === expenseId);
-      if (expenseToDelete?.receipt?.url) {
-        const fileName = expenseToDelete.receipt.fileName || 'receipt.jpg';
-        const path = `groups/${groupId}/expenses/${expenseId}/${fileName}`;
-        await deleteFile(path);
-      }
-
-      const updatedExpenses = group.expenses.filter((exp) => exp.expenseId !== expenseId);
+      if (!expenseToDelete) throw new Error('Expense not found');
+      const expected = expectation ?? expectationFor(expenseToDelete);
 
       const docRef = doc(db, 'groups', groupId);
-      await updateDoc(docRef, {
-        expenses: updatedExpenses,
-        updatedAt: serverTimestamp(),
+      await runTransaction(db, async (txn) => {
+        const snap = await txn.get(docRef);
+        if (!snap.exists()) throw new Error('Group not found');
+        const serverGroup = snap.data() as Group;
+        txn.update(docRef, {
+          expenses: removeRevisionedEntity({
+            entities: serverGroup.expenses ?? [],
+            entityId: expenseId,
+            idOf: (expense) => expense.expenseId,
+            expectation: expected,
+            entityLabel: 'This expense',
+          }),
+          updatedAt: serverTimestamp(),
+        });
+        txn.delete(doc(db, 'expenses', expenseId));
       });
 
-      await deleteDoc(doc(db, 'expenses', expenseId));
+      if (expenseToDelete.receipt?.url) {
+        const fileName = expenseToDelete.receipt.fileName || 'receipt.jpg';
+        const path = receiptObjectPath(groupId, expenseId, fileName);
+        try { await deleteFile(path); } catch (cleanupError) {
+          console.warn('Deleted expense receipt cleanup skipped (non-fatal):', cleanupError);
+        }
+      }
 
       // Withdraw any delivered notification that deep-links to this expense
       // on this device (other members' devices clear via the snapshot diff).
@@ -656,7 +705,9 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       ...settlement,
       settlementId,
       requestId: reqId,
+      revision: 1,
       createdAt: Date.now(),
+      updatedAt: Date.now(),
       status: 'pending' as const,
     }) as Settlement;
 
@@ -677,24 +728,39 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     postSettlementCard(localGroup, groupId, newSettlement);
   };
 
-  const updateSettlement = async (groupId: string, updatedSettlement: Settlement, requestId?: string) => {
+  const updateSettlement = async (
+    groupId: string,
+    updatedSettlement: Settlement,
+    requestId?: string,
+    expectation: MutationExpectation = expectationFor(updatedSettlement),
+  ) => {
     try {
       const group = groups.find((g) => g.groupId === groupId);
       if (!group) throw new Error('Group not found');
 
-      const updatedSettlements = group.settlements.map((settlement) =>
-        settlement.settlementId === updatedSettlement.settlementId
-          ? {
-              ...updatedSettlement,
-              requestId: requestId ?? updatedSettlement.requestId ?? updatedSettlement.settlementId,
-            }
-          : settlement
-      );
-
       const docRef = doc(db, 'groups', groupId);
-      await updateDoc(docRef, {
-        settlements: updatedSettlements,
-        updatedAt: serverTimestamp(),
+      const mutationAt = Date.now();
+      await runTransaction(db, async (txn) => {
+        const snap = await txn.get(docRef);
+        if (!snap.exists()) throw new Error('Group not found');
+        const serverGroup = snap.data() as Group;
+        const proposed = stripUndefinedDeep({
+          ...updatedSettlement,
+          requestId: requestId ?? updatedSettlement.requestId ?? updatedSettlement.settlementId,
+        });
+        const replaced = replaceRevisionedEntity({
+          entities: serverGroup.settlements ?? [],
+          entityId: updatedSettlement.settlementId,
+          idOf: (settlement) => settlement.settlementId,
+          proposed,
+          expectation,
+          entityLabel: 'This settlement',
+          updatedAt: mutationAt,
+        });
+        txn.update(docRef, {
+          settlements: replaced.entities,
+          updatedAt: serverTimestamp(),
+        });
       });
     } catch (error) {
       console.error('Error updating settlement:', error);
@@ -702,17 +768,30 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     }
   };
 
-  const deleteSettlement = async (groupId: string, settlementId: string) => {
+  const deleteSettlement = async (groupId: string, settlementId: string, expectation?: MutationExpectation) => {
     try {
       const group = groups.find((g) => g.groupId === groupId);
       if (!group) throw new Error('Group not found');
 
-      const updatedSettlements = group.settlements.filter((s) => s.settlementId !== settlementId);
+      const settlementToDelete = group.settlements.find((s) => s.settlementId === settlementId);
+      if (!settlementToDelete) throw new Error('Settlement not found');
+      const expected = expectation ?? expectationFor(settlementToDelete);
 
       const docRef = doc(db, 'groups', groupId);
-      await updateDoc(docRef, {
-        settlements: updatedSettlements,
-        updatedAt: serverTimestamp(),
+      await runTransaction(db, async (txn) => {
+        const snap = await txn.get(docRef);
+        if (!snap.exists()) throw new Error('Group not found');
+        const serverGroup = snap.data() as Group;
+        txn.update(docRef, {
+          settlements: removeRevisionedEntity({
+            entities: serverGroup.settlements ?? [],
+            entityId: settlementId,
+            idOf: (settlement) => settlement.settlementId,
+            expectation: expected,
+            entityLabel: 'This settlement',
+          }),
+          updatedAt: serverTimestamp(),
+        });
       });
 
       // Withdraw any delivered notification that deep-links to this
@@ -1377,6 +1456,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       };
     };
 
+    const conversionAt = Date.now();
     await runTransaction(db, async (txn) => {
       const ref = doc(db, 'groups', groupId);
       const snap = await txn.get(ref);
@@ -1389,7 +1469,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
           (expense.participants ?? []).map((p) => p.share),
         );
         return {
-          ...expense,
+          ...advanceEntityRevision(expense, conversionAt),
           amount: round(expense.amount),
           participants: (expense.participants ?? []).map((participantShare, i) => ({
             ...participantShare,
@@ -1399,7 +1479,7 @@ export const GroupProvider: React.FC<React.PropsWithChildren> = ({ children }) =
         };
       });
       const settlements = (data.settlements ?? []).map((settlement) => ({
-        ...settlement,
+        ...advanceEntityRevision(settlement, conversionAt),
         amount: round(settlement.amount),
       }));
       // Per-category budget thresholds are stored in the group currency too —

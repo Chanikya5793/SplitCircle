@@ -2,6 +2,7 @@ import { MD3DarkTheme, MD3LightTheme, type MD3Theme } from 'react-native-paper';
 import { ACCENTS, CHART_BASE, NEUTRALS, type AccentId } from './palette';
 import {
   radius,
+  scaleTypography,
   spacing,
   typography,
   type Radius,
@@ -63,13 +64,26 @@ export interface AppTheme extends MD3Theme {
   scheme: ColorScheme;
   /** Surface treatment for bounded content surfaces. Defaults to 'glass'. */
   surfaceStyle: SurfaceStyle;
+  /** Live OS text-size multiplier (1 = default). Layout that must adapt at
+   *  accessibility sizes branches on this — see isAccessibilityTextSize. */
+  fontScale: number;
+  /** OS Reduce Transparency. Glass surfaces must render opaque when true. */
+  reduceTransparency: boolean;
+  /** OS Reduce Motion. Non-essential animation must be skipped when true. */
+  reduceMotion: boolean;
 }
 
 export const buildTheme = (
   scheme: ColorScheme,
   accentId: AccentId,
   surfaceStyle: SurfaceStyle = 'glass',
+  /** OS accessibility state. Defaulted so existing callers and the many tests
+   *  that call buildTheme(scheme, accent) keep working unchanged. */
+  a11y: { fontScale?: number; reduceTransparency?: boolean; reduceMotion?: boolean } = {},
 ): AppTheme => {
+  const fontScale = a11y.fontScale ?? 1;
+  const reduceTransparency = a11y.reduceTransparency ?? false;
+  const reduceMotion = a11y.reduceMotion ?? false;
   const base = scheme === 'dark' ? MD3DarkTheme : MD3LightTheme;
   const accent = ACCENTS[accentId][scheme];
   const neutral = NEUTRALS[scheme];
@@ -147,7 +161,10 @@ export const buildTheme = (
     },
     spacing,
     radius,
-    typography,
+    typography: scaleTypography(typography, fontScale),
+    fontScale,
+    reduceTransparency,
+    reduceMotion,
     blob: {
       settled: neutral.blobSettled,
       balanced: accent.blobBalanced,

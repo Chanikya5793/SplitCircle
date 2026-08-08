@@ -41,15 +41,16 @@ import {
   type AgentDecision,
 } from '@/utils/aiLoop';
 import {
+  evidenceForToolResults,
   executeToolRequests,
   statusLineFor,
   toolCatalog,
-  toolTier,
   type CallStatsResult,
   type ChatSearchResult,
   type ToolCtx,
   type ToolRequest,
   type ToolResult,
+  type AiToolEvidence,
 } from '@/utils/aiTools';
 import { getCallHistory } from '@/services/localCallStorage';
 import { getChatMessages } from '@/services/localMessageStorage';
@@ -140,6 +141,8 @@ export interface AgenticReply {
   options?: string[];
   /** Stated reading under mild ambiguity — rendered as a caption (doc 24). */
   assumption?: string;
+  /** Content-free record of the exact capabilities used for this answer. */
+  evidence?: AiToolEvidence[];
   /** Doc 25 — the full turn snapshot; a 👎 turns it into an eval fixture. */
   trace?: TurnTrace;
 }
@@ -158,6 +161,22 @@ export function clearAgenticAnswerCache(): void {
 const PCC_BUDGET = 24_000;
 const RESPONSE_RESERVE = 1024;
 const DEFAULT_CONTEXT = 4096;
+const ROUTER_TIMEOUT_MS = 8_000;
+const MODEL_CALL_TIMEOUT_MS = 15_000;
+
+const within = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('AI_DEADLINE_EXCEEDED')), Math.max(1, timeoutMs));
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
 
 const budgetTokens = (): number =>
   Math.max(1536, (getOnDeviceContextSize() || DEFAULT_CONTEXT) - RESPONSE_RESERVE);
@@ -185,8 +204,10 @@ function chatSearchProvider(
   chatId: string,
   nameOf: (userId: string) => string,
 ): NonNullable<ToolCtx['chatSearch']> {
-  return async (query: string, tf: Timeframe | null): Promise<ChatSearchResult> => {
+  return async (query: string, tf: Timeframe | null, signal?: AbortSignal): Promise<ChatSearchResult> => {
+    if (signal?.aborted) throw new Error('ABORTED');
     const messages = await getChatMessages(chatId);
+    if (signal?.aborted) throw new Error('ABORTED');
     const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
     const hits = messages.filter(
       (m) =>
@@ -207,8 +228,10 @@ function chatSearchProvider(
 }
 
 function callStatsProvider(chatId: string | undefined): NonNullable<ToolCtx['callStats']> {
-  return async (member: string | undefined, tf: Timeframe | null): Promise<CallStatsResult> => {
+  return async (member: string | undefined, tf: Timeframe | null, signal?: AbortSignal): Promise<CallStatsResult> => {
+    if (signal?.aborted) throw new Error('ABORTED');
     const rows = await getCallHistory();
+    if (signal?.aborted) throw new Error('ABORTED');
     const q = (member ?? '').toLowerCase();
     const filtered = rows.filter(
       (r) =>
@@ -333,7 +356,7 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     // user pinned Private Cloud; on 'auto' they're offered, and using one pins
     // the whole turn on-device (narration included).
     const includeLocal = (args.engine ?? 'auto') !== 'pcc';
-    const filter = { includeLocal };
+    const filter = { includeLocal, surface: args.thread.surface };
     const catalog = toolCatalog(ctx, filter);
     const date = dateLine(now);
 
@@ -350,7 +373,7 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
       resolvedClarify,
     });
     const decision: AgentDecision = coerceDecision(
-      await routeTurn(
+      await within(routeTurn(
         withMemory(
           routerInstructions({
             scopeLabel,
@@ -361,7 +384,7 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
           }),
         ),
         routerPrompt.prompt,
-      ),
+      ), ROUTER_TIMEOUT_MS),
     );
 
     // Doc 25 Q2 — observed-pattern counters (toggle-respected in the service).
@@ -436,9 +459,9 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     // ── Step 4: data loop (router's requests are hop 1) ─────────────────────
     const seenKeys = new Set<string>();
     let requests: ToolRequest[] = decision.requests;
+    const dataDeadlineAt = Date.now() + LOOP_WALL_MS;
     while (requests.length > 0) {
       if (args.onStatus) args.onStatus(statusLineFor(requests[0], ctx));
-      if (includeLocal && requests.some((r) => toolTier(r.tool) === 'local')) usedLocal = true;
       executedRequests.push(
         ...requests.map((r) => ({
           tool: r.tool,
@@ -447,16 +470,28 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
             .join(' '),
         })),
       );
-      results.push(...(await executeToolRequests(requests, ctx, seenKeys, filter)));
+      const hopResults = await executeToolRequests(requests, ctx, seenKeys, {
+        ...filter,
+        deadlineAt: dataDeadlineAt,
+      });
+      results.push(...hopResults);
+      if (
+        includeLocal &&
+        hopResults.some((result) =>
+          !result.error && result.dataClasses?.some((kind) => kind === 'local_chat' || kind === 'local_calls'),
+        )
+      ) {
+        usedLocal = true;
+      }
       requests = [];
       // Ask "enough?" only while hops + time remain (router + narrator excluded
       // from MAX_HOPS' loop share: ≤ MAX_HOPS-1 step calls).
-      if (loopSteps >= MAX_HOPS - 1 || Date.now() - started > LOOP_WALL_MS) break;
+      if (loopSteps >= MAX_HOPS - 1 || Date.now() >= dataDeadlineAt) break;
       if (results.length === 0) break;
       try {
         loopSteps += 1;
         const step = coerceLoopStep(
-          await agentLoopStep(
+          await within(agentLoopStep(
             loopInstructions(catalog),
             assembleHopPrompt({
               userText: args.userText,
@@ -464,7 +499,7 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
               hop: loopSteps,
               maxHops: MAX_HOPS - 1,
             }),
-          ),
+          ), dataDeadlineAt - Date.now()),
         );
         if (step.done) break;
         requests = step.requests;
@@ -541,18 +576,26 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
       // Stream only the FIRST draft — a retry after a failed gate would
       // re-stream text the UI already replaced.
       if (args.onDelta && !nudge) {
-        const { promise } = generateOnDeviceTextStreamed(assembled.prompt, instr, (_delta, full) => {
+        const { promise, cancel } = generateOnDeviceTextStreamed(assembled.prompt, instr, (_delta, full) => {
           args.onDelta?.(stripChatDecorations(full));
         });
-        return stripChatDecorations(await promise);
+        try {
+          return stripChatDecorations(await within(promise, MODEL_CALL_TIMEOUT_MS));
+        } catch (error) {
+          cancel();
+          throw error;
+        }
       }
-      const out = await generateOnDeviceText(assembled.prompt, instr);
+      const out = await within(generateOnDeviceText(assembled.prompt, instr), MODEL_CALL_TIMEOUT_MS);
       return stripChatDecorations(out);
     };
     const narratePcc = async (): Promise<string> => {
       const big = assemble(PCC_BUDGET);
       // Memory may ride PCC prompts — explicit doc-25 user decision.
-      const out = await tryPccPrompt(big.prompt, withMemory(narratorInstructions(narratorArgs)), reasoning);
+      const out = await within(
+        tryPccPrompt(big.prompt, withMemory(narratorInstructions(narratorArgs)), reasoning),
+        MODEL_CALL_TIMEOUT_MS,
+      );
       return stripChatDecorations(out ?? '');
     };
 
@@ -561,8 +604,12 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
     const pccAllowed = !usedLocal;
     if (pccAllowed && (engine === 'pcc' || (engine === 'auto' && (overflow || deepTurn)))) {
       if (deepTurn && args.onStatus) args.onStatus('Thinking deeper in Private Cloud…');
-      text = await narratePcc();
-      if (text) source = 'pcc';
+      try {
+        text = await narratePcc();
+        if (text) source = 'pcc';
+      } catch {
+        text = '';
+      }
     }
     if (!text) {
       try {
@@ -573,8 +620,12 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
       }
     }
     if (!text && engine !== 'ondevice' && pccAllowed) {
-      text = await narratePcc();
-      if (text) source = 'pcc';
+      try {
+        text = await narratePcc();
+        if (text) source = 'pcc';
+      } catch {
+        text = '';
+      }
     }
     if (!text) return null;
 
@@ -597,6 +648,7 @@ export async function runAgenticTurn(args: AgenticTurnArgs): Promise<AgenticRepl
       text,
       source,
       assumption: decision.assumption || undefined,
+      evidence: evidenceForToolResults(results),
     };
     const trace = makeTrace({ role: 'assistant', text, source });
     // Cache exact-repeat answers (never local-tier turns, never during replay).

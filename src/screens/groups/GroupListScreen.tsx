@@ -1,3 +1,4 @@
+import { FONT_CAP, isAccessibilityTextSize } from '@/utils/a11yText';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { GlassCard, ListSeparator, StickyHeaderPill } from '@/components/ui';
@@ -48,6 +49,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   // cards are meant to be inset from the edge.
   const isFlat = theme?.surfaceStyle === 'flat';
   const listGutter = isFlat ? 0 : 16;
+  const bigText = isAccessibilityTextSize(theme?.fontScale ?? 1);
   const { isShielded: guardIsShielded, isVanished: guardIsVanished, duress: guardDuress } = usePrivacyGuard();
   // Creating/joining expense groups is blocked while expenses are hidden —
   // but not in duress, where a disabled button would betray the fake unlock.
@@ -337,7 +339,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
                     <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
                     {(selectedCurrencies.length > 0) && (
                       <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary, borderColor: theme.colors.background }]}>
-                        <Text style={{ color: theme.colors.onPrimary, fontSize: 10, fontWeight: 'bold' }}>
+                        <Text style={{ color: theme.colors.onPrimary, fontSize: 10, fontWeight: 'bold' }} maxFontSizeMultiplier={FONT_CAP.badge}>
                           {selectedCurrencies.length}
                         </Text>
                       </View>
@@ -392,15 +394,19 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         }
       />
 
-      {!groupsShielded && <View style={[styles.actions, { bottom: tabBarEnvelopeHeight + 12 }]}>
-        <Button mode="contained" compact style={styles.primaryAction} onPress={() => { lightHaptic(); setDialog('create'); }}>
+      {/* Three side-by-side pills cannot hold their labels at accessibility
+          text sizes — "New group" truncated to "New grou…" and "Join via code"
+          wrapped out of its pill on a Pixel 7 at 2×. Past the threshold they
+          stack full-width instead of fighting over a third of the screen. */}
+      {!groupsShielded && <View style={[styles.actions, bigText && styles.actionsStacked, { bottom: tabBarEnvelopeHeight + 12 }]}>
+        <Button mode="contained" compact style={[styles.primaryAction, bigText && styles.actionStacked]} onPress={() => { lightHaptic(); setDialog('create'); }}>
           New group
         </Button>
 
         <TouchableOpacity
           onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.FRIENDS, { backTitle: 'Expenses' }); }}
           activeOpacity={0.8}
-          style={styles.glassAction}
+          style={[styles.glassAction, bigText && styles.actionStacked]}
         >
           <GlassView role="floating" style={styles.glassActionInner}>
             <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Friends</Text>
@@ -410,7 +416,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         <TouchableOpacity
           onPress={() => { lightHaptic(); setDialog('join'); }}
           activeOpacity={0.8}
-          style={styles.glassAction}
+          style={[styles.glassAction, bigText && styles.actionStacked]}
         >
           {/* GlassView provides the blurred/frosted fill inside the button */}
           <GlassView role="floating" style={styles.glassActionInner}>
@@ -568,6 +574,15 @@ const styles = StyleSheet.create({
   primaryAction: {
     flex: 1,
     minWidth: 0,
+  },
+  /** Accessibility sizes: full width, natural height, no flex competition. */
+  actionsStacked: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  actionStacked: {
+    flex: 0,
+    width: '100%',
   },
   glassAction: {
     flex: 1,

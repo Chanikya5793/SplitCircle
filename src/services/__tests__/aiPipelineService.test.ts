@@ -160,6 +160,7 @@ describe('the data loop', () => {
     const r = await runAgenticTurn({ ...baseArgs(), onStatus: (s) => statuses.push(s) });
 
     expect(r).toMatchObject({ role: 'assistant', source: 'ondevice', text: 'You are owed 50 USD overall.' });
+    expect(r?.evidence?.map((entry) => entry.tool)).toEqual(['balances', 'forecast']);
     expect(fm.agentLoopStep).toHaveBeenCalledTimes(2);
     // The narrator prompt carries the numbered REAL tool results.
     const narratorPrompt = fm.generateOnDeviceText.mock.calls[0][0];
@@ -275,6 +276,14 @@ describe('P3 PCC depth routing', () => {
     expect(pcc).not.toHaveBeenCalled();
     expect(r?.source).toBe('ondevice');
   });
+
+  it('falls back on-device when PCC rejects instead of abandoning the turn', async () => {
+    fm.routeTurn.mockResolvedValueOnce(decision({ complexity: 'deep' }));
+    pcc.mockRejectedValueOnce(new Error('network failed'));
+    fm.generateOnDeviceText.mockResolvedValueOnce('The total is 100 USD.');
+    const r = await runAgenticTurn({ ...baseArgs(), userText: 'why was this month expensive?' });
+    expect(r).toMatchObject({ source: 'ondevice', text: 'The total is 100 USD.' });
+  });
 });
 
 describe('Q1 trace + answer cache (doc 25)', () => {
@@ -338,6 +347,7 @@ describe('P5 local-tier pinning', () => {
     fm.generateOnDeviceText.mockResolvedValueOnce('The total is 100 USD.');
     const r = await runAgenticTurn({
       ...baseArgs(),
+      thread: { ...thread(), surface: 'assistant' },
       chatId: 'c1',
       userText: 'why was the hotel so expensive?',
     });
@@ -348,7 +358,12 @@ describe('P5 local-tier pinning', () => {
   it("engine 'pcc' removes local tools from the router's catalog", async () => {
     fm.routeTurn.mockResolvedValueOnce(decision({}));
     pcc.mockResolvedValueOnce('The total is 100 USD.');
-    await runAgenticTurn({ ...baseArgs(), chatId: 'c1', engine: 'pcc' });
+    await runAgenticTurn({
+      ...baseArgs(),
+      thread: { ...thread(), surface: 'assistant' },
+      chatId: 'c1',
+      engine: 'pcc',
+    });
     expect(fm.routeTurn.mock.calls[0][0]).not.toContain('chat_search');
     expect(fm.routeTurn.mock.calls[0][0]).not.toContain('call_stats');
   });
@@ -356,9 +371,59 @@ describe('P5 local-tier pinning', () => {
   it('on auto with a chatId the catalog offers the local tools', async () => {
     fm.routeTurn.mockResolvedValueOnce(decision({}));
     fm.generateOnDeviceText.mockResolvedValueOnce('The total is 100 USD.');
-    await runAgenticTurn({ ...baseArgs(), chatId: 'c1' });
+    await runAgenticTurn({
+      ...baseArgs(),
+      thread: { ...thread(), surface: 'assistant' },
+      chatId: 'c1',
+    });
     expect(fm.routeTurn.mock.calls[0][0]).toContain('chat_search');
     expect(fm.routeTurn.mock.calls[0][0]).toContain('call_stats');
+  });
+
+  it('does not pin PCC when a disallowed local tool is hallucinated on insights', async () => {
+    fm.routeTurn.mockResolvedValueOnce(
+      decision({ complexity: 'deep', requests: [{ tool: 'chat_search', query: 'hotel' }] }),
+    );
+    fm.agentLoopStep.mockResolvedValueOnce({ done: true, requests: [] });
+    pcc.mockResolvedValueOnce('The total is 100 USD.');
+    const r = await runAgenticTurn({ ...baseArgs(), chatId: 'c1', userText: 'analyze the hotel' });
+    expect(r?.source).toBe('pcc');
+    expect(r?.trace?.usedLocal).toBe(false);
+    expect(r?.evidence).toEqual([]);
+    expect(r?.trace?.results[0]).toMatchObject({ tool: 'chat_search', error: 'That capability is not available in this context.' });
+  });
+});
+
+describe('real deadlines and cancellation', () => {
+  it('returns null after the router deadline instead of hanging forever', async () => {
+    vi.useFakeTimers();
+    try {
+      fm.routeTurn.mockImplementationOnce(() => new Promise(() => undefined));
+      const pending = runAgenticTurn(baseArgs());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fm.routeTurn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(8_001);
+      await expect(pending).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels a streamed native narration when its deadline expires', async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    try {
+      fm.routeTurn.mockResolvedValueOnce(decision({}));
+      fm.streamed.mockReturnValueOnce({ promise: new Promise(() => undefined), cancel });
+      const pending = runAgenticTurn({ ...baseArgs(), onDelta: () => undefined, engine: 'ondevice' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fm.streamed).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(15_001);
+      await expect(pending).resolves.toBeNull();
+      expect(cancel).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

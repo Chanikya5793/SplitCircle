@@ -1,3 +1,4 @@
+import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { GuardedScreen } from '@/components/ui';
@@ -213,7 +214,8 @@ export const SettlementsScreen = ({
                       label={resolveInitials(member.displayName)}
                       style={{ backgroundColor: theme.colors.primaryContainer }}
                       color={theme.colors.onPrimaryContainer}
-                    />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
                     <Text variant="bodyLarge" style={{ marginLeft: 12, color: theme.colors.onSurface }}>
                       {resolveDisplayName(member)}
                     </Text>

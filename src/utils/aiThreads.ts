@@ -12,6 +12,8 @@
  * model-written digest, recent turns stay verbatim.
  */
 
+import type { AiToolEvidence } from './aiTools';
+
 export type AiThreadRole = 'user' | 'assistant' | 'context' | 'clarify';
 export type AiAnswerSource = 'ondevice' | 'pcc' | 'deterministic';
 
@@ -37,6 +39,8 @@ export interface AiThreadMessage {
   options?: string[];
   /** Stated reading on an answer produced under mild ambiguity (doc 24). */
   assumption?: string;
+  /** Content-free record of deterministic capabilities used by the turn. */
+  evidence?: AiToolEvidence[];
   /** True once this turn has been folded into thread.summary (display-only). */
   inSummary?: boolean;
   /** Surface-specific extras (e.g. the assistant's action/confirm-card data). */

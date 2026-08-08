@@ -1,3 +1,4 @@
+import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { LiquidBackground } from '@/components/LiquidBackground';
@@ -686,7 +687,8 @@ export const GroupInfoScreen = () => {
                                             label={resolveInitials(member.displayName)}
                                             style={{ backgroundColor: theme.colors.primary }}
                                             color={theme.colors.onPrimary}
-                                        />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
                                     )}
                                     right={() => renderMemberRight(member)}
                                 />
@@ -747,7 +749,8 @@ export const GroupInfoScreen = () => {
                                                     label={resolveInitials(member.displayName)}
                                                     style={{ backgroundColor: theme.colors.surfaceVariant }}
                                                     color={theme.colors.onSurfaceVariant}
-                                                />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
                                             )}
                                         />
                                         {index < group.archivedMembers!.length - 1 && <Divider />}

@@ -1,3 +1,4 @@
+import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { Divider, GuardedScreen } from '@/components/ui';
@@ -214,6 +215,7 @@ export const MessageInfoScreen = () => {
         label={resolveInitials(participant.displayName)}
         style={{ backgroundColor: getAvatarColor(participant.userId) }}
         color="#FFF"
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
       />
     );
   };

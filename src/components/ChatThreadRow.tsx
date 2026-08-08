@@ -4,6 +4,7 @@
 // own last-message preview + unread badge (subscribed from local storage), so
 // every screen that lists threads renders them identically.
 
+import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { GroupAvatar, UserAvatar } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
@@ -437,7 +438,7 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
               })()}
               {!locked && !chatsAnyShielded && unreadCount > 0 && (
                 <View style={[styles.unreadBadge, { backgroundColor: theme.colors.error, borderColor: theme.colors.background }]}>
-                  <Text style={{ color: theme.colors.onError, fontSize: 10, fontWeight: 'bold' }}>
+                  <Text style={{ color: theme.colors.onError, fontSize: 10, fontWeight: 'bold' }} maxFontSizeMultiplier={FONT_CAP.badge}>
                     {unreadCount > 9 ? '9+' : unreadCount}
                   </Text>
                 </View>

@@ -1,3 +1,4 @@
+import { FONT_CAP } from '@/utils/a11yText';
 import { ExpenseCardBubble } from '@/components/Chat/ExpenseCardBubble';
 import { LinkPreview } from '@/components/Chat/LinkPreview';
 import { MapErrorBoundary } from '@/components/Chat/MapErrorBoundary';
@@ -1358,7 +1359,8 @@ const MessageBubbleInner = ({ message, showSenderInfo, senderName, onSwipeReply,
                     style={{ backgroundColor: senderColor }}
                     color="#FFF"
                     labelStyle={{ fontSize: 12, lineHeight: 28 }}
-                  />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
                 )}
               </View>
             )}

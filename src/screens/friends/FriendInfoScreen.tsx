@@ -1,3 +1,4 @@
+import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { Divider, GuardedScreen } from '@/components/ui';
@@ -219,7 +220,8 @@ export const FriendInfoScreen = () => {
                 label={initials}
                 style={{ backgroundColor: theme.colors.primary }}
                 color={theme.colors.onPrimary}
-              />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
             )}
           </View>
           <Text

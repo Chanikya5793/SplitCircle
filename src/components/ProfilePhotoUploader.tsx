@@ -1,3 +1,4 @@
+import { FONT_CAP } from '@/utils/a11yText';
 import { APP_NAME } from '@/constants/appInfo';
 import { useAuth } from '@/context/AuthContext';
 import { useGroups } from '@/context/GroupContext';
@@ -114,7 +115,8 @@ export const ProfilePhotoUploader = ({ size = 80, editable = true }: ProfilePhot
               label={initials}
               style={{ backgroundColor: theme.colors.primaryContainer }}
               color={theme.colors.onPrimaryContainer}
-            />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
           )}
           
           {uploading && (

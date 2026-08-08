@@ -5,6 +5,7 @@ import type { Group } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { usePressFeedback } from '@/hooks/usePressFeedback';
+import { isAccessibilityTextSize } from '@/utils/a11yText';
 import { heavyHaptic, lightHaptic } from '@/utils/haptics';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import React, { useRef } from 'react';
@@ -32,6 +33,8 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
   const displayName = maskGroupName(group.name, group.groupId);
   const { theme } = useTheme();
   const isFlat = theme?.surfaceStyle === 'flat';
+  // Accessibility text size — the row restacks rather than truncating.
+  const bigText = isAccessibilityTextSize(theme?.fontScale ?? 1);
   const swipeableRef = useRef<Swipeable>(null);
   const { pressScaleStyle, pressHighlightStyle, touchableProps } = usePressFeedback();
   const total = group.expenses.reduce((sum, expense) => sum + expense.amount, 0);
@@ -107,17 +110,39 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
                 the label is dropped (the currency beside it already says
                 what it is). */}
             <Animated.View style={[styles.content, isFlat && styles.contentFlat, pressHighlightStyle]}>
-              <View style={styles.header}>
+              {/* At accessibility text sizes the amount moves BELOW the name
+                  instead of competing with it for width. Keeping the single
+                  row there truncates both ("Not lona anvmore" / "$6.16…") —
+                  restacking is Apple's own pattern for this. */}
+              <View style={[styles.header, bigText && styles.headerStacked]}>
                 <GroupAvatar photoURL={group.photoURL} name={displayName} size={40} />
                 <View style={styles.meta}>
-                  <Text variant="titleMedium" style={{ fontWeight: '600', color: theme.colors.onSurface }} numberOfLines={1}>{displayName}</Text>
-                  <Text variant="bodySmall" style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1}>
+                  <Text
+                    variant="titleMedium"
+                    style={{ fontWeight: '600', color: theme.colors.onSurface }}
+                    // Names wrap rather than truncate once there is room to.
+                    numberOfLines={bigText ? 3 : 1}
+                  >
+                    {displayName}
+                  </Text>
+                  <Text
+                    variant="bodySmall"
+                    style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}
+                    numberOfLines={bigText ? 2 : 1}
+                  >
                     {group.members.length} members · {group.currency}
                   </Text>
+                  {bigText && (
+                    <Text variant="bodyMedium" style={[styles.totalStacked, { color: theme.colors.primary }]}>
+                      {fmtMoney(total, group.currency)}
+                    </Text>
+                  )}
                 </View>
-                <Text variant="bodyMedium" style={[styles.total, { color: theme.colors.primary }]} numberOfLines={1}>
-                  {fmtMoney(total, group.currency)}
-                </Text>
+                {!bigText && (
+                  <Text variant="bodyMedium" style={[styles.total, { color: theme.colors.primary }]} numberOfLines={1}>
+                    {fmtMoney(total, group.currency)}
+                  </Text>
+                )}
                 {loading ? (
                   <View style={styles.loadingIndicator}>
                     <ActivityIndicator animating size="small" color={theme.colors.primary} />
@@ -166,6 +191,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  /** Accessibility sizes: align to the top so a wrapped 3-line name doesn't
+   *  drag the avatar and chevron to its vertical centre. */
+  headerStacked: {
+    alignItems: 'flex-start',
+  },
+  totalStacked: {
+    fontWeight: '700',
+    marginTop: 2,
   },
   meta: {
     flex: 1,

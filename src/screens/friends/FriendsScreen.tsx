@@ -1,3 +1,4 @@
+import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { StickyHeaderPill } from '@/components/ui';
@@ -397,7 +398,8 @@ export const FriendsScreen = () => {
                   label={resolveInitials(row.displayName)}
                   style={{ backgroundColor: theme.colors.primary }}
                   color={theme.colors.onPrimary}
-                />
+        maxFontSizeMultiplier={FONT_CAP.avatarMonogram}
+      />
               )}
             </TouchableRipple>
             <View style={styles.rowText}>
