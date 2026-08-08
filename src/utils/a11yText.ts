@@ -22,6 +22,40 @@ export const isAccessibilityTextSize = (fontScale: number) =>
   fontScale >= STACK_AT_FONT_SCALE;
 
 /**
+ * The width a row's content effectively gets once the text has been scaled up:
+ * the screen is fixed, so a 1.3× text size leaves 1/1.3 of the usable columns.
+ */
+const effectiveWidth = (windowWidth: number, fontScale: number) =>
+  windowWidth / Math.max(fontScale, 1);
+
+/**
+ * Below this many effective points, a name + amount + chevron row cannot hold
+ * its own on one line and has to restack. Derived from the two real cases:
+ * an iPhone 17 Pro (402pt) at iOS's XXL (1.235) lands at 325 and overflows —
+ * money truncated to "€495…", the title clipped mid-word — while a Pixel 7
+ * (485dp) at 1.3 lands at 373 and is comfortably fine.
+ */
+const MIN_ROW_WIDTH = 370;
+
+/**
+ * Whether a horizontal row must restack, given BOTH the text scale and the
+ * screen width.
+ *
+ * A bare scale threshold is not enough, and shipping one is what let this
+ * regress (2026-08-08). `STACK_AT_FONT_SCALE` sits at 1.35 — which on iOS is
+ * the top of the NON-accessibility ladder (XXXL = 1.353). The two sizes just
+ * below it, XL (1.118) and XXL (1.235), are ordinary choices people make from
+ * Settings › Display, and they fell in a band with no handling at all: too big
+ * to fit, not big enough to restack, so rows simply overflowed. It went unseen
+ * because the Android device used for testing is 485dp wide and absorbs that
+ * band; a 402pt iPhone does not. Width is half the problem, so width belongs
+ * in the condition.
+ */
+export const shouldStackRow = (fontScale: number, windowWidth: number) =>
+  isAccessibilityTextSize(fontScale) ||
+  effectiveWidth(windowWidth, fontScale) < MIN_ROW_WIDTH;
+
+/**
  * Caps for genuinely fixed-geometry chrome ONLY. Each is a container whose
  * size cannot follow the text.
  */

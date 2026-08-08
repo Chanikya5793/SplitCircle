@@ -60,24 +60,20 @@ export const BalanceHeadline = ({ groupIds, style }: BalanceHeadlineProps) => {
   return (
     <View style={[styles.wrap, style]} accessible accessibilityRole="summary">
       {owed.length > 0 && (
-        <View style={styles.line}>
-          <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-            You are owed
-          </Text>
-          <Text variant="bodyMedium" style={[styles.amount, { color: theme.colors.moneyPositive }]}>
+        <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+          You are owed{' '}
+          <Text style={[styles.amount, { color: theme.colors.moneyPositive }]}>
             {joinAmounts(owed)}
           </Text>
-        </View>
+        </Text>
       )}
       {owing.length > 0 && (
-        <View style={styles.line}>
-          <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-            You owe
-          </Text>
-          <Text variant="bodyMedium" style={[styles.amount, { color: theme.colors.moneyNegative }]}>
+        <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+          You owe{' '}
+          <Text style={[styles.amount, { color: theme.colors.moneyNegative }]}>
             {joinAmounts(owing)}
           </Text>
-        </View>
+        </Text>
       )}
     </View>
   );
@@ -88,20 +84,16 @@ const styles = StyleSheet.create({
     gap: 2,
     paddingBottom: 4,
   },
-  /** Label and amount read as ONE phrase — "You are owed $799.32" — so they sit
-   *  next to each other at the same size, with the weight and the money colour
-   *  carrying the emphasis. They used to be a bodySmall label pinned to the
-   *  left and a titleMedium amount pinned to the right by space-between, which
-   *  put a screen's width between two halves of the same sentence and made the
-   *  label look like a caption for something else. */
-  line: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
+  /** The amount is a NESTED Text inside the label, not a sibling in a flex row.
+   *
+   *  It reads as one phrase either way — "You are owed $799.32", with the weight
+   *  and the money colour carrying the emphasis — but nesting makes it a single
+   *  text flow, so it wraps across lines like a sentence and CANNOT clip. As a
+   *  flex row it could, and did: on a 402pt iPhone at iOS's XXL text size, with
+   *  two currencies to show, the line overflowed the screen and was cut
+   *  mid-word — "You are owe ₹6,717.44 · $3,617". Money is the number this
+   *  screen exists for; it must never be the thing that gets truncated. */
   amount: {
     fontWeight: '700',
-    flexShrink: 1,
   },
 });

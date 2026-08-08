@@ -5,13 +5,13 @@ import type { Group } from '@/models';
 import { useMoneyDisplay } from '@/hooks/useMoneyDisplay';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { usePressFeedback } from '@/hooks/usePressFeedback';
-import { isAccessibilityTextSize } from '@/utils/a11yText';
+import { shouldStackRow } from '@/utils/a11yText';
 import { computeMyGroupBalance } from '@/utils/myBalance';
 import { useAuth } from '@/context/AuthContext';
 import { heavyHaptic, lightHaptic } from '@/utils/haptics';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import React, { useRef } from 'react';
-import { Animated as RNAnimated, StyleSheet, View } from 'react-native';
+import { Animated as RNAnimated, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import { ActivityIndicator, Icon, IconButton, Text, TouchableRipple } from 'react-native-paper';
@@ -35,8 +35,11 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
   const displayName = maskGroupName(group.name, group.groupId);
   const { theme } = useTheme();
   const isFlat = theme?.surfaceStyle === 'flat';
-  // Accessibility text size — the row restacks rather than truncating.
-  const bigText = isAccessibilityTextSize(theme?.fontScale ?? 1);
+  // Restacks rather than truncating. Width-aware, not just scale-aware: money
+  // is the one thing on this row that must never be cut off, and whether it
+  // fits depends on the screen as much as the text size (see a11yText).
+  const { width: windowWidth } = useWindowDimensions();
+  const bigText = shouldStackRow(theme?.fontScale ?? 1, windowWidth);
   const swipeableRef = useRef<Swipeable>(null);
   const { pressScaleStyle, pressHighlightStyle, touchableProps } = usePressFeedback();
   // What the row shows is YOUR position, not the group's turnover: total

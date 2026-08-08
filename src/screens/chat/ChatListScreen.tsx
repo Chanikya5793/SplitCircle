@@ -237,7 +237,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
             <View>
               <View style={styles.headerContainer}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Chats</Text>
+                  <Text variant="displaySmall" numberOfLines={2} style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Chats</Text>
 
                   <View>
                     {/* Same fix as GroupListScreen: an IconButton nested in a
@@ -371,8 +371,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingBottom: 16,
   },
+  /** See GroupListScreen.headerTitle — yields to the trailing button rather
+   *  than running under it at large text sizes. */
   headerTitle: {
     fontWeight: 'bold',
+    flexShrink: 1,
   },
   filterButton: {
     borderRadius: 50,

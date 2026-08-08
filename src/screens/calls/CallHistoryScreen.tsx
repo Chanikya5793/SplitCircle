@@ -696,6 +696,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
 
                 <Text
                   variant="displaySmall"
+                  numberOfLines={2}
                   style={[styles.headerTitle, { color: theme.colors.onSurface }]}
                 >
                   Calls
@@ -989,8 +990,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     zIndex: 10,
   },
+  /** See GroupListScreen.headerTitle — the Edit and New-call buttons flank it,
+   *  so it must yield rather than run under them at large text sizes. */
   headerTitle: {
     fontWeight: 'bold',
+    flexShrink: 1,
+    textAlign: 'center',
   },
   /** 44pt minimum touch target for the per-row icon actions. hitSlop alone
    *  left them at 42dp and does not show up as node bounds to an audit. */

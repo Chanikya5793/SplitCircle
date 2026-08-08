@@ -1,4 +1,4 @@
-import { FONT_CAP, isAccessibilityTextSize } from '@/utils/a11yText';
+import { FONT_CAP, shouldStackRow } from '@/utils/a11yText';
 import { BalanceHeadline } from '@/components/BalanceHeadline';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
@@ -27,7 +27,7 @@ import { useSyncRootStackTitle } from '@/navigation/useSyncRootStackTitle';
 import { lightHaptic, successHaptic } from '@/utils/haptics';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Keyboard, Modal, Platform, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Animated, Keyboard, Modal, Platform, Pressable, ScrollView, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
 import { Button, Text, Icon, IconButton, Chip, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -43,6 +43,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   const { user } = useAuth();
   const { isOnline } = useOfflineSync();
   const { theme, isDark } = useTheme();
+  const { width: windowWidth } = useWindowDimensions();
   // Flat rows are FULL-BLEED: the list drops its horizontal gutter so a row's
   // press highlight and its divider reach both screen edges, like a native
   // list. The gutter moves onto the header/empty-state instead, and each
@@ -54,7 +55,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
   // what forced every non-row child — header, empty state — to re-add its own
   // `paddingHorizontal: isFlat ? 16 : 0`, and anything that forgot ended up
   // pinned to the screen edge.
-  const bigText = isAccessibilityTextSize(theme?.fontScale ?? 1);
+  const bigText = shouldStackRow(theme?.fontScale ?? 1, windowWidth);
   const { isShielded: guardIsShielded, isVanished: guardIsVanished, duress: guardDuress } = usePrivacyGuard();
   // Creating/joining expense groups is blocked while expenses are hidden —
   // but not in duress, where a disabled button would betray the fake unlock.
@@ -340,7 +341,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           <View>
             <View style={styles.headerContainer}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Expenses</Text>
+                <Text variant="displaySmall" numberOfLines={2} style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Expenses</Text>
                 {/* Was an unlabeled control containing a SECOND clickable: a
                     uiautomator dump showed TalkBack focusing both the wrapper
                     and an inner 40×40dp icon-button, announcing the raw icon
@@ -733,8 +734,14 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     marginTop: 16,
   },
+  /** flexShrink so the title yields to the filter button instead of running
+   *  under it: with no bound, "Expenses" at iOS's XXL text size was clipped
+   *  mid-word ("Expense") on a 402pt iPhone. It wraps to a second line rather
+   *  than truncating — a large title spilling to two lines is what iOS itself
+   *  does, and a truncated screen name is not acceptable at any text size. */
   headerTitle: {
     fontWeight: 'bold',
+    flexShrink: 1,
   },
   filterButton: {
     borderRadius: 50,

@@ -2,6 +2,7 @@ import { MD3DarkTheme, MD3LightTheme, type MD3Theme } from 'react-native-paper';
 import { ACCENTS, CHART_BASE, NEUTRALS, type AccentId } from './palette';
 import {
   radius,
+  scalePaperFonts,
   scaleTypography,
   spacing,
   typography,
@@ -92,6 +93,9 @@ export const buildTheme = (
 
   return {
     ...base,
+    // Paper's MD3 variants carry hardcoded lineHeights; RN scales fontSize by
+    // the OS text scale but not lineHeight, so they clip at large sizes.
+    fonts: scalePaperFonts(base.fonts, fontScale),
     roundness: 12,
     colors: {
       ...base.colors,
