@@ -512,6 +512,12 @@ export const SettingsScreen = () => {
         <GlassCard style={styles.card} contentStyle={styles.cardContent}>
           {wrapAnchor(SETTING_IDS.appearance, (
           <View style={styles.appearanceBlock}>
+            {/* KNOWN GAP: measured 142x36dp on a Pixel 7 — under the 44pt
+                HIG / 48dp Material minimum. Paper's SegmentedButtons sizes its
+                INNER items, so neither a `style` minHeight on the container
+                (tried; no effect) nor `density` raises it. Fixing this means
+                replacing the component, which is a design change rather than
+                an a11y patch — left as a deliberate, recorded gap. */}
             <SegmentedButtons
               value={mode}
               onValueChange={(next) => {

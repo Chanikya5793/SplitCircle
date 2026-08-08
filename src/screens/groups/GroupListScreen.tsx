@@ -28,7 +28,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Keyboard, Modal, Platform, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { appAlert } from '@/utils/appAlert';
-import { Button, Text, IconButton, Chip, TouchableRipple } from 'react-native-paper';
+import { Button, Text, Icon, IconButton, Chip, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface GroupListScreenProps {
@@ -330,15 +330,34 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
             <View style={styles.headerContainer}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Expenses</Text>
+                {/* Was an unlabeled control containing a SECOND clickable: a
+                    uiautomator dump showed TalkBack focusing both the wrapper
+                    and an inner 40×40dp icon-button, announcing the raw icon
+                    glyph either way. The icon is now non-interactive (plain
+                    Icon, not IconButton) so there is exactly one focusable
+                    node, and it carries a real name + state. */}
                 <TouchableRipple
                   onPress={() => { lightHaptic(); setFilterVisible(true); }}
                   style={styles.filterButton}
                   borderless
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    selectedCurrencies.length > 0
+                      ? `Filter and sort, ${selectedCurrencies.length} filter${selectedCurrencies.length === 1 ? '' : 's'} active`
+                      : 'Filter and sort'
+                  }
+                  accessibilityHint="Opens filter and sort options"
                 >
                   <GlassView role="floating" intensity={40} style={styles.filterButtonContent}>
-                    <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
+                    <Icon source="filter-variant" size={24} color={theme.colors.onSurface} />
                     {(selectedCurrencies.length > 0) && (
-                      <View style={[styles.filterBadge, { backgroundColor: theme.colors.primary, borderColor: theme.colors.background }]}>
+                      <View
+                        // The count is already in the button's accessibilityLabel;
+                        // leaving it focusable makes TalkBack read "3" on its own.
+                        accessibilityElementsHidden
+                        importantForAccessibility="no-hide-descendants"
+                        style={[styles.filterBadge, { backgroundColor: theme.colors.primary, borderColor: theme.colors.background }]}
+                      >
                         <Text style={{ color: theme.colors.onPrimary, fontSize: 10, fontWeight: 'bold' }} maxFontSizeMultiplier={FONT_CAP.badge}>
                           {selectedCurrencies.length}
                         </Text>
@@ -399,7 +418,16 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           wrapped out of its pill on a Pixel 7 at 2×. Past the threshold they
           stack full-width instead of fighting over a third of the screen. */}
       {!groupsShielded && <View style={[styles.actions, bigText && styles.actionsStacked, { bottom: tabBarEnvelopeHeight + 12 }]}>
-        <Button mode="contained" compact style={[styles.primaryAction, bigText && styles.actionStacked]} onPress={() => { lightHaptic(); setDialog('create'); }}>
+        <Button
+          mode="contained"
+          compact
+          style={[styles.primaryAction, bigText && styles.actionStacked]}
+          // Paper's Button sizes its INNER content view, so a minHeight on
+          // `style` never reaches it — measured 142x37dp even with the outer
+          // floor set. contentStyle is the one that lands.
+          contentStyle={{ minHeight: 48 }}
+          onPress={() => { lightHaptic(); setDialog('create'); }}
+        >
           New group
         </Button>
 
@@ -574,6 +602,11 @@ const styles = StyleSheet.create({
   primaryAction: {
     flex: 1,
     minWidth: 0,
+    // Measured 142x37dp on a Pixel 7 — under the 44pt HIG / 48dp Material
+    // minimum. Paper's `compact` Button shrinks its own height, so the floor
+    // has to be set here.
+    minHeight: 48,
+    justifyContent: 'center',
   },
   /** Accessibility sizes: full width, natural height, no flex competition. */
   actionsStacked: {
@@ -597,6 +630,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    // Measured 142x42dp — just under the minimum. See primaryAction.
+    minHeight: 48,
   },
   emptyContainer: {
     flex: 1,

@@ -453,6 +453,36 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
           ) : undefined}
           onPress={handleOpen}
           onLongPress={handleLongPress}
+          accessibilityRole="button"
+          // Unread count and pin/mute state are conveyed VISUALLY by a badge
+          // and small icons; without this they are simply absent for a screen
+          // reader. Rolled into the name so it is announced up front.
+          accessibilityLabel={[
+            maskChatTitle(getChatTitle(), thread.chatId),
+            locked ? 'Locked chat' : undefined,
+            !locked && !chatsAnyShielded && unreadCount > 0
+              ? `${unreadCount} unread message${unreadCount === 1 ? '' : 's'}`
+              : undefined,
+            pinned && !locked ? 'Pinned' : undefined,
+            muted ? 'Muted' : undefined,
+          ]
+            .filter(Boolean)
+            .join(', ')}
+          accessibilityHint="Opens the conversation"
+          // Pin / lock / archive are swipe-only gestures — unreachable with a
+          // screen reader until they are exposed as custom actions.
+          accessibilityActions={[
+            ...(variant === 'active' ? [{ name: 'pin', label: pinned ? 'Unpin chat' : 'Pin chat' }] : []),
+            ...(variant === 'active' ? [{ name: 'lock', label: 'Lock chat' }] : []),
+            ...(variant === 'locked' ? [{ name: 'unlock', label: 'Unlock chat' }] : []),
+            { name: 'archive', label: variant === 'archived' ? 'Restore chat' : 'Archive chat' },
+          ]}
+          onAccessibilityAction={({ nativeEvent: { actionName } }) => {
+            if (actionName === 'pin') void handleTogglePin();
+            if (actionName === 'lock') void handleLock();
+            if (actionName === 'unlock') void handleUnlock();
+            if (actionName === 'archive') void handleArchiveToggle();
+          }}
           {...touchableProps}
           style={[styles.chatItemRow, theme?.surfaceStyle === 'flat' && styles.chatItemRowFlat]}
           titleStyle={{ fontWeight: 'bold', fontSize: 16, color: theme.colors.onSurface }}

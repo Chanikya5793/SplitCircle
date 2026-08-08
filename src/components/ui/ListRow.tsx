@@ -41,6 +41,25 @@ export const ListRow = ({
   const tint = destructive ? theme.colors.danger : (iconColor ?? theme.colors.primary);
   const showChevron = chevron ?? (Boolean(onPress) && !trailing);
 
+  /**
+   * A `trailing` control (usually a Switch) is its own focusable node, and
+   * inline it has no name — a uiautomator dump of Settings showed four
+   * unlabeled `Switch` nodes, which TalkBack announces as just "switch, on".
+   * The row's title is the only thing that says WHAT is being toggled, so it
+   * is lent to the control here. `accessibilityLabel` on a parent does not
+   * cascade in RN, so this has to be an explicit clone rather than a wrapper.
+   *
+   * A control that already names itself keeps its own label.
+   */
+  const labelledTrailing = React.useMemo(() => {
+    if (!React.isValidElement(trailing)) return trailing;
+    const existing = (trailing.props as { accessibilityLabel?: string }).accessibilityLabel;
+    if (existing) return trailing;
+    return React.cloneElement(trailing as React.ReactElement<any>, {
+      accessibilityLabel: title,
+    });
+  }, [trailing, title]);
+
   const content = (
     <View style={[styles.row, { paddingVertical: theme.spacing.sm + 2, paddingHorizontal: theme.spacing.md }, style]}>
       {icon ? (
@@ -80,7 +99,7 @@ export const ListRow = ({
           </Text>
         ) : null}
       </View>
-      {trailing}
+      {labelledTrailing}
       {showChevron ? <Icon source="chevron-right" size={20} color={theme.colors.muted} /> : null}
     </View>
   );

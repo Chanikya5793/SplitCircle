@@ -101,6 +101,25 @@ export const SwipeableGroupCard = React.memo(({ group, onPress, onLongPress, onA
             onLongPress={loading || !onLongPress ? undefined : () => { lightHaptic(); onLongPress(group); }}
             style={{ flex: 1 }}
             disabled={loading}
+            accessibilityRole="button"
+            // Spelled out rather than left to RN's child-concatenation, which
+            // produced "Budget, 7 members · USD, $29,214.18" — the middot is
+            // read aloud and the amount arrives with no idea what it means.
+            accessibilityLabel={`${displayName}, ${group.members.length} member${group.members.length === 1 ? '' : 's'}, total spent ${fmtMoney(total, group.currency)}`}
+            accessibilityHint="Opens the group"
+            accessibilityState={{ busy: loading }}
+            // Archive is otherwise a SWIPE-ONLY action, i.e. unreachable with a
+            // screen reader on. Exposing it as a custom action puts it in
+            // VoiceOver's rotor / TalkBack's actions menu. Same for the
+            // long-press quick actions.
+            accessibilityActions={[
+              ...(onArchive ? [{ name: 'archive', label: archived ? 'Restore group' : 'Archive group' }] : []),
+              ...(onLongPress ? [{ name: 'magicTap', label: 'Quick actions' }] : []),
+            ]}
+            onAccessibilityAction={({ nativeEvent: { actionName } }) => {
+              if (actionName === 'archive') onArchive?.(group);
+              if (actionName === 'magicTap') onLongPress?.(group);
+            }}
             {...touchableProps}
           >
             {/* Two lines, not three. The total used to sit on its own

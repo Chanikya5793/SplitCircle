@@ -24,7 +24,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Platform, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
+import { Icon, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
 import { StickyHeaderPill } from '@/components/ui';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
@@ -238,13 +238,20 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
                   <Text variant="displaySmall" style={[styles.headerTitle, { color: theme.colors.onSurface }]}>Chats</Text>
 
                   <View>
+                    {/* Same fix as GroupListScreen: an IconButton nested in a
+                        TouchableRipple gives TalkBack two focusable nodes and
+                        announces the raw icon glyph. Plain Icon + a real name
+                        on the wrapper. */}
                     <TouchableRipple
                       onPress={() => { lightHaptic(); setFilterVisible(true); }}
                       style={[styles.filterButton, { backgroundColor: theme.colors.skeleton }]}
                       borderless
+                      accessibilityRole="button"
+                      accessibilityLabel="Filter and sort"
+                      accessibilityHint="Opens filter and sort options"
                     >
                       <View style={styles.filterButtonContent}>
-                        <IconButton icon="filter-variant" size={24} iconColor={theme.colors.onSurface} style={{ margin: 0 }} />
+                        <Icon source="filter-variant" size={24} color={theme.colors.onSurface} />
                       </View>
                     </TouchableRipple>
                   </View>
