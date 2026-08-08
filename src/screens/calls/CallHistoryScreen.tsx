@@ -161,14 +161,25 @@ const CallHistoryRow = memo(function CallHistoryRow({
           (DESIGN.md liquid glass DNA) and forced the old blur fallback. */}
       <Animated.View style={pressScaleStyle}>
         <GlassView style={[styles.callItem, isFlat && styles.callItemFlat]}>
+          {/* No padding on the TouchableRipple. The press highlight lives on the
+              Animated.View INSIDE it, so any padding here becomes a margin the
+              highlight cannot paint into — measured on a Pixel 7, the highlight
+              covered x 32..1048 of a full-width row and only 43 of its 54dp
+              height. The row's insets therefore belong on the highlighted view
+              itself, which is what makes the highlight fill the row. */}
           <TouchableRipple
             onPress={() => onPressInfo(entry)}
             onLongPress={() => onLongPressRow(entry)}
-            style={styles.callItemContent}
             borderless
             {...touchableProps}
           >
-            <Animated.View style={[styles.callRow, isFlat && styles.callRowFlat, pressHighlightStyle]}>
+            <Animated.View
+              style={[
+                styles.callRow,
+                isFlat ? styles.callRowFlat : styles.callRowGlass,
+                pressHighlightStyle,
+              ]}
+            >
               {/* Left: Avatar + Delete button in edit mode */}
               <View style={styles.leftSection}>
                 {isEditing && (
@@ -1139,16 +1150,20 @@ const styles = StyleSheet.create({
     marginBottom: 0,
     borderRadius: 0,
   },
+  /** Flat rows are full-bleed, so the row's own padding IS the text inset. 20
+   *  to match the group and chat lists (SwipeableGroupCard.contentFlat) — the
+   *  calls list used to sit 30dp in, a hair further than every other list. */
   callRowFlat: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
   },
-  callItemContent: {
-    paddingVertical: 10,
+  /** Glass cards are already inset by their margins, so less padding here. */
+  callRowGlass: {
     paddingHorizontal: 14,
   },
   callRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 10,
   },
   leftSection: {
     flexDirection: 'row',

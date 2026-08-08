@@ -321,23 +321,24 @@ export const SearchScreen = () => {
     }, [clearFocusTimers, contentIn, focusField]),
   );
 
-  /*
-   * NO "re-tap the Search tab to reopen the keyboard" HANDLER — it cannot be
-   * built on this navigator, so don't spend time trying again.
+  /**
+   * Re-tapping the Search tab while already on it brings the keyboard back —
+   * the recovery path when it was dismissed with Back, a scroll, or a submit.
    *
-   * `createNativeBottomTabNavigator` emits `tabPress` from
-   * `onNativeFocusChange` (@react-navigation/bottom-tabs
-   * unstable/NativeBottomTabView.native), and react-native-screens' native tab
-   * bar exposes `onNativeFocusChange` as its ONLY event. Tapping the tab you
-   * are already on changes no focus, so nothing crosses to JS at all: a
-   * `tabPress` listener here was verified silent on a Pixel 7. This is the same
-   * class of native-tab-bar limitation as the note on the SEARCH_TAB screen in
-   * AppNavigator.
+   * This DOES work on the native tab bar, despite the name `onNativeFocusChange`
+   * suggesting otherwise: react-native-screens' `TabsHost` calls its
+   * `setOnItemSelectedListener` for a repeated selection too (it even flags the
+   * case as `repeatedSelectionHandledBySpecialEffect`), and
+   * @react-navigation/bottom-tabs emits `tabPress` from that handler
+   * unconditionally. An earlier round concluded the opposite from a test where
+   * the listener DID fire and `focusField` was the thing silently doing nothing
+   * — it still had the `isFocused()` guard described above.
    *
-   * The recovery path is the field itself, which is why it's wrapped in a
-   * Pressable — the whole pill raises the keyboard, not just the text. Coming
-   * back from another tab is covered by useFocusEffect above.
+   * `tabPress` is LISTEN-ONLY here. Native bottom tabs declare it
+   * `canPreventDefault: false`, so calling preventDefault() throws and kills the
+   * app — see the note on the SEARCH_TAB screen in AppNavigator.
    */
+  useEffect(() => navigation.addListener('tabPress', focusField), [navigation, focusField]);
 
   const results = useMemo(() => (debounced ? search(debounced, 'all') : []), [debounced, search]);
   const sections = useMemo(() => groupByType(results), [results]);
