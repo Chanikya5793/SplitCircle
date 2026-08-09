@@ -37,6 +37,7 @@ export const EmptyState = ({ icon, title, hint, actionLabel, onAction, style }: 
         style={{
           color: theme.colors.onSurface,
           fontSize: theme.typography.subtitle.fontSize,
+          lineHeight: theme.typography.subtitle.lineHeight,
           fontWeight: theme.typography.subtitle.fontWeight,
           textAlign: 'center',
         }}

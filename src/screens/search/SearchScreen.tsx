@@ -100,6 +100,7 @@ const HighlightedText = ({
   color,
   highlightColor,
   fontSize,
+  lineHeight,
   fontWeight,
   numberOfLines,
   marginTop,
@@ -109,13 +110,16 @@ const HighlightedText = ({
   color: string;
   highlightColor: string;
   fontSize: number;
+  /** Must be passed alongside fontSize: the default line box is derived from
+   *  the UNSCALED size, so at large text sizes descenders get sliced. */
+  lineHeight: number;
   fontWeight?: '400' | '500' | '600' | '700';
   numberOfLines?: number;
   marginTop?: number;
 }) => {
   const segments = useMemo(() => highlightSegments(text, query), [text, query]);
   return (
-    <Text numberOfLines={numberOfLines} style={{ color, fontSize, fontWeight, marginTop }}>
+    <Text numberOfLines={numberOfLines} style={{ color, fontSize, lineHeight, fontWeight, marginTop }}>
       {segments.map((seg, i) =>
         seg.match ? (
           <Text key={i} style={{ color: highlightColor, fontWeight: '700' }}>
@@ -145,6 +149,7 @@ const ResultRow = ({ item, query, onPress }: { item: RankedItem; query: string; 
           color={theme.colors.onSurface}
           highlightColor={theme.colors.primary}
           fontSize={theme.typography.body.fontSize}
+          lineHeight={theme.typography.body.lineHeight}
           fontWeight="500"
           numberOfLines={1}
         />
@@ -155,6 +160,7 @@ const ResultRow = ({ item, query, onPress }: { item: RankedItem; query: string; 
             color={theme.colors.muted}
             highlightColor={theme.colors.primary}
             fontSize={theme.typography.caption.fontSize}
+            lineHeight={theme.typography.caption.lineHeight}
             numberOfLines={2}
             marginTop={1}
           />
@@ -689,7 +695,7 @@ export const SearchScreen = () => {
                 <Text
                   style={[
                     styles.largeTitle,
-                    { color: theme.colors.onSurface, fontSize: theme.typography.display.fontSize },
+                    { color: theme.colors.onSurface, fontSize: theme.typography.display.fontSize, lineHeight: theme.typography.display.lineHeight },
                   ]}
                 >
                   Search
@@ -866,7 +872,7 @@ export const SearchScreen = () => {
                   ]}
                 >
                   <Ionicons name="search" size={14} color={theme.colors.onSurfaceVariant} />
-                  <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: theme.typography.body.fontSize }}>
+                  <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: theme.typography.body.fontSize, lineHeight: theme.typography.body.lineHeight }}>
                     <Text style={{ color: theme.colors.onSurface }}>{p.slice(0, debounced.length)}</Text>
                     <Text style={{ color: theme.colors.onSurfaceVariant }}>{p.slice(debounced.length)}</Text>
                   </Text>

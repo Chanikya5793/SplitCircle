@@ -338,7 +338,13 @@ export const LinkedDevicesScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  rowActions: { flexDirection: 'row', alignItems: 'center' },
+  /** Top-aligned, not centred. List.Item centres its `right` content against
+   *  the WHOLE row, so once the description wraps to two lines at large text
+   *  sizes the button lands level with the second line and reads as a word
+   *  inside the description — "Simulator iOS · Companion Sign out · (this
+   *  device)". Aligning to the top keeps it level with the title, where a row
+   *  action belongs. */
+  rowActions: { flexDirection: 'row', alignItems: 'flex-start', alignSelf: 'flex-start' },
   container: {
     flexGrow: 1,
     padding: 24,

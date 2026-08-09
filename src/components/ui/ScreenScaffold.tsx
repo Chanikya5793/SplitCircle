@@ -86,6 +86,7 @@ export const StickyGlassHeader = ({
               {
                 color: theme.colors.onSurface,
                 fontSize: theme.typography.subtitle.fontSize,
+                lineHeight: theme.typography.subtitle.lineHeight,
                 fontWeight: theme.typography.subtitle.fontWeight,
               },
             ]}
@@ -131,6 +132,7 @@ export const LargeTitle = ({ title, subtitle, right }: LargeTitleProps) => {
             style={{
               color: theme.colors.muted,
               fontSize: theme.typography.body.fontSize,
+              lineHeight: theme.typography.body.lineHeight,
               marginTop: theme.spacing.xs,
             }}
           >

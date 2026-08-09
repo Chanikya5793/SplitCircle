@@ -19,6 +19,7 @@ export const SectionLabel = ({ children, style }: SectionLabelProps) => {
         {
           color: theme.colors.muted,
           fontSize: theme.typography.label.fontSize,
+          lineHeight: theme.typography.label.lineHeight,
           fontWeight: theme.typography.label.fontWeight,
           letterSpacing: 0.8,
           textTransform: 'uppercase',

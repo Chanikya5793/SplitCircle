@@ -31,6 +31,7 @@ export const SyncBadge = ({ label = 'Pending', style }: SyncBadgeProps) => {
         style={{
           color: theme.colors.onWarningContainer,
           fontSize: theme.typography.label.fontSize,
+          lineHeight: theme.typography.label.lineHeight,
           fontWeight: theme.typography.label.fontWeight,
         }}
       >
