@@ -29,7 +29,7 @@ import { resolveDisplayName } from '@/utils/identity';
 import { heavyHaptic, lightHaptic, successHaptic } from '@/utils/haptics';
 import { clearOpenSwipeable, setOpenSwipeable } from '@/utils/swipeableRegistry';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { usePressFeedback } from '@/hooks/usePressFeedback';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
@@ -85,6 +85,7 @@ const SwipeableChatRow = ({
   onArchiveToggle,
   onLock,
   onUnlock,
+  containerStyle,
   children,
 }: {
   variant: ChatRowVariant;
@@ -93,6 +94,7 @@ const SwipeableChatRow = ({
   onArchiveToggle?: () => void;
   onLock?: () => void;
   onUnlock?: () => void;
+  containerStyle?: StyleProp<ViewStyle>;
   children: ReactNode;
 }) => {
   const swipeableRef = useRef<Swipeable>(null);
@@ -154,6 +156,7 @@ const SwipeableChatRow = ({
         setOpenSwipeable(swipeableRef.current);
       }}
       onSwipeableClose={() => clearOpenSwipeable(swipeableRef.current)}
+      containerStyle={containerStyle}
     >
       {children}
     </Swipeable>
@@ -389,6 +392,7 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
 
   return (
     <SwipeableChatRow
+      containerStyle={theme?.surfaceStyle === 'flat' ? styles.rowBleed : undefined}
       variant={variant}
       pinned={pinned}
       onPin={() => void handleTogglePin()}
@@ -496,11 +500,18 @@ export const ChatThreadRow = ({ thread, variant, onOpenThread, typingUserIds }: 
 };
 
 const styles = StyleSheet.create({
-  /** Flat rows cancel the list's gutter so the press highlight and the row's
-   *  hairline reach both screen edges; the row's own padding keeps the text
-   *  inset. See components/ui/layout. */
   chatItemFlatGap: {
     marginBottom: 0,
+  },
+  /** Flat rows cancel the list's gutter so the press highlight and the row's
+   *  hairline reach both screen edges; the row's own padding keeps the text
+   *  inset. See components/ui/layout.
+   *
+   *  This has to sit on the SWIPEABLE's container, not on the card inside it.
+   *  Swipeable clips its children, so a negative margin applied further in is
+   *  simply cut off — measured on an iPhone 17 Pro, the chat separator stayed
+   *  at 32pt→370pt (gutter-inset) while the groups separator reached 386pt. */
+  rowBleed: {
     ...fullBleed,
   },
   chatItem: {
