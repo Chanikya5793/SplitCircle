@@ -20,10 +20,11 @@ import type { ChatMessage } from '@/models';
 import { formatRelativeTime } from '@/utils/format';
 import { lightHaptic } from '@/utils/haptics';
 import { resolveDisplayName } from '@/utils/identity';
+import { shouldStackRow } from '@/utils/a11yText';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import React from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Text } from 'react-native-paper';
 
 interface ExpenseCardBubbleProps {
@@ -42,6 +43,8 @@ export const ExpenseCardBubble = ({
   onReactionsPress,
 }: ExpenseCardBubbleProps) => {
   const { theme, isDark } = useTheme();
+  const { width: windowWidth } = useWindowDimensions();
+  const tightRow = shouldStackRow(theme?.fontScale ?? 1, windowWidth);
   const { user } = useAuth();
   const { groups } = useGroups();
   const navigation = useNavigation<any>();
@@ -291,6 +294,7 @@ export const ExpenseCardBubble = ({
         }
         style={({ pressed }) => [
           styles.card,
+          tightRow && styles.cardWide,
           { backgroundColor: surface, borderColor: hairline },
           pressed && { opacity: 0.85 },
         ]}
@@ -315,14 +319,18 @@ export const ExpenseCardBubble = ({
           />
         </View>
         <View style={styles.body}>
+          {/* Wraps instead of truncating once the row is tight. The amount on
+              the right keeps its width, so at large text sizes a single line
+              left the title as "July wr…" and the subtitle as "13 expen…" —
+              a digest card that cannot say what it is a digest OF. */}
           <Text
             variant="bodyMedium"
-            numberOfLines={1}
+            numberOfLines={tightRow ? 2 : 1}
             style={{ color: theme.colors.onSurface, fontWeight: '600' }}
           >
             {isSettlement ? 'Settled up' : title}
           </Text>
-          <Text variant="labelSmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
+          <Text variant="labelSmall" numberOfLines={tightRow ? 2 : 1} style={{ color: theme.colors.onSurfaceVariant }}>
             {subtitle}
             {myShare !== undefined && myShare > 0 && !isSettlement ? ' · your share ' : ''}
             {myShare !== undefined && myShare > 0 && !isSettlement ? (
@@ -449,6 +457,12 @@ const styles = StyleSheet.create({
     gap: 10,
     maxWidth: '88%',
     minWidth: '70%',
+  },
+  /** Tight rows take the full 88% the card is already allowed. Shrink-to-fit
+   *  left it at ~62% of the screen while the title wrapped inside it — width
+   *  going unused next to text with nowhere to go. */
+  cardWide: {
+    minWidth: '88%',
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     paddingVertical: 10,
