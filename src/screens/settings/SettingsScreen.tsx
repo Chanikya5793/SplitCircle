@@ -466,6 +466,7 @@ export const SettingsScreen = () => {
             hiding this card — it would otherwise open a real-identity screen
             from behind an intentionally obscured profile. */}
         <GlassCard style={styles.card} contentStyle={styles.profileContent}>
+          <View style={styles.profileRow}>
           {hideOwnProfile ? (
             <View style={[styles.profileSilhouette, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
               <Ionicons name="person" size={30} color={theme.colors.onSurfaceVariant} />
@@ -512,6 +513,7 @@ export const SettingsScreen = () => {
             <Text variant="bodySmall" numberOfLines={1} style={{ color: theme.colors.onSurfaceVariant }}>
               {hideOwnProfile ? '••••••••••' : user?.email}
             </Text>
+          </View>
           </View>
         </GlassCard>
 
@@ -914,11 +916,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  /** VERTICAL padding only. GlassCard's borderless (flat) path zeroes
+   *  paddingHorizontal on both its outer and content views, so any horizontal
+   *  inset set here silently disappears in flat mode — the avatar sat at 32pt
+   *  in glass and 16pt in flat, and the name and email slid 16pt sideways on
+   *  every toggle. The horizontal inset lives on profileRow instead, which the
+   *  reset cannot reach, so it holds in both modes. */
   profileContent: {
+    paddingVertical: 16,
+  },
+  /** 8pt + the card's own 16pt gutter = 24pt, matching every other row. */
+  profileRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    padding: 16,
+    paddingHorizontal: 8,
   },
   profileText: {
     flex: 1,
