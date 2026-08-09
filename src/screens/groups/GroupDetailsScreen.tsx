@@ -97,7 +97,15 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
     : Math.max(70, 56 + insets.bottom);
   const compactDockBottom = tabBarHeight + (Platform.OS === 'ios' ? 12 : 14);
   const expandedActionsBottom = compactDockBottom + compactDockHeight + 10;
-  const contentBottomPadding = Platform.OS === 'android' ? expandedActionsBottom + 190 : tabBarHeight + 188;
+  // Reserve the action block's MEASURED height, not a fixed guess. At large
+  // text sizes the five buttons grow well past the old 188pt allowance and the
+  // block floats over the list, so "Recent activity" ended up underneath it
+  // with no way to scroll clear — same failure as the Expenses action bar.
+  // Falls back to the original allowance until the first layout pass.
+  const [actionsHeight, setActionsHeight] = useState(0);
+  const actionsAllowance = Math.max(188, actionsHeight + 32);
+  const contentBottomPadding =
+    (Platform.OS === 'android' ? expandedActionsBottom + 2 : tabBarHeight) + actionsAllowance;
   const expandedActionsAnchorBottom = Platform.OS === 'android' ? 8 : 0;
 
   // All bar animations are derived from compactAnim (0=expanded, 1=compact).
@@ -785,6 +793,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               },
             ]}
             pointerEvents={isCompact ? 'none' : 'auto'}
+            onLayout={(e) => setActionsHeight(e.nativeEvent.layout.height)}
           >
             <View style={styles.actionGrid}>
               <TouchableRipple
