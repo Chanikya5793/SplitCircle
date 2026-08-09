@@ -36,7 +36,21 @@ export const FloatingLabelInput = ({ label, value, style, containerStyle, onFocu
       marginBottom: 0, // Spacing between this field and the next element
       paddingTop: 18   // Space reserved for the floating label at the top
     }, containerStyle]}>
-      <Animated.Text style={[{ position: 'absolute', zIndex: 1 }, labelStyle]} pointerEvents="none">
+      {/* `right: 0` is load-bearing, not cosmetic.
+
+          This label is absolutely positioned and its fontSize is animated on
+          the UI thread, so its box is measured ONCE at the base size and never
+          re-measured. With Dynamic Type turned up the glyphs render larger than
+          that box and get cut mid-letter — "Title" showed as "Titl", "Amount"
+          as "Amour", on an iPhone 17 Pro at XXL. Spanning to the container's
+          right edge gives the text room at any scale; numberOfLines keeps a
+          long label on one line so it degrades to an ellipsis rather than
+          wrapping over the field. */}
+      <Animated.Text
+        numberOfLines={1}
+        style={[{ position: 'absolute', right: 0, zIndex: 1 }, labelStyle]}
+        pointerEvents="none"
+      >
         {label}
       </Animated.Text>
       <TextInput
