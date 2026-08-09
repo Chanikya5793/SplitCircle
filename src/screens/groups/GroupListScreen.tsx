@@ -91,7 +91,13 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     extrapolate: 'clamp',
   });
   const tabBarEnvelopeHeight = getFloatingTabBarEnvelopeHeight(insets.bottom);
-  const listBottomPadding = getFloatingTabBarContentPadding(insets.bottom, 56);
+  // The action buttons float ABOVE the list, so the list has to reserve room for
+  // however tall they actually are. Measured, not assumed: at large text sizes
+  // they restack from one row into three, roughly tripling in height, and a
+  // fixed 56pt guess left them sitting on top of the last group rows.
+  const [actionsHeight, setActionsHeight] = useState(0);
+  const listBottomPadding =
+    getFloatingTabBarContentPadding(insets.bottom, 56) + (bigText ? 0 : actionsHeight);
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener(
@@ -298,6 +304,60 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
     });
   };
 
+  // The action bar is rendered in ONE of two places depending on text size.
+  //
+  // Normally it FLOATS over the list, which is the intended look. At large text
+  // sizes the three pills restack into three full-width rows and the block
+  // roughly triples in height — at that point a floating bar permanently covers
+  // the bottom third of the list, and when the list is short enough not to
+  // scroll those rows can never be moved out from under it. Verified on an
+  // iPhone 17 Pro simulator at XXL: three group rows sat behind the buttons
+  // with no way to reach them. So past the threshold it becomes the list's
+  // FOOTER and scrolls with the content instead of covering it.
+  const actionsBlock = (
+    <View
+      onLayout={(e) => setActionsHeight(e.nativeEvent.layout.height)}
+      style={bigText ? styles.actionsInline : [styles.actions, { bottom: tabBarEnvelopeHeight + 12 }]}
+    >
+        <Button
+          mode="contained"
+          compact
+          style={[styles.primaryAction, bigText && styles.actionStacked]}
+          // Paper's Button sizes its INNER content view, so a minHeight on
+          // `style` never reaches it — measured 142x37dp even with the outer
+          // floor set. contentStyle is the one that lands.
+          contentStyle={{ minHeight: 48 }}
+          onPress={() => { lightHaptic(); setDialog('create'); }}
+        >
+          New group
+        </Button>
+
+        <TouchableOpacity
+          onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.FRIENDS, { backTitle: 'Expenses' }); }}
+          activeOpacity={0.8}
+          style={[styles.glassAction, bigText && styles.actionStacked]}
+        >
+          {/* radius={50}: GlassView paints the fill, so the pill shape has to be
+              set on IT — the wrapper's overflow:'hidden' clips the corners but
+              leaves a squared-off fill underneath on Android. */}
+          <GlassView role="floating" radius={50} style={styles.glassActionInner}>
+            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Friends</Text>
+          </GlassView>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => { lightHaptic(); setDialog('join'); }}
+          activeOpacity={0.8}
+          style={[styles.glassAction, bigText && styles.actionStacked]}
+        >
+          {/* GlassView provides the blurred/frosted fill inside the button */}
+          <GlassView role="floating" radius={50} style={styles.glassActionInner}>
+            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Join via code</Text>
+          </GlassView>
+        </TouchableOpacity>
+    </View>
+  );
+
   return (
     <LiquidBackground style={styles.container}>
       <Animated.View
@@ -410,6 +470,9 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         initialNumToRender={10}
         maxToRenderPerBatch={10}
         windowSize={5}
+        // Inline (scrolls with the list) only at large text sizes; otherwise it
+        // floats below and this stays empty. See actionsBlock.
+        ListFooterComponent={!groupsShielded && bigText ? actionsBlock : null}
         ListEmptyComponent={
           loading ? (
             <View>
@@ -429,48 +492,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         }
       />
 
-      {/* Three side-by-side pills cannot hold their labels at accessibility
-          text sizes — "New group" truncated to "New grou…" and "Join via code"
-          wrapped out of its pill on a Pixel 7 at 2×. Past the threshold they
-          stack full-width instead of fighting over a third of the screen. */}
-      {!groupsShielded && <View style={[styles.actions, bigText && styles.actionsStacked, { bottom: tabBarEnvelopeHeight + 12 }]}>
-        <Button
-          mode="contained"
-          compact
-          style={[styles.primaryAction, bigText && styles.actionStacked]}
-          // Paper's Button sizes its INNER content view, so a minHeight on
-          // `style` never reaches it — measured 142x37dp even with the outer
-          // floor set. contentStyle is the one that lands.
-          contentStyle={{ minHeight: 48 }}
-          onPress={() => { lightHaptic(); setDialog('create'); }}
-        >
-          New group
-        </Button>
-
-        <TouchableOpacity
-          onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.FRIENDS, { backTitle: 'Expenses' }); }}
-          activeOpacity={0.8}
-          style={[styles.glassAction, bigText && styles.actionStacked]}
-        >
-          {/* radius={50}: GlassView paints the fill, so the pill shape has to be
-              set on IT — the wrapper's overflow:'hidden' clips the corners but
-              leaves a squared-off fill underneath on Android. */}
-          <GlassView role="floating" radius={50} style={styles.glassActionInner}>
-            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Friends</Text>
-          </GlassView>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => { lightHaptic(); setDialog('join'); }}
-          activeOpacity={0.8}
-          style={[styles.glassAction, bigText && styles.actionStacked]}
-        >
-          {/* GlassView provides the blurred/frosted fill inside the button */}
-          <GlassView role="floating" radius={50} style={styles.glassActionInner}>
-            <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Join via code</Text>
-          </GlassView>
-        </TouchableOpacity>
-      </View>}
+      {!groupsShielded && !bigText && actionsBlock}
 
       <GroupFilterSortSheet
         visible={filterVisible}
@@ -634,6 +656,14 @@ const styles = StyleSheet.create({
   actionsStacked: {
     flexDirection: 'column',
     alignItems: 'stretch',
+  },
+  /** Footer placement: same stacked layout, but in normal flow so it pushes the
+   *  list instead of floating over it. */
+  actionsInline: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 10,
+    paddingTop: 8,
   },
   actionStacked: {
     flex: 0,
