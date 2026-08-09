@@ -34,5 +34,16 @@ export const friendlyAuthError = (error: unknown, provider?: 'google' | 'apple')
   }
 
   if (code && MESSAGES[code]) return MESSAGES[code];
+
+  // Anything reaching here is an auth failure we have no copy for, and the
+  // fallback tells the user — and whoever they report it to — nothing at all.
+  // console.error, not console.warn or debugLog: a Release bundle's warn never
+  // reaches the device log, so this is the only level that stays diagnosable in
+  // the builds where it actually matters (see CLAUDE.md).
+  console.error(
+    `[auth] unmapped failure — code=${code ?? 'none'} message=${
+      (error as Error)?.message ?? String(error)
+    }`,
+  );
   return 'Something went wrong. Please try again.';
 };

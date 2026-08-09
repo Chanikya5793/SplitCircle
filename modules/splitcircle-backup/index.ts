@@ -8,9 +8,27 @@
  * device-retirement gate exists to prevent. Callers must handle rejection.
  */
 
+import * as Device from 'expo-device';
 import NativeModule, { type BackupChunkRaw, type BackupHealthRaw } from './src/SplitCircleBackupModule';
 
 export type { BackupChunkRaw, BackupHealthRaw };
+
+/**
+ * CloudKit is UNREACHABLE on a simulator and taking the process down is how it
+ * says so.
+ *
+ * `CloudKitBackupProvider` builds its `CKContainer(identifier:)` eagerly in a
+ * lazy var, and CKContainer TRAPS (EXC_BREAKPOINT / SIGTRAP) when the running
+ * binary has no matching iCloud entitlement — which is always true of a
+ * simulator build, and also true of any device build whose provisioning lost
+ * the container. A trap is not an exception: the try/catch in isBackupHealthy
+ * below cannot see it, and neither can any JS handler, so the whole app dies
+ * instead of showing "backup unavailable".
+ *
+ * Same shape as the PrivateCloudCompute simulator crash in CLAUDE.md, and the
+ * same answer: do not construct the native object at all where it cannot work.
+ */
+const CLOUDKIT_REACHABLE = Device.isDevice;
 
 /**
  * Coarse iCloud-account presence check. Safe to call even when the native
@@ -19,6 +37,9 @@ export type { BackupChunkRaw, BackupHealthRaw };
  * (doc 31 §3.6), not a mutating action.
  */
 export async function isBackupHealthy(): Promise<BackupHealthRaw> {
+  if (!CLOUDKIT_REACHABLE) {
+    return { isAvailable: false, reason: 'simulator_no_icloud' };
+  }
   if (!NativeModule) {
     return { isAvailable: false, reason: 'native_module_unavailable' };
   }
@@ -30,6 +51,11 @@ export async function isBackupHealthy(): Promise<BackupHealthRaw> {
 }
 
 const requireModule = () => {
+  // Reject BEFORE reaching native: every mutating call routes through the same
+  // provider getter that traps, so letting one through kills the process.
+  if (!CLOUDKIT_REACHABLE) {
+    throw new Error('iCloud backup is unavailable on the simulator');
+  }
   if (!NativeModule) {
     throw new Error('SplitCircleBackup native module is not available on this platform/build');
   }
