@@ -27,8 +27,19 @@ import { selectionHaptic } from '@/utils/haptics';
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Icon, Text } from 'react-native-paper';
 
-/** HIG minimum touch target. The container adds its 3pt padding on top. */
-const SEGMENT_HEIGHT = 44;
+/**
+ * Apple's own UISegmentedControl is 32pt tall, and matching it is the whole
+ * point — at a 44pt segment (50pt container) this read as a chunky custom
+ * control sitting next to native chrome, not as part of it.
+ *
+ * The 44pt touch target is preserved by HIT SLOP instead of by height, the same
+ * trade the accent swatches already make. Vertical only: the segments sit side
+ * by side, so horizontal slop would make neighbouring targets overlap and the
+ * boundary between them ambiguous.
+ */
+const SEGMENT_HEIGHT = 32;
+const SEGMENT_PADDING = 2;
+const HIT_SLOP_Y = Math.ceil((44 - SEGMENT_HEIGHT) / 2);
 
 export interface SegmentedControlOption<T extends string> {
   value: T;
@@ -54,8 +65,16 @@ export function SegmentedControl<T extends string>({
   style,
   accessibilityLabel,
 }: SegmentedControlProps<T>) {
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
   const bigText = isAccessibilityTextSize(theme?.fontScale ?? 1);
+  // Apple's selected segment is a NEUTRAL elevated capsule, not an accent tint
+  // — UISegmentedControl never colours its thumb by the app's tint. Accent
+  // colour lives on the LABEL instead, which is also what iOS does.
+  //
+  // Safe to be near-white now that the container is real glass: an earlier
+  // near-white thumb was invisible, but that was against an opaque near-white
+  // container. Against translucent material it reads clearly in both schemes.
+  const thumbFill = isDark ? 'rgba(120,120,128,0.44)' : 'rgba(255,255,255,0.92)';
 
   return (
     // The group role lives on a wrapper rather than on GlassCard: that
@@ -63,7 +82,13 @@ export function SegmentedControl<T extends string>({
     // is not a good reason to widen its API. radiogroup so a screen reader
     // announces "1 of 3 selected" instead of three unrelated buttons.
     <View accessibilityRole="radiogroup" accessibilityLabel={accessibilityLabel} style={style}>
-    <GlassCard role="floating" radius={50} contentStyle={styles.row}>
+    {/* role="glass", not "floating": this is CHROME, and on iOS 26 it should be
+        the real Liquid Glass material like the tab bar beside it. "floating"
+        follows the user's flat/glass preference and so renders an opaque fill
+        in flat mode — correct for a sheet, wrong for a system-style control
+        that is meant to look native regardless. role="glass" opts out of that
+        preference while still honouring Reduce Transparency. */}
+    <GlassCard role="glass" radius={50} contentStyle={styles.row}>
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -77,9 +102,10 @@ export function SegmentedControl<T extends string>({
             accessibilityRole="radio"
             accessibilityState={{ checked: selected, selected }}
             accessibilityLabel={option.label}
+            hitSlop={{ top: HIT_SLOP_Y, bottom: HIT_SLOP_Y }}
             style={({ pressed }) => [
               styles.segment,
-              selected && { backgroundColor: theme.colors.primaryContainer },
+              selected && [styles.segmentSelected, { backgroundColor: thumbFill }],
               // Pressed feedback on the UNSELECTED segments only — a selected
               // segment already has the accent fill and re-tapping it is a
               // no-op, so flashing it would signal a change that never happens.
@@ -91,16 +117,16 @@ export function SegmentedControl<T extends string>({
             {option.icon && !bigText ? (
               <Icon
                 source={option.icon}
-                size={18}
-                color={selected ? theme.colors.onPrimaryContainer : theme.colors.onSurfaceVariant}
+                size={15}
+                color={selected ? theme.colors.onSurface : theme.colors.onSurfaceVariant}
               />
             ) : null}
             <Text
               variant="labelLarge"
               numberOfLines={1}
               style={{
-                color: selected ? theme.colors.onPrimaryContainer : theme.colors.onSurfaceVariant,
-                fontWeight: selected ? '700' : '500',
+                color: selected ? theme.colors.onSurface : theme.colors.onSurfaceVariant,
+                fontWeight: selected ? '600' : '400',
               }}
             >
               {option.label}
@@ -116,14 +142,23 @@ export function SegmentedControl<T extends string>({
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    padding: 3,
+    padding: SEGMENT_PADDING,
+  },
+  /** The thumb's lift. Apple's is a soft, tight shadow — not elevation, which
+   *  on Android escapes the container's clip and paints a hard-cornered box
+   *  inside the pill (the bug this control was rebuilt to fix). */
+  segmentSelected: {
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
   },
   segment: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
     minHeight: SEGMENT_HEIGHT,
     paddingHorizontal: 8,
     borderRadius: 50,
