@@ -41,6 +41,14 @@
 				<string>exp+splitcircle</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.googleusercontent.apps</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.862098318872-644i4oatfhphjvem6vl2trvsl9f9ej2i</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
@@ -57,13 +65,13 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>ManaSplit uses Bluetooth to exchange messages with trusted nearby devices when the internet is unavailable, including Android phones.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_expo._tcp</string>
 		<string>_manasplit-mesh._tcp</string>
 	</array>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>ManaSplit uses Bluetooth to exchange messages with trusted nearby devices when the internet is unavailable, including Android phones.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Allow ManaSplit to access your camera</string>
 	<key>NSFaceIDUsageDescription</key>

@@ -218,19 +218,32 @@ const styles = StyleSheet.create({
    *    like a native list row. Only the TEXT is inset (contentFlat below).
    *  Must stay in step with rightAction/rightActionGlass or the swipe action
    *  drifts out of alignment with the row. */
+  /** GLASS AND FLAT MUST PUT TEXT ON THE SAME X.
+   *
+   *  Toggling the surface style used to slide every row's avatar and label
+   *  sideways — glass text landed at 31pt (16 gutter + 4 card margin + 11 card
+   *  padding) and flat at 20pt, so the whole list jumped 11pt. Changing the
+   *  MATERIAL should not move the CONTENT; that sideways lurch is what made the
+   *  switch feel broken rather than like a restyle.
+   *
+   *  Both now resolve to 24pt: glass = 16 gutter + 0 card margin + 8 card
+   *  padding, flat = 0 (full-bleed) + 24 padding. The card simply spans the
+   *  screen gutter instead of being inset a further 4pt inside it. The vertical
+   *  rhythm still differs — spaced cards vs a dense hairline list — because
+   *  that IS the difference between the two modes. */
   containerGlass: {
     marginBottom: 6,
-    marginHorizontal: 4,
+    marginHorizontal: 0,
   },
   content: {
     paddingVertical: 8,
-    paddingHorizontal: 11,
+    paddingHorizontal: 8,
   },
   /** Flat rows are full-bleed, so the text inset moves from the container's
    *  margin to the content's own padding. 20 = the 16 list gutter + the 4
    *  card margin that glass mode used, so text lands where it always did. */
   contentFlat: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 24,
   },
   header: {
     flexDirection: 'row',

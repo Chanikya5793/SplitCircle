@@ -515,14 +515,16 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
   },
+  /** See SwipeableGroupCard.containerGlass — glass and flat must land text on
+   *  the same x so switching surface style does not slide the list sideways. */
   chatItemRow: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 8,
     borderRadius: 16,
   },
   /** Full-bleed flat row: the list drops its gutter, so the text inset moves
    *  here. 20 = the 16 list gutter + 4, matching SwipeableGroupCard. */
   chatItemRowFlat: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 24,
   },
   unreadBadge: {
     position: 'absolute',

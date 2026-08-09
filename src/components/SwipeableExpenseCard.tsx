@@ -190,12 +190,14 @@ const styles = StyleSheet.create({
     // borderRadius handled by Swipeable containerStyle
     flex: 1,
   },
+  /** See SwipeableGroupCard.containerGlass — same x in both surface styles. */
   content: {
-    padding: 10, // Ultra-compact
+    paddingVertical: 10,
+    paddingHorizontal: 8,
   },
   /** Flat: full-bleed, text inset by the row's own padding. */
   contentFlat: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 24,
   },
   header: {
     flexDirection: 'row',

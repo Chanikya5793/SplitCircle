@@ -10,21 +10,29 @@
 // was worse than not applying the floor at all.
 //
 // Here the segment IS the Pressable, so its height, its fill and its touch area
-// are one box by construction and cannot drift apart. That also lets the
-// container and the segments share a pill radius — Paper draws square corners on
-// middle segments by MD3 design, which read as a rectangle nested in a pill.
+// are one box by construction and cannot drift apart.
 //
-// The selected segment is marked by FILL ALONE — no shadow, no elevation. An
-// elevated child escapes the container's clip on Android: the shadow spills past
-// the rounded corner and the lifted background paints a hard-cornered rectangle
-// inside the pill. `primaryContainer`/`onPrimaryContainer` is the palette's own
-// paired fill+foreground, so it reads in both schemes and against every accent.
+// LOOKING NATIVE is the point, and it takes three things, not one:
+//   1. The container is real Liquid Glass (role="glass"), like the tab bar.
+//   2. The THUMB is its own glass capsule that SLIDES between segments. This is
+//      what actually reads as native — UISegmentedControl animates its selection
+//      and never jump-cuts, and a thumb that teleports is the single clearest
+//      tell that a control is hand-rolled. It is one shared element that
+//      animates its x/width, not per-segment backgrounds being toggled.
+//   3. Apple's thumb is NEUTRAL: UISegmentedControl never tints it with the
+//      app's accent, it lifts a light capsule and leaves colour to the label.
+//
+// The lift is a tight shadow, never `elevation` — on Android an elevated child
+// escapes the container's clip and paints a hard-cornered box inside the pill,
+// which is the original bug this control was rebuilt to fix.
 
 import { GlassCard } from './GlassCard';
 import { useTheme } from '@/context/ThemeContext';
 import { isAccessibilityTextSize } from '@/utils/a11yText';
 import { selectionHaptic } from '@/utils/haptics';
-import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useState } from 'react';
+import { Pressable, StyleSheet, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming, Easing } from 'react-native-reanimated';
 import { Icon, Text } from 'react-native-paper';
 
 /**
@@ -40,6 +48,9 @@ import { Icon, Text } from 'react-native-paper';
 const SEGMENT_HEIGHT = 32;
 const SEGMENT_PADDING = 2;
 const HIT_SLOP_Y = Math.ceil((44 - SEGMENT_HEIGHT) / 2);
+
+/** Measured off UISegmentedControl: a short, firm ease — not a spring. */
+const THUMB_MS = 220;
 
 export interface SegmentedControlOption<T extends string> {
   value: T;
@@ -67,14 +78,38 @@ export function SegmentedControl<T extends string>({
 }: SegmentedControlProps<T>) {
   const { theme, isDark } = useTheme();
   const bigText = isAccessibilityTextSize(theme?.fontScale ?? 1);
-  // Apple's selected segment is a NEUTRAL elevated capsule, not an accent tint
-  // — UISegmentedControl never colours its thumb by the app's tint. Accent
-  // colour lives on the LABEL instead, which is also what iOS does.
-  //
-  // Safe to be near-white now that the container is real glass: an earlier
-  // near-white thumb was invisible, but that was against an opaque near-white
-  // container. Against translucent material it reads clearly in both schemes.
-  const thumbFill = isDark ? 'rgba(120,120,128,0.44)' : 'rgba(255,255,255,0.92)';
+  const reduceMotion = theme?.reduceMotion === true;
+
+  // Track width drives the thumb's geometry. Measured rather than assumed: the
+  // control is used at a fixed width in Calls and full-width in Settings.
+  const [trackWidth, setTrackWidth] = useState(0);
+  const index = Math.max(0, options.findIndex((o) => o.value === value));
+  const segmentWidth = trackWidth > 0 ? trackWidth / options.length : 0;
+
+  const thumbX = useSharedValue(0);
+  const onTrackLayout = (event: LayoutChangeEvent) => {
+    const width = event.nativeEvent.layout.width;
+    setTrackWidth(width);
+    // Position without animating on first measure, or the thumb slides in from
+    // the left edge every time the screen mounts.
+    thumbX.value = (width / options.length) * index;
+  };
+
+  const thumbStyle = useAnimatedStyle(() => ({
+    width: segmentWidth,
+    transform: [{ translateX: thumbX.value }],
+  }));
+
+  // Drive the slide from render so it also follows a value change made
+  // elsewhere (deep link, another control), not only from onPress.
+  if (segmentWidth > 0) {
+    const target = segmentWidth * index;
+    if (thumbX.value !== target) {
+      thumbX.value = reduceMotion
+        ? target
+        : withTiming(target, { duration: THUMB_MS, easing: Easing.out(Easing.cubic) });
+    }
+  }
 
   return (
     // The group role lives on a wrapper rather than on GlassCard: that
@@ -82,76 +117,92 @@ export function SegmentedControl<T extends string>({
     // is not a good reason to widen its API. radiogroup so a screen reader
     // announces "1 of 3 selected" instead of three unrelated buttons.
     <View accessibilityRole="radiogroup" accessibilityLabel={accessibilityLabel} style={style}>
-    {/* role="glass", not "floating": this is CHROME, and on iOS 26 it should be
-        the real Liquid Glass material like the tab bar beside it. "floating"
-        follows the user's flat/glass preference and so renders an opaque fill
-        in flat mode — correct for a sheet, wrong for a system-style control
-        that is meant to look native regardless. role="glass" opts out of that
-        preference while still honouring Reduce Transparency. */}
-    <GlassCard role="glass" radius={50} contentStyle={styles.row}>
-      {options.map((option) => {
-        const selected = option.value === value;
-        return (
-          <Pressable
-            key={option.value}
-            onPress={() => {
-              if (selected) return;
-              selectionHaptic();
-              onChange(option.value);
-            }}
-            accessibilityRole="radio"
-            accessibilityState={{ checked: selected, selected }}
-            accessibilityLabel={option.label}
-            hitSlop={{ top: HIT_SLOP_Y, bottom: HIT_SLOP_Y }}
-            style={({ pressed }) => [
-              styles.segment,
-              selected && [styles.segmentSelected, { backgroundColor: thumbFill }],
-              // Pressed feedback on the UNSELECTED segments only — a selected
-              // segment already has the accent fill and re-tapping it is a
-              // no-op, so flashing it would signal a change that never happens.
-              pressed && !selected && {
-                backgroundColor: theme?.colors?.pressHighlight ?? 'rgba(0,0,0,0.10)',
-              },
-            ]}
-          >
-            {option.icon && !bigText ? (
-              <Icon
-                source={option.icon}
-                size={15}
-                color={selected ? theme.colors.onSurface : theme.colors.onSurfaceVariant}
-              />
-            ) : null}
-            <Text
-              variant="labelLarge"
-              numberOfLines={1}
-              style={{
-                color: selected ? theme.colors.onSurface : theme.colors.onSurfaceVariant,
-                fontWeight: selected ? '600' : '400',
-              }}
-            >
-              {option.label}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </GlassCard>
+      <GlassCard role="glass" radius={50} contentStyle={styles.row}>
+        <View style={styles.track} onLayout={onTrackLayout}>
+          {segmentWidth > 0 ? (
+            <Animated.View style={[styles.thumb, thumbStyle]} pointerEvents="none">
+              {/* The thumb is its own glass surface, so on iOS 26 the selection
+                  is real material layered over the track's material — the same
+                  thing UISegmentedControl does — rather than a flat fill. */}
+              <GlassCard
+                role="glass"
+                radius={50}
+                style={[
+                  styles.thumbSurface,
+                  { backgroundColor: isDark ? 'rgba(120,120,128,0.40)' : 'rgba(255,255,255,0.72)' },
+                ]}
+                contentStyle={styles.thumbSurface}
+              >
+                <View />
+              </GlassCard>
+            </Animated.View>
+          ) : null}
+
+          {options.map((option) => {
+            const selected = option.value === value;
+            return (
+              <Pressable
+                key={option.value}
+                onPress={() => {
+                  if (selected) return;
+                  selectionHaptic();
+                  onChange(option.value);
+                }}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: selected, selected }}
+                accessibilityLabel={option.label}
+                hitSlop={{ top: HIT_SLOP_Y, bottom: HIT_SLOP_Y }}
+                style={styles.segment}
+              >
+                {option.icon && !bigText ? (
+                  <Icon
+                    source={option.icon}
+                    size={15}
+                    color={selected ? theme.colors.onSurface : theme.colors.onSurfaceVariant}
+                  />
+                ) : null}
+                <Text
+                  variant="labelLarge"
+                  numberOfLines={1}
+                  style={{
+                    color: selected ? theme.colors.onSurface : theme.colors.onSurfaceVariant,
+                    fontWeight: selected ? '600' : '400',
+                  }}
+                >
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </GlassCard>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   row: {
-    flexDirection: 'row',
     padding: SEGMENT_PADDING,
   },
-  /** The thumb's lift. Apple's is a soft, tight shadow — not elevation, which
-   *  on Android escapes the container's clip and paints a hard-cornered box
-   *  inside the pill (the bug this control was rebuilt to fix). */
-  segmentSelected: {
+  track: {
+    flexDirection: 'row',
+    position: 'relative',
+  },
+  thumb: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    borderRadius: 50,
+    // Apple's lift: short, soft, close to the surface.
     shadowColor: '#000',
     shadowOpacity: 0.12,
     shadowRadius: 3,
     shadowOffset: { width: 0, height: 1 },
+  },
+  thumbSurface: {
+    flex: 1,
+    borderRadius: 50,
   },
   segment: {
     flex: 1,
@@ -161,6 +212,5 @@ const styles = StyleSheet.create({
     gap: 6,
     minHeight: SEGMENT_HEIGHT,
     paddingHorizontal: 8,
-    borderRadius: 50,
   },
 });
