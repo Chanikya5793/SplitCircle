@@ -21,6 +21,9 @@ export interface ListRowProps {
   chevron?: boolean;
   destructive?: boolean;
   disabled?: boolean;
+  /** Horizontal text inset. Defaults to spacing.md. Pass a surface-aware value
+   *  when the parent card's own left edge moves between glass and flat. */
+  inset?: number;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -34,6 +37,7 @@ export const ListRow = ({
   chevron,
   destructive = false,
   disabled = false,
+  inset,
   style,
 }: ListRowProps) => {
   const { theme } = useTheme();
@@ -84,8 +88,16 @@ export const ListRow = ({
     });
   }, [trailing, title, rowToggles]);
 
+  // Horizontal inset is a PROP because it has to compensate for the parent.
+  // A card that runs edge to edge in flat mode (SettingsScreen's cardFlat)
+  // starts its rows at x=0, while the same card in glass mode starts them at
+  // the screen gutter — so a fixed padding here puts the text in a different
+  // place in each mode, and toggling the surface style slides the whole screen
+  // sideways. It stays INSIDE the press highlight, so insetting the text never
+  // pulls the highlight off the screen edges.
+  const insetH = inset ?? theme.spacing.md;
   const content = (
-    <View style={[styles.row, { paddingVertical: theme.spacing.sm + 2, paddingHorizontal: theme.spacing.md }, style]}>
+    <View style={[styles.row, { paddingVertical: theme.spacing.sm + 2, paddingHorizontal: insetH }, style]}>
       {icon ? (
         <View
           style={[

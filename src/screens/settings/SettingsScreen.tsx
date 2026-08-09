@@ -60,6 +60,12 @@ export const SettingsScreen = () => {
   const { isDark, theme, mode, setMode, accent, setAccent, surfaceStyle, setSurfaceStyle } =
     useTheme();
   const isFlat = surfaceStyle === 'flat';
+  // Keeps row text on the SAME x in both surface styles. The section cards run
+  // edge to edge in flat (cardFlat) and sit at the screen gutter in glass, so
+  // the rows have to absorb that 16pt difference or the whole screen slides
+  // sideways the moment the toggle is flipped — on the very screen the toggle
+  // lives on. 24pt both ways, matching the group/chat/expense lists.
+  const rowInset = isFlat ? 24 : 8;
   const appWallpaper = useWallpaperSlot('app');
   const chatDefaultWallpaper = useWallpaperSlot('chat-default');
   const { active: guardActive, duress: guardDuress, settings: guardSettings } = usePrivacyGuard();
@@ -512,7 +518,7 @@ export const SettingsScreen = () => {
         <SectionLabel style={styles.sectionLabel}>Appearance</SectionLabel>
         <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           {wrapAnchor(SETTING_IDS.appearance, (
-          <View style={styles.appearanceBlock}>
+          <View style={[styles.appearanceBlock, { paddingHorizontal: rowInset }]}>
             {/* Not Paper's SegmentedButtons — it sizes its own inner touchable,
                 so the 44pt floor grew only the painted box and left the tappable
                 area at 36dp sitting at the top of it. See ui/SegmentedControl. */}
@@ -568,7 +574,7 @@ export const SettingsScreen = () => {
           ))}
           {divider}
           {wrapAnchor(SETTING_IDS.wallpaperApp, (
-          <ListRow
+          <ListRow inset={rowInset}
             title="App background"
             subtitle={
               guardActive && guardSettings.hideWallpaper
@@ -584,7 +590,7 @@ export const SettingsScreen = () => {
           ))}
           {divider}
           {wrapAnchor(SETTING_IDS.wallpaperChat, (
-          <ListRow
+          <ListRow inset={rowInset}
             title="Chat wallpaper"
             subtitle={
               guardActive && guardSettings.hideWallpaper
@@ -603,7 +609,7 @@ export const SettingsScreen = () => {
         <SectionLabel style={styles.sectionLabel}>Receipts & AI</SectionLabel>
         <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           {wrapAnchor(SETTING_IDS.aiReceipts, (
-          <ListRow
+          <ListRow inset={rowInset}
             title="AI receipt parsing"
             subtitle="Cloud AI sharpens OCR accuracy"
             icon="creation"
@@ -612,7 +618,7 @@ export const SettingsScreen = () => {
           ))}
           {divider}
           {wrapAnchor(SETTING_IDS.receiptStrict, (
-          <ListRow
+          <ListRow inset={rowInset}
             title="Strict receipt review"
             subtitle="Review low-confidence rows before saving"
             icon="shield-check-outline"
@@ -621,7 +627,7 @@ export const SettingsScreen = () => {
           ))}
           {divider}
           {wrapAnchor(SETTING_IDS.onDeviceAi, (
-          <ListRow
+          <ListRow inset={rowInset}
             title="On-device AI"
             subtitle="What's indexed on this device"
             icon="chip"
@@ -634,7 +640,7 @@ export const SettingsScreen = () => {
           {merchantLearning.length > 0 && (
             <>
               {divider}
-              <View style={styles.learningBlock}>
+              <View style={[styles.learningBlock, { paddingHorizontal: rowInset }]}>
                 <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>
                   Receipt learning · on device
                 </Text>
@@ -661,7 +667,7 @@ export const SettingsScreen = () => {
         <SectionLabel style={styles.sectionLabel}>Security</SectionLabel>
         <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
           {wrapAnchor(SETTING_IDS.appLock, (
-          <ListRow
+          <ListRow inset={rowInset}
             title={`App Lock (${bioLabel})`}
             subtitle={
               !bioAvailable
@@ -684,7 +690,7 @@ export const SettingsScreen = () => {
             <>
               {divider}
               {wrapAnchor(SETTING_IDS.autoLock, (
-              <ListRow
+              <ListRow inset={rowInset}
                 title="Auto-lock"
                 subtitle={AUTO_LOCK_OPTIONS.find((o) => o.value === appLock.autoLockMs)?.label ?? 'Immediately'}
                 icon="timer-outline"
@@ -695,7 +701,7 @@ export const SettingsScreen = () => {
           )}
           {divider}
           {wrapAnchor(SETTING_IDS.confirmSettlements, (
-          <ListRow
+          <ListRow inset={rowInset}
             title="Confirm settlements"
             subtitle={
               !bioAvailable
@@ -714,7 +720,7 @@ export const SettingsScreen = () => {
           ))}
           {divider}
           {wrapAnchor(SETTING_IDS.linkedDevices, (
-          <ListRow
+          <ListRow inset={rowInset}
             title="Linked devices"
             subtitle="Manage devices linked to your account"
             icon="devices"
@@ -730,7 +736,7 @@ export const SettingsScreen = () => {
           {/* One entry point for the whole backup feature — passphrase and
               device retirement are reached from inside it, so Settings doesn't
               fan out three sibling rows for one concern. */}
-          <ListRow
+          <ListRow inset={rowInset}
             title="iCloud backup"
             subtitle="Back up, restore, and schedule your chat history"
             icon="cloud-lock-outline"
@@ -745,7 +751,7 @@ export const SettingsScreen = () => {
 
         <SectionLabel style={styles.sectionLabel}>General</SectionLabel>
         <GlassCard style={[styles.card, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
-          <ListRow
+          <ListRow inset={rowInset}
             title="Your spending"
             subtitle="Cross-group stats, budgets & deep analysis"
             icon="chart-arc"
@@ -758,7 +764,7 @@ export const SettingsScreen = () => {
           />
           {divider}
           {wrapAnchor(SETTING_IDS.notifications, (
-          <ListRow
+          <ListRow inset={rowInset}
             title="Notifications"
             subtitle="Messages, expenses, sounds & more"
             icon="bell-outline"
@@ -770,7 +776,7 @@ export const SettingsScreen = () => {
           ))}
           {divider}
           {wrapAnchor(SETTING_IDS.nearbyMesh, (
-          <ListRow
+          <ListRow inset={rowInset}
             title="Nearby mesh"
             subtitle="Offline messaging and nearby devices"
             icon="access-point"
@@ -784,7 +790,7 @@ export const SettingsScreen = () => {
           ))}
           {divider}
           {wrapAnchor(SETTING_IDS.offlineSync, (
-          <ListRow
+          <ListRow inset={rowInset}
             title="Offline sync"
             subtitle="Connectivity and pending changes"
             icon="cloud-check-outline"
@@ -799,7 +805,7 @@ export const SettingsScreen = () => {
         </GlassCard>
 
         <GlassCard style={[styles.card, styles.signOutCard, isFlat && styles.cardFlat]} contentStyle={styles.cardContent}>
-          <ListRow
+          <ListRow inset={rowInset}
             title="Sign out"
             icon="logout"
             iconColor={theme.colors.error}
@@ -807,7 +813,7 @@ export const SettingsScreen = () => {
             onPress={handleSignOut}
           />
           {divider}
-          <ListRow
+          <ListRow inset={rowInset}
             title="Delete account"
             subtitle="Permanently erase your account and data"
             icon="trash-can-outline"
