@@ -466,7 +466,26 @@ export const SettingsScreen = () => {
             hiding this card — it would otherwise open a real-identity screen
             from behind an intentionally obscured profile. */}
         <GlassCard style={styles.card} contentStyle={styles.profileContent}>
-          <View style={styles.profileRow}>
+          {/* The whole hero is the edit affordance once a name exists. It used
+              to be reachable ONLY through the "Add your name" chip below, which
+              renders solely when the name is MISSING — so a user who had a name
+              could never change it. The 30-day cooldown in EditNameScreen exists
+              precisely to rate-limit repeat changes, which gave that away: the
+              editing flow was built and then only wired up for first-time
+              setting. Suppressed while the privacy guard is hiding the profile,
+              for the same reason the chip is. */}
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={hideOwnProfile ? 'Profile' : 'Edit your name'}
+            accessibilityHint={hideOwnProfile ? undefined : 'Opens your name for editing'}
+            activeOpacity={0.75}
+            disabled={hideOwnProfile}
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate(ROUTES.APP.EDIT_NAME);
+            }}
+            style={styles.profileRow}
+          >
           {hideOwnProfile ? (
             <View style={[styles.profileSilhouette, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
               <Ionicons name="person" size={30} color={theme.colors.onSurfaceVariant} />
@@ -514,7 +533,10 @@ export const SettingsScreen = () => {
               {hideOwnProfile ? '••••••••••' : user?.email}
             </Text>
           </View>
-          </View>
+          {!hideOwnProfile ? (
+            <Ionicons name="chevron-forward" size={18} color={theme.colors.onSurfaceVariant} />
+          ) : null}
+          </TouchableOpacity>
         </GlassCard>
 
         <SectionLabel style={styles.sectionLabel}>Appearance</SectionLabel>

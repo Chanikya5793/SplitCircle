@@ -50,6 +50,16 @@ const errorMessage = (error: unknown, fallback: string): string => {
 // exactly the low-friction path doc 30 was built to protect — see
 // `displayNameChangedAt`'s doc comment in models/user.ts, null until this
 // screen's first successful save).
+/**
+ * Display names are capped because `displayName` is not confined to this
+ * screen: it flows into group member lists, chat titles, expense attribution
+ * and push-notification bodies, so an unbounded name is both a layout problem
+ * and an abuse surface everywhere else in the app. 50 comfortably fits real
+ * names — including long compound and multi-part ones — while ruling out
+ * paragraph-length input.
+ */
+const MAX_NAME_LENGTH = 50;
+
 const COOLDOWN_DAYS = 30;
 const COOLDOWN_MS = COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
 
@@ -68,8 +78,10 @@ export const EditNameScreen = () => {
   const cooldownActive = cooldownEndsAt !== null && Date.now() < cooldownEndsAt;
 
   const trimmed = name.trim();
+  const tooLong = trimmed.length > MAX_NAME_LENGTH;
   const canSubmit =
     Boolean(trimmed) &&
+    !tooLong &&
     trimmed !== (user?.displayName ?? '').trim() &&
     !saving &&
     !cooldownActive &&
@@ -145,6 +157,7 @@ export const EditNameScreen = () => {
                 setName(next);
                 if (error) setError(null);
               }}
+              maxLength={MAX_NAME_LENGTH}
               editable={!cooldownActive}
               autoFocus={!cooldownActive}
               autoComplete="name"
