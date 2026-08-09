@@ -117,6 +117,12 @@ export const ListRow = ({
           style={{
             color: destructive ? theme.colors.danger : theme.colors.onSurface,
             fontSize: theme.typography.body.fontSize,
+            // Explicit line box, already multiplied by the OS text scale in
+            // scaleTypography. Without it the descenders were sliced flat at
+            // large sizes — "background" read as "backqround", "wallpaper" as
+            // "wallpaoer" — because the default line box is derived from the
+            // UNSCALED font size while the glyphs render scaled.
+            lineHeight: theme.typography.body.lineHeight,
             fontWeight: '500',
           }}
         >
@@ -128,6 +134,7 @@ export const ListRow = ({
             style={{
               color: theme.colors.muted,
               fontSize: theme.typography.caption.fontSize,
+              lineHeight: theme.typography.caption.lineHeight,
               marginTop: 1,
             }}
           >
