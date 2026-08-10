@@ -18,10 +18,15 @@ RESTORED and properly implemented for the first time, group rows compacted
 3 lines → 2, press feedback rebuilt per-platform from Paper's actual source.
 See §12, and §12.4 before touching dividers again.**
 
-**Installed and launched on a physical iPhone 17 Pro (iOS 27), but the visual
-result has NOT been reviewed on a screen.** The app starts and stays up; that is
-all that has been shown. Per this repo's own "verify the user-facing path" rule,
-flat mode is not proven until someone actually looks at it.
+**VISUALLY VERIFIED 2026-08-09 — see §13.** Flat mode was swept on the iOS 27
+simulator across Settings, Expenses, Group Detail, Chats and a bottom sheet, in
+both dark and light. Borderless, `role="floating"` and `role="glass"` all render
+as designed, and the contrast fixes are legible. **One finding:** a status-bar
+collision on scrolled group detail (§13.3). **Android remains unverified.**
+
+> Every "not visually verified" note in §7/§8/§11/§12 predates that sweep and
+> was written on the premise that no simulator runtime existed on this machine.
+> **That premise is false** — the runtime is back. Read §13 before repeating it.
 
 **Goal:** a second, **borderless** UI the user can switch to, the same way they
 already switch light/dark and accent. The shipping liquid-glass UI is untouched
@@ -75,11 +80,14 @@ in the app.
 So `GlassCard` takes a structural role (`src/components/ui/surfaceRole.ts`):
 
 ```ts
-type SurfaceRole = 'section' | 'floating';
+type SurfaceRole = 'section' | 'floating' | 'glass';  // 'glass' added in Phase 5, §8
 ```
 
 - **`'section'`** (default) — a content card. Goes fully borderless when flat.
 - **`'floating'`** — keeps an opaque fill + hairline when flat.
+- **`'glass'`** — added later (§8): a deliberate glass ACCENT that ignores
+  `surfaceStyle` entirely and always renders the real material. For the small
+  named set of hero containers. Not part of the original two-way split.
 
 Rule of thumb: *if removing the surface entirely would leave content floating
 over unrelated scrolling content, it is `'floating'`.*
@@ -128,8 +136,12 @@ Now `#5A6675` (5.62:1 on `appBackground`, 5.82:1 on white).
 > and it is a pre-existing accessibility bug that glass was masking — but it is
 > not invisible, so it should be eyeballed on device before shipping.
 >
-> Not changed: `moneyNeutral` is still `#64748B` and has the same issue in the
-> same places. Left alone deliberately — money colouring is its own decision.
+> ~~Not changed: `moneyNeutral` is still `#64748B`.~~ **Superseded the next day**
+> — `moneyNeutral`, `moneyPositive`, `moneyNegative`, `success`, `warning`,
+> `danger` and the accent `primary` were ALL found to fail AA in light mode and
+> were all darkened (`9a3a85b`→`e501046`). `moneyPositive` was the worst at
+> 3.64:1 on the DEFAULT background — it had never passed anywhere, glass or
+> flat. See §7.
 
 > Caveat, stated honestly: these numbers model the blur tier as a flat tint
 > composite. Real iOS 26 `UIGlassEffect` also blurs and applies adaptive
@@ -144,7 +156,7 @@ Mirrors how `mode` and `accent` already work — no new pattern.
 
 ```
 tokens.ts            SurfaceStyle = 'glass' | 'flat'  +  flatRadius scale
-surfaceRole.ts       SurfaceRole  = 'section' | 'floating'
+surfaceRole.ts       SurfaceRole  = 'section' | 'floating' (+ 'glass', §8)
 palette.ts           flatSurface / flatSurfaceAlt / flatBorder / divider
                      + muted darkened (light)
 buildTheme.ts        buildTheme(scheme, accent, surfaceStyle = 'glass')
@@ -411,6 +423,7 @@ presets written minutes earlier** (`solid-mist` 4.37:1, `solid-ink` 4.21:1, and
 two more — all light-mode `muted`). Fixed by the `muted` darkening in §2 rather
 than by loosening the threshold.
 
+**[SUPERSEDED 2026-08-09 — see §13; this was verified on a simulator.]**
 **Not verified: nothing has run on a simulator or device.** Per this repo's
 "verify the user-facing path" rule, flat mode is not proven until someone flips
 the toggle on a real screen. The spike proves it compiles and type-checks.
@@ -471,7 +484,8 @@ deltas, not a new spacing-token scale (unlike `flatRadius`, there is no
 would be a much larger refactor than these two screens needed).
 
 **Not done / open questions for whoever picks this up next:**
-- **Not visually verified anywhere.** No simulator runtime is currently
+- **[SUPERSEDED — see §13. The runtime is back and this was verified.]**
+  **Not visually verified anywhere.** No simulator runtime is currently
   available on this machine (wiped by an Xcode update, see
   [[ios27-sim-verification-workflow]]) — every number above is a reasoned
   guess, not something anyone has looked at. Treat this phase as unverified
@@ -673,7 +687,7 @@ per-screen `List.Item` — fixes every settings row in one place),
 **Verification:** `tsc --noEmit` clean, full suite green (590 unit + 466
 services + 27 dom = 1,083), no failures and no bugs surfaced by the change —
 reported as found, not invented, per the instruction to fix anything broken
-"along the way." **Not visually verified** — same gap as Phases 5–6; nobody
+"along the way." **Not visually verified** *(superseded — see §13)* — same gap as Phases 5–6; nobody
 has watched a real tap on a real screen since this landed.
 
 ---
@@ -854,6 +868,99 @@ in whether rows are separated at all. Anyone reading §9/§11 and thinking
 about removing hairlines again should read this line first.
 
 **Verification:** `tsc --noEmit` clean, 1,083 tests green (590 unit + 466
-services + 27 dom). **Still not visually verified** — the sim runtime is
+services + 27 dom). **Still not visually verified** *(superseded — see §13,
+which verified this phase's dividers, compacted rows and press states on a
+real screen)* — the sim runtime is
 gone from this machine, so as with every phase in this session, the pixel
 values and the press behavior are reasoned from source, not seen.
+
+---
+
+## 13. Visual verification — actually seen on a screen (2026-08-09)
+
+**Every "not visually verified" note above (§7, §8, §11, §12) was written on a
+premise that is no longer true, and several are now simply wrong.** They say
+some version of *"no simulator runtime is available on this machine (wiped by an
+Xcode update), so every number is a reasoned guess."* Checked 2026-08-09:
+
+- `xcrun simctl list runtimes` → **iOS 27.0 (24A5390f) is present.**
+- `xcrun simctl list devices` → **ManaSplit-iPhone17Pro**
+  (`10CA4824-C3FB-465D-B6B7-AB787036B32E`), bootable.
+- The physical **iPhone 17 Pro** also works end-to-end via `devicectl` — Release
+  was built, installed and launched on it repeatedly on 2026-08-07 (see
+  [[ios-visual-verification-gap]], which has been corrected; it previously
+  asserted the opposite and would have kept propagating this).
+
+So the blocker that six phases of pixel decisions were reasoned around had
+already lifted. **Read this section before repeating the "cannot verify" claim.**
+
+### 13.1 How
+
+JS-bundle hot-swap onto the already-installed simulator build, per CLAUDE.md's
+JS-only path — valid here because the ONLY change under `ios/`, `modules/` or
+`package.json` since that build was an `Info.plist` edit for Google sign-in
+(`1daaa1d`) plus a JS-side module change (`b500f77`, in the bundle). Everything
+visual was current HEAD.
+
+```
+APP=$(xcrun simctl get_app_container <sim-udid> com.splitcircle.app app)
+npx expo export:embed --entry-file index.ts --platform ios --dev false \
+  --bundle-output "$APP/main.jsbundle" --assets-dest "$APP"
+xcrun simctl terminate <sim-udid> com.splitcircle.app
+xcrun simctl launch  <sim-udid> com.splitcircle.app
+```
+
+### 13.2 Confirmed working
+
+Swept Settings, Expenses (`GroupListScreen`), Group Detail, Chats, and a bottom
+sheet, in **flat** mode, in both dark and light.
+
+- **Borderless renders correctly** everywhere it was applied — content on the
+  canvas, grouped by inset hairlines, visibly tighter than glass.
+- **`role="floating"` holds.** The Filters sheet came up fully opaque with its
+  grabber. This was the likeliest thing to be wrong (§1.1) and the Phase 2
+  classification did its job.
+- **`role="glass"` reads as intended.** On group detail the balances card and
+  "Who owes whom" keep real Liquid Glass while the activity list below is
+  borderless — they read as hero containers, not leftover cards. Phase 5's core
+  bet is sound.
+- **The contrast work is visible and correct in light mode** — the deepened
+  `moneyNegative`/`moneyPositive` are clearly legible on the canvas, and the
+  accent swatches are visibly deeper from `e501046`.
+- **Dividers are present and correctly inset** (Settings/Expenses inset past the
+  icon, Chats full-width), consistent with §12.4's standing rule.
+- **The group-detail action bar collapses on scroll** into one
+  `Settle · Stats · Chat · Bills · Add` row, and the list scrolls clear of it —
+  `a0d212a` / `c591433` work.
+
+### 13.3 One real finding: status-bar collision on group detail
+
+Scrolled, the balances-card text runs up into the status bar and collides with
+the system glyphs at full opacity — the member name overlapping the clock, and
+`-$1,382.14` rendering through the wifi and battery icons. Both become
+unreadable. Much more obvious in light mode.
+
+Content passing under the status bar and behind the tab bar is a **deliberate**
+decision in this app ([[content-bleed-behind-chrome-is-intended]]), so this is
+recorded as an observation, not filed as a layout bug. But two things make this
+case unlike the tab bar, and worth a decision rather than an assumption:
+
+- The floating header **pills are fine** — "Multi Device Test" stays perfectly
+  legible, because it has glass behind it. It is specifically the status-bar
+  strip, which has nothing backing it, that fails.
+- CLAUDE.md records that the iOS 26 **scroll-edge effect is deliberately patched
+  out** (`patches/react-native+0.83.2.patch`) because it fogged the colorful
+  backdrops. That effect is exactly the mechanism that would normally keep the
+  status bar legible over scrolling content — so removing it is what turns a
+  soft bleed into a hard collision here.
+
+If it should be fixed, the narrow fix is a scrim/glass backing behind the status
+bar strip on scrolled screens, NOT re-enabling the patched-out edge effect.
+
+### 13.4 Still unverified
+
+- **Android.** Flat mode has never been looked at there. It already renders
+  half-flat (near-opaque tint + `elevation: 4`), so the delta is smallest on
+  that platform — but "smallest delta" is not "verified".
+- Screens not in this sweep: Calls, Stats, Add Expense, BillSplit, the AI
+  surfaces.
