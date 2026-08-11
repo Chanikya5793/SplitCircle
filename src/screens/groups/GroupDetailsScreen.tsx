@@ -108,6 +108,31 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
     (Platform.OS === 'android' ? expandedActionsBottom + 2 : tabBarHeight) + actionsAllowance;
   const expandedActionsAnchorBottom = Platform.OS === 'android' ? 8 : 0;
 
+  /**
+   * Real height for the floating dock layer. BOTH of its children are
+   * `position: 'absolute'`, which contributes nothing to a parent's layout, so
+   * the layer measured ZERO height. The buttons still drew (Android does not
+   * clip by default) and still took touches (RN's touch handling walks the JS
+   * tree, not native bounds) — but Android derives accessibility bounds from
+   * the native view hierarchy, so children outside a zero-height parent are
+   * `visible-to-user=false` and get dropped from the tree entirely. Settle Up /
+   * Add Expense / Stats / Chat / Bills — the primary actions of this screen —
+   * were unreachable by TalkBack while looking perfectly fine. See doc 37 §15.2;
+   * it took a `uiautomator dump` to see it, and a first fix that only added
+   * labels did nothing because the labels were never the operative cause.
+   *
+   * Safe to grow: both children anchor by `bottom`, and this layer's own bottom
+   * edge is pinned by `compactDockBottom`, so adding height extends it UPWARD
+   * and cannot move either child. Nothing here renders a background, and
+   * `pointerEvents="box-none"` keeps the layer itself non-interactive, so the
+   * list underneath stays reachable in the gaps between buttons.
+   */
+  const dockLayerHeight = Math.max(
+    compactDockHeight + 15, // Android compact dock: its height + its own `bottom`
+    actionsHeight + expandedActionsAnchorBottom, // expanded block, measured
+    120, // floor until the first layout pass reports actionsHeight
+  );
+
   // All bar animations are derived from compactAnim (0=expanded, 1=compact).
   // This means the bar jumps cleanly between states with spring physics
   // instead of continuously following the raw scroll position.
@@ -781,7 +806,14 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
       </Animated.ScrollView>
 
-      <View style={[styles.floatingActions, Platform.OS === 'android' && styles.floatingActionsAndroid, { bottom: compactDockBottom }]}>
+      <View
+        style={[
+          styles.floatingActions,
+          Platform.OS === 'android' && styles.floatingActionsAndroid,
+          { bottom: compactDockBottom, height: dockLayerHeight },
+        ]}
+        pointerEvents="box-none"
+      >
           {/* Expanded buttons - compact and appealing */}
           <Animated.View
             style={[
