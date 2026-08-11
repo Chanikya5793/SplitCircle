@@ -797,23 +797,27 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
           >
             <View style={styles.actionGrid}>
               <TouchableRipple
+                accessibilityRole="button"
+                accessibilityLabel="Settle up"
                 onPress={() => { lightHaptic(); onSettle(group); }}
                 style={styles.compactButton}
                 borderless
               >
                 <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.success }]}>
-                  <IconButton icon="handshake" size={20} iconColor="#fff" style={{ margin: 0 }} />
+                  <Icon source="handshake" size={20} color="#fff" />
                   <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Settle Up</Text>
                 </View>
               </TouchableRipple>
 
               <TouchableRipple
+                accessibilityRole="button"
+                accessibilityLabel="Add expense"
                 onPress={() => { lightHaptic(); onAddExpense(group); }}
                 style={styles.compactButton}
                 borderless
               >
                 <View style={[styles.compactButtonInner, { backgroundColor: theme.colors.primary }]}>
-                  <IconButton icon="plus" size={20} iconColor="#fff" style={{ margin: 0 }} />
+                  <Icon source="plus" size={20} color="#fff" />
                   <Text variant="labelLarge" style={{ color: '#fff', fontWeight: '600' }}>Add Expense</Text>
                 </View>
               </TouchableRipple>
@@ -821,6 +825,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
 
             <View style={styles.actionGrid}>
               <TouchableRipple
+                accessibilityRole="button"
+                accessibilityLabel="Group stats"
                 onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: groupDisplayName }); }}
                 style={styles.compactButtonSmall}
                 borderless
@@ -831,29 +837,33 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
                     list). Not a one-shot mount animation, so it can't be restructured
                     to transform-only like an entering/exiting preset. */}
                 <GlassCard role="floating" style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
-                  <IconButton icon="chart-pie" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                  <Icon source="chart-pie" size={18} color={theme.colors.primary} />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
                 </GlassCard>
               </TouchableRipple>
 
               <TouchableRipple
+                accessibilityRole="button"
+                accessibilityLabel="Group chat"
                 onPress={() => { lightHaptic(); onOpenChat(group); }}
                 style={styles.compactButtonSmall}
                 borderless
               >
                 <GlassCard role="floating" style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
-                  <IconButton icon="chat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                  <Icon source="chat" size={18} color={theme.colors.primary} />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
                 </GlassCard>
               </TouchableRipple>
 
               <TouchableRipple
+                accessibilityRole="button"
+                accessibilityLabel="Recurring bills"
                 onPress={() => { lightHaptic(); navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: groupDisplayName }); }}
                 style={styles.compactButtonSmall}
                 borderless
               >
                 <GlassCard role="floating" style={styles.compactButtonSmallGlass} contentStyle={styles.compactButtonSmallInner} radius={50} forceBlur>
-                  <IconButton icon="repeat" size={18} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+                  <Icon source="repeat" size={18} color={theme.colors.primary} />
                   <Text variant="labelMedium" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
                 </GlassCard>
               </TouchableRipple>
@@ -873,31 +883,31 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
               pointerEvents={isCompact ? 'auto' : 'none'}
             >
               <GlassCard role="floating" style={styles.androidDock} contentStyle={styles.androidDockContent} radius={50}>
-                <TouchableRipple onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.success }]} borderless>
+                <TouchableRipple accessibilityRole="button" accessibilityLabel="Settle up" onPress={() => onSettle(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.success }]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="handshake" size={18} color="#fff" />
                     <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Settle</Text>
                   </View>
                 </TouchableRipple>
-                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: groupDisplayName })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                <TouchableRipple accessibilityRole="button" accessibilityLabel="Group stats" onPress={() => navigation.navigate(ROUTES.APP.GROUP_STATS, { groupId: group.groupId, backTitle: groupDisplayName })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="chart-pie" size={18} color={theme.colors.primary} />
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Stats</Text>
                   </View>
                 </TouchableRipple>
-                <TouchableRipple onPress={() => onOpenChat(group)} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                <TouchableRipple accessibilityRole="button" accessibilityLabel="Group chat" onPress={() => onOpenChat(group)} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="chat" size={18} color={theme.colors.primary} />
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Chat</Text>
                   </View>
                 </TouchableRipple>
-                <TouchableRipple onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: groupDisplayName })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
+                <TouchableRipple accessibilityRole="button" accessibilityLabel="Recurring bills" onPress={() => navigation.navigate(ROUTES.APP.RECURRING_BILLS, { groupId: group.groupId, backTitle: groupDisplayName })} style={[styles.androidDockButton, styles.androidUtilityButton]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="repeat" size={18} color={theme.colors.primary} />
                     <Text variant="labelSmall" style={{ color: theme.colors.onSurface, fontWeight: '600' }}>Bills</Text>
                   </View>
                 </TouchableRipple>
-                <TouchableRipple onPress={() => onAddExpense(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.primary }]} borderless>
+                <TouchableRipple accessibilityRole="button" accessibilityLabel="Add expense" onPress={() => onAddExpense(group)} style={[styles.androidDockButton, styles.androidPrimaryPill, { backgroundColor: theme.colors.primary }]} borderless>
                   <View style={styles.androidDockButtonInner}>
                     <Icon source="plus" size={18} color="#fff" />
                     <Text variant="labelSmall" style={{ color: '#fff', fontWeight: '700' }}>Add</Text>
