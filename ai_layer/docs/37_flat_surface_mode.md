@@ -1143,8 +1143,8 @@ Two things carried over from iOS, both expected:
   point bleeds into the status area when scrolled. Same class as §13.3, so that
   finding is not iOS-specific either.
 
-### 15.2 Real finding: the group action dock was invisible to screen readers
-(fixed, `fe21654`)
+### 15.2 Real finding: the group action dock is invisible to screen readers
+(**NOT fixed** — `fe21654` was a wrong fix; root cause below)
 
 `Settle Up`, `Add Expense`, `Stats`, `Chat`, `Bills` — **visible on screen and
 absent from the accessibility tree.** Screenshot and dump taken at the same
@@ -1170,9 +1170,48 @@ deliberately elsewhere. The dock had nothing — and commit `b4f724f` was
 literally *"Make rows reachable and named for screen readers"*, so the intent
 existed and this surface was skipped.
 
-**The fix is NOT device-verified.** Confirming it needs an Android rebuild and
-the machine is at 99% disk. The bug was found by looking at a device; the fix
-deserves the same check before anyone calls it done.
+**`fe21654` did NOT fix it, and the verification is what caught that.** After
+pruning archives and rebuilding (7m42s), installing, and re-dumping the tree on
+the same screen: all five controls **still absent**. The labels are provably in
+the shipped bundle and the source is correct — so the cause was never the
+labels.
+
+**Actual root cause — a zero-height absolutely-positioned parent:**
+
+```
+<View style={styles.floatingActions}>            // position:'absolute', left/right/bottom, NO height
+  <Animated.View style={styles.expandedContainer}>   // ALSO position:'absolute'
+```
+
+An absolutely-positioned child contributes nothing to its parent's layout, so
+`floatingActions` measures **zero height**. The buttons still draw (Android does
+not clip by default) and still receive touches (RN's touch handling walks the JS
+tree, not native bounds) — but Android derives accessibility bounds from the
+native view hierarchy, so children outside a zero-height parent are
+`visible-to-user=false` and are dropped from the tree.
+
+That accounts for all three symptoms at once: **visible, tappable, invisible to
+accessibility.** Corroborated in the same dump — `Filters` (normal flow inside
+the ScrollView) is present, the native tab bar is present, and only the
+absolutely-positioned dock is missing.
+
+**Keep `fe21654` anyway.** The `IconButton` → `Icon` swap is independently
+correct (it removes a nested focusable and 48pt of phantom touch padding, per
+§12.3), and the labels are required once the bounds are fixed — they are simply
+not sufficient on their own.
+
+**The real fix touches load-bearing layout** — `floatingActions` needs real
+bounds, but the expanded container is anchored by `bottom:
+expandedActionsAnchorBottom` and animated by three recently-tuned commits
+(`a0d212a`, `c591433`, `1daaa1d` — action-bar height, list clearance, and the
+glass/flat lurch). It should not be changed blind; it needs a deliberate pass
+with a device dump after.
+
+**Lesson, and the reason this section reads the way it does:** the first fix
+addressed the most *visible* deficiency (no labels — real, and real in the
+source) without establishing that it was the *operative* one. Nothing in `tsc`,
+the suite, or code review distinguishes those two. Only re-running the exact
+check that found the bug did.
 
 ### 15.3 Method note
 
