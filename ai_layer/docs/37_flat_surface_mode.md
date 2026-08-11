@@ -33,11 +33,11 @@ accents for the app's entire life, in glass mode as well as flat.
 
 **ANDROID VERIFIED 2026-08-09 on a Pixel 7 — see §15.** Flat mode works there,
 including `role="glass"`'s Android fallback. It also turned up a third finding
-the eye could not catch: **the group action dock is invisible to screen
-readers** — root-caused to a zero-height absolutely-positioned parent, **still
-OPEN** (§15.2; `fe21654` was a wrong fix, kept because it is independently
-correct). `InsightChatOverlay` is the one screen still unseen and can only ever
-be checked on a physical iPhone — it does not exist on Android at all (§13.4).
+the eye could not catch: **the group action dock was invisible to screen
+readers** — a zero-height absolutely-positioned parent, now **fixed and verified
+on device** (§15.2, `9b67d71`). `InsightChatOverlay` is the one screen still
+unseen and can only ever be checked on a physical iPhone — it does not exist on
+Android at all (§13.4).
 
 > Every "not visually verified" note in §7/§8/§11/§12 predates that sweep and
 > was written on the premise that no simulator runtime existed on this machine.
@@ -1144,8 +1144,8 @@ Two things carried over from iOS, both expected:
   point bleeds into the status area when scrolled. Same class as §13.3, so that
   finding is not iOS-specific either.
 
-### 15.2 Real finding: the group action dock is invisible to screen readers
-(**NOT fixed** — `fe21654` was a wrong fix; root cause below)
+### 15.2 Real finding: the group action dock was invisible to screen readers
+(**FIXED & VERIFIED** — `9b67d71`; `fe21654` before it was a wrong fix)
 
 `Settle Up`, `Add Expense`, `Stats`, `Chat`, `Bills` — **visible on screen and
 absent from the accessibility tree.** Screenshot and dump taken at the same
@@ -1201,12 +1201,26 @@ correct (it removes a nested focusable and 48pt of phantom touch padding, per
 §12.3), and the labels are required once the bounds are fixed — they are simply
 not sufficient on their own.
 
-**The real fix touches load-bearing layout** — `floatingActions` needs real
-bounds, but the expanded container is anchored by `bottom:
-expandedActionsAnchorBottom` and animated by three recently-tuned commits
-(`a0d212a`, `c591433`, `1daaa1d` — action-bar height, list clearance, and the
-glass/flat lurch). It should not be changed blind; it needs a deliberate pass
-with a device dump after.
+**The real fix (`9b67d71`).** Give the layer a real height — the max of the
+compact dock's height-plus-offset, the measured expanded block, and a floor
+until the first layout pass — and mark it `pointerEvents="box-none"`.
+
+Safe by construction rather than by luck, which mattered because three recent
+commits tuned this exact area (`a0d212a`, `c591433`, `1daaa1d`): both children
+anchor by `bottom` and the layer's own bottom edge is pinned by
+`compactDockBottom`, so added height extends it **upward** and cannot move
+either child. The layer draws no background, and `box-none` keeps it
+non-interactive so the list underneath stays reachable in the gaps between
+buttons.
+
+**Verified on the Pixel 7 after rebuild + install, on all three axes** — because
+"the a11y tree is fixed" is only one third of not having broken anything:
+
+| Check | Result |
+|---|---|
+| Controls in the accessibility tree | **5/5**, `clickable=true`, 72pt / 60pt targets (clear the 44pt minimum) |
+| Layout unchanged | Screenshot **pixel-identical** to before |
+| List still reachable under the dock | Expense rows at y=2024 / 2177 / 2327 still clickable — `box-none` working |
 
 **Lesson, and the reason this section reads the way it does:** the first fix
 addressed the most *visible* deficiency (no labels — real, and real in the
