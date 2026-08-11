@@ -30,7 +30,13 @@ dense-editor contract, and the mandatory AI engine disclosure is present.
 **Material purple leaking through the accent system** (§14, fixed in `7da394f`)
 — chips and group avatars had been rendering Material lavender under all six
 accents for the app's entire life, in glass mode as well as flat.
-**Android remains unverified.**
+
+**ANDROID VERIFIED 2026-08-09 on a Pixel 7 — see §15.** Flat mode works there,
+including `role="glass"`'s Android fallback. It also turned up a third finding
+the eye could not catch: **the group action dock was invisible to screen
+readers** (§15.2, fixed in `fe21654`). `InsightChatOverlay` is the one screen
+still unseen and can only ever be checked on a physical iPhone — it does not
+exist on Android at all (§13.4).
 
 > Every "not visually verified" note in §7/§8/§11/§12 predates that sweep and
 > was written on the premise that no simulator runtime existed on this machine.
@@ -1004,16 +1010,23 @@ bar strip on scrolled screens, NOT re-enabling the patched-out edge effect.
 
 ### 13.4 Still unverified
 
-- **`InsightChatOverlay` — the one iOS screen still unseen, and the biggest
-  remaining role-classification risk.** It is the single largest glass file in
-  the app (14 surfaces, all marked `role="floating"` in Phase 2) and it mixes
-  content bubbles with chrome. It is reachable only by tapping a Group Stats
-  narrative card, and that narrative cannot generate on a simulator — it needs
-  Foundation Models or PCC, neither of which exists there. **Verifying it
-  requires the physical device.**
-- **Android.** Flat mode has never been looked at there. It already renders
-  half-flat (near-opaque tint + `elevation: 4`), so the delta is smallest on
-  that platform — but "smallest delta" is not "verified".
+- **`InsightChatOverlay` — the one screen still unseen, and it can ONLY be
+  verified on a physical iPhone.** It is the largest glass file in the app (14
+  surfaces, all `role="floating"` from Phase 2) and mixes content bubbles with
+  chrome, so it is the biggest remaining role-classification risk.
+
+  It renders only when a narrative exists (`GroupStatsScreen.tsx`, `{narrative &&
+  …}`), and the narrative tier is documented in that file as **"on-device → PCC
+  → nothing"**. Both are iOS-only:
+  - **Simulator** — no Foundation Models, no PCC. Narrative never generates.
+  - **Android** — same, structurally. Confirmed empirically on a Pixel 7 by
+    sweeping the whole of Group Stats: no narrative card, and no AI affordance
+    anywhere in the accessibility tree. The overlay never mounts on that
+    platform *at all*, so it is not an Android gap to close — it does not exist
+    there.
+
+  Do not attribute this to tooling. It is a platform constraint, and the
+  physical iPhone (PCC entitlement granted 2026-07-18) is the only way.
 
 ---
 
@@ -1098,3 +1111,72 @@ evidence the guard worked. A guard test that cannot fail is worse than no test,
 because it stops you looking. Verify a control by asserting the mutation landed
 (the redo patched via python with an `assert pattern in source`), not by
 observing that the suite still runs.
+
+---
+
+## 15. Android verified (2026-08-09) — Pixel 7, Android 17
+
+First look at flat mode on Android, on a physical Pixel 7 (`28181FDH200F7K`,
+Android 17 / SDK 37, arm64-v8a) against the 10:42 release APK. Android is fully
+drivable (`adb` + `uiautomator dump` gives the real accessibility tree with node
+bounds), which is what made §15.2 findable at all.
+
+### 15.1 Flat mode works on Android
+
+Swept Expenses, Group Detail and Group Stats, in flat + dark + sunset accent:
+
+- **Borderless renders correctly** — rows on the canvas with inset hairlines.
+- **`role="glass"` degrades correctly.** The two hero containers fall back to
+  Android's near-opaque tinted card + `elevation` (BlurView cannot render
+  there), and still read as hero containers against the borderless list. The
+  Android fallback path was the least-examined branch of `GlassCard` and it
+  holds.
+- Group Stats is clean end to end — insight rows, Momentum bars, the
+  who-pays/who-spends donut, top merchants and the trajectory bar.
+
+Two things carried over from iOS, both expected:
+
+- **Avatar circles are lavender** — the §14 Material-purple leak, confirming it
+  was cross-platform (it is a JS theme bug, not a platform one). That APK
+  predates the fix; not a regression.
+- **Content passes under the status bar** — the Spending Trend chart's data
+  point bleeds into the status area when scrolled. Same class as §13.3, so that
+  finding is not iOS-specific either.
+
+### 15.2 Real finding: the group action dock was invisible to screen readers
+(fixed, `fe21654`)
+
+`Settle Up`, `Add Expense`, `Stats`, `Chat`, `Bills` — **visible on screen and
+absent from the accessibility tree.** Screenshot and dump taken at the same
+instant, so not a timing artifact. These are the primary actions of the app's
+main screen.
+
+Two causes, both fixed across the expanded grid and the compact Android dock
+(10 controls):
+
+1. Each button used Paper's **`IconButton` as a decorative icon**. `IconButton`
+   is itself interactive and focusable, so nesting it inside `TouchableRipple`
+   breaks the accessible grouping (and it carries 48pt of its own touch
+   padding). Replaced with the plain `Icon` already imported in that file.
+   **§12.3 made exactly this swap for group ROWS, for the same reasons — the
+   dock was missed.** Same shape as §14: a fix applied to the instance that
+   produced the visible symptom rather than to the pattern.
+2. Zero `accessibilityRole`/`accessibilityLabel` in the entire dock block.
+
+What made this readable as a real gap rather than a `uiautomator` quirk: every
+other interactive element on the screen dumps a rich composed label
+(`"Budget, 8 members, you are owed $714.32"`), because the app does this
+deliberately elsewhere. The dock had nothing — and commit `b4f724f` was
+literally *"Make rows reachable and named for screen readers"*, so the intent
+existed and this surface was skipped.
+
+**The fix is NOT device-verified.** Confirming it needs an Android rebuild and
+the machine is at 99% disk. The bug was found by looking at a device; the fix
+deserves the same check before anyone calls it done.
+
+### 15.3 Method note
+
+`uiautomator dump` exposes what a screen reader can actually reach, which is a
+strictly stronger check than a screenshot — §15.2 is invisible to the eye and
+obvious in the tree. **Do accessibility verification on Android first**, even
+for an iOS-led feature; iOS has no equivalent one-command tree dump here.
