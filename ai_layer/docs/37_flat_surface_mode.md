@@ -43,6 +43,50 @@ Android at all (§13.4).
 > was written on the premise that no simulator runtime existed on this machine.
 > **That premise is false** — the runtime is back. Read §13 before repeating it.
 
+---
+
+## 0. State of play — read this first
+
+This doc is long because it records how things were found, not just what they
+are. If you are picking this up cold, this section is the whole picture.
+
+**Done and verified.** Flat mode ships behind Settings ▸ Appearance ▸ Glass/Flat.
+Glass is the default and is byte-identical to before. Verified on a real screen
+across Settings, Expenses, Group Detail, Chats, Calls, Add Expense, Stats,
+BillSplit, the AI assistant, sheets and pickers — on the iOS 27 simulator and a
+physical Pixel 7. `role="floating"` held on every surface, zero misses.
+
+**Guard tests that must stay green** (`npm run test:unit`):
+
+| Test | Guards |
+|---|---|
+| `surfaceRoleCoverage` | every glass surface in a `<Modal>` is floating/nested; blur confined to `GlassCard` + `ScrimBackdrop` |
+| `accentContainerContrast` | MD3 container roles are SET (not Material stock) and their pairs clear AA |
+| `accentPrimaryContrast`, `solidBackgroundContrast`, `flatSurfaceContrast` | every token/background pair clears WCAG AA |
+
+**Open, in priority order:**
+
+1. **Status-bar collision (§13.3)** — needs a *decision*, not a fix. Content
+   passing under the status bar is a deliberate choice here
+   ([[content-bleed-behind-chrome-is-intended]]), but the glyphs become
+   unreadable. If it should change, §13.3 names the narrow fix *and* the wrong
+   one.
+2. **`InsightChatOverlay` appearance (§13.4)** — classification is verified
+   correct; only the look is unseen. Physical iPhone only: it renders behind
+   `{narrative && …}` and the tier is on-device → PCC → nothing, so it cannot
+   exist on Android or generate on a simulator.
+3. **Cosmetic leftovers** — `AVATAR_COLORS` white initials run ~3.2–3.8:1
+   (fine as a graphic, under the line as text); `src/constants/theme.ts` is a
+   deprecated compat layer holding stale token values.
+
+**If you change theming, read the two traps first** — §14 (an un-overridden MD3
+role is silently Material purple; audit the whole set, not the one that showed a
+symptom) and §15.2 (verify a fix by re-running the exact check that found the
+bug — fixing the most *visible* deficiency is not the same as fixing the
+*operative* one).
+
+---
+
 **Goal:** a second, **borderless** UI the user can switch to, the same way they
 already switch light/dark and accent. The shipping liquid-glass UI is untouched
 and stays the default.
