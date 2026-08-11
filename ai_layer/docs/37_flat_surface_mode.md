@@ -18,10 +18,14 @@ RESTORED and properly implemented for the first time, group rows compacted
 3 lines → 2, press feedback rebuilt per-platform from Paper's actual source.
 See §12, and §12.4 before touching dividers again.**
 
-**VISUALLY VERIFIED 2026-08-09 — see §13.** Flat mode was swept on the iOS 27
-simulator across Settings, Expenses, Group Detail, Chats, Calls, Add Expense and
-a bottom sheet, in both dark and light. Borderless, `role="floating"` and
-`role="glass"` all render as designed, and the contrast fixes are legible.
+**VISUALLY VERIFIED 2026-08-09 — see §13. iOS screen coverage is complete**
+except `InsightChatOverlay` (needs a device — §13.4). Flat mode was swept on the
+iOS 27 simulator across Settings, Expenses, Group Detail, Chats, Calls, Add
+Expense, Group Stats, BillSplit, the AI assistant, a bottom sheet and a picker
+sheet, in both dark and light. Borderless, `role="floating"` and `role="glass"`
+all render as designed — **`role="floating"` held on every surface, zero
+misses** — the contrast fixes are legible, `BillSplitScreen` visibly matches its
+dense-editor contract, and the mandatory AI engine disclosure is present.
 **Two findings:** a status-bar collision on scrolled group detail (§13.3), and
 **Material purple leaking through the accent system** (§14, fixed in `7da394f`)
 — chips and group avatars had been rendering Material lavender under all six
@@ -916,11 +920,45 @@ xcrun simctl launch  <sim-udid> com.splitcircle.app
 
 ### 13.2 Confirmed working
 
-Swept Settings, Expenses (`GroupListScreen`), Group Detail, Chats, and a bottom
-sheet, in **flat** mode, in both dark and light. A second pass added Calls and
-Add Expense (§14) — Calls is clean, and Add Expense is structurally correct
-(sectioned, accent-tinted outlined inputs at rest, docked Cancel/Save, matching
-DESIGN.md's ambient-surface rules), but it is where the §14 bug surfaced.
+**iOS screen coverage is now complete**, in **flat** mode, in both dark and
+light: Settings, Expenses (`GroupListScreen`), Group Detail, Chats, Calls,
+Add Expense, Group Stats, `BillSplitScreen`, the AI assistant, a bottom sheet
+(Filters) and a picker sheet (Category).
+
+**`role="floating"` held on every one — zero misses.** No surface anywhere in
+the sweep came up without its background. That was the single likeliest thing to
+be wrong after Phase 2's classification (§1.1), and it is now checked on real
+screens rather than by grep.
+
+Screen-specific notes from the later passes:
+
+- **Calls** — clean; empty state, chrome keeps its fills.
+- **Add Expense** — structurally correct (sectioned, accent-tinted outlined
+  inputs at rest, docked Cancel/Save, real "50% match" split suggestion, anomaly
+  warning). It is also where the §14 bug surfaced.
+- **Group Stats** — fully borderless; outlined timeframe pills, severity-tinted
+  insight icons, AI narrative skeleton loading correctly.
+- **`BillSplitScreen`** — visibly matches DESIGN.md's dense-editor contract:
+  floating glass header pill with the roster selector, single-level MethodRail
+  with the selection visible and the deliberate ~28px edge peek on the clipped
+  last item, borderless participant rows with inset dividers, and the docked
+  footer carrying the live figure (`$40.00/person`, `3 of 3 included`) beside a
+  single enabled **Done**.
+- **AI assistant** — all four surfaces keep their fills, and **DESIGN.md's
+  mandatory AI disclosure is present and correct**: the response carried the
+  engine badge ("Exact calculation · How this was answered"), a tappable
+  citation row, and 👍/👎. The engine correctly fell through to the
+  deterministic tier, since neither Foundation Models nor PCC exists on a
+  simulator. The answer itself was accurate.
+- **Category picker** — DESIGN.md names this as a former react-native-paper
+  `Dialog`/`Menu` violation. It now renders as a proper opaque sheet with a
+  grabber and row dividers; that violation is genuinely gone.
+- **Observation, not filed as a bug:** the per-person `AVATAR_COLORS` identity
+  palette (`#059669`, `#D97706`, `#DC2626`, …) still holds the pre-darkening
+  hexes, so white initials on those circles run ~3.2–3.8:1. Fine if two-letter
+  initials in a circle are read as a graphical element (3:1), under the line if
+  read as text (4.5:1). Left deliberately — these are identity colours, not
+  semantic ones — but it is a choice, not an oversight.
 
 - **Borderless renders correctly** everywhere it was applied — content on the
   canvas, grouped by inset hairlines, visibly tighter than glass.
@@ -966,11 +1004,16 @@ bar strip on scrolled screens, NOT re-enabling the patched-out edge effect.
 
 ### 13.4 Still unverified
 
+- **`InsightChatOverlay` — the one iOS screen still unseen, and the biggest
+  remaining role-classification risk.** It is the single largest glass file in
+  the app (14 surfaces, all marked `role="floating"` in Phase 2) and it mixes
+  content bubbles with chrome. It is reachable only by tapping a Group Stats
+  narrative card, and that narrative cannot generate on a simulator — it needs
+  Foundation Models or PCC, neither of which exists there. **Verifying it
+  requires the physical device.**
 - **Android.** Flat mode has never been looked at there. It already renders
   half-flat (near-opaque tint + `elevation: 4`), so the delta is smallest on
   that platform — but "smallest delta" is not "verified".
-- Screens not in this sweep: Stats, BillSplit, the AI surfaces. (Calls and Add
-  Expense were covered in a second pass — see §14.)
 
 ---
 
