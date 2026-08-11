@@ -104,6 +104,14 @@ export const buildTheme = (
       primaryContainer: accent.primaryContainer,
       onPrimaryContainer: accent.onPrimaryContainer,
       secondary: accent.secondary,
+      // Accent-derived, NOT inherited from Paper's MD3 base. `...base.colors`
+      // above supplies every MD3 role, so any role left un-overridden silently
+      // keeps Material's stock baseline palette — which is purple. That is what
+      // made expense category chips, Add Expense participant chips, doc icons
+      // and group-info action icons render lavender under all six accents.
+      secondaryContainer: accent.secondaryContainer,
+      onSecondaryContainer: accent.onSecondaryContainer,
+      onSecondary: accent.onSecondary,
       surface: neutral.surface,
       // Real bug found 2026-08-07: these were never overridden, so every
       // TouchableRipple/List.Item in the app (react-native-paper's
@@ -130,6 +138,11 @@ export const buildTheme = (
       errorContainer: neutral.dangerContainer,
       onErrorContainer: neutral.onDangerContainer,
       outline: neutral.border,
+      // Same reason as the secondary-container roles above — these are neutral
+      // rather than accent-derived, but they were equally purple by default.
+      surfaceVariant: neutral.surfaceVariant,
+      outlineVariant: neutral.outlineVariant,
+      surfaceDisabled: neutral.surfaceDisabled,
 
       success: neutral.success,
       onSuccess: neutral.onSuccess,

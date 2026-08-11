@@ -10,6 +10,24 @@ export interface AccentScheme {
   primaryContainer: string;
   onPrimaryContainer: string;
   secondary: string;
+  /**
+   * MD3 secondary-container role. Defined per accent because buildTheme
+   * spreads Paper's MD3 base first — anything NOT overridden here keeps
+   * Material's stock baseline palette, which is purple. That is exactly what
+   * happened: expense category chips, the Add Expense participant chips,
+   * media-gallery doc icons and group-info action icons were all rendering
+   * Material lavender regardless of which of the six accents was selected
+   * (found 2026-08-09 by looking at the running app, not by reading code).
+   *
+   * Derived as the accent hue at low chroma, with `onSecondaryContainer`
+   * pushed just far enough to clear WCAG AA on it — the LIGHTEST passing
+   * value, so it stays hue-tinted instead of collapsing to black/white.
+   * Guarded by accentContainerContrast.test.ts.
+   */
+  secondaryContainer: string;
+  onSecondaryContainer: string;
+  /** Text/icon colour on the `secondary` pop colour itself. */
+  onSecondary: string;
   /** Trio used by LiquidBackground's neutral "balanced" state so the ambient
    *  blobs follow the user's accent instead of the old pink/purple palette. */
   blobBalanced: [string, string, string];
@@ -38,6 +56,9 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
       primaryContainer: '#D8E6FD',
       onPrimaryContainer: '#0A2E66',
       secondary: '#FFAD05',
+      secondaryContainer: '#DAE3F1',
+      onSecondaryContainer: '#175ECC',
+      onSecondary: '#624711',
       blobBalanced: ['#a5c8ff', '#c4e0f9', '#9bb8f0'],
     },
     dark: {
@@ -46,6 +67,9 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
       primaryContainer: '#173B66',
       onPrimaryContainer: '#C7DDFF',
       secondary: '#FFD369',
+      secondaryContainer: '#243D59',
+      onSecondaryContainer: '#6EAAEF',
+      onSecondary: '#755915',
       blobBalanced: ['#173B66', '#1C2E58', '#0F4C75'],
     },
   },
@@ -58,6 +82,9 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
       primaryContainer: '#EADDFC',
       onPrimaryContainer: '#3B1477',
       secondary: '#F59E0B',
+      secondaryContainer: '#E2DAF1',
+      onSecondaryContainer: '#7532E8',
+      onSecondary: '#593E10',
       blobBalanced: ['#d0b3ff', '#e3d1fc', '#b79aef'],
     },
     dark: {
@@ -66,6 +93,9 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
       primaryContainer: '#432C7A',
       onPrimaryContainer: '#E4D7FF',
       secondary: '#FBBF24',
+      secondaryContainer: '#332657',
+      onSecondaryContainer: '#A185F1',
+      onSecondary: '#674F12',
       blobBalanced: ['#432C7A', '#33245E', '#4527A0'],
     },
   },
@@ -84,6 +114,9 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
       primaryContainer: '#CFF5E7',
       onPrimaryContainer: '#054D37',
       secondary: '#0EA5E9',
+      secondaryContainer: '#D8F3EA',
+      onSecondaryContainer: '#0D7857',
+      onSecondary: '#0D3649',
       blobBalanced: ['#9df0cf', '#c8f2e4', '#7fe0c0'],
     },
     dark: {
@@ -92,6 +125,9 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
       primaryContainer: '#0B4A37',
       onPrimaryContainer: '#BDF5DF',
       secondary: '#38BDF8',
+      secondaryContainer: '#2E4F43',
+      onSecondaryContainer: '#2DD296',
+      onSecondary: '#114860',
       blobBalanced: ['#0B4A37', '#0A3A3A', '#14532D'],
     },
   },
@@ -108,6 +144,9 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
       primaryContainer: '#FDE3D2',
       onPrimaryContainer: '#79300A',
       secondary: '#0D9488',
+      secondaryContainer: '#F2E2D9',
+      onSecondaryContainer: '#AA4713',
+      onSecondary: '#051E1C',
       blobBalanced: ['#ffc9a3', '#ffe1c9', '#f5b083'],
     },
     dark: {
@@ -116,6 +155,9 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
       primaryContainer: '#6E3410',
       onPrimaryContainer: '#FFE0C7',
       secondary: '#2DD4BF',
+      secondaryContainer: '#583C25',
+      onSecondaryContainer: '#ED9E5D',
+      onSecondary: '#11554C',
       blobBalanced: ['#6E3410', '#5C2E0E', '#7C2D12'],
     },
   },
@@ -132,6 +174,9 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
       primaryContainer: '#FBDCE3',
       onPrimaryContainer: '#750A24',
       secondary: '#8B5CF6',
+      secondaryContainer: '#F0DBDF',
+      onSecondaryContainer: '#C0193D',
+      onSecondary: '#100725',
       blobBalanced: ['#ffb3c4', '#ffd6df', '#f79ab3'],
     },
     dark: {
@@ -140,6 +185,9 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
       primaryContainer: '#6B1130',
       onPrimaryContainer: '#FFD3DC',
       secondary: '#A78BFA',
+      secondaryContainer: '#57262D',
+      onSecondaryContainer: '#F07B8C',
+      onSecondary: '#36198C',
       blobBalanced: ['#6B1130', '#581C3C', '#7F1D3A'],
     },
   },
@@ -152,6 +200,9 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
       primaryContainer: '#E2E8F0',
       onPrimaryContainer: '#111827',
       secondary: '#64748B',
+      secondaryContainer: '#E2E5E9',
+      onSecondaryContainer: '#476693',
+      onSecondary: '#FFFFFF',
       blobBalanced: ['#cbd5e1', '#e2e8f0', '#b6c2d2'],
     },
     dark: {
@@ -160,6 +211,9 @@ export const ACCENTS: Record<AccentId, AccentDefinition> = {
       primaryContainer: '#374151',
       onPrimaryContainer: '#F1F5F9',
       secondary: '#94A3B8',
+      secondaryContainer: '#373E46',
+      onSecondaryContainer: '#92ABCA',
+      onSecondary: '#2E3846',
       blobBalanced: ['#374151', '#2B3444', '#1F2937'],
     },
   },
@@ -233,6 +287,12 @@ export const NEUTRALS = {
     // glass material is doing legibility work over the ambient blobs, and a
     // translucent flat fill would inherit the blob contrast failure instead of
     // fixing it (muted text hits 2.92:1 over the worst blob — below AA).
+    // MD3 neutral roles. Set explicitly for the same reason as the accent
+    // container roles: anything left un-overridden keeps Paper's Material
+    // baseline, which is purple-tinted.
+    surfaceVariant: '#EAEEF4',
+    outlineVariant: 'rgba(15, 23, 42, 0.12)',
+    surfaceDisabled: 'rgba(31, 41, 55, 0.12)',
     flatSurface: '#FFFFFF',
     // Second level, for a surface that must sit ON a flatSurface (nested rows,
     // inputs) without a border doing the separating.
@@ -292,6 +352,9 @@ export const NEUTRALS = {
     glassFallback: 'rgba(36, 36, 40, 0.86)',
     // Flat surface treatment — see the light-scheme note above. Sits just off
     // appBackground (#121212) so a group reads as structure without a border.
+    surfaceVariant: '#2A2A2F',
+    outlineVariant: 'rgba(255, 255, 255, 0.14)',
+    surfaceDisabled: 'rgba(243, 244, 246, 0.12)',
     flatSurface: '#1C1C1F',
     flatSurfaceAlt: '#252529',
     flatBorder: 'rgba(255, 255, 255, 0.10)',
