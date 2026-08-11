@@ -19,10 +19,14 @@ RESTORED and properly implemented for the first time, group rows compacted
 See §12, and §12.4 before touching dividers again.**
 
 **VISUALLY VERIFIED 2026-08-09 — see §13.** Flat mode was swept on the iOS 27
-simulator across Settings, Expenses, Group Detail, Chats and a bottom sheet, in
-both dark and light. Borderless, `role="floating"` and `role="glass"` all render
-as designed, and the contrast fixes are legible. **One finding:** a status-bar
-collision on scrolled group detail (§13.3). **Android remains unverified.**
+simulator across Settings, Expenses, Group Detail, Chats, Calls, Add Expense and
+a bottom sheet, in both dark and light. Borderless, `role="floating"` and
+`role="glass"` all render as designed, and the contrast fixes are legible.
+**Two findings:** a status-bar collision on scrolled group detail (§13.3), and
+**Material purple leaking through the accent system** (§14, fixed in `7da394f`)
+— chips and group avatars had been rendering Material lavender under all six
+accents for the app's entire life, in glass mode as well as flat.
+**Android remains unverified.**
 
 > Every "not visually verified" note in §7/§8/§11/§12 predates that sweep and
 > was written on the premise that no simulator runtime existed on this machine.
@@ -913,7 +917,10 @@ xcrun simctl launch  <sim-udid> com.splitcircle.app
 ### 13.2 Confirmed working
 
 Swept Settings, Expenses (`GroupListScreen`), Group Detail, Chats, and a bottom
-sheet, in **flat** mode, in both dark and light.
+sheet, in **flat** mode, in both dark and light. A second pass added Calls and
+Add Expense (§14) — Calls is clean, and Add Expense is structurally correct
+(sectioned, accent-tinted outlined inputs at rest, docked Cancel/Save, matching
+DESIGN.md's ambient-surface rules), but it is where the §14 bug surfaced.
 
 - **Borderless renders correctly** everywhere it was applied — content on the
   canvas, grouped by inset hairlines, visibly tighter than glass.
@@ -962,5 +969,89 @@ bar strip on scrolled screens, NOT re-enabling the patched-out edge effect.
 - **Android.** Flat mode has never been looked at there. It already renders
   half-flat (near-opaque tint + `elevation: 4`), so the delta is smallest on
   that platform — but "smallest delta" is not "verified".
-- Screens not in this sweep: Calls, Stats, Add Expense, BillSplit, the AI
-  surfaces.
+- Screens not in this sweep: Stats, BillSplit, the AI surfaces. (Calls and Add
+  Expense were covered in a second pass — see §14.)
+
+---
+
+## 14. Material purple leaking through the accent system (2026-08-09, `7da394f`)
+
+Found while sweeping the last screens for §13. **Not a flat-mode bug** — it had
+been wrong in glass mode for the app's entire life, under all six accents.
+
+### 14.1 The mechanism
+
+`buildTheme` opens with `...base.colors` (`MD3LightTheme` / `MD3DarkTheme`), so
+**every** Material role is already populated before this app assigns anything.
+A role the app does not override does not error, does not fall back to a
+neutral, and does not read as missing in review — it silently keeps Material's
+stock baseline palette, which is **purple**.
+
+`secondaryContainer` was in exactly that state. Rendering Material lavender
+regardless of the selected accent:
+
+- Add Expense participant chips (the "included" state)
+- **Group avatar circles** on the Expenses list
+- Expense category chips (`ExpenseDetailsScreen`)
+- Media-gallery document icons
+- Group-info action icons
+
+### 14.2 Why nothing caught it
+
+`tsc`, lint and 603 passing tests were all green with it broken, and they always
+would have been — `theme.colors.secondaryContainer` is a perfectly valid
+expression that resolves to a real colour. It was found by **looking at the
+running app**: the Add Expense chips were visibly lavender next to an Ocean-blue
+accent.
+
+This is the same root cause **Phase 7 already hit and fixed** for `onSurface` /
+`onSurfaceVariant` (§10, the purple press-state bug). That fix stopped at the
+two tokens producing its symptom instead of sweeping the role set, which is why
+this survived another 30 commits. *When you find one un-overridden MD3 role,
+audit all of them.*
+
+### 14.3 The fix
+
+Defined per accent across all 12 scheme blocks: `secondaryContainer`,
+`onSecondaryContainer`, `onSecondary`. Derived as the accent hue at low chroma,
+with the on-colour pushed to the **lightest** value that still clears WCAG AA —
+searching from the accent outward rather than from black, so it stays hue-tinted
+instead of collapsing to pure black/white (the first attempt produced `#000000`
+for every accent, which is legible and off-brand).
+
+Plus the neutral roles `surfaceVariant`, `outlineVariant`, `surfaceDisabled`.
+
+Left alone deliberately: `tertiary` (1 use, an archive button that already has a
+hardcoded `'#FF9500'` fallback and wants a semantic colour, not an MD3 role) and
+`elevation` (1 use, already guarded by `?? theme.colors.surface`).
+
+### 14.4 The guard
+
+`accentContainerContrast.test.ts` (51 tests) asserts **two independent** things,
+because they fail independently:
+
+1. **The app actually SETS these roles.** A hardcoded list of Material's stock
+   hexes (`#E8DEF8`, `#4A4458`, `#E7E0EC`, `#CAC4D0`, …) fails the test if one
+   reappears. This is the check that would have caught the original bug; a pure
+   contrast test would NOT have, because Material's purple pair is itself
+   perfectly readable.
+2. **Every on/container pair clears AA.**
+
+### 14.5 Two process failures worth keeping
+
+**A grep-derived count was wrong by 20×.** The first audit reported 1,153
+leaking usages *including* `onSurface`/`onSurfaceVariant` — i.e. the app's
+primary and secondary text colours. It sliced the colours block with
+`bt.index('spacing,')`, which matched the word in the **import line above it**,
+read an empty block, and flagged every token as un-overridden. Real figure: ~49.
+Caught only because "your primary text colour is Material purple" contradicted
+the screenshot on screen. Same lesson as §4.1: read the code, don't trust the
+count.
+
+**A negative control silently tested nothing.** The controls for the new guard
+used `sed -i '' "0,/pat/s//repl/"`, which is a **silent no-op on BSD sed** — the
+file was never modified, both "controls" passed, and that briefly looked like
+evidence the guard worked. A guard test that cannot fail is worse than no test,
+because it stops you looking. Verify a control by asserting the mutation landed
+(the redo patched via python with an `assert pattern in source`), not by
+observing that the suite still runs.

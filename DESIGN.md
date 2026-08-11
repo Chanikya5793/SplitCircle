@@ -155,6 +155,21 @@ of the app):
   **And does it pass `role="floating"`?** A sheet that reaches `GlassCard` but
   keeps the default `role="section"` renders with no background at all in flat
   mode. Both halves are required.
+- **An MD3 role this app doesn't override is Material purple, silently.**
+  `buildTheme` opens with `...MD3LightTheme.colors`, so every Material role is
+  populated before the app assigns anything. A role left un-overridden does not
+  error, does not fall back to a neutral, and reads as a perfectly valid
+  `theme.colors.x` at the call site — it just renders Material's stock baseline,
+  which is purple, under every accent. This has bitten twice: `onSurface`/
+  `onSurfaceVariant` (the purple press-state bug) and then `secondaryContainer`
+  (chips and group avatars lavender under all six accents, for the app's entire
+  life). Both were found by LOOKING at the app; `tsc`, lint and the full suite
+  were green each time. **When you find one, audit the whole role set** — the
+  first fix stopped at the two tokens causing its symptom and the second bug
+  survived another 30 commits. Guarded by `accentContainerContrast.test.ts`,
+  which checks both that the roles are set (against a list of Material's stock
+  hexes) and that their on/container pairs clear AA — the stock pair is itself
+  readable, so a contrast test alone would never have caught it.
 - **Not everything with a `borderRadius` + `backgroundColor` is a card.** A 2026-08-07
   audit flagged 53 such style blocks as "hand-rolled cards"; reading them showed 30
   were round/pill geometry (avatars, badges, chips, progress bars) and most of the rest
