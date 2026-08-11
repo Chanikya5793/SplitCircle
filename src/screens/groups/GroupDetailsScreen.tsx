@@ -3,6 +3,7 @@ import { DebtsList } from '@/components/DebtsList';
 import { ActivityTypeFilter, DateRange, FilterSortSheet, SortField, SortOrder } from '@/components/FilterSortSheet';
 import { GlassView } from '@/components/GlassView';
 import { LiquidBackground } from '@/components/LiquidBackground';
+import { TopEdgeFade } from '@/components/ui/TopEdgeFade';
 import { GroupAvatar, GlassCard, SCREEN_GUTTER } from '@/components/ui';
 import { usePrivacyMask } from '@/hooks/usePrivacyMask';
 import { SettlementCard } from '@/components/SettlementCard';
@@ -514,6 +515,8 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
         </GlassView>
       </Animated.View>
 
+      {/* Dissolves content before it reaches the status-bar glyphs — doc 37 §13.3. */}
+      <TopEdgeFade>
       <Animated.ScrollView
         contentContainerStyle={[styles.container, { paddingBottom: contentBottomPadding }]}
         onScroll={Animated.event(
@@ -805,6 +808,7 @@ export const GroupDetailsScreen = ({ group, onAddExpense, onSettle, onOpenChat, 
         )}
 
       </Animated.ScrollView>
+      </TopEdgeFade>
 
       <View
         style={[
