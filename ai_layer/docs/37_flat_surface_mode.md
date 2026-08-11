@@ -1011,10 +1011,29 @@ bar strip on scrolled screens, NOT re-enabling the patched-out edge effect.
 
 ### 13.4 Still unverified
 
-- **`InsightChatOverlay` — the one screen still unseen, and it can ONLY be
-  verified on a physical iPhone.** It is the largest glass file in the app (14
-  surfaces, all `role="floating"` from Phase 2) and mixes content bubbles with
-  chrome, so it is the biggest remaining role-classification risk.
+- **`InsightChatOverlay` — the one screen still unseen.** It can ONLY be looked
+  at on a physical iPhone (reasons below).
+
+  **Its role classification has since been verified statically, and the risk is
+  much lower than this section originally claimed.** All 14 surfaces are
+  `role="floating"`, and reviewing them by category, every one is correctly so:
+
+  | Surface | × | Why `floating` is right |
+  |---|--:|---|
+  | `bubble` | 3 | chat bubbles — locked decision (5), bubbles stay bubbles |
+  | `starterChip` | 4 | a borderless suggestion chip is an invisible chip |
+  | `glassCircle` | 3 | circular icon buttons — borderless = invisible control |
+  | `titlePill` | 1 | header pill, floats over content |
+  | `historyPanel` | 2 | slide-over thread panel, sits over the chat |
+  | `inputBarShell` | 1 | the composer |
+
+  **There is no content-section surface in the file at all** — the whole overlay
+  is chrome plus bubbles, and both categories legitimately keep their fills. The
+  original worry ("mixes content bubbles with chrome") was right about the mix
+  and wrong about the consequence: both halves want a fill in flat mode.
+
+  What remains unverified is therefore **appearance, not classification** —
+  spacing, density and contrast inside the overlay. That needs eyes.
 
   It renders only when a narrative exists (`GroupStatsScreen.tsx`, `{narrative &&
   …}`), and the narrative tier is documented in that file as **"on-device → PCC
