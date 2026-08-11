@@ -33,10 +33,11 @@ accents for the app's entire life, in glass mode as well as flat.
 
 **ANDROID VERIFIED 2026-08-09 on a Pixel 7 — see §15.** Flat mode works there,
 including `role="glass"`'s Android fallback. It also turned up a third finding
-the eye could not catch: **the group action dock was invisible to screen
-readers** (§15.2, fixed in `fe21654`). `InsightChatOverlay` is the one screen
-still unseen and can only ever be checked on a physical iPhone — it does not
-exist on Android at all (§13.4).
+the eye could not catch: **the group action dock is invisible to screen
+readers** — root-caused to a zero-height absolutely-positioned parent, **still
+OPEN** (§15.2; `fe21654` was a wrong fix, kept because it is independently
+correct). `InsightChatOverlay` is the one screen still unseen and can only ever
+be checked on a physical iPhone — it does not exist on Android at all (§13.4).
 
 > Every "not visually verified" note in §7/§8/§11/§12 predates that sweep and
 > was written on the premise that no simulator runtime existed on this machine.
