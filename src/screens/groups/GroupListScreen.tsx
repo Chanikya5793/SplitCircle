@@ -3,6 +3,7 @@ import { BalanceHeadline } from '@/components/BalanceHeadline';
 import { FloatingLabelInput } from '@/components/FloatingLabelInput';
 import { GlassView } from '@/components/GlassView';
 import { GlassCard, ListSeparator, SCREEN_GUTTER, StickyHeaderPill } from '@/components/ui';
+import { TopEdgeFade } from '@/components/ui/TopEdgeFade';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
@@ -371,6 +372,8 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
         </StickyHeaderPill>
       </Animated.View>
 
+      {/* Dissolves content before it reaches the status-bar glyphs — doc 37 §13.3. */}
+      <TopEdgeFade>
       <Animated.FlatList
         data={activeGroups}
         keyExtractor={(item) => item.groupId}
@@ -491,6 +494,7 @@ export const GroupListScreen = ({ onOpenGroup }: GroupListScreenProps) => {
           )
         }
       />
+      </TopEdgeFade>
 
       {!groupsShielded && !bigText && actionsBlock}
 

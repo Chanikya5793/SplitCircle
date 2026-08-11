@@ -26,6 +26,7 @@ import { Animated, Platform, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon, Text, IconButton, Portal, TouchableRipple } from 'react-native-paper';
 import { SCREEN_GUTTER, StickyHeaderPill } from '@/components/ui';
+import { TopEdgeFade } from '@/components/ui/TopEdgeFade';
 import { usePrivacyGuard } from '@/context/PrivacyGuardContext';
 import { ChatFilterSortSheet, ChatSortField, ChatSortOrder } from '@/components/ChatFilterSortSheet';
 
@@ -209,6 +210,8 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
       </Animated.View>
 
       <View style={styles.container}>
+        {/* Dissolves content before it reaches the status-bar glyphs — doc 37 §13.3. */}
+        <TopEdgeFade>
         <Animated.FlatList
           data={vanishAllChats ? [] : activeThreads}
           keyExtractor={(item) => item.chatId}
@@ -312,6 +315,7 @@ export const ChatListScreen = ({ onOpenThread }: ChatListScreenProps) => {
           )}
           scrollEventThrottle={16}
         />
+        </TopEdgeFade>
       </View>
 
       <Portal>

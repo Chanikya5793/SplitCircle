@@ -1,6 +1,7 @@
 import { FONT_CAP } from '@/utils/a11yText';
 import { GlassView } from '@/components/GlassView';
 import { fullBleed, GlassCard, ListSeparator, SCREEN_GUTTER, SegmentedControl, StickyHeaderPill } from '@/components/ui';
+import { TopEdgeFade } from '@/components/ui/TopEdgeFade';
 import { ChatListSkeleton } from '@/components/SkeletonLoader';
 import { LiquidBackground } from '@/components/LiquidBackground';
 import { getFloatingTabBarContentPadding } from '@/components/tabbar/tabBarMetrics';
@@ -661,6 +662,8 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
       </RNAnimated.View>
 
       <View style={styles.container}>
+        {/* Dissolves content before it reaches the status-bar glyphs — doc 37 §13.3. */}
+        <TopEdgeFade>
         <RNAnimated.SectionList
           sections={callsShielded ? [] : sections}
           keyExtractor={keyExtractor}
@@ -797,6 +800,7 @@ export const CallHistoryScreen = ({ onStartCall, onOpenCallInfo }: CallHistorySc
             )
           }
         />
+        </TopEdgeFade>
       </View>
 
       {/* New Call Bottom Sheet */}

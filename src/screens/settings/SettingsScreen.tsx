@@ -7,6 +7,7 @@ import { LiquidBackground } from '@/components/LiquidBackground';
 import { ProfilePhotoUploader } from '@/components/ProfilePhotoUploader';
 import { MugguMark } from '@/components/brand';
 import { fullBleed, GlassCard, GuardCodePad, ListRow, PrivacyGuardSheet, SCREEN_GUTTER, SectionLabel, SegmentedControl, StickyHeaderPill, WallpaperPickerSheet } from '@/components/ui';
+import { TopEdgeFade } from '@/components/ui/TopEdgeFade';
 import { attemptUnlock, getGuardSync, hashCode, updateGuard } from '@/services/privacyGuardService';
 import { useAppLock } from '@/context/AppLockContext';
 import { AUTO_LOCK_OPTIONS, updateAppLock } from '@/services/appLockService';
@@ -445,6 +446,8 @@ export const SettingsScreen = () => {
         </StickyHeaderPill>
       </Animated.View>
 
+      {/* Dissolves content before it reaches the status-bar glyphs — doc 37 §13.3. */}
+      <TopEdgeFade>
       <Animated.ScrollView
         ref={scrollRef}
         contentContainerStyle={[styles.container, { paddingTop: insets.top + 24, paddingBottom: bottomPadding }]}
@@ -865,6 +868,7 @@ export const SettingsScreen = () => {
           </Text>
         </TouchableOpacity>
       </Animated.ScrollView>
+      </TopEdgeFade>
 
       <PrivacyGuardSheet visible={guardSheetOpen} onClose={() => setGuardSheetOpen(false)} />
       <GuardCodePad
