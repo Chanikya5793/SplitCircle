@@ -66,6 +66,15 @@ export function assessSecurityRisk(
         likelyRisks.add("impersonation");
         likelyRisks.add("targeted_phishing");
     }
+    if (finding.indicators?.recentlyRegisteredDomain) {
+        addFactor(factors, "new_domain", "Domain registered within the last 30 days", 15);
+        likelyRisks.add("targeted_phishing");
+        likelyRisks.add("scam");
+    }
+    if (finding.indicators?.certificateRisk) {
+        addFactor(factors, "certificate", "TLS certificate is invalid, expired, or unusually new", 12);
+        likelyRisks.add("targeted_phishing");
+    }
 
     const ageMs = Math.max(0, now - (finding.occurredAt ?? finding.observedAt));
     if (ageMs <= 7 * DAY_MS) {
@@ -122,4 +131,3 @@ export function assessSecurityRisk(
         recommendedActions,
     };
 }
-

@@ -11,6 +11,7 @@ import type {
 import {
   analyzeSecurityUrl,
   deleteAllSecurityMonitoringData,
+  deleteSecurityFinding,
   enrollSecurityIdentity,
   getSecurityCenter,
   removeSecurityIdentity,
@@ -315,6 +316,22 @@ export const SecurityCenterScreen = () => {
     }));
   };
 
+  const confirmDeleteFinding = (findingId: string) => {
+    appAlert('Delete this finding?', 'The normalized evidence and its risk assessment will be permanently removed.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => void deleteSecurityFinding(findingId).then(() => {
+          setSnapshot((current) => ({
+            ...current,
+            findings: current.findings.filter((finding) => finding.findingId !== findingId),
+          }));
+        }).catch((error) => appAlert('Could not delete finding', errorText(error, 'Please try again.'))),
+      },
+    ]);
+  };
+
   const toggleMonitoring = async (enabled: boolean) => {
     setSnapshot((current) => ({ ...current, enabled }));
     try {
@@ -570,6 +587,7 @@ export const SecurityCenterScreen = () => {
                   key={finding.findingId}
                   finding={finding}
                   onStateChange={(state) => changeFindingState(finding.findingId, state)}
+                  onDelete={() => confirmDeleteFinding(finding.findingId)}
                 />
               ))}
             </View>

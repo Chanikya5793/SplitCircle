@@ -35,6 +35,8 @@ export interface NormalizedSecurityFinding {
         infostealer?: boolean;
         maliciousUrl?: boolean;
         impersonation?: boolean;
+        recentlyRegisteredDomain?: boolean;
+        certificateRisk?: boolean;
     };
 }
 
@@ -59,4 +61,3 @@ export interface ProviderScanResult {
     safeMessage?: string;
     retryAfterMs?: number;
 }
-

@@ -252,6 +252,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Tenant-wide provider identifiers can be shared by multiple monitored
+    // identities. Reference counts are server-only so one user cannot detach
+    // another user's provider enrollment or infer its existence.
+    match /securityProviderIdentifierRefs/{referenceId} {
+      allow read, write: if false;
+    }
+
     match /groups/{groupId} {
       allow create: if isSignedIn()
         && request.resource.data.createdBy == request.auth.uid

@@ -53,7 +53,7 @@ afterEach(() => {
 describe('SecurityFindingCard', () => {
   it('expands evidence and records acknowledgement through the server callback', async () => {
     const onStateChange = vi.fn(async () => undefined);
-    render(<SecurityFindingCard finding={finding} onStateChange={onStateChange} />);
+    render(<SecurityFindingCard finding={finding} onStateChange={onStateChange} onDelete={vi.fn()} />);
 
     expect(screen.queryByText('Safe evidence')).toBeNull();
     fireEvent.click(screen.getByLabelText('high severity: Example breach'));
@@ -71,12 +71,19 @@ describe('SecurityFindingCard', () => {
       text: 'Password exposure is the strongest factor. [F1]',
       citedEvidenceIds: ['F1'],
     });
-    render(<SecurityFindingCard finding={finding} onStateChange={vi.fn()} />);
+    render(<SecurityFindingCard finding={finding} onStateChange={vi.fn()} onDelete={vi.fn()} />);
     fireEvent.click(screen.getByLabelText('high severity: Example breach'));
     fireEvent.click(screen.getByText('Explain with AI'));
 
     expect(await screen.findByText('On-device explanation')).toBeTruthy();
     expect(screen.getByText('Password exposure is the strongest factor. [F1]')).toBeTruthy();
   });
-});
 
+  it('exposes explicit deletion without conflating it with mute or remediation', () => {
+    const onDelete = vi.fn();
+    render(<SecurityFindingCard finding={finding} onStateChange={vi.fn()} onDelete={onDelete} />);
+    fireEvent.click(screen.getByLabelText('high severity: Example breach'));
+    fireEvent.click(screen.getByText('Delete'));
+    expect(onDelete).toHaveBeenCalledTimes(1);
+  });
+});

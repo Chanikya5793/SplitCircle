@@ -13,12 +13,13 @@ export interface SecurityProviderScanContext {
     type: SecurityIdentityType;
     value: string;
     providerReference?: string;
+    providerManaged?: boolean;
     signal?: AbortSignal;
 }
 
 export interface SecurityProviderAdapter {
     readonly id: ProviderScanResult["provider"];
-    scan(context: SecurityProviderScanContext): Promise<ProviderScanResult & { providerReference?: string }>;
+    scan(context: SecurityProviderScanContext): Promise<ProviderScanResult & { providerReference?: string; providerManaged?: boolean }>;
     remove?(providerReference: string): Promise<void>;
 }
 
@@ -79,6 +80,7 @@ type HibpPaste = { Source?: unknown; Id?: unknown; Date?: unknown; EmailCount?: 
 
 export class HibpProvider implements SecurityProviderAdapter {
     readonly id = "hibp" as const;
+    private breachCatalog: HibpBreach[] | null = null;
 
     constructor(private readonly apiKey: string) {}
 
@@ -100,15 +102,64 @@ export class HibpProvider implements SecurityProviderAdapter {
             const prefix = sha1.slice(0, 6);
             const suffix = sha1.slice(6);
 
-            const [range, catalog, pastes, stealer] = await Promise.all([
-                requestJson<HibpRangeEntry[]>(`${HIBP_BASE_URL}/breachedaccount/range/${prefix}`, { headers }, context.signal),
-                requestJson<HibpBreach[]>(`${HIBP_BASE_URL}/breaches`, { headers }, context.signal),
-                requestJson<HibpPaste[]>(`${HIBP_BASE_URL}/pasteAccount/${encodeURIComponent(context.value)}`, { headers }, context.signal),
-                requestJson<string[]>(`${HIBP_BASE_URL}/stealerLogsByEmail/${encodeURIComponent(context.value)}`, { headers }, context.signal),
-            ]);
+            // Keep account-specific calls sequential. HIBP rate limits vary by
+            // subscription, and firing four requests at once turns one scan
+            // into a needless burst. The public breach catalog is reused for
+            // every identity scanned by this provider instance.
+            const range = await requestJson<HibpRangeEntry[]>(
+                `${HIBP_BASE_URL}/breachedaccount/range/${prefix}`,
+                { headers },
+                context.signal,
+            );
+            if (range.status === 429) {
+                const retrySeconds = Number(range.headers.get("retry-after") ?? 60);
+                return {
+                    provider: this.id,
+                    status: "rate_limited",
+                    latencyMs: Date.now() - started,
+                    findings: [],
+                    retryAfterMs: Number.isFinite(retrySeconds) ? retrySeconds * 1000 : 60_000,
+                };
+            }
+            let catalogStatus = 200;
+            if (!this.breachCatalog) {
+                const catalog = await requestJson<HibpBreach[]>(`${HIBP_BASE_URL}/breaches`, { headers }, context.signal);
+                catalogStatus = catalog.status;
+                if (catalog.status === 429) {
+                    const retrySeconds = Number(catalog.headers.get("retry-after") ?? 60);
+                    return {
+                        provider: this.id,
+                        status: "rate_limited",
+                        latencyMs: Date.now() - started,
+                        findings: [],
+                        retryAfterMs: Number.isFinite(retrySeconds) ? retrySeconds * 1000 : 60_000,
+                    };
+                }
+                if (catalog.status === 200 && Array.isArray(catalog.body)) this.breachCatalog = catalog.body;
+            }
+            const pastes = await requestJson<HibpPaste[]>(
+                `${HIBP_BASE_URL}/pasteAccount/${encodeURIComponent(context.value)}`,
+                { headers },
+                context.signal,
+            );
+            if (pastes.status === 429) {
+                const retrySeconds = Number(pastes.headers.get("retry-after") ?? 60);
+                return {
+                    provider: this.id,
+                    status: "rate_limited",
+                    latencyMs: Date.now() - started,
+                    findings: [],
+                    retryAfterMs: Number.isFinite(retrySeconds) ? retrySeconds * 1000 : 60_000,
+                };
+            }
+            const stealer = await requestJson<string[]>(
+                `${HIBP_BASE_URL}/stealerLogsByEmail/${encodeURIComponent(context.value)}`,
+                { headers },
+                context.signal,
+            );
 
-            if ([range, catalog, pastes, stealer].some((response) => response.status === 429)) {
-                const retrySeconds = Number(range.headers.get("retry-after") ?? pastes.headers.get("retry-after") ?? 60);
+            if (stealer.status === 429) {
+                const retrySeconds = Number(stealer.headers.get("retry-after") ?? 60);
                 return {
                     provider: this.id,
                     status: "rate_limited",
@@ -123,7 +174,7 @@ export class HibpProvider implements SecurityProviderAdapter {
                 : undefined;
             const breachNames = new Set(safeStringArray(matchedRange?.websites));
             const catalogByName = new Map(
-                (Array.isArray(catalog.body) ? catalog.body : []).map((breach) => [safeText(breach.Name, "", 80), breach]),
+                (this.breachCatalog ?? []).map((breach) => [safeText(breach.Name, "", 80), breach]),
             );
             const now = Date.now();
             const findings: NormalizedSecurityFinding[] = [];
@@ -192,7 +243,7 @@ export class HibpProvider implements SecurityProviderAdapter {
                 }
             }
 
-            const partial = [range, catalog].some((response) => response.status !== 200) ||
+            const partial = range.status !== 200 || catalogStatus !== 200 ||
                 ![200, 404, 403].includes(pastes.status) || ![200, 404, 403].includes(stealer.status);
             return {
                 provider: this.id,
@@ -243,8 +294,10 @@ export class FlareProvider implements SecurityProviderAdapter {
     private async ensureIdentifier(
         token: string,
         context: SecurityProviderScanContext,
-    ): Promise<string> {
-        if (context.providerReference && /^\d+$/.test(context.providerReference)) return context.providerReference;
+    ): Promise<{ providerReference: string; providerManaged: boolean }> {
+        if (context.providerReference && /^\d+$/.test(context.providerReference)) {
+            return { providerReference: context.providerReference, providerManaged: context.providerManaged === true };
+        }
         const headers = { Authorization: `Bearer ${token}`, "content-type": "application/json" };
         const search = await requestJson<{ items?: FlareIdentifier[] }>(
             `${FLARE_BASE_URL}/firework/v3/identifiers/?q=${encodeURIComponent(context.value)}&exact_matches_only=true&size=20`,
@@ -254,7 +307,9 @@ export class FlareProvider implements SecurityProviderAdapter {
         const existing = Array.isArray(search.body?.items)
             ? search.body.items.find((entry) => safeText(entry.name, "", 320).toLowerCase() === context.value.toLowerCase())
             : undefined;
-        if (existing && Number.isSafeInteger(Number(existing.id))) return String(existing.id);
+        if (existing && Number.isSafeInteger(Number(existing.id))) {
+            return { providerReference: String(existing.id), providerManaged: false };
+        }
 
         const create = await requestJson<{ asset?: FlareIdentifier }>(
             `${FLARE_BASE_URL}/firework/v2/assets/`,
@@ -272,10 +327,10 @@ export class FlareProvider implements SecurityProviderAdapter {
         );
         const id = Number(create.body?.asset?.id);
         if (create.status !== 200 || !Number.isSafeInteger(id)) throw new Error("Flare identifier enrollment failed");
-        return String(id);
+        return { providerReference: String(id), providerManaged: true };
     }
 
-    async scan(context: SecurityProviderScanContext): Promise<ProviderScanResult & { providerReference?: string }> {
+    async scan(context: SecurityProviderScanContext): Promise<ProviderScanResult & { providerReference?: string; providerManaged?: boolean }> {
         const started = Date.now();
         if (!this.apiKey) {
             return { provider: this.id, status: "not_configured", latencyMs: 0, findings: [], safeMessage: "Flare API key is not configured." };
@@ -286,7 +341,7 @@ export class FlareProvider implements SecurityProviderAdapter {
 
         try {
             const token = await this.token(context.signal);
-            const providerReference = await this.ensureIdentifier(token, context);
+            const { providerReference, providerManaged } = await this.ensureIdentifier(token, context);
             const response = await requestJson<{ items?: FlareEvent[] }>(
                 `${FLARE_BASE_URL}/firework/v4/events/identifiers/${providerReference}/_search`,
                 {
@@ -302,7 +357,7 @@ export class FlareProvider implements SecurityProviderAdapter {
                 context.signal,
             );
             if (response.status === 429) {
-                return { provider: this.id, status: "rate_limited", latencyMs: Date.now() - started, findings: [], providerReference, retryAfterMs: 60_000 };
+                return { provider: this.id, status: "rate_limited", latencyMs: Date.now() - started, findings: [], providerReference, providerManaged, retryAfterMs: 60_000 };
             }
             if (response.status !== 200) throw new Error("Flare event feed failed");
 
@@ -347,7 +402,7 @@ export class FlareProvider implements SecurityProviderAdapter {
                 })
                 .filter((finding): finding is NormalizedSecurityFinding => finding !== null);
 
-            return { provider: this.id, status: "success", latencyMs: Date.now() - started, findings, providerReference };
+            return { provider: this.id, status: "success", latencyMs: Date.now() - started, findings, providerReference, providerManaged };
         } catch {
             return { provider: this.id, status: "failed", latencyMs: Date.now() - started, findings: [], safeMessage: "Flare did not complete this scan." };
         }

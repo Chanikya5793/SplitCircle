@@ -102,14 +102,54 @@ const toMillis = (value: unknown): number | null => {
     return typeof candidate?.toMillis === "function" ? candidate.toMillis() : null;
 };
 
-const sanitizeProviderStatus = (results: ProviderScanResult[]) =>
-    Object.fromEntries(results.map((result) => [result.provider, {
-        status: result.status,
-        latencyMs: result.latencyMs,
-        findingCount: result.findings.length,
-        checkedAt: Date.now(),
-        ...(result.safeMessage ? { message: result.safeMessage } : {}),
+const PROVIDER_STATUS_PRIORITY: Record<ProviderScanResult["status"], number> = {
+    failed: 6,
+    rate_limited: 5,
+    partial: 4,
+    success: 3,
+    not_configured: 2,
+    unsupported_identity: 1,
+};
+
+export const sanitizeProviderStatus = (results: ProviderScanResult[]) => {
+    const aggregate = new Map<string, {
+        status: ProviderScanResult["status"];
+        latencyMs: number;
+        findingCount: number;
+        checkedAt: number;
+        messages: Set<string>;
+    }>();
+    for (const result of results) {
+        const current = aggregate.get(result.provider);
+        if (!current) {
+            aggregate.set(result.provider, {
+                status: result.status,
+                latencyMs: result.latencyMs,
+                findingCount: result.findings.length,
+                checkedAt: Date.now(),
+                messages: new Set(result.safeMessage ? [result.safeMessage] : []),
+            });
+            continue;
+        }
+        if (PROVIDER_STATUS_PRIORITY[result.status] > PROVIDER_STATUS_PRIORITY[current.status]) {
+            current.status = result.status;
+        }
+        current.latencyMs += result.latencyMs;
+        current.findingCount += result.findings.length;
+        if (result.safeMessage) current.messages.add(result.safeMessage);
+    }
+    return Object.fromEntries([...aggregate].map(([provider, value]) => [provider, {
+        status: value.status,
+        latencyMs: value.latencyMs,
+        findingCount: value.findingCount,
+        checkedAt: value.checkedAt,
+        ...(value.messages.size ? { message: [...value.messages].join(" ").slice(0, 320) } : {}),
     }]));
+};
+
+export const securityNotificationCopy = (detailed: boolean): { title: string; body: string } => detailed
+    ? { title: "Security alert", body: "A high-risk security finding needs your review." }
+    : { title: "ManaSplit", body: "Open ManaSplit to review a protected security alert." };
 
 const monitorRef = (uid: string) => getFirestore().collection(SECURITY_COLLECTION).doc(uid);
 
@@ -182,6 +222,14 @@ async function runSecurityScan(uid: string, requestId: string, source: "manual" 
     for (const identityDoc of identitySnapshot.docs) {
         const identity = identityDoc.data();
         const type = identity.type as SecurityIdentityType;
+        const existingFindings = await rootRef.collection("findings").where("identityId", "==", identityDoc.id).get();
+        const evidenceByKind = new Map<string, Set<string>>();
+        for (const existingFinding of existingFindings.docs) {
+            const data = existingFinding.data();
+            const evidenceKey = `${asString(data.source, 32)}:${asString(data.sourceReference, 256)}`;
+            if (!evidenceByKind.has(data.kind)) evidenceByKind.set(data.kind, new Set());
+            evidenceByKind.get(data.kind)!.add(evidenceKey);
+        }
         let plaintext = await decryptIdentityValue(
             identity.encryptedValue as EncryptedIdentityValue,
             identityAad(uid, identityDoc.id, type),
@@ -189,27 +237,39 @@ async function runSecurityScan(uid: string, requestId: string, source: "manual" 
             userWrappedDek,
         );
         try {
-            const results = await Promise.all(providers.map((provider) => provider.scan({
-                type,
-                value: plaintext,
-                providerReference: asString(identity.providerReferences?.[provider.id], 128) || undefined,
-            })));
+            const results: ProviderScanResult[] = [];
+            for (const provider of providers) {
+                results.push(await provider.scan({
+                    type,
+                    value: plaintext,
+                    providerReference: asString(identity.providerReferences?.[provider.id], 128) || undefined,
+                    providerManaged: identity.providerManagedReferences?.[provider.id] === true,
+                }));
+            }
             allResults.push(...results);
 
             for (const result of results) {
                 const providerReference = (result as ProviderScanResult & { providerReference?: string }).providerReference;
                 if (providerReference) {
-                    await identityDoc.ref.set({
-                        providerReferences: { ...(identity.providerReferences ?? {}), [result.provider]: providerReference },
-                        updatedAt: FieldValue.serverTimestamp(),
-                    }, { merge: true });
+                    await attachFlareReference(
+                        identityDoc.ref,
+                        providerReference,
+                        (result as ProviderScanResult & { providerManaged?: boolean }).providerManaged === true,
+                    );
                 }
                 for (const finding of result.findings.slice(0, MAX_FINDINGS_PER_PROVIDER)) {
                     const findingId = securityFindingDedupeKey(identityDoc.id, finding);
                     const findingRef = rootRef.collection("findings").doc(findingId);
                     const existing = await findingRef.get();
-                    const occurrenceCount = Math.max(0, Number(existing.data()?.occurrenceCount) || 0) + 1;
-                    const assessment = assessSecurityRisk(finding, { repeatedExposureCount: occurrenceCount - 1 });
+                    const evidenceKey = `${finding.source}:${finding.sourceReference}`;
+                    const sameKindEvidence = evidenceByKind.get(finding.kind) ?? new Set<string>();
+                    const repeatedExposureCount = sameKindEvidence.has(evidenceKey)
+                        ? Math.max(0, sameKindEvidence.size - 1)
+                        : sameKindEvidence.size;
+                    sameKindEvidence.add(evidenceKey);
+                    evidenceByKind.set(finding.kind, sameKindEvidence);
+                    const occurrenceCount = Math.max(1, sameKindEvidence.size);
+                    const assessment = assessSecurityRisk(finding, { repeatedExposureCount });
                     const isNew = !existing.exists;
                     await findingRef.set({
                         findingId,
@@ -230,6 +290,7 @@ async function runSecurityScan(uid: string, requestId: string, source: "manual" 
                         firstSeenAt: existing.data()?.firstSeenAt ?? FieldValue.serverTimestamp(),
                         lastSeenAt: FieldValue.serverTimestamp(),
                         occurrenceCount,
+                        scanMatchCount: FieldValue.increment(1),
                         updatedAt: FieldValue.serverTimestamp(),
                     }, { merge: true });
                     findingCount += 1;
@@ -264,10 +325,11 @@ async function runSecurityScan(uid: string, requestId: string, source: "manual" 
 
     if (newHighRiskCount > 0) {
         const detailed = root.data()?.detailedNotifications === true;
+        const notification = securityNotificationCopy(detailed);
         await sendPushToUsers(
             [uid],
-            detailed ? "Security alert" : "ManaSplit",
-            detailed ? "A high-risk security finding needs your review." : "Open ManaSplit to review a protected security alert.",
+            notification.title,
+            notification.body,
             { type: "security", route: "SecurityCenter", requestId },
             "general",
             undefined,
@@ -382,7 +444,7 @@ export const enrollSecurityIdentity = onCall({ secrets: monitoringSecrets }, asy
         keyVersion: Number(root.data()?.keyVersion) || 1,
         consentVersion: CONSENT_VERSION,
         consentedAt: FieldValue.serverTimestamp(),
-        detailedNotifications: false,
+        detailedNotifications: root.exists ? root.data()?.detailedNotifications === true : false,
         nextScanAt: Timestamp.fromMillis(Date.now()),
         nextKeyRotationAt: root.data()?.nextKeyRotationAt ?? Timestamp.fromMillis(Date.now() + KEY_ROTATION_INTERVAL_MS),
         updatedAt: FieldValue.serverTimestamp(),
@@ -398,6 +460,7 @@ export const enrollSecurityIdentity = onCall({ secrets: monitoringSecrets }, asy
         verificationMethod,
         ...(domainChallenge ? { verificationChallenge: domainChallenge } : {}),
         providerReferences: {},
+        providerManagedReferences: {},
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
     });
@@ -487,6 +550,17 @@ export const updateSecurityFinding = onCall(async (request) => {
     return { success: true };
 });
 
+export const deleteSecurityFinding = onCall(async (request) => {
+    const uid = authenticatedUid(request);
+    const findingId = asString(request.data?.findingId, 64);
+    const ref = monitorRef(uid).collection("findings").doc(findingId);
+    const finding = await ref.get();
+    if (!finding.exists) return { success: true };
+    await ref.delete();
+    await writeTimeline(uid, "finding_deleted", { findingId });
+    return { success: true };
+});
+
 export const updateSecurityPreferences = onCall(async (request) => {
     const uid = authenticatedUid(request);
     const patch: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
@@ -569,7 +643,76 @@ const deleteQuery = async (query: Query): Promise<void> => {
     if (snapshot.size === 400) await deleteQuery(query);
 };
 
-async function enqueueOrRemoveFlareReference(uid: string, identityId: string, providerReference: string): Promise<void> {
+const providerReferenceDoc = (providerReference: string) => getFirestore()
+    .collection("securityProviderIdentifierRefs")
+    .doc(createHash("sha256").update(`flare:${providerReference}`).digest("base64url"));
+
+async function attachFlareReference(
+    identityRef: FirebaseFirestore.DocumentReference,
+    providerReference: string,
+    providerManaged: boolean,
+): Promise<void> {
+    const db = getFirestore();
+    const referenceRef = providerReferenceDoc(providerReference);
+    await db.runTransaction(async (transaction) => {
+        const [identity, reference] = await Promise.all([
+            transaction.get(identityRef),
+            transaction.get(referenceRef),
+        ]);
+        if (!identity.exists || identity.data()?.providerReferences?.flare === providerReference) return;
+        transaction.update(identityRef, {
+            "providerReferences.flare": providerReference,
+            "providerManagedReferences.flare": providerManaged,
+            updatedAt: FieldValue.serverTimestamp(),
+        });
+        transaction.set(referenceRef, {
+            provider: "flare",
+            providerReference,
+            providerManaged: reference.exists ? reference.data()?.providerManaged === true : providerManaged,
+            referenceCount: Math.max(0, Number(reference.data()?.referenceCount) || 0) + 1,
+            updatedAt: FieldValue.serverTimestamp(),
+            createdAt: reference.exists ? reference.data()?.createdAt ?? FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
+        }, { merge: true });
+    });
+}
+
+async function releaseFlareReference(
+    identityRef: FirebaseFirestore.DocumentReference,
+    providerReference: string,
+): Promise<boolean> {
+    const db = getFirestore();
+    const referenceRef = providerReferenceDoc(providerReference);
+    return db.runTransaction(async (transaction) => {
+        const [identity, reference] = await Promise.all([
+            transaction.get(identityRef),
+            transaction.get(referenceRef),
+        ]);
+        if (!identity.exists || identity.data()?.providerReferences?.flare !== providerReference) return false;
+        transaction.update(identityRef, {
+            "providerReferences.flare": FieldValue.delete(),
+            "providerManagedReferences.flare": FieldValue.delete(),
+            updatedAt: FieldValue.serverTimestamp(),
+        });
+        const count = Math.max(1, Number(reference.data()?.referenceCount) || 1);
+        if (count > 1) {
+            transaction.set(referenceRef, {
+                referenceCount: count - 1,
+                updatedAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+            return false;
+        }
+        transaction.delete(referenceRef);
+        return reference.data()?.providerManaged === true || identity.data()?.providerManagedReferences?.flare === true;
+    });
+}
+
+async function enqueueOrRemoveFlareReference(
+    uid: string,
+    identityId: string,
+    identityRef: FirebaseFirestore.DocumentReference,
+    providerReference: string,
+): Promise<void> {
+    if (!(await releaseFlareReference(identityRef, providerReference))) return;
     try {
         await new FlareProvider(secretValue(flareApiKey, "FLARE_API_KEY")).remove(providerReference);
     } catch {
@@ -589,7 +732,7 @@ export async function prepareSecurityMonitoringAccountDeletion(uid: string): Pro
     const identities = await monitorRef(uid).collection("identities").get();
     for (const identity of identities.docs) {
         const flareReference = asString(identity.data().providerReferences?.flare, 128);
-        if (flareReference) await enqueueOrRemoveFlareReference(uid, identity.id, flareReference);
+        if (flareReference) await enqueueOrRemoveFlareReference(uid, identity.id, identity.ref, flareReference);
     }
 }
 
@@ -601,7 +744,7 @@ export const removeSecurityIdentity = onCall({ secrets: monitoringSecrets }, asy
     const identity = await identityRef.get();
     if (!identity.exists) return { success: true };
     const flareReference = asString(identity.data()?.providerReferences?.flare, 128);
-    if (flareReference) await enqueueOrRemoveFlareReference(uid, identityId, flareReference);
+    if (flareReference) await enqueueOrRemoveFlareReference(uid, identityId, identityRef, flareReference);
     await deleteQuery(rootRef.collection("findings").where("identityId", "==", identityId));
     await identityRef.delete();
     await writeTimeline(uid, "identity_removed", { identityId, identityType: identity.data()?.type });
@@ -614,7 +757,7 @@ export const deleteSecurityMonitoringData = onCall({ secrets: monitoringSecrets,
     const identities = await rootRef.collection("identities").get();
     for (const identity of identities.docs) {
         const flareReference = asString(identity.data().providerReferences?.flare, 128);
-        if (flareReference) await enqueueOrRemoveFlareReference(uid, identity.id, flareReference);
+        if (flareReference) await enqueueOrRemoveFlareReference(uid, identity.id, identity.ref, flareReference);
     }
     for (const subcollection of ["findings", "identities", "timeline", "scanJobs", "auditEvents"]) {
         await deleteQuery(rootRef.collection(subcollection));

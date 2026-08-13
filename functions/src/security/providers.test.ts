@@ -87,8 +87,23 @@ describe("Flare provider normalization", () => {
         const result = await new FlareProvider("flare-key").scan({ type: "email", value: "owner@example.com" });
         expect(result.status).toBe("success");
         expect(result.providerReference).toBe("42");
+        expect(result.providerManaged).toBe(true);
         expect(result.findings[0]).toMatchObject({ kind: "infostealer", sourceReference: "stealer/event/123" });
         expect(JSON.stringify(result)).not.toMatch(/NEVER-PERSIST|short-lived-token|owner@example\.com/);
+    });
+
+    it("never claims ownership of a provider identifier that already existed", async () => {
+        vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+            const url = String(input);
+            if (url.endsWith("/tokens/generate")) return json({ token: "short-lived-token" });
+            if (url.includes("/firework/v3/identifiers/?")) {
+                return json({ items: [{ id: 77, name: "owner@example.com", type: "email" }] });
+            }
+            if (url.endsWith("/firework/v4/events/identifiers/77/_search")) return json({ items: [] });
+            throw new Error(`Unexpected URL ${url}`);
+        }));
+        const result = await new FlareProvider("flare-key").scan({ type: "email", value: "owner@example.com" });
+        expect(result).toMatchObject({ providerReference: "77", providerManaged: false, status: "success" });
     });
 
     it("requires provider credentials to honor deletion", async () => {

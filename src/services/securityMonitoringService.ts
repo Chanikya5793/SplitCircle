@@ -29,6 +29,7 @@ const updateFindingCallable = httpsCallable<
   { findingId: string; state: SecurityFindingState },
   { success: boolean }
 >(functions, 'updateSecurityFinding');
+const deleteFindingCallable = httpsCallable<{ findingId: string }, { success: boolean }>(functions, 'deleteSecurityFinding');
 const updatePreferencesCallable = httpsCallable<
   { enabled?: boolean; detailedNotifications?: boolean },
   { success: boolean }
@@ -42,6 +43,7 @@ const analyzeUrlCallable = httpsCallable<
     risk: import('@/models/security').SecurityRiskAssessment;
     indicators: Array<{ code: string; label: string; evidence: string }>;
     providerStatus: 'success' | 'not_configured' | 'failed';
+    enrichmentStatus: 'success' | 'partial' | 'failed';
     safeToOpen: boolean;
     checkedAt: number;
   }
@@ -66,6 +68,10 @@ export const updateSecurityFinding = async (
   state: SecurityFindingState,
 ): Promise<void> => {
   await updateFindingCallable({ findingId, state });
+};
+
+export const deleteSecurityFinding = async (findingId: string): Promise<void> => {
+  await deleteFindingCallable({ findingId });
 };
 
 export const updateSecurityPreferences = async (patch: {

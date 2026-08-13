@@ -37,6 +37,11 @@ describeWithEmulator("security monitoring Firestore isolation", () => {
                 provider: "flare",
                 status: "pending",
             });
+            await setDoc(doc(context.firestore(), "securityProviderIdentifierRefs/r1"), {
+                provider: "flare",
+                providerReference: "42",
+                referenceCount: 2,
+            });
         });
     });
 
@@ -66,5 +71,10 @@ describeWithEmulator("security monitoring Firestore isolation", () => {
         await assertSucceeds(environment.withSecurityRulesDisabled((context) =>
             getDoc(doc(context.firestore(), "securityProviderDeletions/d1"))));
     });
-});
 
+    it("keeps shared provider reference counts server-only", async () => {
+        const db = environment.authenticatedContext("alice").firestore();
+        await assertFails(getDoc(doc(db, "securityProviderIdentifierRefs/r1")));
+        await assertFails(setDoc(doc(db, "securityProviderIdentifierRefs/forged"), { referenceCount: 0 }));
+    });
+});

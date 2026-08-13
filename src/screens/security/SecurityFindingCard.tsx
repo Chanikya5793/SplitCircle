@@ -10,6 +10,7 @@ import { Button, Icon, Text } from 'react-native-paper';
 interface SecurityFindingCardProps {
   finding: SecurityFinding;
   onStateChange: (state: SecurityFindingState) => Promise<void>;
+  onDelete: () => void;
 }
 
 const SOURCE_LABEL: Record<SecurityFinding['source'], string> = {
@@ -46,7 +47,7 @@ const officialPageFor = (finding: SecurityFinding): string | null => {
   return match?.[1] ?? null;
 };
 
-export const SecurityFindingCard = ({ finding, onStateChange }: SecurityFindingCardProps) => {
+export const SecurityFindingCard = ({ finding, onStateChange, onDelete }: SecurityFindingCardProps) => {
   const { theme } = useTheme();
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -200,6 +201,7 @@ export const SecurityFindingCard = ({ finding, onStateChange }: SecurityFindingC
             {finding.state !== 'muted' ? (
               <Button compact mode="text" textColor={theme.colors.onSurfaceVariant} disabled={busy} onPress={() => void changeState('muted')}>Mute</Button>
             ) : null}
+            <Button compact mode="text" textColor={theme.colors.danger} disabled={busy} onPress={onDelete}>Delete</Button>
             {busy ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
           </View>
         </View>

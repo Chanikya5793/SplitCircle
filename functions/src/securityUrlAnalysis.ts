@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { lookup } from "node:dns/promises";
+import { connect } from "node:tls";
 import { domainToUnicode } from "node:url";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { defineSecret } from "firebase-functions/params";
@@ -55,13 +57,148 @@ export interface UrlAnalysisResult {
     risk: ReturnType<typeof assessSecurityRisk>;
     indicators: Array<{ code: string; label: string; evidence: string }>;
     providerStatus: "success" | "not_configured" | "failed";
+    enrichmentStatus: "success" | "partial" | "failed";
     safeToOpen: boolean;
     checkedAt: number;
 }
 
+export interface DomainEnrichment {
+    status: UrlAnalysisResult["enrichmentStatus"];
+    dnsAddressCount: number;
+    registeredAt?: number;
+    certificate?: {
+        authorized: boolean;
+        validFrom?: number;
+        validTo?: number;
+        issuer?: string;
+    };
+    latestCtCertificateAt?: number;
+}
+
+export const isPrivateOrReservedAddress = (address: string): boolean => {
+    const normalized = address.toLowerCase();
+    if (normalized.startsWith("::ffff:")) return isPrivateOrReservedAddress(normalized.slice(7));
+    if (normalized.includes(":")) {
+        return normalized === "::1" || normalized === "::" ||
+            normalized.startsWith("fc") || normalized.startsWith("fd") ||
+            /^fe[89ab]/.test(normalized) || normalized.startsWith("ff") ||
+            normalized.startsWith("2001:db8:");
+    }
+    const parts = normalized.split(".").map(Number);
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+    return parts[0] === 10 || parts[0] === 127 || parts[0] === 0 ||
+        (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) ||
+        (parts[0] === 169 && parts[1] === 254) ||
+        (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+        (parts[0] === 192 && (parts[1] === 0 || parts[1] === 168)) ||
+        (parts[0] === 198 && (parts[1] === 18 || parts[1] === 19 || parts[1] === 51)) ||
+        (parts[0] === 203 && parts[1] === 0 && parts[2] === 113) ||
+        parts[0] >= 224;
+};
+
+const boundedJson = async <T>(response: Response, maxBytes = 1_000_000): Promise<T> => {
+    const text = await response.text();
+    if (text.length > maxBytes) throw new Error("Enrichment response exceeded limit");
+    return JSON.parse(text) as T;
+};
+
+const inspectTlsCertificate = async (hostname: string, address: string): Promise<DomainEnrichment["certificate"]> =>
+    new Promise((resolve, reject) => {
+        const socket = connect({
+            host: address,
+            port: 443,
+            servername: hostname,
+            rejectUnauthorized: false,
+            timeout: 5_000,
+        }, () => {
+            const certificate = socket.getPeerCertificate();
+            const validFrom = Date.parse(certificate.valid_from ?? "");
+            const validTo = Date.parse(certificate.valid_to ?? "");
+            const issuer = typeof certificate.issuer?.O === "string" ? certificate.issuer.O.slice(0, 96) : undefined;
+            resolve({
+                authorized: socket.authorized,
+                ...(Number.isFinite(validFrom) ? { validFrom } : {}),
+                ...(Number.isFinite(validTo) ? { validTo } : {}),
+                ...(issuer ? { issuer } : {}),
+            });
+            socket.end();
+        });
+        socket.once("timeout", () => socket.destroy(new Error("TLS inspection timed out")));
+        socket.once("error", reject);
+    });
+
+export const collectDomainEnrichment = async (
+    hostname: string,
+    fetchImpl: typeof fetch,
+    dependencies: {
+        lookupImpl?: (hostname: string) => Promise<Array<{ address: string }>>;
+        tlsInspector?: (hostname: string, address: string) => Promise<DomainEnrichment["certificate"]>;
+    } = {},
+): Promise<DomainEnrichment> => {
+    let addresses: Array<{ address: string }> = [];
+    try {
+        addresses = dependencies.lookupImpl
+            ? await dependencies.lookupImpl(hostname)
+            : await lookup(hostname, { all: true, verbatim: true });
+    } catch {
+        return { status: "failed", dnsAddressCount: 0 };
+    }
+    const publicAddresses = addresses.filter((entry) => !isPrivateOrReservedAddress(entry.address));
+    if (publicAddresses.length === 0) return { status: "failed", dnsAddressCount: 0 };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
+    try {
+        const [rdap, ct, certificate] = await Promise.allSettled([
+            fetchImpl(`https://rdap.org/domain/${encodeURIComponent(hostname)}`, {
+                method: "GET",
+                headers: { accept: "application/rdap+json, application/json" },
+                signal: controller.signal,
+            }).then(async (response) => {
+                if (!response.ok) throw new Error("RDAP failed");
+                return boundedJson<{ events?: Array<{ eventAction?: unknown; eventDate?: unknown }> }>(response);
+            }),
+            fetchImpl(`https://crt.sh/?q=${encodeURIComponent(hostname)}&exclude=expired&output=json`, {
+                method: "GET",
+                headers: { accept: "application/json" },
+                signal: controller.signal,
+                redirect: "error",
+            }).then(async (response) => {
+                if (!response.ok) throw new Error("Certificate Transparency lookup failed");
+                return boundedJson<Array<{ not_before?: unknown }>>(response);
+            }),
+            (dependencies.tlsInspector ?? inspectTlsCertificate)(hostname, publicAddresses[0].address),
+        ]);
+        const rdapBody = rdap.status === "fulfilled" ? rdap.value : null;
+        const registration = rdapBody?.events?.find((event) => event.eventAction === "registration");
+        const registeredAt = typeof registration?.eventDate === "string" ? Date.parse(registration.eventDate) : Number.NaN;
+        const ctBody = ct.status === "fulfilled" && Array.isArray(ct.value) ? ct.value : [];
+        const latestCtCertificateAt = ctBody.reduce((latest, entry) => {
+            const parsed = typeof entry.not_before === "string" ? Date.parse(entry.not_before) : Number.NaN;
+            return Number.isFinite(parsed) ? Math.max(latest, parsed) : latest;
+        }, 0);
+        const successCount = [rdap, ct, certificate].filter((entry) => entry.status === "fulfilled").length;
+        return {
+            status: successCount === 3 ? "success" : successCount > 0 ? "partial" : "failed",
+            dnsAddressCount: publicAddresses.length,
+            ...(Number.isFinite(registeredAt) ? { registeredAt } : {}),
+            ...(certificate.status === "fulfilled" ? { certificate: certificate.value } : {}),
+            ...(latestCtCertificateAt > 0 ? { latestCtCertificateAt } : {}),
+        };
+    } finally {
+        clearTimeout(timer);
+    }
+};
+
 export async function analyzeUrl(
     rawUrl: string,
-    options: { fetchImpl?: typeof fetch; apiKey?: string; now?: number } = {},
+    options: {
+        fetchImpl?: typeof fetch;
+        apiKey?: string;
+        now?: number;
+        enrichNetwork?: boolean;
+        domainEnrichment?: DomainEnrichment;
+    } = {},
 ): Promise<UrlAnalysisResult> {
     if (!rawUrl || rawUrl.length > MAX_URL_LENGTH) throw new HttpsError("invalid-argument", "Enter a valid link.");
     const candidate = /^[a-z][a-z0-9+.-]*:/i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
@@ -107,6 +244,25 @@ export async function analyzeUrl(
         }
     }
 
+    const now = options.now ?? Date.now();
+    const enrichment = options.domainEnrichment ?? (options.enrichNetwork === false
+        ? { status: "failed" as const, dnsAddressCount: 0 }
+        : await collectDomainEnrichment(hostname, options.fetchImpl ?? fetch));
+    if (enrichment.registeredAt && now - enrichment.registeredAt <= 30 * 24 * 60 * 60 * 1000) {
+        add("new_domain", "Newly registered domain", "RDAP reports that the domain was registered within the last 30 days.");
+    }
+    if (enrichment.certificate) {
+        if (!enrichment.certificate.authorized || (enrichment.certificate.validTo ?? Number.POSITIVE_INFINITY) < now) {
+            add("tls_invalid", "TLS certificate problem", "The live TLS handshake returned an invalid or expired certificate.");
+        } else if ((enrichment.certificate.validTo ?? Number.POSITIVE_INFINITY) - now <= 7 * 24 * 60 * 60 * 1000) {
+            add("tls_expiring", "TLS certificate expires soon", "The live certificate expires within seven days.");
+        }
+    }
+    if (enrichment.latestCtCertificateAt && now - enrichment.latestCtCertificateAt <= 7 * 24 * 60 * 60 * 1000 &&
+        indicators.some((entry) => entry.code === "lookalike" || entry.code === "idn")) {
+        add("new_certificate", "Recent certificate-transparency event", "A recent certificate was observed for a lookalike hostname.");
+    }
+
     let providerStatus: UrlAnalysisResult["providerStatus"] = "not_configured";
     const apiKey = options.apiKey ?? secretValue();
     if (apiKey) {
@@ -138,7 +294,6 @@ export async function analyzeUrl(
         }
     }
 
-    const now = options.now ?? Date.now();
     const finding: NormalizedSecurityFinding = {
         source: indicators.some((entry) => entry.code === "web_risk") ? "google_web_risk" : "manasplit",
         sourceReference: createHash("sha256").update(hostname).digest("base64url"),
@@ -154,10 +309,20 @@ export async function analyzeUrl(
         indicators: {
             maliciousUrl: indicators.some((entry) => entry.code === "web_risk"),
             impersonation: indicators.some((entry) => entry.code === "lookalike" || entry.code === "idn"),
+            recentlyRegisteredDomain: indicators.some((entry) => entry.code === "new_domain"),
+            certificateRisk: indicators.some((entry) => entry.code.startsWith("tls_") || entry.code === "new_certificate"),
         },
     };
     const risk = assessSecurityRisk(finding, { now });
-    return { hostname, risk, indicators, providerStatus, safeToOpen: indicators.length === 0 && providerStatus === "success", checkedAt: now };
+    return {
+        hostname,
+        risk,
+        indicators,
+        providerStatus,
+        enrichmentStatus: enrichment.status,
+        safeToOpen: indicators.length === 0 && providerStatus === "success" && enrichment.status === "success",
+        checkedAt: now,
+    };
 }
 
 export const analyzeSecurityUrl = onCall({ secrets: [webRiskApiKey] }, async (request) => {
@@ -193,4 +358,3 @@ export const analyzeSecurityUrl = onCall({ secrets: [webRiskApiKey] }, async (re
 });
 
 export const securityUrlSecrets = { webRiskApiKey };
-
