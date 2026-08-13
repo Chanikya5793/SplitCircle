@@ -17,6 +17,7 @@
  *   splitcircle://add-expense?group=<id>&amount=<n>&title=<t>&split=<method>&participants=<uid,uid>
  *   splitcircle://settle?group=<id>
  *   splitcircle://ask?group=<id>&q=<question>
+ *   splitcircle://security
  *
  * Best-effort: never throws into React. Navigation failures (e.g. target not mounted
  * yet) leave a pending link in place to retry.
@@ -129,6 +130,12 @@ export function handleUrl(rawUrl: string): boolean {
         navigationRef.navigate(ROUTES.APP.ASK_AI, {
           groupId,
           initialQuestion: query.q,
+        });
+        return true;
+      }
+      case 'security': {
+        navigationRef.navigate(ROUTES.APP.SECURITY_CENTER, {
+          backTitle: 'Settings',
         });
         return true;
       }

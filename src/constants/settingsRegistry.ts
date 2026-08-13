@@ -44,6 +44,7 @@ export const SETTING_IDS = {
   autoLock: 'auto-lock',
   confirmSettlements: 'confirm-settlements',
   linkedDevices: 'linked-devices',
+  securityCenter: 'security-center',
   notifications: 'notifications',
   offlineSync: 'offline-sync',
   nearbyMesh: 'nearbyMesh',
@@ -152,6 +153,15 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     icon: 'devices',
     section: 'Security',
     route: ROUTES.APP.LINKED_DEVICES,
+  },
+  {
+    id: SETTING_IDS.securityCenter,
+    title: 'Security Center',
+    subtitle: 'Identity, breach, infostealer, and phishing protection',
+    keywords: ['security', 'breach', 'dark web', 'infostealer', 'phishing', 'password', 'identity', 'scam'],
+    icon: 'shield-search',
+    section: 'Security',
+    route: ROUTES.APP.SECURITY_CENTER,
   },
 
   // General ------------------------------------------------------------------

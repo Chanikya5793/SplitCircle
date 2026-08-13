@@ -44,6 +44,7 @@ export const ROUTES = {
     BACKUP_SETTINGS: 'BackupSettings',
     BACKUP_PASSPHRASE: 'BackupPassphrase',
     DEVICE_RETIREMENT: 'DeviceRetirement',
+    SECURITY_CENTER: 'SecurityCenter',
     AI_INDEX: 'AiIndex',
     AI_EVALS: 'AiEvals',
     AI_MEMORY: 'AiMemory',

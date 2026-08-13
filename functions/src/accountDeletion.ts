@@ -17,6 +17,7 @@ const CHATS_COLLECTION = "chats";
 const EXPENSES_COLLECTION = "expenses";
 const RECURRING_BILLS_COLLECTION = "recurringBills";
 const NOTIFICATION_DEVICES_COLLECTION = "notificationDevices";
+const SECURITY_MONITORS_COLLECTION = "securityMonitors";
 const FRIENDS_PATH = "friends";
 const MESSAGE_QUEUE_PATH = "messageQueue";
 
@@ -309,6 +310,18 @@ const deleteNotificationDevices = async (db: Firestore, uid: string): Promise<vo
     await commitDeletesInChunks(snapshot.docs.map((doc) => doc.ref));
 };
 
+const deleteSecurityMonitoringData = async (db: Firestore, uid: string): Promise<void> => {
+    const rootRef = db.collection(SECURITY_MONITORS_COLLECTION).doc(uid);
+    const subcollections = await rootRef.listCollections();
+    for (const collection of subcollections) {
+        const snapshot = await collection.get();
+        if (!snapshot.empty) {
+            await commitDeletesInChunks(snapshot.docs.map((doc) => doc.ref));
+        }
+    }
+    await rootRef.delete();
+};
+
 /**
  * Cascades a user's full account deletion: every group they belong to is
  * either cascade-deleted (solo-owned) or has their membership archived
@@ -339,6 +352,10 @@ export async function deleteAccountCascade(uid: string): Promise<void> {
     }
 
     await deleteNotificationDevices(db, uid);
+    // Security monitoring is server-owned and therefore cannot be cleaned up
+    // by the client after Auth deletion. Remove encrypted identities, findings,
+    // scan jobs and timeline records before deleting the user itself.
+    await deleteSecurityMonitoringData(db, uid);
 
     // Only the deleted user's OWN friends/{uid} node is cleared. Friendships
     // are actually written bidirectionally by functions/src/friends.ts

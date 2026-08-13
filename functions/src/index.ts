@@ -52,6 +52,7 @@ import {
     recoverAsNewMainDevice as recoverAsNewMainDeviceImpl,
 } from "./accountRecovery";
 import { backfillMissingDisplayNames } from "./displayNameBackfill";
+import { prepareSecurityMonitoringAccountDeletion, securityMonitoringSecrets } from "./securityMonitoring";
 export { cleanupOldRtdbData, reapStaleRingingCalls } from "./cleanup";
 // Consolidated AI-layer ingestion fan-out (gated by AI_LAYER_ENABLED; no-op until
 // activated — see aiLayer.ts and ai_layer/docs/08_self_review.md).
@@ -59,6 +60,10 @@ export { onGroupWritten } from "./aiLayer";
 // App-facing AI assistant callable (gated the same way; the app never holds the
 // RAG shared secret — this proxies with the uid from the verified token).
 export { askExpenseAi } from "./askExpenseAi";
+// Server-owned, consent-gated identity monitoring. Every callable derives uid
+// from the verified Firebase token; clients never read the backing collections.
+export * from "./securityMonitoring";
+export * from "./securityUrlAnalysis";
 
 initializeApp();
 
@@ -1240,7 +1245,7 @@ export const checkAccountDeletionBlockers = onCall(async (request) => {
     }
 });
 
-export const deleteAccount = onCall(async (request) => {
+export const deleteAccount = onCall({ secrets: [securityMonitoringSecrets.flareApiKey] }, async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
         throw new HttpsError("unauthenticated", "Authentication required.");
@@ -1255,6 +1260,7 @@ export const deleteAccount = onCall(async (request) => {
             throw new HttpsError("failed-precondition", "Transfer ownership of your groups first.", { blockers });
         }
 
+        await prepareSecurityMonitoringAccountDeletion(uid);
         await deleteAccountCascade(uid);
         logger.info("Account deleted", { uid });
         return { success: true };

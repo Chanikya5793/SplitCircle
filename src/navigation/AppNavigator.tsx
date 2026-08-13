@@ -50,6 +50,7 @@ import { BackupSettingsScreen } from '@/screens/settings/BackupSettingsScreen';
 import { BackupPassphraseScreen } from '@/screens/settings/BackupPassphraseScreen';
 import { DeviceRetirementScreen } from '@/screens/settings/DeviceRetirementScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
+import { SecurityCenterScreen } from '@/screens/security/SecurityCenterScreen';
 import { EditNameScreen } from '@/screens/settings/EditNameScreen';
 import { SearchScreen } from '@/screens/search/SearchScreen';
 import type { NotificationData } from '@/utils/notifications';
@@ -1277,6 +1278,15 @@ const AppStackNavigator = () => {
         }}
       />
       <AppStack.Screen
+        name={ROUTES.APP.SECURITY_CENTER}
+        component={SecurityCenterScreen}
+        options={{
+          title: SCREEN_TITLES.securityCenter,
+          headerTransparent: true,
+          headerTintColor: theme.colors.primary,
+        }}
+      />
+      <AppStack.Screen
         name={ROUTES.APP.LINK_DEVICE}
         component={LinkDeviceScreen}
         options={{
@@ -1504,6 +1514,11 @@ const NotificationNavigator = () => {
               joinCallId: data.callId,
             });
           }
+          break;
+        case 'security':
+          navigation.navigate(ROUTES.APP.SECURITY_CENTER, {
+            backTitle: ROOT_SCREEN_TITLES.settings,
+          });
           break;
         default:
           break;

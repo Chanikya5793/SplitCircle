@@ -234,6 +234,24 @@ service cloud.firestore {
       allow read, write: if isSelfWithLiveDevice(userId);
     }
 
+    // Security monitoring is callable-only. These documents contain encrypted
+    // identity ciphertext, blind indexes, provider references, findings, scan
+    // jobs, and audit events. Even the owner receives a deliberately projected
+    // response rather than the stored document shape.
+    match /securityMonitors/{userId} {
+      allow read, write: if false;
+
+      match /{document=**} {
+        allow read, write: if false;
+      }
+    }
+
+    // Provider deletion retries are server-owned tombstones. They contain no
+    // plaintext identity, but exposing them would still leak provider usage.
+    match /securityProviderDeletions/{deletionId} {
+      allow read, write: if false;
+    }
+
     match /groups/{groupId} {
       allow create: if isSignedIn()
         && request.resource.data.createdBy == request.auth.uid

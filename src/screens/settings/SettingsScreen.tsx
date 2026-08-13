@@ -746,6 +746,20 @@ export const SettingsScreen = () => {
           />
           ))}
           {divider}
+          {wrapAnchor(SETTING_IDS.securityCenter, (
+          <ListRow inset={rowInset}
+            title="Security Center"
+            subtitle="Breach, infostealer & phishing protection"
+            icon="shield-search"
+            onPress={() => {
+              lightHaptic();
+              (navigation as any).navigate(ROUTES.APP.SECURITY_CENTER, {
+                backTitle: ROOT_SCREEN_TITLES.settings,
+              });
+            }}
+          />
+          ))}
+          {divider}
           {wrapAnchor(SETTING_IDS.linkedDevices, (
           <ListRow inset={rowInset}
             title="Linked devices"

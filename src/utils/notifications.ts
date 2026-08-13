@@ -39,6 +39,7 @@ export type NotificationType =
   // Silent server push withdrawing stale tray notifications for a deleted
   // group/expense/settlement — never shown, handled by the background task.
   | 'revoke'
+  | 'security'
   | 'general';
 
 export interface NotificationData {
