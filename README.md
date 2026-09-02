@@ -215,3 +215,7 @@ Customize rules to match your compliance requirements before going to production
 - Harden Firestore rules with granular validations (amount ranges, membership checks, etc.).
 
 Enjoy splitting and chatting with SplitCircle! 🤝
+
+---
+
+Built by **Chanakya Thotakura** — [chanakyachowdary.in](https://chanakyachowdary.in) · [Case study](https://chanakyachowdary.in/#/work/splitcircle)
