@@ -163,9 +163,11 @@ deploy is not proof that Google has published a changed public brand. The Fireba
 project and Web app display names are also **ManaSplit**; their immutable IDs
 remain `splitcircle-c9e46` and the existing app ID. After changing branding,
 verify the consent screen and a new-account Google notice with a real account.
-The owner Chrome session currently stops at Google Cloud's new Terms of Service
-dialog before Branding. After the owner accepts it, inspect the Branding logo,
-upload `assets/icon.png` if absent, and verify the public consent screen.
+On 2026-10-03, the owner Chrome profile `chanikya.chowdary1@gmail.com` showed
+the ManaSplit project Branding page with app name **ManaSplit**, an existing
+Current App logo, and the `manasplit.pages.dev` public links. The current logo
+was not visually matched to `assets/icon.png`; verify that image and the public
+consent screen before claiming the branding work fully complete.
 As checked on 2026-10-03, Audience is External and Testing with no listed test
 users. Google's basic `openid`/`email`/`profile` sign-in exception permits
 non-test accounts in that state, so Testing alone does not explain a login
