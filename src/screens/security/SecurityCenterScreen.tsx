@@ -199,6 +199,7 @@ export const SecurityCenterScreen = () => {
   const navigation = useNavigation();
   const [snapshot, setSnapshot] = useState<SecurityCenterSnapshot>(EMPTY_SNAPSHOT);
   const [loading, setLoading] = useState(true);
+  const [unavailable, setUnavailable] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
@@ -221,8 +222,10 @@ export const SecurityCenterScreen = () => {
     else setLoading(true);
     try {
       setSnapshot(await getSecurityCenter());
+      setUnavailable(false);
     } catch (error) {
-      appAlert('Could not load Security Center', errorText(error, 'Please try again.'));
+      console.warn('[SecurityCenter] Could not load monitoring:', error);
+      setUnavailable(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -437,6 +440,15 @@ export const SecurityCenterScreen = () => {
 
         {loading ? (
           <View style={styles.loading}><ActivityIndicator color={theme.colors.primary} /><Text style={{ color: theme.colors.onSurfaceVariant }}>Opening protected monitoring…</Text></View>
+        ) : unavailable ? (
+          <GlassCard contentStyle={styles.heroCardContent}>
+            <Icon source="cloud-off-outline" size={32} color={theme.colors.onSurfaceVariant} />
+            <Text variant="titleMedium" style={{ color: theme.colors.onSurface, fontWeight: '800' }}>Monitoring is unavailable</Text>
+            <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+              ManaSplit could not connect to Security Center. No monitoring results or protection status can be shown right now.
+            </Text>
+            <Button mode="contained-tonal" icon="refresh" onPress={() => void load()}>Try again</Button>
+          </GlassCard>
         ) : (
           <>
             <GlassCard contentStyle={styles.heroCardContent}>

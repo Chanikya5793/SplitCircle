@@ -56,7 +56,6 @@ import {
     recoverAsNewMainDevice as recoverAsNewMainDeviceImpl,
 } from "./accountRecovery";
 import { backfillMissingDisplayNames } from "./displayNameBackfill";
-import { prepareSecurityMonitoringAccountDeletion, securityMonitoringSecrets } from "./securityMonitoring";
 import {
     authorizeChatAccessImpl,
     createAuthorizedCallImpl,
@@ -1310,7 +1309,10 @@ export const checkAccountDeletionBlockers = onCall(async (request) => {
     }
 });
 
-export const deleteAccount = onCall({ secrets: [securityMonitoringSecrets.flareApiKey] }, async (request) => {
+// Flare removal is best-effort and durably queued when its optional provider
+// credential is unavailable. Account deletion must remain deployable and usable
+// before Security Center provider onboarding is complete.
+export const deleteAccount = onCall(async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
         throw new HttpsError("unauthenticated", "Authentication required.");
@@ -1325,6 +1327,10 @@ export const deleteAccount = onCall({ secrets: [securityMonitoringSecrets.flareA
             throw new HttpsError("failed-precondition", "Transfer ownership of your groups first.", { blockers });
         }
 
+        // Load Security Center only for an actual account deletion. Keeping
+        // its provider setup out of the core functions startup lets the core
+        // release deploy while optional monitoring providers are unprovisioned.
+        const { prepareSecurityMonitoringAccountDeletion } = await import("./securityMonitoring");
         await prepareSecurityMonitoringAccountDeletion(uid);
         await deleteAccountCascade(uid);
         logger.info("Account deleted", { uid });

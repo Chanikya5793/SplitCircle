@@ -66,7 +66,7 @@ const iosPushNotificationsEnabled = true;
 const config = {
   name: 'ManaSplit',
   slug: 'SplitCircle',
-  version: '1.0.1',
+  version: '1.0.2',
   owner: 'chanikya6163',
   orientation: 'portrait',
   icon: './assets/icon.png',

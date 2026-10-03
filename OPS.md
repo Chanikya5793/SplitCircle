@@ -13,6 +13,22 @@ npm run build:ios:local  # .ipa only, no upload
 number auto-increments, `scripts/eas-local-preflight.sh` needs ~12GB free disk and
 purges stale DerivedData. Builds land in TestFlight after Apple processes.
 
+### 2026-10-03 release status: Security Center provider gate
+
+The iOS `1.0.1 (0.0.252)` archive built, but App Store Connect rejected its
+submission because version `1.0.1` was already submitted. The next archive
+uses marketing version `1.0.2`. The 56 existing core Functions deployed.
+The Security Center monitoring Functions were excluded from that
+Functions deploy: Cloud KMS is not enabled, and the project has no values for
+`SECURITY_MONITORING_KMS_KEY`, `SECURITY_BLIND_INDEX_KEY`, `HIBP_API_KEY`,
+`FLARE_API_KEY`, or `GOOGLE_WEB_RISK_API_KEY`. Do not set dummy credentials or
+describe monitoring as live. Finish provider onboarding, create the KMS key and
+blind-index secret, bind the real provider keys, then run the full Functions
+deploy and exercise enrollment, scanning, URL analysis, and deletion on a
+physical device. Firebase Auth, Firestore rules/indexes, RTDB rules, and Storage
+rules were deployed separately after the full Functions deploy stopped at the
+missing-secret gate.
+
 One-time credentials (already done; redo only if rotated):
 - ASC API key stored on EAS: `eas credentials` → iOS → App Store Connect API Key.
 - `eas.json` `submit.production.ios.ascAppId: "6760814898"` (required for
